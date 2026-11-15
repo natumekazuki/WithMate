@@ -1,14 +1,14 @@
 import { SESSION_GRAPH_RUNTIME_OPERATION_PATHS, type SessionGraphRuntimeOperation } from "../../../src-shared/session-graph/session-graph-operation-schema.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../memory/memory-runtime-exchange.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../agent-runtime/runtime-exchange.js";
 import {
-  callWithMateMemoryRuntime, mapWithMateMemoryDiscoveryCode, resolveWithMateMemoryApi,
+  callAgentRuntime, mapAgentRuntimeDiscoveryCode, resolveAgentRuntimeApi,
   resolveAgentRuntimeBindingReference, resolveAgentRuntimeTurnCapability,
-  type WithMateMemoryRuntimeConnection, WithMateMemoryRuntimeExchangeError,
-} from "./withmate-memory-runtime-client.js";
+  type AgentRuntimeConnection, AgentRuntimeExchangeError,
+} from "../agent-runtime/runtime-client.js";
 
-export type SessionGraphRuntimeClientDeps = Omit<Parameters<typeof resolveWithMateMemoryApi>[0], "adapter" | "signal"> & {
-  connection?: WithMateMemoryRuntimeConnection;
-  runtimeCall?: typeof callWithMateMemoryRuntime;
+export type SessionGraphRuntimeClientDeps = Omit<Parameters<typeof resolveAgentRuntimeApi>[0], "adapter" | "signal"> & {
+  connection?: AgentRuntimeConnection;
+  runtimeCall?: typeof callAgentRuntime;
   requestTimeoutMs?: number;
 };
 
@@ -33,12 +33,12 @@ export async function callSessionGraphRuntime(
       return { ok: false, code: "SESSION_GRAPH_BINDING_REQUIRED", effect: "none" };
     }
     const resolution = deps.connection ? { kind: "selected" as const, connection: deps.connection }
-      : await resolveWithMateMemoryApi({ ...deps, adapter: "mcp", signal: controller.signal });
+      : await resolveAgentRuntimeApi({ ...deps, adapter: "mcp", signal: controller.signal });
     if (resolution.kind === "error") {
-      return { ok: false, code: mapWithMateMemoryDiscoveryCode(resolution.code), effect: "none", candidates: resolution.candidates };
+      return { ok: false, code: mapAgentRuntimeDiscoveryCode(resolution.code), effect: "none", candidates: resolution.candidates };
     }
     dispatched = true;
-    const response = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(resolution.connection,
+    const response = await (deps.runtimeCall ?? callAgentRuntime)(resolution.connection,
       { method: "POST", path: SESSION_GRAPH_RUNTIME_OPERATION_PATHS[operation], body }, {
         signal: controller.signal, bindingReference, turnCapability,
         exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
@@ -47,7 +47,7 @@ export async function callSessionGraphRuntime(
       ? response.value as Record<string, unknown>
       : createSessionGraphTransportError(operation === "apply" ? "unknown" : "none");
   } catch (cause) {
-    const wasDispatched = cause instanceof WithMateMemoryRuntimeExchangeError ? cause.dispatched : dispatched;
+    const wasDispatched = cause instanceof AgentRuntimeExchangeError ? cause.dispatched : dispatched;
     return createSessionGraphTransportError(operation === "apply" && wasDispatched ? "unknown" : "none");
   } finally { clearTimeout(timeout); }
 }

@@ -35,6 +35,26 @@ export function resolveSessionFilesDirectory(userDataPath: string, sessionId: st
   return path.join(userDataPath, SESSION_FILES_ROOT, safePathSegment(sessionId));
 }
 
+export function resolveCrewFilesDirectory(userDataPath: string, rootSessionId: string): string {
+  return path.join(userDataPath, "crew-files", safePathSegment(rootSessionId));
+}
+
+export function ensureCrewFilesDirectory(userDataPath: string, rootSessionId: string): string {
+  const directoryPath = resolveCrewFilesDirectory(userDataPath, rootSessionId);
+  mkdirSync(directoryPath, { recursive: true });
+  return directoryPath;
+}
+
+export function appendCrewFilesDirectory<TSession extends { allowedAdditionalDirectories: string[] }>(
+  userDataPath: string,
+  session: TSession,
+  rootSessionId: string,
+): TSession {
+  const directoryPath = ensureCrewFilesDirectory(userDataPath, rootSessionId);
+  if (session.allowedAdditionalDirectories.some((entry) => path.resolve(entry) === path.resolve(directoryPath))) return session;
+  return { ...session, allowedAdditionalDirectories: [...session.allowedAdditionalDirectories, directoryPath] };
+}
+
 export async function createSessionFilesDirectory(userDataPath: string, sessionId: string): Promise<string> {
   const directoryPath = resolveSessionFilesDirectory(userDataPath, sessionId);
   await mkdir(path.dirname(directoryPath), { recursive: true });

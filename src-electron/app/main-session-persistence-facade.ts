@@ -96,6 +96,14 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId, queuedInput);
   }
 
+  beginRunningInput(...args: Parameters<SessionPersistenceService["beginRunningInput"]>): Promise<Session> {
+    return this.deps.getSessionPersistenceService().beginRunningInput(...args);
+  }
+
+  settleRunningInput(...args: Parameters<SessionPersistenceService["settleRunningInput"]>): Promise<Session> {
+    return this.deps.getSessionPersistenceService().settleRunningInput(...args);
+  }
+
   async appendTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {
     return this.deps.getSessionPersistenceService().appendTerminalSession(session, terminalCommit);
   }

@@ -2,29 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  SETTINGS_MEMORY_FILE_QUOTA_HELP,
-  SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
 } from "../../src/settings/settings-ui.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "../../src-electron/windows/window-defaults.js";
 
 describe("Settings UI constants", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "Memory file quotaの説明はProtected Objectのappend制約を具体的に示す"
-  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
-  // fault = "quotaの対象を曖昧にするか、protected objectとfile appendの制約を落とす"
-  // observable = "Memory file quota label/helpに含まれるprotected objectsとfile append"
-  // observation_boundary = "public-boundary"
-  // scope = "settings-ui memory quota wording"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("Memory file quota は Protected Object の append 制約として説明する", () => {
-    assert.equal(SETTINGS_MEMORY_FILE_QUOTA_LABEL, "Memory File Quota");
-    assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /protected objects/);
-    assert.match(SETTINGS_MEMORY_FILE_QUOTA_HELP, /file append/);
-  });
 
   // @test-value v2
   // kind = "contract"

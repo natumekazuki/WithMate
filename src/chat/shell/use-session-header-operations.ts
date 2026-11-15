@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
+import { createElement, useCallback, useEffect, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
 
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
@@ -9,6 +9,8 @@ import {
 } from "../session-shell-handlers.js";
 import type { SessionHeaderProps } from "./session-header.js";
 import { buildLiveSessionHeaderProps } from "../chat-header-actions.js";
+import { CrewDeletionDialog } from "../../coordination/CrewDeletionDialog.js";
+import { SessionRoleChangeDialog } from "./session-role-change-dialog.js";
 
 export type SessionHeaderOperations = {
   titleDraft: string;
@@ -47,6 +49,11 @@ export function useSessionHeaderOperations(input: {
 }): SessionHeaderOperations {
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isRoleChangePending, setIsRoleChangePending] = useState(false);
+  const [roleChangeSession, setRoleChangeSession] = useState<Session | null>(null);
+  const [roleChangeError, setRoleChangeError] = useState("");
+  const [crewDeletionOpen, setCrewDeletionOpen] = useState(false);
+  const roleChangePendingRef = useRef(false);
   const latestSessionRef = useRef(input.selectedSession);
   latestSessionRef.current = input.selectedSession;
   const titleRequestRevisionRef = useRef(0);
@@ -56,6 +63,9 @@ export function useSessionHeaderOperations(input: {
   const incarnationId = input.selectedSession ? getSessionIncarnationId(input.selectedSession) : null;
   useEffect(() => {
     setIsEditingTitle(false);
+    setCrewDeletionOpen(false);
+    setRoleChangeSession(null);
+    setRoleChangeError("");
     return () => { titleRequestRevisionRef.current += 1; };
   }, [ownerId, incarnationId]);
   const canEdit = !!input.selectedSession && !input.isReadOnly && input.runState !== "running";
@@ -106,10 +116,46 @@ export function useSessionHeaderOperations(input: {
   const deleteSession = useCallback(async () => {
     const session = input.selectedSession;
     if (!input.api || !session || input.runState === "running") return;
+    if (session.sessionKind === "default") { setCrewDeletionOpen(true); return; }
     if (!window.confirm(`Delete session "${session.taskTitle}"?\n\nIts Aux conversations and Session Graph will also be deleted.`)) return;
     await input.api.deleteSession(session.id);
     input.closeWindow();
   }, [input]);
+
+  const canChangeRole = !!input.api && canEdit && input.selectedSession?.sessionKind === "default"
+    && (input.selectedSession.sessionRole ?? "standalone") === "standalone";
+  useEffect(() => {
+    if (!canChangeRole) setRoleChangeSession(null);
+  }, [canChangeRole]);
+
+  const promoteToOverallCoordinator = useCallback(() => {
+    if (!canChangeRole || roleChangePendingRef.current) return;
+    setRoleChangeError("");
+    setRoleChangeSession(input.selectedSession);
+  }, [canChangeRole, input.selectedSession]);
+
+  const confirmRoleChange = useCallback(async () => {
+    const session = roleChangeSession;
+    if (!input.api || !session || input.isReadOnly || input.runState === "running"
+      || session.sessionKind !== "default" || (session.sessionRole ?? "standalone") !== "standalone"
+      || latestSessionRef.current?.id !== session.id
+      || getSessionIncarnationId(latestSessionRef.current) !== getSessionIncarnationId(session)
+      || roleChangePendingRef.current) return;
+    roleChangePendingRef.current = true;
+    setIsRoleChangePending(true);
+    try {
+      await input.api.promoteSessionToOverallCoordinator(session.id, getSessionIncarnationId(session));
+      setRoleChangeSession((current) => current === session ? null : current);
+    } catch (error) {
+      if (latestSessionRef.current?.id === session.id
+        && getSessionIncarnationId(latestSessionRef.current) === getSessionIncarnationId(session)) {
+        setRoleChangeError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      roleChangePendingRef.current = false;
+      setIsRoleChangePending(false);
+    }
+  }, [input, roleChangeSession]);
 
   const buildChatHeader = useCallback((view: Parameters<SessionHeaderOperations["buildChatHeader"]>[0]) => {
     const session = input.selectedSession;
@@ -117,7 +163,12 @@ export function useSessionHeaderOperations(input: {
       throw new Error("Cannot build a session header without a selected session.");
     }
 
-    return buildLiveSessionHeaderProps({
+    const header = buildLiveSessionHeaderProps({
+      sessionRole: !view.isAuxiliaryMode && session.sessionKind === "default" ? session.sessionRole ?? "standalone" : undefined,
+      isRoleChangePending,
+      onPromoteToOverallCoordinator: !view.isAuxiliaryMode && session.sessionKind === "default"
+        && (session.sessionRole ?? "standalone") === "standalone" && !view.isReadOnly
+        ? () => void promoteToOverallCoordinator() : undefined,
       actions: view.actions,
       taskTitle: session.taskTitle,
       isEditingTitle,
@@ -127,7 +178,7 @@ export function useSessionHeaderOperations(input: {
       isPinned: view.isPinned,
       isPinPending: view.isPinPending,
       isAuxiliaryMode: view.isAuxiliaryMode,
-      canDeleteSession: true,
+      canDeleteSession: session.sessionKind !== "default" || (session.rootSessionId ?? session.id) === session.id,
       onOpenTerminal: view.onOpenSessionTerminal,
       onOpenExternalTerminal: view.onOpenExternalTerminal,
       isTerminalDisabled: !view.isWorkspaceAvailable,
@@ -143,7 +194,20 @@ export function useSessionHeaderOperations(input: {
       onOpenWorkspaceExplorer: view.onOpenSessionExplorer,
       isWorkspaceExplorerDisabled: !view.isWorkspaceAvailable,
     });
-  }, [cancelTitleEdit, input.selectedSession, isEditingTitle, saveTitle, startTitleEdit, titleDraft]);
+    if (session.sessionKind === "default") header.deleteActionLabel = "Delete Crew";
+    if (crewDeletionOpen && input.api) header.actions = createElement("div", null, header.actions, createElement(CrewDeletionDialog, {
+      api: input.api, sessionId: session.id, incarnationId: getSessionIncarnationId(session), title: session.taskTitle,
+      onClose: () => setCrewDeletionOpen(false), onDeleted: input.closeWindow,
+    }));
+    if (roleChangeSession && canChangeRole && roleChangeSession.id === session.id
+      && getSessionIncarnationId(roleChangeSession) === getSessionIncarnationId(session)) {
+      header.actions = createElement("div", null, header.actions, createElement(SessionRoleChangeDialog, {
+        title: roleChangeSession.taskTitle, pending: isRoleChangePending, error: roleChangeError,
+        onClose: () => setRoleChangeSession(null), onConfirm: () => void confirmRoleChange(),
+      }));
+    }
+    return header;
+  }, [cancelTitleEdit, input, crewDeletionOpen, isEditingTitle, isRoleChangePending, promoteToOverallCoordinator, saveTitle, startTitleEdit, titleDraft, roleChangeSession, roleChangeError, canChangeRole, confirmRoleChange]);
 
   return { titleDraft, setTitleDraft, isEditingTitle, startTitleEdit, cancelTitleEdit, saveTitle, deleteSession, buildChatHeader };
 }

@@ -21,7 +21,7 @@ import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantT
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
-import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+import { WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import type { LiveElicitationRequest, LiveRunStep } from "../../src-shared/session/runtime-state.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 type CodexLog = Parameters<NonNullable<ConstructorParameters<typeof CodexAdapter>[0]>>[0];
@@ -476,9 +476,9 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexはMemory・Glossary・GraphのHTTP設定を渡しcredentialをprocess envだけへ置き、存在する既知managed設定だけを無効化し第三者設定とpromptを維持してWorker出力からtokenを除去する"
+// claim = "CodexはGlossary・Graph・SessionのHTTP設定を渡しcredentialをprocess envだけへ置き、既存の既知managed3設定だけへ無効化overrideを渡して第三者設定を上書きせずWorker出力からtokenを除去する"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
-// fault = "tokenをargvやthread設定へ埋める、存在しないserverを無効化する、第三者serverを無効化する、またはWorker投影からtokenを漏らす"
+// fault = "tokenをargvやthread設定へ埋める、既存managed設定の無効化を欠落させる、第三者serverを上書きする、またはWorker投影からtokenを漏らす"
 // observable = "transport作成envとargv、config/readとthread/startの送信params、runSessionTurnの確定結果"
 // observation_boundary = "consumer"
 // scope = "Codex foreground HTTP MCP bootstrap and Worker projection"
@@ -492,14 +492,19 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   input.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "codex",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
   };
   const transport = new FakeTransport();
   const request = transport.request.bind(transport);
   transport.request = async <T>(method: string, params?: unknown): Promise<T> => {
     if (method === "config/read") {
       transport.calls.push({ method, params });
-      return { config: { mcp_servers: { "withmate-memory": { command: "stdio-fixture" }, "third-party": { command: "third-party-fixture" } } } } as T;
+      return { config: { mcp_servers: {
+        "withmate-glossary": { command: "glossary-fixture" },
+        "withmate-session-graph": { command: "graph-fixture" },
+        "withmate-session": { command: "session-fixture" },
+        "third-party": { command: "third-party-fixture" },
+      } } } as T;
     }
     return request<T>(method, params);
   };
@@ -509,17 +514,18 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   const output = await adapter.runSessionTurn(input);
   assert.equal(options?.env?.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
   const argumentsText = options!.arguments!.join("\n");
-  assert.match(argumentsText, /mcp_servers.withmate-memory-http=.*env_http_headers/);
   assert.match(argumentsText, /mcp_servers.withmate-glossary-http=.*env_http_headers/);
   assert.match(argumentsText, /mcp_servers.withmate-session-graph-http=.*env_http_headers/);
   assert.doesNotMatch(argumentsText, /opaque-http-token/);
   assert.deepEqual(transport.calls.find((call) => call.method === "config/read")?.params, { cwd: directory, includeLayers: false });
   const thread = transport.calls.find((call) => call.method === "thread/start")!.params as { config: { mcp_servers: unknown } };
   assert.deepEqual(thread.config.mcp_servers, {
-    "withmate-memory": { enabled: false },
-    "withmate-memory-http": { url: "http://127.0.0.1:47891/memory", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
+    "withmate-glossary": { enabled: false },
+    "withmate-session-graph": { enabled: false },
+    "withmate-session": { enabled: false },
     "withmate-glossary-http": { url: "http://127.0.0.1:47891/glossary", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
     "withmate-session-graph-http": { url: "http://127.0.0.1:47891/session-graph", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
+    "withmate-session-http": { url: "http://127.0.0.1:47891/session", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
   });
   assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
   assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);
@@ -1538,9 +1544,9 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 
 // @test-value v2
 // kind = "invariant"
-// claim = "異なるforeground Memory owner envを分離し親env不変でlive artifact error logからsecretを除去する"
+// claim = "異なるforeground runtimeOwnerのagent-runtime envを分離し親env不変でlive artifact error logからsecretを除去する"
 // oracle = { type = "contract", ref = "src-electron/providers/codex/codex-adapter.ts: createTransport / executeTurn / buildTurnResult; docs/design/provider-adapter.md: Codex projection owner" }
-// fault = "bindingかMemory owner selectorを欠落・再利用するか出力secretをUIへ公開する"
+// fault = "bindingか共有runtime owner selectorを欠落・再利用するか出力secretをUIへ公開する"
 // observable = "2 ownerのtransport env、process.env、live state、返却artifact.operationTimeline/providerMetadata、ProviderTurnError.messageとlogger出力"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
@@ -1575,7 +1581,7 @@ it("fresh process bindingを2 foreground ownerで分離し全出力境界をreda
     const input = createCodexRunSessionTurnInput(directory);
     input.session.id = "owner-" + owner;
     input.agentRuntimeBinding = { bindingId: "binding-" + owner, bindingReference: secrets[owner * 2], turnCapability: secrets[owner * 2 + 1], providerId: "codex", executionGeneration: "generation-" + owner, transport: "env", expiresAt: null,
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-" + owner, runtimeGenerationId: "memory-generation-" + owner } };
+      runtimeOwner: { applicationInstanceId: "app-instance-" + owner, runtimeGenerationId: "memory-generation-" + owner } };
     const run = adapter.runSessionTurn(input, (state) => { progress.push(state); });
     if (owner === 0) {
       const result = await run;
@@ -1590,8 +1596,8 @@ it("fresh process bindingを2 foreground ownerで分離し全出力境界をreda
     }
   }
   for (const owner of [0, 1]) {
-    assert.equal(environments[owner][WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-" + owner);
-    assert.equal(environments[owner][WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-" + owner);
+    assert.equal(environments[owner][WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-" + owner);
+    assert.equal(environments[owner][WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-" + owner);
   }
   for (const [index, secret] of secrets.entries()) {
     assert.ok(Object.values(environments[Math.floor(index / 2)]).includes(secret));

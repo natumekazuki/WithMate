@@ -7,7 +7,7 @@ import type { spawn } from "node:child_process";
 import { it } from "node:test";
 import type { Options, ResolvedSettings, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
-import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type RunSessionTurnInput, type RunSessionTurnResult } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -368,7 +368,7 @@ it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", as
       const request = input("", controller.signal);
       request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secrets[0], turnCapability: secrets[1],
         providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
-        managedMcp: { memoryUrl: "http://localhost/mcp/memory", glossaryUrl: "http://localhost/mcp/glossary", sessionGraphUrl: "http://localhost/mcp/session-graph", token: secrets[2] } };
+        managedMcp: {  glossaryUrl: "http://localhost/mcp/glossary", sessionGraphUrl: "http://localhost/mcp/session-graph", token: secrets[2] } };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
       const prefix = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1);
       const expected = `${(prefix + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
@@ -439,6 +439,142 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
     ...overrides,
   });
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeの同一native message内のblock通知は各native indexの増分を置換し、同じ通知UUIDの訂正と対応resultの本文確定を実行失敗と独立に返す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836" }
+// fault = "増分と確定通知を二重化する、別通知のtext blockを落とす、同UUIDの訂正を無視する、または後続stream失敗で確定本文を失う"
+// observable = "runSessionTurn成功結果とProviderTurnError.partialResultの本文、outputのnative ID/blockIndex/range・completion/finality"
+// observation_boundary = "public-boundary"
+// scope = "Claude adapter common output projection"
+// lifecycle = "permanent"
+// impact = "結果回収時の本文欠落・二重化と失敗状態による確定済み回答の喪失を防ぐ"
+// distinction = "既存stream/partial testは複数blockと同一native message訂正後の保存用出力metadataを観測しない"
+// @end-test-value
+it("Claude common output keeps block identity and text finality after stream failure", async () => {
+  for (const failed of [false, true]) {
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "native-output" } } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "draft" } } });
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "draft" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "answer" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "tail" } } });
+      yield sdkMessage({ type: "assistant", uuid: "second", message: { id: "native-output", content: [{ type: "text", text: "tail" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
+      yield result("thread", { result: "answer\ntail" });
+      if (failed) throw new Error("connection after result");
+      yield sessionState("idle");
+    }, undefined, false) });
+    let completed: RunSessionTurnResult;
+    try { completed = await adapter.runSessionTurn(input()); assert.equal(failed, false); }
+    catch (error) { assert.ok(failed && error instanceof ProviderTurnError); completed = error.partialResult; }
+    assert.equal(completed.assistantText, "answer\ntail");
+    assert.equal(completed.output?.finality, "identified");
+    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.blockIndex, unit.completion, unit.final, completed.assistantText.slice(unit.start, unit.end)]), [["native-output", 0, "complete", true, "answer"], ["native-output", 1, "complete", true, "tail"]]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claude result後の同じ通知UUIDの訂正は古い最終回答証拠を失効させ、同内容・同blockの重複通知では証拠を保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836" }
+// fault = "message件数が同じ訂正で古いresult本文を復活させるか、重複通知だけで最終回答を不明に変える"
+// observable = "訂正後のrunSessionTurn結果のassistantText・lastNonEmptyAssistantMessageText・output.finalityとfinal unit数"
+// observation_boundary = "public-boundary"
+// scope = "Claude native result evidence and same-message content updates"
+// lifecycle = "permanent"
+// impact = "訂正前の古い回答を最終回答として回収する誤認と、確定済み回答の不必要な喪失を防ぐ"
+// distinction = "既存block更新testはresult前の訂正であり、後続別message testは同一ID置換を通らない"
+// @end-test-value
+it("Claude invalidates stale result evidence only after a real same-message change", async () => {
+  for (const update of ["duplicate", "changed-text", "changed-block", "removed-text"] as const) {
+    const expected = update === "changed-text" ? "corrected answer" : update === "removed-text" ? "" : "old answer";
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sessionState("running");
+      yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [{ type: "text", text: "old answer" }] } });
+      yield result("thread", { result: "old answer" });
+      yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [
+        ...(update === "changed-block" ? [{ type: "thinking", thinking: "not public" }] : []), { type: "text", text: expected },
+      ] } });
+      yield sessionState("idle");
+    }, undefined, false) });
+    const completed = await adapter.runSessionTurn(input());
+    assert.equal(completed.assistantText, expected);
+    assert.equal(completed.lastNonEmptyAssistantMessageText, expected);
+    assert.equal(completed.output?.finality, update === "duplicate" ? "identified" : "unknown");
+    assert.equal(completed.output?.units.filter((unit) => unit.final).length, update === "duplicate" ? 1 : 0);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeのblock単位通知は同じnative message内の同文textも別blockとして保持し、後続tool通知でも本文を失わない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "native message IDだけで前blockを置換するか、通知内indexをnative indexとして誤って公開する"
+// observable = "runSessionTurn結果またはpartialResultのassistantTextとoutput unitのidentity・blockIndex・本文範囲"
+// observation_boundary = "public-boundary"
+// scope = "Claude SDK block notifications without partial events"
+// lifecycle = "permanent"
+// impact = "通常のtextからtoolへの応答で保存本文と公開execution outputが欠落することを防ぐ"
+// distinction = "既存stream testはnative indexのある通知であり、型検査はSDKの複数block通知の保持を検証できない"
+// @end-test-value
+it("Claude retains separate same-message block notifications through a tool and failure", async () => {
+  for (const failed of [false, true]) {
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      for (const uuid of ["text-one", "text-two"]) yield sdkMessage({ type: "assistant", uuid,
+        message: { id: "native-blocks", content: [{ type: "text", text: "same" }] } });
+      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "native-blocks", content: [
+        { type: "tool_use", id: "read", name: "Read", input: { file_path: "example" } },
+      ] } });
+      if (failed) throw new Error("connection after tool");
+      yield result("thread", { result: "" });
+    }) });
+    let completed: RunSessionTurnResult;
+    try { completed = await adapter.runSessionTurn(input()); assert.equal(failed, false); }
+    catch (error) { assert.ok(failed && error instanceof ProviderTurnError); completed = error.partialResult; }
+    assert.equal(completed.assistantText, "same\nsame");
+    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.blockIndex, completed.assistantText.slice(unit.start, unit.end)]), [
+      ["native-blocks", undefined, "same"], ["native-blocks", undefined, "same"],
+    ]);
+    assert.equal(new Set(completed.output?.units.map((unit) => unit.id)).size, 2);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claude resultは終端native messageと照合し、同文の古い回答をfinalにせず、終端がtoolならresult独立unitで根拠を保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "全messageから最初の本文一致をfinalにするか、tool後に古いmessageを最終回答と認定する"
+// observable = "runSessionTurn結果の本文順序、final unitのmessageIdとevidence・本文範囲"
+// observation_boundary = "public-boundary"
+// scope = "Claude terminal result identity"
+// lifecycle = "permanent"
+// impact = "保存execution outputの最終回答identityと回答範囲の誤認を防ぐ"
+// distinction = "既存testの異なる本文では最初の一致と終端の一致を区別できず、SDK通信不要の短いfixtureで保証する"
+// @end-test-value
+it("Claude matches repeated final text only to the terminal response", async () => {
+  for (const terminal of ["text", "tool"] as const) {
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "A", content: [{ type: "text", text: "Done" }] } });
+      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "tool-message", content: [
+        { type: "tool_use", id: "read", name: "Read", input: {} },
+      ] } });
+      if (terminal === "text") yield sdkMessage({ type: "assistant", uuid: "last", message: { id: "B", content: [{ type: "text", text: "Done" }] } });
+      yield result("thread", { uuid: "result", result: "Done" });
+    }) });
+    const completed = await adapter.runSessionTurn(input());
+    assert.equal(completed.assistantText, "Done\n\nDone");
+    assert.equal(completed.output?.finality, "identified");
+    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.final]), [["A", false], [terminal === "text" ? "B" : undefined, true]]);
+    const final = completed.output!.units.at(-1)!;
+    assert.equal(final.evidence, terminal === "text" ? "claude.result:matching-assistant-blocks" : "claude.result:success-text");
+    assert.equal(completed.assistantText.slice(final.start, final.end), "Done");
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -558,7 +694,7 @@ it("Claudeは複数の子報告と親の取りまとめ後のidleまで待つ", 
           yield sessionState("running");
           yield backgroundSnapshot(["a", "b"]);
           yield sdkMessage({ type: "assistant", uuid: "interim", message: { content: [{ type: "text", text: "Waiting" }] } });
-          if (resultFirst) yield result("thread", { user_message_uuid: first.value.uuid });
+          if (resultFirst) yield result("thread", { user_message_uuid: first.value.uuid, result: "Waiting" });
           yield backgroundSnapshot(["a"]);
           yield taskNotification("b");
           yield result("thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
@@ -574,7 +710,7 @@ it("Claudeは複数の子報告と親の取りまとめ後のidleまで待つ", 
           yield result("thread", { origin: { kind: "task-notification" }, result: "Not the input result",
             usage: { input_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 999 } });
           yield sessionState("idle");
-          if (!resultFirst) yield result("thread", { user_message_uuid: first.value.uuid });
+          if (!resultFirst) yield result("thread", { user_message_uuid: first.value.uuid, result: "Combined a + b" });
           throw new Error("read past terminal");
         } finally { closed = true; }
       })();
@@ -616,7 +752,7 @@ it("Claudeはバックグラウンド待機中の失敗と取消を区別する"
         yield sdkMessage({ type: "system", subtype: "task_started", task_id: "a", task_type: "local_agent", is_backgrounded: true, description: "Agent a" });
       } else yield backgroundSnapshot(["a"]);
       yield sdkMessage({ type: "assistant", uuid: "partial", message: { content: [{ type: "text", text: "Partial" }] } });
-      yield result("thread");
+      yield result("thread", { result: "Partial" });
       if (outcome === "canceled") controller.abort();
       if (outcome === "stream") throw new Error("Transport failed");
       if (outcome === "report-error" || outcome === "report-is-error") {
@@ -756,14 +892,14 @@ it("Claudeの長い本文をprogressと成功結果に保持する", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude foregroundは当turnのMemory・Glossary・Graph HTTP MCP設定をSDKへ渡し、native設定探索とresumeを維持し、SDK応答中のtokenを保存用結果から除去する"
+// claim = "Claude foregroundは当turnのGlossary・Graph HTTP MCP設定をSDKへ渡し、native設定探索とresumeを維持し、SDK応答中のtokenを保存用結果から除去する"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md; docs/design/provider-adapter.md#Thread Management" }
 // fault = "HTTP接続設定を欠落させる、第三者MCPをstrict設定で隠す、resumeを落とす、またはtokenを結果へ漏らす"
 // observable = "queryのoptionsとprompt、runSessionTurnの確定結果"
 // observation_boundary = "consumer"
 // scope = "Claude foreground managed HTTP MCP injection and projection"
 // lifecycle = "permanent"
-// impact = "Memory・Glossary・Graphが使えない、既存第三者設定の探索や会話継続が失われる、またはtokenが監査へ保存される"
+// impact = "Glossary・Graphが使えない、既存第三者設定の探索や会話継続が失われる、またはtokenが監査へ保存される"
 // distinction = "設定型検査では実行時queryへ渡す値やSDK応答のredactionを保証できない。fake SDKで通信せずadapter境界を確認する"
 // risk_tags = ["privacy"]
 // @end-test-value
@@ -772,7 +908,7 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   request.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "claude",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   let seen: Options | undefined;
   let submittedPrompt: unknown;
@@ -783,7 +919,6 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   }, (options, prompt) => { seen = options; submittedPrompt = prompt; }) });
   const output = await adapter.runSessionTurn(request);
   assert.deepEqual(seen?.mcpServers, {
-    "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
@@ -823,7 +958,7 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
           message: { content: [{ type: "text", text: `${index}:${text}` }] } });
       }
       if (canceled) controller.abort();
-      yield result("raw-thread");
+      yield result("raw-thread", { result: `39:${text}` });
     }) });
     let completed;
     try {
@@ -845,14 +980,14 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claudeの明示session再開は最新Character定義・Affectをsystem appendへ渡し、user入力から分離してstream本文と確定本文を二重表示しない"
+// claim = "Claudeの明示session再開は最新Character定義snapshotをsystem appendへ渡し、user入力から分離してstream本文と確定本文を二重表示しない"
 // oracle = { type = "contract", ref = "docs/design/prompt-composition.md; Issue #751" }
-// fault = "resumeで旧Character定義・Affectを使う、system contextをuser入力へ混入する、またはstreamとassistant本文を連結して二重化する"
+// fault = "resumeで旧Character定義snapshotを使う、system contextをuser入力へ混入する、またはstreamとassistant本文を連結して二重化する"
 // observable = "SDK query optionsとuser入力、確定assistantText、進捗assistantText"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
 // lifecycle = "permanent"
-// impact = "CharacterやAffectの現行投影が失われ、Sessionに重複した応答が出る"
+// impact = "Characterの現行投影が失われ、Sessionに重複した応答が出る"
 // distinction = "型検査ではSDK option値とstream/final連結の実行結果を確認できない"
 // @end-test-value
 it("resumes by explicit id with the current system prompt and deduplicates streamed text", async () => {
@@ -860,11 +995,15 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
   const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
     yield sdkMessage({ type: "system", subtype: "init", session_id: "thread-1", model: "claude-opus-5-5" });
     yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-start", parent_tool_use_id: null, event: { type: "message_start", message: { id: "anthropic-msg-1" } } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
     yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-thinking-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "thinking", thinking: "hidden" }] } });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hello" } } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hello" } } });
     yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-message-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "text", text: "Hello" }] } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
     yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-stop", parent_tool_use_id: null, event: { type: "message_stop" } });
-    yield result("thread-1");
+    yield result("thread-1", { result: "Hello" });
     throw new Error("Iterator was advanced after result");
   }, (options, prompt) => seen.push({ options, prompt })) });
   const progress: string[] = [];
@@ -876,12 +1015,6 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
       theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${marker}`,
       definitionSha256: marker, definitionByteSize: marker.length, snapshotAt: "2026-10-03T00:00:00Z",
     };
-    request.characterContext = {
-      schemaVersion: "withmate-character-context-v1",
-      baseline: { definitionSha256: marker, snapshotAt: "2026-10-03T00:00:00Z" },
-      affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
-        label: `Affect ${marker}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: marker, updatedAt: null },
-    };
     // Recreate the adapter for explicit resume: freshness must not rely on an in-memory query cache.
     const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },
       (options, prompt) => seen.push({ options, prompt })) }) : adapter;
@@ -892,9 +1025,8 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     assert.equal(system.preset, "claude_code");
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
-    assert.match(system.append!, new RegExp(`Affect ${marker}`));
     for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
-      assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
+      assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}`));
     }
     const sent = seen[index].prompt as SDKUserMessage;
     assert.deepEqual(sent.message.content, [{ type: "text", text: adapter.composePrompt(request).inputBodyText }]);
@@ -1486,7 +1618,7 @@ it("ClaudeはBash summaryとoperation previewをboundedにし本文と操作順�
       yield sdkMessage({ type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: String(index), is_error: false, content: "done" }] } });
     }
     yield sdkMessage({ type: "assistant", uuid: "answer", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
-    yield result("bounded");
+    yield result("bounded", { result: body });
   }) });
   const summaries: string[] = [];
   const completed = await adapter.runSessionTurn(input(), (progress) => { for (const step of progress.steps) summaries.push(step.summary); });
@@ -1519,7 +1651,7 @@ it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async 
       request.agentRuntimeBinding = {
         bindingId: "binding", bindingReference: secrets[0], turnCapability: secrets[1], providerId: "claude",
         executionGeneration: "generation", transport: "env", expiresAt: null,
-        managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: secrets[2] },
+        managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: secrets[2] },
       };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
       const expected = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10)

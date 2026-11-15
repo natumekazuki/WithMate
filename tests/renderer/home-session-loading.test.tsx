@@ -54,11 +54,11 @@ function page(entries: HomeSessionSummary[], nextCursor: string | null = null): 
 
 function auxiliary(id: string, cancellationState?: AuxiliarySessionSummary["cancellationState"]): AuxiliarySessionSummary {
   return {
-    id, parentSessionId: "open", status: "active", runState: "idle", title: id,
+    id, parentSessionId: "open", runState: "idle", title: id,
     provider: "codex", catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "high",
     approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard",
     codexReviewer: "auto-review", customAgentName: "",
-    threadId: "", displayAfterMessageIndex: null, createdAt: "", updatedAt: "", closedAt: "",
+    threadId: "", displayAfterMessageIndex: null, createdAt: "", updatedAt: "",
     preview: id, cancellationState,
   };
 }
@@ -137,23 +137,14 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
       }],
     }),
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
-    }),
     listSessionSummaryPage: async (request) => listPage(request ?? {}),
     listSessionMonitorPage: async () => {
       const [entries, auxiliarySessions] = await Promise.all([monitorEntries(), auxiliaryQuery()]);
       return { entries, auxiliarySessions, hasMore: false, nextCursor: null };
     },
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async () => null,
     listSessionCharacterUsage: async () => usage(),
     subscribeSessionInvalidation: (listener) => {
       invalidationListeners.add(listener);

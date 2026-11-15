@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 
 import {
   createDefaultAppSettings,
-  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
@@ -19,48 +18,18 @@ import {
   updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPath,
   updateCodingProviderSkillRootPathDraft,
-  updateMemoryExtractionModel,
-  updateMemoryExtractionModelDraft,
-  updateMemoryExtractionReasoningEffort,
-  updateMemoryExtractionReasoningEffortDraft,
-  updateMemoryExtractionThreshold,
-  updateMemoryExtractionThresholdDraft,
-  updateMemoryExtractionTimeoutSeconds,
-  updateMemoryExtractionTimeoutSecondsDraft,
-  updateMemoryFileQuotaMegabytesDraft,
   updateGlossaryProactiveCreateLimitDraft,
-  updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
-  updateMateMemoryGenerationTriggerIntervalMinutesDraft,
-  updateMateMemoryGenerationPriorityProviderDraft,
-  updateMateMemoryGenerationPriorityModelDraft,
-  updateMateMemoryGenerationPriorityReasoningEffortDraft,
-  updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
-  addMateMemoryGenerationPriorityDraft,
-  removeMateMemoryGenerationPriorityDraft,
 } from "../../src/settings/settings-draft.js";
 import {
   handleChangeAutoCollapseActionDockOnSend as handleChangeAutoCollapseActionDockOnSendAction,
-  handleChangeMateMemoryGenerationPriorityModel as handleChangeMateMemoryGenerationPriorityModelAction,
-  handleChangeMateMemoryGenerationPriorityProvider as handleChangeMateMemoryGenerationPriorityProviderAction,
-  handleChangeMateMemoryGenerationPriorityReasoningEffort as handleChangeMateMemoryGenerationPriorityReasoningEffortAction,
-  handleChangeMateMemoryGenerationPriorityTimeoutSeconds as handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction,
-  handleChangeMateMemoryGenerationTriggerIntervalMinutes as handleChangeMateMemoryGenerationTriggerIntervalMinutesAction,
-  handleChangeMemoryFileQuotaMegabytes as handleChangeMemoryFileQuotaMegabytesAction,
-  handleChangeMemoryGenerationEnabled as handleChangeMemoryGenerationEnabledAction,
-  handleChangeMemoryExtractionModel as handleChangeMemoryExtractionModelAction,
-  handleChangeMemoryExtractionReasoningEffort as handleChangeMemoryExtractionReasoningEffortAction,
-  handleChangeMemoryExtractionThreshold as handleChangeMemoryExtractionThresholdAction,
-  handleChangeMemoryExtractionTimeoutSeconds as handleChangeMemoryExtractionTimeoutSecondsAction,
   handleChangeProviderEnabled as handleChangeProviderEnabledAction,
   handleChangeProviderInstructionRelativePath as handleChangeProviderInstructionRelativePathAction,
   handleChangeProviderSkillRelativePath as handleChangeProviderSkillRelativePathAction,
   handleChangeProviderSkillRootPath as handleChangeProviderSkillRootPathAction,
   handleChangeSessionTurnNotificationEnabled as handleChangeSessionTurnNotificationEnabledAction,
   handleChangeSessionTurnNotificationResponsePreviewEnabled as handleChangeSessionTurnNotificationResponsePreviewEnabledAction,
-  handleAddMateMemoryGenerationPriority as handleAddMateMemoryGenerationPriorityAction,
-  handleRemoveMateMemoryGenerationPriority as handleRemoveMateMemoryGenerationPriorityAction,
 } from "../../src/settings/settings-draft-actions.js";
 import { buildSettingsDraftHandlers } from "../../src/settings/settings-draft-handlers.js";
 
@@ -173,57 +142,12 @@ describe("home-settings-draft", () => {
     );
   });
 
-  it("memory extraction model 更新時に resolved selection を返す", () => {
-    const draft = createDefaultAppSettings();
-    draft.memoryExtractionProviderSettings.codex = {
-      model: "gpt-5.4",
-      reasoningEffort: "high",
-      outputTokensThreshold: 300000,
-      timeoutSeconds: 180,
-    };
-
-    const next = updateMemoryExtractionModel(draft, providerCatalog, "codex", "gpt-5.4-mini");
-
-    assert.equal(next.codex.model, "gpt-5.4-mini");
-    assert.equal(next.codex.reasoningEffort, "low");
-  });
-
-  it("memory extraction threshold は 1 未満を 1 に丸める", () => {
-    const draft = createDefaultAppSettings();
-
-    const nextReasoning = updateMemoryExtractionReasoningEffort(draft, "codex", "medium");
-    const nextThreshold = updateMemoryExtractionThreshold(
-      { ...draft, memoryExtractionProviderSettings: nextReasoning },
-      "codex",
-      "0",
-    );
-
-    assert.equal(nextThreshold.codex.reasoningEffort, "medium");
-    assert.equal(nextThreshold.codex.outputTokensThreshold, 1);
-  });
-
-  it("memory extraction timeout は 1 未満を 30 に丸める", () => {
-    const draft = createDefaultAppSettings();
-
-    const nextTimeout = updateMemoryExtractionTimeoutSeconds(draft, "codex", "0");
-
-    assert.equal(nextTimeout.codex.timeoutSeconds, 30);
-  });
-
-  it("memory extraction threshold の draft は大きい値もそのまま保持する", () => {
-    const draft = createDefaultAppSettings();
-
-    const nextThreshold = updateMemoryExtractionThreshold(draft, "codex", "300000");
-
-    assert.equal(nextThreshold.codex.outputTokensThreshold, 300000);
-  });
-
   // @test-value v2
   // kind = "contract"
-  // claim = "providerとMemoryのdraft更新はapp設定の変更を累積して保持する"
+  // claim = "providerのdraft更新はapp設定の変更を累積して保持する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#settings-runtime" }
   // fault = "更新wrapperが以前のdraftへ戻して他の変更を失う"
-  // observable = "更新後のapp、provider、Memory設定の値"
+  // observable = "更新後のappとprovider設定の値"
   // observation_boundary = "component-behavior"
   // scope = "settings-draft-wrappers"
   // lifecycle = "permanent"
@@ -231,16 +155,12 @@ describe("home-settings-draft", () => {
   it("draft wrapper は AppSettings 全体を更新する", () => {
     const draft = createDefaultAppSettings();
 
-    const next = updateMemoryExtractionThresholdDraft(
-      updateMemoryExtractionTimeoutSecondsDraft(
-        updateMemoryExtractionReasoningEffortDraft(
-          updateMemoryExtractionModelDraft(
-            updateCodingProviderInstructionRelativePathDraft(
+    const next = updateCodingProviderInstructionRelativePathDraft(
               updateCodingProviderSkillRelativePathDraft(
                 updateCodingProviderSkillRootPathDraft(
                   updateCodingProviderEnabledDraft(
                     updateAutoCollapseActionDockOnSend(
-                      updateMemoryGenerationEnabled(draft, false),
+                      draft,
                       false,
                     ),
                     "codex",
@@ -254,29 +174,12 @@ describe("home-settings-draft", () => {
               ),
               "codex",
               "AGENTS.md",
-            ),
-            providerCatalog,
-            "codex",
-            "gpt-5.4-mini",
-          ),
-          "codex",
-          "medium",
-        ),
-        "codex",
-        "240",
-      ),
-      "codex",
-      "321",
-    );
-
-    assert.equal(next.memoryGenerationEnabled, false);
+            );
     assert.equal(next.autoCollapseActionDockOnSend, false);
     assert.equal(next.codingProviderSettings.codex.enabled, false);
     assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
     assert.equal(next.codingProviderSettings.codex.skillRelativePath, "skills/codex");
     assert.equal(next.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
-    assert.equal(next.memoryExtractionProviderSettings.codex.outputTokensThreshold, 321);
-    assert.equal(next.memoryExtractionProviderSettings.codex.timeoutSeconds, 240);
   });
 
   it("action dock auto close を toggle できる", () => {
@@ -313,9 +216,9 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Settings の foreground prompt context 4項目の handler は、他の3つのPrompt Context値を保持したまま対象draftだけを更新する"
+  // claim = "Home Settings の foreground prompt context 2項目の handler は、他の1つのPrompt Context値を保持したまま対象draftだけを更新する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-  // fault = "4つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
+  // fault = "2つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
   // observable = "buildSettingsDraftHandlers 経由で checkbox handler を適用した AppSettings"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-draft"
@@ -324,18 +227,10 @@ describe("home-settings-draft", () => {
   // distinction = "混在した初期draftに実配線のhandlerを通し、checkboxから保存draftへ値が届く境界を確認する"
   // @end-test-value
   it("foreground prompt context の handler を項目ごとに toggle できる", () => {
-    const promptContextFields = [
-      "characterDefinitionEnabled",
-      "characterAffectContextEnabled",
-      "conversationTimingEnabled",
-      "toolCallPresenceEnabled",
-    ] as const;
     const initialDraft = {
       ...createDefaultAppSettings(),
       characterDefinitionEnabled: true,
-      characterAffectContextEnabled: false,
-      conversationTimingEnabled: true,
-      toolCallPresenceEnabled: false,
+      currentDateEnabled: true,
     };
     const scenarios = [
       {
@@ -345,22 +240,10 @@ describe("home-settings-draft", () => {
           handlers.onChangeCharacterDefinitionEnabled(false),
       },
       {
-        field: "characterAffectContextEnabled",
-        value: true,
-        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
-          handlers.onChangeCharacterAffectContextEnabled(true),
-      },
-      {
-        field: "conversationTimingEnabled",
+        field: "currentDateEnabled",
         value: false,
         apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
-          handlers.onChangeConversationTimingEnabled(false),
-      },
-      {
-        field: "toolCallPresenceEnabled",
-        value: true,
-        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
-          handlers.onChangeToolCallPresenceEnabled(true),
+          handlers.onChangeCurrentDateEnabled(false),
       },
     ] as const;
 
@@ -370,7 +253,7 @@ describe("home-settings-draft", () => {
       scenario.apply(handlers);
 
       assert.equal(state.draft[scenario.field], scenario.value);
-      for (const field of promptContextFields) {
+      for (const field of ["characterDefinitionEnabled", "currentDateEnabled"] as const) {
         if (field !== scenario.field) {
           assert.equal(state.draft[field], initialDraft[field]);
         }
@@ -380,16 +263,16 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Settingsのaction dock、turn通知、承認通知、response preview、Memory quotaのhandlerを順次操作しても、先行変更と対象外のdraftを保持する"
+  // claim = "Settingsのaction dock、turn通知、response preview、承認通知の4handlerを順に操作しても先行変更と対象外draftを保持する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy" }
-  // fault = "handlerが別の設定を更新するか、後続操作が古いdraftを使って先行変更を巻き戻す"
-  // observable = "buildSettingsDraftHandlers経由の5操作後のAppSettings draft全体"
+  // fault = "画面handlerが別設定のupdaterを呼ぶか、後続操作で先行変更や対象外fieldを巻き戻す"
+  // observable = "buildSettingsDraftHandlers経由の4操作後のAppSettings draft全体"
   // observation_boundary = "component-behavior"
   // scope = "settings-current-draft-handler-composition"
   // lifecycle = "permanent"
-  // distinction = "個別pure functionの値変換testとは異なり、画面向けhandlerから同一draftへの累積更新を確認する"
+  // distinction = "個別pure functionの値変換でなく、画面向け4handlerの結線と同一draftへの累積更新を確認する"
   // @end-test-value
-  it("現行の表示設定とMemory quotaをhandler経由で続けて編集できる", () => {
+  it("現行の表示設定をhandler経由で続けて編集して他のdraftを保持する", () => {
     const initialDraft = createDefaultAppSettings();
     const state = createDraftTracker(initialDraft);
     const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
@@ -398,7 +281,6 @@ describe("home-settings-draft", () => {
     handlers.onChangeSessionTurnNotificationEnabled(false);
     handlers.onChangeSessionTurnNotificationResponsePreviewEnabled(true);
     handlers.onChangeSessionApprovalNotificationEnabled(false);
-    handlers.onChangeMemoryFileQuotaMegabytes("2048");
 
     assert.deepEqual(state.draft, {
       ...initialDraft,
@@ -406,16 +288,7 @@ describe("home-settings-draft", () => {
       sessionTurnNotificationEnabled: false,
       sessionTurnNotificationResponsePreviewEnabled: true,
       sessionApprovalNotificationEnabled: false,
-      memoryFileQuotaBytes: 2048 * 1024 * 1024,
     });
-  });
-
-  it("memory file quota は MB 入力から bytes の draft に変換する", () => {
-    const draft = createDefaultAppSettings();
-
-    const next = updateMemoryFileQuotaMegabytesDraft(draft, "2048");
-
-    assert.equal(next.memoryFileQuotaBytes, 2048 * 1024 * 1024);
   });
 
   // @test-value v2
@@ -447,40 +320,6 @@ describe("home-settings-draft", () => {
     assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "0").glossaryProactiveCreateLimit, 0);
     assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "101").glossaryProactiveCreateLimit, 100);
     assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "").glossaryProactiveCreateLimit, null);
-  });
-
-  it("mate memory generation の priority 1 を provider / model / reasoning / timeout / interval で更新できる", () => {
-    const draft = createDefaultAppSettings();
-
-    const withProvider = updateMateMemoryGenerationPriorityProviderDraft(draft, 0, "codex");
-    const withModel = updateMateMemoryGenerationPriorityModelDraft(withProvider, providerCatalog, 0, "codex", "gpt-5.4-mini");
-    const withReasoning = updateMateMemoryGenerationPriorityReasoningEffortDraft(withModel, 0, "low");
-    const withTimeout = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withReasoning, 0, "42");
-    const withInterval = updateMateMemoryGenerationTriggerIntervalMinutesDraft(withTimeout, "90");
-
-    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].provider, "codex");
-    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].model, "gpt-5.4-mini");
-    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "low");
-    assert.equal(withInterval.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 42);
-    assert.equal(withInterval.mateMemoryGenerationSettings.triggerIntervalMinutes, 90);
-  });
-
-  it("mate memory generation の priority list を追加 / 個別更新 / 削除できる", () => {
-    const draft = createDefaultAppSettings();
-    const withAdded = addMateMemoryGenerationPriorityDraft(draft, {
-      provider: "copilot",
-      model: "copilot-1",
-      reasoningEffort: "medium",
-      timeoutSeconds: 60,
-    });
-    const withUpdated = updateMateMemoryGenerationPriorityTimeoutSecondsDraft(withAdded, 1, "75");
-    const withRemoved = removeMateMemoryGenerationPriorityDraft(withUpdated, 0);
-
-    assert.equal(withAdded.mateMemoryGenerationSettings.priorityList.length, 2);
-    assert.equal(withUpdated.mateMemoryGenerationSettings.priorityList[1]?.provider, "copilot");
-    assert.equal(withUpdated.mateMemoryGenerationSettings.priorityList[1]?.timeoutSeconds, 75);
-    assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList.length, 1);
-    assert.equal(withRemoved.mateMemoryGenerationSettings.priorityList[0]?.provider, "copilot");
   });
 
   it("action: provider enabled を draft 更新で反映できる", () => {
@@ -529,96 +368,5 @@ describe("home-settings-draft", () => {
     });
 
     assert.equal(state.draft.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
-  });
-
-  it("action: catalog 不在時は memory extraction model 更新を反映しない", () => {
-    const state = createDraftTracker();
-    const before = structuredClone(state.draft);
-
-    handleChangeMemoryExtractionModelAction({
-      providerId: "codex",
-      model: "gpt-5.4-mini",
-      modelCatalog: null,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-
-    assert.deepEqual(state.draft, before);
-  });
-
-  it("action: memory extraction model / reasoning / threshold / timeout を更新できる", () => {
-    const state = createDraftTracker();
-
-    handleChangeMemoryExtractionModelAction({
-      providerId: "codex",
-      model: "gpt-5.4-mini",
-      modelCatalog: modelCatalogSnapshot,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMemoryExtractionReasoningEffortAction({
-      providerId: "codex",
-      reasoningEffort: "medium",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMemoryExtractionThresholdAction({
-      providerId: "codex",
-      value: "42",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMemoryExtractionTimeoutSecondsAction({
-      providerId: "codex",
-      value: "90",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-
-    assert.equal(state.draft.memoryExtractionProviderSettings.codex.model, "gpt-5.4-mini");
-    assert.equal(state.draft.memoryExtractionProviderSettings.codex.reasoningEffort, "medium");
-    assert.equal(state.draft.memoryExtractionProviderSettings.codex.outputTokensThreshold, 42);
-    assert.equal(state.draft.memoryExtractionProviderSettings.codex.timeoutSeconds, 90);
-  });
-
-  it("action: mate memory generation priority の add/update/remove/interval を更新できる", () => {
-    const state = createDraftTracker();
-
-    handleAddMateMemoryGenerationPriorityAction({
-      modelCatalog: modelCatalogSnapshot,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMateMemoryGenerationPriorityProviderAction({
-      index: 1,
-      providerId: "copilot",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMateMemoryGenerationPriorityModelAction({
-      index: 1,
-      providerId: "copilot",
-      model: "copilot-1",
-      modelCatalog: modelCatalogSnapshot,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMateMemoryGenerationPriorityReasoningEffortAction({
-      index: 1,
-      reasoningEffort: "low",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMateMemoryGenerationPriorityTimeoutSecondsAction({
-      index: 1,
-      value: "75",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleChangeMateMemoryGenerationTriggerIntervalMinutesAction({
-      value: "90",
-      setSettingsDraft: state.setSettingsDraft,
-    });
-    handleRemoveMateMemoryGenerationPriorityAction({
-      index: 0,
-      setSettingsDraft: state.setSettingsDraft,
-    });
-
-    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList.length, 1);
-    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].provider, "copilot");
-    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].model, "copilot-1");
-    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "low");
-    assert.equal(state.draft.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 75);
-    assert.equal(state.draft.mateMemoryGenerationSettings.triggerIntervalMinutes, 90);
   });
 });

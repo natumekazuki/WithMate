@@ -59,11 +59,11 @@ test("新規Auxiliaryの初回draft保存からqueue受付まで成立する", a
     const api: WithMateWindowAuxiliaryApi = {
       getAuxiliaryDraft: (id) => service.getAuxiliaryDraft(id), getAuxiliarySessionStatus: (id) => service.getAuxiliarySessionStatus(id),
       saveAuxiliaryDraft: (input) => service.saveAuxiliaryDraft(input),
-      listAuxiliarySessions: unused, listOpenActiveAuxiliarySessionSummaries: unused,
-      getActiveAuxiliarySession: unused, getAuxiliarySession: unused, createAuxiliarySession: unused,
+      listAuxiliarySessions: unused, listOpenAuxiliarySessionSummaries: unused,
+      getLatestAuxiliarySession: unused, getAuxiliarySession: unused, createAuxiliarySession: unused,
       getAuxiliaryCreationContext: unused, cancelAuxiliaryCreation: unused, getAuxiliaryCreation: unused,
       updateAuxiliarySession: unused, setAuxiliaryExecutionOptions: unused, setAuxiliaryTitle: unused,
-      setAuxiliaryMessageBookmark: unused, closeAuxiliarySession: unused, runAuxiliarySessionTurn: unused,
+      setAuxiliaryMessageBookmark: unused, runAuxiliarySessionTurn: unused,
       steerAuxiliarySessionTurn: unused, cancelAuxiliarySessionRun: unused,
     };
     const registry = new ComposerControllerRegistry();

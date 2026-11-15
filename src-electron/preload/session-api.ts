@@ -8,6 +8,7 @@ export function createSessionApi(
   platform: NodeJS.Platform,
 ): WithMateWindowSessionApi {
   return {
+    getCrewDeletionStatus: (sessionId, incarnationId) => ipcRenderer.invoke("withmate:get-crew-deletion-status", sessionId, incarnationId),
     readSessionHtmlPreview(request) {
       return ipcRenderer.invoke(READ_SESSION_HTML_PREVIEW, request);
     },
@@ -235,6 +236,9 @@ export function createSessionApi(
         session,
       );
     },
+    changeSessionAdditionalDirectory(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, request);
+    },
     setSessionExecutionOptions(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
@@ -246,6 +250,9 @@ export function createSessionApi(
         channels.WITHMATE_SET_SESSION_TITLE_CHANNEL,
         request,
       );
+    },
+    promoteSessionToOverallCoordinator(sessionId, incarnationId) {
+      return ipcRenderer.invoke(channels.WITHMATE_PROMOTE_SESSION_ROLE_CHANNEL, sessionId, incarnationId);
     },
     setSessionMessageBookmark(request) {
       return ipcRenderer.invoke(

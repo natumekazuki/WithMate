@@ -4,6 +4,8 @@
 - 日付: 2026-10-07
 - 部分置換対象: ADR 021・023・024のmanaged MCP経路の接続前本人確認、およびfallback reporterの所有者
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の入口・保存・背景実行と専用History公開入口に関する範囲は適用対象外とする。通常Session／Graph／Glossaryの共有runtime・認可・instance／generation失効・MCP／CLI契約、通常Sessionの保存履歴readの責務は維持する。以下の当時の本文は判断履歴として保持する。
+
 ## 適用状態
 
 [ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI operatorと通常Session CLIを別authority modeにする判断は現行運用の適用対象外とする。通常CLIはMCP障害を利用条件としない。共有HTTP MCPの短命credential、captured turn、内側のruntime exchange、および明示fallback再試行のadmissionは維持する。以下の本文は当時の判断として保持する。

@@ -2,7 +2,7 @@
 
 ## 現在の適用範囲
 
-通知条件とpreview sourceの判断は維持する。本文の独立Auditへの保存・詳細更新に関する記述は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phaseは最小turnを正本とする後継判断へ置換した。通知は通常履歴と最小turnのterminal保存後に行い、独立した詳細保存を待たない。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)を参照する。本文は当時の判断として保持する。
+通知条件とpreview sourceの判断は維持する。本文の独立Auditへの保存・詳細更新に関する記述は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phaseは最小turnを正本とする後継判断へ置換した。通知は通常履歴と最小turnのterminal保存後に行い、独立した詳細保存を待たない。現行契約は[Session Run Lifecycle](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/session-run-lifecycle.md)を参照する。本文は当時の判断として保持する。
 
 - 状態: Accepted
 - 日付: 2026-07-29

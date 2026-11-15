@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 import { isDeepStrictEqual } from "node:util";
 import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
 
@@ -29,7 +30,8 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
-import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session, type TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
+import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type {
   SetExecutionOptionsResult,
@@ -346,12 +348,8 @@ export class AuxiliarySessionService {
     return (await this.deps.getStorage().listAllAuxiliarySessions()).map((session) => this.overlayExecutionOptions(session));
   }
 
-  async listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Promise<AuxiliarySessionSummary[]> {
-    return (await this.deps.getStorage().listActiveAuxiliarySessionSummaries(parentSessionIds)).map((session) => this.overlayExecutionOptions(session));
-  }
-
-  async getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null> {
-    const session = await this.deps.getStorage().getActiveAuxiliarySession(parentSessionId);
+  async getLatestAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null> {
+    const session = await this.deps.getStorage().getLatestAuxiliarySession(parentSessionId);
     return session ? this.overlayExecutionOptions(session) : null;
   }
 
@@ -372,9 +370,9 @@ export class AuxiliarySessionService {
     return session ? this.overlayExecutionOptions(session) : null;
   }
 
-  async getActiveAuxiliarySessionView(parentSessionId: string): Promise<AuxiliarySession | null> {
+  async getLatestAuxiliarySessionView(parentSessionId: string): Promise<AuxiliarySession | null> {
     const storage = this.deps.getStorage();
-    const summary = (await storage.listActiveAuxiliarySessionSummaries([parentSessionId]))[0];
+    const summary = (await storage.listAuxiliarySessionSummaries([parentSessionId])).at(-1);
     return summary ? this.getAuxiliarySessionView(summary.id) : null;
   }
 
@@ -394,8 +392,7 @@ export class AuxiliarySessionService {
     this.assertStorageIdentity(storage, identity);
     if (!session
       || session.parentSessionId !== request.parentSessionId
-      || session.createdAt !== request.createdAt
-      || session.status !== "active") {
+      || session.createdAt !== request.createdAt) {
       throw new Error("The Auxiliary Session could not be found or has changed.");
     }
     return { storage, identity, session: this.overlayExecutionOptions(session) };
@@ -409,6 +406,15 @@ export class AuxiliarySessionService {
     }
     const updated = await storage.updateAuxiliaryTitleIfMatches({ ...request, updatedAt: currentTimestampLabel() });
     if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
+  }
+
+  async patchAuxiliarySessionMetadata(request: { auxiliarySessionId: string; parentSessionId: string; createdAt: string; patch: SessionMetadataPatch }, assertCurrent?: () => void): Promise<AuxiliarySessionSummary> {
+    const patch = validateSessionMetadataPatch(request.patch);
+    const { storage, identity } = await this.getMutationTarget(request);
+    assertCurrent?.();
+    const result = await storage.patchAuxiliarySessionMetadata({ ...request, patch, updatedAt: currentTimestampLabel() });
+    this.assertStorageIdentity(storage, identity);
+    return result;
   }
 
   async setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void> {
@@ -430,7 +436,7 @@ export class AuxiliarySessionService {
     const current = await storage.getAuxiliarySessionSummary(request.auxiliarySessionId);
     this.assertStorageIdentity(storage, identity);
     if (!current || current.parentSessionId !== request.parentSessionId
-      || current.createdAt !== request.createdAt || current.status !== "active") {
+      || current.createdAt !== request.createdAt) {
       throw new Error("The Auxiliary Session could not be found or has changed.");
     }
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
@@ -478,7 +484,7 @@ export class AuxiliarySessionService {
     const identity = this.deps.captureStorageIdentity?.();
     const session = await storage.getAuxiliarySessionSummary(auxiliarySessionId);
     this.assertStorageIdentity(storage, identity);
-    if (!session || session.status !== "active") throw new Error("The Auxiliary Session could not be found.");
+    if (!session) throw new Error("The Auxiliary Session could not be found.");
     if (session.displayAfterMessageIndex !== null) return;
     const updated = await storage.updateAuxiliaryDisplayAnchorIfMatches({
       auxiliarySessionId: session.id,
@@ -490,8 +496,8 @@ export class AuxiliarySessionService {
     if (!updated) throw new Error("Saving the Auxiliary display anchor was canceled.");
   }
 
-  async listRunningActiveAuxiliarySessions(): Promise<AuxiliarySessionSummary[]> {
-    return (await this.deps.getStorage().listRunningActiveAuxiliarySessions()).map((session) => this.overlayExecutionOptions(session));
+  async listRunningAuxiliarySessions(): Promise<AuxiliarySessionSummary[]> {
+    return (await this.deps.getStorage().listRunningAuxiliarySessions()).map((session) => this.overlayExecutionOptions(session));
   }
 
   async createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession> {
@@ -838,7 +844,6 @@ export class AuxiliarySessionService {
     return storage.upsertAuxiliarySession({
       id: `aux-${randomUUID()}`,
       parentSessionId: parent.id,
-      status: "active",
       runState: "idle",
       title: "",
       provider: launchSelection.provider,
@@ -856,7 +861,6 @@ export class AuxiliarySessionService {
       displayAfterMessageIndex: (parent.messageCount ?? parent.messages.length) - 1,
       createdAt: now,
       updatedAt: now,
-      closedAt: "",
       characterId: prepared.characterSelection.characterId,
       characterRuntimeSnapshot: prepared.characterSelection.characterRuntimeSnapshot,
       characterIconPath: prepared.characterSelection.characterRuntimeSnapshot?.iconFilePath ?? "",
@@ -1079,7 +1083,7 @@ export class AuxiliarySessionService {
     try {
       if (input.displayAnchorParentMessageCount !== undefined) {
         const summary = await storage.getAuxiliarySessionSummary(input.auxiliarySessionId);
-        if (!summary || summary.parentSessionId !== input.parentSessionId || summary.status !== "active") {
+        if (!summary || summary.parentSessionId !== input.parentSessionId) {
           throw new Error("The Auxiliary Session could not be found or has changed.");
         }
         if (summary.displayAfterMessageIndex === null) {
@@ -1192,6 +1196,40 @@ export class AuxiliarySessionService {
     return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: [...runtimeSession.messages, userMessage] };
   }
 
+  async beginRunningInput(runtimeSession: Session, text: string, turnId: number, nativeTurnId: string,
+    attachments: ComposerAttachment[]): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
+    this.assertStorageIdentity(storage, identity);
+    if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) throw new Error("The Auxiliary Session incarnation does not match.");
+    const userMessage = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+    const stored = await storage.beginAuxiliarySteer({ auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length, userMessage, turnId, nativeTurnId, attachments, updatedAt: currentTimestampLabel() });
+    if (!stored) throw new Error("The Auxiliary Steer input could not be saved.");
+    this.notifyRuntimeMessagesCommitted(stored.parentSessionId);
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: [...runtimeSession.messages, userMessage] };
+  }
+
+  async settleRunningInput(runtimeSession: Session, messageSeq: number, turnId: number,
+    state: Exclude<TurnInputDeliveryState, "pending">): Promise<Session> {
+    const storage = this.deps.getStorage();
+    const identity = this.deps.captureStorageIdentity?.();
+    const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
+    if (current) this.assertCharacterSnapshotValid(current);
+    this.assertStorageIdentity(storage, identity);
+    if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) throw new Error("The Auxiliary Session incarnation does not match.");
+    const count = runtimeSession.messageCount ?? runtimeSession.messages.length;
+    const stored = await storage.settleAuxiliarySteer({ auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
+      expectedMessageCount: count, turnId, messageSeq, state, updatedAt: currentTimestampLabel() });
+    if (!stored) throw new Error("The Auxiliary Steer input outcome could not be saved.");
+    this.notifyRuntimeMessagesCommitted(stored.parentSessionId);
+    return { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages.map((message, index) =>
+      (message.historyIndex ?? count - runtimeSession.messages.length + index) === messageSeq && message.turnInput
+        ? { ...message, turnInput: { ...message.turnInput, state } } : message) };
+  }
+
   async appendTerminalSession(runtimeSession: Session, terminalCommit: SessionTurnTerminalCommit,
     options: { confirmedFinalAssistantText?: string | null } = {}): Promise<Session> {
     const storage = this.deps.getStorage();
@@ -1270,8 +1308,6 @@ export class AuxiliarySessionService {
     }
     const next: AuxiliarySession = this.overlayExecutionOptions({
       ...current,
-      status: "active",
-      closedAt: "",
       runState:
         runtimeSession.runState === "running" || runtimeSession.runState === "error"
           ? runtimeSession.runState
@@ -1317,7 +1353,7 @@ export class AuxiliarySessionService {
     if (current.runState === "running" || this.deps.isAuxiliaryRunInFlight?.(current.id)) {
       const parent = await this.deps.getParentSession(current.parentSessionId);
       if (!parent || parent.accessMode !== "active") throw new Error("The parent Session is unavailable or read-only.");
-      if (session.title !== current.title || session.provider !== current.provider || session.status !== current.status
+      if (session.title !== current.title || session.provider !== current.provider
         || session.runState !== current.runState || session.threadId !== current.threadId) {
         throw new Error("A running Auxiliary Session cannot be updated.");
       }
@@ -1337,8 +1373,6 @@ export class AuxiliarySessionService {
     }
     const next: AuxiliarySession = {
       ...current,
-      status: "active",
-      closedAt: "",
       title: session.title,
       provider: current.provider,
       catalogRevision: current.catalogRevision,
@@ -1367,37 +1401,9 @@ export class AuxiliarySessionService {
     return Promise.all(sessions.map((session) => storage.upsertAuxiliarySession(session)));
   }
 
-  async closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession> {
-    const storage = this.deps.getStorage();
-    const current = await storage.getAuxiliarySession(auxiliarySessionId);
-    if (current) this.assertCharacterSnapshotValid(current);
-    if (!current) {
-      throw new Error("The Auxiliary Session could not be found.");
-    }
-    if (current.runState === "running") {
-      throw new Error("A running Auxiliary Session cannot be closed.");
-    }
-
-    const now = currentTimestampLabel();
-    const next: AuxiliarySession = {
-      ...current,
-      status: "closed",
-      runState: "idle",
-      composerDraft: "",
-      updatedAt: now,
-      closedAt: current.closedAt || now,
-    };
-    const updated = await storage.updateAuxiliarySessionIfMatches({
-      session: next,
-      expectedSession: current,
-    });
-    if (!updated) throw new Error("Closing was canceled because the Auxiliary Session was deleted or changed.");
-    return updated;
-  }
-
   async recoverInterruptedSessions(): Promise<void> {
     const storage = this.deps.getStorage();
-    const runningSessions = await storage.listRunningActiveAuxiliarySessions();
+    const runningSessions = await storage.listRunningAuxiliarySessions();
     if (runningSessions.length === 0) {
       return;
     }
@@ -1406,7 +1412,7 @@ export class AuxiliarySessionService {
     for (const summary of runningSessions) {
       const current = await storage.getAuxiliarySession(summary.id);
       if (current) this.assertCharacterSnapshotValid(current);
-      if (!current || current.status !== "active" || current.runState !== "running") {
+      if (!current || current.runState !== "running") {
         continue;
       }
 
@@ -1432,7 +1438,8 @@ export class AuxiliarySessionService {
       ...parent,
       id: auxiliary.id,
       incarnationId: auxiliary.createdAt,
-      taskTitle: parent.taskTitle,
+      taskTitle: auxiliary.title,
+      description: auxiliary.description ?? "",
       status: auxiliary.runState === "running" ? "running" : "idle",
       updatedAt: auxiliary.updatedAt,
       provider: auxiliary.provider,

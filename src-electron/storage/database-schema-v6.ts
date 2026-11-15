@@ -2,6 +2,8 @@ import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 import { migrateLegacySessionTurnsV6 } from "./migrations/migrate-session-turn-storage-v6.js";
+import { removeRetiredMemoryAffectDatabaseData, RETIRED_MEMORY_AFFECT_TABLES } from "./migrations/memory-affect-removal.js";
+import { CREATE_V7_COORDINATION_RECORDS_SQL } from "../coordination/coordination-schema-v7.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -16,6 +18,8 @@ export const REQUIRED_V6_TABLES = [
   "characters",
   "project_scopes_v6",
   "sessions_v6",
+  "session_lifecycle_operations_v6",
+  "coordination_records_v7",
   "session_messages_v6",
   "session_file_pins_v6",
   "session_graphs_v6",
@@ -26,24 +30,10 @@ export const REQUIRED_V6_TABLES = [
   "auxiliary_session_messages",
   "session_turns_v6",
   "session_turn_queue_v6",
-  "memory_entries_v6",
-  "memory_entry_tags_v6",
-  "memory_entry_relations_v6",
-  "memory_tag_catalog_v6",
-  "memory_target_tag_stats_v6",
-  "memory_mutation_events_v6",
-  "memory_idempotency_keys_v6",
-  "memory_idempotency_forget_results_v6",
-  "memory_move_events_v6",
-  "memory_protected_objects_v6",
-  "character_affect_events_v6",
-  "character_affect_resets_v6",
-  "character_affect_idempotency_v6",
-  "character_affect_mutations_v6",
-  "character_affect_observations_v6",
 ] as const;
 
 export const FORBIDDEN_V6_TABLES = [
+  ...RETIRED_MEMORY_AFFECT_TABLES,
   "session_turn_interims_v6",
   "session_turn_provider_outputs_v6",
   "audit_events_v6",
@@ -63,6 +53,11 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
+  "idx_v6_sessions_root",
+  "idx_v6_sessions_parent",
+  "idx_v6_session_lifecycle_operations_kind_phase",
+  "idx_coordination_v7_crew",
+  "idx_coordination_v7_respondent",
   "idx_v6_session_messages_session_seq",
   "idx_auxiliary_sessions_parent_updated",
   "idx_v6_session_turns_session_updated",
@@ -71,23 +66,6 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turn_queue_owner_state",
   "idx_v6_session_turn_queue_main_request",
   "idx_v6_session_turn_queue_auxiliary_request",
-  "idx_v6_memory_entries_target_state_updated",
-  "idx_v6_memory_entry_tags_lookup",
-  "idx_v6_memory_target_tag_stats_page",
-  "idx_v6_memory_mutation_events_result",
-  "idx_v6_memory_idempotency_response_entry",
-  "idx_v6_memory_move_events_entry",
-  "idx_v6_memory_move_events_idempotency",
-  "idx_v6_memory_protected_objects_state",
-  "idx_v6_memory_protected_objects_entry",
-  "idx_v6_character_affect_events_effective",
-  "idx_v6_character_affect_events_auxiliary_effective",
-  "idx_v6_character_affect_events_afterglow",
-  "idx_v6_character_affect_events_target",
-  "idx_v6_character_affect_resets_scope",
-  "idx_v6_character_affect_resets_auxiliary_scope",
-  "idx_v6_character_affect_mutations_scope",
-  "idx_v6_character_affect_observations_scope",
 ] as const;
 
 const REQUIRED_V6_TABLE_COLUMNS = {
@@ -105,6 +83,11 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "title",
     "state",
     "session_kind",
+    "session_role",
+    "root_session_id",
+    "parent_session_id",
+    "created_by_session_id",
+    "description",
     "provider_id",
     "catalog_revision",
     "model_id",
@@ -124,9 +107,11 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "last_active_at",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
+  session_lifecycle_operations_v6: ["operation_id", "kind", "input_json", "targets_json", "resources_json", "prepared_json", "phase", "created_at", "updated_at"],
+  coordination_records_v7: ["id", "crew_root_session_id", "initiator_session_id", "initiator_kind", "initiator_incarnation_id", "respondent_session_id", "respondent_kind", "state", "payload_json"],
   session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
-  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
-  auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
+  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "accepted_json", "dispatched_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
+  auxiliary_sessions: ["id", "parent_session_id", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
     "id",
@@ -145,165 +130,6 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "started_at",
     "completed_at",
     "updated_at",
-  ],
-  memory_entries_v6: [
-    "id",
-    "owner_type",
-    "owner_id",
-    "scope_type",
-    "scope_id",
-    "kind",
-    "title",
-    "body",
-    "body_sha256",
-    "preview",
-    "state",
-    "source_type",
-    "source_session_id",
-    "source_app_message_id",
-    "source_provider_message_id",
-    "source_provider_id",
-    "superseded_by_id",
-    "created_at",
-    "updated_at",
-    "forgotten_at",
-  ],
-  memory_entry_tags_v6: ["entry_id", "tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "created_at"],
-  memory_entry_relations_v6: ["source_entry_id", "target_entry_id", "relation_type", "created_at"],
-  memory_tag_catalog_v6: ["tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "description", "aliases_json", "state", "usage_count", "created_at", "updated_at"],
-  memory_target_tag_stats_v6: ["owner_type", "owner_id", "scope_type", "scope_id", "tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "usage_count", "latest_entry_updated_at"],
-  memory_mutation_events_v6: ["id", "operation", "entry_id", "binding_id_hash", "session_id", "source_message_id", "result_status", "reason", "created_at"],
-  memory_idempotency_keys_v6: [
-    "key",
-    "operation",
-    "binding_id_hash",
-    "owner_type",
-    "owner_id",
-    "scope_type",
-    "scope_id",
-    "response_entry_id",
-    "operation_created",
-    "request_fingerprint",
-    "cleanup_pending_count",
-    "created_at",
-  ],
-  memory_idempotency_forget_results_v6: [
-    "key",
-    "operation",
-    "binding_id_hash",
-    "owner_type",
-    "owner_id",
-    "scope_type",
-    "scope_id",
-    "entry_id",
-    "result_status",
-    "created_at",
-  ],
-  memory_move_events_v6: [
-    "id",
-    "entry_id",
-    "from_owner_type",
-    "from_owner_id",
-    "from_scope_type",
-    "from_scope_id",
-    "to_owner_type",
-    "to_owner_id",
-    "to_scope_type",
-    "to_scope_id",
-    "binding_id_hash",
-    "idempotency_key",
-    "request_fingerprint",
-    "created_at",
-  ],
-  memory_protected_objects_v6: [
-    "object_id",
-    "entry_id",
-    "state",
-    "role",
-    "media_kind",
-    "content_type",
-    "display_name",
-    "summary",
-    "original_bytes",
-    "stored_bytes",
-    "sha256",
-    "key_id",
-    "created_at",
-    "updated_at",
-    "deleted_at",
-  ],
-  character_affect_events_v6: [
-    "auxiliary_session_id", "source_auxiliary_session_id",
-    "id",
-    "character_id",
-    "user_id",
-    "session_id",
-    "source_session_id",
-    "layer",
-    "target_type",
-    "target_id",
-    "family",
-    "value_json",
-    "intensity",
-    "reason",
-    "evidence",
-    "occurred_at",
-    "idempotency_key",
-    "request_fingerprint",
-    "correction_of_event_id",
-    "state",
-    "memory_entry_id",
-    "supersedes_memory_entry_id",
-    "created_at",
-  ],
-  character_affect_resets_v6: [
-    "auxiliary_session_id",
-    "id",
-    "character_id",
-    "user_id",
-    "session_id",
-    "layer",
-    "reason",
-    "reset_at",
-    "idempotency_key",
-    "request_fingerprint",
-    "created_at",
-  ],
-  character_affect_idempotency_v6: [
-    "character_id",
-    "user_id",
-    "idempotency_key",
-    "operation",
-    "request_fingerprint",
-    "event_id",
-    "reset_id",
-    "created_at",
-  ],
-  character_affect_mutations_v6: [
-    "auxiliary_session_id", "source_auxiliary_session_id",
-    "id",
-    "operation",
-    "character_id",
-    "user_id",
-    "session_id",
-    "source_session_id",
-    "event_id",
-    "reset_id",
-    "reason",
-    "created_at",
-  ],
-  character_affect_observations_v6: [
-    "auxiliary_session_id",
-    "id",
-    "kind",
-    "outcome",
-    "character_id",
-    "user_id",
-    "session_id",
-    "event_id",
-    "reset_id",
-    "reason",
-    "created_at",
   ],
 } as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]>;
 
@@ -412,10 +238,10 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   }
 
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-  const normalizedColumns = ["title", "run_state", "preview", "provider_id", "catalog_revision",
+  const normalizedColumns = ["title", "description", "run_state", "preview", "provider_id", "catalog_revision",
     "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
     "codex_reviewer", "custom_agent_name", "thread_id",
-    "display_after_message_index", "closed_at", "character_id", "character_snapshot_json",
+    "display_after_message_index", "character_id", "character_snapshot_json",
     "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
     "creation_request_json"];
   if (!auxiliaryColumns.has("payload_json") && !normalizedColumns.every((name) => auxiliaryColumns.has(name))) {
@@ -456,6 +282,7 @@ function hasForeignKey(
 
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
+    && hasForeignKey(db, "coordination_records_v7", "crew_root_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_graphs_v6", "session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_graph_topics_v6", "session_id", "session_graphs_v6", "session_id", "CASCADE")
     && hasForeignKey(db, "session_graph_records_v6", "topic_id", "session_graph_topics_v6", "id", "CASCADE")
@@ -468,94 +295,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "session_turn_queue_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
     && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
-    && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
-    && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
-    && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
-    && hasForeignKey(db, "memory_idempotency_keys_v6", "response_entry_id", "memory_entries_v6")
-    && hasForeignKey(db, "memory_protected_objects_v6", "entry_id", "memory_entries_v6")
-    && hasForeignKey(db, "character_affect_events_v6", "character_id", "characters", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_events_v6", "session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_events_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_events_v6", "source_auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
-    && hasForeignKey(db, "character_affect_events_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
-    && hasForeignKey(
-      db,
-      "character_affect_events_v6",
-      "correction_of_event_id",
-      "character_affect_events_v6",
-      "id",
-      "SET NULL",
-    )
-    && hasForeignKey(db, "character_affect_events_v6", "memory_entry_id", "memory_entries_v6", "id", "SET NULL")
-    && hasForeignKey(
-      db,
-      "character_affect_events_v6",
-      "supersedes_memory_entry_id",
-      "memory_entries_v6",
-      "id",
-      "SET NULL",
-    )
-    && hasForeignKey(db, "character_affect_resets_v6", "character_id", "characters", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_resets_v6", "session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_resets_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_idempotency_v6", "character_id", "characters", "id", "CASCADE")
-    && hasForeignKey(
-      db,
-      "character_affect_idempotency_v6",
-      "event_id",
-      "character_affect_events_v6",
-      "id",
-      "CASCADE",
-    )
-    && hasForeignKey(
-      db,
-      "character_affect_idempotency_v6",
-      "reset_id",
-      "character_affect_resets_v6",
-      "id",
-      "CASCADE",
-    )
-    && hasForeignKey(db, "character_affect_mutations_v6", "character_id", "characters", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_mutations_v6", "session_id", "sessions_v6", "id", "SET NULL")
-    && hasForeignKey(db, "character_affect_mutations_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
-    && hasForeignKey(db, "character_affect_mutations_v6", "source_auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
-    && hasForeignKey(db, "character_affect_mutations_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
-    && hasForeignKey(
-      db,
-      "character_affect_mutations_v6",
-      "event_id",
-      "character_affect_events_v6",
-      "id",
-      "SET NULL",
-    )
-    && hasForeignKey(
-      db,
-      "character_affect_mutations_v6",
-      "reset_id",
-      "character_affect_resets_v6",
-      "id",
-      "SET NULL",
-    )
-    && hasForeignKey(db, "character_affect_observations_v6", "character_id", "characters", "id", "CASCADE")
-    && hasForeignKey(db, "character_affect_observations_v6", "session_id", "sessions_v6", "id", "SET NULL")
-    && hasForeignKey(db, "character_affect_observations_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
-    && hasForeignKey(
-      db,
-      "character_affect_observations_v6",
-      "event_id",
-      "character_affect_events_v6",
-      "id",
-      "SET NULL",
-    )
-    && hasForeignKey(
-      db,
-      "character_affect_observations_v6",
-      "reset_id",
-      "character_affect_resets_v6",
-      "id",
-      "SET NULL",
-    );
+    && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions");
 }
 
 function tableSql(db: DatabaseSync, tableName: string): string {
@@ -567,29 +307,22 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
+  const lifecycleSql = tableSql(db, "session_lifecycle_operations_v6");
+  const coordinationSql = tableSql(db, "coordination_records_v7");
   const filePinsSql = tableSql(db, "session_file_pins_v6");
   const turnQueueSql = tableSql(db, "session_turn_queue_v6");
-  const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
-  const memoryEntriesSql = tableSql(db, "memory_entries_v6");
-  const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
-  const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
-  const protectedObjectsSql = tableSql(db, "memory_protected_objects_v6");
-  const affectEventsSql = tableSql(db, "character_affect_events_v6");
-  const affectResetsSql = tableSql(db, "character_affect_resets_v6");
-  const affectIdempotencySql = tableSql(db, "character_affect_idempotency_v6");
-  const affectMutationsSql = tableSql(db, "character_affect_mutations_v6");
-  const affectObservationsSql = tableSql(db, "character_affect_observations_v6");
-  const auxiliaryStatusConstrained = auxiliarySessionsSql.includes("status IN ('active', 'closed')")
-    || (tableColumnNames(db, "auxiliary_sessions").has("payload_json")
-      && !db.prepare("SELECT 1 FROM auxiliary_sessions WHERE status NOT IN ('active', 'closed') OR status IS NULL LIMIT 1").get());
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
+    && lifecycleSql.includes("kind IN ('create', 'delete')")
+    && lifecycleSql.includes("phase IN ('preparing', 'applied', 'complete')")
+    && coordinationSql.includes("state IN ('open','resolved','withdrawn','corrected')")
+    && coordinationSql.includes("json_valid(payload_json)")
     && tableSql(db, "session_graphs_v6").includes("CHECK (revision >= 0)")
     && tableSql(db, "session_graph_records_v6").includes("kind IN ('requirement', 'constraint', 'decision', 'activity', 'observation', 'issue')")
     && tableSql(db, "session_graph_records_v6").includes("json_valid(payload_json)")
     && tableSql(db, "session_graph_relations_v6").includes("json_valid(payload_json)")
-    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'additional')")
+    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')")
     && filePinsSql.includes("kind IN ('file', 'directory')")
     && filePinsSql.includes("root_path <> ''")
     && filePinsSql.includes("relative_path <> ''")
@@ -597,44 +330,12 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
     && turnQueueSql.includes("state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')")
     && turnQueueSql.includes("json_valid(captured_json)")
+    && turnQueueSql.includes("accepted_json IS NULL OR json_valid(accepted_json)")
+    && turnQueueSql.includes("dispatched_json IS NULL OR json_valid(dispatched_json)")
     && turnQueueSql.includes("FOREIGN KEY (auxiliary_session_id)")
-    && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
-    && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
     && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
-    && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)")
-    && memoryEntriesSql.includes("ON DELETE RESTRICT")
-    && mutationEventsSql.includes("result_status TEXT NOT NULL")
-    && mutationEventsSql.includes("result_status IN")
-    && idempotencySql.includes("binding_id_hash TEXT NOT NULL")
-    && idempotencySql.includes("PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)")
-    && protectedObjectsSql.includes("state IN ('active', 'delete_pending', 'deleted')")
-    && protectedObjectsSql.includes("role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other')")
-    && protectedObjectsSql.includes("original_bytes >= 0")
-    && protectedObjectsSql.includes("stored_bytes >= 0")
-    && affectEventsSql.includes("layer IN ('relationship', 'session')")
-    && affectEventsSql.includes("target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')")
-    && affectEventsSql.includes("family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')")
-    && affectEventsSql.includes("json_valid(value_json)")
-    && affectEventsSql.includes("intensity >= 0 AND intensity <= 1")
-    && affectEventsSql.includes("state IN ('active', 'corrected')")
-    && affectEventsSql.includes("user_id <> ''")
-    && affectEventsSql.includes("target_id <> ''")
-    && affectEventsSql.includes("layer <> 'relationship' OR target_type IN ('user', 'relationship')")
-    && affectEventsSql.includes("layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id")
-    && affectEventsSql.includes("layer = 'session' AND auxiliary_session_id IS NOT NULL AND source_auxiliary_session_id = auxiliary_session_id")
-    && affectEventsSql.includes("layer = 'relationship' AND session_id IS NULL")
-    && affectResetsSql.includes("layer IN ('relationship', 'session')")
-    && affectResetsSql.includes("session_id IS NOT NULL AND auxiliary_session_id IS NULL")
-    && affectResetsSql.includes("session_id IS NULL AND auxiliary_session_id IS NOT NULL")
-    && affectResetsSql.includes("layer = 'relationship' AND session_id IS NULL")
-    && affectIdempotencySql.includes("operation IN ('record', 'correct', 'reset')")
-    && affectIdempotencySql.includes("PRIMARY KEY (character_id, user_id, idempotency_key)")
-    && affectIdempotencySql.includes("operation IN ('record', 'correct') AND event_id IS NOT NULL AND reset_id IS NULL")
-    && affectIdempotencySql.includes("operation = 'reset' AND event_id IS NULL AND reset_id IS NOT NULL")
-    && affectMutationsSql.includes("operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')")
-    && affectObservationsSql.includes("kind IN ('idempotency', 'concurrency')")
-    && affectObservationsSql.includes("outcome IN ('replayed', 'rejected', 'resolved')");
+    && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)");
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
@@ -725,6 +426,11 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     title TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed', 'archived')),
     session_kind TEXT NOT NULL DEFAULT 'default',
+    session_role TEXT NOT NULL DEFAULT 'standalone',
+    root_session_id TEXT,
+    parent_session_id TEXT,
+    created_by_session_id TEXT,
+    description TEXT NOT NULL DEFAULT '',
     provider_id TEXT NOT NULL,
     catalog_revision INTEGER NOT NULL,
     model_id TEXT NOT NULL,
@@ -763,6 +469,25 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_sessions_character
     ON sessions_v6(character_id, last_active_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_sessions_root ON sessions_v6(root_session_id);
+  CREATE INDEX IF NOT EXISTS idx_v6_sessions_parent ON sessions_v6(parent_session_id);
+`;
+
+export const CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_lifecycle_operations_v6 (
+    operation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('create', 'delete')),
+    input_json TEXT NOT NULL,
+    targets_json TEXT NOT NULL,
+    resources_json TEXT NOT NULL DEFAULT '[]',
+    prepared_json TEXT,
+    phase TEXT NOT NULL CHECK (phase IN ('preparing', 'applied', 'complete')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_session_lifecycle_operations_kind_phase
+    ON session_lifecycle_operations_v6(kind, phase);
 `;
 
 export const CREATE_V6_SESSION_GRAPH_TABLES_SQL = `
@@ -797,7 +522,7 @@ export const CREATE_V6_SESSION_GRAPH_TABLES_SQL = `
 export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_file_pins_v6 (
     session_id TEXT NOT NULL,
-    root_kind TEXT NOT NULL CHECK (root_kind IN ('workspace', 'session-folder', 'additional')),
+    root_kind TEXT NOT NULL CHECK (root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')),
     root_path TEXT NOT NULL CHECK (root_path <> ''),
     relative_path TEXT NOT NULL CHECK (relative_path <> ''),
     relative_path_key TEXT NOT NULL CHECK (relative_path_key <> ''),
@@ -830,10 +555,10 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS auxiliary_sessions (
     id TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
     run_state TEXT NOT NULL DEFAULT 'idle' CHECK (run_state IN ('idle', 'running', 'error')),
     preview TEXT NOT NULL DEFAULT '',
     provider_id TEXT NOT NULL DEFAULT 'codex',
@@ -847,7 +572,6 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
-    closed_at TEXT NOT NULL DEFAULT '',
     character_id TEXT,
     character_snapshot_json TEXT,
     character_snapshot_invalid INTEGER NOT NULL DEFAULT 0,
@@ -914,433 +638,6 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
     WHERE phase = 'failed' AND auxiliary_session_id IS NOT NULL;
 `;
 
-export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_entries_v6 (
-    id TEXT PRIMARY KEY,
-    owner_type TEXT NOT NULL CHECK (owner_type IN ('character', 'project', 'user')),
-    owner_id TEXT NOT NULL,
-    scope_type TEXT NOT NULL CHECK (scope_type IN ('session', 'project', 'character', 'global')),
-    scope_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN (
-      'decision',
-      'constraint',
-      'convention',
-      'context',
-      'deferred',
-      'preference',
-      'relationship',
-      'boundary',
-      'note'
-    )),
-    title TEXT NOT NULL,
-    body TEXT NOT NULL,
-    body_sha256 TEXT NOT NULL,
-    preview TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('active', 'superseded', 'forgotten')),
-    source_type TEXT NOT NULL CHECK (source_type IN ('agent', 'manual', 'migration')),
-    source_session_id TEXT,
-    source_app_message_id INTEGER,
-    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
-    source_provider_message_id TEXT,
-    source_provider_id TEXT,
-    superseded_by_id TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    forgotten_at TEXT,
-    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (source_app_message_id, source_session_id) REFERENCES session_messages_v6(id, session_id) ON DELETE SET NULL,
-    FOREIGN KEY (superseded_by_id) REFERENCES memory_entries_v6(id) ON DELETE RESTRICT,
-    CHECK (owner_type <> 'user' OR owner_id = 'local-user'),
-    CHECK (scope_type <> 'global' OR scope_id = 'global'),
-    CHECK (
-      (owner_type <> 'user' AND scope_type <> 'global')
-      OR (owner_type = 'user' AND owner_id = 'local-user' AND scope_type = 'global' AND scope_id = 'global')
-    ),
-    CHECK ((state = 'active') = (superseded_by_id IS NULL AND forgotten_at IS NULL) OR state <> 'active'),
-    CHECK (state <> 'superseded' OR (superseded_by_id IS NOT NULL AND forgotten_at IS NULL)),
-    CHECK (state <> 'forgotten' OR forgotten_at IS NOT NULL)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_entries_target_state_updated
-    ON memory_entries_v6(owner_type, owner_id, scope_type, scope_id, state, updated_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_entries_kind_state
-    ON memory_entries_v6(kind, state, updated_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_entries_source_session
-    ON memory_entries_v6(source_session_id);
-`;
-
-export const CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_entry_tags_v6 (
-    entry_id TEXT NOT NULL,
-    tag_type TEXT NOT NULL,
-    tag_value TEXT NOT NULL,
-    tag_type_canonical TEXT NOT NULL,
-    tag_value_canonical TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (entry_id, tag_type_canonical, tag_value_canonical),
-    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_entry_tags_lookup
-    ON memory_entry_tags_v6(tag_type_canonical, tag_value_canonical, entry_id);
-`;
-
-export const CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_entry_relations_v6 (
-    source_entry_id TEXT NOT NULL,
-    target_entry_id TEXT NOT NULL,
-    relation_type TEXT NOT NULL CHECK (relation_type IN ('supersedes', 'related')),
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (source_entry_id, target_entry_id, relation_type),
-    FOREIGN KEY (source_entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
-    FOREIGN KEY (target_entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_entry_relations_target
-    ON memory_entry_relations_v6(target_entry_id, relation_type);
-`;
-
-export const CREATE_V6_MEMORY_TAG_CATALOG_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_tag_catalog_v6 (
-    tag_type TEXT NOT NULL,
-    tag_value TEXT NOT NULL,
-    tag_type_canonical TEXT NOT NULL,
-    tag_value_canonical TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    aliases_json TEXT NOT NULL DEFAULT '[]',
-    state TEXT NOT NULL CHECK (state IN ('active', 'disabled')),
-    usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (tag_type_canonical, tag_value_canonical)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_tag_catalog_lookup
-    ON memory_tag_catalog_v6(tag_type_canonical, usage_count DESC, updated_at DESC);
-`;
-
-export const CREATE_V6_MEMORY_TARGET_TAG_STATS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_target_tag_stats_v6 (
-    owner_type TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    scope_type TEXT NOT NULL,
-    scope_id TEXT NOT NULL,
-    tag_type TEXT NOT NULL,
-    tag_value TEXT NOT NULL,
-    tag_type_canonical TEXT NOT NULL,
-    tag_value_canonical TEXT NOT NULL,
-    usage_count INTEGER NOT NULL CHECK (usage_count > 0),
-    latest_entry_updated_at TEXT NOT NULL,
-    PRIMARY KEY (owner_type, owner_id, scope_type, scope_id, tag_type_canonical, tag_value_canonical)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_target_tag_stats_page
-    ON memory_target_tag_stats_v6(
-      owner_type,
-      owner_id,
-      scope_type,
-      scope_id,
-      usage_count DESC,
-      latest_entry_updated_at DESC,
-      tag_type_canonical ASC,
-      tag_value_canonical ASC
-    );
-`;
-
-export const CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_mutation_events_v6 (
-    id TEXT PRIMARY KEY,
-    operation TEXT NOT NULL CHECK (operation IN ('append', 'forget', 'supersede')),
-    entry_id TEXT,
-    binding_id_hash TEXT,
-    session_id TEXT,
-    source_message_id TEXT,
-    result_status TEXT NOT NULL CHECK (result_status IN (
-      'success',
-      'already_forgotten',
-      'not_found',
-      'forbidden',
-      'failed'
-    )),
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_mutation_events_entry
-    ON memory_mutation_events_v6(entry_id, created_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_mutation_events_session
-    ON memory_mutation_events_v6(session_id, created_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_mutation_events_result
-    ON memory_mutation_events_v6(operation, result_status, created_at DESC);
-`;
-
-export const CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_idempotency_keys_v6 (
-    key TEXT NOT NULL,
-    operation TEXT NOT NULL CHECK (operation IN ('append', 'forget')),
-    binding_id_hash TEXT NOT NULL,
-    owner_type TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    scope_type TEXT NOT NULL,
-    scope_id TEXT NOT NULL,
-    response_entry_id TEXT,
-    operation_created INTEGER NOT NULL CHECK (operation_created IN (0, 1)),
-    request_fingerprint TEXT NOT NULL,
-    cleanup_pending_count INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending_count >= 0),
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id),
-    FOREIGN KEY (response_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_idempotency_response_entry
-    ON memory_idempotency_keys_v6(response_entry_id);
-`;
-
-export const CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_idempotency_forget_results_v6 (
-    key TEXT NOT NULL,
-    operation TEXT NOT NULL CHECK (operation = 'forget'),
-    binding_id_hash TEXT NOT NULL,
-    owner_type TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    scope_type TEXT NOT NULL,
-    scope_id TEXT NOT NULL,
-    entry_id TEXT NOT NULL,
-    result_status TEXT NOT NULL CHECK (result_status IN (
-      'forgotten',
-      'already_forgotten',
-      'not_found'
-    )),
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id, entry_id),
-    FOREIGN KEY (
-      binding_id_hash,
-      key,
-      operation,
-      owner_type,
-      owner_id,
-      scope_type,
-      scope_id
-    ) REFERENCES memory_idempotency_keys_v6(
-      binding_id_hash,
-      key,
-      operation,
-      owner_type,
-      owner_id,
-      scope_type,
-      scope_id
-    ) ON DELETE CASCADE
-  );
-`;
-
-export const CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_protected_objects_v6 (
-    object_id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('active', 'delete_pending', 'deleted')),
-    role TEXT NOT NULL DEFAULT 'other' CHECK (role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other')),
-    media_kind TEXT NOT NULL DEFAULT 'other',
-    content_type TEXT NOT NULL DEFAULT '',
-    display_name TEXT NOT NULL DEFAULT '',
-    summary TEXT NOT NULL,
-    original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
-    stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
-    sha256 TEXT NOT NULL DEFAULT '',
-    key_id TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    deleted_at TEXT,
-    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
-    CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_protected_objects_state
-    ON memory_protected_objects_v6(state, updated_at DESC);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_protected_objects_entry
-    ON memory_protected_objects_v6(entry_id, state);
-`;
-
-export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS memory_move_events_v6 (
-    id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL,
-    from_owner_type TEXT NOT NULL,
-    from_owner_id TEXT NOT NULL,
-    from_scope_type TEXT NOT NULL,
-    from_scope_id TEXT NOT NULL,
-    to_owner_type TEXT NOT NULL,
-    to_owner_id TEXT NOT NULL,
-    to_scope_type TEXT NOT NULL,
-    to_scope_id TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    binding_id_hash TEXT NOT NULL,
-    idempotency_key TEXT,
-    request_fingerprint TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
-  );
-
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_memory_move_events_idempotency
-    ON memory_move_events_v6(binding_id_hash, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
-
-  CREATE INDEX IF NOT EXISTS idx_v6_memory_move_events_entry
-    ON memory_move_events_v6(entry_id, created_at DESC);
-`;
-
-const CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_auxiliary_effective
-    ON character_affect_events_v6(character_id, user_id, layer, auxiliary_session_id, state, occurred_at, id);
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_resets_auxiliary_scope
-    ON character_affect_resets_v6(character_id, user_id, layer, auxiliary_session_id, reset_at DESC, id DESC);
-`;
-
-export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
-  CREATE TABLE IF NOT EXISTS character_affect_events_v6 (
-    id TEXT PRIMARY KEY,
-    character_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    session_id TEXT,
-    source_session_id TEXT,
-    layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
-    target_type TEXT NOT NULL CHECK (target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')),
-    target_id TEXT NOT NULL,
-    family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')),
-    value_json TEXT NOT NULL CHECK (json_valid(value_json)),
-    intensity REAL NOT NULL CHECK (intensity >= 0 AND intensity <= 1),
-    reason TEXT NOT NULL,
-    evidence TEXT NOT NULL,
-    occurred_at TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    request_fingerprint TEXT NOT NULL,
-    correction_of_event_id TEXT,
-    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'corrected')),
-    memory_entry_id TEXT,
-    supersedes_memory_entry_id TEXT,
-    created_at TEXT NOT NULL,
-    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE CASCADE,
-    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
-    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (correction_of_event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (memory_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (supersedes_memory_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL,
-    UNIQUE (character_id, user_id, idempotency_key),
-    CHECK (user_id <> ''),
-    CHECK (target_id <> ''),
-    CHECK (layer <> 'relationship' OR target_type IN ('user', 'relationship')),
-    CHECK (session_id IS NULL OR auxiliary_session_id IS NULL),
-    CHECK (source_session_id IS NULL OR source_auxiliary_session_id IS NULL),
-    CHECK (
-      (layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id AND auxiliary_session_id IS NULL)
-      OR (layer = 'session' AND auxiliary_session_id IS NOT NULL AND source_auxiliary_session_id = auxiliary_session_id AND session_id IS NULL)
-      OR (layer = 'relationship' AND session_id IS NULL AND auxiliary_session_id IS NULL)
-    )
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_effective
-    ON character_affect_events_v6(character_id, user_id, layer, session_id, state, occurred_at, id);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_afterglow
-    ON character_affect_events_v6(character_id, user_id, layer, state, occurred_at DESC, id ASC, session_id);
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_target
-    ON character_affect_events_v6(character_id, user_id, target_type, target_id, occurred_at, id);
-
-  CREATE TABLE IF NOT EXISTS character_affect_resets_v6 (
-    id TEXT PRIMARY KEY,
-    character_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    session_id TEXT,
-    layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
-    reason TEXT NOT NULL,
-    reset_at TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    request_fingerprint TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
-    UNIQUE (character_id, user_id, idempotency_key),
-    CHECK ((layer = 'session' AND ((session_id IS NOT NULL AND auxiliary_session_id IS NULL) OR (session_id IS NULL AND auxiliary_session_id IS NOT NULL))) OR (layer = 'relationship' AND session_id IS NULL AND auxiliary_session_id IS NULL))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_resets_scope
-    ON character_affect_resets_v6(character_id, user_id, layer, session_id, reset_at DESC, id DESC);
-
-  CREATE TABLE IF NOT EXISTS character_affect_idempotency_v6 (
-    character_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    operation TEXT NOT NULL CHECK (operation IN ('record', 'correct', 'reset')),
-    request_fingerprint TEXT NOT NULL,
-    event_id TEXT,
-    reset_id TEXT,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (character_id, user_id, idempotency_key),
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE CASCADE,
-    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE CASCADE,
-    CHECK (
-      (operation IN ('record', 'correct') AND event_id IS NOT NULL AND reset_id IS NULL)
-      OR (operation = 'reset' AND event_id IS NULL AND reset_id IS NOT NULL)
-    )
-  );
-
-  CREATE TABLE IF NOT EXISTS character_affect_mutations_v6 (
-    id TEXT PRIMARY KEY,
-    operation TEXT NOT NULL CHECK (operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')),
-    character_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    session_id TEXT,
-    source_session_id TEXT,
-    event_id TEXT,
-    reset_id TEXT,
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
-    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_mutations_scope
-    ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC);
-
-  CREATE TABLE IF NOT EXISTS character_affect_observations_v6 (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('idempotency', 'concurrency')),
-    outcome TEXT NOT NULL CHECK (outcome IN ('replayed', 'rejected', 'resolved')),
-    character_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    session_id TEXT,
-    event_id TEXT,
-    reset_id TEXT,
-    reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE SET NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_observations_scope
-    ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);
-  ${CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL}
-`;
-
 export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_turn_queue_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1352,6 +649,8 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     request_id TEXT NOT NULL CHECK (request_id <> ''),
     state TEXT NOT NULL CHECK (state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')),
     captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
+    accepted_json TEXT CHECK (accepted_json IS NULL OR json_valid(accepted_json)),
+    dispatched_json TEXT CHECK (dispatched_json IS NULL OR json_valid(dispatched_json)),
     turn_id TEXT,
     input_turn_id TEXT,
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
@@ -1377,23 +676,14 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL,
+  CREATE_V7_COORDINATION_RECORDS_SQL,
   CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   CREATE_V6_SESSION_GRAPH_TABLES_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL,
-  CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
-  CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
-  CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,
-  CREATE_V6_MEMORY_TAG_CATALOG_TABLE_SQL,
-  CREATE_V6_MEMORY_TARGET_TAG_STATS_TABLE_SQL,
-  CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL,
-  CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL,
-  CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
-  CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL,
-  CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
-  CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;
 
@@ -1419,7 +709,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     CREATE TABLE auxiliary_sessions_v6_rebuild (
       id TEXT PRIMARY KEY,
       parent_session_id TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       payload_json TEXT NOT NULL
@@ -1429,7 +718,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     INSERT INTO auxiliary_sessions_v6_rebuild (
       id,
       parent_session_id,
-      status,
       created_at,
       updated_at,
       payload_json
@@ -1437,7 +725,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     SELECT
       id,
       parent_session_id,
-      status,
       ${createdAtExpression},
       updated_at,
       payload_json
@@ -1474,8 +761,19 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec("DROP TABLE IF EXISTS model_catalog_models; DROP TABLE IF EXISTS model_catalog_providers; DROP TABLE IF EXISTS model_catalog_revisions;");
-  db.exec("DROP TABLE IF EXISTS character_affect_turn_settlements;");
-  const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
+  removeRetiredMemoryAffectDatabaseData(db);
+  if (tableExists(db, "sessions_v6")) {
+    const sessionColumns = tableColumnNames(db, "sessions_v6");
+    for (const [name, definition] of [
+      ["session_role", "TEXT NOT NULL DEFAULT 'standalone'"],
+      ["root_session_id", "TEXT"],
+      ["parent_session_id", "TEXT"],
+      ["created_by_session_id", "TEXT"],
+      ["description", "TEXT NOT NULL DEFAULT ''"],
+    ]) {
+      if (!sessionColumns.has(name)) db.exec(`ALTER TABLE sessions_v6 ADD COLUMN ${name} ${definition}`);
+    }
+  }
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -1484,8 +782,19 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     ) {
       continue;
     }
-    db.exec(statement === CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
-      ? statement.replace(CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL, "") : statement);
+    db.exec(statement);
+  }
+
+  if (!tableSql(db, "session_file_pins_v6").includes("'crew-folder'")) {
+    db.exec(CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace("IF NOT EXISTS session_file_pins_v6", "session_file_pins_v6_rebuild"));
+    db.exec(`
+      INSERT INTO session_file_pins_v6_rebuild
+        (session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label)
+      SELECT session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label
+      FROM session_file_pins_v6;
+      DROP TABLE session_file_pins_v6;
+      ALTER TABLE session_file_pins_v6_rebuild RENAME TO session_file_pins_v6;
+    `);
   }
 
   if (!db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY)) {
@@ -1509,6 +818,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';");
   }
   db.exec("UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';");
+  db.exec("UPDATE sessions_v6 SET root_session_id = id WHERE root_session_id IS NULL;");
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
@@ -1518,14 +828,16 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     migrateLegacySessionTurnsV6(db);
     const hasRetainedAuxiliaryTurns = tableExists(db, "session_turns_v6")
       && Boolean(db.prepare("SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1").get());
-    const shouldRebuildAuxiliarySessions = !hasRetainedAuxiliaryTurns && (
-      hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
-      || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')")
-    );
+    const shouldRebuildAuxiliarySessions = auxiliaryColumns.has("payload_json")
+      && !hasRetainedAuxiliaryTurns
+      && hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6");
     if (shouldRebuildAuxiliarySessions) {
       rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
     } else if (!auxiliaryColumns.has("created_at")) {
       db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+    }
+    if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("description")) {
+      db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''");
     }
     backfillAuxiliarySessionsCreatedAt(db);
 
@@ -1565,105 +877,22 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0)");
     db.exec("UPDATE session_turn_queue_v6 SET queue_position = sequence");
   }
+  const queueColumns = tableColumnNames(db, "session_turn_queue_v6");
+  for (const name of ["accepted_json", "dispatched_json"]) {
+    if (!queueColumns.has(name)) {
+      db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
+    }
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_sender ON session_turn_queue_v6(
+    json_extract(accepted_json, '$.origin.actorKind'),
+    json_extract(accepted_json, '$.origin.actorSessionId'),
+    json_extract(accepted_json, '$.origin.actorIncarnationId'),
+    json_extract(accepted_json, '$.origin.actorTurnId'), sequence)`);
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");
   }
 
-  if (tableExists(db, "memory_protected_objects_v6")) {
-    const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");
-    if (!protectedObjectColumns.has("role")) {
-      db.exec("ALTER TABLE memory_protected_objects_v6 ADD COLUMN role TEXT NOT NULL DEFAULT 'other' CHECK (role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'))");
-    }
-  }
-
-  if (tableExists(db, "memory_idempotency_keys_v6")) {
-    const idempotencyColumns = tableColumnNames(db, "memory_idempotency_keys_v6");
-    if (!idempotencyColumns.has("cleanup_pending_count")) {
-      db.exec("ALTER TABLE memory_idempotency_keys_v6 ADD COLUMN cleanup_pending_count INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending_count >= 0)");
-      if (idempotencyColumns.has("cleanup_required")) {
-        db.exec("UPDATE memory_idempotency_keys_v6 SET cleanup_pending_count = 1 WHERE cleanup_required = 1");
-      }
-    }
-  }
-
-  if (!targetTagStatsExisted) {
-    db.exec(`
-      INSERT INTO memory_target_tag_stats_v6 (
-        owner_type,
-        owner_id,
-        scope_type,
-        scope_id,
-        tag_type,
-        tag_value,
-        tag_type_canonical,
-        tag_value_canonical,
-        usage_count,
-        latest_entry_updated_at
-      )
-      SELECT
-        e.owner_type,
-        e.owner_id,
-        e.scope_type,
-        e.scope_id,
-        MAX(t.tag_type),
-        MAX(t.tag_value),
-        t.tag_type_canonical,
-        t.tag_value_canonical,
-        COUNT(*),
-        MAX(e.updated_at)
-      FROM memory_entry_tags_v6 AS t
-      INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
-      WHERE e.state = 'active'
-      GROUP BY e.owner_type, e.owner_id, e.scope_type, e.scope_id, t.tag_type_canonical, t.tag_value_canonical
-    `);
-  }
-
-  if (!tableColumnNames(db, "memory_entries_v6").has("source_auxiliary_session_id")) {
-    db.exec("ALTER TABLE memory_entries_v6 ADD COLUMN source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL");
-  }
-
-  if (tableExists(db, "memory_mutation_events_v6")) {
-    const mutationEventColumns = tableColumnNames(db, "memory_mutation_events_v6");
-    if (!mutationEventColumns.has("source_message_id")) {
-      db.exec("ALTER TABLE memory_mutation_events_v6 ADD COLUMN source_message_id TEXT");
-    }
-  }
-
-  if (tableExists(db, "memory_move_events_v6")) {
-    const moveEventColumns = tableColumnNames(db, "memory_move_events_v6");
-    if (!moveEventColumns.has("reason")) {
-      db.exec("ALTER TABLE memory_move_events_v6 ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
-    }
-  }
-
-  if (tableExists(db, "character_affect_events_v6")) {
-    const affectEventColumns = tableColumnNames(db, "character_affect_events_v6");
-    if (!affectEventColumns.has("family")) {
-      db.exec("ALTER TABLE character_affect_events_v6 ADD COLUMN family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other'))");
-    }
-  }
-
-  ensureAffectConversationOwners(db);
-  db.exec(CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL);
-
-}
-
-function ensureAffectConversationOwners(db: DatabaseSync): void {
-  if (tableColumnNames(db, "character_affect_events_v6").has("auxiliary_session_id")) return;
-  const tables = ["character_affect_events_v6", "character_affect_resets_v6", "character_affect_idempotency_v6",
-    "character_affect_mutations_v6", "character_affect_observations_v6"];
-  // Rebuild the connected Affect tables together so every event/reset/link ID survives.
-  let replacementSql = CREATE_V6_CHARACTER_AFFECT_TABLES_SQL.replace(/CREATE INDEX[^;]+;/g, "");
-  for (const table of tables) replacementSql = replacementSql.replaceAll(table, `${table}_replacement`);
-  db.exec(replacementSql);
-  for (const table of tables) {
-    const columns = [...tableColumnNames(db, table)].map((column) => `"${column}"`).join(", ");
-    db.exec(`INSERT INTO ${table}_replacement (${columns}) SELECT ${columns} FROM ${table};`);
-  }
-  for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${table};`);
-  for (const table of tables) db.exec(`ALTER TABLE ${table}_replacement RENAME TO ${table};`);
-  db.exec(CREATE_V6_CHARACTER_AFFECT_TABLES_SQL);
 }
 
 export function ensureV6Schema(db: DatabaseSync): void {

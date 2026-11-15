@@ -16,6 +16,8 @@ Model候補とDepthはCodex、Claude、GitHub Copilot、OpenCodeのSDK／native 
 
 ## 選択と実行
 
+通常Agentが利用する端末の選定基準・契約経路の優先順は[Sessionの選定方針](../features/session-operating-policies.md)としてcatalogとは分離して保存する。子作成前・実行設定の再選定前に方針を読み、実際の候補は宛先Provider／Workspaceの`session.get_catalog`で確認する。方針を保存しただけではcatalog、Model Availability、Session設定や実行許可は変わらない。
+
 候補の更新は選択肢の更新であり、Session migrationではない。保存済み・現在選択のmodel／Depth、入力draft、thread、実行中turn、受付済みqueueの捕捉値は変更しない。cacheから消えた現在のmodelも表示を維持する。
 
 新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合、同contextのcacheに既定modelがあれば背景更新の失敗後も利用する。cacheがなければ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelや別contextへfallbackしない。
@@ -33,8 +35,6 @@ OpenCodeのサービスIDはmodel IDの最初の`/`より前とする。サー�
 Settingsの管理画面は無効なModelも表示し、通常のModel選択肢は無効なサービス・Modelを除外する。保存済みの現在値とDepthは変更せず、現在値の表示は維持するが候補へ再挿入しない。pickerは開いた時点の無効なModelも含むSDK候補・定義をsnapshotとして保持し、表示時にだけ最新の無効設定を適用する。開いている間の無効化では候補を隠し、再有効化では同じsnapshotの候補を戻す。SDK一覧のbackground更新によるsnapshotの差し替えとは分けて扱う。
 
 新規要求の受付とMain／Auxiliary共通の実行開始前に、最新の設定でModelを検査する。保存済み・選択中のIDも例外とせず、無効なら実行前に拒否する。queue待機中に無効化された要求は開始前に失敗とし、実行中turnは停止しない。同じrequest IDの既知receiptの再取得には新規送信の検査を課さない。新規Sessionが引き継ぐ選択値や既定Modelも検査し、無効なら別Modelへfallbackしない。
-
-背景三用途のModel候補にも同じ無効設定を適用する。保存済みのModel／Depthは保持し、無効な現在値は選択不能な表示として残して修正先を案内する。背景呼出しの開始準備で最新設定を検査し、無効なら`unavailable`として開始しない。別Modelへのfallbackや、設定変更による準備済み・実行中の呼出しの取消は行わない。
 
 無効設定の検査自体はローカルの設定だけに対して行い、SDK一覧の再取得や掲載確認は要求しない。背景処理など呼出し固有のcatalog検証とは分離する。MCP経由の要求にも同じ受付・実行境界を使い、Model一覧・指定用のMCP API自体はこの設定機能に含めない。
 

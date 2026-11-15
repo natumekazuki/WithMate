@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
+import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 import { removeCompanionData } from "../../src-electron/storage/migrations/companion-removal.js";
 import { resolveOrMigrateAppDatabasePath } from "../../src-electron/storage/app-database-path.js";
 import { SyncTextBlobStore } from "../../src-electron/storage/text-blob-store.js";
@@ -52,7 +53,7 @@ async function fixture(t: TestContext, sharedAttachment = false) {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec("PRAGMA foreign_keys = ON");
-    ensureV6Schema(db);
+    db.exec(RELEASED_V6_SCHEMA_SQL);
     installReleasedLegacyAuxiliarySessionsTable(db);
     db.exec(`
       CREATE TABLE companion_groups (id TEXT PRIMARY KEY);

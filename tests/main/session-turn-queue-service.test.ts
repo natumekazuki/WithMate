@@ -40,6 +40,7 @@ function boundary() {
       return structuredClone(row);
     },
     getReceipt: async (owned, requestId) => rows.find((row) => row.incarnationId === owned.incarnationId && row.requestId === requestId) ?? null,
+    getReceiptById: async (owned, id) => rows.find((row) => row.incarnationId === owned.incarnationId && row.id === id) ?? null,
     listActive: async () => rows.filter((row) => ["queued", "starting", "running", "interrupted"].includes(row.state)),
     listReceipts: async () => ({ receipts: structuredClone(rows), nextCursor: null }),
     listPendingOwners: async () => rows.length ? [owner] : [],
@@ -83,6 +84,97 @@ function boundary() {
   };
   return { rows, store };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "外部transactionで保存済みのCoordination受付は実行中・queue編集中でも購読者へ通知し、保留解放後は再受付せず一度だけ配送する。通常receipt読取は再通知しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queue、Queue Editing、通常AgentのSession操作" }
+// fault = "外部受付を通知しない、編集中にdispatchする、再enqueueで受付を重複させる、または読取から再通知を繰り返す"
+// observable = "通知時に取得可能なreceipt ID列、保留前後のdispatch ID列、保存receipt数"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceの外部commit受付・receipt再確認とdrain"
+// lifecycle = "permanent"
+// impact = "受理済みCoordinationをQueueで確認・取消できない、編集中の予約が勝手に実行される、または外部操作が重複する"
+// distinction = "storage testは保存後の購読通知とruntime/edit holdの接続を通らず、型検査も通知欠落を検出できない。二つのin-memory状態だけで確認する"
+// @end-test-value
+test("外部commit受付は実行中とqueue編集中にも通知し既存受付を一度だけ配送する", async () => {
+  for (const mode of ["running", "editing"] as const) {
+    const { store, rows } = boundary();
+    let guarded = true;
+    const dispatched: string[] = [];
+    const observed: string[][] = [];
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded,
+      onChanged: (notified) => {
+        assert.deepEqual(notified, owner);
+        observed.push(rows.filter((row) => row.state === "queued").map((row) => row.id));
+      },
+      dispatch: async (receipt) => { dispatched.push(receipt.id); return { state: "completed" }; },
+    });
+    try {
+      if (mode === "editing") {
+        await service.enqueue(owner, captured("editable"));
+        await service.waitForPending();
+        await service.beginQueuedEdit(owner, "editable", async () => {});
+        guarded = false;
+      }
+      const input = captured("coordination");
+      input.coordination = { id: "consultation", operation: "deliver", actor: { kind: "user" } };
+      const receipt = await store.enqueue(owner, input);
+      observed.length = 0;
+      service.acceptCommittedReceipt(receipt);
+      await service.waitForPending();
+      const expectedIds = mode === "editing" ? ["editable", "coordination"] : ["coordination"];
+      assert.deepEqual(observed, [expectedIds]);
+      assert.deepEqual(dispatched, []);
+      service.reconcileKnownReceipt(receipt);
+      await service.waitForPending();
+      assert.deepEqual(observed, [expectedIds], "receipt reads do not invalidate subscribers");
+      assert.deepEqual(rows.map((row) => row.id), expectedIds);
+      if (mode === "editing") await service.cancelQueuedEdit(owner, "editable");
+      else { guarded = false; service.wake(owner.sessionId); }
+      await service.waitForPending();
+      assert.deepEqual(dispatched, expectedIds);
+      assert.deepEqual(rows.map((row) => row.state), expectedIds.map(() => "completed"));
+    } finally { await service.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "queue lockの待機中に失効したactorの新規受付と取消を、lock取得後の認可で拒否する"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 非同期検証後の有効runtime binding確認" }
+// fault = "queue lock待機前だけ認可して失効済みactorのmutationを保存する"
+// observable = "受付行数、対象receipt状態、公開操作の失効reject"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceの受付・取消lockとactor再検証"
+// lifecycle = "permanent"
+// distinction = "facadeのpreflight認可testではservice lock待機中の失効を再現しない"
+// @end-test-value
+test("queue lock取得後にactorの受付と取消権限を再検証する", async () => {
+  const { store, rows } = boundary();
+  const held = deferred<void>();
+  const entered = deferred<void>();
+  const enqueue = store.enqueue;
+  store.enqueue = async (...args) => { entered.resolve(); await held.promise; return enqueue(...args); };
+  let valid = true;
+  const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => ({ state: "completed" }) });
+  try {
+    const first = service.enqueue(owner, captured("first"));
+    await entered.promise;
+    const second = service.enqueue(owner, captured("second"), assertActor);
+    const canceled = service.cancelQueued(owner, "first", assertActor);
+    const rejectedSecond = assert.rejects(second, /binding expired/);
+    const rejectedCancel = assert.rejects(canceled, /binding expired/);
+    valid = false;
+    held.resolve();
+    await first;
+    await rejectedSecond;
+    await rejectedCancel;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.state, "queued");
+  } finally { held.resolve(); await service.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

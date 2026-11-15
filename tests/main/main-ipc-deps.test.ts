@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { WebContents } from "electron";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 import { createMainIpcRegistrationDeps } from "../../src-electron/app/main-ipc-deps.js";
 import type {
@@ -77,16 +78,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openSettingsWindow() {
         return {} as never;
       },
-      async openMemoryV6ReviewWindow() {
-        calls.push("openMemoryReview");
-        return {} as never;
-      },
       isSettingsWindow() {
         calls.push("isSettings");
-        return true;
-      },
-      isMemoryV6ReviewWindow() {
-        calls.push("isMemoryReview");
         return true;
       },
       async openCharacterEditorWindow() {
@@ -164,23 +157,12 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       getModelCatalog: () => ({ providers: [] }),
     } satisfies MainIpcCatalogDepsArgs,
     settings: {
-      getAppSettings: () =>
-        ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
+      getAppSettings: () => createDefaultAppSettings(),
       updateAppSettings: (settings) => settings,
       updateChatLayoutPreference: () => ({}) as never,
       getAppDatabaseDiagnostics: () => ({}) as never,
       scanSessionFolderCleanup: async () => ({}) as never,
       runSessionFolderCleanup: async () => ({}) as never,
-      getMemoryV6Diagnostics: () => ({}) as never,
-      installMemoryV6CliShim: () => ({}) as never,
-      uninstallMemoryV6CliShim: () => ({}) as never,
-      getMemoryV6FileUsage: () => ({}) as never,
-      exportMemoryV6EntryFiles: () => null,
-      runMemoryV6ProtectedObjectGc: () => ({}) as never,
-      searchMemoryV6Entries: () => ({ items: [] }),
-      listMemoryV6ReviewTargets: () => ({ characters: [], projects: [] }),
-      getMemoryV6Entry: () => null,
-      forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
       async resetAppDatabase() {
         return null;
       },
@@ -286,11 +268,11 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         return null;
       },
       getSessionContextTelemetry: () => null,
-      getSessionBackgroundActivity: () => null,
       resolveLiveApproval: () => {},
       resolveLiveElicitation: () => {},
       createSession: () => ({}) as never,
       updateSession: () => ({}) as never,
+      changeSessionAdditionalDirectory: () => {},
       setSessionExecutionOptions: () => { throw new Error("not used"); },
       setSessionTitle: () => { throw new Error("not used"); },
       setSessionMessageBookmark: () => { throw new Error("not used"); },
@@ -362,8 +344,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   const payload = { requestId: "flush-1", success: true };
   deps.common.acknowledgeSessionDraftFlush({ sender }, payload);
   assert.deepEqual(acknowledged, { sender, payload });
-  assert.equal(await deps.window.openMemoryV6ReviewWindow(), undefined);
-  assert.equal(deps.settings.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.settings.isSettingsWindow({} as never), true);
   assert.equal(
     await deps.window.openSessionWindow("session-1", "aux-1"),
@@ -395,8 +375,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   await deps.mate.resetMate();
   assert.deepEqual(calls, [
     "openHome",
-    "openMemoryReview",
-    "isMemoryReview",
     "isSettings",
     "openSession:session-1:aux-1",
     "getSessionWindowRestoreSet",

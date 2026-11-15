@@ -12,7 +12,7 @@ import { createDefaultAppSettings } from "../../src-shared/settings/provider-set
 
 const graphTables = ["session_graphs_v6", "session_graph_topics_v6", "session_graph_records_v6", "session_graph_relations_v6"];
 const retainedTables = ["sessions_v6", "session_messages_v6", "auxiliary_sessions", "auxiliary_session_messages", "auxiliary_session_drafts",
-  "session_turns_v6", "memory_entries_v6", "character_affect_events_v6", "characters"];
+  "session_turns_v6", "characters"];
 
 function graphFixture(db: DatabaseSync, payload: string): void {
   for (const sessionId of ["main-a", "main-b"]) {
@@ -32,23 +32,17 @@ function graphFixture(db: DatabaseSync, payload: string): void {
 function retainedFixture(db: DatabaseSync): void {
   db.exec(`
     INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character', 'Character', 'time', 'time');
-    INSERT INTO sessions_v6 (id, incarnation_id, title, state, provider_id, catalog_revision, model_id,
+    INSERT INTO sessions_v6 (id, root_session_id, incarnation_id, title, state, provider_id, catalog_revision, model_id,
       approval_mode, character_id, character_snapshot_json, created_at, updated_at, last_active_at)
-      VALUES ('main-a', 'incarnation-a', 'Main A', 'active', 'codex', 1, 'model', 'default', 'character', '{}', 'time', 'time', 'time'),
-        ('main-b', 'incarnation-b', 'Main B', 'active', 'codex', 1, 'model', 'default', NULL, NULL, 'time', 'time', 'time');
-    INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at) VALUES ('main-a', 0, 'user', 'conversation', 'time');
-    INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-      VALUES ('aux', 'main-a', 'active', 'time', 'time');
+      VALUES ('main-a', 'main-a', 'incarnation-a', 'Main A', 'active', 'codex', 1, 'model', 'default', 'character', '{}', 'time', 'time', 'time'),
+        ('main-b', 'main-b', 'incarnation-b', 'Main B', 'active', 'codex', 1, 'model', 'default', NULL, NULL, 'time', 'time', 'time');
+    INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at) VALUES ('main-a', 0, 'user', '{"text":"conversation"}', 'time');
+    INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+      VALUES ('aux', 'main-a', 'time', 'time');
     INSERT INTO auxiliary_session_messages VALUES ('aux', 0, 'user', '{"text":"aux conversation"}', NULL, 'time');
     INSERT INTO auxiliary_session_drafts VALUES ('aux', 'main-a', 'draft-incarnation', 3, 'draft', 'time');
     INSERT INTO session_turns_v6 (session_id, phase, started_at, completed_at, updated_at)
       VALUES ('main-a', 'completed', 'time', 'time', 'time');
-    INSERT INTO memory_entries_v6 (id, owner_type, owner_id, scope_type, scope_id, kind, title, body, body_sha256,
-      preview, state, source_type, source_session_id, created_at, updated_at)
-      VALUES ('memory', 'character', 'character', 'session', 'main-a', 'note', 'Memory', 'body', 'hash', 'preview', 'active', 'agent', 'main-a', 'time', 'time');
-    INSERT INTO character_affect_events_v6 (id, character_id, user_id, session_id, source_session_id, layer,
-      target_type, target_id, value_json, intensity, reason, evidence, occurred_at, idempotency_key, request_fingerprint, created_at)
-      VALUES ('affect', 'character', 'local-user', 'main-a', 'main-a', 'session', 'task', 'task', '{}', 0.5, 'reason', 'evidence', 'time', 'key', 'fingerprint', 'time');
   `);
 }
 
@@ -94,8 +88,8 @@ test("Session Graph contract initializes once and preserves other assets", () =>
     assert.deepEqual(snapshot(db, graphTables), newGraph);
     const settings = new AppSettingsStorage(dbPath);
     try {
-      settings.updateSettings({ ...settings.getSettings(), memoryGenerationEnabled: !createDefaultAppSettings().memoryGenerationEnabled });
-      assert.equal(settings.resetSettings().memoryGenerationEnabled, createDefaultAppSettings().memoryGenerationEnabled);
+      settings.updateSettings({ ...settings.getSettings(), launchAtLoginEnabled: !createDefaultAppSettings().launchAtLoginEnabled });
+      assert.equal(settings.resetSettings().launchAtLoginEnabled, createDefaultAppSettings().launchAtLoginEnabled);
     } finally {
       settings.close();
     }

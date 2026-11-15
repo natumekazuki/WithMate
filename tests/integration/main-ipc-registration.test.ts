@@ -509,7 +509,6 @@ import {
 } from "../../src-electron/ipc/register-main-ipc.js";
 import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
-  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
@@ -521,7 +520,7 @@ import {
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
-  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
   WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
@@ -532,18 +531,10 @@ import {
   WITHMATE_GET_CHARACTER_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
-  WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
-  WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
-  WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
-  WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
-  WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
-  WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
-  WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
-  WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
-  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
@@ -603,7 +594,6 @@ import {
   WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
-  WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 type Handler = (...args: unknown[]) => unknown;
@@ -751,7 +741,6 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     resolveEventWindow: () => null,
     resolveHomeWindow: () => null,
     isSettingsWindow: () => false,
-    isMemoryV6ReviewWindow: () => false,
     isFilePreviewWindow: () => false,
     getFilePreviewWindowResource: () => null,
     isFilePreviewTokenWindow: () => false,
@@ -808,7 +797,7 @@ test("steer IPCはMainとAuxiliaryのowner Windowを検証する", async () => {
   const { deps } = createDeps({
     resolveEventWindow: () => sender,
     resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
-    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1", status: "active" }),
+    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1" }),
     steerSessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
     steerAuxiliarySessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
   });
@@ -884,7 +873,6 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -900,7 +888,6 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
     displayAfterMessageIndex: null,
     createdAt: "2026-07-04T00:00:00.000Z",
     updatedAt: "2026-07-04T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }
@@ -1016,15 +1003,6 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_CHARACTERS_CHANNEL));
@@ -2772,7 +2750,6 @@ test("narrow session mutation IPC はowner windowとmutation identityを確認�
     getAuxiliarySessionStatus: async () => ({
       id: "aux-1",
       parentSessionId: "session-1",
-      status: "active",
       createdAt: "2026-07-04T00:00:00.000Z",
       incarnation: "aux-incarnation-1",
       runState: "idle",
@@ -2895,176 +2872,6 @@ test("run-session-turn IPC拒否ログは本文を含めずclient request IDを�
 });
 
 // @test-value v2
-// kind = "contract"
-// claim = "Reviewの候補取得と対象ID付き検索はpreloadから専用IPCへ接続し、Review以外のWindowを依存呼出し前に拒否し、取得errorを伝播する"
-// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review; src-shared/memory/memory-review-state.ts" }
-// fault = "新規候補APIが未配線、target filterが欠落、通常Windowが候補へアクセス、またはread failureを空結果へ置換する"
-// observable = "preload APIの返却値・serviceに届くrequest・Promise拒否と依存呼出件数"
-// observation_boundary = "public-boundary"
-// scope = "Memory Review selector and search IPC"
-// lifecycle = "permanent"
-// risk_tags = ["authorization", "privacy"]
-// distinction = "Worker/service testではElectron sender認可とpreload runtime channel配線を検証できない"
-// @end-test-value
-test("Memory Review target selector and filter IPC preserve authorization and failures", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
-  let sender = reviewWindow;
-  let targetCalls = 0;
-  let failure: Error | undefined;
-  const targets = { characters: [{ id: "character-a", name: "あやめ", iconFilePath: null, state: "active" }], projects: [] };
-  const requests: unknown[] = [];
-  const { deps } = createDeps({
-    resolveEventWindow: () => sender,
-    isMemoryV6ReviewWindow: (window: unknown) => window === reviewWindow,
-    listMemoryV6ReviewTargets: async () => { targetCalls++; if (failure) throw failure; return targets; },
-    searchMemoryV6Entries: async (request: unknown) => { requests.push(request); return { items: [] }; },
-  });
-  registerMainIpcHandlers(ipcMain, deps);
-  const api = createWithMateWindowApi({ invoke: async (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args) } as never);
-  assert.deepEqual(await api.listMemoryV6ReviewTargets(), targets);
-  const request = { query: "あやめ", characterId: "character-a", projectId: "project-a", cursor: "next", kinds: ["note" as const] };
-  assert.deepEqual(await api.searchMemoryV6Entries(request), { items: [] });
-  assert.deepEqual(requests, [request]);
-  sender = createWindowStub("http://localhost:5173/?mode=memory-review");
-  await assert.rejects(api.listMemoryV6ReviewTargets(), /Memory V6 Review IPC is only available/);
-  assert.equal(targetCalls, 1);
-  sender = reviewWindow;
-  failure = new Error("catalog read failed");
-  await assert.rejects(api.listMemoryV6ReviewTargets(), (error) => error === failure);
-});
-
-test("Memory V6 Review IPC は memory-review window からだけ呼び出せる", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => reviewWindow,
-    isMemoryV6ReviewWindow: (window: unknown) => window === reviewWindow,
-    getMemoryV6FileUsage: async () => ({ usedBytes: 0 }) as never,
-    exportMemoryV6EntryFiles: async (entryId: string) => ({ entryId, exportedCount: 1 }) as never,
-    runMemoryV6ProtectedObjectGc: async (request: { dryRun: boolean }) => ({ dryRun: request.dryRun }) as never,
-    searchMemoryV6Entries: async () => ({ items: [] }),
-    getMemoryV6Entry: async () => null,
-    forgetMemoryV6Entry: async () => ({ entryId: "mem-1", status: "not_found", reason: "user_request" }),
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  assert.deepEqual(await handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}), { usedBytes: 0 });
-  assert.deepEqual(await handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1"), {
-    entryId: "mem-1",
-    exportedCount: 1,
-  });
-  assert.deepEqual(await handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }), {
-    dryRun: true,
-  });
-  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }), { items: [] });
-  assert.equal(await handlers.get(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1"), null);
-  assert.deepEqual(await handlers.get(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1", "user_request"), {
-    entryId: "mem-1",
-    status: "not_found",
-    reason: "user_request",
-  });
-  assert.deepEqual(calls, []);
-});
-
-test("Memory V6 CLI shim IPC は Settings window からだけ呼び出せる", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => settingsWindow,
-    isSettingsWindow: (window: unknown) => window === settingsWindow,
-    installMemoryV6CliShim: async () => {
-      calls.push("install");
-      return { cliShim: { status: "installed" } };
-    },
-    uninstallMemoryV6CliShim: async () => {
-      calls.push("uninstall");
-      return { cliShim: { status: "not-installed" } };
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  assert.deepEqual(await handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
-    cliShim: { status: "installed" },
-  });
-  assert.deepEqual(await handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
-    cliShim: { status: "not-installed" },
-  });
-  assert.deepEqual(calls, ["install", "uninstall"]);
-});
-
-test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを拒否する", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const homeWindow = createWindowStub("http://localhost:5173/");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => homeWindow,
-    isSettingsWindow: () => false,
-    installMemoryV6CliShim: async () => {
-      calls.push("install");
-      return null;
-    },
-    uninstallMemoryV6CliShim: async () => {
-      calls.push("uninstall");
-      return null;
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  await assert.rejects(
-    () => handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
-    /Settings IPC is only available/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
-    /Settings IPC is only available/,
-  );
-  assert.equal(calls.includes("install"), false);
-  assert.equal(calls.includes("uninstall"), false);
-});
-
-test("Memory V6 Review protected object IPC は通常 window からの呼び出しを拒否する", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const homeWindow = createWindowStub("http://localhost:5173/");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => homeWindow,
-    isMemoryV6ReviewWindow: () => false,
-    getMemoryV6FileUsage: async () => {
-      calls.push("usage");
-      return {};
-    },
-    exportMemoryV6EntryFiles: async () => {
-      calls.push("export");
-      return null;
-    },
-    runMemoryV6ProtectedObjectGc: async () => {
-      calls.push("gc");
-      return {};
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  await assert.rejects(
-    () => handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}) as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1") as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }) as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  assert.equal(calls.includes("usage"), false);
-  assert.equal(calls.includes("export"), false);
-  assert.equal(calls.includes("gc"), false);
-});
-
-// @test-value v2
 // kind = "security"
 // claim = "Session Folder cleanupのscan/runはSettings以外と不正入力をservice前に拒否し、正常なrenderer要求と結果を保持する"
 // oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
@@ -3178,9 +2985,22 @@ test("single session delete IPC は Home / Settings / 対象 Session window か�
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Home・Settings・削除対象SessionのいずれでもないWindowからのSession削除IPCを拒否し、削除処理へ委譲しない"
+// oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionDeleteSender" }
+// fault = "無関係なWindowからの削除要求を許可するか、拒否してもdeleteSessionを実行する"
+// observable = "登録済み削除IPC handlerの拒否errorとdeleteSession:session-1の呼出記録の不在"
+// observation_boundary = "public-boundary"
+// scope = "Session削除IPCのWindow認可と削除委譲"
+// lifecycle = "permanent"
+// impact = "無関係なWindowからSessionを削除されることを防ぐ"
+// distinction = "型検査では実行時の送信Windowと認可前の削除副作用を判定できない"
+// risk_tags = ["authorization", "irreversible-data-loss"]
+// @end-test-value
 test("single session delete IPC は許可されていない window からの呼び出しを拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
-  const otherWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=other-window");
   const homeWindow = createWindowStub("http://localhost:5173/");
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
   const { deps, calls } = createDeps({
@@ -3546,11 +3366,11 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
 // @test-value v2
 // kind = "contract"
 // claim = "Auxiliary mutation/run IPCは対象外windowからdepsへ到達させない"
-// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts" }
-// fault = "Home、Settings、Diff、MonitorからAuxiliaryの作成・更新・終了・実行・取消を許可する"
-// observable = "各対象外Windowからの5操作のrejectionとmutationCallsが空であること"
+// oracle = { type = "contract", ref = "src-electron/ipc/auxiliary.ts: assertAuxiliaryOwnerWindowSender" }
+// fault = "Home、Settings、Diff、MonitorからAuxiliaryの作成・更新・実行・取消を許可する"
+// observable = "各対象外Windowからの4操作のrejectionとmutationCallsが空であること"
 // observation_boundary = "public-boundary"
-// scope = "scripts/tests/main-ipc-registration.test.ts"
+// scope = "auxiliary-mutation-ipc-owner-authorization"
 // lifecycle = "permanent"
 // @end-test-value
 test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {
@@ -3569,10 +3389,6 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
     },
     updateAuxiliarySession: async () => {
       mutationCalls.push("updateAuxiliarySession");
-      return auxiliarySession;
-    },
-    closeAuxiliarySession: async () => {
-      mutationCalls.push("closeAuxiliarySession");
       return auxiliarySession;
     },
     runAuxiliarySessionTurn: async () => {
@@ -3604,10 +3420,6 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession) as Promise<unknown>,
-      /Auxiliary session IPC is only available/,
-    );
-    await assert.rejects(
-      () => handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
       /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
@@ -3647,15 +3459,15 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
     resolveEventWindow: () => homeWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
     listAuxiliarySessions: async () => [createAuxiliarySessionStub({ messages: undefined, composerDraft: undefined })],
-    getActiveAuxiliarySession: async () => {
-      detailReadCalls.push("getActiveAuxiliarySession");
+    getLatestAuxiliarySession: async () => {
+      detailReadCalls.push("getLatestAuxiliarySession");
       return auxiliarySession;
     },
     getAuxiliarySession: async () => {
       detailReadCalls.push("getAuxiliarySession");
       return auxiliarySession;
     },
-    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, status: auxiliarySession.status, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
+    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
   });
 
   registerMainIpcHandlers(ipcMain, deps);
@@ -3665,7 +3477,7 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
     1,
   );
   await assert.rejects(
-    () => handlers.get(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    () => handlers.get(WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
     /Auxiliary session IPC is only available/,
   );
   await assert.rejects(
@@ -3675,7 +3487,17 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
   assert.deepEqual(detailReadCalls, []);
 });
 
-test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Home用Auxiliary一覧IPCはMainが確定したopen parent範囲の軽量summaryをそのまま返す"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#live-run-delivery" }
+// fault = "renderer指定scopeや別のdetail取得経路を用いて対象外会話やtranscriptをHomeへ渡す"
+// observable = "登録済IPC handlerの返却summary、Main側一覧の呼出記録、summaryのmessages/composerDraft不在"
+// observation_boundary = "public-boundary"
+// scope = "home-auxiliary-summary-ipc"
+// lifecycle = "permanent"
+// @end-test-value
+test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の summary だけを返す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const {
     messages: _messages,
@@ -3684,8 +3506,8 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   } = createAuxiliarySessionStub();
   const calls: string[] = [];
   const { deps } = createDeps({
-    listOpenActiveAuxiliarySessionSummaries: async () => {
-      calls.push("listOpenActiveAuxiliarySessionSummaries");
+    listOpenAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenAuxiliarySessionSummaries");
       return [summary];
     },
   });
@@ -3693,10 +3515,10 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.deepEqual(
-    await handlers.get(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    await handlers.get(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
     [summary],
   );
-  assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
+  assert.deepEqual(calls, ["listOpenAuxiliarySessionSummaries"]);
   assert.equal("messages" in summary, false);
   assert.equal("composerDraft" in summary, false);
 });
@@ -3735,64 +3557,4 @@ test("Auxiliary update IPC は payload parent と既存 parent の不一致を�
     /Auxiliary Session parent mismatch/,
   );
   assert.equal(calls.includes("updateAuxiliarySession"), false);
-});
-
-test("Memory V6 Review IPC は通常 window からの呼び出しを拒否する", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const homeWindow = createWindowStub("http://localhost:5173/?mode=settings");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => homeWindow,
-    isMemoryV6ReviewWindow: () => false,
-    searchMemoryV6Entries: async () => {
-      calls.push("search");
-      return { items: [] };
-    },
-    getMemoryV6Entry: async () => {
-      calls.push("get");
-      return null;
-    },
-    forgetMemoryV6Entry: async () => {
-      calls.push("forget");
-      return { entryId: "mem-1", status: "not_found", reason: "user_request" };
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  await assert.rejects(
-    () => handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }) as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1") as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1", "privacy") as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  assert.equal(calls.includes("search"), false);
-  assert.equal(calls.includes("get"), false);
-  assert.equal(calls.includes("forget"), false);
-});
-
-test("Memory V6 Review IPC は通常 window のURLがmemory-reviewでも拒否する", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const spoofedHomeWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
-  const { deps, calls } = createDeps({
-    resolveEventWindow: () => spoofedHomeWindow,
-    isMemoryV6ReviewWindow: () => false,
-    searchMemoryV6Entries: async () => {
-      calls.push("search");
-      return { items: [] };
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  await assert.rejects(
-    () => handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }) as Promise<unknown>,
-    /Memory V6 Review IPC is only available/,
-  );
-  assert.equal(calls.includes("search"), false);
 });

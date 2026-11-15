@@ -145,6 +145,10 @@ function resultFor(name, args) {
       sequence: 1, state: "queued", captured: { request, attachments: [], provider: mainSession.provider, workspacePath: mainSession.workspacePath },
       turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: now, updatedAt: now };
   }
+  if (name === "executeCoordination") {
+    if (args[0]?.operation === "list") return { items: [], total: 0, nextOffset: null };
+    throw new Error("The composer benchmark does not contain Coordination records.");
+  }
   if (name.startsWith("list") || name.startsWith("search")) return [];
   if (name.startsWith("get")) return null;
   if (name.startsWith("subscribe") || name === "onSessionTurnUpdated" || name === "onSessionTurnQueueChanged") return () => {};
@@ -174,6 +178,7 @@ const names = [
   "subscribeSessionDraftFlushRequest",
   "subscribeSessionDraftFlushRelease",
   "subscribeAppSettings",
+  "subscribeOpenCoordination", "subscribeCoordinationChanged", "executeCoordination",
   "getAuxiliaryDraft", "saveAuxiliaryDraft", "getAuxiliarySessionStatus",
   "acknowledgeSessionDraftFlush",
   "getConversationPage", "searchConversation", "listConversationNavigator",

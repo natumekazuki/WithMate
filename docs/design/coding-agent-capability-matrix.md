@@ -16,7 +16,6 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | assistant textのstreaming | 対応 | 対応 | 対応 | 対応 | 確定結果と実行中投影を区別する |
 | command・操作結果・変更差分 | 対応 | 対応 | 対応 | 操作結果のみ、artifact差分なし | 共通のoperationTimeline、応答Details、Git差分表示へ投影する |
 | app内の承認・elicitation | 承認・permissions・質問・MCP elicitationに対応 | 対応 | 承認・質問に対応 | 承認・form質問に対応 | 元requestとの対応を保持し、同一turnの要求を共通pending UIで直列処理する。OpenCodeの未対応fieldは拒否する |
-| Memory・Affect MCP | 対応 | 対応 | 対応 | managed HTTP MCP | 通常turn内で既存application serviceを使う。Affectの専用post-turn評価、通常Memoryの背景抽出は行わない |
 | 実行中の追加入力 | 対応 | 未対応 | 未対応 | 未対応 | Codexの現在turnへexpectedTurnId付きturn/steerを送る。terminal後・turn不一致では拒否する |
 | background task snapshot | UI表示なし | 対応 | UI表示なし | UI表示なし | CopilotのTasks tabに現在のsessionのsnapshotを表示する |
 | usage・quota・context情報 | turn usage、契約quotaの定期取得・Monitor／Action Dock表示 | 取得可能な情報を表示 | token／cache usage、契約quotaの定期取得・Monitor／Action Dock表示 | token／context、OpenCode Go枠の定期取得・Monitor／Action Dock表示 | 契約残量とtoken消費を混同しない。ClaudeのAPI換算額は実請求額として表示しない。OpenCodeの取得不能を残量0や100%へ変換しない |

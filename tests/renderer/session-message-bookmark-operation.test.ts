@@ -18,12 +18,12 @@ function setup() {
     threadId: "thread", messages: [{ role: "assistant", text: "Main saved response" }], stream: [],
   };
   let auxiliary: AuxiliarySession = {
-    id: "auxiliary", parentSessionId: "main", status: "active", runState: "running", title: "Auxiliary",
+    id: "auxiliary", parentSessionId: "main", runState: "running", title: "Auxiliary",
     provider: "codex", catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never",
     codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
     threadId: "aux-thread", composerDraft: "",
     messages: [{ role: "user", text: "Auxiliary saved prompt" }], displayAfterMessageIndex: null,
-    createdAt: "generation-1", updatedAt: "2026-09-27", closedAt: "",
+    createdAt: "generation-1", updatedAt: "2026-09-27",
   };
   const commands: unknown[] = [];
   let wait = Promise.resolve();
@@ -86,7 +86,7 @@ test("実行中でもMain/Auxiliaryのsource会話へBookmarkを付与・解除�
 // kind = "invariant"
 // claim = "Bookmarkのread-only制限とAuxiliary owner照合は実行中許可後も維持する"
 // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md" }
-// fault = "read-onlyで操作を提供する、別親や閉じたAuxiliary・本文不一致のsourceへ保存する"
+// fault = "read-onlyで操作を提供する、別親Auxiliaryや本文不一致のsourceへ保存する"
 // observable = "handlerの未提供と不正source操作後のAPI呼出数"
 // observation_boundary = "public-boundary"
 // scope = "message-bookmark-owner-guard"
@@ -100,9 +100,7 @@ test("Bookmarkはread-onlyと別owner・置換messageを更新しない", async 
   const target = view.target("auxiliary");
   view.auxiliary = { ...view.auxiliary, parentSessionId: "other-parent" };
   await createMessageBookmarkHandler(view.input())!(target);
-  view.auxiliary = { ...view.auxiliary, parentSessionId: "main", status: "closed" };
-  await createMessageBookmarkHandler(view.input())!(target);
-  view.auxiliary = { ...view.auxiliary, status: "active", messages: [{ role: "user", text: "replacement" }] };
+  view.auxiliary = { ...view.auxiliary, parentSessionId: "main", messages: [{ role: "user", text: "replacement" }] };
   await createMessageBookmarkHandler(view.input())!(target);
   assert.deepEqual(view.commands, []);
 });

@@ -8,6 +8,7 @@ import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from 
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
@@ -17,7 +18,6 @@ import type {
   SetSessionTitleRequest,
   SetSessionTitleResult,
 } from "../session/session-mutation-contract.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../memory/session-memory-state.js";
 import type { ChatLayoutPreferenceUpdate } from "../settings/chat-layout-preference.js";
 import type { AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "../auxiliary/auxiliary-draft-contract.js";
 import type {
@@ -34,8 +34,6 @@ import type {
 import type { AppBootStatus } from "../window/app-boot-state.js";
 import type { WorkspaceDirectoryValidationResult } from "../window/workspace-directory-validation.js";
 import type { AppDatabaseDiagnostics } from "../window/app-database-diagnostics-state.js";
-import type { MemoryV6Diagnostics } from "../memory/memory-diagnostics-state.js";
-import type { MemoryV6ReviewApi } from "../memory/memory-review-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -153,7 +151,6 @@ export type WithMateWindowNavigationApi = {
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
-  openMemoryV6ReviewWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openSessionFilePreviewWindow(
@@ -243,8 +240,11 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
+  changeSessionAdditionalDirectory(request: ChangeSessionAdditionalDirectoryRequest): Promise<void>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
+  promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): Promise<SessionSummary>;
+  getCrewDeletionStatus(sessionId: string, incarnationId: string): Promise<import("../session/session-crew-deletion.js").CrewDeletionStatus>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;
@@ -277,8 +277,8 @@ export type WithMateWindowSessionApi = {
 
 export type WithMateWindowAuxiliaryApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
-  listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
-  getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
+  listOpenAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
+  getLatestAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): Promise<AuxiliaryDraftSaveResult>;
@@ -291,7 +291,6 @@ export type WithMateWindowAuxiliaryApi = {
   setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
-  closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
   steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
@@ -301,10 +300,6 @@ export type WithMateWindowObservabilityApi = {
   reportRendererLog(input: RendererLogInput): void;
   getProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
-  getSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-  ): Promise<SessionBackgroundActivityState | null>;
   listOpenSessionWindowIds(): Promise<string[]>;
 };
 
@@ -315,9 +310,6 @@ export type WithMateWindowSettingsApi = {
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
   runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
-  getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
-  installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
-  uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
   deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
 };
@@ -368,13 +360,6 @@ export type WithMateWindowSubscriptionApi = {
   subscribeAuxiliarySessionSelection(listener: (payload: AuxiliarySessionSelectionPayload) => void): () => void;
   subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
   subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;
-  subscribeSessionBackgroundActivity(
-    listener: (
-      sessionId: string,
-      kind: SessionBackgroundActivityKind,
-      state: SessionBackgroundActivityState | null,
-    ) => void,
-  ): () => void;
   subscribeSessionGraph(listener: (sessionId: string) => void): () => void;
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
@@ -406,8 +391,9 @@ export type WithMateWindowApi =
   & { isClipboardFileBacked(file: unknown): boolean }
   & WithMateHtmlPreviewApi
   & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
+  & import("../coordination/coordination-window-contract.js").CoordinationWindowApi
+  & import("../session/session-execution-window-contract.js").SessionExecutionWindowApi
   & WithMateWindowNavigationApi
-  & MemoryV6ReviewApi
   & WithMateWindowCatalogApi
   & WithMateWindowAuxiliaryApi
   & WithMateWindowSessionApi

@@ -52,6 +52,9 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
   const opened: string[] = [];
   let windowResponse: Promise<void> = Promise.resolve();
   const api: Partial<WithMateWindowApi> = {
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async (id) => saved.find((session) => session.id === id) ?? null,
     listCharacters: async () => [{
       id: "mia", name: "Mia", description: "", iconFilePath: "", state: "active",
       theme: { main: "#6f8cff", sub: "#6fb8c7" }, createdAt: "", updatedAt: "", archivedAt: null,

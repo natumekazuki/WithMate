@@ -20,7 +20,6 @@ import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSe
 import { HomeSettingsContent, type HomeSettingsContentProps } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { buildSettingsCommandHandlers } from "../../src/settings/settings-command-handlers.js";
 import { buildSettingsDraftHandlers } from "../../src/settings/settings-draft-handlers.js";
@@ -65,20 +64,12 @@ describe("HomeSettingsContent", () => {
     providerSettingRows?: typeof providerSettingRows;
     settingsFeedback?: string;
     settingsErrors?: ReadonlyMap<string, string>;
-    memoryV6Diagnostics?: MemoryV6Diagnostics | null;
   };
 
   const buildSettingsContent = (params?: RenderSettingsParams) => (
     <HomeSettingsContent
-      modelCatalog={modelCatalog}
-      onChangeBackgroundPurpose={noOp}
-      onChangeMemoryRecordingFrequencies={noOp}
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
-      memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
-      memoryV6DiagnosticsLoadStatus="loaded"
-      memoryV6DiagnosticsLoadError=""
-      onRetryMemoryV6Diagnostics={noOp}
       appSettingsLoadStatus="loaded"
       settingsDraftLoaded={true}
       appSettingsLoadError=""
@@ -93,17 +84,14 @@ describe("HomeSettingsContent", () => {
       deletingOldSessions={false}
       onChangeAutoCollapseActionDockOnSend={noOp}
       onChangeCharacterDefinitionEnabled={noOp}
-      onChangeCharacterAffectContextEnabled={noOp}
-      onChangeConversationTimingEnabled={noOp}
+      onChangeCurrentDateEnabled={noOp}
       onChangeScrollToLatestOnSend={noOp}
       onChangePreviewWheelZoomStep={noOp}
       onChangeLaunchAtLoginEnabled={noOp}
       onChangeSessionTurnNotificationEnabled={noOp}
       onChangeSessionApprovalNotificationEnabled={noOp}
       onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}
-      onChangeToolCallPresenceEnabled={noOp}
       onChangeKeyboardShortcuts={noOp}
-      onChangeMemoryFileQuotaMegabytes={noOp}
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
@@ -116,9 +104,6 @@ describe("HomeSettingsContent", () => {
       onBrowseProviderInstructionRelativePath={noOp}
       onOpenAppLogFolder={noOp}
       onOpenCrashDumpFolder={noOp}
-      onOpenMemoryV6Review={noOp}
-      onInstallMemoryV6CliShim={noOp}
-      onUninstallMemoryV6CliShim={noOp}
       onDeleteSessionsLastActiveBefore={noOp}
       onSaveSettings={noOp}
     />
@@ -168,25 +153,6 @@ describe("HomeSettingsContent", () => {
     });
   });
 
-  const shimDiagnostics: MemoryV6Diagnostics = {
-    generatedAt: "2026-10-25T00:00:00.000Z",
-    runtime: {
-      status: "running",
-      applicationInstanceId: "test-instance",
-      runtimeGenerationId: "test-generation",
-      buildChannel: "installed",
-      discoveryPublished: true,
-    },
-    cliShim: {
-      platform: "darwin",
-      commandName: "withmate-memory",
-      supported: true,
-      status: "installed",
-      pathContainsShimDirectory: true,
-    },
-    lastErrors: [],
-  };
-
   async function withSettingsDom(check: (container: HTMLElement, root: Root) => Promise<void>) {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const previousWindow = globalThis.window;
@@ -210,91 +176,86 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Settingsの親子groupは独立開閉でき、別sectionの編集後も子の開閉・入力途中・背景設定draftを保持して既存Saveへ渡す"
+  // claim = "Settingsの親section開閉と別sectionのdraft更新を挟んでも、子disclosure状態とprovider入力DOM・選択・draftを保持し、開閉だけでは保存しない"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
-  // fault = "親の開閉で子の開閉や入力途中を失うか、別sectionの更新で開閉を巻き戻すか、開閉だけで保存する"
-  // observable = "親子のopen状態、再open後の同じselect/textareaと選択範囲・値、Save呼出回数とpayload"
+  // fault = "親を閉じて子を再生成し入力や選択・開閉を失うか、別section更新でdraftを巻き戻すか、開閉時に保存する"
+  // observable = "Provider File SettingsとNotificationsのopen、provider入力のDOM同一性・選択範囲・値、Save回数とpayload"
   // observation_boundary = "component-behavior"
-  // scope = "Settings section disclosure and shared draft"
+  // scope = "Settings disclosureをまたぐprovider入力とPrompt Context draft保持"
   // lifecycle = "permanent"
-  // impact = "閲覧範囲の整理で未保存の設定を失うか、意図せず保存したと誤認させる"
-  // distinction = "native disclosure自体でなく、Settingsの再renderと保存結線をまたぐ編集保持を確認する"
+  // distinction = "provider入力値を持つdraftから開始し、enable編集と別section更新を挟んだ保持を確認する。テキスト入力event自体の再現ではない"
   // @end-test-value
-  it("sectionを個別に閉じても背景設定を保持してSaveへ渡す", async () => {
+  it("section開閉と別section編集を挟んでもprovider入力と子disclosureを保持してSaveへ渡す", async () => {
     await withSettingsDom(async (container, root) => {
       let saved: ReturnType<typeof createDefaultAppSettings> | undefined;
       let saves = 0;
       function View() {
-        const [draft, setDraft] = useState(createDefaultAppSettings());
-        const changeBackgroundPurpose: HomeSettingsContentProps["onChangeBackgroundPurpose"] = (purpose, value) => setDraft((current) => ({
-          ...current, backgroundExecutionSettings: { ...current.backgroundExecutionSettings, [purpose]: value },
-        }));
+        const [draft, setDraft] = useState<ReturnType<typeof createDefaultAppSettings>>(() => {
+          const defaults = createDefaultAppSettings();
+          return {
+            ...defaults,
+            codingProviderSettings: {
+              ...defaults.codingProviderSettings,
+              codex: { ...defaults.codingProviderSettings.codex, skillRootPath: "C:/provider-config" },
+            },
+          };
+        });
+        const handlers = buildSettingsDraftHandlers({ setSettingsDraft: setDraft });
         return React.cloneElement(buildSettingsContent(), {
+          ...handlers,
           settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(modelCatalog, draft),
           settingsDirty: JSON.stringify(draft) !== JSON.stringify(createDefaultAppSettings()),
-          onChangeBackgroundPurpose: changeBackgroundPurpose,
-          onChangeToolCallPresenceEnabled: (enabled: boolean) => setDraft((current) => ({ ...current, toolCallPresenceEnabled: enabled })),
           onSaveSettings: () => { saves++; saved = structuredClone(draft); },
         });
       }
       await act(async () => root.render(<View />));
       const sections = [...container.querySelectorAll<HTMLDetailsElement>("details.settings-section-card")];
-      assert.deepEqual(sections.map((section) => section.querySelector("summary")?.textContent), [
-        "App", "Prompt Context", "Coding Agent Providers", "Background Execution", "Diagnostics", "Repository Glossary", "Storage Maintenance", "Help",
-      ]);
-      assert.ok(sections.every((section) => section.open));
-      const section = (title: string) => sections.find((entry) => entry.querySelector("summary")?.textContent === title)!;
-      const background = section("Background Execution");
-      const target = [...background.querySelectorAll<HTMLDetailsElement>(".settings-background-purpose")]
-        .find((entry) => entry.querySelector("summary")?.textContent === "Target Memory")!;
-      const instructions = target.querySelector<HTMLDetailsElement>("details.settings-subsection")!;
-      const textarea = instructions.querySelector("textarea")!;
-      textarea.setSelectionRange(3, 9);
-      const codex = section("Coding Agent Providers").querySelector<HTMLDetailsElement>("details.settings-provider-card")!;
+      const section = (title: string) => {
+        const found = sections.find((entry) => entry.querySelector("summary")?.textContent === title);
+        assert.ok(found);
+        return found;
+      };
+      const providers = section("Coding Agent Providers");
+      const codex = providers.querySelector<HTMLDetailsElement>("details.settings-provider-card")!;
       const fileSettings = codex.querySelector<HTMLDetailsElement>("details.settings-provider-file-settings")!;
       const notifications = section("App").querySelector<HTMLDetailsElement>("details.settings-subsection")!;
-      const provider = background.querySelector<HTMLSelectElement>('[aria-label="Target Memory Provider"]')!;
+      const input = fileSettings.querySelector<HTMLInputElement>('input[type="text"]')!;
+      assert.ok(input);
+      await act(async () => codex.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+      input.setSelectionRange(3, 9);
       await act(async () => {
-        provider.value = "codex";
-        provider.dispatchEvent(new window.Event("change", { bubbles: true }));
-      });
-      await act(async () => {
-        instructions.querySelector("summary")!.click();
-        target.querySelector("summary")!.click();
         fileSettings.querySelector("summary")!.click();
         codex.querySelector("summary")!.click();
+        providers.querySelector("summary")!.click();
         notifications.querySelector("summary")!.click();
-        background.querySelector("summary")!.click();
         section("App").querySelector("summary")!.click();
       });
-      assert.equal(background.open, false);
+      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-current-date")!.click());
+      assert.equal(providers.open, false);
       assert.equal(section("App").open, false);
       assert.equal(section("Prompt Context").open, true);
-      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-tool-call-presence")!.click());
-      assert.equal(background.open, false);
-      assert.equal(section("App").open, false);
-      await act(async () => background.querySelector("summary")!.click());
-      assert.equal(background.open, true);
-      assert.equal(target.open, false);
-      assert.equal(instructions.open, false);
+      await act(async () => {
+        providers.querySelector("summary")!.click();
+        section("App").querySelector("summary")!.click();
+      });
       assert.equal(codex.open, false);
       assert.equal(fileSettings.open, false);
       assert.equal(notifications.open, false);
       await act(async () => {
-        target.querySelector("summary")!.click();
-        instructions.querySelector("summary")!.click();
+        codex.querySelector("summary")!.click();
+        fileSettings.querySelector("summary")!.click();
       });
-      assert.equal(instructions.querySelector("textarea"), textarea);
-      assert.equal(textarea.selectionStart, 3);
-      assert.equal(textarea.selectionEnd, 9);
-      assert.equal(background.querySelector('[aria-label="Target Memory Provider"]'), provider);
-      assert.equal(provider.value, "codex");
-      assert.equal(background.querySelector<HTMLSelectElement>('[aria-label="Target Memory Model"]')!.value, "gpt-5.4");
+      assert.equal(fileSettings.querySelector('input[type="text"]'), input);
+      assert.equal(input.value, "C:/provider-config");
+      assert.equal(input.selectionStart, 3);
+      assert.equal(input.selectionEnd, 9);
       assert.equal(saves, 0);
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!.click());
       assert.equal(saves, 1);
-      assert.equal(saved?.backgroundExecutionSettings["target-memory"].selection?.providerId, "codex");
-      assert.equal(saved?.toolCallPresenceEnabled, false);
+      assert.equal(saved?.codingProviderSettings.codex.skillRootPath, "C:/provider-config");
+      assert.equal(saved?.codingProviderSettings.codex.enabled, false);
+      assert.equal(saved?.currentDateEnabled, false);
     });
   });
 
@@ -326,10 +287,10 @@ describe("HomeSettingsContent", () => {
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
-  // impact = "ユーザーが4つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // impact = "ユーザーが2つの prompt context の設定面を見つけられないか、既定状態を判断できない"
   // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
   // @end-test-value
-  it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
+  it("Prompt Context に2項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
     const promptContextSection = Array.from(document.querySelectorAll("details.settings-section-card"))
@@ -340,9 +301,7 @@ describe("HomeSettingsContent", () => {
 
     const promptContextLabels = [
       "Character Definition Snapshot",
-      "Character Affect Context",
-      "Conversation Timing",
-      "Tool Call Presence",
+      "Current Date",
     ];
     const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
     assert.equal(promptContextRows.length, promptContextLabels.length);
@@ -441,22 +400,6 @@ describe("HomeSettingsContent", () => {
     const html = renderSettings();
     assert.ok(!html.includes("Mate を初期化"));
     assert.ok(!html.includes("保存済みの Mate の状態を破壊的に初期化する"));
-  });
-
-  it("削除対象の Settings surface は表示しない", () => {
-    const html = renderSettings();
-
-    assert.ok(!html.includes("Provider Instruction Sync"));
-    assert.ok(!html.includes("Write Mode"));
-    assert.ok(!html.includes("Fail Policy"));
-    assert.ok(!html.includes("Mate Embedding"));
-    assert.ok(!html.includes("Mate Memory Generation"));
-    assert.ok(!html.includes("Mate Growth を手動適用"));
-    assert.ok(!html.includes("Mate Growth Settings"));
-    assert.ok(!html.includes("最近の Growth Event"));
-    assert.ok(!html.includes("settings-character-section"));
-    assert.ok(!html.includes("Save Character"));
-    assert.ok(!html.includes("character-notes.md"));
   });
 
   // @test-value v2
@@ -579,10 +522,10 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Settings操作は設定・Session更新、native picker、CLI shimの実際の競合だけを排他し、独立した導線と日付編集を維持する"
+  // claim = "Settings操作は設定・Session更新、native pickerの実際の競合だけを排他し、独立した導線と日付編集を維持する"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/settings-ui.md#runtime-policy" }
   // fault = "保存とSession削除の競合を許可する、独立操作を停止する、重複要求を受け付ける、または競合待ちbuttonを実行中として通知する"
-  // observable = "設定保存・picker・Session削除・CLI shimの各操作buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、Session削除日付の編集可否、完了後の解除"
+  // observable = "設定保存・picker・Session削除の各操作buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、Session削除日付の編集可否、完了後の解除"
   // observation_boundary = "component-behavior"
   // scope = "HomeSettingsContent action conflicts"
   // lifecycle = "permanent"
@@ -592,13 +535,10 @@ describe("HomeSettingsContent", () => {
   it("操作の競合範囲だけをdisabledにし、実行したbuttonだけをbusyにする", async () => {
     const updates = ["Save Settings", "Delete"];
     const dialogs = ["Browse"];
-    const shim = ["Install CLI Shim", "Uninstall CLI Shim"];
     const cases = [
       { label: "Save Settings", blocked: updates },
       { label: "Delete", blocked: updates },
       { label: "Browse", blocked: dialogs },
-      { label: "Install CLI Shim", blocked: shim },
-      { label: "Uninstall CLI Shim", blocked: shim },
     ];
     for (const scenario of cases) {
       await withSettingsDom(async (container, root) => {
@@ -608,13 +548,11 @@ describe("HomeSettingsContent", () => {
           calls += 1;
           return new Promise<void>((resolve) => { release = resolve; });
         };
-        await act(async () => root.render(React.cloneElement(buildSettingsContent({ memoryV6Diagnostics: shimDiagnostics }), {
+        await act(async () => root.render(React.cloneElement(buildSettingsContent({ }), {
           settingsDirty: true,
           sessionCleanupCutoffDate: "2026-01-01",
           onSaveSettings: pending,
           onDeleteSessionsLastActiveBefore: pending,
-          onInstallMemoryV6CliShim: pending,
-          onUninstallMemoryV6CliShim: pending,
           onBrowseProviderSkillRootPath: pending,
           onBrowseProviderSkillRelativePath: pending,
           onBrowseProviderInstructionRelativePath: pending,
@@ -643,177 +581,6 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "CLI shim、Logs、Memory Review、保存を並行実行でき、別要求の完了でbusyやshimの失敗理由を失わず、保存中の新しいdraftと失敗後の再試行を維持する"
-  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/settings-ui.md#interaction" }
-  // fault = "独立callbackを呼ばない、別要求の終了でbusyや失敗理由を消す、保存で後続編集を巻き戻す、または失敗後の再試行を止める"
-  // observable = "実command handlerを接続したcomponentのcallback回数、各buttonのbusy、error feedback、編集checkboxとUnsaved Changes、失敗後の再実行"
-  // observation_boundary = "component-behavior"
-  // scope = "HomeSettingsContent concurrent action lifecycle"
-  // lifecycle = "permanent"
-  // impact = "遅い診断操作でも設定編集と回復を継続でき、編集中の値を保護する"
-  // distinction = "command handler単体では観測できない同時pendingとcomponentのbusy解除・編集接続を一つの遅延/失敗scenarioで確認する"
-  // @end-test-value
-  it("独立操作の完了と失敗を分離し、並行保存中の新しいdraftを保持する", async () => {
-    await withSettingsDom(async (container, root) => {
-      let shimCalls = 0;
-      let logCalls = 0;
-      let reviewCalls = 0;
-      let rejectShim!: (error: Error) => void;
-      let finishShim!: () => void;
-      let finishLogs!: () => void;
-      let finishReview!: () => void;
-      let finishSave!: () => void;
-      let currentDraft = { ...settingsDraft, launchAtLoginEnabled: true };
-      const api = {
-        installMemoryV6CliShim: () => {
-          shimCalls += 1;
-          return new Promise<MemoryV6Diagnostics>((resolve, reject) => {
-            rejectShim = reject;
-            finishShim = () => resolve(shimDiagnostics);
-          });
-        },
-        openAppLogFolder: () => {
-          logCalls += 1;
-          return new Promise<void>((resolve) => { finishLogs = resolve; });
-        },
-        updateAppSettings: (saved: typeof settingsDraft) => new Promise<typeof settingsDraft>((resolve) => {
-          finishSave = () => resolve(saved);
-        }),
-      } as WithMateWindowApi;
-      function Harness() {
-        const [draft, setDraft] = useState(currentDraft);
-        const [saved, setSaved] = useState(settingsDraft);
-        const { settingsFeedback: feedback, settingsErrors, setSettingsFeedback: setFeedback, clearSettingsFeedback } = useSettingsFeedback();
-        currentDraft = draft;
-        const commands = buildSettingsCommandHandlers({
-          getApi: () => api,
-          persistedSettingsDraft: draft,
-          getPersistedSettingsDraft: () => currentDraft,
-          setAppSettings: setSaved,
-          setSettingsDraft: setDraft,
-          setSettingsFeedback: setFeedback,
-          setMemoryV6Diagnostics: noOp,
-        });
-        return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback: feedback, settingsErrors, memoryV6Diagnostics: shimDiagnostics }), {
-          ...commands,
-          settingsDirty: JSON.stringify(draft) !== JSON.stringify(saved),
-          ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }),
-          onOpenMemoryV6Review: () => {
-            reviewCalls += 1;
-            return new Promise<void>((resolve) => { finishReview = resolve; });
-          },
-        });
-      }
-      await act(async () => root.render(<Harness />));
-      const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
-      const install = button("Install CLI Shim");
-      const logs = button("Open Logs");
-      const review = button("Review Memory");
-      const save = button("Save Settings");
-      const shimFailure = () => container.querySelector('[aria-label="Install CLI Shim error details"] p')?.textContent;
-      await act(async () => { install.click(); install.click(); logs.click(); review.click(); save.click(); });
-      assert.equal(shimCalls, 1);
-      assert.equal(logCalls, 1);
-      assert.equal(reviewCalls, 1);
-      for (const control of [install, logs, review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
-      const launch = container.querySelector<HTMLInputElement>('.settings-section-toggle input[type="checkbox"]')!;
-      await act(async () => launch.click());
-      assert.equal(launch.checked, false);
-      await act(async () => rejectShim(new Error("CLI shim test failure")));
-      assert.equal(install.disabled, false);
-      assert.equal(install.getAttribute("aria-busy"), "false");
-      assert.equal(shimFailure(), "CLI shim test failure");
-      for (const control of [logs, review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
-      await act(async () => finishLogs());
-      assert.equal(logs.disabled, false);
-      assert.equal(shimFailure(), "CLI shim test failure");
-      for (const control of [review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
-      assert.equal(launch.checked, false);
-      await act(async () => { finishReview(); finishSave(); });
-      assert.equal(launch.checked, false);
-      assert.ok(container.querySelector(".settings-dirty-state"));
-      assert.equal(save.disabled, false);
-      assert.equal(shimFailure(), "CLI shim test failure");
-      await act(async () => install.click());
-      assert.equal(shimCalls, 2);
-      await act(async () => rejectShim(new Error("CLI shim retry failure")));
-      assert.equal(shimFailure(), "CLI shim retry failure");
-      await act(async () => install.click());
-      await act(async () => finishShim());
-      assert.equal(container.querySelector(".settings-feedback")!.textContent, "Installed the withmate-memory CLI shim.");
-    });
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "並行するSettings操作の失敗理由をそれぞれ保持し、無関係な成功では消さず、再試行結果を対象操作だけへ反映し、ユーザーのdraft編集では通知をクリアする"
-  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#interaction; docs/design/ui-design-guidelines.md#読込・空・失敗" }
-  // fault = "保存またはshimの失敗を別操作の完了で消す、一方の再試行成功で両方の失敗を解除する、またはdraft編集で結果通知をクリアできない"
-  // observable = "実hookとcommand/draft handlerを接続したSettingsの操作別詳細入口と診断原文、再試行後の残存理由と成功feedback、編集checkbox"
-  // observation_boundary = "component-behavior"
-  // scope = "HomeSettingsContent operation-owned failure feedback"
-  // lifecycle = "permanent"
-  // impact = "並行操作で発生した失敗の理由と回復に必要な情報を利用者が確認できる"
-  // distinction = "型や単独handlerの文字列testでは代替できない、複数要求の失敗保持と既存draft編集/再試行の接続を一つのscenarioで確認する"
-  // @end-test-value
-  it("並行操作の失敗を個別に保持し、再試行した操作だけを解消する", async () => {
-    await withSettingsDom(async (container, root) => {
-      let rejectSave!: (error: Error) => void;
-      let rejectShim!: (error: Error) => void;
-      let retry = false;
-      const api = {
-        updateAppSettings: (value: typeof settingsDraft) => retry ? Promise.resolve(value)
-          : new Promise<typeof settingsDraft>((_resolve, reject) => { rejectSave = reject; }),
-        installMemoryV6CliShim: () => retry ? Promise.resolve(shimDiagnostics)
-          : new Promise<MemoryV6Diagnostics>((_resolve, reject) => { rejectShim = reject; }),
-        openAppLogFolder: async () => undefined,
-      } as WithMateWindowApi;
-      function Harness() {
-        const [draft, setDraft] = useState({ ...settingsDraft, launchAtLoginEnabled: true });
-        const { settingsFeedback, settingsErrors, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
-        const commands = buildSettingsCommandHandlers({
-          getApi: () => api, persistedSettingsDraft: draft, setAppSettings: noOp,
-          setSettingsDraft: setDraft, setSettingsFeedback, setMemoryV6Diagnostics: noOp,
-        });
-        return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback, settingsErrors, memoryV6Diagnostics: shimDiagnostics }), {
-          ...commands, ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }), settingsDirty: true,
-        });
-      }
-      await act(async () => root.render(<Harness />));
-      const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
-      const save = button("Save Settings");
-      const install = button("Install CLI Shim");
-      const feedback = () => container.querySelector(".settings-feedback")!.textContent;
-      const errorDetails = () => [...container.querySelectorAll('[popover] p')].map((element) => element.textContent);
-      const expectBothErrors = () => {
-        assert.deepEqual(new Set(errorDetails()), new Set(["Settings save failed", "CLI shim failed"]));
-        for (const name of ["Save Settings", "Install CLI Shim"]) {
-          const trigger = button(`${name} failed. Show error details`);
-          assert.equal(trigger.getAttribute("aria-expanded"), "false");
-          const panel = container.ownerDocument.getElementById(trigger.getAttribute("aria-controls")!);
-          assert.equal(panel?.getAttribute("popover"), "auto");
-          assert.equal(panel?.getAttribute("aria-label"), `${name} error details`);
-        }
-      };
-      await act(async () => { save.click(); install.click(); });
-      await act(async () => { rejectSave(new Error("Settings save failed")); rejectShim(new Error("CLI shim failed")); });
-      expectBothErrors();
-      await act(async () => button("Open Logs").click());
-      expectBothErrors();
-      retry = true;
-      await act(async () => save.click());
-      assert.deepEqual(errorDetails(), ["CLI shim failed"]);
-      await act(async () => install.click());
-      assert.equal(feedback(), "Installed the withmate-memory CLI shim.");
-      const launch = container.querySelector<HTMLInputElement>('.settings-section-toggle input[type="checkbox"]')!;
-      await act(async () => launch.click());
-      assert.equal(launch.checked, false);
-      assert.equal(container.querySelector(".settings-feedback"), null);
-    });
-  });
-
-  // @test-value v2
-  // kind = "contract"
   // claim = "Settingsの入力修正案内は診断詳細へ隠さず、別操作の成功後も残り、明示的なdraft編集で通知を解除する"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗; docs/design/settings-ui.md#interaction" }
   // fault = "未設定のroot directoryの修正案内を診断popoverへ隠す、別操作の成功で案内を消す、または編集後にも失敗通知が残る"
@@ -836,7 +603,7 @@ describe("HomeSettingsContent", () => {
         return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback, settingsErrors }), {
           ...buildSettingsCommandHandlers({
             getApi: () => api, persistedSettingsDraft: draft, setAppSettings: noOp,
-            setSettingsDraft: setDraft, setSettingsFeedback, setMemoryV6Diagnostics: noOp,
+            setSettingsDraft: setDraft, setSettingsFeedback,
           }),
           ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }),
         });
@@ -876,69 +643,6 @@ describe("HomeSettingsContent", () => {
     assert.match(html, /Delete Old Sessions/);
     assert.match(html, /Delete sessions last active before the selected date/);
     assert.match(html, /Running sessions are kept\./);
-  });
-
-  // @test-value v2
-  // kind = "security"
-  // claim = "Memory diagnosticsはruntime、CLI shim、Last errorだけを表示し、managed Skill、provider instruction、secret、pathを表示しない"
-  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-  // fault = "廃止済みのMemory Skill同期状態やprovider instruction copy導線、credential、個人pathをSettingsへ公開する"
-  // observable = "diagnosticsのsafe status/codeとfixtureに含めたsecret・binding reference・個人pathのmarkup不在"
-  // observation_boundary = "public-boundary"
-  // scope = "memory-runtime-diagnostics-projection"
-  // lifecycle = "permanent"
-  // impact = "diagnostics経由の資格情報・個人pathの公開を防ぐ"
-  // distinction = "型定義だけでは検出できない、extra fieldを含むruntime payloadの不用意なmarkup展開を少数sentinelで確認する"
-  // @end-test-value
-  it("Memory V6 diagnostics はinstance metadataだけのredacted summaryとして表示する", () => {
-    const privateFields = {
-      apiSecret: "diagnostics-secret-sentinel",
-      bindingReference: "diagnostics-binding-sentinel",
-      discoveryPath: "C:/Users/private-sentinel/runtime.json",
-    };
-    const html = renderSettings({
-      memoryV6Diagnostics: {
-        ...privateFields,
-        generatedAt: "2026-06-27T00:00:00.000Z",
-        runtime: {
-          ...privateFields,
-          status: "running",
-          applicationInstanceId: "11111111-1111-4111-8111-111111111111",
-          runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
-          buildChannel: "installed",
-          discoveryPublished: true,
-        },
-        cliShim: {
-          ...privateFields,
-          platform: "darwin",
-          commandName: "withmate-memory",
-          supported: true,
-          status: "installed",
-          pathContainsShimDirectory: true,
-        },
-        lastErrors: [
-          { kind: "memory-v6.runtime-api.start-failed", occurredAt: "2026-06-27T00:00:00.000Z" },
-        ],
-      },
-    });
-
-    assert.ok(html.includes("Memory API"));
-    assert.ok(html.includes("running"));
-    assert.ok(!html.includes("Active Bindings"));
-    assert.ok(!html.includes("codex: env / custom: unsupported"));
-    assert.ok(!html.includes("Managed Skill"));
-    assert.ok(html.includes("CLI Shim"));
-    assert.ok(html.includes("PATH Ready"));
-    assert.ok(html.includes("memory-v6.runtime-api.start-failed"));
-    assert.ok(!html.includes("Provider Instruction Sample"));
-    assert.ok(!html.includes("Copy Sample"));
-    assert.ok(!html.includes("apiSecret"));
-    assert.ok(!html.includes("bindingReference"));
-    assert.ok(!html.includes("C:/"));
-    assert.ok(!html.includes("/Users/"));
-    for (const value of Object.values(privateFields)) {
-      assert.ok(!html.includes(value));
-    }
   });
 
   // @test-value v2
@@ -1314,6 +1018,7 @@ describe("HomeLaunchDialog", () => {
     <HomeLaunchDialog
       open={true}
       title="demo"
+      sessionRole="standalone"
       sessionFolderSelected={false}
       workspacePathInput="C:\\work space\\"
       workspaceValidation={workspaceValidation}
@@ -1332,6 +1037,7 @@ describe("HomeLaunchDialog", () => {
       launchStarting={false}
       onClose={noOp}
       onChangeTitle={noOp}
+      onSelectRole={noOp}
       onChangeWorkspacePath={noOp}
       onBrowseWorkspace={noOp}
       onSelectSessionFolder={noOp}
@@ -1382,6 +1088,7 @@ describe("HomeLaunchDialog", () => {
           <HomeLaunchDialog
             open={open}
             title="Draft title"
+            sessionRole="standalone"
             sessionFolderSelected={false}
             workspacePathInput={workspacePathInput}
             workspaceValidation="invalid"
@@ -1397,6 +1104,7 @@ describe("HomeLaunchDialog", () => {
             launchStarting={false}
             onClose={() => { closeCount += 1; setOpen(false); }}
             onChangeTitle={noOp}
+            onSelectRole={noOp}
             onChangeWorkspacePath={setWorkspacePathInput}
             onBrowseWorkspace={noOp}
             onSelectSessionFolder={noOp}
@@ -2078,7 +1786,6 @@ describe("HomeMonitorContent", () => {
   const createMonitorAuxiliary = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -2092,7 +1799,6 @@ describe("HomeMonitorContent", () => {
     displayAfterMessageIndex: null,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-30T00:00:00.000Z",
-    closedAt: "",
     characterIconPath: "mate.png",
     preview: "Auxiliary preview",
     codexSpeed: "standard",
@@ -2104,10 +1810,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親行はMain状態をavatar/titleと同じまとまりに表示し、Auxiliaryの状態別件数を配下一覧の展開操作へまとめる"
+  // claim = "Home Monitorの親行はavatar、titleとaccessible nameを持つMain状態iconを同じまとまりに表示し、Auxiliaryの状態別件数を配下一覧の展開操作へまとめる"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-  // fault = "Main状態を親名と分離する、Auxiliaryの集約と展開操作を分離する、Main/Aux状態を混同する、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
-  // observable = "Main session group内の状態と親を開くbutton、Auxiliary展開button内の状態別件数とicon、aria-expanded、avatarとtitle"
+  // fault = "Main状態iconのaccessible nameを表示しない、Main状態を親名と分離する、Auxiliaryの集約と展開操作を分離する、Main/Aux状態を混同する、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
+  // observable = "Main session group内の状態iconとaccessible name、親を開くbutton、Auxiliary展開button内の状態別件数とicon、aria-expanded、avatarとtitle"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -2123,9 +1829,8 @@ describe("HomeMonitorContent", () => {
         mainState: { kind: "neutral", label: "Idle" },
         auxiliarySessions: [
           createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
-          createMonitorAuxiliary("aux-closed", {
-            status: "closed",
-            preview: "Closed auxiliary",
+          createMonitorAuxiliary("aux-idle", {
+            preview: "Idle auxiliary",
           }),
         ],
       },
@@ -2154,7 +1859,6 @@ describe("HomeMonitorContent", () => {
 
     assert.ok(html.includes("Agent task"));
     assert.ok(html.includes("Auxiliary task"));
-    assert.equal(html.includes("workspace"), false);
     assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
@@ -2162,6 +1866,7 @@ describe("HomeMonitorContent", () => {
       assert.ok(mainGroup);
       assert.ok(mainGroup.querySelector(`button[aria-label="Open session: ${entries[index]?.session.taskTitle}"]`));
       assert.ok(mainGroup.querySelector(`.home-monitor-status-icon.${expectedMainStates[index]}`));
+      assert.ok(mainGroup.querySelector(`[aria-label="Main ${entries[index]?.mainState.label}"]`));
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
       assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
@@ -2170,7 +1875,7 @@ describe("HomeMonitorContent", () => {
       assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
       assert.equal(parentRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
       assert.equal(
-        parentRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        mainGroup.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
         1,
       );
     }
@@ -2181,20 +1886,18 @@ describe("HomeMonitorContent", () => {
     assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
     assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
     assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Error: 1"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Closed: 1"]'));
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 1);
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'));
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 2);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
     assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 2);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
     assert.ok(html.includes('aria-label="Auxiliary Error: 1"'));
-    assert.ok(html.includes('aria-label="Auxiliary Closed: 1"'));
+    assert.ok(html.includes('aria-label="Auxiliary Idle: 1"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
@@ -2373,11 +2076,11 @@ describe("HomeMonitorContent", () => {
 
       assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
       if (auxiliaryDataState === "loading") {
-        assert.equal(document.querySelector('[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
+        assert.equal(document.querySelector('.home-session-list-load-status [role="status"], .home-session-list-load-status[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
         assert.equal(document.querySelector('[role="alert"]'), null);
       } else {
         assert.equal(document.querySelector('[role="alert"]')?.textContent, expectedFeedback);
-        assert.equal(document.querySelector('[role="status"]'), null);
+        assert.equal(document.querySelector('.home-session-list-load-status'), null);
       }
     }
   });
@@ -2418,7 +2121,6 @@ describe("HomeMonitorContent", () => {
       {
         id: "aux-a",
         parentSessionId: "session-expand",
-        status: "active",
         runState: "idle",
         preview: "First auxiliary",
         createdAt: "2026-03-28T00:00:00.000Z",
@@ -2426,7 +2128,6 @@ describe("HomeMonitorContent", () => {
       {
         id: "aux-b",
         parentSessionId: "session-expand",
-        status: "closed",
         runState: "error",
         preview: "Second auxiliary",
         createdAt: "2026-03-29T00:00:00.000Z",
@@ -2687,7 +2388,7 @@ describe("HomeMonitorContent", () => {
       />,
     );
 
-    assert.doesNotMatch(emptyHtml, /role="status"/);
+    assert.equal(new JSDOM(emptyHtml).window.document.querySelector('.home-session-list-feedback [role="status"]'), null);
     assert.match(
       failureHtml,
       /role="status" aria-live="polite">Could not copy session ID\.<\/p>/,
@@ -2953,7 +2654,7 @@ describe("HomeRightPane", () => {
     );
 
     assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
-    assert.doesNotMatch(successHtml, /role="status"/);
+    assert.equal(new JSDOM(successHtml).window.document.querySelector('.session-window-restore-feedback [role="status"], .session-window-restore-feedback[role="status"]'), null);
     assert.match(failureHtml, /session-b \(Deleted\)/);
     assert.match(failureHtml, /role="status" aria-live="polite"/);
     assert.doesNotMatch(failureHtml, /件のSessionを開きました/);

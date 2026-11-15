@@ -1,11 +1,14 @@
 import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessionStorageType } from "../auxiliary/auxiliary-session-storage.js";
 import type { WorkerOptions } from "node:worker_threads";
+import { existsSync } from "node:fs";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { SessionGraphStorageV6 } from "../session-graph/session-graph-storage-v6.js";
-import type { SessionGraphOwner, SessionGraphIdentity } from "../../src-shared/session-graph/session-graph-contract.js";
+import { SessionExecutionReadStorage } from "./session-execution-read.js";
+import { CoordinationStorageV7 } from "../coordination/coordination-storage-v7.js";
+import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphStorageAuthority } from "../../src-shared/session-graph/session-graph-contract.js";
 import type { SessionGraphStorageOperation, SessionGraphStorageRequest, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
-import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { MateStorage } from "../mate/mate-storage.js";
@@ -15,6 +18,7 @@ import { SessionStorageV6 } from "../session/session-storage-v6.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
 import { openAppDatabase, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
+import { assertRetiredMemoryAffectDatabasePath } from "./migrations/memory-affect-removal.js";
 import { StorageWorkerClient } from "./storage-worker-client.js";
 import type { StorageWorkerEntryData } from "./storage-worker-protocol.js";
 import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
@@ -37,26 +41,31 @@ type AsyncStore<T extends object> = {
 };
 
 const STORE_METHODS = {
+  coordination: ["execute", "deliveryTarget"],
   sessionGraph: ["execute"],
+  execution: ["execute"],
   session: [
-    "getSessionView", "getConversationPage", "readSessionHistory", "readBackgroundSource", "captureBackgroundSource", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
-    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
+    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
+    "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
+    "getSessionLifecycleOperation", "listPendingSessionLifecycleOperations", "getCrewDeletionStatus", "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
     "updateSessionRuntimeMetadataIfMatches", "updateSession", "upsertTerminalSession", "updateTerminalSession",
     "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession", "replaceSessions",
     "deleteSession", "deleteSessions", "clearSessions",
   ],
-  turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
-  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
+  turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn"],
+  queue: ["enqueue", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
-    "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
+    "listRunningAuxiliarySessions", "getLatestAuxiliarySession",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
     "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
+    "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
     "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
     "updateAuxiliarySessionIfMatches", "updateTerminalAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
     "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches",
@@ -69,7 +78,7 @@ const STORE_METHODS = {
     "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter", "resolveLaunchCharacter",
     "createRuntimeSnapshot", "refreshRuntimeSnapshot", "deleteCharacterRootDirectory",
   ],
-  settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings"],
+  settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings", "getSelectionPolicy", "setSelectionPolicy", "getWorktreePolicy", "setWorktreeRoot", "setWorktreeRepository"],
   catalog: ["getCachedProviders", "getCatalog", "upsertProvider", "clear"],
   mate: [
     "initializeSchema", "getMateState", "getUserDataPath", "getMateProfile", "verifyMateProfileFiles",
@@ -84,7 +93,10 @@ const MUTATIONS = new Set([
   "reorderQueued", "updateQueued",
   "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
   "pinSessionFile", "unpinSessionFile",
-  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
+  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
+  "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
+  "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
+  "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
   "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
   "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession",
   "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
@@ -94,6 +106,7 @@ const MUTATIONS = new Set([
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
   "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
   "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "upsertProvider", "clear",
+  "setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository",
   "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
@@ -110,6 +123,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     throw new Error("V6 storage worker requires dbPath and userDataPath.");
   }
   const dbPath = data.dbPath;
+  if (existsSync(dbPath)) assertRetiredMemoryAffectDatabasePath(dbPath);
   const schemaDb = openAppDatabase(dbPath);
   try {
     ensureV6Schema(schemaDb);
@@ -124,6 +138,8 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const turn = new SessionTurnStorageV6(data.dbPath);
   const queue = new SessionTurnQueueStorageV6(data.dbPath);
   const sessionGraph = new SessionGraphStorageV6(data.dbPath);
+  const execution = new SessionExecutionReadStorage(data.dbPath);
+  const coordination = new CoordinationStorageV7(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
   conversationQueries = new ConversationQueryCoordinator(data.generationId, { session_messages_v6: session, auxiliary_session_messages: auxiliary });
   const queries = conversationQueries;
@@ -132,7 +148,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const catalog = new ModelCatalogStorage(data.dbPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
-  instances = { session, turn, queue, sessionGraph, auxiliary, character, settings, catalog, mate, prompt };
+  instances = { session, turn, queue, sessionGraph, execution, coordination, auxiliary, character, settings, catalog, mate, prompt };
   const currentInstances = instances;
 
   return {
@@ -166,7 +182,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "sessionGraph" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -222,13 +238,17 @@ export function createV6StorageWorkerBundle(options: {
         if (!methods.includes(property as never)) return undefined;
         return (...args: unknown[]) => {
           const graphMutation = store === "sessionGraph" && args[1] === "apply";
-          const needsTurnAdmission = graphMutation || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          const coordinationInput = store === "coordination" && property === "execute"
+            ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
+          const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
+            && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
+          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || graphMutation || store === "coordination" || store === "execution" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
             property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
-            mutation: store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
+            mutation: store === "coordination" ? coordinationMutation : store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
             operation: `${store}.${property}`,
           });
         };
@@ -248,8 +268,10 @@ export type V6StorageWorkerBundle = {
   initialize(): Promise<unknown>;
   truncateWal(): Promise<boolean>;
   stores: {
+    coordination: AsyncStore<CoordinationStorageV7>;
+    execution: AsyncStore<SessionExecutionReadStorage>;
     sessionGraph: {
-      execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphStorageResult<K>>;
+      execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[], authority?: SessionGraphStorageAuthority): Promise<SessionGraphStorageResult<K>>;
     };
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;

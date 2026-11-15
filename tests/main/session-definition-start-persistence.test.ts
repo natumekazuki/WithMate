@@ -52,10 +52,10 @@ test("Auxiliary定義開始保存はlegacy snapshotを固定しdraftと会話ide
       listActiveCharacters: () => [], createCharacterRuntimeSnapshot: () => null,
     });
     const initial = auxiliary.upsertAuxiliarySession({
-      ...parent, id: "aux", parentSessionId: parent.id, title: "Aux", status: "active",
+      ...parent, id: "aux", parentSessionId: parent.id, title: "Aux",
       runState: "idle",
       createdAt: "2026-01-01T00:00:00.000Z",
-      closedAt: "", composerDraft: "keep draft", displayAfterMessageIndex: null,
+      composerDraft: "keep draft", displayAfterMessageIndex: null,
       threadId: "keep-thread", characterId: undefined, characterRuntimeSnapshot: undefined,
       messages: [{ role: "assistant", text: "bookmarked", isBookmarked: true }],
     });

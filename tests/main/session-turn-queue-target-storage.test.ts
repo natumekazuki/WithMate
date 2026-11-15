@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId, type Message } from "../../src-shared/session/session-state.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnInput } from "../../src-shared/session/session-turn-state.js";
@@ -32,8 +32,8 @@ test("Main/Auxの順変更は原子的に保存し競合と履歴を保持する
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
     const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "reorder-aux", parentSessionId: f.session.id,
-      title: "Aux", status: "active", runState: "idle", composerDraft: "draft", messages: [], displayAfterMessageIndex: null,
-      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created", closedAt: "" });
+      title: "Aux", runState: "idle", composerDraft: "draft", messages: [], displayAfterMessageIndex: null,
+      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
     const owners = [{ sessionId: f.session.id, incarnationId: getSessionIncarnationId(f.session) }, { sessionId: aux.id, incarnationId: aux.createdAt }];
     const snapshots: Array<{ owner: SessionTurnQueueOwner; ids: string[]; receipts: SessionTurnQueueReceipt[] }> = [];
     for (const owner of owners) {
@@ -172,6 +172,75 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "直接SteerはMain/Auxの既存messageへ送信前pendingを保存し、同じ本文とTurn対応を保って確定・不明・未送信へ収束し再openでも判別できる"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 同じTurnへの追加入力、送信前markerと確定入力列" }
+// fault = "ack後にだけ入力を保存する、状態更新で本文を差し替える、確定済みを不明へ戻す、送信先Turnを取り違える"
+// observable = "実Worker再open後のmessage text/turnInput/seq、状態更新失敗後のpending、確定後のdowngrade拒否"
+// observation_boundary = "public-boundary"
+// scope = "Main/Aux direct SteerのSQLite message保存とtyped Worker操作"
+// lifecycle = "permanent"
+// impact = "送信結果不明を追加なしとして見せることと、確認済み入力の喪失を防ぐ"
+// distinction = "既存queue Steer testはreceiptを持たない入力のProvider呼出前保存を確認しない"
+// @end-test-value
+test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに残る", async () => {
+  const f = await fixture();
+  const db = new DatabaseSync(f.options.dbPath);
+  let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
+  const expected: Array<{ id: string; auxiliary: boolean; turnId: string }> = [];
+  try {
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "direct-aux", parentSessionId: f.session.id,
+      title: "Aux", runState: "idle", composerDraft: "", messages: [], displayAfterMessageIndex: null,
+      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
+    for (const auxiliary of [false, true]) {
+      const id = auxiliary ? aux.id : f.session.id;
+      const owner = { sessionId: id, incarnationId: auxiliary ? aux.createdAt : f.session.incarnationId! };
+      const target = { auxiliarySessionId: id, parentSessionId: f.session.id, createdAt: owner.incarnationId };
+      if (auxiliary) await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...target, expectedMessageCount: 0, updatedAt: "start",
+          userMessage: { role: "user", text: "start" } });
+      else await f.bundle.stores.session.appendRunningTurnStart({ ...owner, expectedMessageCount: 0, updatedAt: "start", userMessage: { role: "user", text: "start" } });
+      const turnId = (await f.bundle.stores.turn.createSessionTurn(f.turn(id))).id;
+      for (const [index, state] of (["confirmed", "unknown", "not-sent"] as const).entries()) {
+        const seq = index + 1;
+        const input = { expectedMessageCount: seq, turnId, nativeTurnId: "native-target", attachments: [],
+          userMessage: { role: "user" as const, text: `input-${state}` }, updatedAt: "pending" };
+        if (auxiliary) await f.bundle.stores.auxiliary.beginAuxiliarySteer({ ...target, ...input });
+        else await f.bundle.stores.session.beginSessionSteer({ ...owner, ...input });
+        const read = auxiliary ? await f.bundle.stores.auxiliary.getAuxiliarySession(id) : await f.bundle.stores.session.getSession(id);
+        assert.equal(read?.messages[seq]?.turnInput?.state, "pending");
+        assert.equal(read?.messages[seq]?.turnInput?.turnId, String(turnId));
+        const settle = { expectedMessageCount: seq + 1, turnId, messageSeq: seq, state, updatedAt: "settled" };
+        if (state === "confirmed") {
+          db.exec(`CREATE TRIGGER fail_direct_settle BEFORE UPDATE OF body ON ${auxiliary ? "auxiliary_session_messages" : "session_messages_v6"}
+            BEGIN SELECT RAISE(ABORT, 'direct settle failed'); END`);
+          if (auxiliary) await assert.rejects(f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle }), /direct settle failed/);
+          else await assert.rejects(f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle }), /direct settle failed/);
+          db.exec("DROP TRIGGER fail_direct_settle");
+          const pending = auxiliary ? await f.bundle.stores.auxiliary.getAuxiliarySession(id) : await f.bundle.stores.session.getSession(id);
+          assert.equal(pending?.messages[seq]?.turnInput?.state, "pending");
+        }
+        if (auxiliary) await f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle });
+        else await f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle });
+        if (state === "confirmed") {
+          if (auxiliary) await assert.rejects(f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle, state: "unknown" }), /no longer matches/);
+          else await assert.rejects(f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle, state: "unknown" }), /no longer matches/);
+        }
+      }
+      expected.push({ id, auxiliary, turnId: String(turnId) });
+    }
+    await f.bundle.client.close();
+    reopened = createV6StorageWorkerBundle(f.options);
+    await reopened.initialize();
+    for (const target of expected) {
+      const saved: { messages: Message[] } | null = target.auxiliary ? await reopened.stores.auxiliary.getAuxiliarySession(target.id) : await reopened.stores.session.getSession(target.id);
+      assert.deepEqual(saved?.messages.slice(1).map((message) => ({ text: message.text, turnId: message.turnInput?.turnId,
+        nativeTurnId: message.turnInput?.nativeTurnId, state: message.turnInput?.state })),
+      ["confirmed", "unknown", "not-sent"].map((state) => ({ text: `input-${state}`, turnId: target.turnId, nativeTurnId: "native-target", state })));
+    }
+  } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Auxiliaryのretry受付は前回本文をreceiptへ保存し現在draftの本文とrevisionを一致・不一致・空の各場合に保持し、同requestをdedupし、古いownerを拒否し、通常composer受付ではdraft消費を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
 // fault = "retryが現在draftを消費または本文一致を要求する、別incarnationを受け入れる、同requestを二重受付する、または通常送信のdraft消費をやめる"
@@ -187,9 +256,9 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
   try {
     for (const [index, text] of ["Different unsent draft", "Previous request", ""].entries()) {
       const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session,
-        id: `retry-aux-${index}`, parentSessionId: f.session.id, title: "Recovery", status: "active", runState: "error",
+        id: `retry-aux-${index}`, parentSessionId: f.session.id, title: "Recovery", runState: "error",
         composerDraft: text, messages: [], displayAfterMessageIndex: null,
-        characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: `created-${index}`, updatedAt: "created", closedAt: "",
+        characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: `created-${index}`, updatedAt: "created",
       });
       const owner = { sessionId: aux.id, incarnationId: aux.createdAt };
       const before = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
@@ -223,7 +292,7 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの予約入力はcurrent turnへ一度だけ原子的に保存され、dispatch前復元と不明結果解放はcanonical turnを変えない"
+// claim = "Main予約入力はclaim時からWithMate Turnと採用入力へ対応し、一度だけ保存し、未送信復元で固定を解除し、不明結果は対象を保持する"
 // oracle = { type = "contract", ref = "Issue #801: selected queued current-turn input, atomic append, pre-provider restore and unknown hold" }
 // fault = "provider turn IDとSQLite turn IDを同一視する、receiptだけcompletedにする、inputを二重appendする、stale ownerを受け入れる、またはinput解放でcurrent turnを中断する"
 // observable = "Worker receipt state/inputTurnId、canonical message count/textとturn phase、例外"
@@ -249,9 +318,14 @@ test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent t
     const captured = f.captured("input");
     const queued = await f.bundle.stores.queue.enqueue(owner, captured);
     await assert.rejects(f.bundle.stores.queue.claimForInput({ ...owner, incarnationId: "stale" }, queued.id, providerTurnId), /incarnation mismatch/);
-    await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
+    const claimed = await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
+    assert.equal(claimed.turnId, turnId);
+    assert.deepEqual(claimed.dispatched, captured);
     await f.bundle.stores.queue.restoreQueuedInput(owner, queued.id, providerTurnId);
-    assert.equal((await f.bundle.stores.queue.getReceipt(owner, queued.requestId))?.inputTurnId, null);
+    const restored = await f.bundle.stores.queue.getReceipt(owner, queued.requestId);
+    assert.equal(restored?.inputTurnId, null);
+    assert.equal(restored?.turnId, null);
+    assert.equal(restored?.dispatched, null);
     await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
     await assert.rejects(f.bundle.stores.queue.markStarted(owner, queued.id, { turnId, userMessageSeq: 1 }), /not starting/);
     const append = { ...owner, expectedMessageCount: 1, turnId: Number(turnId), userMessage: { role: "user" as const, text: "input" },
@@ -271,6 +345,9 @@ test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent t
     const unknown = await f.bundle.stores.queue.enqueue(owner, f.captured("unknown"));
     await f.bundle.stores.queue.claimForInput(owner, unknown.id, providerTurnId);
     await f.bundle.stores.queue.settle(owner, unknown.id, "interrupted");
+    const uncertain = await f.bundle.stores.queue.getReceipt(owner, unknown.requestId);
+    assert.equal(uncertain?.turnId, turnId);
+    assert.deepEqual(uncertain?.dispatched, uncertain?.captured);
     await f.bundle.stores.queue.releaseInterrupted(owner, unknown.id, { runReleased: true });
     assert.equal((await f.bundle.stores.session.getSessionMetadata(owner.sessionId))?.summary.runState, "running");
     assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(owner.sessionId))?.phase, "running");
@@ -295,8 +372,8 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
     const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "aux", parentSessionId: f.session.id,
-      title: "Aux", status: "active", runState: "idle", composerDraft: " queued\n", messages: [], displayAfterMessageIndex: null,
-      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created", closedAt: "" });
+      title: "Aux", runState: "idle", composerDraft: " queued\n", messages: [], displayAfterMessageIndex: null,
+      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
     const aux2 = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...aux, id: "aux2", composerDraft: "queued" });
     const owner = { sessionId: aux.id, incarnationId: aux.createdAt };
     const writeOwner = { auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId, createdAt: aux.createdAt };
@@ -381,7 +458,7 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
 
 // @test-value v2
 // kind = "contract"
-// claim = "既存Main queue schema更新はreceipt全列と受付順を維持し次の受付sequenceを進める"
+// claim = "既存Main queue schema更新はreceipt全列と受付順を維持し、過去原文・採用入力をNULLで保持し、次の受付sequenceを進める"
 // oracle = { type = "contract", ref = "Issue #801: existing durable Main queue receipts survive additive target schema migration" }
 // fault = "table再構成で既存receiptやsequenceを失いcaptured requestまたはterminal状態を変更する"
 // observable = "migration前後のSQLite全receipt列と次のsequence"
@@ -410,11 +487,13 @@ test("旧Main queue schema移行はreceiptと受付順を保持する", async ()
     const before = db.prepare("SELECT * FROM session_turn_queue_v6").get();
     ensureV6Schema(db);
     const after = db.prepare("SELECT * FROM session_turn_queue_v6").get() as Record<string, unknown>;
-    const { auxiliary_session_id, input_turn_id, queue_position, ...retained } = after;
+    const { auxiliary_session_id, input_turn_id, queue_position, accepted_json, dispatched_json, ...retained } = after;
     assert.deepEqual(retained, { ...before });
     assert.equal(queue_position, 42);
     assert.equal(auxiliary_session_id, null);
     assert.equal(input_turn_id, null);
+    assert.equal(accepted_json, null);
+    assert.equal(dispatched_json, null);
     ensureV6Schema(db);
     db.prepare(`INSERT INTO session_turn_queue_v6 (id,session_id,incarnation_id,request_id,state,captured_json,created_at,updated_at)
       VALUES ('next',?,?, 'next', 'queued', '{}', 'now','now')`).run(f.session.id, f.session.incarnationId!);

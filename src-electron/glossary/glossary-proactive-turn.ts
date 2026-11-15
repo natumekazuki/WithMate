@@ -2,6 +2,7 @@ import {
   ProviderAgentRuntimeTurnCoordinator,
   type ProviderAgentRuntimeTurnHandle,
 } from "../providers/provider-agent-runtime-turn-coordinator.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 export type GlossaryProactiveTurnHandle = ProviderAgentRuntimeTurnHandle;
 
@@ -22,10 +23,12 @@ export class GlossaryProactiveTurnCoordinator {
     actorSessionId: string;
     providerId: string;
     proactiveCreateLimit: number | null | undefined;
+    executionOptions?: SessionExecutionOptions;
   }): GlossaryProactiveTurnHandle {
     const handle = this.#providerTurns.begin({
       actorSessionId: input.actorSessionId,
       providerId: input.providerId,
+      executionOptions: input.executionOptions,
     });
     this.#stateByHandle.set(handle, {
       limit: input.proactiveCreateLimit,

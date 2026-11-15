@@ -10,6 +10,7 @@ import {
   resolveV6FreshDatabasePath,
 } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { assertRetiredMemoryAffectDatabasePath } from "./migrations/memory-affect-removal.js";
 
 export type V6FreshDatabaseBootstrapResult = {
   dbPath: string;
@@ -26,6 +27,7 @@ export async function createOrVerifyV6FreshDatabase(
 ): Promise<V6FreshDatabaseBootstrapResult> {
   const dbPath = resolveV6FreshDatabasePath(userDataPath);
   if (existsSync(dbPath)) {
+    assertRetiredMemoryAffectDatabasePath(dbPath);
     if (readV6DatabaseUserVersion(dbPath) === 6) {
       const db = openAppDatabase(dbPath);
       try {

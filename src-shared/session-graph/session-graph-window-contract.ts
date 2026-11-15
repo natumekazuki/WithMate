@@ -23,6 +23,6 @@ export type SessionGraphWindowApi = {
   openSessionGraphWindow(request: SessionGraphWindowOpenRequest): Promise<{ token: string }>;
   getSessionGraphWindowPayload(token: string): Promise<SessionGraphWindowPayload | null>;
   readSessionGraphWindow<K extends SessionGraphUiReadOperation>(token: string, operation: K, request: SessionGraphUiReadRequest<K>): Promise<SessionGraphUiReadResult<K>>;
-  updateSessionGraphWindowState(token: string, state: SessionGraphViewState): Promise<void>;
+  updateSessionGraphWindowState(token: string, state: SessionGraphViewState, title?: string): Promise<void>;
   openSessionGraphWindowReference(token: string, target: string): Promise<import("../file-explorer/file-explorer-contract.js").SessionFilePreviewWindowOpenResult>;
 };

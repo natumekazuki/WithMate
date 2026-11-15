@@ -48,6 +48,7 @@ export type HomeLaunchDraft = {
   providerId: string;
   characterSelectionMode: LaunchCharacterSelectionMode;
   characterId: string;
+  sessionRole: "standalone" | "overall-coordinator";
 };
 
 export function createClosedLaunchDraft(): HomeLaunchDraft {
@@ -61,6 +62,7 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     providerId: "",
     characterSelectionMode: "random",
     characterId: "",
+    sessionRole: "standalone",
   };
 }
 
@@ -79,6 +81,7 @@ export function openLaunchDraft(
     providerId: defaultProviderId,
     characterSelectionMode: "random",
     characterId: "",
+    sessionRole: "standalone",
   };
 }
 
@@ -94,6 +97,7 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     providerId: "",
     characterSelectionMode: "random",
     characterId: "",
+    sessionRole: "standalone",
   };
 }
 
@@ -257,6 +261,7 @@ export function buildCreateSessionRequestFromLaunchDraft({
 
   return {
     provider: selectedProviderId,
+    sessionRole: draft.sessionRole,
     taskTitle: normalizedTitle,
     workspace,
     characterId: characterSnapshot.characterId,

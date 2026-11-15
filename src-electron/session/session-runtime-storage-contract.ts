@@ -1,5 +1,5 @@
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
-import type { Message, Session, SessionSummary } from "../../src-shared/session/session-state.js";
+import type { Message, Session, SessionSummary, TurnInputMetadata, TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
 export type SessionMetadataResult = {
@@ -27,6 +27,14 @@ export type SessionSteerAppendInput = SessionAppendOwner & {
   userMessage: Message;
   updatedAt: string;
   queuedInput?: { queueId: string; inputTurnId: string };
+};
+
+export type SessionSteerBeginInput = SessionSteerAppendInput & Pick<TurnInputMetadata, "nativeTurnId" | "attachments">;
+export type SessionSteerSettleInput = SessionAppendOwner & {
+  turnId: number;
+  messageSeq: number;
+  state: Exclude<TurnInputDeliveryState, "pending">;
+  updatedAt: string;
 };
 
 export type SessionTerminalAppendInput = SessionAppendOwner & {

@@ -20,7 +20,6 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 
-export type AuxiliarySessionStatus = "active" | "closed";
 export type AuxiliaryRuntimeSelectionMode = "explicit" | "latest-session";
 
 export type AuxiliaryCreationContext = {
@@ -77,9 +76,9 @@ export type CreateAuxiliarySessionInput = {
 export type AuxiliarySession = {
   id: string;
   parentSessionId: string;
-  status: AuxiliarySessionStatus;
   runState: "idle" | "running" | "error";
   title: string;
+  description?: string;
   provider: string;
   catalogRevision: number;
   model: string;
@@ -96,7 +95,6 @@ export type AuxiliarySession = {
   displayAfterMessageIndex: number | null;
   createdAt: string;
   updatedAt: string;
-  closedAt: string;
   /** Character identity is fixed when the Auxiliary is created. Legacy rows omit it. */
   characterId?: string;
   characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
@@ -114,7 +112,7 @@ export type AuxiliarySessionSummary = Omit<
   AuxiliarySession,
   "messages" | "composerDraft" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid"
   | "creationContext" | "creationRequest"
-> & { cancellationState?: "requested" | "terminating"; approvalPending?: boolean; hasUnreadResult?: boolean };
+> & { character?: string; characterDescription?: string; cancellationState?: "requested" | "terminating"; approvalPending?: boolean; hasUnreadResult?: boolean };
 
 export function applyAuxiliarySessionPatch(
   session: AuxiliarySession,
@@ -416,12 +414,12 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
   return {
     id: candidate.id.trim(),
     parentSessionId: candidate.parentSessionId.trim(),
-    status: candidate.status === "closed" ? "closed" : "active",
     runState:
       candidate.runState === "running" || candidate.runState === "error"
         ? candidate.runState
         : "idle",
     title: typeof candidate.title === "string" ? candidate.title : "",
+    description: typeof candidate.description === "string" ? candidate.description : "",
     provider: typeof candidate.provider === "string" ? candidate.provider : "codex",
     catalogRevision: typeof candidate.catalogRevision === "number" ? candidate.catalogRevision : 1,
     model: typeof candidate.model === "string" ? candidate.model : "",
@@ -446,7 +444,6 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
         : null,
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : "",
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : "",
-    closedAt: typeof candidate.closedAt === "string" ? candidate.closedAt : "",
     characterId: normalizedCharacterId,
     characterRuntimeSnapshot: normalizedCharacterRuntimeSnapshot,
     characterRuntimeSnapshotInvalid,
@@ -491,6 +488,8 @@ export function projectAuxiliarySessionSummary(session: AuxiliarySession): Auxil
   } = session;
   return {
     ...summary,
+    characterDescription: session.characterRuntimeSnapshot?.description ?? "",
+    character: session.characterRuntimeSnapshot?.name ?? "",
     characterIconPath: session.characterIconPath ?? session.characterRuntimeSnapshot?.iconFilePath ?? "",
     preview: session.preview ?? buildAuxiliaryPreview(session.messages),
   };

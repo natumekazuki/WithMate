@@ -9,6 +9,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, getQueuedSourceWaitState, type TurnInputReadContext } from "./turn-input-details.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
@@ -38,6 +39,7 @@ export function SessionTurnQueueStatus(props: {
 function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
+  const editableInput = !receipt.captured.coordination;
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -56,10 +58,13 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     };
   }, []);
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
+  const sourceWaitState = getQueuedSourceWaitState(receipt);
+  const waitingForSource = sourceWaitState !== null;
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} aria-label={label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
     {label ? <span>{label}</span> : null}
+    {sourceWaitState ? <span className="session-turn-queue-reason">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
       {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
         title={direction === "up" ? "Move Up" : "Move Down"} aria-label={`Move queued turn ${position} ${direction}`} data-queue-move={direction}
@@ -68,17 +73,24 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
         <ButtonContent busy={busyKind === `move-${direction}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={direction === "up" ? "M12 20V4m-6 6 6-6 6 6" : "M12 4v16m-6-6 6 6 6-6"} /></svg></ButtonContent>
       </button>)}
     </span> : null}
-    {receipt.state === "queued" && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
-    {receipt.state === "queued" && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
+    {receipt.state === "queued" && editableInput && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
+    {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busyKind === "release" || undefined} onClick={() => onRelease(receipt)}><ButtonContent busy={busyKind === "release"}>Release Later Turns</ButtonContent></button> : null}
   </div>;
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
-  return <><article className="message-row user" data-message-source="turn-queue">
-    <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
+export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext; inputReadContext?: TurnInputReadContext }) {
+  const message = { role: "user" as const, text: props.receipt.captured.request.userMessage };
+  const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
+  const isSessionOrigin = read.origin?.kind === "session";
+  const role = isSessionOrigin ? "session-origin" : "user";
+  return <><article className={`message-row ${role}`} data-message-source="turn-queue">
+    {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
+    <div className={`message-card ${role}`}><div className="message-card-content">
+      {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
+      <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
+      {read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>

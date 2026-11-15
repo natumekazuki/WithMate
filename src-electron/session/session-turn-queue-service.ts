@@ -13,6 +13,7 @@ export type SessionTurnQueueDispatchResult = {
 export type SessionTurnQueueServiceDeps = {
   store: SessionTurnQueueStore;
   isRunInFlight(sessionId: string): boolean | Promise<boolean>;
+  getUnreleasedSourceTurnIds?(): readonly string[];
   sendInput?(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<unknown>;
   dispatch(
     receipt: SessionTurnQueueReceipt,
@@ -51,15 +52,22 @@ export class SessionTurnQueueService {
     })());
   }
 
-  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt> {
+  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
+      await assertAuthorized?.();
       const receipt = await this.deps.store.enqueue(owner, captured);
       this.adoptOwner(owner);
       this.notify(owner);
       this.wake(owner.sessionId);
       return receipt;
     }));
+  }
+
+  acceptCommittedReceipt(receipt: SessionTurnQueueReceipt): void {
+    this.adoptOwner(receipt);
+    this.notify(receipt);
+    this.wake(receipt.sessionId);
   }
 
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
@@ -72,9 +80,23 @@ export class SessionTurnQueueService {
     this.wake(receipt.sessionId);
   }
 
-  cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
+  async wakeSourceTurnDependents(sourceSessionId: string): Promise<void> {
+    if (this.closing || this.closed) return;
+    await this.track((async () => {
+      const owners = await this.deps.store.listPendingOwners(sourceSessionId);
+      if (this.closing || this.closed) return;
+      for (const owner of owners) {
+        this.adoptOwner(owner);
+        this.notify(owner);
+        this.wake(owner.sessionId);
+      }
+    })());
+  }
+
+  cancelQueued(owner: SessionTurnQueueOwner, id: string, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
+      await assertAuthorized?.();
       this.assertNotEditing(owner, id);
       const receipt = await this.deps.store.cancelQueued(owner, id);
       if (this.isCurrentOwner(owner)) {
@@ -94,6 +116,7 @@ export class SessionTurnQueueService {
       if (edit && (edit.incarnationId !== owner.incarnationId || edit.id !== id)) throw new Error("Another queued message is being edited.");
       const receipt = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
       if (!receipt || receipt.state !== "queued") throw new Error("Only a queued receipt can be edited.");
+      if (receipt.captured.coordination) throw new Error("Coordination delivery cannot be edited as a queued message.");
       this.adoptOwner(owner);
       this.edits.set(owner.sessionId, { incarnationId: owner.incarnationId, id });
       return receipt;
@@ -162,9 +185,10 @@ export class SessionTurnQueueService {
         if (!this.deps.sendInput) throw new Error("Queued Session input is unavailable.");
         const candidate = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
         if (!candidate || candidate.state !== "queued") throw new Error("The queued input is no longer available.");
+        if (candidate.captured.coordination) throw new Error("Coordination delivery cannot be sent as additional input.");
         let claimed: SessionTurnQueueReceipt;
         try {
-          claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId);
+          claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId, this.deps.getUnreleasedSourceTurnIds?.());
         } catch (error) {
           try {
             const canonical = await this.deps.store.getReceipt(owner, candidate.requestId);
@@ -174,7 +198,7 @@ export class SessionTurnQueueService {
               this.blocked.add(owner.sessionId);
               if (canonical.state === "starting" && canonical.sessionId === owner.sessionId
                 && canonical.incarnationId === owner.incarnationId && canonical.id === id
-                && canonical.inputTurnId === expectedTurnId && canonical.turnId === null && canonical.userMessageSeq === null) {
+                && canonical.inputTurnId === expectedTurnId && canonical.userMessageSeq === null) {
                 // No provider call has begun. Restore only this confirmed input
                 // claim, and resolve a lost restore reply by reading, not retrying.
                 const restored = await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
@@ -248,7 +272,7 @@ export class SessionTurnQueueService {
       const current = await this.deps.store.getReceipt(owner, requestId);
       if (current?.state === "queued") return current;
       if (current?.state === "starting" && current.id === id && current.inputTurnId === expectedTurnId
-        && current.turnId === null && current.userMessageSeq === null) {
+        && current.userMessageSeq === null) {
         await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
       }
       throw error;
@@ -327,7 +351,7 @@ export class SessionTurnQueueService {
           await this.deps.store.releaseInterrupted(owner, released.id, { runReleased: true });
           if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
         }
-        return this.deps.store.claimNext(owner);
+        return this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
       });
       if (!receipt || !this.isCurrentOwner(owner)) return;
       this.lastClaim.set(sessionId, receipt);

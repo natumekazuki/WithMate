@@ -257,11 +257,13 @@ describe("SessionStorage", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "legacy Session summary projectionはdetail破損時もCodex speedとReviewerを既定値へ正規化する"
-  // oracle = { type = "contract", ref = "accepted behavior: existing saved data default" }
-  // failure_mode = "旧Session summaryの欠落runtime optionが誤った値へ変わるか一覧取得を壊す"
+  // claim = "legacy Session summary projectionはdetail破損時も保存metadataを返し、Role・説明・Codex runtime optionの欠落を既定値へ正規化する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md" }
+  // fault = "detail JSONの破損で一覧取得が失敗するか、欠落metadataを不正なRole・設定へ投影する"
+  // observable = "再open後のsummary全fieldとdetail破損のerror記録"
+  // observation_boundary = "public-boundary"
   // scope = "session-storage-summary"
   // lifecycle = "permanent"
   // @end-test-value
@@ -293,6 +295,11 @@ describe("SessionStorage", () => {
       assert.deepEqual(summaries, [
         {
           id: session.id,
+          sessionRole: "standalone",
+          rootSessionId: session.id,
+          parentSessionId: null,
+          createdBySessionId: null,
+          description: "",
           taskTitle: session.taskTitle,
           status: session.status,
           updatedAt: session.updatedAt,

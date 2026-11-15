@@ -60,7 +60,7 @@ function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<Cha
 describe("home-launch-state", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "New Sessionを開くと既定providerとrandom選択で入力を初期化し、閉じると次回へ古い開始条件を持ち越さない"
+  // claim = "New Sessionを開くとStandalone・既定providerとrandom選択で入力を初期化し、閉じると次回へ古い開始条件を持ち越さない"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialog" }
   // fault = "再表示時に古いタイトル・workspace・provider選択を持ち越す"
   // observable = "open/close後のdraftの入力値・選択状態・検証状態"
@@ -92,6 +92,7 @@ describe("home-launch-state", () => {
       providerId: "codex",
       characterSelectionMode: "random",
       characterId: "",
+      sessionRole: "standalone",
     });
 
     assert.deepEqual(closeLaunchDraft(opened), {
@@ -104,6 +105,7 @@ describe("home-launch-state", () => {
       providerId: "",
       characterSelectionMode: "random",
       characterId: "",
+      sessionRole: "standalone",
     });
   });
 
@@ -447,6 +449,18 @@ describe("home-launch-state", () => {
     );
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "起点Session作成要求はdraftのtitle・directory workspace・provider・Character snapshotと既定Standalone Roleを保持する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / GitHub Issue #834 Roleと作成経路" }
+  // fault = "起点Roleを欠落させるか、選択したworkspaceやCharacterを異なる作成条件へ変換する"
+  // observable = "buildCreateSessionRequestFromLaunchDraftが返す作成要求全体"
+  // observation_boundary = "public-boundary"
+  // scope = "directory workspaceを選択した起点Sessionの作成要求"
+  // lifecycle = "permanent"
+  // impact = "ユーザーの選択と異なるRole・作業場所・CharacterでSessionを作ることを防ぐ"
+  // distinction = "型だけでは値の対応を保証できず、UIの非同期試験より小さな純粋処理で作成条件の対応を確認する"
+  // @end-test-value
   it("launch draft から directory workspace の session request を組み立てる", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
@@ -479,6 +493,7 @@ describe("home-launch-state", () => {
 
     assert.deepEqual(input, {
       provider: "codex",
+      sessionRole: "standalone",
       taskTitle: "task",
       workspace: {
         kind: "directory",

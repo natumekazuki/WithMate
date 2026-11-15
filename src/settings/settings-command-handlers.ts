@@ -6,7 +6,6 @@ import {
 } from "./settings-actions.js";
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import type { SettingsFeedbackSource } from "./use-settings-feedback.js";
 
 type SettingsCommandHandlersContext = {
@@ -16,19 +15,15 @@ type SettingsCommandHandlersContext = {
   setSettingsDraft: (settings: AppSettings) => void;
   getPersistedSettingsDraft?: () => AppSettings;
   setSettingsFeedback: (feedback: string, source: SettingsFeedbackSource) => void;
-  setMemoryV6Diagnostics: (diagnostics: MemoryV6Diagnostics) => void;
   getSessionCleanupCutoffDate?: () => string;
   setDeletingOldSessions?: (deleting: boolean) => void;
   refreshSessionSummaries?: () => Promise<void>;
-  onSettingsSaved?: () => void;
 };
 
 export type SettingsCommandHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onOpenAppLogFolder"
   | "onOpenCrashDumpFolder"
-  | "onInstallMemoryV6CliShim"
-  | "onUninstallMemoryV6CliShim"
   | "onBrowseProviderSkillRootPath"
   | "onBrowseProviderSkillRelativePath"
   | "onBrowseProviderInstructionRelativePath"
@@ -43,11 +38,9 @@ export function buildSettingsCommandHandlers({
   setSettingsDraft,
   getPersistedSettingsDraft,
   setSettingsFeedback: reportSettingsFeedback,
-  setMemoryV6Diagnostics,
   getSessionCleanupCutoffDate = () => "",
   setDeletingOldSessions = () => undefined,
   refreshSessionSummaries,
-  onSettingsSaved,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (
     action: string,
@@ -112,24 +105,6 @@ export function buildSettingsCommandHandlers({
         setSettingsFeedback("Opened the crash dump folder.");
       } catch (error) {
         setSettingsFeedback(error instanceof Error ? error.message : "Could not open the crash dump folder.", true);
-      }
-    }),
-    onInstallMemoryV6CliShim: () => withApi("install-cli-shim", async (api, setSettingsFeedback) => {
-      try {
-        const diagnostics = await api.installMemoryV6CliShim();
-        setMemoryV6Diagnostics(diagnostics);
-        setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "install"));
-      } catch (error) {
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not install the CLI shim.", true);
-      }
-    }),
-    onUninstallMemoryV6CliShim: () => withApi("uninstall-cli-shim", async (api, setSettingsFeedback) => {
-      try {
-        const diagnostics = await api.uninstallMemoryV6CliShim();
-        setMemoryV6Diagnostics(diagnostics);
-        setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "uninstall"));
-      } catch (error) {
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not uninstall the CLI shim.", true);
       }
     }),
     onBrowseProviderSkillRootPath: (providerId) => withApi(`browse-root:${providerId}`, async (api, setSettingsFeedback) => {
@@ -214,7 +189,6 @@ export function buildSettingsCommandHandlers({
         setSettingsFeedback(hasNewChanges
           ? "Settings saved. New changes remain unsaved."
           : result.feedback);
-        onSettingsSaved?.();
       } catch (error) {
         setSettingsFeedback(error instanceof Error ? error.message : "Could not save settings.", true);
       }
@@ -240,19 +214,4 @@ export function buildSettingsCommandHandlers({
       }
     }),
   };
-}
-
-function formatCliShimActionFeedback(
-  diagnostics: MemoryV6Diagnostics,
-  action: "install" | "uninstall",
-): string {
-  if (diagnostics.cliShim.status === "installed-path-missing") {
-    return "CLI shim created. Add ~/.local/bin to PATH to enable it.";
-  }
-
-  if (action === "install") {
-    return "Installed the withmate-memory CLI shim.";
-  }
-
-  return "Uninstalled the withmate-memory CLI shim.";
 }

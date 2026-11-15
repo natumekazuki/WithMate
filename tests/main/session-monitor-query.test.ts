@@ -25,8 +25,8 @@ test("監視対象をbounded pageで取得し閉じた親のMain/Auxiliary状態
   const ids = [...Array.from({ length: 100 }, (_, i) => `open-${String(i).padStart(3, "0")}`), "retained"];
   const readIds: string[][] = [];
   const auxiliary: AuxiliarySessionSummary = {
-    ...base, id: "aux", parentSessionId: "retained", title: "Auxiliary", status: "active", runState: "idle",
-    displayAfterMessageIndex: null, createdAt: "", closedAt: "",
+    ...base, id: "aux", parentSessionId: "retained", title: "Auxiliary", runState: "idle",
+    displayAfterMessageIndex: null, createdAt: "",
   };
   let canceling = true;
   const deps = {

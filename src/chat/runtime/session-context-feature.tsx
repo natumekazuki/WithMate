@@ -59,5 +59,5 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
   useLayoutEffect(() => {
     props.onAnnotationMatcherChange(glossary.annotationMatcher);
   }, [glossary.annotationMatcher, props.onAnnotationMatcherChange]);
-  return props.visible ? <SessionContextPane {...context.rightPaneProps} {...props.navigator} /> : null;
+  return <SessionContextPane {...context.rightPaneProps} {...props.navigator} visible={props.visible} />;
 }

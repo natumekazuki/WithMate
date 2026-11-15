@@ -9,11 +9,12 @@ import {
   collectCompanionRemovalDatabaseTarget,
 } from "../../src-electron/storage/migrations/companion-removal-database.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
+import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 
 function database(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
-  ensureV6Schema(db);
+  db.exec(RELEASED_V6_SCHEMA_SQL);
   installReleasedLegacyAuxiliarySessionsTable(db);
   db.exec(`
     CREATE TABLE session_turn_provider_outputs_v6 (
@@ -83,8 +84,8 @@ describe("companion removal database", () => {
     try {
       ensureV6Schema(db);
       db.prepare(`INSERT INTO auxiliary_sessions
-        (id, parent_session_id, status, created_at, updated_at)
-        VALUES ('live-aux', 'live-parent', 'active', 'now', 'now')`).run();
+        (id, parent_session_id, created_at, updated_at)
+        VALUES ('live-aux', 'live-parent', 'now', 'now')`).run();
       db.prepare(`INSERT INTO auxiliary_session_messages
         (auxiliary_session_id, seq, role, body, created_at)
         VALUES ('live-aux', 0, 'user', ?, 'now')`).run(JSON.stringify(message));

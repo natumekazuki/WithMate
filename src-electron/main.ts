@@ -1,3 +1,4 @@
+import { startAgentRuntimeApi, type AgentRuntimeApiHandle } from "./platform/agent-runtime/runtime-api.js";
 import { readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { SessionFolderCleanupService } from "./files/session-folder-cleanup-service.js";
 import { mkdirSync } from "node:fs";
@@ -14,7 +15,6 @@ import {
   Menu,
   nativeImage,
   Notification,
-  safeStorage,
   shell,
   Tray,
   type NativeImage,
@@ -22,17 +22,16 @@ import {
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
+import { captureSessionTurnQueueDisplay } from "../src-shared/session/session-turn-queue.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
-import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
-import type { BackgroundSourceRef } from "../src-shared/session/background-source-snapshot.js";
-import type { SessionHistoryReadScope } from "../src-shared/session/session-history-read-scope.js";
+import type { AgentRuntimeSourceRef } from "../src-shared/agent-runtime/agent-runtime-source.js";
 import {
   type DiffPreviewPayload,
   getSessionIncarnationId,
   type MessageArtifact,
   type Session,
+  type SessionSummary,
 } from "../src-shared/session/session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
@@ -82,7 +81,6 @@ import {
 } from "./auxiliary/auxiliary-session-storage.js";
 import { CharacterService } from "./character/character-service.js";
 import { refreshSessionCharacterRuntimeSnapshot } from "./character/character-runtime-service.js";
-import { resolveBackgroundPromptContext } from "./providers/background-prompt-context.js";
 import { CharacterWorkspaceOperationCoordinator } from "./character/character-workspace-operation-coordinator.js";
 import { CharacterStorage } from "./character/character-storage.js";
 import {
@@ -106,15 +104,14 @@ import {
 } from "./files/open-path.js";
 import { launchTerminalAtPath } from "./files/open-terminal.js";
 import { SessionStorage } from "./session/session-storage.js";
-import { SessionMemoryStorage } from "./session/session-memory-storage.js";
-import { ProjectMemoryStorage } from "./memory/project-memory-storage.js";
 import { SessionRuntimeService } from "./session/session-runtime-service.js";
 import { createMainSessionRuntime } from "./app/main-session-runtime-assembly.js";
-import { MainSessionTurnQueueFacade } from "./app/main-session-turn-queue-facade.js";
+import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "./app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "./session/session-turn-queue-service.js";
 import { createAuxiliarySessionRuntime } from "./auxiliary/auxiliary-session-runtime-assembly.js";
 import { SessionTurnNotificationService } from "./session/session-turn-notification-service.js";
 import { SessionPersistenceService } from "./session/session-persistence-service.js";
+import { manageSessionDirectories } from "./session/session-directory-management.js";
 import { createSessionStorageCommandAdapter } from "./session/session-storage-command-adapter.js";
 import { createSessionPersistenceAssembly } from "./session/session-persistence-assembly.js";
 import { readSessionFileExplorerContext } from "./files/session-file-explorer-context.js";
@@ -127,7 +124,6 @@ import { SessionElicitationService } from "./session/session-elicitation-service
 import { WindowBroadcastService } from "./windows/window-broadcast-service.js";
 import { WindowDialogService } from "./windows/window-dialog-service.js";
 import { WorkspaceDirectoryValidationService } from "./files/workspace-directory-validation-service.js";
-import { SessionMemorySupportService } from "./session/session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./files/session-file-explorer-service.js";
 import { SessionFileExplorerRuntime } from "./files/session-file-explorer-runtime.js";
 import { SessionFilePreviewImageCopyService } from "./files/session-file-preview-image-copy-service.js";
@@ -142,6 +138,8 @@ import { FileRootGitChangesService } from "./files/file-root-git-changes-service
 import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
+  appendCrewFilesDirectory,
+  resolveCrewFilesDirectory,
   copyFilesToSessionFiles as copyFilesToSessionFilesStorage,
   createSessionFilesDirectory,
   deleteSessionFilesDirectory,
@@ -150,7 +148,6 @@ import {
   saveSessionFile,
 } from "./files/session-files.js";
 import { MateStorage } from "./mate/mate-storage.js";
-import { captureSessionMemoryFileAccess } from "./memory/memory-file-access.js";
 import { MateProfileItemStorage } from "./mate/mate-profile-item-storage.js";
 import { WindowEntryLoader } from "./windows/window-entry-loader.js";
 import { AuxWindowService } from "./auxiliary/aux-window-service.js";
@@ -163,8 +160,6 @@ import {
   type AuxiliarySessionStorageAccess,
   type CharacterStorageAccess,
   type PersistentStoreBundle,
-  type ProjectMemoryStorageAccess,
-  type SessionMemoryStorageAccess,
   type SessionPinStorage,
   type SessionFilePinStorage,
   type SessionStorageRead,
@@ -200,7 +195,6 @@ import {
   type ManagedSkillBundleDescriptor,
   WITHMATE_GLOSSARY_SKILL_NAME,
 } from "./skills/managed-skill-distribution-service.js";
-import { MemoryCliShimService } from "./memory/memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session/session-summary-adapter.js";
 import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
 import { resolveWorkspaceDirectoryValidationMessage } from "../src-shared/window/workspace-directory-validation.js";
@@ -212,32 +206,13 @@ import { AppLogService } from "./app/app-log-service.js";
 import { StorageOperationLogService } from "./app/storage-operation-log-service.js";
 import type { AppBootStatus } from "../src-shared/window/app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "../src-shared/window/app-database-diagnostics-state.js";
-import type {
-  MemoryV6DiagnosticEvent,
-  MemoryV6Diagnostics,
-} from "../src-shared/memory/memory-diagnostics-state.js";
-import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src-shared/memory/memory-contract.js";
-import {
-  CHARACTER_CONTEXT_SCHEMA_VERSION,
-  isCharacterContextError,
-} from "../src-shared/character-context/character-context-contract.js";
-import type { MemoryV6ProtectedObjectGcRequest } from "../src-shared/memory/memory-review-state.js";
 import {
   assertPersistentStoreOwnerActive,
   capturePersistentStoreOwner,
 } from "./storage/persistent-store-owner-guard.js";
-import {
-  startMemoryV6RuntimeApi,
-  type MemoryV6RuntimeApiHandle,
-} from "./memory/memory-v6-runtime.js";
-import { backgroundMemoryRegistrationHandlers } from "./memory/background-memory-registration.js";
-import { MemoryRecordingController } from "./memory/memory-recording-controller.js";
-import { createElectronSafeStorageKeyProtector } from "./memory/memory-protected-object-key-store.js";
-import { MemoryV6MainAssembly } from "./memory/memory-v6-main-assembly.js";
 import { AgentRuntimeBindingRegistry } from "./providers/agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary/auxiliary-provider-runtime-lifecycle.js";
 import { toConversationView } from "./storage/conversation-query.js";
-import { getMemoryV6AgentRuntimeOperations } from "./memory/memory-v6-http-server.js";
 import { RuntimeDiscoveryRegistryError } from "./platform/runtime-discovery/runtime-discovery-contract.js";
 import {
   GlossaryApplicationService,
@@ -245,26 +220,27 @@ import {
 } from "./glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
-import { BackgroundExecutionService } from "./providers/background-execution-service.js";
-import { BackgroundAffectController } from "./character/background-affect-controller.js";
-import { BackgroundProductionRuntime } from "./providers/background-production-runtime.js";
-import { createBackgroundProviderAgent } from "./providers/background-provider-agent.js";
-import type { SessionBackgroundEvent } from "./session/session-background-events.js";
-import type { BackgroundRegistration } from "./providers/background-registration.js";
-import { registerBackgroundAffect } from "./character/background-affect-registration.js";
-import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
-import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.js";
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossary-operation-schema.js";
 import { getSessionGraphAgentRuntimeOperations } from "../src-shared/session-graph/session-graph-operation-schema.js";
 import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from "./session-graph/session-graph-application-service.js";
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
-import { SessionHistoryRuntimeService } from "./session-history/session-history-runtime-service.js";
-import { createWithMateSessionHistoryMcpServer } from "./platform/mcp/withmate-session-history-mcp.js";
-import { SESSION_HISTORY_TOOL_OPERATIONS } from "../src-shared/session-history/session-history-contract.js";
+import { SessionManagementApplication, SessionManagementError } from "./session/session-management-application.js";
+import { SessionOperatingPolicyService } from "./session/session-operating-policy-service.js";
+import { SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
+import { resolveRelatedSessions } from "./session/session-relationship-resolver.js";
+import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
+import { getModelDisabledReason } from "../src-shared/settings/model-availability.js";
 import { SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
 import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
+import { registerSessionRoleHandlers } from "./ipc/session-role.js";
+import { registerSessionExecutionHandlers } from "./ipc/session-execution.js";
+import { registerSessionCrewHandlers } from "./ipc/session-crew.js";
+import { assertOwningSessionWindowSender } from "./ipc/shared.js";
+import { registerCoordinationHandlers } from "./ipc/coordination.js";
+import { CoordinationApplicationService } from "./coordination/coordination-application-service.js";
+import { ChildSessionCreationRejectedError } from "./session/session-storage-errors.js";
 import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { MainStoreContext } from "./app/main-store-context.js";
 import {
@@ -326,23 +302,11 @@ const appLogService = new AppLogService({
   logsPath: appLogsPath,
   runtimeInfo: appLogRuntimeInfo,
 });
-const backgroundFailureLogService = new AppLogService({
-  logsPath: appLogsPath,
-  fileName: "background-failures.jsonl",
-  rotation: false,
-  backgroundFailureDiagnostics: true,
-  runtimeInfo: appLogRuntimeInfo,
-});
 const storageOperationLogService = new StorageOperationLogService(writeAppLog);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
-const bundledMemoryCliScriptPath = resolveBundledMemoryCliScriptPath({
-  isPackaged: app.isPackaged,
-  resourcesPath: process.resourcesPath,
-  currentDir,
-});
 const bundledGlossarySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_GLOSSARY_SKILL_NAME);
@@ -419,20 +383,9 @@ const mainStoreContext = new MainStoreContext();
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
-let memoryCliShimService: MemoryCliShimService | null = null;
 let allowQuitWithInFlightRuns = false;
-let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
+let agentRuntimeApi: AgentRuntimeApiHandle | null = null;
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
-let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
-const memoryV6MainAssembly = new MemoryV6MainAssembly({
-  getRuntime: () => memoryV6RuntimeApi,
-  getRuntimeStatus: () => mainStoreContext.memoryV6RuntimeStatus,
-  getCliShimService: () => requireMemoryCliShimService(),
-  getDiagnosticErrors: () => memoryV6DiagnosticErrors,
-  userDataPath: fixedUserDataPath,
-  protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
-  getMemoryFileQuotaBytes: async () => (await requireAppSettingsStorage().getSettings()).memoryFileQuotaBytes,
-});
 const mainWindowComposition = new MainWindowComposition(
   preloadPath,
   mainLogComposition.attachWindowLogHandlers,
@@ -578,7 +531,6 @@ let sessionTurnService: SessionTurnService | null = null;
 const sessionResultReadService = new SessionResultReadService((sessionId) => {
   requireWindowBroadcastService().broadcastSessionTurnUpdated(sessionId);
 });
-let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
@@ -595,7 +547,7 @@ const glossarySessionProjectionService = new GlossarySessionProjectionService({
   getBindingGeneration: (sessionId, providerId) =>
     agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
   subscribeBindingChanges: (listener) => agentRuntimeBindingRegistry.subscribeChanges((change) => {
-    if (!change.backgroundBindingId) listener({ sessionId: change.actorSessionId, providerId: change.providerId });
+    listener({ sessionId: change.actorSessionId, providerId: change.providerId });
   }),
 });
 const glossaryWindowSubscriptionCoordinator = new SessionGlossaryWindowSubscriptionCoordinator<BrowserWindow>({
@@ -609,10 +561,11 @@ const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationServ
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
+// App shutdown state outlives persistent-store generations (including quit cleanup).
+let appLifecycleService: AppLifecycleService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
       PersistentStoreLifecycleService,
-      AppLifecycleService,
       MainBootstrapService
     >
   | null = null;
@@ -666,64 +619,16 @@ async function getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics> {
   return mainStoreContext.appDatabaseDiagnostics!;
 }
 
-function recordMemoryV6DiagnosticError(
-  kind: string,
-  _message: string,
-  discoveryCode?: MemoryV6DiagnosticEvent["discoveryCode"],
-): void {
-  memoryV6DiagnosticErrors = [
-    {
-      kind,
-      occurredAt: new Date().toISOString(),
-      ...(discoveryCode ? { discoveryCode } : {}),
-    },
-    ...memoryV6DiagnosticErrors,
-  ].slice(0, 3);
-}
 
-async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
-  return memoryV6MainAssembly.getDiagnostics();
-}
 
-async function installMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
-  return memoryV6MainAssembly.installCliShim();
-}
 
-async function uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics> {
-  return memoryV6MainAssembly.uninstallCliShim();
-}
 
-function getMemoryV6FileUsage() {
-  return memoryV6MainAssembly.getFileUsage();
-}
 
-async function exportMemoryV6EntryFiles(entryId: string, targetWindow?: BrowserWindow | null) {
-  const outputDirectoryPath = await requireWindowDialogService().pickDirectory(targetWindow ?? null, null);
-  if (!outputDirectoryPath) {
-    return null;
-  }
-  return memoryV6MainAssembly.exportEntryFiles(entryId, outputDirectoryPath);
-}
 
-function runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest) {
-  return memoryV6MainAssembly.runProtectedObjectGc(request);
-}
 
-function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined) {
-  return memoryV6MainAssembly.searchEntries(request);
-}
 
-function listMemoryV6ReviewTargets() {
-  return memoryV6MainAssembly.listReviewTargets();
-}
 
-function getMemoryV6Entry(entryId: string) {
-  return memoryV6MainAssembly.getEntry(entryId);
-}
 
-function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null) {
-  return memoryV6MainAssembly.forgetEntry(entryId, reason);
-}
 
 async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "main" | "auxiliary") {
   const session = sourceKind === "auxiliary" ? null : getSession(sessionId);
@@ -733,8 +638,6 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
       providerId: session.provider,
       characterId: session.characterId,
       workspacePath: session.workspacePath,
-      resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
-        mainStoreContext.executionSelections.apply(session), resolveSessionFilesDirectory(app.getPath("userData"), session.id), outputPath),
       source: { kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
     };
   }
@@ -750,8 +653,6 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
         providerId: auxiliary.provider,
         characterId: auxiliary.characterId,
         workspacePath: auxiliary.workspacePath,
-        resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
-          mainStoreContext.executionSelections.apply(auxiliary), resolveSessionFilesDirectory(app.getPath("userData"), parent.id), outputPath),
         source: { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(auxiliary),
           parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } },
       }
@@ -767,119 +668,25 @@ async function ensureSessionGlossarySubscription(sessionId: string): Promise<voi
 }
 
 const providerAgentRuntimeTurns = new ProviderAgentRuntimeTurnCoordinator();
-const backgroundExecutions = new BackgroundExecutionService({
-  bindings: agentRuntimeBindingRegistry,
-  turns: providerAgentRuntimeTurns,
-  closeConnection: (handle) => memoryV6RuntimeApi?.managedMcp?.closeConnection(handle),
-});
-const backgroundSourceKinds: BackgroundRegistration["sourceKinds"] = {
-  "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"], affect: ["main", "auxiliary"],
-};
-const backgroundRuntime = new BackgroundProductionRuntime({
-  executions: backgroundExecutions,
-  runAgent: createBackgroundProviderAgent({
-    getAppSettings: () => requireAppSettingsStorage().getSettings(),
-    getProviderCodingAdapter,
-    getModelCatalog: (input) => getModelCatalog({ providerId: input.selection.providerId, workspacePath: input.session.workspacePath }),
-    resolvePromptContext: (input, settings) => resolveBackgroundPromptContext(input, settings, {
-      userDataPath: app.getPath("userData"),
-      refreshSnapshot: (characterId, previous) => requireCharacterService().refreshRuntimeSnapshot(characterId, previous),
-      characterContextService: memoryV6RuntimeApi?.characterContextService,
-      getTimingSnapshot: async (sessionId, observedAt) => requireSessionTurnStorage().getConversationTimingSnapshot(sessionId, observedAt),
-      onCharacterContextFailure: (owner, result) => writeAppLog({ level: "warn",
-            kind: "character-context.lifecycle.read-failed", process: "main",
-            message: "Character context was unavailable for a background turn",
-            data: { sessionId: owner.id, code: result.error.code } }),
-    }),
-    projectBinding: (input) => {
-      const runtime = memoryV6RuntimeApi;
-      if (!runtime?.managedMcp) throw new Error("Background managed MCP runtime is unavailable.");
-      const binding = { ...input.binding, memoryRuntimeOwner: {
-        applicationInstanceId: runtime.applicationInstanceId, runtimeGenerationId: runtime.runtimeGenerationId,
-      } };
-      return { ...binding, managedMcp: runtime.managedMcp.issue(binding, input.handle, input.signal) };
-    },
-  }),
-  getAppSettings: () => requireAppSettingsStorage().getSettings(),
-  getModelCatalog: (session, providerId) => getModelCatalog({ providerId, workspacePath: session.workspacePath }),
-  captureSource: (source) => {
-    const worker = mainStoreContext.storageWorker;
-    if (!worker || databaseMaintenanceRequested) throw new Error("Background source storage is unavailable.");
-    return worker.stores.session.captureBackgroundSource(source);
-  },
-  resolveAuthority: async (session, source) => {
-    const memoryAuthority = await resolveSessionMemoryAuthority(session);
-    const graph = await resolveSessionGraphSession(session.id, source.kind);
-    if (!memoryAuthority || !graph) return null;
-    let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
-    try { glossaryAuthority = projectGlossaryCheckoutAuthority(await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath)); }
-    catch { /* Non-Git workspaces have no glossary authority. */ }
-    return { ...memoryAuthority, sessionKind: session.sessionKind, sessionGraphOwner: graph.owner,
-      ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}) };
-  },
-  sourceKinds: backgroundSourceKinds,
-  resolveSessionFolderPath: (source) => resolveSessionFilesDirectory(app.getPath("userData"),
-    source.kind === "auxiliary" ? source.parent.sessionId : source.sessionId),
-  onFailure: ({ timestamp, reason, ...data }) => {
-    try {
-      backgroundFailureLogService.write({ timestamp, level: "error", kind: "background.execution.failed",
-        process: "main", message: reason, data });
-    } catch (error) { console.warn("Background failure log write failed", error); }
-  },
-  onExecutionDiagnostic: ({ timestamp, level, ...data }) => {
-    try {
-      backgroundFailureLogService.write({ timestamp, level,
-        kind: "background.execution.diagnostic", process: "main",
-        message: data.execution.failure?.reason ?? "Background execution ended with operation errors.", data });
-    } catch (error) { console.warn("Background execution diagnostic log write failed", error); }
-  },
-});
-
-const memoryRecordingController = new MemoryRecordingController({
-  runtime: backgroundRuntime,
-  captureSource: (source) => {
-    const worker = mainStoreContext.storageWorker;
-    if (!worker || databaseMaintenanceRequested) throw new Error("Memory recording source storage is unavailable.");
-    return worker.stores.session.captureBackgroundSource(source);
-  },
-  getSettings: () => requireAppSettingsStorage().getSettings(),
-  resolveAuthority: resolveSessionMemoryAuthority,
-});
-const backgroundAffectController = new BackgroundAffectController({
-  runtime: backgroundRuntime,
-  captureSource: (source) => {
-    const worker = mainStoreContext.storageWorker;
-    if (!worker || databaseMaintenanceRequested) throw new Error("Affect source storage is unavailable.");
-    return worker.stores.session.captureBackgroundSource(source);
-  },
-});
-
-async function publishBackgroundConversationEvent(event: SessionBackgroundEvent, kind: "main" | "auxiliary"): Promise<void> {
-  const { session } = event;
-  const identity = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
-  if (kind === "main") {
-    backgroundRuntime.publish({ ...event, source: { kind, ...identity } });
-    return;
-  }
-  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id);
-  const parent = auxiliary ? await requireSessionStorage().getSessionMetadata?.(auxiliary.parentSessionId) : null;
-  if (!auxiliary || !parent) return;
-  backgroundRuntime.publish({ ...event, source: { kind, ...identity,
-    parent: { sessionId: auxiliary.parentSessionId, incarnationId: getSessionIncarnationId(parent.summary) } } });
-}
-async function resolveSessionGraphSession(sessionId: string, sourceKind?: "main" | "auxiliary"): Promise<ResolvedSessionGraphSession | null> {
+async function resolveSessionGraphSession(sessionId: string, source?: { kind: "main" | "auxiliary"; incarnationId?: string }): Promise<ResolvedSessionGraphSession | null> {
   const generation = mainStoreContext.storageWorker;
   const sessions = requireSessionStorage();
   if (!generation || databaseMaintenanceRequested || !sessions.getSessionMetadata) return null;
-  const main = sourceKind === "auxiliary" ? null : await sessions.getSessionMetadata(sessionId);
-  const auxiliary = sourceKind === "main" || main ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  const main = source?.kind === "auxiliary" ? null : await sessions.getSessionMetadata(sessionId);
+  const auxiliary = source?.kind === "main" ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  if (main && auxiliary) return null;
   const parentMetadata = main ?? (auxiliary ? await sessions.getSessionMetadata(auxiliary.parentSessionId) : null);
   if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !parentMetadata) return null;
   const parent = parentMetadata.summary;
+  const root = await sessions.getSessionSummary?.(parent.rootSessionId ?? parent.id);
+  if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !root) return null;
   const subject = auxiliary ?? parent;
+  const subjectSource = { kind: auxiliary ? "auxiliary" as const : "main" as const, incarnationId: auxiliary?.createdAt ?? getSessionIncarnationId(parent) };
+  if (source?.incarnationId && source.incarnationId !== subjectSource.incarnationId) return null;
   const snapshot = auxiliary?.characterRuntimeSnapshot ?? parentMetadata.characterRuntimeSnapshot;
   return {
-    owner: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) },
+    owner: { sessionId: root.id, incarnationId: getSessionIncarnationId(root) },
+    source: subjectSource,
     identity: {
       sessionId: subject.id,
       sessionTitle: auxiliary ? auxiliary.title : parent.taskTitle,
@@ -903,9 +710,16 @@ const sessionGraphApplicationService = new SessionGraphApplicationService({
   resolveSession: resolveSessionGraphSession,
 });
 sessionGraphApplicationService.subscribe((sessionId) => {
-  const window = requireSessionWindowBridge().getWindow(sessionId);
-  if (window && !window.isDestroyed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
-  void sessionGraphWindowService.notify(sessionId);
+  void (async () => {
+    const owner = requireActivePersistentStoreOwnerForFactory("Session Graph notification");
+    const members = await owner.sessionStorage.listSessionSummaries();
+    assertPersistentStoreOwnerIsActive(owner, "Session Graph notification");
+    for (const member of members.filter((entry) => (entry.rootSessionId ?? entry.id) === sessionId)) {
+      const window = requireSessionWindowBridge().getWindow(member.id);
+      if (window && !window.isDestroyed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, member.id);
+    }
+    await sessionGraphWindowService.notify(sessionId);
+  })().catch((error: unknown) => writeAppLog({ level: "warn", kind: "session-graph.notification-failed", process: "main", message: "Crew Session Graph notification failed", error: appLogService.errorToLogError(error) }));
 });
 const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
   application: sessionGraphApplicationService,
@@ -921,28 +735,127 @@ const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
     if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
   },
 });
-async function validateBackgroundSource(scope: SessionHistoryReadScope): Promise<boolean> {
-  const generation = mainStoreContext.storageWorker;
-  if (!generation || databaseMaintenanceRequested) return false;
-  const source = await generation.stores.session.readBackgroundSource(scope);
-  return source !== null && mainStoreContext.storageWorker === generation && !databaseMaintenanceRequested;
-}
 const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   applicationService: sessionGraphApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
-  validateBackgroundSource,
 });
-const sessionHistoryRuntimeService = new SessionHistoryRuntimeService({
-  read: async (input) => {
-    const generation = mainStoreContext.storageWorker;
-    if (!generation || databaseMaintenanceRequested) throw new Error("Session history storage is unavailable.");
-    const result = await (input.scope.source.kind === "main" ? generation.stores.session.readSessionHistory(input) : generation.stores.auxiliary.readSessionHistory(input));
-    if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested) throw new Error("Session history storage changed during the read.");
-    return result;
+const coordinationApplicationService = new CoordinationApplicationService({
+  getStore: () => {
+    const owner = requireActivePersistentStoreOwnerForFactory("Coordination");
+    if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Coordination storage is unavailable.");
+    return owner.storageWorker.stores.coordination;
   },
+  prepareDelivery: async (target, operationId, actor) => {
+    const captured = await requireMainSessionTurnQueueFacade().prepareCoordinationDelivery(target, operationId);
+    const recipient = target.kind === "main" ? await getRuntimeSession(target.sessionId) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(target.sessionId);
+    const sender = actor.kind === "user" ? null : actor.kind === "main" ? await getRuntimeSession(actor.sessionId) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.sessionId);
+    const auxiliarySender = actor.kind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(actor.sessionId) : null;
+    if (!recipient || getSessionIncarnationId(recipient) !== target.incarnationId || (actor.kind !== "user" && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId))) throw new Error("The Coordination sender or recipient changed.");
+    return { ...captured, origin: { kind: actor.kind === "user" ? "gui" : "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
+      targetSnapshot: captureSessionTurnQueueDisplay(recipient), ...(sender ? { actorSnapshot: captureSessionTurnQueueDisplay(sender) } : {}), ...(auxiliarySender ? { actorMainSessionId: auxiliarySender.parentSessionId } : {}) } };
+  },
+  onAccepted: (receipt) => requireMainSessionTurnQueueService().acceptCommittedReceipt(receipt),
+  onNotificationError: (error) => writeAppLog({ level: "warn", kind: "coordination.notification-failed", process: "main", message: "A saved Coordination notification failed", error: appLogService.errorToLogError(error) }),
+});
+const sessionManagementRuntimeService = new SessionManagementRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
+  application: new SessionManagementApplication({
+    operatingPolicy: (actor, operation, request, assertCurrent) => new SessionOperatingPolicyService({
+      getStore: () => requireAppSettingsStorage(),
+      getQuota: getProviderQuotaTelemetry,
+    }).execute(operation, request, actor.workspacePath, assertCurrent),
+    createChild: async (actor, request, assertCurrent) => {
+      try {
+        return await requireMainSessionCommandFacade().createChildSession({ id: actor.id, incarnationId: actor.incarnationId }, request, assertCurrent);
+      } catch (error) {
+        if (error instanceof ChildSessionCreationRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
+        throw error;
+      }
+    },
+    catalog: async (actor, request) => {
+      const session = actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
+      if (!session || getSessionIncarnationId(session) !== actor.incarnationId) throw new SessionManagementError("SESSION_REPLACED", "The catalog actor was replaced or deleted.");
+      const catalog = await getModelCatalog({ providerId: request.provider, workspacePath: request.workspacePath ?? session.workspacePath });
+      const settings = await requireAppSettingsStorage().getSettings();
+      return { ...catalog, providers: catalog.providers.filter((provider) => getProviderAppSettings(settings, provider.id).enabled).map((provider) => ({
+        ...provider,
+        models: provider.models.filter((model) => getModelDisabledReason(settings.modelAvailability, provider.id, model.id) === null),
+        defaultModelAvailable: provider.models.some((model) => model.id === provider.defaultModelId) && getModelDisabledReason(settings.modelAvailability, provider.id, provider.defaultModelId) === null,
+      })) };
+    },
+    coordinate: async (actor, turnId, request, assertCurrent) => {
+      const identity = { kind: actor.kind, sessionId: actor.id, incarnationId: actor.incarnationId };
+      const guard = () => { assertCurrent(); return true; };
+      try {
+        return await (turnId === null
+          ? coordinationApplicationService.read(identity, request, guard)
+          : coordinationApplicationService.executeAgent({ ...identity, turnId }, request, guard));
+      } catch (error) {
+        if (error instanceof Error && "code" in error && (error.code === "COORDINATION_REJECTED" || error.code === "COORDINATION_DELETED")) throw new SessionManagementError(error.code, error.message);
+        throw error;
+      }
+    },
+    crewFolder: async (actor) => ({ rootSessionId: actor.rootSessionId, path: resolveCrewFilesDirectory(app.getPath("userData"), actor.rootSessionId) }),
+    directories: (target, change, assertCurrent) => manageSessionDirectories(requireSessionPersistenceService(), app.getPath("userData"), target, change, assertCurrent),
+    listSessions: async () => {
+      const owner = requireActivePersistentStoreOwnerForFactory("Session relationships");
+      const mains = await owner.sessionStorage.listSessionSummaries();
+      const auxiliaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(mains.map((session) => session.id));
+      assertPersistentStoreOwnerIsActive(owner, "Session relationships");
+      return resolveRelatedSessions(mains, auxiliaries);
+    },
+    currentTurn: async (actor) => {
+      const owner = requireActivePersistentStoreOwnerForFactory("Session current Turn");
+      const mainRunning = Boolean(sessionRuntimeService?.isRunInFlight(actor.id));
+      const auxiliaryRunning = Boolean(auxiliarySessionRuntimeService?.isRunInFlight(actor.id));
+      const actualOwnerRunning = actor.kind === "main" ? mainRunning && !auxiliaryRunning : auxiliaryRunning && !mainRunning;
+      const turnId = actualOwnerRunning ? getLiveSessionRun(actor.id)?.sessionTurnId ?? null : null;
+      const receipts = turnId ? await owner.storageWorker!.stores.queue.listActive({ sessionId: actor.id, incarnationId: actor.incarnationId }) : [];
+      assertPersistentStoreOwnerIsActive(owner, "Session current Turn");
+      const receipt = receipts.find((entry) => entry.turnId === turnId && !entry.inputTurnId) ?? null;
+      return { turnId, receipt: receipt ? { sessionId: receipt.sessionId, incarnationId: receipt.incarnationId, receiptId: receipt.id, requestId: receipt.requestId, turnId: receipt.turnId } : null, origin: receipt?.accepted?.origin ?? null };
+    },
+    updateMetadata: async (actor, patch, assertCurrent) => {
+      assertCurrent();
+      if (actor.kind === "main") return requireSessionPersistenceService().patchSessionMetadata(actor.id, actor.incarnationId, patch, assertCurrent);
+      const metadata = await requireAuxiliarySessionService().patchAuxiliarySessionMetadata({ auxiliarySessionId: actor.id, parentSessionId: actor.mainSessionId, createdAt: actor.incarnationId, patch }, assertCurrent);
+      broadcastSessions([actor.mainSessionId]);
+      return metadata;
+    },
+    enqueue: async (target, input, actor, turnId, assertCurrent) => {
+      const session = await getQueueRuntimeSession(target.id);
+      if (!session) throw new Error("The target Session is unavailable.");
+      const facade = requireMainSessionTurnQueueFacade();
+      const sender = actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
+      if (!sender || getSessionIncarnationId(sender) !== actor.incarnationId) throw new Error("The sender Session is unavailable or changed.");
+      const origin = { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
+        actorSnapshot: captureSessionTurnQueueDisplay(sender), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
+      try {
+        return await facade.enqueueSessionMessage(input, origin, assertCurrent);
+      } catch (error) {
+        if (error instanceof SessionTurnQueuePreflightRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
+        throw error;
+      }
+    },
+    getReceipt: (target, requestId) => requireMainSessionTurnQueueFacade().getSessionTurnQueueReceipt(target.id, requestId, target.incarnationId),
+    readExecution: async (_target, operation, request, assertCurrent) => {
+      const owner = requireActivePersistentStoreOwnerForFactory("Session execution read");
+      const worker = owner.storageWorker;
+      if (!worker || databaseMaintenanceRequested) throw new Error("Saved Session execution storage is unavailable.");
+      assertCurrent();
+      const result = await worker.stores.execution.execute({ target: request.target, operation, request });
+      assertPersistentStoreOwnerIsActive(owner, "Session execution read");
+      assertCurrent();
+      return result;
+    },
+    cancelReceipt: (target, receiptId, assertCurrent) => requireMainSessionTurnQueueFacade().cancelSessionTurnReceipt({ sessionId: target.id, incarnationId: target.incarnationId }, receiptId, assertCurrent),
+    stopTurn: (target, turnId, assertCurrent) => requireSessionRuntimeService().stopSessionTurn(target.id, target.incarnationId, turnId, assertCurrent),
+    steer: (target, input, actor, turnId, assertCurrent) => requireSessionRuntimeService().steerChildSessionTurn(
+      { sessionId: target.id, incarnationId: target.incarnationId }, input.turnId, input.message,
+      { sessionId: actor.id, incarnationId: actor.incarnationId, turnId }, assertCurrent),
+  }),
 });
 
 function listPreviewWindowsIncludingGraphs() {
@@ -960,19 +873,19 @@ const glossaryRuntimeService = new GlossaryRuntimeService({
   resolveActorSession: resolveAgentRuntimeActorSession,
   getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
   providerAgentRuntimeTurns,
-  validateBackgroundSource,
 });
 
 async function beginManagedProviderTurn(
   session: Session,
   binding: import("./providers/agent-runtime-binding.js").ProviderAgentRuntimeBindingProjection | null,
   signal: AbortSignal,
+  executionOptions: import("../src-shared/session/session-execution-options.js").SessionExecutionOptions,
 ) {
   if (!binding) return undefined;
   signal.throwIfAborted();
-  const turn = await glossaryRuntimeService.beginProviderTurn(session.id, binding);
+  const turn = await glossaryRuntimeService.beginProviderTurn(session.id, binding, executionOptions);
   try {
-    const host = memoryV6RuntimeApi?.managedMcp;
+    const host = agentRuntimeApi?.managedMcp;
     if (!host) throw new Error("Managed MCP runtime is unavailable.");
     const managedMcp = host.issue(turn.binding, turn.handle, signal);
     signal.throwIfAborted();
@@ -985,160 +898,86 @@ async function beginManagedProviderTurn(
 
 function endManagedProviderTurn(handle: unknown): void {
   const turn = handle as import("./glossary/glossary-proactive-turn.js").GlossaryProactiveTurnHandle;
-  memoryV6RuntimeApi?.managedMcp?.release(turn);
+  agentRuntimeApi?.managedMcp?.release(turn);
   glossaryRuntimeService.endProviderTurn(turn);
 }
 
-async function resolveSessionMemoryAuthority(session: Pick<Session, "characterId" | "workspacePath">) {
-  const runtime = memoryV6RuntimeApi;
-  if (!runtime || databaseMaintenanceRequested) throw new Error("Memory authority storage is unavailable.");
-  const authority = await buildProviderAgentRuntimeAuthoritySnapshot({
-    characterId: session.characterId,
-    workspacePath: session.workspacePath,
-    resolveCanonicalProjectId: async (workspacePath) => (await runtime.resolveKnownProjectByPath(workspacePath))?.id,
-  });
-  if (memoryV6RuntimeApi !== runtime || databaseMaintenanceRequested) throw new Error("Memory authority storage changed during resolution.");
-  return authority;
-}
 
 async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "incarnationId" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
-  actorSource: BackgroundSourceRef = { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
+  actorSource: AgentRuntimeSourceRef = { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
 ) {
-  const memoryAuthority = await resolveSessionMemoryAuthority(session);
-  if (!memoryAuthority) {
-    throw new Error("Provider runtime binding requires a canonical Character authority.");
-  }
+  const sourceKind = actorSource.kind;
   let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
   try {
     glossaryAuthority = projectGlossaryCheckoutAuthority(
       await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath),
     );
   } catch {
-    // Non-Git workspaces keep Memory grants but do not receive glossary authority.
+    // Non-Git workspaces do not receive glossary authority.
   }
-  const graphSession = await resolveSessionGraphSession(session.id);
+  const auxiliary = sourceKind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id) : null;
+  if (sourceKind === "auxiliary" && !auxiliary) throw new Error("Provider runtime binding requires a saved Auxiliary Session identity.");
+  const main = await requireSessionStorage().getSessionSummary?.(auxiliary?.parentSessionId ?? session.id);
+  if (!main) throw new Error("Provider runtime binding requires a saved Main Session identity.");
+  const sessionIdentity = auxiliary
+    ? { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, mainSessionId: main.id, mainIncarnationId: getSessionIncarnationId(main) }
+    : { kind: "main" as const, sessionId: main.id, incarnationId: getSessionIncarnationId(main) };
+  const graphSession = await resolveSessionGraphSession(session.id, { kind: sourceKind, incarnationId: sessionIdentity.incarnationId });
   if (!graphSession) throw new Error("Provider runtime binding requires a current Session Graph owner.");
   const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
     actorSource,
     providerId,
     authoritySnapshot: {
-      ...memoryAuthority,
+      userId: "local-user",
+      characterId: session.characterId,
       sessionKind: session.sessionKind,
+      sessionIdentity,
       sessionGraphOwner: graphSession.owner,
+      sessionGraphSource: graphSession.source,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
     operationGrants: [
-      ...getMemoryV6AgentRuntimeOperations(),
       ...getSessionGraphAgentRuntimeOperations(),
+      ...getSessionAgentRuntimeOperations(),
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
   });
-  return memoryV6RuntimeApi
+  return agentRuntimeApi
     ? {
         ...binding,
-        memoryRuntimeOwner: {
-          applicationInstanceId: memoryV6RuntimeApi.applicationInstanceId,
-          runtimeGenerationId: memoryV6RuntimeApi.runtimeGenerationId,
+        runtimeOwner: {
+          applicationInstanceId: agentRuntimeApi.applicationInstanceId,
+          runtimeGenerationId: agentRuntimeApi.runtimeGenerationId,
         },
       }
     : binding;
 }
 
-async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
-  if (memoryV6RuntimeApi) {
-    return;
-  }
-
+async function startAgentRuntimeApiBestEffort(): Promise<void> {
+  if (agentRuntimeApi) return;
   try {
-    mainStoreContext.setMemoryRuntimeStatus("stopped");
-    memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
-      storageOperationDiagnosticSink: logStorageOperationDiagnostic,
-      userDataPath: app.getPath("userData"),
-      applicationInstanceId,
-      buildChannel: runtimeBuildChannel,
-      processStartedAt,
-      listCharacters: () => requireCharacterService().listCharacters(),
-      resolveCharacterById: async (id) => {
-        const character = await requireCharacterService().getCharacterCatalogEntry(id);
-        return character ? { id: character.id, name: character.name } : null;
-      },
-      resolveCharacterRuntimeSnapshot: (characterId) =>
-        requireCharacterService().createRuntimeSnapshot(characterId),
-      getMemoryFileQuotaBytes: async () => (await requireAppSettingsStorage().getSettings()).memoryFileQuotaBytes,
-      protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
-      agentRuntimeBindingRegistry,
-      providerAgentRuntimeTurns,
-      resolveActorSession: resolveAgentRuntimeActorSession,
-      sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
-      backgroundRegistration: {
-        handlers: { ...backgroundMemoryRegistrationHandlers, affect: registerBackgroundAffect },
-        sourceKinds: backgroundSourceKinds,
-        readBackgroundSource: (scope) => {
-          const generation = mainStoreContext.storageWorker;
-          if (!generation || databaseMaintenanceRequested) throw new Error("Main source storage is unavailable.");
-          return generation.stores.session.readBackgroundSource(scope);
-        },
-      },
-      onBackgroundOperation: (bindingId, observation) => backgroundExecutions.observeOperation(bindingId, observation),
-      routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
-      log: writeAppLog,
+    agentRuntimeApi = await startAgentRuntimeApi({
+      applicationInstanceId, buildChannel: runtimeBuildChannel, processStartedAt,
+      agentRuntimeBindingRegistry, providerAgentRuntimeTurns,
+      routeAgentRuntimeExtension: async (request) => await sessionManagementRuntimeService.route(request)
+        ?? await sessionGraphRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
     });
-    mainStoreContext.setMemoryRuntimeStatus("running");
-    backgroundRuntime.start();
-    memoryRecordingController.start();
-    backgroundAffectController.start();
-    mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   } catch (error) {
-    mainStoreContext.setMemoryRuntimeStatus("failed");
-    recordMemoryV6DiagnosticError(
-      "memory-v6.runtime-api.start-failed",
-      error instanceof Error ? error.message : String(error),
-      error instanceof RuntimeDiscoveryRegistryError && error.code === "registry_capacity"
-        ? "WITHMATE_RUNTIME_REGISTRY_CAPACITY"
-        : undefined,
-    );
-    writeAppLog({
-      level: "warn",
-      kind: "memory-v6.runtime-api.start-failed",
-      process: "main",
-      message: "Memory V6 runtime API did not start",
-      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
-    });
+    writeAppLog({ level: "warn", kind: "agent-runtime.start-failed", process: "main",
+      message: "Agent tool runtime did not start", error: appLogService.errorToLogError(error) });
   }
 }
 
-async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
-  backgroundRuntime.stop();
-  const runtimeApi = memoryV6RuntimeApi;
-  memoryV6RuntimeApi = null;
-  mainStoreContext.setMemoryRuntimeStatus("stopped");
-  if (!runtimeApi) {
-    return;
-  }
-
-  try {
-    await runtimeApi.stop();
-    writeAppLog({
-      level: "info",
-      kind: "memory-v6.runtime-api.stopped",
-      process: "main",
-      message: "Memory V6 runtime API stopped",
-    });
-  } catch (error) {
-    recordMemoryV6DiagnosticError(
-      "memory-v6.runtime-api.stop-failed",
-      error instanceof Error ? error.message : String(error),
-    );
-    writeAppLog({
-      level: "warn",
-      kind: "memory-v6.runtime-api.stop-failed",
-      process: "main",
-      message: "Memory V6 runtime API cleanup failed",
-      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
-    });
+async function stopAgentRuntimeApiBestEffort(): Promise<void> {
+  const runtime = agentRuntimeApi; agentRuntimeApi = null;
+  if (!runtime) return;
+  try { await runtime.stop(); }
+  catch (error) {
+    writeAppLog({ level: "warn", kind: "agent-runtime.stop-failed", process: "main",
+      message: "Agent tool runtime cleanup failed", error: appLogService.errorToLogError(error) });
   }
 }
 
@@ -1287,7 +1126,7 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
       if (!session) {
         throw new Error("The session could not be found.");
       }
-      if ("parentSessionId" in session && !await owner.sessionStorage.getSessionSummary?.(session.parentSessionId)) {
+      if ("createdAt" in session && !await owner.sessionStorage.getSessionSummary?.(session.parentSessionId)) {
         throw new Error("The Auxiliary parent session could not be found.");
       }
       assertPersistentStoreOwnerIsActive(owner, "Turn admission");
@@ -1376,7 +1215,6 @@ function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly s
 
 function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   PersistentStoreLifecycleService,
-  AppLifecycleService,
   MainBootstrapService
 > {
   if (!mainInfrastructureRegistry) {
@@ -1391,8 +1229,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           createCharacterStorage: (nextDbPath, nextUserDataPath) =>
             new CharacterStorage(nextDbPath, nextUserDataPath),
           createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
-          createSessionMemoryStorage: (nextDbPath) => new SessionMemoryStorage(nextDbPath),
-          createProjectMemoryStorage: (nextDbPath) => new ProjectMemoryStorage(nextDbPath),
           createAuxiliarySessionStorage: (nextDbPath) => new AuxiliarySessionStorage(nextDbPath),
           createAppSettingsStorage: (nextDbPath) => new AppSettingsStorage(nextDbPath),
           createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -1437,58 +1273,98 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             await rm(directoryPath, { recursive: true, force: true });
           },
         }),
-      createAppLifecycleService: () =>
-        new AppLifecycleService(
-          createAppLifecycleDeps({
-            hasInFlightSessionRuns,
-            getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
-            setAllowQuitWithInFlightRuns: (value) => {
-              allowQuitWithInFlightRuns = value;
-            },
-            createHomeWindow: async () => {
-              await createHomeWindow();
-            },
-            quitApp: () => {
-              app.quit();
-            },
-            shouldQuitWhenAllWindowsClosed: () => false,
-            confirmQuitWhileRunning: () => {
-              const choice = dialog.showMessageBoxSync({
-                type: "warning",
-                buttons: ["Go Back", "Quit"],
-                defaultId: 0,
-                cancelId: 0,
-                title: "Session Is Running",
-                message: "A session is still running.",
-                detail: "Quitting WithMate will interrupt the running work.",
-                noLink: true,
-              });
-              return choice === 1;
-            },
-            prepareSessionWindowSnapshotForQuit: () =>
-              requireSessionWindowBridge().prepareSnapshotForQuit(),
-            flushSessionWindowDrafts: async () => {
-              sessionTurnQueueService?.beginShutdown();
-              let flushed = false;
-              try {
-                flushed = await requireSessionWindowBridge().flushSessionWindowDrafts();
-                return flushed;
-              } finally {
-                if (!flushed) sessionTurnQueueService?.resume();
-              }
-            },
-            stopMemoryRuntime: stopMemoryV6RuntimeApiBestEffort,
-            closePersistentStores,
-            invalidateAllProviderSessionThreads,
-            revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
-          }),
-        ),
       createMainBootstrapService: () =>
         new MainBootstrapService(
           createMainBootstrapDeps({
             ipcMain,
             registerMainIpcHandlers: (ipc, deps) => {
               registerMainIpcHandlers(ipc, deps);
+              registerSessionRoleHandlers(ipc, {
+                resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+                resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                promoteSessionToOverallCoordinator: (id, incarnationId, assertCurrent) => requireMainSessionCommandFacade().promoteSessionToOverallCoordinator(id, incarnationId, assertCurrent),
+              });
+              registerSessionCrewHandlers(ipc, {
+                assertOwningSessionWindowSender: (event, sessionId) => assertOwningSessionWindowSender(event, sessionId, {
+                  resolveEventWindow: (entry) => BrowserWindow.fromWebContents(entry.sender),
+                  resolveSessionWindow: (id) => requireSessionWindowBridge().getWindow(id),
+                }),
+                getCrewDeletionStatus: (id, incarnationId) => requireMainSessionCommandFacade().getCrewDeletionStatus(id, incarnationId),
+              });
+              registerSessionExecutionHandlers(ipc, {
+                resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+                resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                readExecution: async (input) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("GUI execution read");
+                  if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Saved Session execution storage is unavailable.");
+                  const result = await owner.storageWorker.stores.execution.execute(input);
+                  assertPersistentStoreOwnerIsActive(owner, "GUI execution read");
+                  return result;
+                },
+              });
+              registerCoordinationHandlers(ipc, {
+                service: coordinationApplicationService,
+                resolveIdentity: async (identity) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination display identity");
+                  if (!owner.sessionStorage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");
+                  const auxiliary = identity.kind === "auxiliary"
+                    ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(identity.sessionId)
+                    : null;
+                  assertPersistentStoreOwnerIsActive(owner, "Coordination display identity");
+                  if (identity.kind === "auxiliary" && (!auxiliary || auxiliary.createdAt !== identity.incarnationId)) return null;
+                  const metadata = await owner.sessionStorage.getSessionMetadata(auxiliary?.parentSessionId ?? identity.sessionId);
+                  assertPersistentStoreOwnerIsActive(owner, "Coordination display identity");
+                  if (!metadata || (identity.kind === "main" && getSessionIncarnationId(metadata.summary) !== identity.incarnationId)) return null;
+                  const snapshot = auxiliary?.characterRuntimeSnapshot ?? metadata.characterRuntimeSnapshot;
+                  return {
+                    title: auxiliary ? auxiliary.title : metadata.summary.taskTitle,
+                    character: {
+                      name: snapshot?.name ?? metadata.summary.character,
+                      iconPath: auxiliary?.characterIconPath ?? snapshot?.iconFilePath ?? metadata.summary.characterIconPath,
+                    },
+                  };
+                },
+                resolveWindow: (sender) => BrowserWindow.fromWebContents(sender),
+                isTrustedWindow: (window) => window === requireAuxWindowService().getHomeWindow()
+                  || requireMainWindowFacade().isSessionMonitorWindow(window)
+                  || listOpenSessionWindowIds().some((id) => requireSessionWindowBridge().getWindow(id) === window),
+                allWindows: () => BrowserWindow.getAllWindows(),
+                authorizeRequest: async (window, request) => {
+                  if (request.operation === "list" || request.operation === "get") return;
+                  const sessionId = listOpenSessionWindowIds().find((id) => requireSessionWindowBridge().getWindow(id) === window);
+                  if (!sessionId || !("id" in request)) throw new Error("Coordination writes require the owning Session window.");
+                  const result = await coordinationApplicationService.executeUser({ operation: "get", id: request.id }, () => !window.isDestroyed() && requireSessionWindowBridge().getWindow(sessionId) === window);
+                  if (!("record" in result)) throw new Error("The Coordination record is unavailable.");
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination window authorization");
+                  const identities = [result.record.initiator, result.record.respondent].filter((identity) => identity.kind !== "user");
+                  for (const identity of identities) {
+                    if (identity.kind === "main") {
+                      const main = await owner.sessionStorage.getSessionSummary?.(identity.sessionId);
+                      assertPersistentStoreOwnerIsActive(owner, "Coordination window authorization");
+                      if (main?.id === sessionId && getSessionIncarnationId(main) === identity.incarnationId) return;
+                    } else {
+                      const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(identity.sessionId);
+                      assertPersistentStoreOwnerIsActive(owner, "Coordination window authorization");
+                      if (auxiliary?.parentSessionId === sessionId && auxiliary.createdAt === identity.incarnationId) return;
+                    }
+                  }
+                  throw new Error("This Session window does not own the Coordination initiator or respondent.");
+                },
+                open: async (request) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination navigation");
+                  if (request.kind === "main") {
+                    const summary = await owner.sessionStorage.getSessionSummary?.(request.sessionId);
+                    assertPersistentStoreOwnerIsActive(owner, "Coordination navigation");
+                    if (!summary || getSessionIncarnationId(summary) !== request.incarnationId) throw new Error("The Coordination Main Session was replaced or deleted.");
+                    return openSessionWindow(summary.id);
+                  }
+                  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(request.sessionId);
+                  const parent = auxiliary ? await owner.sessionStorage.getSessionSummary?.(auxiliary.parentSessionId) : null;
+                  assertPersistentStoreOwnerIsActive(owner, "Coordination navigation");
+                  if (!auxiliary || auxiliary.createdAt !== request.incarnationId || !parent) throw new Error("The Coordination Auxiliary Session was replaced or deleted.");
+                  return openSessionWindow(parent.id, auxiliary.id);
+                },
+              });
               registerSessionGraphWindowHandlers(ipc, {
                 service: sessionGraphWindowService,
                 resolveWindow: (sender) => BrowserWindow.fromWebContents(sender),
@@ -1535,10 +1411,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
-                openMemoryV6ReviewWindow,
                 isSessionMonitorWindow: (window) => requireMainWindowFacade().isSessionMonitorWindow(window),
                 isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
-                isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 listSessionFilePreviewWindows: async () => Promise.all(
@@ -1626,16 +1500,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   () => sessionFolderCleanupService.scan(request), "session-folder-cleanup-scan"),
                 runSessionFolderCleanup: ({ scanId }) => providerRuntimeOperationCoordinator.runExclusive(
                   () => sessionFolderCleanupService.run(scanId), "session-folder-cleanup-run"),
-                getMemoryV6Diagnostics,
-                installMemoryV6CliShim,
-                uninstallMemoryV6CliShim,
-                getMemoryV6FileUsage,
-                exportMemoryV6EntryFiles,
-                runMemoryV6ProtectedObjectGc,
-                searchMemoryV6Entries,
-                listMemoryV6ReviewTargets,
-                getMemoryV6Entry,
-                forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => {
                   if (databaseMaintenanceRequested) {
                     throw new Error("Database initialization is already in progress.");
@@ -1751,12 +1615,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId),
                 listAuxiliarySessionSummaries: (parentSessionIds) =>
                   requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds),
-                listOpenActiveAuxiliarySessionSummaries: () =>
-                  requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
+                listOpenAuxiliarySessionSummaries: () =>
+                  requireAuxiliarySessionService().listAuxiliarySessionSummaries([
                     ...listOpenSessionWindowIds(),
                   ]),
-                getActiveAuxiliarySession: (parentSessionId) =>
-                  requireAuxiliarySessionService().getActiveAuxiliarySessionView(parentSessionId),
+                getLatestAuxiliarySession: (parentSessionId) =>
+                  requireAuxiliarySessionService().getLatestAuxiliarySessionView(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
                   requireAuxiliarySessionService().getAuxiliarySessionView(auxiliarySessionId),
                 getAuxiliaryDraft: (auxiliarySessionId) =>
@@ -1793,39 +1657,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     updateAuxiliarySession: (nextSession) =>
                       requireAuxiliarySessionService().updateAuxiliarySession(nextSession),
                     revokeSessionAgentRuntimeBindings: (sessionId) => {
-                      memoryRecordingController.forget("auxiliary", sessionId);
                       agentRuntimeBindingRegistry.revokeSession(sessionId);
                     },
                     invalidateProviderSessionThread,
                   });
                   broadcastSessions([updated.parentSessionId]);
                   return updated;
-                },
-                closeAuxiliarySession: async (auxiliarySessionId) => {
-                  const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary close");
-                  const { current, closed } = await providerRuntimeOperationCoordinator.runExclusive(
-                    async () => {
-                      assertPersistentStoreOwnerIsActive(owner, "Auxiliary close");
-                      if (auxiliaryRunParents.has(auxiliarySessionId)
-                        || auxiliarySessionRuntimeService?.isRunInFlight(auxiliarySessionId)) {
-                        throw new Error("A running Auxiliary Session cannot be closed.");
-                      }
-                      const service = requireAuxiliarySessionService();
-                      const current = await service.getAuxiliarySession(auxiliarySessionId);
-                      const closed = await service.closeAuxiliarySession(auxiliarySessionId);
-                      auxiliaryLiveRunParents.delete(auxiliarySessionId, owner);
-                      return { current, closed };
-                    },
-                    "auxiliary-session-close",
-                  );
-                  agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
-                  memoryRecordingController.forget("auxiliary", auxiliarySessionId);
-                  backgroundAffectController.forgetSource("auxiliary", auxiliarySessionId);
-                  mainStoreContext.executionSelections.forget(auxiliarySessionId);
-                  await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
-                  requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
-                  broadcastSessions([closed.parentSessionId]);
-                  return closed;
                 },
                 runAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
                   const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary run admission");
@@ -1915,11 +1752,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
                 getProviderQuotaTelemetry: (providerId, options) => getOrRefreshProviderQuotaTelemetry(providerId, options),
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
-                getSessionBackgroundActivity: (sessionId, kind) => getSessionBackgroundActivity(sessionId, kind),
                 resolveLiveApproval,
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: async (session) => toConversationView(await requireMainSessionCommandFacade().updateSession(session)),
+                changeSessionAdditionalDirectory: async (request) => { await requireSessionPersistenceService().changeAdditionalDirectory(request); },
                 setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
                 setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions, request.confirmedReviewerChange),
@@ -2051,8 +1888,8 @@ function requireMainQueryService(): MainQueryService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       discoverSessionSkills,
       discoverSessionCustomAgents,
-      resolveComposerPreview: (session, userMessage) =>
-        resolveComposerPreview(appendSessionFilesDirectory(app.getPath("userData"), session), userMessage),
+      resolveComposerPreview: async (session, userMessage) =>
+        resolveComposerPreview(await resolveManagedProviderSession(session), userMessage),
       launchTerminalAtPath,
     });
   }
@@ -2158,6 +1995,13 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
       initializeCreatedSession: ensureDefaultAuxiliarySession,
+      openCreatedChildSession: async (session) => {
+        await requireSessionWindowBridge().openSessionWindow(session.id, { presentation: "minimized" });
+      },
+      listActiveCharacters: () => requireCharacterService().listCharacters({ includeArchived: false }),
+      createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
+      resolveSessionFilesDirectory: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+      resolveCrewFilesDirectory: (rootSessionId) => resolveCrewFilesDirectory(app.getPath("userData"), rootSessionId),
       createSessionId: () => `launch-${crypto.randomUUID()}`,
       createSessionFilesDirectory: (sessionId) =>
         createSessionFilesDirectory(app.getPath("userData"), sessionId),
@@ -2322,11 +2166,13 @@ async function ensureDefaultAuxiliarySession(session: Session): Promise<void> {
     return;
   }
 
+  const creationContext = await service.getAuxiliaryCreationContext(session.id);
   await service.createAuxiliarySession({
     parentSessionId: session.id,
     provider: session.provider,
     runtimeSelection: "latest-session",
     clientRequestId: `default:${session.id}`,
+    creationContext,
   });
 }
 
@@ -2471,18 +2317,6 @@ function requireManagedSkillDistributionService(): ManagedSkillDistributionServi
   return managedSkillDistributionService;
 }
 
-function requireMemoryCliShimService(): MemoryCliShimService {
-  if (!memoryCliShimService) {
-    memoryCliShimService = new MemoryCliShimService({
-      appExecutablePath: process.execPath,
-      bundledCliScriptPath: bundledMemoryCliScriptPath,
-      homeDirectory: homedir(),
-      pathEnv: process.env.PATH,
-    });
-  }
-
-  return memoryCliShimService;
-}
 
 async function createMate(input: Parameters<MateStorage["createMate"]>[0]): ReturnType<MateStorage["createMate"]> {
   const profile = await requireMateStorage().createMate(input);
@@ -2525,17 +2359,6 @@ function requireMateProfileItemStorage(): NonNullable<typeof mainStoreContext.ma
   return mainStoreContext.mateProfileItemStorage!;
 }
 
-function requireSessionMemorySupportService(): SessionMemorySupportService {
-  if (!sessionMemorySupportService) {
-    sessionMemorySupportService = new SessionMemorySupportService({
-      getSessionMemory: (sessionId) => requireSessionMemoryStorage().getSessionMemory(sessionId),
-      upsertSessionMemory: (memory) => requireSessionMemoryStorage().upsertSessionMemory(memory),
-      ensureProjectScope: (scope) => requireProjectMemoryStorage().ensureProjectScope(scope),
-    });
-  }
-
-  return sessionMemorySupportService;
-}
 
 function requireWindowEntryLoader(): WindowEntryLoader {
   return mainWindowRuntime.getWindowEntryLoader();
@@ -2564,6 +2387,15 @@ async function resolveQueueSessionRuntime(sessionId: string) {
   return { runtime, auxiliary };
 }
 
+function wakeSessionQueueAfterRunReleased(sessionId: string): void {
+  sessionTurnQueueService?.wake(sessionId);
+  void sessionTurnQueueService?.wakeSourceTurnDependents(sessionId).catch((error) => writeAppLog({
+    level: "warn", kind: "session-queue.source-turn-wake-failed", process: "main",
+    message: "Could not resume messages waiting for the sender Turn.",
+    data: { sessionId, error: error instanceof Error ? error.message : String(error) },
+  }));
+}
+
 function requireMainSessionTurnQueueService(): SessionTurnQueueService {
   if (!sessionTurnQueueService) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue");
@@ -2571,6 +2403,7 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     sessionTurnQueueService = new SessionTurnQueueService({
       store,
+      getUnreleasedSourceTurnIds: () => sessionRuntimeService?.getUnreleasedTurnIds() ?? [],
       isRunInFlight: async (sessionId) => {
         const session = await getQueueRuntimeSession(sessionId);
         return databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()
@@ -2613,6 +2446,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
     const store = owner.storageWorker?.stores.queue;
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     mainSessionTurnQueueFacade = new MainSessionTurnQueueFacade({
+      getUnreleasedSourceTurnIds: () => sessionRuntimeService?.getUnreleasedTurnIds() ?? [],
       assertActive: () => assertPersistentStoreOwnerIsActive(owner, "Queue acceptance"),
       assertAccepting: () => {
         assertPersistentStoreOwnerIsActive(owner, "Queue acceptance");
@@ -2621,6 +2455,9 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         }
       },
       getSession: getQueueRuntimeSession,
+      getSessionForCoordination: (target) => target.kind === "main"
+        ? getRuntimeSession(target.sessionId)
+        : requireAuxiliarySessionService().getAuxiliaryRuntimeSession(target.sessionId),
       getAppSettings: async () => owner.appSettingsStorage.getSettings(),
       validateWorkspace: assertSessionQueueWorkspaceAvailable,
       validateProvider: async (session) => {
@@ -2632,9 +2469,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
       },
       preview: async (session, message) => {
         const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
-        const providerSession = auxiliary
-          ? appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, auxiliary.parentSessionId)
-          : appendSessionFilesDirectory(app.getPath("userData"), session);
+        const providerSession = await resolveManagedProviderSession(session, auxiliary?.parentSessionId);
         return resolveComposerPreview(providerSession, message);
       },
       store,
@@ -2659,6 +2494,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       sessions: {
         getSession: (sessionId) => getRuntimeSession(sessionId),
         appendRunningInput: (session, text, turnId, queuedInput) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId, queuedInput),
+        beginRunningInput: (...args) => requireMainSessionPersistenceFacade().beginRunningInput(...args),
+        settleRunningInput: (...args) => requireMainSessionPersistenceFacade().settleRunningInput(...args),
         getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
         checkpointRuntimeMetadata: (session, expected) => requireMainSessionPersistenceFacade().checkpointRuntimeMetadata(session, expected),
         persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
@@ -2679,27 +2516,21 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           await assertSessionQueueWorkspaceAvailable(session);
           await assertCapturedComposerAttachmentsAvailable(session, attachments);
         },
-        resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+        resolveProviderSession: (session) => resolveManagedProviderSession(session),
         resolveSessionFolderPath: (sessionId) => ensureSessionFilesDirectory(sessionId),
+        resolveCrewFolderPath: resolveSavedCrewFolderPath,
         resolveProviderCatalog,
       },
-      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal), endProviderAgentRuntimeTurn: endManagedProviderTurn },
-      memory: {
+      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions), endProviderAgentRuntimeTurn: endManagedProviderTurn },
+      context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
-        getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
-        onCharacterContextFailure: (session, result) => writeAppLog({ level: "warn", kind: "character-context.lifecycle.read-failed", process: "main", message: "Character context was unavailable for a session turn", data: { sessionId: session.id, code: result.error.code, retryable: result.error.retryable, conversationMayContinue: result.error.conversationMayContinue } }),
-        getConversationTimingSnapshot: async (sessionId, observedAt) => {
-          const storage = requireSessionTurnStorage();
-          return storage.getConversationTimingSnapshot(sessionId, observedAt);
-        },
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
-        onBackgroundEvent: (event) => publishBackgroundConversationEvent(event, "main"),
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
-        onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
+        onSessionRunReleased: wakeSessionQueueAfterRunReleased,
       },
       timing: { currentTimestampLabel },
     });
@@ -2801,6 +2632,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
         appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
+        beginRunningInput: (session, text, turnId, nativeTurnId, attachments) => requireAuxiliarySessionService().beginRunningInput(session, text, turnId, nativeTurnId, attachments),
+        settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
           sessionResultReadService.recordResult(commit);
@@ -2823,15 +2656,14 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         getProviderCodingAdapter,
         resetProviderSessionThread,
         endProviderAgentRuntimeTurn: endManagedProviderTurn,
-        resolveProviderSession: (session, parentSessionId) => appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, parentSessionId),
+        resolveProviderSession: (session, parentSessionId) => resolveManagedProviderSession(session, parentSessionId),
         resolveSessionFolderPath: (parentSessionId) => ensureSessionFilesDirectory(parentSessionId),
+        resolveCrewFolderPath: resolveSavedCrewFolderPath,
         issueRuntimeBinding: async (session, provider, source) => await issueProviderAgentRuntimeBinding(session, provider.id, source),
-        beginRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal),
+        beginRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions),
       },
-      memory: {
+      context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
-        getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
-        onCharacterContextFailure: (session, result) => writeAppLog({ level: "warn", kind: "character-context.lifecycle.read-failed", process: "main", message: "Character context was unavailable for an Auxiliary turn", data: { sessionId: session.id, sourceKind: "auxiliary", code: result.error.code, retryable: result.error.retryable, conversationMayContinue: result.error.conversationMayContinue } }),
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: {
@@ -2852,7 +2684,6 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       notification: async (notification, context) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification, context); },
       getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
       onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
-      onBackgroundEvent: (event) => publishBackgroundConversationEvent(event, "auxiliary"),
       currentTimestampLabel,
     });
   }
@@ -2901,13 +2732,9 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       },
       effects: {
-        syncSessionDependencies: (session) => requireSessionMemorySupportService().syncSessionDependencies(session),
         clearSessionContextTelemetry,
-        clearSessionBackgroundActivities,
         invalidateProviderSessionThread,
         revokeSessionAgentRuntimeBindings: (sessionId) => {
-          memoryRecordingController.forget("main", sessionId);
-          backgroundAffectController.forgetSource("main", sessionId);
           agentRuntimeBindingRegistry.revokeSession(sessionId);
           auxiliaryLiveRunParents.delete(sessionId, owner);
         },
@@ -2964,7 +2791,6 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       listAuxiliaryCredentialThreads: () => requireAuxiliarySessionStorage().listAuxiliaryCredentialThreads(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
-      invalidateBackgroundProvider: (providerId) => agentRuntimeBindingRegistry.revokeBackgroundProvider(providerId),
       updateChatLayoutPreference: (update) => requireAppSettingsStorage().updateChatLayoutPreference(update),
       onChatLayoutPreferenceSaveError: (update, error) => writeAppLog({
         level: "error",
@@ -2985,11 +2811,9 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
       resetAppSettings,
-      clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       resetSessionRuntime: () => requireSessionRuntimeService().reset(),
       clearAllProviderQuotaTelemetry,
       clearAllSessionContextTelemetry,
-      clearAllSessionBackgroundActivities,
       invalidateAllProviderSessionThreads,
       closeResetTargetWindows,
       dismissSessionTurnNotification: (sessionId) =>
@@ -3017,9 +2841,6 @@ function requireSessionObservabilityService(): SessionObservabilityService {
       },
       onSessionContextTelemetryChanged: (sessionId, telemetry) => {
         requireWindowBroadcastService().broadcastSessionContextTelemetry(sessionId, telemetry);
-      },
-      onSessionBackgroundActivityChanged: (sessionId, kind, state) => {
-        requireWindowBroadcastService().broadcastSessionBackgroundActivity(sessionId, kind, state);
       },
       onLiveSessionRunChanged: (sessionId, state) => {
         auxiliaryLiveRunParents.publish(sessionId, state, owner);
@@ -3143,28 +2964,61 @@ async function notifyLiveApproval(sessionId: string, requestId: string, signal: 
   });
 }
 
-function requireSessionMemoryStorage(): SessionMemoryStorageAccess {
-  if (!mainStoreContext.sessionMemoryStorage) {
-    throw new Error("Session memory storage is not initialized.");
-  }
 
-  return mainStoreContext.sessionMemoryStorage;
-}
-
-function requireProjectMemoryStorage(): ProjectMemoryStorageAccess {
-  if (!mainStoreContext.projectMemoryStorage) {
-    throw new Error("Project memory storage is not initialized.");
-  }
-
-  return mainStoreContext.projectMemoryStorage;
-}
 
 function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return requireMainInfrastructureRegistry().getPersistentStoreLifecycleService();
 }
 
 function requireAppLifecycleService(): AppLifecycleService {
-  return requireMainInfrastructureRegistry().getAppLifecycleService();
+  if (!appLifecycleService) {
+    appLifecycleService = new AppLifecycleService(
+      createAppLifecycleDeps({
+        hasInFlightSessionRuns,
+        getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
+        setAllowQuitWithInFlightRuns: (value) => {
+          allowQuitWithInFlightRuns = value;
+        },
+        createHomeWindow: async () => {
+          await createHomeWindow();
+        },
+        quitApp: () => {
+          app.quit();
+        },
+        shouldQuitWhenAllWindowsClosed: () => false,
+        confirmQuitWhileRunning: () => {
+          const choice = dialog.showMessageBoxSync({
+            type: "warning",
+            buttons: ["Go Back", "Quit"],
+            defaultId: 0,
+            cancelId: 0,
+            title: "Session Is Running",
+            message: "A session is still running.",
+            detail: "Quitting WithMate will interrupt the running work.",
+            noLink: true,
+          });
+          return choice === 1;
+        },
+        prepareSessionWindowSnapshotForQuit: () =>
+          requireSessionWindowBridge().prepareSnapshotForQuit(),
+        flushSessionWindowDrafts: async () => {
+          sessionTurnQueueService?.beginShutdown();
+          let flushed = false;
+          try {
+            flushed = await requireSessionWindowBridge().flushSessionWindowDrafts();
+            return flushed;
+          } finally {
+            if (!flushed) sessionTurnQueueService?.resume();
+          }
+        },
+        stopAgentRuntime: stopAgentRuntimeApiBestEffort,
+        closePersistentStores,
+        invalidateAllProviderSessionThreads,
+        revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
+      }),
+    );
+  }
+  return appLifecycleService;
 }
 
 function requireMainBootstrapService(): MainBootstrapService {
@@ -3173,9 +3027,6 @@ function requireMainBootstrapService(): MainBootstrapService {
 
 function applyPersistentStoreBundle(bundle: PersistentStoreBundle): ModelCatalogSnapshot {
   mainStoreContext.activate(bundle);
-  for (const session of mainStoreContext.sessions) {
-    requireSessionMemorySupportService().syncSessionDependencies(session);
-  }
   return bundle.activeModelCatalog;
 }
 
@@ -3207,6 +3058,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
       app.getPath("userData"),
     );
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
+    await recoverSessionLifecycleOperations();
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
     startWalMaintenance();
     const discovery = requireProviderModelDiscoveryService();
@@ -3232,7 +3084,6 @@ async function closePersistentStores(): Promise<void> {
   characterService = null;
   characterAuthoringService = null;
   managedSkillDistributionService = null;
-  memoryCliShimService = null;
   sessionTurnService = null;
   sessionResultReadService.clear();
   auxiliarySessionService = null;
@@ -3243,7 +3094,6 @@ async function closePersistentStores(): Promise<void> {
   sessionObservabilityService = null;
   sessionApprovalService = null;
   sessionElicitationService = null;
-  sessionMemorySupportService = null;
   mainBroadcastFacade = null;
   mainObservabilityFacade = null;
   mainProviderFacade = null;
@@ -3270,14 +3120,11 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainSessionTurnQueueFacade = null;
   mainStoreContext.setActivePersistentStoreOwner(null);
   auxiliaryLiveRunParents.clear();
-  const memoryRuntimeToStop = memoryV6RuntimeApi;
-  backgroundRuntime.stop();
-  memoryV6RuntimeApi = null;
-  mainStoreContext.setMemoryRuntimeStatus("stopped");
-  if (memoryRuntimeToStop) {
-    // Reset must not remove a database still owned by another Worker.
-    // Unlike application quit, a failed close aborts this destructive action.
-    await memoryRuntimeToStop.stop();
+  const runtimeToStop = agentRuntimeApi;
+  agentRuntimeApi = null;
+  if (runtimeToStop) {
+    // Do not proceed with a database reset while tool requests remain active.
+    await runtimeToStop.stop();
   }
 
   stopWalMaintenance();
@@ -3294,8 +3141,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
     modelCatalogStorage: mainStoreContext.modelCatalogStorage,
     characterStorage: mainStoreContext.characterStorage,
     sessionStorage: mainStoreContext.sessionStorage,
-    sessionMemoryStorage: mainStoreContext.sessionMemoryStorage,
-    projectMemoryStorage: mainStoreContext.projectMemoryStorage,
     sessionTurnStorage: mainStoreContext.sessionTurnStorage,
     auxiliarySessionStorage: mainStoreContext.auxiliarySessionStorage,
     appSettingsStorage: mainStoreContext.appSettingsStorage,
@@ -3314,7 +3159,6 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessionObservabilityService = null;
   sessionApprovalService = null;
   sessionElicitationService = null;
-  sessionMemorySupportService = null;
   mainBroadcastFacade = null;
   mainObservabilityFacade = null;
   mainProviderFacade = null;
@@ -3329,12 +3173,13 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainStoreContext.setSessions([]);
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  await recoverSessionLifecycleOperations();
   mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
-  if (memoryRuntimeToStop) {
-    await startMemoryV6RuntimeApiBestEffort();
-    if (!memoryV6RuntimeApi) {
-      throw new Error("Memory runtime restart failed after database initialization. Restart the app.");
+  if (runtimeToStop) {
+    await startAgentRuntimeApiBestEffort();
+    if (!agentRuntimeApi) {
+      throw new Error("Agent tool runtime restart failed after database initialization. Restart the app.");
     }
   }
   startWalMaintenance();
@@ -3474,7 +3319,6 @@ async function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Pr
 
 async function broadcastAppSettings(settings?: AppSettings): Promise<void> {
   const current = settings ?? await requireAppSettingsStorage().getSettings();
-  backgroundRuntime.publish({ kind: "settings_changed", settings: current });
   requireMainObservabilityFacade().configureProviderQuotaPolling(current);
   await requireMainBroadcastFacade().broadcastAppSettings(current);
   if (providerModelDiscoveryService) {
@@ -3530,28 +3374,9 @@ function clearAllSessionContextTelemetry(): void {
   requireMainObservabilityFacade().clearAllSessionContextTelemetry();
 }
 
-function getSessionBackgroundActivity(
-  sessionId: string,
-  kind: SessionBackgroundActivityKind,
-): SessionBackgroundActivityState | null {
-  return requireMainObservabilityFacade().getSessionBackgroundActivity(sessionId, kind);
-}
 
-function setSessionBackgroundActivity(
-  sessionId: string,
-  kind: SessionBackgroundActivityKind,
-  state: SessionBackgroundActivityState | null,
-): void {
-  requireMainObservabilityFacade().setSessionBackgroundActivity(sessionId, kind, state);
-}
 
-function clearSessionBackgroundActivities(sessionId: string): void {
-  requireMainObservabilityFacade().clearSessionBackgroundActivities(sessionId);
-}
 
-function clearAllSessionBackgroundActivities(): void {
-  requireMainObservabilityFacade().clearAllSessionBackgroundActivities();
-}
 
 function listOpenSessionWindowIds(): string[] {
   return requireMainWindowFacade().listOpenSessionWindowIds();
@@ -3644,6 +3469,14 @@ async function recoverInterruptedSessions(): Promise<void> {
   if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
 }
 
+async function recoverSessionLifecycleOperations(): Promise<void> {
+  try {
+    await requireMainSessionCommandFacade().recoverPendingSessionLifecycleOperations();
+  } catch (error) {
+    writeAppLog({ level: "error", kind: "session.lifecycle.recovery-incomplete", process: "main", message: "Pending Session lifecycle recovery remains incomplete; affected operations remain pending", error: appLogService.errorToLogError(error) });
+  }
+}
+
 async function previewComposerInput(
   sessionId: string,
   userMessage: string,
@@ -3655,11 +3488,7 @@ async function previewComposerInput(
     : null;
   if (auxiliaryRuntimeSession) {
     return resolveComposerPreview(
-      appendSessionFilesDirectoryForSessionId(
-        app.getPath("userData"),
-        auxiliaryRuntimeSession,
-        auxiliarySession?.parentSessionId ?? sessionId,
-      ),
+      await resolveManagedProviderSession(auxiliaryRuntimeSession, auxiliarySession!.parentSessionId),
       userMessage,
     );
   }
@@ -3704,6 +3533,27 @@ async function savePastedSessionFile(request: SavePastedSessionFileRequest): Pro
 
 function ensureSessionFilesDirectory(sessionId: string): string {
   return ensureManagedSessionFilesDirectory(app.getPath("userData"), sessionId);
+}
+
+async function resolveManagedProviderSession<T extends SessionSummary>(session: T, parentSessionId?: string): Promise<T> {
+  const owner = requireActivePersistentStoreOwnerForFactory("Provider directories");
+  const main = await owner.sessionStorage.getSessionSummary?.(parentSessionId ?? session.id);
+  assertPersistentStoreOwnerIsActive(owner, "Provider directories");
+  if (!main || (!parentSessionId && getSessionIncarnationId(main) !== getSessionIncarnationId(session))) {
+    throw new Error("The saved Main Session identity is unavailable for provider directories.");
+  }
+  const withSessionFolder = parentSessionId
+    ? appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, parentSessionId)
+    : appendSessionFilesDirectory(app.getPath("userData"), session);
+  return appendCrewFilesDirectory(app.getPath("userData"), withSessionFolder, main.rootSessionId ?? main.id);
+}
+
+async function resolveSavedCrewFolderPath(mainSessionId: string): Promise<string> {
+  const owner = requireActivePersistentStoreOwnerForFactory("Crew Folder");
+  const main = await owner.sessionStorage.getSessionSummary?.(mainSessionId);
+  assertPersistentStoreOwnerIsActive(owner, "Crew Folder");
+  if (!main) throw new Error("The saved Main Session is unavailable for Crew Folder resolution.");
+  return resolveCrewFilesDirectory(app.getPath("userData"), main.rootSessionId ?? main.id);
 }
 
 function isPathInsideOrEqual(parentPath: string, targetPath: string): boolean {
@@ -3785,9 +3635,6 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openSettingsWindow();
 }
 
-async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
-  return requireMainWindowFacade().openMemoryV6ReviewWindow();
-}
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {
   return requireMainWindowFacade().openCharacterEditorWindow(characterId);
@@ -3887,7 +3734,7 @@ if (!hasSingleInstanceLock) {
       });
       await requireMainBootstrapService().handleReady();
       requireMainObservabilityFacade().configureProviderQuotaPolling(await requireAppSettingsStorage().getSettings());
-      await startMemoryV6RuntimeApiBestEffort();
+      await startAgentRuntimeApiBestEffort();
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(
         app,

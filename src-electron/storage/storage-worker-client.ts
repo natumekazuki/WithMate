@@ -6,13 +6,7 @@ import {
   type StorageWorkerMessage,
   type StorageWorkerRequest,
 } from "./storage-worker-protocol.js";
-import {
-  MemoryV6EntryNotFoundError,
-  MemoryV6FileQuotaExceededError,
-  MemoryV6IdempotencyConflictError,
-} from "../memory/memory-v6-storage.js";
-import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../character/character-affect-storage.js";
-import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import {
   createStorageOperationDiagnosticContext,
   emitStorageOperationDiagnostic,
@@ -355,15 +349,9 @@ function isStructuredCloneError(error: unknown): boolean {
 }
 
 function rehydrateStorageWorkerError(message: Extract<StorageWorkerMessage, { type: "error" }>): Error {
-  const details = message.details ?? {};
   let error: Error;
   switch (message.code) {
     case "RUNTIME_TURN_INACTIVE": error = new RuntimeTurnInactiveError(); break;
-    case "MEMORY_V6_IDEMPOTENCY_CONFLICT": error = new MemoryV6IdempotencyConflictError(); break;
-    case "MEMORY_V6_ENTRY_NOT_FOUND": error = new MemoryV6EntryNotFoundError(String(details.entryId ?? "unknown")); break;
-    case "MEMORY_V6_FILE_QUOTA_EXCEEDED": error = new MemoryV6FileQuotaExceededError(Number(details.quotaBytes ?? 0), Number(details.usedBytes ?? 0), Number(details.incomingBytes ?? 0)); break;
-    case "CHARACTER_AFFECT_VERSION_CONFLICT": error = new CharacterAffectVersionConflictError(String(details.expectedVersion ?? ""), String(details.actualVersion ?? "")); break;
-    case "CHARACTER_AFFECT_IDEMPOTENCY_CONFLICT": error = new CharacterAffectIdempotencyConflictError(); break;
     default: return new StorageWorkerRemoteError(message.message, message.code, message.outcome, message.details);
   }
   error.name = message.name || error.name;

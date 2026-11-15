@@ -3,18 +3,26 @@ import { describe, it } from "node:test";
 
 import {
   createDefaultAppSettings,
-  getMemoryExtractionProviderSettings,
   getProviderAppSettings,
-  getResolvedProviderSettingsBundle,
   normalizeAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
 describe("app settings provider helpers", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "空のapp settingsを正規化するとCodexは有効、Copilotは無効として取得できる"
+  // oracle = { type = "contract", ref = "src-shared/settings/provider-settings-state.ts: createDefaultAppSettingsとgetProviderAppSettingsのprovider有効既定値" }
+  // fault = "未設定のCodexを無効にするか、未設定のCopilotを有効にする"
+  // observable = "normalizeAppSettings({})からgetProviderAppSettingsで取得したcodexとcopilotのenabled値"
+  // observation_boundary = "public-boundary"
+  // scope = "未設定app settingsのprovider有効既定値"
+  // lifecycle = "permanent"
+  // distinction = "boolean型ではJSON入力が未設定の場合に選ばれるprovider別既定値を検出できない"
+  // @end-test-value
   it("settings 未設定でも codex は既定で enabled になる", () => {
     const settings = normalizeAppSettings({});
 
     assert.equal(getProviderAppSettings(settings, "codex").enabled, true);
     assert.equal(getProviderAppSettings(settings, "copilot").enabled, false);
-    assert.equal(settings.memoryGenerationEnabled, true);
   });
 
   // @test-value v2
@@ -107,66 +115,5 @@ describe("app settings provider helpers", () => {
       skillRelativePath: "",
       instructionRelativePath: "",
     });
-  });
-
-  it("memory extraction settings を provider ごとに保持する", () => {
-    const settings = normalizeAppSettings({
-      ...createDefaultAppSettings(),
-      memoryExtractionProviderSettings: {
-        codex: {
-          model: "gpt-5.1-mini",
-          reasoningEffort: "medium",
-          outputTokensThreshold: 280,
-          timeoutSeconds: 240,
-        },
-      },
-    });
-
-    assert.deepEqual(getMemoryExtractionProviderSettings(settings, "codex"), {
-      model: "gpt-5.1-mini",
-      reasoningEffort: "medium",
-      outputTokensThreshold: 280,
-      timeoutSeconds: 240,
-    });
-  });
-
-  it("resolved provider settings bundle で provider 設定をまとめて取得できる", () => {
-    const settings = normalizeAppSettings({
-      ...createDefaultAppSettings(),
-      memoryGenerationEnabled: false,
-      codingProviderSettings: {
-        codex: {
-          enabled: false,
-          apiKey: "codex-key",
-          skillRootPath: "C:/skills",
-          instructionRelativePath: "AGENTS.md",
-        },
-      },
-      memoryExtractionProviderSettings: {
-        codex: {
-          model: "gpt-5.1-mini",
-          reasoningEffort: "medium",
-          outputTokensThreshold: 280,
-          timeoutSeconds: 240,
-        },
-      },
-    });
-
-    assert.deepEqual(getResolvedProviderSettingsBundle(settings, "codex"), {
-      coding: {
-        enabled: false,
-        apiKey: "codex-key",
-        skillRootPath: "C:/skills",
-        skillRelativePath: "",
-        instructionRelativePath: "AGENTS.md",
-      },
-      memoryExtraction: {
-        model: "gpt-5.1-mini",
-        reasoningEffort: "medium",
-        outputTokensThreshold: 280,
-        timeoutSeconds: 240,
-      },
-    });
-    assert.equal(settings.memoryGenerationEnabled, false);
   });
 });

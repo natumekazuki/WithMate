@@ -12,7 +12,7 @@ type AppLifecycleServiceDeps = {
   confirmQuitWhileRunning(): boolean;
   prepareSessionWindowSnapshotForQuit?(): Promise<void>;
   flushSessionWindowDrafts?(): Promise<boolean>;
-  stopMemoryRuntime?(): Promise<void>;
+  stopAgentRuntime?(): Promise<void>;
   closePersistentStores(): void | Promise<void>;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
@@ -96,7 +96,7 @@ export class AppLifecycleService {
           // Runtime cleanup and application shutdown must still complete if revocation fails.
         }
         try {
-          await this.deps.stopMemoryRuntime?.();
+          await this.deps.stopAgentRuntime?.();
         } catch {
           // Persistent stores and application shutdown must still complete if runtime cleanup fails.
         }

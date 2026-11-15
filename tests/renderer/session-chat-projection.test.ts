@@ -12,7 +12,7 @@ import { registerSessionQueryHandlers } from "../../src-electron/ipc/session-que
 import { WorkspaceDirectoryValidationService } from "../../src-electron/files/workspace-directory-validation-service.js";
 import { WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
-import { buildSessionWithAddedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
+import { addAllowedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
 
 import {
   useSessionComposerFeature,
@@ -311,7 +311,7 @@ function createComposerBridge(
 ): SessionComposerFeatureBridge {
   return {
     session: createComposerSession(options.provider, options.codexSpeed),
-    canRemoveAdditionalDirectories: (options.provider ?? "codex") === "codex",
+    canRemoveAdditionalDirectories: true,
     isCharacterAuthoringSession,
     target,
     runtime: {
@@ -470,7 +470,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
   return {
     id: "auxiliary-session",
     parentSessionId: "main-session",
-    status: "active",
     runState: "idle",
     title: "Auxiliary session",
     provider: "codex",
@@ -489,7 +488,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     displayAfterMessageIndex: null,
     createdAt: "2026-09-22T00:00:00.000Z",
     updatedAt: "2026-09-22T00:00:00.000Z",
-    closedAt: "",
   };
 }
 
@@ -720,7 +718,7 @@ test("session composerのMain/Auxiliaryパス検証と追加は親Mainへ接続�
       bridge.operations.layout.addAdditionalDirectory = (path) => addition = (async () => {
         additions.push(target);
         const selected = await select(path);
-        if (selected) main = buildSessionWithAddedAdditionalDirectory(main, selected);
+        if (selected) main = { ...main, allowedAdditionalDirectories: addAllowedAdditionalDirectory(main.allowedAdditionalDirectories, selected) };
       })();
       const harness = await renderComposerHarness(root, input);
       const feature = harness.getFeature();

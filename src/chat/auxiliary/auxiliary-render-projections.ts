@@ -4,41 +4,8 @@ import {
   buildMainAuxiliaryRuntimeSession,
   type AuxiliaryRuntimeProjectionInput,
 } from "./auxiliary-runtime-projection.js";
-import type { MessageListAuxiliarySession } from "./auxiliary-session-message-projection.js";
 import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
-
-function toMessageListAuxiliarySession(session: AuxiliarySession): MessageListAuxiliarySession {
-  return {
-    id: session.id,
-    messages: session.messages,
-    displayAfterMessageIndex: session.displayAfterMessageIndex,
-    createdAt: session.createdAt,
-  };
-}
-export function useMessageListAuxiliarySessions(
-  closedSessions: AuxiliarySession[],
-  activeSession: AuxiliarySession | null,
-): MessageListAuxiliarySession[] {
-  const closedProjection = useMemo(
-    () => closedSessions.map(toMessageListAuxiliarySession),
-    [closedSessions],
-  );
-  const activeProjection = useMemo(
-    () => activeSession ? toMessageListAuxiliarySession(activeSession) : null,
-    [
-      activeSession?.createdAt,
-      activeSession?.displayAfterMessageIndex,
-      activeSession?.id,
-      activeSession?.messages,
-    ],
-  );
-
-  return useMemo(
-    () => activeProjection ? [...closedProjection, activeProjection] : closedProjection,
-    [activeProjection, closedProjection],
-  );
-}
 
 function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): AuxiliaryRuntimeProjectionInput {
   return {

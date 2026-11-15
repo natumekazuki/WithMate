@@ -1,4 +1,5 @@
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import { coordinationDeliveryText } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { MessageListProjection } from "../auxiliary/auxiliary-session-message-projection.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
@@ -20,6 +21,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
     if (savedIndex >= 0) {
       projection.keys[savedIndex] = key;
+      if (receipt.captured.coordination) projection.messages[savedIndex] = { ...projection.messages[savedIndex], text: coordinationDeliveryText(receipt.dispatched ?? receipt.captured) };
       if (receipt.state !== "completed" && receipt.state !== "canceled") metadata.set(projection.keys[savedIndex], receipt);
       continue;
     }
@@ -34,7 +36,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     const liveIndex = projection.sources.findIndex((source, index) => source.kind === "live-assistant"
       && (receipt.userMessageSeq === null || projection.messages[index].historyIndex === undefined || projection.messages[index].historyIndex! > receipt.userMessageSeq));
     const index = liveIndex < 0 ? projection.messages.length : liveIndex;
-    projection.messages.splice(index, 0, { role: "user", text: receipt.captured.request.userMessage });
+    projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(receipt.dispatched ?? receipt.captured) });
     projection.keys.splice(index, 0, key);
     projection.sources.splice(index, 0, { kind: "turn-queue", receipt });
     projection.groups.splice(index, 0, null);

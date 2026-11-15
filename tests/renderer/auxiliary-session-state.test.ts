@@ -49,7 +49,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -67,7 +66,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     displayAfterMessageIndex: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }

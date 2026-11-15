@@ -156,7 +156,6 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
   return {
     id: "aux-v6",
     parentSessionId: "session-v6",
-    status: "active",
     runState: "idle",
     title: "V6 auxiliary",
     provider: "codex",
@@ -174,7 +173,6 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
     displayAfterMessageIndex: null,
     createdAt: "2026-07-02T00:00:00.000Z",
     updatedAt: "2026-07-02T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }
@@ -227,8 +225,6 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
           closeCalls.push("session");
         },
       }) as never,
-    createSessionMemoryStorage: () => createClosableStore("session-memory", closeCalls) as never,
-    createProjectMemoryStorage: () => createClosableStore("project-memory", closeCalls) as never,
     createCharacterStorage: () => createCharacterStorageStub(() => closeCalls.push("character-memory")),
     createAppSettingsStorage: () => createClosableStore("settings", closeCalls) as never,
     createMateStorage: () => createClosableStore("mate", closeCalls) as never,
@@ -274,8 +270,6 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () => ({ getCatalog: () => ({ providers: [] }), close() {} }) as never,
       createSessionStorage: () => ({ listSessions: () => [], listSessionSummaries: () => [], close() {} }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => {
@@ -364,8 +358,6 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -424,8 +416,6 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -472,8 +462,6 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () =>
         ({
@@ -528,8 +516,6 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: (nextDbPath, nextUserDataPath) => new MateStorage(nextDbPath, nextUserDataPath),
@@ -585,8 +571,6 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () => null as never,
     createSessionStorage: () => null as never,
-    createSessionMemoryStorage: () => null as never,
-    createProjectMemoryStorage: () => null as never,
     createCharacterStorage: () => createCharacterStorageStub(),
     createAppSettingsStorage: () => null as never,
     createMateStorage: () => null as never,
@@ -603,8 +587,6 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     modelCatalogStorage: createClosableStore("model", closeCalls) as never,
     sessionStorage: createClosableStore("session", closeCalls) as never,
     characterStorage: createCharacterStorageStub(() => closeCalls.push("character")),
-    sessionMemoryStorage: createClosableStore("session-memory", closeCalls) as never,
-    projectMemoryStorage: createClosableStore("project-memory", closeCalls) as never,
     sessionTurnStorage: createClosableStore("turn", closeCalls) as never,
     auxiliarySessionStorage: createClosableStore("auxiliary", closeCalls) as never,
     appSettingsStorage: createClosableStore("settings", closeCalls) as never,
@@ -618,8 +600,6 @@ test("PersistentStoreLifecycleService は close 時に hook と各 store close �
     "model",
     "character",
     "session",
-    "session-memory",
-    "project-memory",
     "turn",
     "auxiliary",
     "settings",
@@ -645,8 +625,6 @@ test("PersistentStoreLifecycleService は V6 WAL の終了処理を Worker の�
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () => null as never,
     createSessionStorage: () => null as never,
-    createSessionMemoryStorage: () => null as never,
-    createProjectMemoryStorage: () => null as never,
     createAppSettingsStorage: () => null as never,
     createMateStorage: () => null as never,
     onBeforeClose: () => { calls.push("before-close"); },
@@ -701,8 +679,6 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗を close 呼び出
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () => null as never,
       createSessionStorage: () => null as never,
-      createSessionMemoryStorage: () => null as never,
-      createProjectMemoryStorage: () => null as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => null as never,
       createMateStorage: () => null as never,
@@ -749,8 +725,6 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
         listSessionSummaries: () => [],
         close() {},
       }) as never,
-    createSessionMemoryStorage: () => ({ close() {} }) as never,
-    createProjectMemoryStorage: () => ({ close() {} }) as never,
     createCharacterStorage: () => createCharacterStorageStub(),
     createAppSettingsStorage: () => ({ close() {} }) as never,
     createMateStorage: () => ({ close() {} }) as never,
@@ -805,8 +779,6 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
         listSessionSummaries: () => [],
         close() {},
       }) as never,
-    createSessionMemoryStorage: () => ({ close() {} }) as never,
-    createProjectMemoryStorage: () => ({ close() {} }) as never,
     createCharacterStorage: () => createCharacterStorageStub(),
     createAppSettingsStorage: () => ({ close() {} }) as never,
     createMateStorage: () => ({ close() {} }) as never,
@@ -854,8 +826,6 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
       createSessionStorage: () => {
         throw new Error("V2 DB では V1 session storage を生成しない");
       },
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -924,8 +894,6 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -991,8 +959,6 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
           listSessionSummaries: () => [],
           close() {},
         }) as never,
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -1049,8 +1015,6 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
           close() {},
         } as never;
       },
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -1141,8 +1105,6 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
         v1SessionStorageControl.value = storage;
         return storage as never;
       },
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
       createCharacterStorage: () => createCharacterStorageStub(),
       createAppSettingsStorage: () => ({ close() {} }) as never,
       createMateStorage: () => ({ close() {} }) as never,
@@ -1184,10 +1146,10 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "有効な V2 DB の initialize は V1 write-capable session factory を呼ばず V2 storages を返す"
+// claim = "有効な V2 DB の initialize は V1 Session/Character factory を呼ばず V2 storages を返す"
 // oracle = { type = "contract", ref = "src-electron/storage/persistent-store-lifecycle-service.ts#initialize" }
 // fault = "V2 DB に V1 writer を接続し、旧 schema へ書き込む"
-// observable = "returned storage の実型と V1 factory 呼出し回数"
+// observable = "returned storage の実型と V1 Session/Character factory 呼出し回数"
 // observation_boundary = "public-boundary"
 // scope = "persistent-store-v2-writer-boundary"
 // lifecycle = "permanent"
@@ -1195,6 +1157,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
 test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 storages を返す", async () => {
   const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
+  let createCharacterStorageCallCount = 0;
 
   await withTempV2Database(async (dbPath) => {
     const service = new PersistentStoreLifecycleService({
@@ -1211,62 +1174,6 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
           close() {},
         } as never;
       },
-      createSessionMemoryStorage: () => ({ close() {} }) as never,
-      createProjectMemoryStorage: () => ({ close() {} }) as never,
-      createCharacterStorage: () => createCharacterStorageStub(),
-      createAppSettingsStorage: () => ({ close() {} }) as never,
-      createMateStorage: () => ({ close() {} }) as never,
-      onBeforeClose: () => {},
-      truncateWal() {},
-      async removeFile() {},
-    });
-
-    const bundle = await service.initialize(dbPath);
-    try {
-      assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
-      assert.equal(createSessionStorageCallCount, 0);
-    } finally {
-      await service.close(bundle, dbPath);
-    }
-  });
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "V2 DB の initialize は legacy memory storage factory を呼ばず legacy memory table を作成しない"
-// oracle = { type = "contract", ref = "src-electron/storage/persistent-store-lifecycle-service.ts#initialize" }
-// fault = "V2 DB に legacy memory table を追加し、旧 storage を接続する"
-// observable = "factory 呼出し回数と sqlite_master の table 一覧"
-// observation_boundary = "public-boundary"
-// scope = "persistent-store-v2-memory-boundary"
-// lifecycle = "permanent"
-// impact = "V2 DBへlegacy memory tableを追加すると、V2所有境界外の表を残して後続のschema判定とデータ所有を混乱させる"
-// distinction = "factoryの型検査やschema SQL確認では、initialize後の実SQLite table副作用とfactory非呼出しを同時に確認できない"
-// @end-test-value
-test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作成しない", async () => {
-  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
-  let createSessionMemoryStorageCallCount = 0;
-  let createProjectMemoryStorageCallCount = 0;
-  let createCharacterStorageCallCount = 0;
-
-  await withTempV2Database(async (dbPath) => {
-    const service = new PersistentStoreLifecycleService({
-      createModelCatalogStorage: () =>
-        ({
-          getCatalog: () => activeModelCatalog,
-          close() {},
-        }) as never,
-      createSessionStorage: () => {
-        throw new Error("V2 DB では V1 session storage を生成しない");
-      },
-      createSessionMemoryStorage: () => {
-        createSessionMemoryStorageCallCount += 1;
-        return { close() {} } as never;
-      },
-      createProjectMemoryStorage: () => {
-        createProjectMemoryStorageCallCount += 1;
-        return { close() {} } as never;
-      },
       createCharacterStorage: () => {
         createCharacterStorageCallCount += 1;
         return createCharacterStorageStub();
@@ -1280,28 +1187,8 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
 
     const bundle = await service.initialize(dbPath);
     try {
-      const db = new DatabaseSync(dbPath, { readOnly: true });
-      try {
-        const rows = db.prepare(`
-          SELECT name
-          FROM sqlite_master
-          WHERE type = 'table'
-            AND name IN (
-              'session_memories',
-              'project_scopes',
-              'project_memory_entries',
-              'character_scopes',
-              'character_memory_entries'
-            )
-          ORDER BY name
-        `).all() as Array<{ name: string }>;
-        assert.deepEqual(rows, []);
-      } finally {
-        db.close();
-      }
-
-      assert.equal(createSessionMemoryStorageCallCount, 0);
-      assert.equal(createProjectMemoryStorageCallCount, 0);
+      assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
+      assert.equal(createSessionStorageCallCount, 0);
       assert.equal(createCharacterStorageCallCount, 0);
     } finally {
       await service.close(bundle, dbPath);
@@ -1366,8 +1253,6 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
   const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let ensureV3SchemaCallCount = 0;
   let createSessionStorageCallCount = 0;
-  let createSessionMemoryStorageCallCount = 0;
-  let createProjectMemoryStorageCallCount = 0;
   let createCharacterStorageCallCount = 0;
 
   await withTempV3Database(async (dbPath) => {
@@ -1380,14 +1265,6 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
       createSessionStorage: () => {
         createSessionStorageCallCount += 1;
         throw new Error("V3 DB では V1 session storage を生成しない");
-      },
-      createSessionMemoryStorage: () => {
-        createSessionMemoryStorageCallCount += 1;
-        return { close() {} } as never;
-      },
-      createProjectMemoryStorage: () => {
-        createProjectMemoryStorageCallCount += 1;
-        return { close() {} } as never;
       },
       createCharacterStorage: () => {
         createCharacterStorageCallCount += 1;
@@ -1411,8 +1288,6 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
       assert.deepEqual(bundle.sessions, []);
       assert.equal(ensureV3SchemaCallCount, 1);
       assert.equal(createSessionStorageCallCount, 0);
-      assert.equal(createSessionMemoryStorageCallCount, 0);
-      assert.equal(createProjectMemoryStorageCallCount, 0);
       assert.equal(createCharacterStorageCallCount, 0);
     } finally {
       await service.close(bundle, dbPath);

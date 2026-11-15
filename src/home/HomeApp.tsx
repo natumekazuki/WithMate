@@ -11,7 +11,6 @@ import {
 import { type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "../app/open-session-window-subscription.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import {
   buildHomeLaunchProjection,
 } from "./home-launch-projection.js";
@@ -39,7 +38,6 @@ import { buildHomeLaunchHandlers, type HomeLaunchLifetime } from "./home-launch-
 import { HomeLaunchResults } from "./HomeLaunchResults.js";
 import {
   buildHomeProviderSettingRows,
-  buildPersistedAppSettingsFromRows,
   type HomeProviderSettingRow,
 } from "../settings/settings-view-model.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
@@ -62,7 +60,6 @@ import { getHomeWindowMode } from "./home-window-mode.js";
 import { useHomeOpenWindowSubscriptions } from "./use-home-open-window-subscriptions.js";
 import {
   openCharacterEditorWindow,
-  openMemoryV6ReviewWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -104,7 +101,6 @@ export default function HomeApp() {
   const homeWindowMode = useMemo(() => getHomeWindowMode(), []);
   const isMonitorWindowMode = homeWindowMode === "monitor";
   const isSettingsWindowMode = homeWindowMode === "settings";
-  const isMemoryReviewWindowMode = homeWindowMode === "memory-review";
   const [sessionSummariesState, setSessionSummariesState] = useState<HomeSessionSummariesState>(
     createEmptyHomeSessionSummariesState,
   );
@@ -114,7 +110,7 @@ export default function HomeApp() {
     sessionIds: [],
   });
   const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
-  const monitorSnapshot = useHomeSessionMonitor(!isSettingsWindowMode && !isMemoryReviewWindowMode, openSessionWindowIds);
+  const monitorSnapshot = useHomeSessionMonitor(!isSettingsWindowMode, openSessionWindowIds);
   const {
     inputText: searchInputText,
     searchText: sessionSearchText,
@@ -139,10 +135,6 @@ export default function HomeApp() {
   const [deletingOldSessions, setDeletingOldSessions] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
-  const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
-  const [memoryV6DiagnosticsLoadStatus, setMemoryV6DiagnosticsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
-  const [memoryV6DiagnosticsLoadError, setMemoryV6DiagnosticsLoadError] = useState("");
-  const [memoryV6DiagnosticsRetry, setMemoryV6DiagnosticsRetry] = useState(0);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
@@ -185,7 +177,7 @@ export default function HomeApp() {
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
-  const persistedSettingsDraftRef = useRef<AppSettings | null>(null);
+  const settingsDraftRef = useRef<AppSettings | null>(null);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<DirectoryPathValidationController | null>(null);
   const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
@@ -196,7 +188,7 @@ export default function HomeApp() {
     );
   }
   const refreshSessionSummaries = useHomeSessionSummaryRefresh({
-    enabled: !isSettingsWindowMode && !isMemoryReviewWindowMode,
+    enabled: !isSettingsWindowMode,
     sessionSearchText,
     openSessionWindowIds,
     sessionSummariesState,
@@ -358,21 +350,6 @@ export default function HomeApp() {
     }
   };
 
-  const refreshMemoryV6Diagnostics = async (
-    api: NonNullable<ReturnType<typeof getWithMateApi>>,
-  ): Promise<void> => {
-    setMemoryV6DiagnosticsLoadStatus("loading");
-    setMemoryV6DiagnosticsLoadError("");
-    try {
-      setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
-      setMemoryV6DiagnosticsLoadStatus("loaded");
-    } catch (error) {
-      setMemoryV6DiagnosticsLoadStatus("error");
-      setMemoryV6DiagnosticsLoadError(error instanceof Error ? error.message : "Could not load Memory V6 diagnostics.");
-      throw error;
-    }
-  };
-
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
@@ -383,7 +360,7 @@ export default function HomeApp() {
       };
     }
 
-    if (!isSettingsWindowMode && !isMonitorWindowMode && !isMemoryReviewWindowMode) {
+    if (!isSettingsWindowMode && !isMonitorWindowMode) {
       setMateLoadStatus("loading");
       setMateLoadError("");
       void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
@@ -396,15 +373,11 @@ export default function HomeApp() {
       });
     }
 
-    if (isSettingsWindowMode) {
-      void refreshMemoryV6Diagnostics(withmateApi).catch(() => undefined);
-    }
-
     return () => { active = false; };
-  }, [homeStateRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode, memoryV6DiagnosticsRetry]);
+  }, [homeStateRetry, isMonitorWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
-    if (isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    if (isSettingsWindowMode || isMonitorWindowMode) return;
     const api = getWithMateApi();
     if (!api) return;
     let active = true;
@@ -412,10 +385,10 @@ export default function HomeApp() {
       if (active) setCharacterListFeedback(error instanceof Error ? error.message : "Could not load characters.");
     });
     return () => { active = false; };
-  }, [characterRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+  }, [characterRetry, isMonitorWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
-    if (isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    if (isMonitorWindowMode) return;
     const api = getWithMateApi();
     if (!api) return;
     let active = true;
@@ -437,10 +410,10 @@ export default function HomeApp() {
       },
     });
     return () => { active = false; unsubscribe(); };
-  }, [isMemoryReviewWindowMode, isMonitorWindowMode, modelCatalogRetry]);
+  }, [isMonitorWindowMode, modelCatalogRetry]);
 
   useEffect(() => {
-    if (isMonitorWindowMode || isMemoryReviewWindowMode) return;
+    if (isMonitorWindowMode) return;
     const api = getWithMateApi();
     if (!api) return;
     let active = true;
@@ -460,12 +433,12 @@ export default function HomeApp() {
       },
     });
     return () => { active = false; unsubscribe(); };
-  }, [appSettingsRetry, isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+  }, [appSettingsRetry, isMonitorWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
-    if (isSettingsWindowMode || isMemoryReviewWindowMode) return;
+    if (isSettingsWindowMode) return;
     const withmateApi = getWithMateApi();
-    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
+    if (!withmateApi || isSettingsWindowMode || isMonitorWindowMode) {
       return;
     }
 
@@ -484,43 +457,63 @@ export default function HomeApp() {
 
     window.addEventListener("focus", refreshCharactersOnFocus);
     return () => window.removeEventListener("focus", refreshCharactersOnFocus);
-  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+  }, [isMonitorWindowMode, isSettingsWindowMode]);
 
   useHomeOpenWindowSubscriptions({
-    enabled: !isSettingsWindowMode && !isMemoryReviewWindowMode,
+    enabled: !isSettingsWindowMode,
     getApi: getWithMateApi,
     setOpenSessionWindowIdsState,
   });
 
   useEffect(() => {
     const api = getWithMateApi();
-    if (!api || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
+    if (!api || isSettingsWindowMode || isMonitorWindowMode) {
       return;
     }
     let active = true;
-    let receivedSnapshotUpdate = false;
+    let snapshotRevision = 0;
+    let loading = false;
+    let loadError: string | null = null;
+    const clearLoadError = () => {
+      const previousError = loadError;
+      loadError = null;
+      if (previousError !== null) {
+        setSessionWindowRestoreFeedback((feedback) => feedback === previousError ? "" : feedback);
+      }
+    };
     const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => {
       if (active) {
-        receivedSnapshotUpdate = true;
+        snapshotRevision += 1;
         setSessionWindowRestoreIds(sessionIds);
+        clearLoadError();
       }
     });
-    void api.getSessionWindowRestoreSet().then((sessionIds) => {
-      if (active && !receivedSnapshotUpdate) {
-        setSessionWindowRestoreIds(sessionIds);
-      }
-    }).catch((error) => {
-      if (active) {
-        setSessionWindowRestoreFeedback(
-          error instanceof Error ? error.message : "Could not load previous sessions.",
-        );
-      }
-    });
+    const loadSnapshot = () => {
+      const revision = snapshotRevision;
+      loading = true;
+      void api.getSessionWindowRestoreSet().then((sessionIds) => {
+        if (active && revision === snapshotRevision) {
+          setSessionWindowRestoreIds(sessionIds);
+          clearLoadError();
+        }
+      }).catch((error) => {
+        if (active && revision === snapshotRevision) {
+          loadError = error instanceof Error ? error.message : "Could not load previous sessions.";
+          setSessionWindowRestoreFeedback(loadError);
+        }
+      }).finally(() => { loading = false; });
+    };
+    const retryOnFocus = () => {
+      if (loadError !== null && !loading) loadSnapshot();
+    };
+    loadSnapshot();
+    window.addEventListener("focus", retryOnFocus);
     return () => {
       active = false;
       unsubscribe();
+      window.removeEventListener("focus", retryOnFocus);
     };
-  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+  }, [isMonitorWindowMode, isSettingsWindowMode]);
 
   const restoreSessionWindows = async () => {
     const api = getWithMateApi();
@@ -577,6 +570,7 @@ export default function HomeApp() {
   } = sessionProjection;
   const launchProjection = useMemo(
     () => buildHomeLaunchProjection({
+      modelCatalog,
       launchProviderId: launchDraft.providerId,
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
@@ -591,7 +585,6 @@ export default function HomeApp() {
       sessionCharacterUsageLoadStatus: sessionSummariesState.characterUsageStatus,
       openSessionWindowIdsLoadStatus: openSessionWindowIdsState.status,
       appSettings,
-      modelCatalog,
       providerLoadStatus: modelCatalogLoadStatus === "error" || appSettingsLoadStatus === "error"
         ? "error"
         : modelCatalogLoadStatus === "loading" || appSettingsLoadStatus === "loading"
@@ -727,16 +720,10 @@ export default function HomeApp() {
       settingsDraft,
     ],
   );
-  const persistedSettingsDraft = useMemo(
-    () => modelCatalogLoadStatus === "loaded"
-      ? buildPersistedAppSettingsFromRows(settingsDraft, providerSettingRows)
-      : settingsDraft,
-    [modelCatalogLoadStatus, providerSettingRows, settingsDraft],
-  );
-  persistedSettingsDraftRef.current = persistedSettingsDraft;
+  settingsDraftRef.current = settingsDraft;
   const settingsDirty = useMemo(() => {
-    return JSON.stringify(persistedSettingsDraft) !== JSON.stringify(appSettings);
-  }, [appSettings, persistedSettingsDraft]);
+    return JSON.stringify(settingsDraft) !== JSON.stringify(appSettings);
+  }, [appSettings, settingsDraft]);
 
   useEffect(() => {
     settingsDirtyRef.current = settingsDirty;
@@ -744,41 +731,25 @@ export default function HomeApp() {
 
   const settingsCommandHandlers = buildSettingsCommandHandlers({
     getApi: getWithMateApi,
-    persistedSettingsDraft,
+    persistedSettingsDraft: settingsDraft,
     setAppSettings,
     setSettingsDraft,
-    getPersistedSettingsDraft: () => persistedSettingsDraftRef.current ?? persistedSettingsDraft,
+    getPersistedSettingsDraft: () => settingsDraftRef.current ?? settingsDraft,
     setSettingsFeedback,
-    setMemoryV6Diagnostics,
     getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
     setDeletingOldSessions,
     refreshSessionSummaries: async () => {
       await refreshSessionSummaries("preserve");
-    },
-    onSettingsSaved: () => {
-      const api = getWithMateApi();
-      if (!api) {
-        return;
-      }
-      void refreshMemoryV6Diagnostics(api).catch(() => undefined);
     },
   });
 
   const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
-    modelCatalog,
     settingsDraft,
     providerSettingRows,
     modelDiscovery: modelCatalog?.discovery,
-    memoryV6Diagnostics,
     settingsDraftLoaded,
-    memoryV6DiagnosticsLoadStatus,
-    memoryV6DiagnosticsLoadError,
-    onRetryMemoryV6Diagnostics: () => {
-      setMemoryV6DiagnosticsLoadStatus("loading");
-      setMemoryV6DiagnosticsRetry((current) => current + 1);
-    },
     appSettingsLoadStatus,
     appSettingsLoadError,
     onRetryAppSettings: () => {
@@ -799,7 +770,6 @@ export default function HomeApp() {
     sessionCleanupCutoffDate,
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
-    onOpenMemoryV6Review: openMemoryV6ReviewWindow,
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };
@@ -942,6 +912,7 @@ export default function HomeApp() {
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
+      onSelectRole: homeLaunchHandlers.onSelectLaunchRole,
       onChangeWorkspacePath: homeLaunchHandlers.onChangeWorkspacePath,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,
@@ -957,8 +928,6 @@ export default function HomeApp() {
       desktopRuntime={desktopRuntime}
       homePageClassName={homePageClassName}
       isSettingsWindowMode={isSettingsWindowMode}
-      isMemoryReviewWindowMode={isMemoryReviewWindowMode}
-      getMemoryReviewApi={getWithMateApi}
       settingsContent={settingsContent}
       mateProfileEditorOpen={mateProfileEditorOpen}
       mateSetupContent={mateSetupContent}

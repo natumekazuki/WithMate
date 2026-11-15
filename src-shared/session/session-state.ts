@@ -32,8 +32,11 @@ import {
   type DiffRow,
   type RunCheck,
   type ElicitationRecord,
+  type ComposerAttachment,
 } from "./runtime-state.js";
 import { currentTimestampLabel } from "../time-state.js";
+import { normalizeProviderOutput, type ProviderOutput } from "./provider-output.js";
+import { normalizeSessionRelationship, type SessionRelationship, type SessionRole } from "./session-role.js";
 
 export type MessageArtifact = {
   title: string;
@@ -44,7 +47,19 @@ export type MessageArtifact = {
   detailAvailable?: boolean;
 };
 
+export type TurnInputDeliveryState = "pending" | "confirmed" | "unknown" | "not-sent";
+export type TurnInputMetadata = {
+  turnId: string;
+  nativeTurnId: string;
+  state: TurnInputDeliveryState;
+  queueId?: string;
+  origin?: import("./session-turn-queue.js").SessionSteerOrigin;
+  attachments: ComposerAttachment[];
+};
+
 export type Message = {
+  output?: ProviderOutput;
+  turnInput?: TurnInputMetadata;
   runFailure?: string;
   historyIndex?: number;
   role: "user" | "assistant";
@@ -67,10 +82,11 @@ export type SessionKind = "default" | "character-authoring";
 export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
 export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
 
-export type Session = {
+export type Session = Partial<SessionRelationship> & {
   id: string;
   incarnationId?: string;
   taskTitle: string;
+  description?: string;
   status: "running" | "idle" | "saved";
   updatedAt: string;
   isPinned: boolean;
@@ -104,6 +120,7 @@ export type Session = {
 };
 
 export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot" | "isPinned"> & {
+  characterDescription?: string;
   isPinned: boolean;
 };
 export type SessionDetail = Session;
@@ -165,6 +182,11 @@ export type DiffPreviewPayload = {
 
 export type CreateSessionInput = {
   id?: string;
+  sessionRole?: SessionRole;
+  rootSessionId?: string;
+  parentSessionId?: string | null;
+  createdBySessionId?: string | null;
+  description?: string;
   provider?: string;
   catalogRevision?: number;
   taskTitle: string;
@@ -213,6 +235,7 @@ export type CreateSessionRequest = Omit<
   | "customAgentName"
 > & {
   workspace: CreateSessionWorkspaceRequest;
+  clientRequestId?: string;
 };
 
 export type SetSessionPinnedRequest = {
@@ -402,10 +425,21 @@ export function normalizeMessage(value: unknown): Message | null {
   if (candidate.role !== "user" && candidate.role !== "assistant") {
     return null;
   }
+  if (candidate.turnInput !== undefined && (candidate.role !== "user" || !candidate.turnInput
+    || typeof candidate.turnInput.turnId !== "string" || !candidate.turnInput.turnId.trim()
+    || typeof candidate.turnInput.nativeTurnId !== "string" || !candidate.turnInput.nativeTurnId.trim()
+    || !["pending", "confirmed", "unknown", "not-sent"].includes(candidate.turnInput.state)
+    || !Array.isArray(candidate.turnInput.attachments))) throw new Error("The saved Turn input metadata is invalid.");
+  const inputOrigin = candidate.turnInput?.origin;
+  if (inputOrigin !== undefined && (!inputOrigin || inputOrigin.kind !== "session" || inputOrigin.actorKind !== "main" || inputOrigin.operation !== "steer"
+    || [inputOrigin.actorSessionId, inputOrigin.actorIncarnationId, inputOrigin.actorTurnId, inputOrigin.targetSessionId, inputOrigin.targetIncarnationId]
+      .some((value) => typeof value !== "string" || !value.trim()))) throw new Error("The saved Steer origin is invalid.");
 
   return {
     role: candidate.role,
     text: typeof candidate.text === "string" ? candidate.text : "",
+    ...(candidate.output ? { output: normalizeProviderOutput(candidate.output, typeof candidate.text === "string" ? candidate.text : "") } : {}),
+    ...(candidate.turnInput ? { turnInput: structuredClone(candidate.turnInput) } : {}),
     ...(candidate.role === "assistant" && typeof candidate.runFailure === "string" ? { runFailure: candidate.runFailure } : {}),
     accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
     artifact: normalizeMessageArtifact(candidate.artifact),
@@ -433,12 +467,15 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     return null;
   }
 
-  const candidate = value as Partial<Session>;
+  const candidate = value as Partial<Session & { characterDescription: string }>;
   const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "Character";
   const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
+  const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`;
 
   return {
-    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`,
+    id,
+    ...normalizeSessionRelationship({ ...candidate, id }),
+    description: typeof candidate.description === "string" ? candidate.description : "",
     incarnationId:
       typeof candidate.incarnationId === "string" && candidate.incarnationId.trim()
         ? candidate.incarnationId.trim()
@@ -479,6 +516,9 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : CURRENT_SESSION_SCHEMA_VERSION - 1,
     characterId,
     character: characterName,
+    ...(typeof candidate.characterRuntimeSnapshot?.description === "string" && candidate.characterRuntimeSnapshot.description
+      ? { characterDescription: candidate.characterRuntimeSnapshot.description }
+      : typeof candidate.characterDescription === "string" && candidate.characterDescription ? { characterDescription: candidate.characterDescription } : {}),
     characterIconPath:
       typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
         ? candidate.characterIconPath
@@ -676,8 +716,11 @@ export function buildNewSession(input: CreateSessionInput): Session {
   if (characterRuntimeSnapshot && characterRuntimeSnapshot.characterId !== characterId) {
     throw new Error("The Character runtime snapshot does not match the selected Character.");
   }
+  const id = input.id?.trim() || `launch-${Date.now()}`;
   return {
-    id: input.id?.trim() || `launch-${Date.now()}`,
+    id,
+    ...normalizeSessionRelationship({ ...input, id }),
+    description: input.description ?? "",
     taskTitle: normalizedTaskTitle,
     status: "idle",
     updatedAt: currentTimestampLabel(),
@@ -767,6 +810,11 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.status,
     summary.runState,
     summary.taskTitle,
+    summary.description ?? "",
+    summary.sessionRole ?? "standalone",
+    summary.rootSessionId ?? summary.id,
+    summary.parentSessionId ?? "",
+    summary.createdBySessionId ?? "",
     summary.threadId,
     summary.provider,
     String(summary.catalogRevision),

@@ -4,24 +4,12 @@ import type { RendererLogInput } from "../../src-shared/window/app-log-types.js"
 
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type { LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../../src-shared/session/session-state.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
 } from "../../src-shared/window/markdown-link-context-menu.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
-import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../../src-shared/memory/memory-contract.js";
-import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
-import type {
-  MemoryV6ReviewEntryDetail,
-  MemoryV6ReviewExportFilesResult,
-  MemoryV6ReviewForgetResult,
-  MemoryV6ProtectedObjectGcRequest,
-  MemoryV6ProtectedObjectGcResponse,
-  MemoryV6ReviewSearchResult,
-} from "../../src-shared/memory/memory-review-state.js";
 import type {
   AuxiliarySession,
   AuxiliarySessionSummary,
@@ -105,6 +93,7 @@ import type {
   SetSessionPinnedRequest,
 } from "../../src-shared/session/session-state.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
@@ -178,10 +167,8 @@ export type MainIpcWindowDepsArgs = {
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
-  openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
   isSessionMonitorWindow(window: BrowserWindow): boolean;
   isSettingsWindow(window: BrowserWindow): boolean;
-  isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
@@ -248,16 +235,6 @@ export type MainIpcSettingsDepsArgs = {
   getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
   scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
   runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
-  getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
-  installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
-  uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
-  getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
-  exportMemoryV6EntryFiles(entryId: string, targetWindow?: MaybeWindow): Awaitable<MemoryV6ReviewExportFilesResult | null>;
-  runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest): Awaitable<MemoryV6ProtectedObjectGcResponse>;
-  searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | undefined): Awaitable<MemoryV6ReviewSearchResult>;
-  listMemoryV6ReviewTargets(): Awaitable<import("../../src-shared/memory/memory-review-state.js").MemoryV6ReviewTargets>;
-  getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
-  forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
 };
 
@@ -341,8 +318,8 @@ export type MainIpcSessionQueryDepsArgs = {
 export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Awaitable<AuxiliarySessionSummary[]>;
-  listOpenActiveAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
-  getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
+  listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
+  getLatestAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft(input: import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
@@ -355,7 +332,6 @@ export type MainIpcAuxiliaryDepsArgs = {
   setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Awaitable<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
-  closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
   steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
@@ -367,14 +343,11 @@ export type MainIpcSessionRuntimeDepsArgs = {
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
   getProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null>;
   getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;
-  getSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-  ): SessionBackgroundActivityState | null;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void | Promise<void>;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
+  changeSessionAdditionalDirectory(request: ChangeSessionAdditionalDirectoryRequest): Awaitable<void>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Awaitable<SetSessionTitleResult>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;
@@ -428,8 +401,8 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
   return {
     listAuxiliarySessions: () => [],
     listAuxiliarySessionSummaries: () => [],
-    listOpenActiveAuxiliarySessionSummaries: () => [],
-    getActiveAuxiliarySession: () => null,
+    listOpenAuxiliarySessionSummaries: () => [],
+    getLatestAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
     getAuxiliaryDraft: () => null,
     saveAuxiliaryDraft: throwUnavailable,
@@ -442,7 +415,6 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     setAuxiliaryExecutionOptions: throwUnavailable,
     setAuxiliaryTitle: throwUnavailable,
     setAuxiliaryMessageBookmark: throwUnavailable,
-    closeAuxiliarySession: throwUnavailable,
     runAuxiliarySessionTurn: throwUnavailable,
     cancelAuxiliarySessionRun: throwUnavailable,
   };
@@ -473,7 +445,6 @@ export function createMainIpcRegistrationDeps(
     ...eventWindow,
     ...homeWindow,
     isSettingsWindow: args.window.isSettingsWindow,
-    isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
   };
   const sessionQueryContext = {
     ...eventWindow,

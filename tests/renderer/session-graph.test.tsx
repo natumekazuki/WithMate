@@ -1145,7 +1145,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
 // claim = "範囲外の関連先で詳細dismiss・通常選択しても範囲復帰を保ち、追加page・live更新後のBackは元ID集合と位置を最新record/relationで復元し、異topicの復帰失敗は履歴を保って再検証でき、先頭追加で取得境界がずれてもLoad Moreで重複・取り逃しなく末尾へ到達する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
 // fault = "詳細解除で範囲履歴を消すか、Backで追加取得nodeが残るか、旧record・削除relation・旧endpointを復活させるか、異topicの失敗を古い成功表示に置き換えるか、復帰後の表示件数をサーバoffsetとして先頭追加を取り逃す"
-// observable = "toolbarの範囲復帰操作、node ID相当のtitle集合と位置、倍率・scroll・focus、更新titleとrelationの削除/endpoint、詳細getのexpectedRevision、異topic再取得alert・再試行結果、復帰後Load Moreのoffsetと全recordのユニークID集合・完了状態"
+// observable = "toolbarの範囲復帰操作、node ID相当のtitle集合と位置、倍率・scroll・focus、更新titleとrelationの削除/endpoint、復帰後の最新詳細本文、異topic再取得alert・再試行結果、復帰後Load Moreのoffsetと全recordのユニークID集合・完了状態"
 // observation_boundary = "component-behavior"
 // scope = "SessionGraphPreviewの詳細履歴と範囲履歴、同topic最新データ復元、異topic同revision再検証"
 // lifecycle = "permanent"
@@ -1243,7 +1243,7 @@ test("graph range return survives detail dismissal and never restores stale grap
     assert.equal(state().relationState.relations.some((edge) => edge.id === "deleted"), false);
     assert.equal(state().relationState.relations.find((edge) => edge.id === "moving")?.fromId, "page-3");
     assert.equal(state().relationState.relations.find((edge) => edge.id === "moving")?.label, "Meaning At 2");
-    assert.deepEqual(requests.at(-1), { operation: "get", ids: ["page-2"], expectedRevision: 2 });
+    assert.match(details()?.textContent ?? "", /page-2 At 2/);
     assert.equal(doc.querySelector("[role='alert']"), null);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [31, 73]);
 

@@ -8,30 +8,28 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runWithMateSessionGraphCli, WITHMATE_SESSION_GRAPH_CLI_EXIT_CODES } from "../../src-cli/session-graph/withmate-session-graph.js";
 import { createWithMateSessionGraphMcpServer } from "../../src-electron/platform/mcp/withmate-session-graph-mcp.js";
-import { WithMateMemoryRuntimeExchangeError, type callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+import { AgentRuntimeExchangeError, type callAgentRuntime, type AgentRuntimeConnection } from "../../src-electron/platform/agent-runtime/runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/agent-runtime/runtime-exchange.js";
 import { SESSION_GRAPH_RUNTIME_OPERATION_PATHS } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 
 const env = {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding", WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn",
-  WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777", WITHMATE_MEMORY_API_SECRET: "secret",
-  WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
-  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
-  WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+  WITHMATE_AGENT_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
 };
-const connection: WithMateMemoryRuntimeConnection = {
-  api: { baseUrl: env.WITHMATE_MEMORY_API_URL, apiSecret: "secret", applicationInstanceId: env.WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID,
-    runtimeGenerationId: env.WITHMATE_MEMORY_RUNTIME_GENERATION_ID, runtimeInstanceId: env.WITHMATE_MEMORY_RUNTIME_GENERATION_ID },
+const connection: AgentRuntimeConnection = {
+  api: { baseUrl: "http://127.0.0.1:7777", apiSecret: "secret", applicationInstanceId: env.WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID,
+    runtimeGenerationId: env.WITHMATE_AGENT_RUNTIME_GENERATION_ID },
   credential: { adapter: "mcp", adapterSecret: "mcp-secret" },
 };
-async function cli(args: string[], runtimeCall: typeof callWithMateMemoryRuntime, extraEnv = env) {
+async function cli(args: string[], runtimeCall: typeof callAgentRuntime, extraEnv = env) {
   let output = "";
-  const exit = await runWithMateSessionGraphCli(args, { env: extraEnv, runtimeCall,
+  const exit = await runWithMateSessionGraphCli(args, { env: extraEnv, connection, runtimeCall,
     stdout: { write: (value) => { output += String(value); return true; } }, stderr: { write: () => true } });
   return { exit, value: JSON.parse(output) as Record<string, unknown> };
 }
-async function mcp(runtimeCall: typeof callWithMateMemoryRuntime, action: (client: Client) => Promise<void>) {
+async function mcp(runtimeCall: typeof callAgentRuntime, action: (client: Client) => Promise<void>) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createWithMateSessionGraphMcpServer({ env, connection, runtimeCall });
   const client = new Client({ name: "graph-parity", version: "1.0.0" });
@@ -41,7 +39,7 @@ async function mcp(runtimeCall: typeof callWithMateMemoryRuntime, action: (clien
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graph CLIとMCPの6操作は同じ入力とbinding/turnをextension exchangeへ渡し同じ結果を返す"
+// claim = "Graph CLIとMCPの6操作は他Crewの明示読取を含む同じ入力とbinding/turnをextension exchangeへ渡し同じ結果を返す"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md#MCPと更新" }
 // fault = "CLIが別routeや認可contextを使い、MCPと異なる要求または結果になる"
 // observable = "runtime dispatchのpath/body/binding/turn/exchangeとCLI JSONおよびMCP structuredContent"
@@ -52,11 +50,12 @@ async function mcp(runtimeCall: typeof callWithMateMemoryRuntime, action: (clien
 // impact = "CLI経由の復元と更新がMCPと異なるGraph操作になることを防ぐ"
 // @end-test-value
 it("6操作のCLIとSDK MCPは同じbinding付き要求と結果を共有する", async () => {
-  const inputs = { list_topics: { limit: 1 }, recent: { limit: 1 }, context: { kind: "issue" }, get: { ids: ["r"] }, search: { query: "work" },
+  const graphOwner = { sessionId: "other-crew-root", incarnationId: "root-incarnation" };
+  const inputs = { list_topics: { limit: 1, graphOwner }, recent: { limit: 1, graphOwner }, context: { kind: "issue", graphOwner }, get: { ids: ["r"], graphOwner }, search: { query: "work", graphOwner },
     apply: { expectedRevision: 1, records: [{ id: "r", topicId: "t", kind: "decision", title: "decision", detail: "detail", scope: "task", references: [],
       origin: { type: "user" }, actorRole: null, adoption: "accepted", adoptionOrigin: { type: "user" } }] } } as const;
   const calls: unknown[] = [];
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (selected, operation, options) => {
+  const runtimeCall: typeof callAgentRuntime = async (selected, operation, options) => {
     assert.deepEqual(selected, connection);
     calls.push({ operation, binding: options.bindingReference, turn: options.turnCapability, exchange: options.exchangePath });
     return { ok: true, status: 200, value: { ok: true, revision: 2, received: operation.body } };
@@ -89,8 +88,8 @@ it("6操作のCLIとSDK MCPは同じbinding付き要求と結果を共有する"
 // @end-test-value
 it("conflictとdispatch前後の失敗効果をCLIとMCPで一致させる", async () => {
   for (const scenario of ["conflict", "before", "after", "malformed"] as const) {
-    const runtimeCall: typeof callWithMateMemoryRuntime = async () => {
-      if (scenario === "before" || scenario === "after") throw new WithMateMemoryRuntimeExchangeError("lost", scenario === "after");
+    const runtimeCall: typeof callAgentRuntime = async () => {
+      if (scenario === "before" || scenario === "after") throw new AgentRuntimeExchangeError("lost", scenario === "after");
       return { ok: true, status: 200, value: scenario === "conflict" ? { status: "conflict", revision: 3 } : null };
     };
     await mcp(runtimeCall, async (client) => {
@@ -118,13 +117,16 @@ it("conflictとdispatch前後の失敗効果をCLIとMCPで一致させる", asy
 // @end-test-value
 it("不正入力とbinding欠落をdispatch前に拒否する", async () => {
   let calls = 0;
-  const runtimeCall: typeof callWithMateMemoryRuntime = async () => { calls++; throw new Error("must not dispatch"); };
+  const runtimeCall: typeof callAgentRuntime = async () => { calls++; throw new Error("must not dispatch"); };
   await mcp(runtimeCall, async (client) => {
     for (const body of [{ sessionId: "other" }, { limit: 0 }, { recordedBy: "other" }]) {
       const result = await cli(["recent", "--json", JSON.stringify(body)], runtimeCall);
       assert.equal(result.exit, WITHMATE_SESSION_GRAPH_CLI_EXIT_CODES.usage);
       assert.equal((await client.callTool({ name: "session_graph.recent", arguments: body })).isError, true);
     }
+    const write = { expectedRevision: 0, graphOwner: { sessionId: "other-crew-root", incarnationId: "root-incarnation" } };
+    assert.equal((await cli(["apply", "--json", JSON.stringify(write)], runtimeCall)).exit, WITHMATE_SESSION_GRAPH_CLI_EXIT_CODES.usage);
+    assert.equal((await client.callTool({ name: "session_graph.apply", arguments: write })).isError, true);
   });
   assert.equal((await cli(["recent", "--session-id", "other"], runtimeCall)).exit, 2);
   const missing = await cli(["recent"], runtimeCall, { ...env, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "" });
@@ -153,7 +155,7 @@ it("file、at-file、stdinとschemaを扱う", async () => {
     await writeFile(file, JSON.stringify(body));
     for (const input of [["--file", file], [`@${file}`], ["--stdin"]]) {
       let received: unknown;
-      const exit = await runWithMateSessionGraphCli(["apply", ...input], { env,
+      const exit = await runWithMateSessionGraphCli(["apply", ...input], { env, connection,
         stdin: Readable.from([JSON.stringify(body)]), stdout: { write: () => true }, stderr: { write: () => true },
         runtimeCall: async (_selected, operation) => { received = operation.body; return { ok: true, status: 200, value: { ok: true } }; } });
       assert.equal(exit, 0); assert.deepEqual(received, body);

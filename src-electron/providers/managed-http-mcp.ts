@@ -2,25 +2,17 @@ import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-bind
 
 export const WITHMATE_MANAGED_MCP_TOKEN_ENV = "WITHMATE_MANAGED_MCP_TOKEN";
 export const WITHMATE_MANAGED_MCP_TOKEN_HEADER = "x-withmate-mcp-token";
-export const WITHMATE_MANAGED_MEMORY_MCP_NAME = "withmate-memory";
 export const WITHMATE_MANAGED_GLOSSARY_MCP_NAME = "withmate-glossary";
 export const WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME = "withmate-session-graph";
-export const WITHMATE_MANAGED_SESSION_HISTORY_MCP_NAME = "withmate-session-history";
+export const WITHMATE_MANAGED_SESSION_MCP_NAME = "withmate-session";
 
 function managedServerUrls(binding: ProviderAgentRuntimeBindingProjection): [string, string][] {
   const connection = binding.managedMcp;
   if (!connection) return [];
-  if (binding.background) {
-    if (!connection.sessionHistoryUrl) throw new Error("Background execution requires its session-history MCP endpoint.");
-    return [[WITHMATE_MANAGED_SESSION_HISTORY_MCP_NAME, connection.sessionHistoryUrl],
-      [WITHMATE_MANAGED_MEMORY_MCP_NAME, connection.memoryUrl],
-      [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, connection.glossaryUrl],
-      [WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, connection.sessionGraphUrl]];
-  }
   return [
-    [WITHMATE_MANAGED_MEMORY_MCP_NAME, connection.memoryUrl],
     [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, connection.glossaryUrl],
     [WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, connection.sessionGraphUrl],
+    ...(connection.sessionUrl ? [[WITHMATE_MANAGED_SESSION_MCP_NAME, connection.sessionUrl] as [string, string]] : []),
   ];
 }
 
@@ -39,7 +31,7 @@ export function buildCodexManagedMcpDisableConfig(effectiveConfig: Record<string
   const configured = effectiveConfig.mcp_servers;
   if (!configured || typeof configured !== "object" || Array.isArray(configured)) return {};
   return Object.fromEntries(
-    [WITHMATE_MANAGED_MEMORY_MCP_NAME, WITHMATE_MANAGED_GLOSSARY_MCP_NAME, WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, WITHMATE_MANAGED_SESSION_HISTORY_MCP_NAME]
+    [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, WITHMATE_MANAGED_SESSION_MCP_NAME]
       .filter((name) => Object.hasOwn(configured, name))
       .map((name) => [name, { enabled: false as const }]),
   );

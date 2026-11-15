@@ -71,11 +71,11 @@ test("runtime metadata commandは実Workerのownerとatomic境界を保つ", asy
     assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(main.id))?.phase, "completed");
 
     const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ id: "aux", parentSessionId: main.id,
-      status: "active", runState: "idle", title: "aux", provider: main.provider, catalogRevision: main.catalogRevision,
+      runState: "idle", title: "aux", provider: main.provider, catalogRevision: main.catalogRevision,
       model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
       codexSandboxMode: main.codexSandboxMode, codexSpeed: main.codexSpeed, codexReviewer: main.codexReviewer,
       customAgentName: "", threadId: "", composerDraft: "", messages: [],
-      displayAfterMessageIndex: null, createdAt: "created", updatedAt: "created", closedAt: "" });
+      displayAfterMessageIndex: null, createdAt: "created", updatedAt: "created" });
     const auxOwner = { auxiliarySessionId: aux.id, parentSessionId: main.id, createdAt: aux.createdAt };
     assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 0);
     assert.equal((await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...auxOwner, expectedMessageCount: 0,

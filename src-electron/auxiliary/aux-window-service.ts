@@ -74,7 +74,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private homeWindow: TWindow | null = null;
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
-  private memoryV6ReviewWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly filePreviewWindows = new Map<string, TWindow>();
   private readonly filePreviewResourceTokens = new Map<string, string>();
@@ -90,10 +89,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return this.homeWindow && !this.homeWindow.isDestroyed() ? this.homeWindow : null;
   }
 
-  isMemoryV6ReviewWindow(window: TWindow): boolean {
-    return this.memoryV6ReviewWindow === window && !window.isDestroyed();
-  }
-
   isSettingsWindow(window: TWindow): boolean {
     return this.settingsWindow === window && !window.isDestroyed();
   }
@@ -107,7 +102,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.homeWindow,
       this.sessionMonitorWindow,
       this.settingsWindow,
-      this.memoryV6ReviewWindow,
     ].filter((window): window is TWindow => !!window && !window.isDestroyed());
   }
 
@@ -299,28 +293,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
-  async openMemoryV6ReviewWindow(): Promise<TWindow> {
-    const existing = this.reuseWindow(this.memoryV6ReviewWindow);
-    if (existing) {
-      return existing;
-    }
-
-    const window = this.deps.createWindow({
-      width: 1120,
-      height: 880,
-      minWidth: 860,
-      minHeight: 680,
-      title: "Memory Review",
-    });
-    this.memoryV6ReviewWindow = window;
-    window.once("ready-to-show", () => window.show());
-    window.on("closed", () => {
-      this.memoryV6ReviewWindow = null;
-    });
-    await this.deps.loadHomeEntry(window, "memory-review");
-    return window;
-  }
-
   async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
     const normalizedCharacterId = characterId?.trim() ?? "";
     const windowKey = normalizedCharacterId ? `character:${normalizedCharacterId}` : "character:new";
@@ -426,10 +398,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   }
 
   closeResetTargetWindows(): void {
-    if (this.memoryV6ReviewWindow && !this.memoryV6ReviewWindow.isDestroyed()) {
-      this.memoryV6ReviewWindow.close();
-    }
-    this.memoryV6ReviewWindow = null;
 
     for (const [token, window] of this.diffWindows.entries()) {
       if (!window.isDestroyed()) {

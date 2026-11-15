@@ -1,5 +1,7 @@
 # ADR 023: 複数WithMate instanceのruntime discoveryをregistryで管理する
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の入口・保存・背景実行と専用History公開入口に関する範囲は適用対象外とする。通常Session／Graph／Glossaryの共有runtime・認可・instance／generation失効・MCP／CLI契約、通常Sessionの保存履歴readの責務は維持する。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted

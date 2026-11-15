@@ -636,8 +636,6 @@ describe("V1 to V2 database migration write mode", () => {
         createSessionStorage: () => {
           throw new Error("V2 lifecycle では V1 session storage を生成しない");
         },
-        createSessionMemoryStorage: () => ({ close() {} }) as never,
-        createProjectMemoryStorage: () => ({ close() {} }) as never,
         createAppSettingsStorage: () => ({ close() {} }) as never,
         createMateStorage: () => ({ close() {} }) as never,
         ensureV2Schema(dbPath) {

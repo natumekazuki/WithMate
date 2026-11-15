@@ -16,8 +16,7 @@ import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-
 import type { SettingsCatalogServiceDeps } from "../../src-electron/settings/settings-catalog-service.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
-import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
+import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/agent-runtime/runtime-turn-admission.js";
 
 type SettingsCatalogDeps = SettingsCatalogServiceDeps;
 type DefaultedSettingsCatalogDependency =
@@ -29,11 +28,9 @@ type DefaultedSettingsCatalogDependency =
   | "updateAuxiliarySessionThreadIfMatches"
   | "replaceAllSessions"
   | "resetAppSettings"
-  | "clearProjectMemories"
   | "resetSessionRuntime"
   | "clearAllProviderQuotaTelemetry"
   | "clearAllSessionContextTelemetry"
-  | "clearAllSessionBackgroundActivities"
   | "invalidateAllProviderSessionThreads"
   | "closeResetTargetWindows"
   | "dismissSessionTurnNotification"
@@ -50,11 +47,9 @@ const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSet
   updateAuxiliarySessionThreadIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionThreadIfMatches"); },
   replaceAllSessions: async () => { throw new Error("unexpected replaceAllSessions"); },
   resetAppSettings: async () => { throw new Error("unexpected resetAppSettings"); },
-  clearProjectMemories: () => { throw new Error("unexpected clearProjectMemories"); },
   resetSessionRuntime: () => { throw new Error("unexpected resetSessionRuntime"); },
   clearAllProviderQuotaTelemetry: () => { throw new Error("unexpected clearAllProviderQuotaTelemetry"); },
   clearAllSessionContextTelemetry: () => { throw new Error("unexpected clearAllSessionContextTelemetry"); },
-  clearAllSessionBackgroundActivities: () => { throw new Error("unexpected clearAllSessionBackgroundActivities"); },
   invalidateAllProviderSessionThreads: async () => { throw new Error("unexpected invalidateAllProviderSessionThreads"); },
   closeResetTargetWindows: () => { throw new Error("unexpected closeResetTargetWindows"); },
   dismissSessionTurnNotification: () => { throw new Error("unexpected dismissSessionTurnNotification"); },
@@ -172,7 +167,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -190,7 +184,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     displayAfterMessageIndex: 0,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-28T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }
@@ -222,125 +215,12 @@ function createCatalogSnapshot(): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "provider credential変更・無効化の保存後に該当背景Providerを失効し、保存失敗や無関係な設定変更では失効しない"
-  // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-  // fault = "保存前に背景を失効する、credential変更を元会話のProvider列挙だけへ限定する、または無効化で背景を残す"
-  // observable = "invalidateBackgroundProviderのProvider列と保存成功・失敗"
-  // observation_boundary = "component-behavior"
-  // scope = "SettingsCatalogService provider lifecycle notification"
-  // lifecycle = "permanent"
-  // impact = "元会話とは別Providerの背景呼出しがcredential無効化後も結果を適用できる"
-  // distinction = "既存の通常thread無効化testは通常会話のない背景Providerを扱わない。registry側の取消testとは保存境界の責務が異なる"
-  // @end-test-value
-  it("保存済みcredential変更とProvider無効化を背景実行へ通知する", async () => {
-    let saved = createDefaultAppSettings();
-    const invalidated: string[] = [];
-    let failSave = false;
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
-      listSessions: () => [], listAuxiliarySessions: () => [], getAppSettings: () => saved,
-      updateAppSettings: (settings) => { if (failSave) throw new Error("save failed"); saved = settings; return settings; },
-      invalidateBackgroundProvider: (providerId) => invalidated.push(providerId),
-      getModelCatalog: () => createCatalogSnapshot(), clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
-      invalidateProviderSessionThread: () => {}, broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
-    });
-    await service.updateAppSettings({ ...saved, launchAtLoginEnabled: true });
-    assert.deepEqual(invalidated, []);
-    await service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
-      codex: { ...saved.codingProviderSettings.codex, apiKey: "changed-fixture-key" } } });
-    assert.deepEqual(invalidated, ["codex"]);
-    await service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
-      codex: { ...saved.codingProviderSettings.codex, enabled: false } } });
-    assert.deepEqual(invalidated, ["codex", "codex"]);
-    failSave = true;
-    await assert.rejects(service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
-      codex: { ...saved.codingProviderSettings.codex, apiKey: "rejected-fixture-key" } } }), /save failed/);
-    assert.deepEqual(invalidated, ["codex", "codex"]);
-  });
+
 
 
   // @test-value v2
   // kind = "contract"
-  // claim = "appSettings-only reset成功後は無効化・credential変更された背景Providerの実行中admissionを失効し、失敗時と無変更Providerは維持する"
-  // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-  // fault = "設定resetが背景失効を通知しない、保存前に失効する、または無関係なProviderや通常bindingまで失効する"
-  // observable = "resetの成功・失敗、Provider別signal、保存callback回数とadmission例外、通常bindingの解決結果"
-  // observation_boundary = "component-behavior"
-  // scope = "SettingsCatalogService reset with production background binding/handle/admission"
-  // lifecycle = "permanent"
-  // impact = "Provider初期化後にも未確定の背景生成結果を保存できるか、無変更Providerの結果を失う"
-  // distinction = "通常updateの通知testやregistry単体ではreset経路の保存後失効を確認できない。設定保存と接続閉鎖はfixtureで、DB保存やatomic checkpointは対象外"
-  // @end-test-value
-  it("設定だけの初期化で該当Providerの背景保存admissionを失効する", async () => {
-    for (const codexApiKey of ["", "fixture-key"]) {
-      let saved = createDefaultAppSettings();
-      saved.codingProviderSettings.codex.apiKey = codexApiKey;
-      saved.codingProviderSettings.claude = { ...saved.codingProviderSettings.codex, apiKey: "", enabled: true };
-      let failReset = true;
-      let savedResults = 0;
-      const bindings = new AgentRuntimeBindingRegistry();
-      const turns = new ProviderAgentRuntimeTurnCoordinator();
-      const executions = new BackgroundExecutionService({ bindings, turns, closeConnection() {} });
-      executions.start();
-      const session = createSession({ incarnationId: "fixture-incarnation" });
-      const normal = bindings.issueOrReuse({ actorSessionId: session.id, providerId: "codex", operationGrants: [] });
-      const service = new SettingsCatalogService({
-        hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
-        listSessions: () => [session], listAuxiliarySessions: () => [], getAppSettings: () => saved,
-        updateAppSettings: (settings) => { saved = settings; return saved; },
-        resetAppSettings: () => {
-          if (failReset) throw new Error("reset failed");
-          saved = createDefaultAppSettings();
-          return saved;
-        },
-        invalidateBackgroundProvider: (providerId) => { bindings.revokeBackgroundProvider(providerId); },
-        getModelCatalog: () => createCatalogSnapshot(), clearProviderQuotaTelemetry() {}, clearSessionContextTelemetry() {},
-        clearAllProviderQuotaTelemetry() {}, invalidateProviderSessionThread() {},
-        broadcastSessions() {}, broadcastAppSettings() {}, broadcastModelCatalog() {},
-      });
-      const begin = (providerId: string, purpose: "affect" | "target-memory") => {
-        return executions.begin({ actorSessionId: session.id, providerId, session,
-          authoritySnapshot: { characterId: session.characterId }, operationGrants: ["session_history.route.read_messages"],
-          scope: { purpose, history: { source: { kind: "main", sessionId: session.id,
-            incarnationId: getSessionIncarnationId(session), ownerIdentity: "fixture-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
-          memoryTargets: [] },
-        });
-      };
-      try {
-        const codex = begin("codex", "affect");
-        const claude = begin("claude", "target-memory");
-        const save = () => { savedResults += 1; };
-        await assert.rejects(service.resetAppDatabase({ targets: ["appSettings"] }), /reset failed/);
-        for (const execution of [codex, claude]) {
-          assert.equal(execution.signal.aborted, false);
-          runWithRuntimeTurnAdmission(execution.admission, save);
-        }
-        assert.equal(savedResults, 2);
-
-        failReset = false;
-        const result = await service.resetAppDatabase({ targets: ["appSettings"] });
-        assert.deepEqual(result.appSettings, createDefaultAppSettings());
-        assert.equal(claude.signal.aborted, true);
-        assert.throws(() => runWithRuntimeTurnAdmission(claude.admission, save), /no longer active/);
-        assert.equal(codex.signal.aborted, codexApiKey !== "");
-        if (codexApiKey) {
-          assert.throws(() => runWithRuntimeTurnAdmission(codex.admission, save), /no longer active/);
-        } else {
-          runWithRuntimeTurnAdmission(codex.admission, save);
-        }
-        assert.equal(savedResults, codexApiKey ? 2 : 3);
-        assert.equal(bindings.resolveIdentity(normal.bindingReference).ok, true);
-      } finally {
-        executions.stop();
-      }
-    }
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "任意のchat layout checkpointが保留・失敗しDB読込応答が遅れても、再読込・Settings保存・表示設定以外のresetは現在の表示選択を返す"
+  // claim = "任意のchat layout checkpointが保留・失敗しDB読込応答が遅れても、再読込・Settings保存は現在の表示選択を返す"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
   // fault = "再open時やSettings保存結果がDBの旧layoutへ戻る、またはcheckpoint失敗を診断できない"
   // observable = "serviceのsettings projection、broadcast、DB値、失敗診断"
@@ -402,7 +282,6 @@ describe("SettingsCatalogService", () => {
           diagnostics.push(`${update.target}: ${String(error)}`);
           diagnosticReceived.resolve();
         },
-        clearProjectMemories: () => {},
         getModelCatalog: () => createCatalogSnapshot(),
 
         clearProviderQuotaTelemetry: () => {},
@@ -429,9 +308,6 @@ describe("SettingsCatalogService", () => {
       assert.equal((await service.getAppSettings()).chatLayoutPreference.header, "visible");
       assert.equal(storage.getSettings().chatLayoutPreference.header, "hidden");
 
-      const reset = await service.resetAppDatabase({ targets: ["projectMemory"] });
-      assert.equal(reset.appSettings.chatLayoutPreference.header, "visible");
-      assert.equal(broadcasts.at(-1)?.chatLayoutPreference.header, "visible");
 
       service.updateChatLayoutPreference({ target: "header", value: "visible" });
       service.updateChatLayoutPreference({ target: "header", value: "hidden" });
@@ -1396,9 +1272,8 @@ describe("SettingsCatalogService", () => {
         isStorageIdentityCurrent: (identity) => identity === storageGeneration,
         resetAppSettings: () => { current = resetSettings; return current; },
         clearAllProviderQuotaTelemetry: () => {}, clearAllSessionContextTelemetry: () => {},
-        clearAllSessionBackgroundActivities: () => {}, invalidateAllProviderSessionThreads: async () => {},
         closeResetTargetWindows: () => {}, resetSessionRuntime: () => {},
-        clearProjectMemories: () => {}, recreateDatabaseFile: async () => createCatalogSnapshot(),
+        recreateDatabaseFile: async () => createCatalogSnapshot(),
 
       });
       const updating = service.updateAppSettings(resetSettings);
@@ -1650,9 +1525,6 @@ describe("SettingsCatalogService", () => {
         return createDefaultAppSettings();
       },
 
-      clearProjectMemories() {
-        calls.push("clearProject");
-      },
       resetSessionRuntime() {
         calls.push("resetRuntime");
       },
@@ -1661,9 +1533,6 @@ describe("SettingsCatalogService", () => {
       },
       clearAllSessionContextTelemetry() {
         calls.push("clearAllContext");
-      },
-      clearAllSessionBackgroundActivities() {
-        calls.push("clearAllActivity");
       },
       invalidateAllProviderSessionThreads() {
         calls.push("invalidateAllThreads");
@@ -1697,7 +1566,7 @@ describe("SettingsCatalogService", () => {
     });
 
     const failedPartialReset = service.resetAppDatabase({
-      targets: ["sessions", "appSettings"],
+      targets: ["sessions"],
     });
     await firstReplacementStarted.promise;
     assert.equal(calls.some((call) => call.startsWith("dismissNotification:")), false);
@@ -1710,10 +1579,10 @@ describe("SettingsCatalogService", () => {
 
     calls.length = 0;
     const result = await service.resetAppDatabase({
-      targets: ["sessions", "appSettings"],
+      targets: ["sessions"],
     });
 
-    assert.deepEqual(result.resetTargets, ["sessions", "appSettings"]);
+    assert.deepEqual(result.resetTargets, ["sessions"]);
     assert.deepEqual(calls, [
       "closeResetWindows",
       "replace:0",
@@ -1722,10 +1591,7 @@ describe("SettingsCatalogService", () => {
       "dismissNotification:aux-partial-1",
       "dismissNotification:aux-partial-2",
       "resetRuntime",
-      "clearAllActivity",
       "invalidateAllThreads",
-      "resetAppSettings",
-      "clearAllQuota",
       "broadcastSessions",
       "broadcastSettings",
       "broadcastCatalog",
@@ -1757,7 +1623,6 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(fullResult.resetTargets, [
       "sessions",
       "appSettings",
-      "projectMemory",
     ]);
     assert.deepEqual(calls, [
       "closeResetWindows",
@@ -1767,7 +1632,6 @@ describe("SettingsCatalogService", () => {
       "dismissNotification:aux-full-1",
       "dismissNotification:aux-full-2",
       "resetRuntime",
-      "clearAllActivity",
       "invalidateAllThreads",
       "clearAllQuota",
       "clearAllContext",

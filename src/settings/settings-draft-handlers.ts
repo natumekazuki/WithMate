@@ -3,13 +3,11 @@ import type { AppSettings } from "../../src-shared/settings/provider-settings-st
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   handleChangeAutoCollapseActionDockOnSend,
-  handleChangeCharacterAffectContextEnabled,
   handleChangeCharacterDefinitionEnabled,
-  handleChangeConversationTimingEnabled,
+  handleChangeCurrentDateEnabled,
   handleChangeGlossaryProactiveCreateLimit,
   handleChangeKeyboardShortcuts,
   handleChangeLaunchAtLoginEnabled,
-  handleChangeMemoryFileQuotaMegabytes,
   handleChangeScrollToLatestOnSend,
   handleChangePreviewWheelZoomStep,
   handleChangeProviderInstructionRelativePath,
@@ -19,7 +17,6 @@ import {
   handleChangeSessionTurnNotificationEnabled,
   handleChangeSessionApprovalNotificationEnabled,
   handleChangeSessionTurnNotificationResponsePreviewEnabled,
-  handleChangeToolCallPresenceEnabled,
 } from "./settings-draft-actions.js";
 
 type SettingsDraftHandlersContext = {
@@ -30,11 +27,8 @@ type SettingsDraftHandlersContext = {
 export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
-  | "onChangeBackgroundPurpose"
-  | "onChangeMemoryRecordingFrequencies"
-  | "onChangeCharacterAffectContextEnabled"
   | "onChangeCharacterDefinitionEnabled"
-  | "onChangeConversationTimingEnabled"
+  | "onChangeCurrentDateEnabled"
   | "onChangeScrollToLatestOnSend"
   | "onChangePreviewWheelZoomStep"
   | "onChangeKeyboardShortcuts"
@@ -42,8 +36,6 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeSessionTurnNotificationEnabled"
   | "onChangeSessionApprovalNotificationEnabled"
   | "onChangeSessionTurnNotificationResponsePreviewEnabled"
-  | "onChangeToolCallPresenceEnabled"
-  | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeProviderEnabled"
   | "onChangeModelAvailability"
@@ -62,12 +54,6 @@ export function buildSettingsDraftHandlers({
   };
 
   return {
-    onChangeBackgroundPurpose: (purpose, value) => {
-      updateSettingsDraft((current) => ({ ...current, backgroundExecutionSettings: { ...current.backgroundExecutionSettings, [purpose]: value } }));
-    },
-    onChangeMemoryRecordingFrequencies: (value) => {
-      updateSettingsDraft((current) => ({ ...current, memoryRecordingFrequencies: value }));
-    },
     onChangeModelAvailability: (modelAvailability) => {
       updateSettingsDraft((current) => ({ ...current, modelAvailability }));
     },
@@ -77,11 +63,8 @@ export function buildSettingsDraftHandlers({
     onChangeCharacterDefinitionEnabled: (enabled) => {
       handleChangeCharacterDefinitionEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
-    onChangeCharacterAffectContextEnabled: (enabled) => {
-      handleChangeCharacterAffectContextEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeConversationTimingEnabled: (enabled) => {
-      handleChangeConversationTimingEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
+    onChangeCurrentDateEnabled: (enabled) => {
+      handleChangeCurrentDateEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
     onChangeScrollToLatestOnSend: (enabled) => {
       handleChangeScrollToLatestOnSend({ enabled, setSettingsDraft: updateSettingsDraft });
@@ -103,12 +86,6 @@ export function buildSettingsDraftHandlers({
     },
     onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled) => {
       handleChangeSessionTurnNotificationResponsePreviewEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeToolCallPresenceEnabled: (enabled) => {
-      handleChangeToolCallPresenceEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeMemoryFileQuotaMegabytes: (value) => {
-      handleChangeMemoryFileQuotaMegabytes({ value, setSettingsDraft: updateSettingsDraft });
     },
     onChangeGlossaryProactiveCreateLimit: (value) => {
       handleChangeGlossaryProactiveCreateLimit({ value, setSettingsDraft: updateSettingsDraft });

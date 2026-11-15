@@ -11,7 +11,7 @@ Auxiliaryの準備済みCharacterを再抽選しない判断は、Issue #749の�
 
 作成時の設定検証と ownership 境界は引き続き適用する。DB の直近 Session だけを実行設定の継承元とする判断は、Issue #738 の現在選択と保存 checkpoint の分離により適用対象外とする。新規会話は Main Process が保持する provider ごとの現在選択を優先し、存在しない場合に保存済みの直近値を参照する。各 Send は送信時に捕捉した設定を検証して使用する。後継判断と現行契約は [Electron Session Store の実行設定と Send](../design/electron-session-store.md#実行設定と-send) に記載する。以下の判断本文は履歴として保持する。
 
-Auxiliaryの追加Directoryを作成commit時に親から取得して個別保存する判断は適用対象外とする。Additional Directoryは親Mainだけに保存し、全AuxiliaryのFiles認可と次turnの実行contextは現在の親一覧を参照する。実行中turnの捕捉済み認可は維持する。他の実行設定の継承とownership境界の適用状態は変更しない。後継判断と現行契約は[Auxiliary SessionのContext boundary](../design/auxiliary-session.md#context-boundary)と[Database SchemaのAdditional Directory](../design/database-schema.md#additional-directory)を参照する。
+Auxiliaryの追加Directoryを作成commit時に親から取得して個別保存する判断は適用対象外とする。Additional Directoryは親Mainだけに保存し、全AuxiliaryのFiles認可と次turnの実行contextは現在の親一覧を参照する。実行中turnの捕捉済み認可は維持する。他の実行設定の継承とownership境界の適用状態は変更しない。後継判断と現行契約は[Auxiliary SessionのContext boundary](../design/auxiliary-session.md#context-boundary)と[Database SchemaのAdditional Directory](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/database-schema.md#additional-directory)を参照する。
 
 directory workspace の New Session で設定解決から保存までを coordinator 内で処理する判断は、次の現行契約には適用しない。Main Session 作成時は、workspace 種別にかかわらず SessionFolder を作成する。folder 準備を coordinator 外で行い、保存時に再検証する後継の扱いは [Session Local Files](../design/session-local-files.md) に記載する。
 

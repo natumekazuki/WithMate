@@ -6,9 +6,9 @@ import test from "node:test";
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Session作成画面はCharacter一覧だけを内部スクロールし、周辺操作領域を固定する"
+// claim = "Session作成画面はRole・title・workspace・providerの自然な高さを確保し、最後のCharacter一覧だけを伸縮する内部スクロール領域にする"
 // oracle = { type = "contract", ref = "HomeLaunch character selection layout" }
-// fault = "launch panel全体がスクロールする、またはfocus-visibleの選択肢が視認できない"
+// fault = "providerを伸縮行へ割り当ててCharacterと重ねる、launch panel全体をスクロールする、またはfocus-visibleの選択肢が視認できない"
 // observable = "launch panelのgridとoverflow、character listのoverflow、focus-visible outline CSSおよびcomponent class"
 // observation_boundary = "declaration"
 // scope = "home-launch-character-list-layout-css"
@@ -29,7 +29,7 @@ test("Session 作成画面は Character 一覧だけをスクロール領域に�
   assert.match(componentSource, /dialogClassName="home-launch-dialog"/);
   assert.match(componentSource, /className="launch-section minimal home-launch-character-section"/);
   assert.ok(panelRule);
-  assert.match(panelRule, /grid-template-rows:\s*auto auto auto minmax\(0, 1fr\);/);
+  assert.match(panelRule, /grid-template-rows:\s*auto auto auto auto minmax\(0, 1fr\);/);
   assert.match(panelRule, /overflow:\s*hidden;/);
   assert.ok(characterListRule);
   assert.match(characterListRule, /overflow-y:\s*auto;/);

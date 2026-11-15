@@ -785,6 +785,7 @@ export function useAuxiliaryWorkspace(input: {
     const auxiliaryMessages = input.auxiliarySession?.messages ?? [];
     const main = {
       ...input.messageColumn,
+      inputReadContext: input.mainSession?.incarnationId ? { ownerSessionId: mainSessionId, target: { kind: "main" as const, sessionId: mainSessionId, incarnationId: input.mainSession.incarnationId } } : undefined,
       sessionId: mainSessionId,
       messages: mainMessages,
       onToggleMessageBookmark: input.onToggleMessageBookmark,
@@ -794,6 +795,10 @@ export function useAuxiliaryWorkspace(input: {
     const auxiliary = input.auxiliarySession
       ? {
           ...input.messageColumn,
+          inputReadContext: input.mainSession?.incarnationId && selectedSession?.id === input.auxiliarySession.id ? {
+            ownerSessionId: mainSessionId,
+            target: { kind: "auxiliary" as const, sessionId: selectedSession.id, incarnationId: selectedSession.createdAt, mainSessionId: selectedSession.parentSessionId, mainIncarnationId: input.mainSession.incarnationId },
+          } : undefined,
           sessionId: input.auxiliarySession.id,
           messages: auxiliaryMessages,
           onToggleMessageBookmark: input.onToggleMessageBookmark,
@@ -824,7 +829,7 @@ export function useAuxiliaryWorkspace(input: {
       loading: loading || detailLoading,
       error: detailError?.message ?? error?.message ?? null,
     };
-  }, [auxiliaryItems, commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, target, widthRatio]);
+  }, [auxiliaryItems, commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, target, widthRatio]);
 
   return useMemo(() => ({
     summaries,

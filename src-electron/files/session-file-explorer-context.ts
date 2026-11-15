@@ -1,4 +1,5 @@
 import { getSessionIncarnationId, type SessionSummary } from "../../src-shared/session/session-state.js";
+import { normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { SessionFileExplorerContext } from "./session-file-explorer-service.js";
 
@@ -22,6 +23,7 @@ export async function readSessionFileExplorerContext(
     workspacePath: session.workspacePath,
     parentSessionId: session.id,
     parentIncarnationId: getSessionIncarnationId(session),
+    crewRootSessionId: normalizeSessionRelationship(session).rootSessionId,
     allowedAdditionalDirectories: session.allowedAdditionalDirectories,
   };
 }

@@ -1,5 +1,7 @@
 # ADR 029: CLIとMCPの公開契約を揃え、必要な文脈だけをbindingする
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の入口・保存・背景実行と専用History公開入口に関する範囲は適用対象外とする。通常Session／Graph／Glossaryの共有runtime・認可・instance／generation失効・MCP／CLI契約、通常Sessionの保存履歴readの責務は維持する。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted
@@ -25,7 +27,7 @@ ADR 020・021・024・027のCLI専用operator権限、一般Memoryの一律bindi
 
 runtime credential、binding registry、generation、grant、captured turn、共有HTTP MCPの接続認証は維持する。application boundary、保存済みデータとmutationの整合契約も維持する。旧CLI explicit identity入力の互換経路は設けず、両入口の公開schemaへ統一する。
 
-現行の操作契約は[Memory／Affect](../runbooks/memory-affect-mcp.md)、[Glossary](../runbooks/repository-glossary.md)、[Session Graph](../design/session-graph.md)、継続的な変更規約は[Development Workflow](../runbooks/development-workflow.md)を正本とする。
+現行の操作契約は[Memory／Affect](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/runbooks/memory-affect-mcp.md)、[Glossary](../runbooks/repository-glossary.md)、[Session Graph](../design/session-graph.md)、継続的な変更規約は[Development Workflow](../runbooks/development-workflow.md)を正本とする。
 
 ## Alternatives
 

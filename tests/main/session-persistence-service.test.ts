@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
@@ -84,6 +84,67 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 describe("SessionPersistenceService", () => {
   // @test-value v2
   // kind = "invariant"
+  // claim = "MainごとのDirectory変更は並行追加を保持し、他Mainと実ファイルを変更せず、無効pathと旧incarnationや失効した実行元を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api; docs/design/database-schema.md#additional-directory" }
+  // fault = "古い一覧で上書きする、他Sessionや実ファイルを削除する、無効pathまたは旧owner・失効実行元を保存する"
+  // observable = "保存一覧、通知対象、実ファイルの存在と拒否結果"
+  // observation_boundary = "component-behavior"
+  // scope = "session-additional-directory-mutation"
+  // lifecycle = "permanent"
+  // impact = "同時操作が失われる、他Sessionの設定が変わる、または無効pathを後続Turnへ渡す"
+  // distinction = "正規化helper単体では保存queueとSession identity、実directory検証を確認できない"
+  // @end-test-value
+  it("serializes directory updates per saved Main and only unregisters paths", async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-mutation-"));
+    const workspace = path.join(temp, "workspace"), first = path.join(temp, "first"), second = path.join(temp, "second");
+    await Promise.all([mkdir(workspace), mkdir(first), mkdir(second)]);
+    const file = path.join(first, "retained.txt");
+    await writeFile(file, "retained");
+    try {
+      const parent = createSession({ id: "directory-parent", incarnationId: "parent-v1", provider: "copilot", workspacePath: workspace, allowedAdditionalDirectories: [] });
+      const child = createSession({ id: "directory-child", incarnationId: "child-v1", provider: "claude", workspacePath: workspace, allowedAdditionalDirectories: [] });
+      let cached = [parent, child];
+      const stored = new Map(cached.map((session) => [session.id, session]));
+      const broadcasts: string[] = [];
+      const service = new SessionPersistenceService({
+        getSessions: () => cached, setSessions: (next) => { cached = next; },
+        getSession: (id) => cached.find((session) => session.id === id) ?? null,
+        getStoredSession: (id) => stored.get(id) ?? null,
+        isSessionRunInFlight: () => true,
+        upsertStoredSession: async (session) => { await Promise.resolve(); stored.set(session.id, session); return session; },
+        setStoredSessionAdditionalDirectories: async (id, _incarnation, directories) => {
+          await Promise.resolve();
+          const session = { ...stored.get(id)!, allowedAdditionalDirectories: directories };
+          stored.set(id, session);
+          return projectSessionSummary(session);
+        },
+        replaceStoredSessions: () => undefined, listStoredSessions: () => [...stored.values()],
+        getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: createSnapshot,
+         clearSessionContextTelemetry: () => undefined,
+         invalidateProviderSessionThread: () => undefined,
+        closeSessionWindow: () => undefined, broadcastSessions: (ids) => broadcasts.push(...(ids ?? [])),
+      });
+      const change = (sessionId: string, incarnationId: string, operation: "add" | "remove", directoryPath: string) =>
+        service.changeAdditionalDirectory({ sessionId, incarnationId, operation, directoryPath });
+      await Promise.all([change(parent.id, "parent-v1", "add", first), change(parent.id, "parent-v1", "add", second), change(child.id, "child-v1", "add", second)]);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [first, second].sort((a, b) => a.localeCompare(b)));
+      assert.deepEqual(stored.get(child.id)?.allowedAdditionalDirectories, [second]);
+      await change(parent.id, "parent-v1", "remove", first);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [second]);
+      assert.deepEqual(stored.get(child.id)?.allowedAdditionalDirectories, [second]);
+      await access(file);
+      await assert.rejects(change(parent.id, "old", "remove", second), /could not be found/i);
+      await assert.rejects(change(parent.id, "parent-v1", "add", file), /invalid/i);
+      await assert.rejects(change(parent.id, "parent-v1", "add", "relative"), /absolute/i);
+      await assert.rejects(service.changeAdditionalDirectory({ sessionId: parent.id, incarnationId: "parent-v1", operation: "remove", directoryPath: second }, () => { throw new Error("turn expired"); }), /turn expired/);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [second]);
+      assert.deepEqual(broadcasts.toSorted(), [parent.id, parent.id, child.id, parent.id].toSorted());
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+  // @test-value v2
+  // kind = "invariant"
   // claim = "metadataとturn内messageだけを持つruntimeのsteer/terminal保存は全履歴件数とturn identityをstorageへ渡し、確定ACKのtitle/pin/設定を投影する"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#sessionpersistenceservice; docs/design/session-run-lifecycle.md" }
   // fault = "turn内配列indexを履歴indexとして保存する、full保存へ渡す、または古いruntime metadataでACKの現行title/pin/設定を上書きする"
@@ -117,9 +178,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => [],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: (ids) => { broadcasts.push(Array.from(ids ?? [])); },
@@ -197,9 +258,9 @@ describe("SessionPersistenceService", () => {
             settings: { getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: createSnapshot },
             character: { createCharacterRuntimeSnapshot: () => null },
             effects: {
-              syncSessionDependencies: () => undefined,
+
               clearSessionContextTelemetry: () => undefined,
-              clearSessionBackgroundActivities: () => undefined,
+
               invalidateProviderSessionThread: () => undefined,
               revokeSessionAgentRuntimeBindings: () => undefined,
               closeSessionWindow: () => undefined,
@@ -256,9 +317,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => [],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
@@ -326,9 +387,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => [stored],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
@@ -405,9 +466,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => cached,
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,
@@ -462,9 +523,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => cached,
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => ++catalogCalls === 1 ? bCatalog : createSnapshot(),
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,
@@ -511,9 +572,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => cached,
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => { reachedCatalog(); return catalogWait; },
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,
@@ -527,6 +588,16 @@ describe("SessionPersistenceService", () => {
     assert.equal(cached[0]?.taskTitle, "New session");
   });
 
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実行中のpin変更は実行状態とupdatedAtを保ちcacheと通知へ反映する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts setSessionPinned" }
+  // fault = "pin変更で実行状態やupdatedAtを上書きするかcache更新または通知を失う"
+  // observable = "返却SessionのpinとupdatedAt、cacheのstatus/runState/pin、broadcast対象ID"
+  // observation_boundary = "component-behavior"
+  // scope = "session persistence pin update"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("setSessionPinnedは実行状態とupdatedAtを変えずにcacheとbroadcastを更新する", async () => {
     const session = createSession({
       id: "pin-target",
@@ -554,9 +625,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => [session],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
@@ -614,9 +685,9 @@ describe("SessionPersistenceService", () => {
       listStoredSessions: () => [storedSession],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,
@@ -661,7 +732,7 @@ describe("SessionPersistenceService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "確定済みterminal保存はdependency/cache/broadcast投影の失敗で未保存扱いにならない"
+  // claim = "確定済みterminal保存はcache/broadcast投影の失敗で未保存扱いにならない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md terminal persistence and projection boundaries" }
   // fault = "永続化成功後のprojection例外を保存失敗として返すか後続projectionを省略する"
   // observable = "返却Sessionと保存Sessionの終端state/本文および各projectionの呼出記録"
@@ -670,7 +741,7 @@ describe("SessionPersistenceService", () => {
   // lifecycle = "permanent"
   // @end-test-value
   it("terminal commit後のprojection failureを保存済み結果へ波及させない", async () => {
-    for (const failingProjection of ["dependency", "cache", "broadcast"] as const) {
+    for (const failingProjection of ["cache", "broadcast"] as const) {
       const runningSession = createSession({
         id: `terminal-projection-${failingProjection}`,
         status: "running",
@@ -709,14 +780,9 @@ describe("SessionPersistenceService", () => {
         listStoredSessions: () => [persistedSession],
         getAppSettings: () => normalizeAppSettings({}),
         getModelCatalogSnapshot: createSnapshot,
-        syncSessionDependencies() {
-          attemptedProjections.push("dependency");
-          if (failingProjection === "dependency") {
-            throw new Error("dependency projection failed");
-          }
-        },
+
         clearSessionContextTelemetry: () => undefined,
-        clearSessionBackgroundActivities: () => undefined,
+
         invalidateProviderSessionThread: () => undefined,
         closeSessionWindow: () => undefined,
         broadcastSessions() {
@@ -740,7 +806,7 @@ describe("SessionPersistenceService", () => {
       assert.equal(result.runState, "idle");
       assert.equal(result.messages.at(-1)?.text, "done");
       assert.equal(persistedSession.runState, "idle");
-      assert.deepEqual(attemptedProjections, ["dependency", "cache", "broadcast"]);
+      assert.deepEqual(attemptedProjections, ["cache", "broadcast"]);
     }
   });
 
@@ -756,7 +822,6 @@ describe("SessionPersistenceService", () => {
   // @end-test-value
   it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
-    const syncedSessionIds: string[] = [];
     const broadcastedSessionIds: string[][] = [];
     const snapshot = createSnapshot();
     const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
@@ -805,11 +870,9 @@ describe("SessionPersistenceService", () => {
         snapshotCharacterIds.push(characterId);
         return characterRuntimeSnapshot;
       },
-      syncSessionDependencies(session) {
-        syncedSessionIds.push(session.id);
-      },
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions(sessionIds) {
@@ -854,7 +917,6 @@ describe("SessionPersistenceService", () => {
     assert.notEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
     assert.deepEqual(persistedSession!.characterRuntimeSnapshot, characterRuntimeSnapshot);
     assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
-    assert.deepEqual(syncedSessionIds, [created.id]);
     assert.deepEqual(broadcastedSessionIds, [[created.id]]);
     assert.deepEqual(storeOperations, ["create"]);
 
@@ -932,9 +994,9 @@ describe("SessionPersistenceService", () => {
       deleteStoredSession() {},
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => createSnapshot(),
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -975,9 +1037,9 @@ describe("SessionPersistenceService", () => {
       deleteStoredSession() {},
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => createSnapshot(),
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1055,9 +1117,9 @@ describe("SessionPersistenceService", () => {
         fallbackSnapshotCalls += 1;
         return createCharacterRuntimeSnapshot({ definitionSha256: "sha256-fallback" });
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1142,9 +1204,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1208,9 +1270,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1287,11 +1349,11 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry(sessionId) {
         clearedTelemetry.push(sessionId);
       },
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1379,9 +1441,9 @@ describe("SessionPersistenceService", () => {
       deleteStoredSession() {},
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: createSnapshot,
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1468,9 +1530,9 @@ describe("SessionPersistenceService", () => {
         getModelCatalogSnapshot() {
           return createSnapshot();
         },
-        syncSessionDependencies() {},
+
         clearSessionContextTelemetry() {},
-        clearSessionBackgroundActivities() {},
+
         invalidateProviderSessionThread() {},
         closeSessionWindow() {},
         broadcastSessions() {},
@@ -1542,9 +1604,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return snapshot;
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1618,9 +1680,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1689,9 +1751,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1723,7 +1785,6 @@ describe("SessionPersistenceService", () => {
     const session = createSession();
     const storedSessions: Session[] = [session];
     const deleted: string[] = [];
-    const clearedBackground: string[] = [];
     const closedWindows: string[] = [];
     const revokedBindings: string[] = [];
     const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
@@ -1767,11 +1828,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities(sessionId) {
-        clearedBackground.push(sessionId);
-      },
+
       invalidateProviderSessionThread(providerId, sessionId) {
         invalidatedThreads.push({ providerId, sessionId });
       },
@@ -1790,7 +1849,6 @@ describe("SessionPersistenceService", () => {
 
     assert.deepEqual(result.deletedAuxiliarySessionIds, ["auxiliary-a"]);
     assert.deepEqual(deleted, [session.id]);
-    assert.deepEqual(clearedBackground, [session.id, "auxiliary-a"]);
     assert.deepEqual(closedWindows, [session.id, "auxiliary-a"]);
     assert.deepEqual(revokedBindings, [session.id, "auxiliary-a"]);
     assert.deepEqual(invalidatedThreads, [
@@ -1854,9 +1912,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -1864,7 +1922,7 @@ describe("SessionPersistenceService", () => {
 
     await assert.rejects(
       () => service.deleteSession(parentSession.id),
-      /A running session cannot be deleted/,
+      /A running Crew cannot be deleted/,
     );
 
     assert.deepEqual(deleted, []);
@@ -1893,7 +1951,6 @@ describe("SessionPersistenceService", () => {
     const storedSessions: Session[] = [oldSession, runningSession, recentSession];
     const deletedBatches: string[][] = [];
     const clearedTelemetry: string[] = [];
-    const clearedBackground: string[] = [];
     const closedWindows: string[] = [];
     const broadcastedSessionIds: string[][] = [];
 
@@ -1935,13 +1992,11 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry(sessionId) {
         clearedTelemetry.push(sessionId);
       },
-      clearSessionBackgroundActivities(sessionId) {
-        clearedBackground.push(sessionId);
-      },
+
       invalidateProviderSessionThread() {},
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
@@ -1961,7 +2016,6 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
     assert.deepEqual(deletedBatches, [[oldSession.id]]);
     assert.deepEqual(clearedTelemetry, [oldSession.id]);
-    assert.deepEqual(clearedBackground, [oldSession.id]);
     assert.deepEqual(closedWindows, [oldSession.id]);
     assert.deepEqual(broadcastedSessionIds, [[oldSession.id]]);
     assert.deepEqual(storedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
@@ -2026,9 +2080,9 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -2069,7 +2123,6 @@ describe("SessionPersistenceService", () => {
     const persistedSessions: Session[] = [uncachedOldSession, runningSession, recentSession];
     const deletedBatches: string[][] = [];
     const clearedTelemetry: string[] = [];
-    const clearedBackground: string[] = [];
     const closedWindows: string[] = [];
     const broadcastedSessionIds: string[][] = [];
 
@@ -2111,13 +2164,11 @@ describe("SessionPersistenceService", () => {
       getModelCatalogSnapshot() {
         return createSnapshot();
       },
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry(sessionId) {
         clearedTelemetry.push(sessionId);
       },
-      clearSessionBackgroundActivities(sessionId) {
-        clearedBackground.push(sessionId);
-      },
+
       invalidateProviderSessionThread() {},
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
@@ -2137,7 +2188,6 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
     assert.deepEqual(deletedBatches, [[uncachedOldSession.id]]);
     assert.deepEqual(clearedTelemetry, [uncachedOldSession.id]);
-    assert.deepEqual(clearedBackground, [uncachedOldSession.id]);
     assert.deepEqual(closedWindows, [uncachedOldSession.id]);
     assert.deepEqual(broadcastedSessionIds, [[uncachedOldSession.id]]);
     assert.deepEqual(cachedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);

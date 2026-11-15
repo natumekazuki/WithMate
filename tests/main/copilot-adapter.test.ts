@@ -32,7 +32,6 @@ import {
   sortLiveBackgroundTasks,
   toCopilotReasoningEffort,
 } from "../../src-electron/providers/copilot/copilot-adapter.js";
-import { applyCopilotAssistantEvent } from "../../src-electron/providers/copilot/copilot-turn-events.js";
 import { buildLiveElicitationRequestFromCopilotEvent, buildLiveElicitationRequestFromCopilotUserInput } from "../../src-electron/providers/copilot/copilot-elicitation.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../../src-electron/providers/mcp-elicitation.js";
 import {
@@ -41,7 +40,7 @@ import {
   toProviderQuotaSnapshots,
 } from "../../src-electron/providers/copilot/copilot-quota-telemetry.js";
 import { toProviderMetadataLogData } from "../../src-electron/providers/provider-metadata-log.js";
-import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV, WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-electron/providers/provider-agent-runtime-binding.js";
+import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { ProviderTurnError, type ProviderPromptComposition, type RunSessionTurnInput, type RunSessionTurnResult } from "../../src-electron/providers/provider-runtime.js";
 
@@ -413,14 +412,14 @@ function createRunSessionInput(options?: {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilot foregroundは当turnのMemory・Glossary・Graph HTTP MCP endpointとcredentialをsession設定へ渡し、promptや第三者設定探索を変更しない"
+// claim = "Copilot foregroundは当turnのGlossary・Graph HTTP MCP endpointとcredentialをsession設定へ渡し、promptへtokenを混ぜず第三者設定探索を無効にしない"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
 // fault = "HTTP serverや認証headerを欠落させる、tokenをpromptへ混ぜる、またはnative設定探索を無効にする"
 // observable = "buildCopilotSessionSettingsのconfigとcomposePromptの戻り値"
 // observation_boundary = "consumer"
 // scope = "Copilot native foreground session HTTP MCP configuration"
 // lifecycle = "permanent"
-// impact = "Memory・Glossary・Graphが認証できず、第三者設定が使えなくなるかtokenがprompt監査へ漏れる"
+// impact = "Glossary・Graphが認証できず、第三者設定が使えなくなるかtokenがprompt監査へ漏れる"
 // distinction = "SDKの型だけではWithMateが設定を渡すことやprompt分離を保証しない。固定fixtureでnative設定境界を確認する"
 // risk_tags = ["privacy", "authentication"]
 // @end-test-value
@@ -428,12 +427,11 @@ it("Copilot foregroundの当turn HTTP MCP設定をpromptから分離する", () 
   const input = createRunSessionInput();
   input.agentRuntimeBinding = {
     ...input.agentRuntimeBinding!,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   const prompt = new CopilotAdapter().composePrompt(input);
   const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
   assert.deepEqual(config.mcpServers, {
-    "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
@@ -451,6 +449,27 @@ function createWritePermissionRequest(): PermissionRequest {
     fileName: "F:/repo/tmp/output.txt",
   } as unknown as PermissionRequest;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "CopilotはCrew Folderを含む捕捉済み追加directoryをSDKへ渡し、変更時はnative session設定を更新する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md#crew-folder" }
+// fault = "promptだけへpathを渡してSDKのadditionalDirectoriesを欠落させる、または旧設定cacheを再利用する"
+// observable = "SDK configのadditionalDirectoriesとsettingsKey"
+// observation_boundary = "consumer"
+// scope = "buildCopilotSessionSettings managed directory設定"
+// lifecycle = "permanent"
+// impact = "Copilotだけ共有folderを利用できずSession間の引継ぎが止まる"
+// distinction = "SDK型検査はoptional propertyの欠落やcache invalidationを保証しない"
+// @end-test-value
+it("Copilotは共有folderをnative追加directoryへ接続する", () => {
+  const input = createRunSessionInput();
+  const prompt = { ...EMPTY_PROMPT, additionalDirectories: ["F:/user-data/crew-files/root"] };
+  const configured = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
+  const previous = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+  assert.deepEqual(configured.config.additionalDirectories, prompt.additionalDirectories);
+  assert.notEqual(configured.settingsKey, previous.settingsKey);
+});
 
 function createReadPermissionRequest(): PermissionRequest {
   return {
@@ -472,15 +491,17 @@ describe("CopilotAdapter env", () => {
     assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Copilot child environment receives the Memory owner selector only for bound execution"
+// claim = "Copilot child environment receives the runtime owner selector only for bound execution"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "Copilot selector is missing for bound execution or survives in unbound environment"
+// fault = "Copilot selector is missing for bound execution or stale binding survives in unbound environment"
+// observable = "bound/unbound environment binding reference and runtime owner fields, preserved PATH and omitted undefined entry"
+// observation_boundary = "component-behavior"
 // scope = "copilot-provider-environment"
 // lifecycle = "permanent"
 // @end-test-value
-it("Copilot child CLIへSession generationごとのopaque referenceとMemory owner selectorを渡す", () => {
+it("Copilot child CLIへSession generationごとのopaque referenceとruntime owner selectorを渡す", () => {
     const binding = {
       bindingId: "binding-a",
       bindingReference: "opaque-reference-a",
@@ -488,7 +509,7 @@ it("Copilot child CLIへSession generationごとのopaque referenceとMemory own
       executionGeneration: "generation-a",
       transport: "env" as const,
       expiresAt: null,
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
+      runtimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
     };
     const boundEnv = buildCopilotClientEnv({
       PATH: "test-path",
@@ -501,25 +522,27 @@ it("Copilot child CLIへSession generationごとのopaque referenceとMemory own
     });
 
     assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], binding.bindingReference);
-    assert.equal(boundEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
-    assert.equal(boundEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+    assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+    assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
     assert.equal(boundEnv.PATH, "test-path");
     assert.equal("EMPTY" in boundEnv, false);
     assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
     assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase()], undefined);
-    assert.equal(unboundEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()], undefined);
-    assert.equal(unboundEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase()], undefined);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()], undefined);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV.toLowerCase()], undefined);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Copilot clients are separated by Memory owner selector and background clients are unbound"
+// claim = "Copilot clients are separated by runtime owner selector and settings-only clients are unbound"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "Copilot client cache reuses a client for a different application instance or runtime generation"
+// fault = "Copilot client cache reuses a client across owners or passes Session binding to settings-only clients"
+// observable = "client identity and cache keys across retries/owners, and resolved environment of bound and settings-only clients"
+// observation_boundary = "component-behavior"
 // scope = "copilot-provider-adapter"
 // lifecycle = "permanent"
 // @end-test-value
-it("Session generationごとのclientを分離しbackground clientをunboundに保つ", () => {
+it("Session generationごとのclientを分離しsettings-only clientをunboundに保つ", () => {
     const adapter = new CopilotAdapter() as unknown as {
       getClient(providerId: string, input: RunSessionTurnInput): {
         client: { resolvedEnv: Record<string, string | undefined> };
@@ -537,14 +560,14 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       executionGeneration: "generation-a",
       transport: "env" as const,
       expiresAt: null,
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
+      runtimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
     };
     const bindingB = {
       ...bindingA,
       bindingId: "binding-b",
       bindingReference: "opaque-reference-b",
       executionGeneration: "generation-b",
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-b", runtimeGenerationId: "memory-generation-b" },
+      runtimeOwner: { applicationInstanceId: "app-instance-b", runtimeGenerationId: "memory-generation-b" },
     };
     const inputA = createRunSessionInput({ agentRuntimeBinding: bindingA });
     const inputB = { ...inputA, agentRuntimeBinding: bindingB };
@@ -565,17 +588,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
       bindingB.bindingReference,
     );
-    assert.equal(clientA.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
-    assert.equal(clientA.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
-    assert.equal(clientB.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-b");
-    assert.equal(clientB.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-b");
+    assert.equal(clientA.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+    assert.equal(clientA.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+    assert.equal(clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-b");
+    assert.equal(clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-b");
     assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
-    assert.equal(backgroundClient.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
-    assert.equal(backgroundClient.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], undefined);
+    assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
+    assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], undefined);
     assert.equal(
       Object.keys(backgroundClient.resolvedEnv).some(
-        (key) => key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()
-          || key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase(),
+        (key) => key.toLowerCase() === WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()
+          || key.toLowerCase() === WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV.toLowerCase(),
       ),
       false,
     );
@@ -1295,17 +1318,14 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
   // impact = "CopilotがCharacterの現行定義を受け取れないか、可変contextの配置を誤る"
   // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
   // @end-test-value
-  it("character prompt だけをCopilot systemMessageへ変換し、可変timingはinput側に留める", () => {
+  it("character prompt だけをCopilot systemMessageへ変換し、現在日時はinput側に留める", () => {
     const input = createRunSessionInput();
     input.session.characterRuntimeSnapshot = {
       characterId: "char-a", name: "A", description: "Saved metadata", iconFilePath: "C:/Character Data/キャラ/icon.png",
       theme: input.session.characterThemeColors, definitionMarkdown: "あなたは頼れる相棒です。",
       definitionSha256: "definition", definitionByteSize: 48, snapshotAt: "2026-10-03T00:00:00Z",
     };
-    input.conversationTimingContext = {
-      observedAt: "2026-08-04T21:32:00+09:00", observedDayOfWeek: "tuesday",
-      currentSession: null, sameCharacterOtherSession: null, sameCharacterSharedWork: null,
-    };
+    input.currentDateTime = "2026-08-04T21:32:00+09:00";
     const prompt = new CopilotAdapter().composePrompt(input);
     const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
 
@@ -1314,8 +1334,8 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       content: prompt.systemBodyText,
     });
     assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
-    assert.doesNotMatch(config.systemMessage?.content ?? "", /Conversation Timing|2026-08-04|# User Input/);
-    assert.match(prompt.inputBodyText, /# Conversation Timing[\s\S]*# User Input\n\nhello/);
+    assert.doesNotMatch(config.systemMessage?.content ?? "", /Current Date|2026-08-04|# User Input/);
+    assert.match(prompt.inputBodyText, /# Current Date[\s\S]*# User Input\n\nhello/);
     assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);
     assert.deepEqual(prompt.imagePaths, []);
   });
@@ -1477,91 +1497,6 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       payloadType: "object",
     });
     assert.equal("payload" in toProviderMetadataLogData(metadata[0]!), false);
-  });
-
-  it("top-level assistant message は arrival 順に空行区切りで連結し、最後の非空 message を保持する", () => {
-    const first = applyCopilotAssistantEvent([], "", {
-      type: "assistant.message",
-      data: {
-        content: "最初の案内",
-        parentToolCallId: null,
-      },
-    } as never);
-    const second = applyCopilotAssistantEvent(first.messages, first.draft, {
-      type: "assistant.message",
-      data: {
-        content: "次の案内",
-        parentToolCallId: null,
-      },
-    } as never);
-    const trailingEmpty = applyCopilotAssistantEvent(second.messages, second.draft, {
-      type: "assistant.message",
-      data: {
-        content: "  ",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(trailingEmpty.assistantText, "最初の案内\n\n次の案内");
-    assert.equal(trailingEmpty.lastNonEmptyAssistantMessageText, "次の案内");
-  });
-
-  it("delta のあとに同内容の final message が来ても二重化しない", () => {
-    const streamed = applyCopilotAssistantEvent([], "", {
-      type: "assistant.message_delta",
-      data: {
-        deltaContent: "進行中メッセージ",
-        parentToolCallId: null,
-      },
-    } as never);
-    const finalized = applyCopilotAssistantEvent(streamed.messages, streamed.draft, {
-      type: "assistant.message",
-      data: {
-        content: "進行中メッセージ",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(finalized.assistantText, "進行中メッセージ");
-    assert.equal(finalized.messages.length, 1);
-    assert.equal(finalized.draft, "");
-  });
-
-  it("tool 配下の assistant message は本文へ混ぜない", () => {
-    const next = applyCopilotAssistantEvent(["本文"], "", {
-      type: "assistant.message",
-      data: {
-        content: "tool 内メッセージ",
-        parentToolCallId: "call-1",
-      },
-    } as never);
-
-    assert.equal(next.assistantText, "本文");
-    assert.deepEqual(next.messages, ["本文"]);
-  });
-
-  it("sub-agent の assistant message は本文へ混ぜない", () => {
-    const afterDelta = applyCopilotAssistantEvent(["本文"], "", {
-      type: "assistant.message_delta",
-      agentId: "subagent-1",
-      data: {
-        deltaContent: "sub-agent の途中経過",
-        parentToolCallId: null,
-      },
-    } as never);
-    const afterFinal = applyCopilotAssistantEvent(afterDelta.messages, afterDelta.draft, {
-      type: "assistant.message",
-      agentId: "subagent-1",
-      data: {
-        content: "sub-agent の完了報告",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(afterFinal.assistantText, "本文");
-    assert.equal(afterFinal.lastNonEmptyAssistantMessageText, "本文");
-    assert.deepEqual(afterFinal.messages, ["本文"]);
-    assert.equal(afterFinal.draft, "");
   });
 
   it("session.idle で実行中の background task を掃除する", () => {
@@ -2215,7 +2150,7 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
     const listeners = new Set<(event: SessionEvent) => void>();
     let rawEventCount = 0;
     const emit = (type: string, data: Record<string, unknown>, ephemeral = false) => {
-      const event = { type, timestamp: "2026-10-05T00:00:00Z", data, ephemeral } as SessionEvent;
+      const event = { id: `event-${rawEventCount}`, type, timestamp: "2026-10-05T00:00:00Z", data, ephemeral } as SessionEvent;
       if (!ephemeral && !type.endsWith("_delta")) rawEventCount += 1;
       for (const listener of listeners) listener(event);
     };
@@ -2229,7 +2164,7 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
           emit("user.message", { content: `${index}:あ😀\"\n${secret.repeat(2000)}` });
         }
         emit("dropped.ephemeral", {}, true);
-        emit("assistant.message_delta", { deltaContent: "delta" });
+        emit("assistant.message_delta", { messageId: "last", deltaContent: "delta" });
         emit(`custom.event.${secret}`, {});
         emit("tool.execution_start", { toolCallId: "check", toolName: "shell", arguments: { command: "npm test" } });
         emit("tool.execution_complete", { toolCallId: "check", success: true, result: { content: "passed" } });
@@ -2428,7 +2363,7 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Conversation Timing 変更は同じ key を使う"
+  // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Current Date 変更は同じ key を使う"
   // oracle = { type = "contract", ref = "Copilot prompt cache boundary" }
   // fault = "system message の切替で古い session を再利用するか、timing の変化だけで不要な session 再接続を起こす"
   // observable = "buildCopilotSessionSettings の settingsKey と systemMessage"
@@ -2442,7 +2377,7 @@ describe("CopilotAdapter session settings", () => {
     const input = createRunSessionInput({ threadId: "thread-1" });
     const promptWithContext: ProviderPromptComposition = {
       ...EMPTY_PROMPT,
-      systemBodyText: "# Character Affect Context\n\n{}\n\n# Tool Call Presence\n\nreply first",
+      systemBodyText: "# Character Definition Snapshot\n\n更新された定義",
     };
     const promptWithoutContext: ProviderPromptComposition = {
       ...promptWithContext,
@@ -2450,7 +2385,7 @@ describe("CopilotAdapter session settings", () => {
     };
     const promptWithLaterTiming: ProviderPromptComposition = {
       ...promptWithContext,
-      inputBodyText: "# Conversation Timing\n\n- Observed local time: later\n\n# User Input\n\nhello",
+      inputBodyText: "# Current Date\n\n- Observed local time: later\n\n# User Input\n\nhello",
     };
 
     const withContext = buildCopilotSessionSettings(input, promptWithContext, "client-key", resolveCustomAgents);

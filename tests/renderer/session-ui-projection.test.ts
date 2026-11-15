@@ -518,22 +518,26 @@ describe("session-ui-projection", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "context pane tab cycleは通常Sessionで利用可能なtabだけを循環する"
-  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
-  // fault = "削除済み専用tabをcycle結果へ返す"
-  // observable = "cycleContextPaneTabの通常tab結果"
+  // claim = "Context paneの標準順はLatest Command・Coordination・Messages・Glossary・Reasoning・Tasksで双方向に循環する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Coordinationを飛ばすか表示順または循環の端で異なるtabへ移動する"
+  // observable = "各tabからの正方向・逆方向cycle結果"
   // observation_boundary = "public-boundary"
   // scope = "session-context-pane-tab-cycle"
   // lifecycle = "permanent"
   // @end-test-value
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
-    assert.equal(cycleContextPaneTab("latest-command", 1), "messages");
+    const order = ["latest-command", "coordination", "messages", "glossary", "reasoning", "tasks"] as const;
+    order.forEach((tab, index) => {
+      assert.equal(cycleContextPaneTab(tab, 1), order[(index + 1) % order.length]);
+      assert.equal(cycleContextPaneTab(tab, -1), order[(index + order.length - 1) % order.length]);
+    });
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "通常Sessionのavailable context tabsはprovider capabilityに従う"
-  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
+  // claim = "通常SessionはCoordinationを常設し、TasksとReasoningのavailable context tabsはprovider capabilityに従う"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
   // fault = "通常Sessionへ利用不可のtabを公開する"
   // observable = "resolveAvailableContextPaneTabsの通常Session結果"
   // observation_boundary = "public-boundary"
@@ -543,36 +547,53 @@ describe("session-ui-projection", () => {
   it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false }), [
       "latest-command",
+      "coordination",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
+      "coordination",
       "tasks",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasReasoningCapability: true }), [
       "latest-command",
+      "coordination",
       "reasoning",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningCapability: true }), [
       "latest-command",
+      "coordination",
       "reasoning",
       "tasks",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningText: true }), [
       "latest-command",
+      "coordination",
       "reasoning",
       "tasks",
     ]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "non-Copilotの通常SessionではLatest CommandとCoordinationだけを双方向に循環する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Tasksや未有効のMessages・Glossary・Reasoningへ移動する、またはCoordinationへ到達しない"
+  // observable = "providerで絞ったavailable tabsからの双方向cycle結果"
+  // observation_boundary = "public-boundary"
+  // scope = "Session context pane provider filtered navigation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("cycleContextPaneTab は利用可能 tab だけを循環する", () => {
     const availableTabs = resolveAvailableContextPaneTabs({ isCopilotSession: false });
-    assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "latest-command");
-    assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "latest-command");
+    assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "coordination");
+    assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "coordination");
+    assert.equal(cycleContextPaneTab("coordination", 1, availableTabs), "latest-command");
+    assert.equal(cycleContextPaneTab("coordination", -1, availableTabs), "latest-command");
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Messages tabは有効化されたSessionにだけ既存pane順で追加される"
+  // claim = "Messages tabは有効化されたSessionにだけCoordinationの後へ追加される"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
   // fault = "Messages tabの表示条件または順序を誤り利用できるpaneの切替先を失う"
   // observable = "利用可能tab一覧、Messages label、循環切替先"
@@ -587,24 +608,36 @@ describe("session-ui-projection", () => {
       hasReasoningCapability: true,
     }), [
       "latest-command",
+      "coordination",
       "messages",
       "reasoning",
       "tasks",
     ]);
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
       "latest-command",
+      "coordination",
       "tasks",
     ]);
     assert.equal(contextPaneTabLabel("messages"), "Messages");
     assert.equal(cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]), "messages");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Glossaryを有効化したAgent SessionではCoordination・Messagesの後にGlossaryを表示する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
+  // fault = "Glossaryを利用可能なtabから落とすかCoordination・Messagesより前へ移す"
+  // observable = "利用可能tab一覧の順序とGlossaryの表示label"
+  // observation_boundary = "public-boundary"
+  // scope = "Session context pane Glossary capability"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Glossary tabはAgent Sessionで明示的に有効化し、既存right pane順へ追加する", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({
       isCopilotSession: false,
       includeMessages: true,
       includeGlossary: true,
-    }), ["latest-command", "messages", "glossary"]);
+    }), ["latest-command", "coordination", "messages", "glossary"]);
     assert.equal(contextPaneTabLabel("glossary"), "Glossary");
   });
 

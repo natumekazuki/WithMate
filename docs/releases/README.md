@@ -30,6 +30,16 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 | Version | Release Notes |
 | --- | --- |
+| v7.0.0 | [WithMate v7.0.0](v7.0.0.md) |
+| v7.0.0-preview.8 | [WithMate v7.0.0-preview.8](v7.0.0-preview.8.md) |
+| v7.0.0-preview.7 | [WithMate v7.0.0-preview.7](v7.0.0-preview.7.md) |
+| v7.0.0-preview.6 | [WithMate v7.0.0-preview.6](v7.0.0-preview.6.md) |
+| v7.0.0-preview.5 | [WithMate v7.0.0-preview.5](v7.0.0-preview.5.md) |
+| v7.0.0-preview.4 | [WithMate v7.0.0-preview.4](v7.0.0-preview.4.md) |
+| v7.0.0-preview.3 | [WithMate v7.0.0-preview.3](v7.0.0-preview.3.md) |
+| v7.0.0-preview.2 | [WithMate v7.0.0-preview.2](v7.0.0-preview.2.md) |
+| v7.0.0-preview.1 | [WithMate v7.0.0-preview.1](v7.0.0-preview.1.md) |
+| v7.0.0-preview.0 | [WithMate v7.0.0-preview.0](v7.0.0-preview.0.md) |
 | v6.5.0 | [WithMate v6.5.0](v6.5.0.md) |
 | v6.5.0-preview.4 | [WithMate v6.5.0-preview.4](v6.5.0-preview.4.md) |
 | v6.5.0-preview.3 | [WithMate v6.5.0-preview.3](v6.5.0-preview.3.md) |

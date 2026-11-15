@@ -21,23 +21,23 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - output: `release/` 配下の installer
 - Start Menu shortcut: `WithMate`
 - installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
-- Memory／Glossary／Session Graph CLI は install root の `withmate-memory.cmd`、`withmate-glossary.cmd`、`withmate-session-graph.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
-- repositoryのartifactはMemoryが`resources/cli/withmate-memory.mjs`、Session Graphが`resources/cli/withmate-session-graph.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。MemoryとGraphはSkill catalogへ置かない
+- Glossary／Session Graph／Session CLI は install root の `withmate-glossary.cmd`、`withmate-session-graph.cmd`、`withmate-session.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
+- repositoryのartifactはSession Graph・Sessionが`resources/cli/`配下の同名`.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。Glossary以外はSkill catalogへ置かない
 
 ### macOS
 
 - target: `dmg`
 - command: `npm run dist:mac`
 - output: `release/` 配下の `.dmg`
-- Memory CLI は Settings > Diagnostics から `~/.local/bin/withmate-memory` shim と管理 metadata を install / uninstall できる。既存の非管理 `withmate-memory` は上書き・削除しない
-- `~/.local/bin` が app process の `PATH` に無い場合、Diagnostics は `installed-path-missing` として表示する。provider Skill directoryへのMemory CLI同期は行わない
 
-全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Session Graphを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSession Graphのhelpは次で確認できる。
+全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Session Graph／Sessionを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSession Graphのhelpは次で確認できる。
 
 ```sh
 ELECTRON_RUN_AS_NODE=1 /Applications/WithMate.app/Contents/MacOS/WithMate \
   /Applications/WithMate.app/Contents/Resources/resources/cli/withmate-session-graph.mjs help
 ```
+
+既設の製品外POSIX shim・Windows aliasは撤去時にも清掃しない。installer／uninstallerや起動処理に、廃止した入口の外部登録清掃を追加しない。
 
 ## Script Policy
 
@@ -104,9 +104,6 @@ macOS artifact の実確認は macOS 環境で次を行う。
 2. `.dmg` から app を展開
 3. `/Applications` へ配置する
 4. Spotlight で `WithMate` を検索して起動できることを確認する
-5. Settings > Diagnostics で CLI Shim が表示され、Install CLI Shim / Uninstall CLI Shim が `~/.local/bin/withmate-memory` を作成・削除できることを確認する
-6. `~/.local/bin` が `PATH` に含まれる環境では`withmate-memory status`がmachine-readable JSONを返すことを確認する
-7. `~/.local/bin` が `PATH` に含まれない環境でもprovider Skill directoryを作成、更新、検査せず、Diagnosticsが`installed-path-missing`を返すことを確認する
 
 ## References
 

@@ -316,7 +316,7 @@ export type SteerSessionTurnRequest = {
 
 export type SteerSessionTurnResult = { turnId: string };
 
-const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function normalizeSessionTurnClientRequestId(value: unknown): string | null {
   if (typeof value !== "string") {

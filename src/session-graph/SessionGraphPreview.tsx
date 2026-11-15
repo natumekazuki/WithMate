@@ -11,7 +11,7 @@ export type SessionGraphPreviewMemory = {
 };
 
 export function SessionGraphPreview({ api, sessionId, onOpenPath, initialState = defaultSessionGraphViewState,
-  onStateChange, onOpenWindow, toolbarActions, initialMemory, onMemoryChange }: {
+  onStateChange, onOpenWindow, toolbarActions, initialMemory, onMemoryChange, onTitleChange }: {
   api: Pick<WithMateWindowApi, "readSessionGraph" | "subscribeSessionGraph">;
   sessionId: string;
   onOpenPath(target: string): void;
@@ -21,6 +21,7 @@ export function SessionGraphPreview({ api, sessionId, onOpenPath, initialState =
   toolbarActions?: ReactNode;
   initialMemory?: SessionGraphPreviewMemory | null;
   onMemoryChange?(memory: SessionGraphPreviewMemory): void;
+  onTitleChange?(title: string): void;
 }) {
   const [topicState, setTopicState] = useState(initialState);
   const overviewState = useRef<SessionGraphViewState>(initialState.topicId === null ? initialState : {
@@ -47,13 +48,13 @@ export function SessionGraphPreview({ api, sessionId, onOpenPath, initialState =
     publish(next);
   };
   if (topicState.topicId !== null) return <SessionGraphTopicView key={topicState.topicId}
-    api={api} sessionId={sessionId} initialState={topicState} initialMemory={memory.current.topic}
+    api={api} sessionId={sessionId} initialState={topicState} initialMemory={memory.current.topic} onTitleChange={onTitleChange}
     onMemoryChange={(topic) => { memory.current.topic = topic; saveMemory(); }}
     onStateChange={publish}
     onOpenPath={onOpenPath}
     onOpenWindow={openWindow}
     toolbarActions={<><BackNavigationButton label="All Topics" showLabel onBack={backToTopics} />{toolbarActions}</>} />;
-  return <SessionGraphTopicView key="all-topics" allTopics api={api} sessionId={sessionId} onFocusTopic={openTopic} onOpenPath={onOpenPath}
+  return <SessionGraphTopicView key="all-topics" allTopics api={api} sessionId={sessionId} onFocusTopic={openTopic} onOpenPath={onOpenPath} onTitleChange={onTitleChange}
       initialState={overviewState.current} initialMemory={memory.current.overview}
       onStateChange={(state) => { overviewState.current = state; publish(state); }}
       onOpenWindow={openWindow} toolbarActions={toolbarActions}

@@ -23,11 +23,13 @@ function createSession(overrides?: Partial<Session>): Session {
   };
 }
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "authoring snapshotのnull入力をstorageへ保持して渡し、canonical resultをfull runtime、summary cache、broadcastへ反映する"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#5,#8,#10" }
-// failure_mode = "nullをundefinedへ変換してsnapshot clearを失うか、commit後にstaleなpin、title、snapshotをcacheへ戻す"
+// fault = "nullをundefinedへ変換してsnapshot clearを失うか、commit後にstaleなpin、title、snapshotをcacheへ戻す"
+// observable = "storage引数のnull snapshotとmessage数、返却Sessionのsnapshot/title/pin/thread/messages、cacheとbroadcast対象ID"
+// observation_boundary = "component-behavior"
 // scope = "SessionPersistenceService.persistRunningTurnStart"
 // lifecycle = "permanent"
 // distinction = "storage atomicityではなく三状態DTOのnull伝播とcommit後のcanonical result合成を観測する"
@@ -91,9 +93,9 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
     listStoredSessions: () => [initial],
     getAppSettings: () => normalizeAppSettings({}),
     getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-    syncSessionDependencies: () => undefined,
+
     clearSessionContextTelemetry: () => undefined,
-    clearSessionBackgroundActivities: () => undefined,
+
     invalidateProviderSessionThread: () => undefined,
     closeSessionWindow: () => undefined,
     broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
@@ -114,11 +116,13 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
   assert.deepEqual(broadcasts, [[initial.id]]);
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
 // claim = "Character authoring runtime clearは専用storage resultからfull runtimeとsummary cacheを構築し、generic upsertやrunning開始保存を使わない"
 // oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
-// failure_mode = "validation前clearがfull-session rewriteに退行するか、commit後のcacheに古いsnapshotまたはthreadを残す"
+// fault = "validation前clearがfull-session rewriteに退行するか、commit後のcacheに古いsnapshotまたはthreadを残す"
+// observable = "generic/running-start callback未実行、返却Sessionのsnapshot/thread/messages/runState、cacheとbroadcast対象ID"
+// observation_boundary = "component-behavior"
 // scope = "SessionPersistenceService.clearCharacterAuthoringRuntimeState"
 // lifecycle = "permanent"
 // distinction = "running開始のnull伝播ではなく、messageを所有しない専用metadata clearのcanonical projectionを観測する"
@@ -174,9 +178,9 @@ it("authoring runtime clearは専用storageだけを使いcanonical resultをcac
     listStoredSessions: () => [initial],
     getAppSettings: () => normalizeAppSettings({}),
     getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-    syncSessionDependencies: () => undefined,
+
     clearSessionContextTelemetry: () => undefined,
-    clearSessionBackgroundActivities: () => undefined,
+
     invalidateProviderSessionThread: () => undefined,
     closeSessionWindow: () => undefined,
     broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),

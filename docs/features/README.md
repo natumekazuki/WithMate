@@ -10,6 +10,8 @@ WithMateの利用者向け機能ガイドです。機能ごとの使い方をま
 
 ## Sessionと画面操作
 
+- [親子Session連携の推奨ルールサンプル](parent-child-session-rules.md)
+- [Sessionの選定方針とWorktree配置](session-operating-policies.md)
 - [Git履歴とcommit preview](git-history-and-commit-preview.md)
 - [Messageの縮小表示とnavigator](session-message-collapse-and-navigation.md)
 - [Messageのブックマークとnavigator絞り込み](message-bookmark-filter.md)
@@ -25,10 +27,8 @@ WithMateの利用者向け機能ガイドです。機能ごとの使い方をま
 ## RepositoryとCharacter
 
 - [Repository Glossary](repository-glossary.md)
-- [Cross-session Affect afterglow](cross-session-affect-afterglow.md)
 
 ## 性能とruntime
 
 - [長いSessionの性能改善](long-session-performance.md)
 - [running turn開始時の永続化](running-turn-start-persistence.md)
-- [Memory runtimeの複数instance discovery](memory-runtime-discovery.md)

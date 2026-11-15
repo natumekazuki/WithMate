@@ -30,7 +30,6 @@
 | --- | --- |
 | [README](../../README.md) | 製品概要、主要機能、起動・検証・buildの基本手順と文書への入口 |
 | [Feature Guides](../features/README.md) | 利用者向けの機能別ガイド |
-| [Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md) | Memory / Affect MCPの運用・診断 |
 | [Repository Glossary Runbook](../runbooks/repository-glossary.md) | 用語集の運用・診断 |
 
 ## 設計・実装の入口
@@ -56,15 +55,14 @@
 | [Auxiliary Session](auxiliary-session.md) | 複数Auxiliary、一覧、共通Composer、draftの保存・consume・flush |
 | [Electron Session Store](electron-session-store.md) | Session・turn・設定・catalogの読書きと保存owner |
 | [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
-| [Session History](session-history.md) | 背景実行向けの保存済み会話・操作記録の読取、認可範囲、MCP／CLI |
+| [Session History](session-history.md) | 通常Session APIによる保存済み会話・実行・操作記録の読取 |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
-| [Background Execution](background-execution.md) | アプリ管理の独立binding、履歴read認可と接続／保存admissionの寿命 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
 | [Provider Model Discovery](model-catalog.md) | SDK model一覧の取得、cache、選択と実行の境界 |
 | [Prompt Composition](prompt-composition.md) | providerへ渡すpromptの構成 |
 
-### Character・Memory・永続化
+### Character・永続化
 
 | 文書 | 内容 |
 | --- | --- |
@@ -73,8 +71,6 @@
 | [Character Authoring And Improvement](character-authoring-growth.md) | 通常Sessionを使うCharacter作成・改善 |
 | [Database Schema](database-schema.md) | SQLiteとfile storageの保存構造 |
 | [V6 Database Foundation](v6-database-foundation.md) | DBの責務と移行・データ境界 |
-| [V6 Memory Foundation](v6-memory-foundation.md) | Memoryのowner、scope、API、storage、privacy |
-| [V6 Memory Protected Objects](v6-memory-protected-objects.md) | Memoryに紐づく暗号化file object、quota、export、GC |
 | [Session Local Files](session-local-files.md) | Session Folderと添付ファイル |
 
 ### 開発・検証・配布

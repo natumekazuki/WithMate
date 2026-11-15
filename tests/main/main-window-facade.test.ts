@@ -33,17 +33,9 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
           calls.push("settings");
           return { id: "settings" };
         },
-        async openMemoryV6ReviewWindow() {
-          calls.push("memory-review");
-          return { id: "memory-review" };
-        },
         isSettingsWindow(window: { id: string }) {
           calls.push(`is-settings:${window.id}`);
           return window.id === "settings";
-        },
-        isMemoryV6ReviewWindow(window: { id: string }) {
-          calls.push(`is-memory-review:${window.id}`);
-          return window.id === "memory-review";
         },
         async openCharacterEditorWindow(characterId?: string | null) {
           calls.push(`character:${characterId ?? "new"}`);
@@ -76,9 +68,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
   await facade.openHomeWindow();
   await facade.openSessionMonitorWindow();
   await facade.openSettingsWindow();
-  await facade.openMemoryV6ReviewWindow();
   assert.equal(facade.isSettingsWindow({ id: "settings" } as never), true);
-  assert.equal(facade.isMemoryV6ReviewWindow({ id: "memory-review" } as never), true);
   await facade.openCharacterEditorWindow("char-1");
   await facade.openSessionWindow("s-1");
   await facade.openDiffWindow({ token: "d-1" } as never);
@@ -89,9 +79,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
     "home",
     "monitor",
     "settings",
-    "memory-review",
     "is-settings:settings",
-    "is-memory-review:memory-review",
     "character:char-1",
     "session:s-1",
     "diff",

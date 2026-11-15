@@ -7,7 +7,6 @@ import { createRoot } from "react-dom/client";
 
 import {
   useMainAuxiliaryRuntimeSession,
-  useMessageListAuxiliarySessions,
 } from "../../src/chat/auxiliary/auxiliary-render-projections.js";
 import {
   buildMainAuxiliaryRuntimeSession,
@@ -19,7 +18,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
   return {
     id: "auxiliary-1",
     parentSessionId: "parent-1",
-    status: "active",
     runState: "running",
     title: "Auxiliary Session",
     provider: "codex",
@@ -37,7 +35,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     displayAfterMessageIndex: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-02T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }
@@ -112,15 +109,15 @@ test("Auxiliaryのpaged projectionは自身の履歴数とownerを使用する",
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Auxiliaryのdraft-only更新は履歴とMain runtime projectionの参照を維持する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/729" }
-// fault = "draft変更だけで履歴またはruntime projectionを不要に再生成する"
-// observable = "draft-only、transcript、runtime、anchor更新後のprojection参照"
+// claim = "Auxiliaryのdraft-only更新はMain runtime projectionの参照を維持し、本文・実行設定の変更だけを表示へ反映する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
+// fault = "draft変更だけでruntime projectionを不要に再生成するか、本文・実行設定の変更を表示へ反映しない"
+// observable = "draft-only、transcript、model、anchor更新後のMain runtime projection参照"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-runtime-projection"
 // lifecycle = "permanent"
 // @end-test-value
-test("Auxiliary render projection は draft-only 更新で履歴と runtime の参照を維持する", async () => {
+test("Auxiliary runtime projection は draft-only 更新で参照を維持する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -136,15 +133,12 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
 
   const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
   const mainSession = createSession();
-  const closedSessions: AuxiliarySession[] = [];
   let latestProjection: {
-    messageListSessions: ReturnType<typeof useMessageListAuxiliarySessions>;
     mainRuntime: Session | null;
   } | null = null;
 
   function ProjectionProbe({ activeSession }: { activeSession: AuxiliarySession }) {
     latestProjection = {
-      messageListSessions: useMessageListAuxiliarySessions(closedSessions, activeSession),
       mainRuntime: useMainAuxiliaryRuntimeSession(mainSession, activeSession),
     };
     return null;
@@ -167,7 +161,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
       updatedAt: "2026-01-03T00:00:00.000Z",
     });
 
-    assert.equal(draftOnly.messageListSessions, initial.messageListSessions);
     assert.equal(draftOnly.mainRuntime, initial.mainRuntime);
 
     const transcriptChanged = await renderProjection({
@@ -175,7 +168,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
       composerDraft: "typing",
       messages: [...initialSession.messages, { role: "user", text: "next message" }],
     });
-    assert.notEqual(transcriptChanged.messageListSessions, draftOnly.messageListSessions);
     assert.notEqual(transcriptChanged.mainRuntime, draftOnly.mainRuntime);
 
     const runtimeChanged = await renderProjection({
@@ -183,7 +175,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
       messages: transcriptChanged.mainRuntime?.messages ?? initialSession.messages,
       model: "gpt-next",
     });
-    assert.equal(runtimeChanged.messageListSessions, transcriptChanged.messageListSessions);
     assert.notEqual(runtimeChanged.mainRuntime, transcriptChanged.mainRuntime);
 
     const anchorChanged = await renderProjection({
@@ -192,7 +183,6 @@ test("Auxiliary render projection は draft-only 更新で履歴と runtime の�
       model: "gpt-next",
       displayAfterMessageIndex: 4,
     });
-    assert.notEqual(anchorChanged.messageListSessions, runtimeChanged.messageListSessions);
     assert.equal(anchorChanged.mainRuntime, runtimeChanged.mainRuntime);
   } finally {
     await act(async () => {

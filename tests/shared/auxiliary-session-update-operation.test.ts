@@ -17,7 +17,6 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
   return {
     id: "aux-1",
     parentSessionId: "parent-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "copilot",
@@ -35,7 +34,6 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     displayAfterMessageIndex: null,
     createdAt: "",
     updatedAt: "",
-    closedAt: "",
     ...overrides,
   };
 }

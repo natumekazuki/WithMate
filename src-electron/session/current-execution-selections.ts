@@ -11,7 +11,7 @@ type CurrentSelection = {
 };
 
 function ownerIdentity(owner: SelectionOwner): string {
-  return "parentSessionId" in owner
+  return "createdAt" in owner
     ? `${owner.parentSessionId}\0${owner.createdAt}`
     : getSessionIncarnationId(owner);
 }
@@ -25,7 +25,7 @@ export class CurrentExecutionSelections {
     this.entries.set(owner.id, {
       identity: ownerIdentity(owner),
       provider: owner.provider,
-      parentSessionId: "parentSessionId" in owner ? owner.parentSessionId : null,
+      parentSessionId: "createdAt" in owner ? owner.parentSessionId : null,
       executionOptions: { ...executionOptions },
     });
   }

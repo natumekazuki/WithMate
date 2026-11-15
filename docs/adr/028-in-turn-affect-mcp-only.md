@@ -1,5 +1,7 @@
 # ADR 028: Affect更新を通常turn内MCPへ統一する
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の本判断は適用対象外とする。機構と専用データは退避せず廃止し、製品外は変更しない。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted
@@ -28,4 +30,4 @@ Accepted
 
 [ADR 020](020-memory-affect-mcp-application-boundary.md)の必須post-turn appraisalと専用settlement・retry・回収、[ADR 024](024-provider-common-memory-mcp-boundary.md)のlifecycle/MCPの2つのevent producerを維持する判断を置換する。[ADR 021](021-agent-runtime-binding-authority-boundary.md)と[ADR 023](023-multi-instance-runtime-discovery.md)のAffect専用background／unbound clientに関する判断も当該clientの廃止に伴い適用対象外とする。MCP主体、認証・application境界、通常turnのbinding・runtime discoveryと保存契約は維持する。
 
-専用評価の追加LLM呼出しと永続queueの運用負担をなくす一方、AgentがMCPを使わないturnではAffect eventを作らない。現行契約は[Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md)、[V6 Memory Foundation](../design/v6-memory-foundation.md)、[Session Run Lifecycle](../design/session-run-lifecycle.md)、[Database Schema](../design/database-schema.md)を正本とする。
+専用評価の追加LLM呼出しと永続queueの運用負担をなくす一方、AgentがMCPを使わないturnではAffect eventを作らない。現行契約は[Memory / Affect MCP Runbook](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/runbooks/memory-affect-mcp.md)、[V6 Memory Foundation](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/v6-memory-foundation.md)、[Session Run Lifecycle](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/session-run-lifecycle.md)、[Database Schema](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/database-schema.md)を正本とする。

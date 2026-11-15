@@ -11,6 +11,100 @@ import { createDefaultAppSettings } from "../../src-shared/settings/provider-set
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 // @test-value v2
 // kind = "contract"
+// claim = "Coordination配送準備はexact種別とincarnationの宛先に通常Send共通preflightを適用し、本文・添付の仮受付や独立enqueueを作らない"
+// oracle = { type = "contract", ref = "GitHub Issue #838: Coordinationと共通queueのatomic配送受付; GitHub Issue #832: 共通Application受付" }
+// fault = "Main-firstでAux宛先を取り違える、検証中の対象置換を許可する、独立enqueueでCoordination記録と受付を分離する"
+// observable = "exact resolverのkind/identity、捕捉設定、preview/enqueue呼出数、対象変更とdisabled modelの拒否"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacade.prepareCoordinationDeliveryと通常Send共通preflight"
+// lifecycle = "permanent"
+// distinction = "通常Send testはcanonical Coordination本文のatomic保存前に行うcapture-only経路を通らない"
+// @end-test-value
+test("Coordination配送準備はexact宛先へ共通preflightだけを実施する", async () => {
+  const f = fixture();
+  let changed = false;
+  const targets: string[] = [];
+  f.deps.getSessionForCoordination = async (target) => { targets.push(target.kind); return changed ? { ...f.session, incarnationId: "replacement" } : f.session; };
+  f.deps.getSession = async () => { throw new Error("A Coordination target must not use Main-first lookup"); };
+  try {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const capture = await f.facade.prepareCoordinationDelivery({ kind, sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId);
+      assert.equal(capture.request.clientRequestId, requestId);
+      assert.deepEqual(capture.request.executionOptions, captureSessionExecutionOptions(f.session));
+      assert.equal(capture.request.userMessage, "");
+      assert.deepEqual(capture.attachments, []);
+      assert.equal(capture.origin, undefined);
+    }
+    assert.deepEqual(targets, ["main", "main", "auxiliary", "auxiliary"]);
+    assert.equal(f.calls.preview, 0);
+    assert.equal(f.calls.acceptance, 0);
+    f.deps.validateWorkspace = async () => { changed = true; };
+    await assert.rejects(f.facade.prepareCoordinationDelivery({ kind: "auxiliary", sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId), /target changed/);
+    changed = false;
+    f.deps.validateWorkspace = async () => {};
+    const settings = createDefaultAppSettings();
+    settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
+    f.deps.getAppSettings = async () => settings;
+    await assert.rejects(f.facade.prepareCoordinationDelivery({ kind: "main", sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId), /disabled/);
+    assert.equal(f.calls.acceptance, 0);
+  } finally { await f.service.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session送信の再試行は不変の受付入力と実actorに結び付き、編集後も一件へ収束し、actor失効は受付済み仕事を取消しない"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 実行identityと認証寿命・受理済み実行寿命の分離" }
+// fault = "編集後payloadを再試行の正本にする、他actorのkey再利用を許可する、失効時に保存済み受付を消す"
+// observable = "receipt IDとcaptured/accepted、受付回数、異actorと失効actorの拒否"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacadeのSession origin・retry・現行actor境界"
+// lifecycle = "permanent"
+// distinction = "GUI retry testは実actorと有効bindingの再検証を通らない"
+// @end-test-value
+test("Session送信は編集後も受付原文と実actorで同じreceiptへ収束する", async () => {
+  const f = fixture();
+  const origin = { kind: "session" as const, operation: "send" as const, actorSessionId: "parent", actorIncarnationId: "parent-incarnation", actorTurnId: "10", targetSessionId: f.session.id, targetIncarnationId: f.session.incarnationId };
+  let valid = true;
+  const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
+  try {
+    const accepted = await f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor);
+    accepted.captured.request.userMessage = "GUI edited";
+    const retried = await f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor);
+    assert.equal(retried.id, accepted.id);
+    assert.equal(retried.captured.request.userMessage, "GUI edited");
+    assert.equal(retried.accepted?.request.userMessage, f.input.userMessage.trim());
+    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, { ...origin, actorSessionId: "another" }, assertActor), /different input or actor/);
+    valid = false;
+    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor), /binding expired/);
+    assert.equal(f.rows.length, 1);
+    assert.equal(f.rows[0]?.state, "queued");
+    assert.equal(f.calls.acceptance, 1);
+  } finally { await f.service.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "非同期preflight中に失効したactorから新規受付を保存しない"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 受付前と非同期検証後の実actor確認" }
+// fault = "最初の認可だけで非同期検証後に失効済みactorを受理する"
+// observable = "preflight拒否と受付mutation件数"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacadeの非同期受付検証"
+// lifecycle = "permanent"
+// distinction = "storage型とGUI受付testはruntime binding失効の時点を再現しない"
+// @end-test-value
+test("preflight中のactor失効は保存前に拒否する", async () => {
+  const f = fixture();
+  let valid = true;
+  f.deps.preview = async () => { valid = false; return f.preview; };
+  try {
+    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, undefined, () => { if (!valid) throw new Error("Actor binding expired"); }), /binding expired/);
+    assert.equal(f.calls.acceptance, 0);
+  } finally { await f.service.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "順変更APIは現行の書込可能ownerだけを許可し、捕捉済み本文/添付を再解決せず競合結果を返す"
 // oracle = { type = "contract", ref = "GitHub Issue #912: incarnationと未開始列の照合、捕捉内容不変" }
 // fault = "旧incarnationやread-only ownerを順変更へ渡す、または順変更で本文/添付のpreflightを再実行する"
@@ -59,12 +153,13 @@ function fixture() {
     enqueue: async (owner, captured) => {
       calls.acceptance += 1;
       const receipt: SessionTurnQueueReceipt = { ...owner, id: "durable-id", requestId: captured.request.clientRequestId,
-        sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), turnId: null, userMessageSeq: null,
+        sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), accepted: structuredClone(captured), dispatched: null, turnId: null, userMessageSeq: null,
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
       rows.push(receipt);
       return receipt;
     },
     getReceipt: async (owner, id) => rows.find((row) => row.requestId === id && row.incarnationId === owner.incarnationId) ?? null,
+    getReceiptById: async (owner, id) => rows.find((row) => row.id === id && row.incarnationId === owner.incarnationId) ?? null,
     listActive: unexpected, listReceipts: unexpected, listPendingOwners: unexpected,
     claimNext: async () => null, markStarted: unexpected, settle: unexpected, cancelQueued: unexpected,
     recoverInterrupted: unexpected, releaseInterrupted: unexpected,

@@ -52,7 +52,6 @@ function createAuxiliarySession(
   return {
     id: overrides.id ?? "aux-1",
     parentSessionId: "session-1",
-    status: overrides.status ?? "closed",
     runState: overrides.runState ?? "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -70,7 +69,6 @@ function createAuxiliarySession(
     displayAfterMessageIndex: overrides.displayAfterMessageIndex ?? 0,
     createdAt: overrides.createdAt ?? "2026-05-24T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-05-24T00:00:01.000Z",
-    closedAt: overrides.closedAt ?? "2026-05-24T00:00:01.000Z",
   };
 }
 
@@ -135,18 +133,26 @@ test("buildMessageListProjection は Auxiliary transcript を message 単位で�
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "複数Auxiliaryのmessage投影は会話ごとのstable IDを描画keyとgroupへ保持する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#メッセージの投影とwindow内live受信" }
+// fault = "別Auxiliaryのmessageを同じ描画keyやgroupへ結合する"
+// observable = "2会話を投影したkeysとgroupsの会話ID・label"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-message-projection-group-identity"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildMessageListProjection は Auxiliary session ごとの group を保持する", () => {
   const projection = buildMessageListProjection(
     [],
     [
       createAuxiliarySession([{ role: "user", text: "first aux prompt" }], {
         id: "aux-1",
-        status: "closed",
         createdAt: "2026-05-24T00:00:00.000Z",
       }),
       createAuxiliarySession([{ role: "user", text: "second aux prompt" }], {
         id: "aux-2",
-        status: "active",
         createdAt: "2026-05-24T00:00:01.000Z",
       }),
     ],

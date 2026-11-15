@@ -125,7 +125,7 @@ full authoring の新しい runtime 定義は、完成返答の `Examples` や�
 ## Non Goals
 
 - `character-notes.md` の runtime 常設 prompt 注入
-- Memory / Growth / unrelated Session history からの hidden rewrite
+- unrelated Session history からの hidden rewrite
 - `config.toml` からの hidden input
 - user action なしの Character 自律保存
 - user-selectable authoring Skill / Agent

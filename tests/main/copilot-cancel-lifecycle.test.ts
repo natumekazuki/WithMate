@@ -29,6 +29,7 @@ async function until(check: () => boolean) {
 }
 
 class FakeSession {
+  private eventSequence = 0;
   readonly inputAck = deferred<{ success: boolean }>();
   readonly inputAckStarted = deferred<void>();
   readonly rpc = { eventLog: {
@@ -72,8 +73,9 @@ class FakeSession {
     return Promise.resolve();
   }
   emit(type: string, data: Record<string, unknown> = {}, late = false) {
+    const event = { id: `event-${++this.eventSequence}`, type, data } as SessionEvent;
     for (const listener of late ? this.retainedListeners : this.listeners) {
-      listener({ type, data } as SessionEvent);
+      listener(event);
     }
   }
   closeTransport() {

@@ -604,6 +604,10 @@
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
 }
 
+.session-header-more-menu .session-role-change-action {
+  white-space: nowrap;
+}
+
 .session-header-more-menu button {
   width: 100%;
   padding: 8px 10px;

@@ -43,7 +43,6 @@ function createAuxiliary(overrides: Partial<AuxiliarySession> = {}): AuxiliarySe
   return {
     id: "aux-1",
     parentSessionId: "parent-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -61,7 +60,6 @@ function createAuxiliary(overrides: Partial<AuxiliarySession> = {}): AuxiliarySe
     displayAfterMessageIndex: null,
     createdAt: FIRST_TIME,
     updatedAt: FIRST_TIME,
-    closedAt: "",
     ...overrides,
   };
 }
@@ -308,9 +306,9 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
         deleteStoredSessions: async (sessionIds) => storage.deleteSessions(sessionIds),
         getAppSettings: () => ({}) as never,
         getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-        syncSessionDependencies: () => undefined,
+
         clearSessionContextTelemetry: () => undefined,
-        clearSessionBackgroundActivities: () => undefined,
+
         invalidateProviderSessionThread: async () => undefined,
         closeSessionWindow: () => undefined,
         broadcastSessions: () => undefined,

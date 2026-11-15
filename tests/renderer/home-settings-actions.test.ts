@@ -93,7 +93,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     const savePromise = handlers.onSaveSettings();
@@ -139,7 +138,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     await handlers.onSaveSettings();
@@ -315,7 +313,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRootPath("codex");
@@ -364,7 +361,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRelativePath("codex");
@@ -412,7 +408,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderInstructionRelativePath("codex");
@@ -457,7 +452,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderInstructionRelativePath("codex");
@@ -493,7 +487,6 @@ describe("home-settings-actions", () => {
       setSettingsFeedback: (nextFeedback) => {
         feedback = nextFeedback;
       },
-      setMemoryV6Diagnostics: () => undefined,
     });
 
     handlers.onBrowseProviderSkillRootPath("codex");
@@ -501,71 +494,6 @@ describe("home-settings-actions", () => {
 
     assert.equal(draft, settings);
     assert.match(feedback, /selection canceled/);
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "pathを含まないMemory diagnosticsでもCLI shim install/uninstallのstateとfeedbackを更新できる"
-  // oracle = { type = "contract", ref = "src/settings/settings-command-handlers.ts: onInstallMemoryV6CliShim/onUninstallMemoryV6CliShim" }
-  // fault = "diagnosticsからpathを除去した結果、CLI shim操作の成功状態をUIへ反映できない"
-  // observable = "safe diagnosticsのcliShim.statusとinstall/uninstall feedback"
-  // observation_boundary = "public-boundary"
-  // scope = "memory-cli-shim-settings-action"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("CLI shim install/uninstall はsafe diagnostics state と feedback を更新する", async () => {
-    const settings = createDefaultAppSettings();
-    let feedback = "";
-    let status = "";
-    const handlers = buildSettingsCommandHandlers({
-      getApi: () => ({
-        installMemoryV6CliShim: async () => ({
-          generatedAt: "2026-06-28T00:00:00.000Z",
-          runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
-          cliShim: {
-            platform: "darwin",
-            commandName: "withmate-memory",
-            supported: true,
-            status: "installed-path-missing",
-            pathContainsShimDirectory: false,
-          },
-          lastErrors: [],
-        }),
-        uninstallMemoryV6CliShim: async () => ({
-          generatedAt: "2026-06-28T00:00:00.000Z",
-          runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
-          cliShim: {
-            platform: "darwin",
-            commandName: "withmate-memory",
-            supported: true,
-            status: "not-installed",
-            pathContainsShimDirectory: false,
-          },
-          lastErrors: [],
-        }),
-      } as Partial<WithMateWindowApi> as WithMateWindowApi),
-      persistedSettingsDraft: settings,
-      setAppSettings: () => undefined,
-      setSettingsDraft: () => undefined,
-      setSettingsFeedback: (nextFeedback) => {
-        feedback = nextFeedback;
-      },
-      setMemoryV6Diagnostics: (diagnostics) => {
-        status = diagnostics.cliShim.status;
-      },
-    });
-
-    handlers.onInstallMemoryV6CliShim();
-    await flushAsyncHandlers();
-
-    assert.equal(status, "installed-path-missing");
-    assert.match(feedback, /PATH/);
-
-    handlers.onUninstallMemoryV6CliShim();
-    await flushAsyncHandlers();
-
-    assert.equal(status, "not-installed");
-    assert.match(feedback, /Uninstalled the withmate-memory CLI shim/);
   });
 
 });

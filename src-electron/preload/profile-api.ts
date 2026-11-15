@@ -119,21 +119,6 @@ export function createSettingsApi(
     runSessionFolderCleanup(request) {
       return ipcRenderer.invoke(channels.WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL, request);
     },
-    getMemoryV6Diagnostics() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
-      );
-    },
-    installMemoryV6CliShim() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
-      );
-    },
-    uninstallMemoryV6CliShim() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
-      );
-    },
     resetAppDatabase(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_RESET_APP_DATABASE_CHANNEL,

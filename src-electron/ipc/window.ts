@@ -23,7 +23,6 @@ import {
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
-  WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
@@ -84,7 +83,6 @@ export type MainIpcWindowServiceDeps = {
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
-  openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
   openCharacterEditorWindow(
     characterId?: string | null,
   ): Promise<BrowserWindow>;
@@ -125,9 +123,6 @@ export function createWindowIpcDeps(
     },
     openSettingsWindow: async () => {
       await services.openSettingsWindow();
-    },
-    openMemoryV6ReviewWindow: async () => {
-      await services.openMemoryV6ReviewWindow();
     },
     openCharacterEditorWindow: async (characterId) => {
       await services.openCharacterEditorWindow(characterId);
@@ -204,9 +199,6 @@ export function registerWindowHandlers(
   });
   ipcMain.handle(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL, async () => {
     await deps.openSettingsWindow();
-  });
-  ipcMain.handle(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL, async () => {
-    await deps.openMemoryV6ReviewWindow();
   });
   ipcMain.handle(
     WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,

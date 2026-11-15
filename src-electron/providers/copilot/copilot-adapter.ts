@@ -1,4 +1,4 @@
-import { resolveRunExecutionTarget } from "../provider-runtime.js";
+import { CopilotOutputProjection } from "./copilot-output.js";
 import { existsSync } from "node:fs";
 import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -53,7 +53,6 @@ import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-bin
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
 import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection, buildLiveElicitationRequestFromCopilotUserInput } from "./copilot-elicitation.js";
-import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
@@ -67,7 +66,6 @@ export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort):
 }
 
 type CachedCopilotSession = {
-  independentExecution?: boolean;
   session: CopilotSession;
   settingsKey: string;
   backgroundTasks: Map<string, LiveBackgroundTask>;
@@ -96,6 +94,7 @@ type CopilotAdapterLogInput = {
 };
 
 type CopilotTurnStreamState = {
+  outputProjection: CopilotOutputProjection;
   liveSteps: ProviderProgressMap<LiveRunStep>;
   operationSteps: Map<string, LiveRunStep>;
   backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
@@ -107,8 +106,6 @@ type CopilotTurnStreamState = {
   redactor: ProviderAgentRuntimeBindingRedactor;
   assistantText: string;
   lastNonEmptyAssistantMessageText: string;
-  assistantMessages: string[];
-  assistantDraft: string;
   usage: ProviderUsage | null;
   streamErrorMessage: string;
 };
@@ -289,8 +286,7 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
     redactor,
     assistantText: "",
     lastNonEmptyAssistantMessageText: "",
-    assistantMessages: [],
-    assistantDraft: "",
+    outputProjection: new CopilotOutputProjection(),
     usage: null,
     streamErrorMessage: "",
   };
@@ -346,13 +342,12 @@ function applyCopilotTurnEvent(args: {
   const { event, state, providerId, sessionId, workspacePath } = args;
 
   switch (event.type) {
+    case "assistant.message_start":
     case "assistant.message_delta":
     case "assistant.message": {
-      const nextAssistantState = applyCopilotAssistantEvent(state.assistantMessages, state.assistantDraft, event);
-      state.assistantMessages = nextAssistantState.messages;
-      state.assistantDraft = nextAssistantState.draft;
-      state.assistantText = nextAssistantState.assistantText;
-      state.lastNonEmptyAssistantMessageText = nextAssistantState.lastNonEmptyAssistantMessageText;
+      state.outputProjection.apply(event);
+      state.assistantText = state.outputProjection.project().assistantText;
+      state.lastNonEmptyAssistantMessageText = state.outputProjection.lastNonEmptyText;
       break;
     }
     case "assistant.usage":
@@ -772,6 +767,7 @@ export function buildCopilotSystemMessage(
 const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "user.message",
   "assistant.message",
+  "assistant.message_start",
   "assistant.usage",
   "session.error",
   "session.idle",
@@ -953,7 +949,7 @@ function buildCopilotBootstrapDebugItems(
       reasoningEffort: input.executionOptions.reasoningEffort,
       approvalMode: input.executionOptions.approvalMode,
       workspacePath: resolveRunWorkspacePath(input),
-      threadId: resolveRunExecutionTarget(input).threadId,
+      threadId: input.session.threadId,
       hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
       useLoggedInUser: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length === 0,
     },
@@ -1058,6 +1054,7 @@ export function buildCopilotSessionSettings(
     model: selection.resolvedModel,
     ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
     workingDirectory: workspacePath,
+    additionalDirectories: prompt.additionalDirectories,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
     ...(input.agentRuntimeBinding?.managedMcp
@@ -1076,6 +1073,7 @@ export function buildCopilotSessionSettings(
       config.model,
       config.reasoningEffort,
       config.workingDirectory,
+      config.additionalDirectories,
       input.executionOptions.approvalMode,
       systemMessage?.mode ?? "",
       systemMessage?.content ?? "",
@@ -1436,7 +1434,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     this.clientKeysBySession.clear();
     const disconnects = sessions.map(async ([sessionId, cached]) => {
       cached.unsubscribeBackgroundObserver?.();
-      if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, []);
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
       await this.disconnectSession(cached.session);
     });
     await Promise.all([
@@ -1503,7 +1501,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     this.sessions.delete(sessionId);
     if (cached) {
       cached.unsubscribeBackgroundObserver?.();
-      if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, []);
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
       await this.disconnectSession(cached.session);
     }
   }
@@ -1532,7 +1530,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         // Cache ownership is already detached; observer cleanup is best effort.
       }
       try {
-        if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, []);
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
       } catch {
         // UI projection failure must not retain the old provider ownership.
       }
@@ -1550,7 +1548,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   setBackgroundTasksObserver(observer: CopilotAdapterOptions["onBackgroundTasksChanged"]): void {
     this.options.onBackgroundTasksChanged = observer;
     for (const [sessionId, cached] of this.sessions.entries()) {
-      if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
     }
   }
 
@@ -1576,15 +1574,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         });
       }
 
-      if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
     });
   }
 
   private async resetRecoverableConnection(input: RunSessionTurnInput): Promise<void> {
-    const mappedClientKey = this.clientKeysBySession.get(resolveRunExecutionTarget(input).id);
+    const mappedClientKey = this.clientKeysBySession.get(input.session.id);
     const currentClientKey = buildCopilotClientKey(input.providerCatalog.id, input);
-    this.clientKeysBySession.delete(resolveRunExecutionTarget(input).id);
-    await this.disposeSessionCache(resolveRunExecutionTarget(input).id);
+    this.clientKeysBySession.delete(input.session.id);
+    await this.disposeSessionCache(input.session.id);
     await Promise.all(
       [...new Set([mappedClientKey, currentClientKey].filter((key): key is string => Boolean(key)))]
         .map((clientKey) => this.disposeClientCache(clientKey)),
@@ -1596,19 +1594,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     prompt: ProviderPromptComposition,
   ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
-    const previousClientKey = this.clientKeysBySession.get(resolveRunExecutionTarget(input).id);
-    this.clientKeysBySession.set(resolveRunExecutionTarget(input).id, clientKey);
+    const previousClientKey = this.clientKeysBySession.get(input.session.id);
+    this.clientKeysBySession.set(input.session.id, clientKey);
     const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
     const resolved = await resolveCopilotSessionForSettings({
-      cached: this.sessions.get(resolveRunExecutionTarget(input).id),
+      cached: this.sessions.get(input.session.id),
       nextSettingsKey: nextSettings.settingsKey,
-      threadId: resolveRunExecutionTarget(input).threadId,
+      threadId: input.session.threadId,
       config: nextSettings.config,
       client,
-      requireExistingThread: Boolean(input.executionTarget),
     });
     if (resolved.reusedCached) {
-      this.clientKeysBySession.set(resolveRunExecutionTarget(input).id, clientKey);
+      this.clientKeysBySession.set(input.session.id, clientKey);
       return {
         session: resolved.session,
         selection: nextSettings.selection,
@@ -1621,17 +1618,16 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await this.disposeClientCache(previousClientKey);
     }
 
-    this.sessions.set(resolveRunExecutionTarget(input).id, {
+    this.sessions.set(input.session.id, {
       session: resolved.session,
       settingsKey: nextSettings.settingsKey,
       backgroundTasks: new Map<string, LiveBackgroundTask>(),
-      independentExecution: Boolean(input.executionTarget),
     });
-    this.clientKeysBySession.set(resolveRunExecutionTarget(input).id, clientKey);
-    const nextCached = this.sessions.get(resolveRunExecutionTarget(input).id);
-    if (nextCached && !input.executionTarget) {
+    this.clientKeysBySession.set(input.session.id, clientKey);
+    const nextCached = this.sessions.get(input.session.id);
+    if (nextCached) {
       this.attachBackgroundTaskObserver(
-        resolveRunExecutionTarget(input).id,
+        input.session.id,
         nextCached,
         createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding),
       );
@@ -1651,7 +1647,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       this.sessions.delete(sessionId);
       try {
         cached.unsubscribeBackgroundObserver?.();
-        if (!cached.independentExecution) this.options.onBackgroundTasksChanged?.(sessionId, []);
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
       } catch {
         // Projection cleanup must not prevent stopping the captured owner.
       }
@@ -1758,6 +1754,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
     providerQuotaTelemetry: ProviderQuotaTelemetry | null,
+    outputProjection?: CopilotOutputProjection,
   ): Promise<RunSessionTurnResult> {
     const redactor = createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
     const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
@@ -1792,6 +1789,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(assistantText),
+      output: outputProjection?.project(redactor.sanitizeText).output,
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
       artifact: redactor.sanitize(artifact),
       providerMetadata,
@@ -1830,13 +1828,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         provider: input.providerCatalog.id,
         model: input.executionOptions.model,
         workspacePath,
-        threadId: resolveRunExecutionTarget(input).threadId,
+        threadId: input.session.threadId,
         message: redactor.sanitizeText(message),
       });
       throw new ProviderTurnError(
         redactor.sanitizeText(message),
         {
-          threadId: resolveRunExecutionTarget(input).threadId || null,
+          threadId: input.session.threadId || null,
           assistantText: "",
           providerMetadata: [{ provider: "copilot", kind: "bootstrap_failure", summary: redactor.sanitizeText(message),
             payload: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)) }],
@@ -1861,7 +1859,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       if (!onProgress || progressFailure) return Promise.resolve();
       return emitLiveState(
           (state, changes) => progressDelivery.deliver(state, changes),
-          resolveRunExecutionTarget(input).id,
+          input.session.id,
           session.sessionId,
           streamState.liveSteps,
           streamState.backgroundTasks,
@@ -1875,7 +1873,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
     await emitLiveState(
       onProgress,
-      resolveRunExecutionTarget(input).id,
+      input.session.id,
       session.sessionId,
       streamState.liveSteps,
       streamState.backgroundTasks,
@@ -1894,7 +1892,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         event,
         state: streamState,
         providerId: input.providerCatalog.id,
-        sessionId: resolveRunExecutionTarget(input).id,
+        sessionId: input.session.id,
         workspacePath,
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
@@ -1959,9 +1957,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
       });
     });
-    const execution = Promise.all([send, completion.wait]).then(async () => {
+    const execution = Promise.all([send, completion.wait]).then(async ([requestMessageId]) => {
       await Promise.all(interactionTasks);
       await progressDelivery.drain();
+      if (typeof requestMessageId === "string") streamState.outputProjection.completeRequest(requestMessageId);
     });
     let cancellationCleanup: Promise<never> | undefined;
     let cancellationFailures: string[] = [];
@@ -1973,7 +1972,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
       // Detach synchronously, before runtime's canceled terminal invalidation.
       const processLifetime = captureCopilotProcessLifetime(client);
-      this.detachCanceledTurn(resolveRunExecutionTarget(input).id, session, client, clientKey);
+      this.detachCanceledTurn(input.session.id, session, client, clientKey);
       const abort = Promise.resolve().then(() => session.abort());
       const requestsSettled = Promise.allSettled([send, abort]);
       cancellationCleanup = (async () => {
@@ -2028,6 +2027,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           beforeSnapshot,
           beforeSnapshotStats,
           null,
+          streamState.outputProjection,
         );
         throw new ProviderTurnError(
           redactor.sanitizeText(streamState.streamErrorMessage),
@@ -2052,6 +2052,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
         null,
+        streamState.outputProjection,
       );
     } catch (error) {
       observingTurn = false;
@@ -2078,6 +2079,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
         null,
+        streamState.outputProjection,
       );
       if (cancellationFailures.length > 0) {
         partialResult.providerMetadata = [
@@ -2128,7 +2130,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     try {
       return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolResult = true; });
     } catch (error) {
-      if (input.executionTarget || acquiredToolResult || !shouldRetryCopilotTurn(error)) {
+      if (acquiredToolResult || !shouldRetryCopilotTurn(error)) {
         throw error;
       }
 
@@ -2136,7 +2138,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         provider: input.providerCatalog.id,
         model: input.executionOptions.model,
         workspacePath: resolveRunWorkspacePath(input),
-        threadId: resolveRunExecutionTarget(input).threadId,
+        threadId: input.session.threadId,
         message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
       });
       await this.resetRecoverableConnection(input);

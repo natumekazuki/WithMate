@@ -4,13 +4,6 @@ import { describe, it } from "node:test";
 import {
   createDefaultAppSettings,
   DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
-  DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
-  DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
-  DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
-  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
-  MEMORY_FILE_QUOTA_MAX_BYTES,
-  MEMORY_FILE_QUOTA_MIN_BYTES,
-  getMateMemoryGenerationSettings,
   normalizeAppSettings,
   isPreviewWheelZoomStep,
 } from "../../src-shared/settings/provider-settings-state.js";
@@ -65,38 +58,6 @@ describe("provider-settings-state", () => {
     }
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "default AppSettings の chat layout は priority なしの canonical shape を持つ"
-  // oracle = { type = "contract", ref = "Default app settings" }
-  // fault = "削除済み priority が default settings に復活する"
-  // observable = "createDefaultAppSettings().chatLayoutPreference"
-  // observation_boundary = "public-boundary"
-  // scope = "default-chat-layout-settings"
-  // lifecycle = "permanent"
-  // impact = "廃止設定が保存・IPC payload へ伝播する"
-  // distinction = "default provider settings と chat layout shape を確認する"
-  // @end-test-value
-  it("memory extraction threshold の default は 300000", () => {
-    const settings = createDefaultAppSettings();
-
-    assert.equal(DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD, 300000);
-    assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 300000);
-    assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
-    assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
-    assert.equal(settings.autoCollapseActionDockOnSend, true);
-    assert.equal(settings.scrollToLatestOnSend, true);
-    assert.deepEqual(settings.chatLayoutPreference, {
-      header: "hidden",
-      actionDock: "compact",
-      sidePane: "none",
-    });
-    assert.equal(settings.sessionTurnNotificationEnabled, true);
-    assert.equal(settings.sessionTurnNotificationResponsePreviewEnabled, false);
-    assert.equal(settings.memoryFileQuotaBytes, MEMORY_FILE_QUOTA_DEFAULT_BYTES);
-    assert.equal(settings.glossaryProactiveCreateLimit, DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT);
-  });
-
   it("glossary proactive create limitは0から100の整数だけを保持し、欠落・不正値をfallbackしない", () => {
     assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 0 }).glossaryProactiveCreateLimit, 0);
     assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 100 }).glossaryProactiveCreateLimit, 100);
@@ -104,96 +65,6 @@ describe("provider-settings-state", () => {
     assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 101 }).glossaryProactiveCreateLimit, null);
     assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: "5" }).glossaryProactiveCreateLimit, null);
     assert.equal(normalizeAppSettings({}).glossaryProactiveCreateLimit, null);
-  });
-
-  it("memory extraction threshold は normalize で 1000000 に clamp する", () => {
-    const settings = normalizeAppSettings({
-      memoryExtractionProviderSettings: {
-        codex: {
-          model: "gpt-5.4-mini",
-          reasoningEffort: "low",
-          outputTokensThreshold: 9000000,
-          timeoutSeconds: 5000,
-        },
-      },
-    });
-
-    assert.equal(settings.memoryExtractionProviderSettings.codex.outputTokensThreshold, 1000000);
-    assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 1800);
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "Mate memory生成設定はSDK取得前のmodel/depthを未選択とし、timeoutと60分のintervalを既定にする"
-  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行; src-shared/settings/provider-settings-state.ts#DEFAULT_MATE_MEMORY_GENERATION_SETTINGS" }
-  // fault = "未取得model/depthを固定値で選択済みにするか既定の実行間隔・timeoutを変更する"
-  // observable = "createDefaultAppSettingsのmateMemoryGenerationSettings"
-  // observation_boundary = "public-boundary"
-  // scope = "mate-memory-generation-default-selection"
-  // lifecycle = "permanent"
-  // distinction = "型では区別できない未選択状態と具体的な既定設定を公開factoryで確認する"
-  // @end-test-value
-  it("mate memory generation settings はmodel/depth未選択でtrigger intervalは60分", () => {
-    const settings = createDefaultAppSettings();
-
-    assert.equal(DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES, 60);
-    assert.deepEqual(settings.mateMemoryGenerationSettings, {
-      priorityList: [
-        {
-          provider: "codex",
-          model: "",
-          reasoningEffort: "",
-          timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
-        },
-      ],
-      triggerIntervalMinutes: DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
-    });
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "Mate memory生成設定のnormalizeはmodel未選択と任意native depthを保持し、timeoutとintervalを範囲内へ制限する"
-  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行; src-shared/settings/provider-settings-state.ts#normalizeMateMemoryGenerationProviderSettings" }
-  // fault = "空modelや任意depthを固定model/depthへ置換するか実行時間設定の下限を無視する"
-  // observable = "normalizeAppSettingsのprovider/model/reasoningEffort/timeoutSeconds/triggerIntervalMinutes"
-  // observation_boundary = "public-boundary"
-  // scope = "mate-memory-generation-normalization"
-  // lifecycle = "permanent"
-  // distinction = "unknown設定入力から保存・実行用設定への実行時正規化を型検査とは別に確認する"
-  // @end-test-value
-  it("mate memory generation settings は未選択modelとnative depthを保持し時間をclampする", () => {
-    const settings = normalizeAppSettings({
-      mateMemoryGenerationSettings: {
-        priorityList: [
-          {
-            provider: "copilot",
-            model: "",
-            reasoningEffort: "native-deeper",
-            timeoutSeconds: 5,
-          },
-        ],
-        triggerIntervalMinutes: -10,
-      },
-    });
-
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].provider, "copilot");
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].model, "");
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "native-deeper");
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 30);
-    assert.equal(settings.mateMemoryGenerationSettings.triggerIntervalMinutes, 1);
-  });
-
-  it("mate memory generation settings は getter でも normalize される", () => {
-    const settings = getMateMemoryGenerationSettings(normalizeAppSettings({
-      mateMemoryGenerationSettings: {
-        priorityList: [],
-        triggerIntervalMinutes: 120,
-      },
-    }));
-
-    assert.equal(settings.priorityList.length, 1);
-    assert.equal(settings.priorityList[0].provider, "codex");
-    assert.equal(settings.triggerIntervalMinutes, 120);
   });
 
   it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
@@ -293,65 +164,37 @@ describe("provider-settings-state", () => {
   // scope = "prompt-context-settings-normalization"
   // lifecycle = "permanent"
   // impact = "設定保存・IPC・provider prompt 合成へ渡る toggle の既定状態が変わる"
-  // distinction = "既存の boolean settings の normalize と異なる prompt context 4項目を一括で確認する"
+  // distinction = "既存の boolean settings の normalize と異なる prompt context 2項目を一括で確認する"
   // @end-test-value
   it("foreground prompt context は既定有効で、false と無効値を正しく normalize する", () => {
     const defaults = createDefaultAppSettings();
 
     assert.equal(defaults.characterDefinitionEnabled, true);
-    assert.equal(defaults.characterAffectContextEnabled, true);
-    assert.equal(defaults.conversationTimingEnabled, true);
-    assert.equal(defaults.toolCallPresenceEnabled, true);
+    assert.equal(defaults.currentDateEnabled, true);
     const normalizedOff = normalizeAppSettings({
       characterDefinitionEnabled: false,
-      characterAffectContextEnabled: false,
-      conversationTimingEnabled: false,
-      toolCallPresenceEnabled: false,
+      currentDateEnabled: false,
     });
     assert.equal(normalizedOff.characterDefinitionEnabled, false);
-    assert.equal(normalizedOff.characterAffectContextEnabled, false);
-    assert.equal(normalizedOff.conversationTimingEnabled, false);
-    assert.equal(normalizedOff.toolCallPresenceEnabled, false);
+    assert.equal(normalizedOff.currentDateEnabled, false);
     const normalizedMixed = normalizeAppSettings({
       characterDefinitionEnabled: true,
-      characterAffectContextEnabled: true,
-      conversationTimingEnabled: false,
-      toolCallPresenceEnabled: true,
+      currentDateEnabled: false,
     });
 
     assert.equal(normalizedMixed.characterDefinitionEnabled, true);
-    assert.equal(normalizedMixed.characterAffectContextEnabled, true);
-    assert.equal(normalizedMixed.conversationTimingEnabled, false);
-    assert.equal(normalizedMixed.toolCallPresenceEnabled, true);
+    assert.equal(normalizedMixed.currentDateEnabled, false);
     const normalizedInvalid = normalizeAppSettings({
       characterDefinitionEnabled: "false",
-      characterAffectContextEnabled: "false",
-      conversationTimingEnabled: null,
-      toolCallPresenceEnabled: 0,
+      currentDateEnabled: null,
     });
 
     assert.equal(normalizedInvalid.characterDefinitionEnabled, true);
-    assert.equal(normalizedInvalid.characterAffectContextEnabled, true);
-    assert.equal(normalizedInvalid.conversationTimingEnabled, true);
-    assert.equal(normalizedInvalid.toolCallPresenceEnabled, true);
+    assert.equal(normalizedInvalid.currentDateEnabled, true);
 
     const normalizedMissing = normalizeAppSettings({});
     assert.equal(normalizedMissing.characterDefinitionEnabled, true);
-    assert.equal(normalizedMissing.characterAffectContextEnabled, true);
-    assert.equal(normalizedMissing.conversationTimingEnabled, true);
-    assert.equal(normalizedMissing.toolCallPresenceEnabled, true);
-  });
-
-  it("memory file quota は normalize で min/max に clamp する", () => {
-    assert.equal(normalizeAppSettings({ memoryFileQuotaBytes: 1 }).memoryFileQuotaBytes, MEMORY_FILE_QUOTA_MIN_BYTES);
-    assert.equal(
-      normalizeAppSettings({ memoryFileQuotaBytes: MEMORY_FILE_QUOTA_MAX_BYTES * 2 }).memoryFileQuotaBytes,
-      MEMORY_FILE_QUOTA_MAX_BYTES,
-    );
-    assert.equal(
-      normalizeAppSettings({ memoryFileQuotaBytes: "1024" }).memoryFileQuotaBytes,
-      MEMORY_FILE_QUOTA_DEFAULT_BYTES,
-    );
+    assert.equal(normalizedMissing.currentDateEnabled, true);
   });
 
 });

@@ -126,10 +126,10 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
 
 // @test-value v2
 // kind = "invariant"
-// claim = "終了時はprovider binding失効後にMemory runtimeを停止し、その後persistent storeを閉じる"
+// claim = "終了時はprovider thread cleanupとbinding失効後に共有runtimeを停止し、その後persistent storeを閉じてquitする"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence; ADR-021 binding authority; ADR-023 runtime discovery" }
-// fault = "Memory runtimeのunpublishより先にstoreまたはprocessが終了し、別processからstale entryがactiveに見える"
-// observable = "provider binding、Memory runtime、persistent storeのcleanup呼出し順"
+// fault = "provider/binding/runtime cleanup前にpersistent storeを閉じるかquitする"
+// observable = "provider thread cleanup・binding失効・stopAgentRuntime・persistent store close・quitのcallback呼出し順"
 // observation_boundary = "public-boundary"
 // scope = "application-shutdown-runtime-discovery"
 // lifecycle = "permanent"
@@ -161,8 +161,8 @@ test("AppLifecycleService は before-quit で runtime cleanup後にpersistent st
     revokeAllAgentRuntimeBindings() {
       calls.push("revokeAllAgentRuntimeBindings");
     },
-    async stopMemoryRuntime() {
-      calls.push("stopMemoryRuntime");
+    async stopAgentRuntime() {
+      calls.push("stopAgentRuntime");
     },
   });
 
@@ -178,7 +178,7 @@ test("AppLifecycleService は before-quit で runtime cleanup後にpersistent st
     "prepareSessionWindowSnapshotForQuit",
     "invalidateAllProviderSessionThreads",
     "revokeAllAgentRuntimeBindings",
-    "stopMemoryRuntime",
+    "stopAgentRuntime",
     "closePersistentStores",
     "quitApp",
   ]);
@@ -186,16 +186,16 @@ test("AppLifecycleService は before-quit で runtime cleanup後にpersistent st
 
 // @test-value v2
 // kind = "invariant"
-// claim = "provider cleanupとMemory runtime cleanupの完了を待ってからpersistent storeを閉じる"
+// claim = "provider cleanupと共有runtime cleanupの非同期完了を待ってからpersistent storeを閉じてquitする"
 // oracle = { type = "adr", ref = "ADR-021 and ADR-023 shutdown ordering" }
 // fault = "非同期cleanupの途中でstoreを閉じ、runtime operationまたはowner cleanupが部分状態になる"
-// observable = "provider／Memory cleanup完了通知とpersistent store closeの呼出し順"
+// observable = "provider／共有runtime cleanup開始・完了のcallback記録とpersistent store close・quitの呼出し順"
 // observation_boundary = "public-boundary"
 // scope = "application-shutdown-runtime-discovery"
 // lifecycle = "permanent"
 // distinction = "cleanup順序だけでなく非同期provider cleanupの完了待機を観測する"
 // @end-test-value
-test("AppLifecycleService はproviderとMemory runtime停止完了後にpersistent storesを閉じて終了する", async () => {
+test("AppLifecycleService はproviderと共有runtime停止完了後にpersistent storesを閉じて終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
   const providerCleanup = { resolve: undefined as (() => void) | undefined };
@@ -225,10 +225,10 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
     revokeAllAgentRuntimeBindings() {
       calls.push("revokeAllAgentRuntimeBindings");
     },
-    async stopMemoryRuntime() {
-      calls.push("stopMemoryRuntime:start");
+    async stopAgentRuntime() {
+      calls.push("stopAgentRuntime:start");
       await new Promise<void>((resolve) => { memoryCleanup.resolve = resolve; });
-      calls.push("stopMemoryRuntime:end");
+      calls.push("stopAgentRuntime:end");
     },
   });
 
@@ -243,7 +243,7 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
 
   providerCleanup.resolve?.();
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start", "invalidateAllProviderSessionThreads:end", "revokeAllAgentRuntimeBindings", "stopMemoryRuntime:start"]);
+  assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start", "invalidateAllProviderSessionThreads:end", "revokeAllAgentRuntimeBindings", "stopAgentRuntime:start"]);
   assert.equal(calls.includes("closePersistentStores"), false);
   memoryCleanup.resolve?.();
   await cleanup;
@@ -252,8 +252,8 @@ test("AppLifecycleService はproviderとMemory runtime停止完了後にpersiste
     "invalidateAllProviderSessionThreads:start",
     "invalidateAllProviderSessionThreads:end",
     "revokeAllAgentRuntimeBindings",
-    "stopMemoryRuntime:start",
-    "stopMemoryRuntime:end",
+    "stopAgentRuntime:start",
+    "stopAgentRuntime:end",
     "closePersistentStores",
     "quitApp",
   ]);
@@ -336,8 +336,8 @@ test("AppLifecycleService はbinding revoke、runtime stop、store closeが失�
       calls.push("revokeAllAgentRuntimeBindings");
       throw new Error("revoke failed");
     },
-    async stopMemoryRuntime() {
-      calls.push("stopMemoryRuntime");
+    async stopAgentRuntime() {
+      calls.push("stopAgentRuntime");
       throw new Error("runtime stop failed");
     },
   });
@@ -352,7 +352,7 @@ test("AppLifecycleService はbinding revoke、runtime stop、store closeが失�
   assert.deepEqual(calls, [
     "invalidateAllProviderSessionThreads",
     "revokeAllAgentRuntimeBindings",
-    "stopMemoryRuntime",
+    "stopAgentRuntime",
     "closePersistentStores",
     "quitApp",
   ]);
@@ -388,7 +388,7 @@ test("AppLifecycleService は複数Window flush失敗時にcleanupを保留し�
     },
     closePersistentStores: () => { calls.push("close"); },
     invalidateAllProviderSessionThreads: async () => { calls.push("provider"); },
-    stopMemoryRuntime: async () => { calls.push("memory"); },
+    stopAgentRuntime: async () => { calls.push("memory"); },
   });
 
   await service.handleBeforeQuit({ preventDefault() {} });

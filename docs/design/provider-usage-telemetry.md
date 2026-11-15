@@ -4,6 +4,8 @@ providerのquotaはapp全体、context usageはSessionごとの一時的な観�
 
 ## Codex・Claude・OpenCodeの取得と更新
 
+通常Session MCPの`session.get_provider_quota`とbound CLIの`get-provider-quota`も同じcacheを読取専用で公開する。未取得の`null`、状態、最終成功日時、数値を保持し、この照会ではremote取得・選定方針の保存を行わない。操作と契約経路の判断境界は[Sessionの選定方針](../features/session-operating-policies.md)を参照する。
+
 有効なCodex・Claude・OpenCodeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。
 
 短命な取得processやHTTP requestの頻繁な発行を避けるため、成功した取得（適用外を含む）の完了後60秒間はprovider単位で再取得を抑制する。抑制中の取得要求は、その60秒の期限で発火する1件へ集約し、後続turnで期限を延期しない。

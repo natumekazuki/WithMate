@@ -101,10 +101,9 @@ function insertAuxiliarySessionRows(dbPath: string, rows: Array<{ id: string; pa
       INSERT INTO auxiliary_sessions (
         id,
         parent_session_id,
-        status,
         created_at,
         updated_at
-      ) VALUES (?, ?, 'active', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')
+      ) VALUES (?, ?, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z')
     `);
     for (const row of rows) {
       statement.run(row.id, row.parentSessionId);

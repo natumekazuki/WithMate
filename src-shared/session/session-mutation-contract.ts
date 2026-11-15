@@ -20,6 +20,13 @@ export type SetSessionTitleRequest = {
   title: string;
 };
 
+export type ChangeSessionAdditionalDirectoryRequest = {
+  sessionId: string;
+  incarnationId: string;
+  operation: "add" | "remove";
+  directoryPath: string;
+};
+
 export type SetSessionTitleResult = {
   status: "committed";
   projectionUpdated: boolean;

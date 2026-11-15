@@ -61,6 +61,9 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
   const invalidationListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
   const invalidate = () => invalidationListeners.forEach((listener) => listener({ scope: "all" }));
   const api: Partial<WithMateWindowApi> = {
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async () => null,
     listCharacters: async () => [{
       id: "mia", name: "Mia", description: "", iconFilePath: "",
       theme: { main: "#6f8cff", sub: "#6fb8c7" },
@@ -77,18 +80,6 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
         id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
       }],
-    }),
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
     }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),

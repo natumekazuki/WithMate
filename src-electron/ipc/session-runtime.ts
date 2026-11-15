@@ -3,7 +3,6 @@ import type {
   LiveElicitationResponse,
   RunSessionTurnRequest,
 } from "../../src-shared/session/runtime-state.js";
-import type { SessionBackgroundActivityKind } from "../../src-shared/memory/session-memory-state.js";
 
 import type {
   CreateSessionRequest,
@@ -21,7 +20,6 @@ import {
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
-  WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
@@ -39,6 +37,7 @@ import {
   WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
   WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_SESSION_TITLE_CHANNEL,
   WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
@@ -56,6 +55,7 @@ import type {
   MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetSessionExecutionOptionsRequest,
   SetSessionMessageBookmarkRequest,
   SetSessionTitleRequest,
@@ -227,15 +227,6 @@ export function registerSessionRuntimeHandlers(
     },
   );
   ipcMain.handle(
-    WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
-    (_event, sessionId: string, kind: SessionBackgroundActivityKind) => {
-      if (!sessionId || !kind) {
-        return null;
-      }
-      return deps.getSessionBackgroundActivity(sessionId, kind);
-    },
-  );
-  ipcMain.handle(
     WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
     (
       _event,
@@ -272,6 +263,12 @@ export function registerSessionRuntimeHandlers(
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) =>
     deps.updateSession(session),
   );
+  ipcMain.handle(WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, (event, request: ChangeSessionAdditionalDirectoryRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId
+      || typeof request.incarnationId !== "string" || !request.incarnationId) throw new TypeError("Session identity is invalid.");
+    assertOwningSessionWindowSender(event, request.sessionId, deps);
+    return deps.changeSessionAdditionalDirectory(request);
+  });
   ipcMain.handle(
     WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
     (event, request: SetSessionExecutionOptionsRequest) => {

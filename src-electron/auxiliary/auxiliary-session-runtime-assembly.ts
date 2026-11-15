@@ -5,10 +5,7 @@ import type { ModelCatalogProvider } from "../../src-shared/settings/model-catal
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
-import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
-import type { CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
-import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
-import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
+import type { AgentRuntimeSourceRef } from "../../src-shared/agent-runtime/agent-runtime-source.js";
 
 type AuxiliaryRuntimeOwner = {
   assertActive(operation: string): void;
@@ -21,6 +18,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getRuntimeSession(sessionId: string): Promise<Session | null>;
     getSession(sessionId: string): Promise<AuxiliarySession | null>;
     appendRunningInput: SessionRuntimeServiceDeps["appendRunningInput"];
+    beginRunningInput?: SessionRuntimeServiceDeps["beginRunningInput"];
+    settleRunningInput?: SessionRuntimeServiceDeps["settleRunningInput"];
     appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
     checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
@@ -40,15 +39,14 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getProviderCodingAdapter: NonNullable<SessionRuntimeServiceDeps["getProviderCodingAdapter"]>;
     resetProviderSessionThread: NonNullable<SessionRuntimeServiceDeps["resetProviderSessionThread"]>;
     endProviderAgentRuntimeTurn?: SessionRuntimeServiceDeps["endProviderAgentRuntimeTurn"];
-    resolveProviderSession(session: Session, parentSessionId: string): Session;
+    resolveProviderSession(session: Session, parentSessionId: string): Session | Promise<Session>;
     resolveSessionFolderPath(parentSessionId: string): string;
-    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider, source: BackgroundSourceRef): Promise<ProviderAgentRuntimeBindingProjection>;
+    resolveCrewFolderPath?: (parentSessionId: string) => string | Promise<string>;
+    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider, source: AgentRuntimeSourceRef): Promise<ProviderAgentRuntimeBindingProjection>;
     beginRuntimeTurn?: SessionRuntimeServiceDeps["beginProviderAgentRuntimeTurn"];
   };
-  memory: {
+  context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
-    getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
-    onCharacterContextFailure?: (session: Session, error: CharacterContextErrorResponse) => void;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: {
@@ -70,7 +68,6 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   currentTimestampLabel?: () => string;
   getQueuedInputReceipt?: SessionRuntimeServiceDeps["getQueuedInputReceipt"];
   onSessionRunReleased?: SessionRuntimeServiceDeps["onSessionRunReleased"];
-  onBackgroundEvent?: SessionRuntimeServiceDeps["onBackgroundEvent"];
 };
 
 export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssemblyDeps): SessionRuntimeService {
@@ -81,7 +78,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     assertOwner(operation);
     return result;
   };
-  const resolveSource = async (session: Session): Promise<BackgroundSourceRef> => {
+  const resolveSource = async (session: Session): Promise<AgentRuntimeSourceRef> => {
     const auxiliary = await deps.auxiliary.getSession(session.id);
     const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
     if (!auxiliary || !parent) throw new Error("Auxiliary conversation owner is unavailable.");
@@ -94,6 +91,8 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
     appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId, queuedInput)),
+    beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
+    settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
@@ -101,7 +100,6 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments)) : undefined,
     getQueuedInputReceipt: deps.getQueuedInputReceipt ? (receipt) => guarded("queued input receipt", () => deps.getQueuedInputReceipt!(receipt)) : undefined,
     onSessionRunReleased: deps.onSessionRunReleased,
-    onBackgroundEvent: deps.onBackgroundEvent,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
     resolveProviderSession: (session) => guarded("provider session path", async () => {
@@ -112,26 +110,21 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
       const auxiliary = await deps.auxiliary.getSession(sessionId);
       return deps.provider.resolveSessionFolderPath(auxiliary?.parentSessionId ?? sessionId);
     }),
-    getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
+    resolveCrewFolderPath: deps.provider.resolveCrewFolderPath ? (sessionId) => guarded("crew folder path", async () => {
+      const auxiliary = await deps.auxiliary.getSession(sessionId);
+      return deps.provider.resolveCrewFolderPath!(auxiliary?.parentSessionId ?? sessionId);
+    }) : undefined,
+    getAppSettings: () => guarded("settings read", deps.context.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: (providerId) => { assertOwner("provider coding adapter"); return deps.provider.getProviderCodingAdapter(providerId); },
     getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", async () =>
       deps.provider.issueRuntimeBinding(session, provider, await resolveSource(session))),
-    beginProviderAgentRuntimeTurn: ({ session, provider, binding, signal }) => binding && deps.provider.beginRuntimeTurn
-      ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!({ session, provider, binding, signal }))
+    beginProviderAgentRuntimeTurn: (input) => input.binding && deps.provider.beginRuntimeTurn
+      ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!(input))
       : undefined,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
     resetProviderSessionThread: (providerId, sessionId) => guarded("provider thread reset", () => deps.provider.resetProviderSessionThread!(providerId, sessionId)),
     isAuxiliarySession: (sessionId) => guarded("Auxiliary session check", () => deps.auxiliary.isAuxiliarySession(sessionId)),
-    resolveCharacterContext: (session) => guarded("character context", async () => {
-      const service = deps.memory.getCharacterContextService?.();
-      if (session.sessionKind !== "default" || !session.characterId || !service) return null;
-      return resolveRuntimeCharacterContext({
-        session, service,
-        sessionSource: await resolveSource(session),
-        onFailure: (owner, error) => deps.memory.onCharacterContextFailure?.(owner, error),
-      });
-    }),
     createSessionTurn: (entry) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },

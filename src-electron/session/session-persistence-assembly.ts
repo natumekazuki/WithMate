@@ -22,9 +22,7 @@ export type SessionPersistenceAssemblyDeps = {
     createCharacterRuntimeSnapshot(characterId: string): ReturnType<NonNullable<SessionPersistenceServiceDeps["createCharacterRuntimeSnapshot"]>>;
   };
   effects: {
-    syncSessionDependencies: SessionPersistenceServiceDeps["syncSessionDependencies"];
     clearSessionContextTelemetry: SessionPersistenceServiceDeps["clearSessionContextTelemetry"];
-    clearSessionBackgroundActivities: SessionPersistenceServiceDeps["clearSessionBackgroundActivities"];
     invalidateProviderSessionThread: SessionPersistenceServiceDeps["invalidateProviderSessionThread"];
     revokeSessionAgentRuntimeBindings(sessionId: string): void;
     closeSessionWindow: SessionPersistenceServiceDeps["closeSessionWindow"];
@@ -60,6 +58,13 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       assertOwner("stored session read");
       return stored;
     },
+    getStoredSessionSummary: async (sessionId) => {
+      assertOwner("stored Session summary read");
+      if (!deps.storage.getSessionSummary) throw new Error("Session summary storage is unavailable.");
+      const result = await deps.storage.getSessionSummary(sessionId);
+      assertOwner("stored Session summary read");
+      return result;
+    },
     isSessionRunInFlight: deps.runtime.isSessionRunInFlight,
     listRunningActiveAuxiliaryParentIds: deps.runtime.listRunningActiveAuxiliaryParentIds,
     listAuxiliarySessionRuntimeIdentities: async (parentSessionIds) => (await Promise.all(parentSessionIds.map(async (parentSessionId) => {
@@ -69,10 +74,25 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       return identities;
     }))).flat(),
     upsertStoredSession: storageCommands.upsertStoredSession,
+    setStoredSessionAdditionalDirectories: (sessionId, incarnationId, directories) => {
+      assertOwner("additional directory update");
+      if (!deps.storage.setSessionAdditionalDirectories) throw new Error("Session additional directory storage is unavailable.");
+      return deps.storage.setSessionAdditionalDirectories(sessionId, incarnationId, directories);
+    },
     appendStoredSessionSteer: (input) => {
       assertOwner("Session steer append");
       if (!deps.storage.appendSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
       return deps.storage.appendSessionSteer(input);
+    },
+    beginStoredSessionSteer: (input) => {
+      assertOwner("Session steer begin");
+      if (!deps.storage.beginSessionSteer) throw new Error("Durable Session input storage is unavailable.");
+      return deps.storage.beginSessionSteer(input);
+    },
+    settleStoredSessionSteer: (input) => {
+      assertOwner("Session steer settle");
+      if (!deps.storage.settleSessionSteer) throw new Error("Durable Session input storage is unavailable.");
+      return deps.storage.settleSessionSteer(input);
     },
     appendStoredSessionTerminal: (input) => {
       assertOwner("Session terminal append");
@@ -88,6 +108,20 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       assertOwner("title update");
       if (!deps.storage.setSessionTitle) throw new Error("Session title storage is unavailable.");
       await deps.storage.setSessionTitle(sessionId, incarnationId, title);
+    },
+    patchStoredSessionMetadata: async (sessionId, incarnationId, patch) => {
+      assertOwner("metadata update");
+      if (!deps.storage.patchSessionMetadata) throw new Error("Session metadata storage is unavailable.");
+      const result = await deps.storage.patchSessionMetadata(sessionId, incarnationId, patch);
+      assertOwner("metadata update");
+      return result;
+    },
+    promoteStoredSessionToOverallCoordinator: async (sessionId, incarnationId) => {
+      assertOwner("Role update");
+      if (!deps.storage.promoteSessionToOverallCoordinator) throw new Error("Session Role storage is unavailable.");
+      const result = await deps.storage.promoteSessionToOverallCoordinator(sessionId, incarnationId);
+      assertOwner("Role update");
+      return result;
     },
     setStoredSessionMessageBookmark: async (sessionId, incarnationId, messageIndex, isBookmarked) => {
       assertOwner("bookmark update");
@@ -147,6 +181,47 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       assertOwner("session list");
       return result;
     },
+    listStoredSessionSummaries: async () => {
+      assertOwner("Session summaries");
+      const result = await deps.storage.listSessionSummaries();
+      assertOwner("Session summaries");
+      return result;
+    },
+    getSessionLifecycleOperation: async (operationId) => {
+      assertOwner("lifecycle read");
+      if (!deps.storage.getSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+      const result = await deps.storage.getSessionLifecycleOperation(operationId);
+      assertOwner("lifecycle read");
+      return result;
+    },
+    listPendingSessionLifecycleOperations: async () => {
+      assertOwner("lifecycle list");
+      if (!deps.storage.listPendingSessionLifecycleOperations) throw new Error("Session lifecycle storage is unavailable.");
+      const result = await deps.storage.listPendingSessionLifecycleOperations();
+      assertOwner("lifecycle list");
+      return result;
+    },
+    beginSessionLifecycleOperation: async (input) => {
+      assertOwner("lifecycle begin");
+      if (!deps.storage.beginSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+      const result = await deps.storage.beginSessionLifecycleOperation(input);
+      assertOwner("lifecycle begin");
+      return result;
+    },
+    advanceSessionLifecycleOperation: async (operationId, phase, resources) => {
+      assertOwner("lifecycle advance");
+      if (!deps.storage.advanceSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+      const result = await deps.storage.advanceSessionLifecycleOperation(operationId, phase, resources);
+      assertOwner("lifecycle advance");
+      return result;
+    },
+    deleteSessionCrewForLifecycle: async (operationId) => {
+      assertOwner("Crew lifecycle deletion");
+      if (!deps.storage.deleteSessionCrewForLifecycle) throw new Error("Crew lifecycle deletion storage is unavailable.");
+      const result = await deps.storage.deleteSessionCrewForLifecycle(operationId);
+      assertOwner("Crew lifecycle deletion");
+      return result;
+    },
     listStoredSessionIdsLastActiveBefore: async (cutoff) => {
       assertOwner("session cutoff list");
       const result = await deps.storage.listSessionIdsLastActiveBefore(cutoff);
@@ -158,12 +233,24 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       await deps.storage.deleteSessions(sessionIds);
       assertOwner("session deletion");
     },
+    getStoredCrewDeletionStatus: async (sessionId, incarnationId) => {
+      assertOwner("Crew deletion status");
+      if (!deps.storage.getCrewDeletionStatus) throw new Error("Crew deletion status storage is unavailable.");
+      const result = await deps.storage.getCrewDeletionStatus(sessionId, incarnationId);
+      assertOwner("Crew deletion status");
+      return result;
+    },
+    prepareSessionLifecycleCreation: async (operationId, input) => {
+      assertOwner("Session lifecycle preparation");
+      if (!deps.storage.prepareSessionLifecycleCreation) throw new Error("Session lifecycle preparation storage is unavailable.");
+      const result = await deps.storage.prepareSessionLifecycleCreation(operationId, input);
+      assertOwner("Session lifecycle preparation");
+      return result;
+    },
     getAppSettings: async () => { assertOwner("settings read"); const result = await deps.settings.getAppSettings(); assertOwner("settings read"); return result; },
     getModelCatalogSnapshot: async (workspacePath, providerId) => { assertOwner("catalog read"); const result = await deps.settings.getModelCatalogSnapshot(workspacePath, providerId); assertOwner("catalog read"); return result; },
     createCharacterRuntimeSnapshot: async (characterId) => { assertOwner("character snapshot"); const result = await deps.character.createCharacterRuntimeSnapshot(characterId); assertOwner("character snapshot"); return result; },
-    syncSessionDependencies: (session) => { assertOwner("session dependency sync"); deps.effects.syncSessionDependencies(session); },
     clearSessionContextTelemetry: (sessionId) => { assertOwner("context telemetry clear"); deps.effects.clearSessionContextTelemetry(sessionId); },
-    clearSessionBackgroundActivities: (sessionId) => { assertOwner("background activity clear"); deps.effects.clearSessionBackgroundActivities(sessionId); },
     invalidateProviderSessionThread: async (providerId, sessionId) => { assertOwner("provider thread invalidation"); await deps.effects.invalidateProviderSessionThread(providerId, sessionId); assertOwner("provider thread invalidation"); },
     revokeSessionAgentRuntimeBindings: (sessionId) => { assertOwner("agent runtime revoke"); deps.effects.revokeSessionAgentRuntimeBindings(sessionId); },
     closeSessionWindow: (sessionId) => { assertOwner("session window close"); deps.effects.closeSessionWindow(sessionId); },

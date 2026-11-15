@@ -12,7 +12,7 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 // claim = "incarnation列のない既存V6 Sessionは本文を維持してlegacy ownerへ移行し、同じIDでの再作成は新ownerになる"
 // oracle = { type = "contract", ref = "src-electron/session/session-storage-v6.ts" }
 // fault = "migrationが既存本文を失うか、同じIDの再作成Sessionが旧incarnationを再利用する"
-// observable = "再open後のSession本文・incarnation、更新結果と再作成後のincarnation不一致"
+// observable = "再open後のSession本文・incarnation、thread更新結果と再作成後のincarnation不一致"
 // observation_boundary = "public-boundary"
 // scope = "V6 Sessionの既存DB migration"
 // lifecycle = "permanent"
@@ -40,7 +40,7 @@ test("既存V6 Sessionのincarnation移行は本文を維持し再作成ownerを
     assert.ok(migrated);
     assert.equal(migrated.incarnationId, `legacy:${initial.id}`);
     assert.deepEqual(migrated.messages, initial.messages);
-    assert.equal(sessions.updateSession({ ...migrated, taskTitle: "Updated legacy" }).taskTitle, "Updated legacy");
+    assert.equal(sessions.updateSession({ ...migrated, threadId: "updated-legacy-thread" }).threadId, "updated-legacy-thread");
     sessions.deleteSession(initial.id);
     const replacement = sessions.insertSession(initial);
     assert.notEqual(replacement.incarnationId, migrated.incarnationId);

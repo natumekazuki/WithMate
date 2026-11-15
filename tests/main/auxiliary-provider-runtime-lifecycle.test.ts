@@ -8,7 +8,6 @@ function createAuxiliarySession(provider: string): AuxiliarySession {
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider,
@@ -26,7 +25,6 @@ function createAuxiliarySession(provider: string): AuxiliarySession {
     displayAfterMessageIndex: null,
     createdAt: "2026-08-15T00:00:00.000Z",
     updatedAt: "2026-08-15T00:00:00.000Z",
-    closedAt: "",
   };
 }
 

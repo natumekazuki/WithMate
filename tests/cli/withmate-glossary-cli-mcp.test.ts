@@ -18,34 +18,33 @@ import {
   WITHMATE_GLOSSARY_CLI_EXIT_CODES,
 } from "../../src-cli/glossary/withmate-glossary.js";
 import type {
-  WithMateMemoryRuntimeOperation,
-  WithMateMemoryRuntimeResponse,
-} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+  AgentRuntimeOperation,
+  AgentRuntimeResponse,
+} from "../../src-electron/platform/agent-runtime/runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/agent-runtime/runtime-exchange.js";
 
 const CLI_ENV = {
-  WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
-  WITHMATE_MEMORY_API_SECRET: "api-secret",
-  WITHMATE_MEMORY_OPERATOR_API_SECRET: "operator-secret",
-  WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
-  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
-  WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+  WITHMATE_AGENT_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-reference",
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-capability",
 };
 
-const MCP_ENV = {
-  ...CLI_ENV,
-  WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+const MCP_ENV = { ...CLI_ENV };
+const connection = {
+  api: { baseUrl: "http://127.0.0.1:7777", apiSecret: "api-secret",
+    applicationInstanceId: CLI_ENV.WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID,
+    runtimeGenerationId: CLI_ENV.WITHMATE_AGENT_RUNTIME_GENERATION_ID },
+  credential: { adapter: "mcp" as const, adapterSecret: "mcp-secret" },
 };
 
-function echoRuntimeCall(calls: WithMateMemoryRuntimeOperation[]) {
+function echoRuntimeCall(calls: AgentRuntimeOperation[]) {
   return async (
     _connection: unknown,
-    operation: WithMateMemoryRuntimeOperation,
+    operation: AgentRuntimeOperation,
     _options: unknown,
-  ): Promise<WithMateMemoryRuntimeResponse> => {
+  ): Promise<AgentRuntimeResponse> => {
     calls.push(operation);
     return {
       ok: true,
@@ -71,9 +70,9 @@ describe("withmate-glossary MCP contract", () => {
 // lifecycle = "permanent"
 // @end-test-value
 it("全operationがcanonical schemaを公開しSession ID自己申告を持たない", async () => {
-    const calls: WithMateMemoryRuntimeOperation[] = [];
+    const calls: AgentRuntimeOperation[] = [];
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createWithMateGlossaryMcpServer({ env: MCP_ENV, runtimeCall: echoRuntimeCall(calls) });
+    const server = createWithMateGlossaryMcpServer({ env: MCP_ENV, connection, runtimeCall: echoRuntimeCall(calls) });
     const client = new Client({ name: "withmate-glossary-test", version: "1.0.0" });
     try {
       await server.connect(serverTransport);
@@ -127,10 +126,10 @@ describe("withmate-glossary CLI contract", () => {
 // lifecycle = "permanent"
 // @end-test-value
 it("MCPと同じdefault requestを構築し未知optionやSession ID optionを拒否する", async () => {
-    const calls: WithMateMemoryRuntimeOperation[] = [];
+    const calls: AgentRuntimeOperation[] = [];
     let output = "";
     const exitCode = await runWithMateGlossaryCli(["get", "--term", "RT"], {
-      env: CLI_ENV,
+      env: CLI_ENV, connection,
       runtimeCall: echoRuntimeCall(calls),
       stdout: { write: (value) => { output += String(value); return true; } },
       stderr: { write: () => true },
@@ -149,7 +148,7 @@ it("MCPと同じdefault requestを構築し未知optionやSession ID optionを�
 
     for (const args of [["list", "--path", "C:/other"], ["list", "--session-id", "other"]]) {
       const rejected = await runWithMateGlossaryCli(args, {
-        env: CLI_ENV,
+        env: CLI_ENV, connection,
         stdout: { write: () => true },
         stderr: { write: () => true },
       });
@@ -157,11 +156,13 @@ it("MCPと同じdefault requestを構築し未知optionやSession ID optionを�
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "binding欠落時にGlossary dispatchを拒否する"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "provider executionがunboundへdowngradeする"
+// fault = "provider executionがunboundへdowngradeする"
+// observable = "binding欠落時のdispatch回数と返却code/effect/exit code"
+// observation_boundary = "public-boundary"
 // scope = "glossary-cli"
 // lifecycle = "permanent"
 // @end-test-value
@@ -169,6 +170,7 @@ it("provider execution markerにbindingがなければdispatchせずstructured a
     let calls = 0;
     let output = "";
     const exitCode = await runWithMateGlossaryCli(["list"], {
+      connection,
       env: {
         ...CLI_ENV,
         WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "",
@@ -208,7 +210,7 @@ it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect u
       },
     }, {
       adapter: "cli",
-      env: CLI_ENV,
+      env: CLI_ENV, connection,
       runtimeCall: async () => ({ ok: true, status: 200, value: {} }),
     });
 
@@ -248,12 +250,12 @@ it("Glossary専用exchangeのruntime 413応答をeffect noneに分類する", as
       },
     }, {
       adapter: "cli",
-      env: CLI_ENV,
+      env: CLI_ENV, connection,
       runtimeCall: async (_connection, _operation, options) => {
         dispatchCalls += 1;
         exchangePath = options.exchangePath ?? "";
         turnCapability = options.turnCapability ?? "";
-        return { ok: false, status: 413, value: { error: { code: "MEMORY_REQUEST_TOO_LARGE" } } };
+        return { ok: false, status: 413, value: { error: { code: "AGENT_RUNTIME_REQUEST_TOO_LARGE" } } };
       },
     });
 
@@ -294,22 +296,22 @@ it("全9操作が無bindingの明示repositoryで同じdispatchと結果を返�
     delete: { selector, expectedRevision: revision, targetTerm: "Parity", explicitUserRequest: true }, validate: { selector },
   };
   const unboundEnv = { ...MCP_ENV, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "", WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "", WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "" };
-  const calls: WithMateMemoryRuntimeOperation[] = [];
-  const runtimeCall = async (_connection: unknown, operation: WithMateMemoryRuntimeOperation, options: { bindingReference?: string; turnCapability?: string; exchangePath?: string }) => {
+  const calls: AgentRuntimeOperation[] = [];
+  const runtimeCall = async (_connection: unknown, operation: AgentRuntimeOperation, options: { bindingReference?: string; turnCapability?: string; exchangePath?: string }) => {
     assert.equal(options.bindingReference, undefined);
     assert.equal(options.turnCapability, undefined);
     assert.equal(options.exchangePath, WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH);
     return echoRuntimeCall(calls)(_connection, operation, options);
   };
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createWithMateGlossaryMcpServer({ env: unboundEnv, runtimeCall });
+  const server = createWithMateGlossaryMcpServer({ env: unboundEnv, connection, runtimeCall });
   const client = new Client({ name: "glossary-full-parity", version: "1.0.0" });
   try {
     await server.connect(serverTransport); await client.connect(clientTransport);
     for (const [operation, body] of Object.entries(inputs)) {
       let output = "";
       const exit = await runWithMateGlossaryCli([operation.replaceAll("_", "-"), "--json", JSON.stringify(body)], {
-        env: unboundEnv, runtimeCall, stdout: { write: (value) => { output += String(value); return true; } }, stderr: { write: () => true },
+        env: unboundEnv, connection, runtimeCall, stdout: { write: (value) => { output += String(value); return true; } }, stderr: { write: () => true },
       });
       const tool = await client.callTool({ name: `glossary.${operation}`, arguments: body });
       assert.equal(exit, 0);
@@ -320,14 +322,14 @@ it("全9操作が無bindingの明示repositoryで同じdispatchと結果を返�
     const count = calls.length;
     let invalid = "";
     assert.equal(await runWithMateGlossaryCli(["update", "--json", JSON.stringify({ selector })], {
-      env: unboundEnv, runtimeCall, stdout: { write: (value) => { invalid += String(value); return true; } }, stderr: { write: () => true },
+      env: unboundEnv, connection, runtimeCall, stdout: { write: (value) => { invalid += String(value); return true; } }, stderr: { write: () => true },
     }), WITHMATE_GLOSSARY_CLI_EXIT_CODES.usage);
     assert.equal(JSON.parse(invalid).code, "GLOSSARY_INVALID_REQUEST");
     assert.equal((await client.callTool({ name: "glossary.update", arguments: { selector } })).isError, true);
     assert.equal(calls.length, count);
     let shorthand = "";
     assert.equal(await runWithMateGlossaryCli(["list-targets", "--repository", selector.path], {
-      env: unboundEnv, runtimeCall, stdout: { write: (value) => { shorthand += String(value); return true; } }, stderr: { write: () => true },
+      env: unboundEnv, connection, runtimeCall, stdout: { write: (value) => { shorthand += String(value); return true; } }, stderr: { write: () => true },
     }), 0);
     assert.deepEqual(JSON.parse(shorthand).received.selector, selector);
     let schema = "";

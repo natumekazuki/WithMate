@@ -27,13 +27,7 @@ import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { AuxiliarySessionStorage } from "../auxiliary/auxiliary-session-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "../mate/mate-storage.js";
-import {
-  ProjectMemoryStorageV2Read,
-  SessionMemoryStorageV2Read,
-} from "../memory/memory-storage-v2-read.js";
 import { ModelCatalogStorage } from "../settings/model-catalog-storage.js";
-import { ProjectMemoryStorage } from "../memory/project-memory-storage.js";
-import { SessionMemoryStorage } from "../session/session-memory-storage.js";
 import { SessionStorage } from "../session/session-storage.js";
 import { SessionStorageV2 } from "../session/session-storage-v2.js";
 import { SessionStorageV3 } from "../session/session-storage-v3.js";
@@ -82,6 +76,9 @@ export type SessionStorageRead = AwaitableStorageMethods<
   getSessionMessageIdentity?: AwaitableStorageMethods<SessionStorageV6, "getSessionMessageIdentity">["getSessionMessageIdentity"];
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
   listSessionCredentialThreads?(): Awaitable<import("../session/session-storage-v6.js").SessionCredentialThreadInfo[]>;
+  getSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "getSessionLifecycleOperation">["getSessionLifecycleOperation"];
+  listPendingSessionLifecycleOperations?: AwaitableStorageMethods<SessionStorageV6, "listPendingSessionLifecycleOperations">["listPendingSessionLifecycleOperations"];
+  getCrewDeletionStatus?: AwaitableStorageMethods<SessionStorageV6, "getCrewDeletionStatus">["getCrewDeletionStatus"];
 };
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
@@ -96,10 +93,19 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   setSessionTitle?(sessionId: string, incarnationId: string, title: string): Awaitable<void>;
   setSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
   setSessionExecutionOptions?(sessionId: string, incarnationId: string, options: import("../../src-shared/session/session-execution-options.js").SessionExecutionOptions): Awaitable<void>;
+  setSessionAdditionalDirectories?: AwaitableStorageMethods<SessionStorageV6, "setSessionAdditionalDirectories">["setSessionAdditionalDirectories"];
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   appendSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "appendSessionSteer">["appendSessionSteer"];
+  beginSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "beginSessionSteer">["beginSessionSteer"];
+  settleSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "settleSessionSteer">["settleSessionSteer"];
+  patchSessionMetadata?: AwaitableStorageMethods<SessionStorageV6, "patchSessionMetadata">["patchSessionMetadata"];
+  promoteSessionToOverallCoordinator?: AwaitableStorageMethods<SessionStorageV6, "promoteSessionToOverallCoordinator">["promoteSessionToOverallCoordinator"];
+  beginSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "beginSessionLifecycleOperation">["beginSessionLifecycleOperation"];
+  prepareSessionLifecycleCreation?: AwaitableStorageMethods<SessionStorageV6, "prepareSessionLifecycleCreation">["prepareSessionLifecycleCreation"];
+  advanceSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "advanceSessionLifecycleOperation">["advanceSessionLifecycleOperation"];
+  deleteSessionCrewForLifecycle?: AwaitableStorageMethods<SessionStorageV6, "deleteSessionCrewForLifecycle">["deleteSessionCrewForLifecycle"];
   appendSessionTerminal?: AwaitableStorageMethods<SessionStorageV6, "appendSessionTerminal">["appendSessionTerminal"];
   checkpointSessionRunMetadata?: AwaitableStorageMethods<SessionStorageV6, "checkpointSessionRunMetadata">["checkpointSessionRunMetadata"];
   clearCharacterAuthoringRuntimeState?(
@@ -124,13 +130,15 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "listAllAuxiliarySessions"
   | "listAuxiliarySessions"
   | "listAuxiliarySessionSummaries"
-  | "listActiveAuxiliarySessionSummaries"
-  | "listRunningActiveAuxiliarySessions"
-  | "getActiveAuxiliarySession"
+  | "listRunningAuxiliarySessions"
+  | "getLatestAuxiliarySession"
   | "getAuxiliarySession"
   | "getAuxiliarySessionMetadata"
   | "appendAuxiliaryRunningTurnStart"
   | "appendAuxiliarySteer"
+  | "beginAuxiliarySteer"
+  | "settleAuxiliarySteer"
+  | "patchAuxiliarySessionMetadata"
   | "appendAuxiliaryTerminal"
   | "checkpointAuxiliaryRuntimeMetadata"
   | "getAuxiliarySessionView"
@@ -176,10 +184,8 @@ export type MateStorageAsyncAccess = AwaitableStorageMethods<
 
 export type SessionTurnStorageAccess = AwaitableStorageMethods<
   SessionTurnStorageV6,
-  "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn" | "getConversationTimingSnapshot"
+  "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn"
 > & Pick<SessionTurnStorageV6, "close">;
-export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
-export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
 export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;
 export type CharacterStorageAccess = CharacterStorageAsyncAccess;
 
@@ -187,8 +193,6 @@ export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorageAsyncAccess;
   characterStorage: CharacterStorageAccess;
   sessionStorage: SessionStorageRead;
-  sessionMemoryStorage: SessionMemoryStorageAccess;
-  projectMemoryStorage: ProjectMemoryStorageAccess;
   sessionTurnStorage: SessionTurnStorageAccess | null;
   auxiliarySessionStorage: AuxiliarySessionStorageAccess;
   appSettingsStorage: AppSettingsStorageAsyncAccess;
@@ -209,8 +213,6 @@ type PersistentStoreLifecycleDeps = {
   createModelCatalogStorage(dbPath: string): ModelCatalogStorage;
   createCharacterStorage?(dbPath: string, userDataPath: string): CharacterStorageAccess;
   createSessionStorage(dbPath: string): SessionStorage;
-  createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
-  createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
   createAuxiliarySessionStorage?(dbPath: string): AuxiliarySessionStorageAccess;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
@@ -270,12 +272,6 @@ export class PersistentStoreLifecycleService {
       : isV2Database
       ? new SessionStorageV2(dbPath)
       : this.deps.createSessionStorage(dbPath);
-    const sessionMemoryStorage = isV6Database || isV3Database || isV2Database
-      ? new SessionMemoryStorageV2Read()
-      : this.deps.createSessionMemoryStorage(dbPath);
-    const projectMemoryStorage = isV6Database || isV3Database || isV2Database
-      ? new ProjectMemoryStorageV2Read()
-      : this.deps.createProjectMemoryStorage(dbPath);
     const sessionTurnStorage = storageWorker ? storageWorker.stores.turn : null;
     const auxiliarySessionStorage = storageWorker
       ? storageWorker.stores.auxiliary
@@ -299,8 +295,6 @@ export class PersistentStoreLifecycleService {
       modelCatalogStorage,
       characterStorage,
       sessionStorage,
-      sessionMemoryStorage,
-      projectMemoryStorage,
       sessionTurnStorage,
       auxiliarySessionStorage,
       appSettingsStorage,
@@ -318,8 +312,6 @@ export class PersistentStoreLifecycleService {
       bundle.modelCatalogStorage,
       bundle.characterStorage,
       bundle.sessionStorage,
-      bundle.sessionMemoryStorage,
-      bundle.projectMemoryStorage,
       bundle.sessionTurnStorage,
       bundle.auxiliarySessionStorage,
       bundle.appSettingsStorage,
@@ -441,6 +433,9 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   getAuxiliarySessionMetadata(): null { return null; }
   appendAuxiliaryRunningTurnStart(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   appendAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  beginAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  settleAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  patchAuxiliarySessionMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   appendAuxiliaryTerminal(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   checkpointAuxiliaryRuntimeMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   getAuxiliarySessionView(): null { return null; }
@@ -457,15 +452,11 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
     return [];
   }
 
-  listActiveAuxiliarySessionSummaries(): AuxiliarySessionSummary[] {
+  listRunningAuxiliarySessions(): AuxiliarySessionSummary[] {
     return [];
   }
 
-  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
-    return [];
-  }
-
-  getActiveAuxiliarySession(): AuxiliarySession | null {
+  getLatestAuxiliarySession(): AuxiliarySession | null {
     return null;
   }
 
@@ -581,8 +572,6 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createModelCatalogStorage: (dbPath) => new ModelCatalogStorage(dbPath),
     createCharacterStorage: (dbPath, userDataPath) => new CharacterStorage(dbPath, userDataPath),
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
-    createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
-    createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
     createAuxiliarySessionStorage: (dbPath) => new AuxiliarySessionStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),

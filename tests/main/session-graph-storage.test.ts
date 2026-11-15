@@ -24,6 +24,60 @@ function record(id: string, topicId = "topic"): SessionGraphRecordInput {
 }
 
 // @test-value v2
+// kind = "invariant"
+// claim = "保存済みCrew関係から別枝とそのAuxの共有Graphを認可し、Standalone昇格と競合再取得後も既存記録・帰属・revisionを保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/921" }
+// fault = "子独自Graphを受理する、別Crewや古いcallerを受理する、または共有化でGraphを再作成する"
+// observable = "実SQLiteのGraph record・revision・帰属と不正操作後の状態"
+// observation_boundary = "public-boundary"
+// scope = "Crew Graph storage transaction"
+// lifecycle = "permanent"
+// impact = "共有記録の消失、Crew混合と削除後binding再利用を防ぐ"
+// distinction = "runtime mockではtransaction時の保存所属とincarnationを検証できない"
+// @end-test-value
+test("Crew storage shares the root Graph and preserves existing records across promotion", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-graph-crew-"));
+  const dbPath = path.join(temporary, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  const graph = new SessionGraphStorageV6(dbPath);
+  const db = openAppDatabase(dbPath);
+  try {
+    const root = sessions.insertSession(newSession("main", temporary));
+    const owner = { sessionId: root.id, incarnationId: getSessionIncarnationId(root) };
+    graph.execute(owner, "apply", { expectedRevision: 0, topics: [{ id: "topic", title: "Work" }], records: [record("existing")] }, identity);
+    const before = graph.execute(owner, "get", { ids: ["existing"] });
+    sessions.promoteSessionToOverallCoordinator(root.id, owner.incarnationId);
+    assert.deepEqual(graph.execute(owner, "get", { ids: ["existing"] }), before);
+    const left = sessions.insertSession({ ...newSession("left", temporary), sessionRole: "task-coordinator", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+    const right = sessions.insertSession({ ...newSession("right", temporary), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+    const unrelated = sessions.insertSession(newSession("unrelated", temporary));
+    const foreign = { sessionId: unrelated.id, incarnationId: getSessionIncarnationId(unrelated) };
+    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, created_at, updated_at) VALUES ('aux', 'left', 'aux-incarnation', 'time')").run();
+    const leftIdentity = { ...identity, sessionId: left.id, sessionTitle: "Left" };
+    const rightIdentity = { ...identity, sessionId: right.id, sessionTitle: "Right" };
+    const auxIdentity: SessionGraphIdentity = { ...identity, sessionId: "aux", sessionTitle: "Aux", role: "auxiliary" };
+    const authority = { caller: { sessionId: "aux", kind: "auxiliary" as const, incarnationId: "aux-incarnation" }, callerOwner: owner };
+    const shared = { expectedRevision: 1, records: [{ ...record("assigned"), actor: { sessionId: right.id } }] };
+    assert.deepEqual(graph.execute(owner, "apply", shared, auxIdentity, [rightIdentity], authority), { status: "ok", revision: 2 });
+    assert.deepEqual(graph.execute(owner, "apply", { expectedRevision: 1, records: [record("parallel")] }, leftIdentity), { status: "conflict", revision: 2 });
+    graph.execute(owner, "apply", { expectedRevision: 2, records: [record("parallel")] }, leftIdentity);
+    const read = graph.execute(owner, "recent", {});
+    if (read.status !== "ok") throw new Error("Unexpected conflict");
+    assert.deepEqual(read.items.map((item) => item.id).sort(), ["assigned", "existing", "parallel"]);
+    assert.deepEqual(read.items.find((item) => item.id === "assigned")?.actorSnapshot, rightIdentity);
+    assert.deepEqual(read.items.find((item) => item.id === "assigned")?.recordedBy, auxIdentity);
+    assert.throws(() => graph.execute({ sessionId: left.id, incarnationId: getSessionIncarnationId(left) }, "recent", {}), /owner is stale/);
+    assert.throws(() => graph.execute(foreign, "apply", { expectedRevision: 0 }, auxIdentity, [], authority), /own Crew/);
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 3, records: [{ ...record("foreign-actor"), actor: { sessionId: unrelated.id } }] }, auxIdentity, [{ ...identity, sessionId: unrelated.id }], authority), /outside the parent/);
+    assert.equal(graph.execute(foreign, "recent", { graphOwner: foreign }, auxIdentity, [], authority).revision, 0);
+    assert.throws(() => graph.execute(owner, "recent", {}, auxIdentity, [], { ...authority, caller: { ...authority.caller, incarnationId: "old" } }), /caller identity is stale/);
+    db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
+    assert.throws(() => graph.execute(owner, "recent", {}, auxIdentity, [], authority), /caller identity is stale/);
+    assert.equal(graph.execute(owner, "list_topics", {}).revision, 3);
+  } finally { graph.close(); db.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "新規の担当は呼出元から解決し、別agentの通常更新とユーザー採用で担当snapshot・初回記録者・内容由来を保持し、明示担当変更と任意属性解除だけを反映する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md#記録" }
@@ -45,7 +99,7 @@ test("Session Graph preserves responsibility and provenance across agent updates
   try {
     const main = sessions.insertSession(newSession("main", temporary));
     const owner = { sessionId: main.id, incarnationId: getSessionIncarnationId(main) };
-    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, status, created_at, updated_at) VALUES ('aux', 'main', 'active', 'time', 'time')").run();
+    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, created_at, updated_at) VALUES ('aux', 'main', 'time', 'time')").run();
     const a: SessionGraphIdentity = { ...identity, character: { id: "same-character", name: "Character", icon: "original.png" } };
     const b: SessionGraphIdentity = { ...a, sessionId: "aux", sessionTitle: "Auxiliary", role: "auxiliary" };
     const body = { id: "proposal", topicId: "topic", kind: "decision" as const, title: "Proposal", detail: "Plan", scope: "feature", references: [] };

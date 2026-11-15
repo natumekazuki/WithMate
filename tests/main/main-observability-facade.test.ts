@@ -12,7 +12,7 @@ function createService() {
   return new SessionObservabilityService({
     onProviderQuotaTelemetryChanged() {},
     onSessionContextTelemetryChanged() {},
-    onSessionBackgroundActivityChanged() {},
+
     onLiveSessionRunChanged() {},
   });
 }
@@ -171,7 +171,7 @@ test("Main quotaは有効化と認証変更を反映しWindowから再取得し�
 // kind = "contract"
 // claim = "MainObservabilityFacadeがquota更新とsession observability stateをserviceへ委譲する"
 // oracle = { type = "contract", ref = "src-electron/app/main-observability-facade.ts" }
-// fault = "provider quotaまたはbackground activityがfacade境界で欠落・誤変換される"
+// fault = "provider quota更新入力またはquota/context telemetryの取得結果がfacade境界で欠落・誤変換される"
 // observable = "adapterへのquota入力とserviceから取得したtelemetry state"
 // observation_boundary = "public-boundary"
 // scope = "main-observability-facade"
@@ -221,20 +221,10 @@ test("MainObservabilityFacade は observability service を透過し quota refre
     currentTokens: 200,
     messagesLength: 4,
   });
-  facade.setSessionBackgroundActivity("s-1", "memory-generation", {
-    kind: "memory-generation",
-    sessionId: "s-1",
-    status: "running",
-    title: "Memory generation",
-    updatedAt: new Date().toISOString(),
-    summary: "running",
-    errorMessage: "",
-  });
 
   assert.equal(refreshed?.provider, "codex");
   assert.equal(facade.getProviderQuotaTelemetry("codex")?.provider, "codex");
   assert.equal(facade.getSessionContextTelemetry("s-1")?.currentTokens, 200);
-  assert.equal(facade.getSessionBackgroundActivity("s-1", "memory-generation")?.status, "running");
   assert.deepEqual(calls.map(({ signal, ...input }) => input), [{ providerId: "codex", appSettings }]);
   assert.equal(calls[0]?.signal?.aborted, false);
   assert.deepEqual(adapterProviderIds, ["codex"]);

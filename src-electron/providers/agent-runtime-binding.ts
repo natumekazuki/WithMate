@@ -1,13 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { MemoryRuntimeOwnerSelector } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+import type { RuntimeOwnerSelector } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
-import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
-import { assertSessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
-import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
-import { backgroundMemoryToolOperations, getBackgroundReadOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import type { AgentRuntimeSourceRef } from "../../src-shared/agent-runtime/agent-runtime-source.js";
 
-const backgroundHistoryOperations = new Set(getSessionHistoryAgentRuntimeOperations());
 
 export type AgentRuntimeOperation = string;
 
@@ -17,14 +12,13 @@ export type AgentRuntimeBindingRecord = {
   bindingId: string;
   bindingReferenceHash: string;
   actorSessionId: string;
-  actorSource?: BackgroundSourceRef;
+  actorSource?: AgentRuntimeSourceRef;
   providerId: string;
   executionGeneration: string;
   authoritySnapshot: AgentRuntimeAuthoritySnapshot;
   operationGrants: readonly AgentRuntimeOperation[];
   createdAt: string;
   expiresAt: string | null;
-  backgroundScope?: BackgroundExecutionScope;
 };
 
 export type ProviderAgentRuntimeBindingProjection = {
@@ -34,15 +28,12 @@ export type ProviderAgentRuntimeBindingProjection = {
   executionGeneration: string;
   transport: "env" | "unsupported";
   expiresAt: string | null;
-  background?: true;
   turnCapability?: string;
-  memoryRuntimeOwner?: MemoryRuntimeOwnerSelector;
+  runtimeOwner?: RuntimeOwnerSelector;
   managedMcp?: {
-    memoryUrl: string;
     glossaryUrl: string;
     sessionGraphUrl: string;
-    /** Served by the host but exposed to a Provider only for an app-managed background execution. */
-    sessionHistoryUrl?: string;
+    sessionUrl?: string;
     token: string;
   };
 };
@@ -66,7 +57,7 @@ export type AgentRuntimeBindingResolveResult =
 
 export type IssueAgentRuntimeBindingInput = {
   actorSessionId: string;
-  actorSource?: BackgroundSourceRef;
+  actorSource?: AgentRuntimeSourceRef;
   providerId: string;
   authoritySnapshot?: AgentRuntimeAuthoritySnapshot;
   operationGrants: readonly AgentRuntimeOperation[];
@@ -79,8 +70,6 @@ export type AgentRuntimeBindingChange = {
   providerId: string;
   previousExecutionGeneration: string | null;
   executionGeneration: string | null;
-  /** Present only for a background binding transition, not a normal Session index change. */
-  backgroundBindingId?: string;
 };
 
 type ActiveBinding = {
@@ -220,32 +209,6 @@ export class AgentRuntimeBindingRegistry {
     return this.project(active, transport);
   }
 
-  issueBackground(input: IssueAgentRuntimeBindingInput & { scope: BackgroundExecutionScope }): ProviderAgentRuntimeBindingProjection {
-    const actorSessionId = input.actorSessionId.trim();
-    const providerId = input.providerId.trim();
-    assertSessionHistoryReadScope(input.scope.history);
-    if (!actorSessionId || actorSessionId !== input.scope.history.source.sessionId
-      || !providerId || getProviderAgentRuntimeBindingCapability(providerId).transport !== "env") {
-      throw new Error("Background binding requires its real source Session and a supported provider.");
-    }
-    const reference = randomBytes(32).toString("base64url");
-    const record: AgentRuntimeBindingRecord = {
-      bindingId: randomUUID(), bindingReferenceHash: hashBindingReference(reference),
-      actorSessionId, providerId, executionGeneration: randomUUID(),
-      authoritySnapshot: structuredClone(input.authoritySnapshot ?? {}),
-      operationGrants: [...new Set(input.operationGrants)].sort(),
-      createdAt: (input.now ?? new Date()).toISOString(), expiresAt: normalizeExpiresAt(input.expiresAt),
-      backgroundScope: structuredClone(input.scope),
-    };
-    const key = `background\0${record.bindingId}`;
-    const active = { record, reference, authorityFingerprint: "" };
-    this.bindingsByKey.set(key, active);
-    this.keysByReferenceHash.set(record.bindingReferenceHash, key);
-    this.emitChange({ actorSessionId, providerId, previousExecutionGeneration: null,
-      executionGeneration: record.executionGeneration, backgroundBindingId: record.bindingId });
-    return this.project(active, "env");
-  }
-
   resolve(
     bindingReference: string | null | undefined,
     operation: AgentRuntimeOperation,
@@ -253,11 +216,6 @@ export class AgentRuntimeBindingRegistry {
   ): AgentRuntimeBindingResolveResult {
     const result = this.resolveIdentity(bindingReference, now);
     if (!result.ok) return result;
-    const scope = result.binding.backgroundScope;
-    if (scope && !backgroundHistoryOperations.has(operation) && !getBackgroundReadOperations().includes(operation)
-      && !Object.values(backgroundMemoryToolOperations(scope.purpose, true, scope.fileAccess)).includes(operation)) {
-      return { ok: false, code: "SESSION_BINDING_FORBIDDEN" };
-    }
     return result.binding.operationGrants.includes(operation)
       ? result : { ok: false, code: "SESSION_BINDING_FORBIDDEN" };
   }
@@ -290,7 +248,6 @@ export class AgentRuntimeBindingRegistry {
         operationGrants: [...active.record.operationGrants],
         createdAt: active.record.createdAt,
         expiresAt: active.record.expiresAt,
-        ...(active.record.backgroundScope ? { backgroundScope: structuredClone(active.record.backgroundScope) } : {}),
       },
     };
   }
@@ -305,9 +262,8 @@ export class AgentRuntimeBindingRegistry {
 
   revokeSession(actorSessionId: string): void {
     for (const [key, active] of [...this.bindingsByKey.entries()]) {
-      const source = active.record.backgroundScope?.history.source;
       if (active.record.actorSessionId === actorSessionId
-        || (source?.kind === "auxiliary" && source.parent.sessionId === actorSessionId)) {
+        || (active.record.actorSource?.kind === "auxiliary" && active.record.actorSource.parent.sessionId === actorSessionId)) {
         this.revokeActiveBinding(key, active);
       }
     }
@@ -319,12 +275,6 @@ export class AgentRuntimeBindingRegistry {
         this.revokeActiveBinding(key, active);
         return;
       }
-    }
-  }
-
-  revokeBackgroundProvider(providerId: string): void {
-    for (const [key, active] of [...this.bindingsByKey]) {
-      if (active.record.backgroundScope && active.record.providerId === providerId) this.revokeActiveBinding(key, active);
     }
   }
 
@@ -368,7 +318,6 @@ export class AgentRuntimeBindingRegistry {
       executionGeneration: active.record.executionGeneration,
       transport,
       expiresAt: active.record.expiresAt,
-      ...(active.record.backgroundScope ? { background: true as const } : {}),
     };
   }
 
@@ -379,7 +328,6 @@ export class AgentRuntimeBindingRegistry {
       providerId: active.record.providerId,
       previousExecutionGeneration: active.record.executionGeneration,
       executionGeneration: null,
-      ...(active.record.backgroundScope ? { backgroundBindingId: active.record.bindingId } : {}),
     });
   }
 

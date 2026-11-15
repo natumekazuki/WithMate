@@ -35,7 +35,7 @@ test("Session Graph UI reads aggregate full scopes and page original evidence at
       branch: "main", characterId: "character", character: "Character", characterIconPath: "",
       characterThemeColors: { main: "#000000", sub: "#ffffff" }, approvalMode: DEFAULT_APPROVAL_MODE }));
     const db = openAppDatabase(dbPath);
-    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, status, created_at, updated_at) VALUES ('aux', 'main', 'active', 'time', 'time')").run();
+    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, created_at, updated_at) VALUES ('aux', 'main', 'time', 'time')").run();
     db.close(); sessions.close();
     bundle = createV6StorageWorkerBundle({ dbPath, userDataPath: temporary,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
@@ -46,7 +46,7 @@ test("Session Graph UI reads aggregate full scopes and page original evidence at
     const identity: SessionGraphIdentity = { sessionId: "main", sessionTitle: "Main", role: "main", character: { id: "character", name: "Character", theme: { main: "#000000", sub: "#ffffff" } } };
     const auxiliary: SessionGraphIdentity = { ...identity, sessionId: "aux", sessionTitle: "Aux", role: "auxiliary" };
     let available = true;
-    const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: () => available ? { owner, identity, providerId: "codex", generation: store } : null });
+    const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: () => available ? { owner, source: { kind: "main", incarnationId: owner.incarnationId }, identity, providerId: "codex", generation: store } : null });
     const records: SessionGraphRecordInput[] = [
       ...Array.from({ length: 6 }, (_, index) => record(`requirement-${index}`)),
       { ...record("constraint"), kind: "constraint" },

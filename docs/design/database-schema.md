@@ -6,13 +6,11 @@
 
 永続化データの正本と、Markdownやprovider instructionなどのgenerated projectionを混同しない。生成された投影は手編集を正本とせず、削除・忘却した情報を再投影やproviderへの送信に残さない。
 
-背景三用途のProvider／model／任意のreasoningEffort・用途別権限・登録本文は`app_settings`の`background_execution_settings_json`、Memory二用途の頻度は`memory_recording_frequencies_json`に保存する。既存AppSettingsの読込・保存・変更通知を用い、キー欠落時だけ初期化し、不正値を既定値へ置換しない。選択未設定と本文未設定・空文字列を区別する。
-
-元会話×用途の背景native thread ID・前回失敗・待機通知はアプリruntime内だけで保持し、DBへ保存しない。再起動時に過去の待機や失敗範囲を自動復元しない。保存済みMemory／Affectはそのまま保持し、生成・登録対象の完了cursorや実行台帳は設けない。実行ごとの認可と継続の契約は[Background Execution](background-execution.md)を参照する。
-
 V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存操作はstorage Workerが所有する。Mainは許可されたtyped commandを非同期で送る。close、reset、reopen後に旧storage generationの遅延応答を新しいDBへ適用しない。
 
 ## Storage Overview
+
+通常Sessionの端末共通運用設定は、`app_settings`の`session_selection_policy_json`（選定基準・実行設定の目安・順序付き契約経路）と`worktree_policy_json`（root・Git common directoryごとの配置ルール）に保存する。Storage Workerのtyped commandだけで更新し、未設定の読取で値を生成しない。通常の設定保存では保持し、設定全体resetでは解除する。実測quota、認証情報、Session実行設定とは独立し、schema migrationは追加しない。公開操作は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。
 
 | 領域 | 主な正本 |
 | --- | --- |
@@ -22,10 +20,9 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | Turn Queue | `session_turn_queue_v6` |
 | Files Pin | `session_file_pins_v6` |
 | Session Graph | `session_graphs_v6`、`session_graph_topics_v6`、`session_graph_records_v6`、`session_graph_relations_v6` |
+| Coordination | `coordination_records_v7` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn | `session_turns_v6` |
-| Memory | `memory_*_v6` |
-| Character Affect | `character_affect_*_v6` |
 
 Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、metadataと順序付きmessage行、artifact詳細を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
@@ -35,21 +32,37 @@ turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設�
 
 質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。入力値や既定値、再操作用のlive requestは保存しない。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
 
+通常Session送信の`accepted_json.origin.requestedExecutionOptions`は送信時の明示設定（省略項目を除く）を保持する。省略を解決した実効設定は既存の`accepted_json.request.executionOptions`へ格納し、同一request IDの照合には両方を使う。既存行に指定情報がない場合は補完せず、保存済み受付・結果を従来どおり読み取る。専用tableやschema migrationは追加しない。
+
+親からの直接Steerは、子の既存user message JSONの`turnInput`へ対象WithMate Turn・native Turn・配送状態・添付と`origin`を保存する。originは実親のSession／incarnation／送信元Turn、明示宛先と表示snapshotを持ち、`kind: session`・`operation: steer`としてGUI入力と区別する。Provider呼出前にpendingを保存し、受理と保存の確定でconfirmed、送信結果不明はunknown、未送信確定はnot-sentとする。保存済みconfirmedを後続の失敗で巻き戻さない。既存のTurn入力保存・終端待機を使い、専用receipt・table・migrationは追加しない。originのない既存入力へ現在の親情報を補記しない。
+
 Turn Queueは次の項目を保持する。
 
 - 親Session ID
 - 任意のAuxiliary ID
 - 対象incarnation
-- GUI request ID
+- 呼出元request ID
 - 受付順
 - 実行順
-- 捕捉値
+- 編集可能な実行予定入力（`captured_json`）
+- 不変の受付時入力（`accepted_json`）
+- dispatch claimで固定した採用入力（`dispatched_json`）
 - 状態
 - 最小turn ID／user seq
 - 追加入力先Turn ID
 - 結果不明後の明示解放時刻
 
 受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。
+
+receiptのUUIDは受付時から終端後まで同じexecution identityである。新規受付は実actorの会話・incarnation・Turn、操作と明示宛先をoriginとして入力に含める。GUI入力はGUI起点として区別する。受付時入力は再試行照合元であり、編集と追加入力では変更しない。採用入力は通常dispatchとqueue経由Steerのclaimで本文・添付を一緒に固定し、Provider未呼出が確認されたqueued復帰でのみ固定を解除する。固定はProvider受信の証明ではない。原文・採用入力が保存されていない既存行はNULLのまま保持し、現在の入力から補わない。
+
+Session送信の`origin.deliveryTiming`は`immediate`（省略時の既定）または`after_source_turn`である。後者も受付時にreceiptを永続化し、通常のqueued状態で保持する。dispatch／Steerのclaimは、受付originの正確な送信元Main・incarnation・Turnの保存済みphaseがcompleted／failed／canceledで、終端保存が確定したものだけを対象とする。未完了・不明・置換された送信元では開始しない。実行候補はこの条件を満たすqueued項目の実行順とし、終了待ちの項目だけで後続の即時送信を塞がない。sourceの終端保存と結果は既存Turnを正本とし、新しいtableや終了フラグを持たない。受付読取の`sourceTurnPhase`はその正本から投影し、dispatch時の終端phaseを採用originへ含める。受付時本文とoriginは変更しない。
+
+保存済み終端と実行guardの解放は別である。取消grace後も元Provider処理が残る場合は、runtimeが保持する未解放のexact Turn IDをclaim／Steerの除外条件へ渡す。GUI／公開receiptの`sourceTurnPendingRelease`はこのruntime待機を表す一時的な投影で、DBへ複製しない。実解放で解除し、その後に始まった別Turnは以前の報告を止めない。
+
+Sessionからの送信とCoordination配送のoriginには、受付時の送信元・宛先のSession名とCharacterのID・名前・icon参照を表示snapshotとして含める。snapshotは表示用であり、認可・navigationには実Session identityを使う。再試行や予定入力の編集で保存済みsnapshotを現在の名前・Characterへ付け替えず、snapshotのない既存originへ現在値を補記しない。
+
+送信側の読取は、表示中の保存message seqを既存Turnへ一括解決し、receiptの`accepted_json.origin`にある送信actorのkind・Session・incarnation・Turnを完全一致させる。実行中は明示されたWithMate Turnだけを追加対象にし、Provider native IDや最新Turnから推測しない。既存receiptのexpression indexを使い、受付sequenceのkeysetで最大20件ずつ、本文は320文字の原文previewとして返す。全文と配送・受信Turnの結果は返却された正確な宛先とreceiptから共通execution読取で取得する。送信本文の別保存や会話messageの複製は行わない。
 
 Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。
 
@@ -63,23 +76,29 @@ Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親ま�
 
 継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
 
-Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Foundation](v6-memory-foundation.md)と[V6 Memory Protected Objects](v6-memory-protected-objects.md)を参照する。Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
+Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
 
-Memory出典の`source_session_id`は実Main、`source_auxiliary_session_id`は実Auxiliaryを参照する。Auxiliary登録ではMain側をNULLにし、同名IDを親Mainへ代用しない。Auxiliary削除では出典FKをSET NULLにして登録済みMemory本文・targetを保持する。既存V6への列追加はWorkerの`ensureV6Schema`で行い、保存済みentryを作り直さない。公開readの`source.auxiliarySessionId`は出典がある場合だけ返し、MCP／CLIで同じ契約を使う。
+## Coordination
 
-## Character Affect
+`coordination_records_v7`はCrew起点Mainをownerとし、起票元の実Main／Auxiliary identity・Turn、元依頼receiptと保存originの実呼出元、現在の回答担当、本文・選択肢、現在の回答とrevisionを保持する。回答担当の変更で起票元は変えない。参照は全Crewへ公開するが、更新権限は起票元・現在の担当・実ユーザーごとに検証する。実ユーザー回答はtrusted GUI入口に限る。
 
-`character_affect_*_v6`をMain／Auxiliaryで共用する。session-layer eventとresetのscope ownerはMainの`session_id`かAuxiliaryの`auxiliary_session_id`の一方だけで、対象会話削除時にcascade削除する。relationship-layerは両scope列をNULLとし、Character／local-user単位で全会話に共有する。発生元は`source_session_id`か`source_auxiliary_session_id`に保持し、削除時はprovenanceだけをNULLにする。mutation／observationの会話参照も削除時にNULLとなる。
+明示配送は通常の`session_turn_queue_v6`へ受付け、Coordinationとqueueの保存は同じWorker接続のtransaction内で行う。操作UUIDによる再試行照合は記録内の操作情報を用い、公開結果へは返さない。置き換えられた回答の本文はCoordination本体に残さず、その操作IDの再使用を拒否する。独立queue・outbox・台帳は持たない。訂正記録と訂正元の状態も同じtransactionで保存する。
 
-内部`sessionSource`が実kind・incarnation・親identity、背景では既存WorkerのownerIdentityを伝え、同名Main／Auxiliaryを区別する。未指定の既存入力はMainである。projection／version／inspect／correct／resetは同じownerを使う。別会話の一時感情は既存afterglowのread-time規則だけで合成し、relationshipへ転写しない。詳細は[ADR018](../adr/018-character-affect-event-persistence.md)に従う。
+回答は起票元が取得する前まで変更できる。変更時は未開始の旧回答配送を取り消し、新しい回答と配送を同じtransactionで保存する。配送開始中の変更は拒否し、配送状態の確認を求める。起票元のTurn入力が保存された時にその回答を取得済みにする。起票元のMCP／CLI操作が回答を返す場合も同じtransactionで取得済みにし、以後は保存側で回答の変更を拒否する。GUIや他Sessionの参照は取得済みにしない。取得済みは回答の利用や相談の解決を意味せず、明示consumeとresolveは別である。
 
-schema ensureは既存Affect tablesの列・CHECK・FKを更新する際、接続するevent／reset／idempotency／mutation／observationを同じsavepoint内で再構築する。既存Main行、ID、Memory link、fingerprint、監査をコピーして保持し、Mainのstate versionを変更しない。Memory tablesと保存本文は対象外で、`user_version`は6を維持する。
+Agent担当が未取得の回答をユーザーへ引き継ぐ場合は、その未開始配送と回答を取り消し、引継ぎ理由を現在の相談情報として示す。取得済みの回答は引継ぎで置き換えず、新しい相談として扱う。訂正された相談は現在の訂正先を参照できる。
+
+取り下げと回答は併存する。取り下げは受理済み回答・queueを取消さず、未取得の有効な回答も受付ける。queueの本文は相談／回答の自然文とし、ID・回答revision・来歴・状態を持つ通知snapshotは既存captured入力の`coordination.notification`へ分離する。受付時入力を保ち、dispatch claim時に現在状態と取り下げ理由を採用通知へ追加する。Providerには本文と別の入力来歴contextで通知を渡す。通知JSONを本文に持つ既存受付も保存metadataで識別してdispatch時に分離し、受付原文と既存の保存会話は書き換えない。置き換えで取り消した受付も通常queueの受付記録として残る。Coordinationは既存Provider質問・承認やGUI Steerへ変換しない。
+
+起票Turn終了・Window close・再起動で記録は失効しない。Crew削除は未対応記録の起票元・現在のAgent担当と通常queueの既存guardで判定し、成立したCrew全体削除ではCrew所有記録をcascade削除する。解決済みや取り下げ済みの相談もCrewが存続する間保持する。
+
+詳細取得は起票元の保存identityから共通execution read用の`initiatorTarget`を投影する。Auxiliaryでは現在の親Main identityも同じ読取transactionで解決し、記録自身へ重複保存しない。存在しない記録・明示指定された削除済みCrew／Mainの照会は`COORDINATION_DELETED`としてGUIへ返す。通信失敗や認可失敗をこの終端結果へ変換せず、一時取得失敗と削除済み表示を区別する。
 
 ## Session Graph
 
 Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Auxiliaryが共有する。親削除で全記録をcascade削除し、AuxiliaryのCloseでは消さない。構造・競合・MCP・表示の契約は[Session Graph](session-graph.md)を参照する。
 
-起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Memory、Affect、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
+起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
 
 ## Additional Directory
 
@@ -105,7 +124,42 @@ Modelの無効設定は`app_settings`の`model_availability_json`へprovider別�
 
 SDK model一覧は`provider_model_cache`へproviderとcontext keyの組を主キーに保存する。`provider_json`と`fetched_at`を保持し、context keyやcredentialをrendererへ渡さない。更新契約は[Provider Model Discovery](model-catalog.md)を参照する。V6 schema更新では`model_catalog_models`、`model_catalog_providers`、`model_catalog_revisions`を削除する。公開済みSessionの`catalog_revision`列の保存値は保持するが、実行設定の検証には使わず、Session、会話、draft、最小turnをcatalog変更で移行しない。
 
-V6 schema更新は`character_affect_turn_settlements`を`DROP TABLE IF EXISTS`で削除する。旧queueのpending、評価候補、retry、実行中、quarantineは再開せず、本文・候補も除去する。旧storage constructorや中断回収を起動せず、再実行・再起動でも旧評価を送信しない。破棄を評価成功として扱わず、保存済みAffect event／関連episode／一般Memoryとversion・idempotency情報は保持する。一部保存済みや保存結果不明の候補も再適用しない。
+### Memory/Affect廃止と共有保存データの継続
+
+Memory／Affectの専用データは、起動時のstorage更新で退避せず破棄する。fresh DBには専用table・設定を作成しない。除去対象の正本は`src-electron/storage/migrations/memory-affect-removal.ts`、起動接続は`app-database-path.ts`と`database-schema-v6.ts`、採用範囲と復元元は[ADR 036](../adr/036-memory-affect-removal.md)に記す。
+
+専用V6 tableは次の15件である。保存本文・eventだけでなく、関連・tag・添付metadata・変更記録・idempotencyを一体で除去する。これに加え、旧queueの`character_affect_turn_settlements`も除去し、候補を再適用しない。
+
+- Affect: `character_affect_observations_v6`、`character_affect_mutations_v6`、`character_affect_idempotency_v6`、`character_affect_resets_v6`、`character_affect_events_v6`
+- Memory: `memory_entry_relations_v6`、`memory_entry_tags_v6`、`memory_idempotency_forget_results_v6`、`memory_idempotency_keys_v6`、`memory_move_events_v6`、`memory_mutation_events_v6`、`memory_protected_objects_v6`、`memory_target_tag_stats_v6`、`memory_tag_catalog_v6`、`memory_entries_v6`
+
+`app_settings`から削除する専用keyは次の7件に限定し、他の設定行は保持する。
+
+- `memory_generation_enabled`
+- `memory_extraction_provider_settings_json`
+- `mate_memory_generation_settings_json`
+- `memory_file_quota_bytes`
+- `character_affect_context_enabled`
+- `memory_recording_frequencies_json`
+- `background_execution_settings_json`
+
+通常Main／Auxiliary、会話・artifact・最小turn、Session Graph、Coordination、Character catalog・定義・snapshot、`project_scopes_v6`、Prompt Templateと共有file／blobは専用破棄の対象外である。元取込file、利用者export（SessionFolder内の`memory-exports/`も含む）、V4 sourceは保持し、破棄済み専用データの再取込元にはしない。製品外のルール・設定・既設CLI登録は清掃しない。再実行では削除済みの専用table・設定・fileを再作成しない。
+
+### 専用データ破棄のfilesystem境界
+
+file除去はmanaged userData配下の`memory-objects/v6/`全体（`.staging/`を含む）と`memory-keys/v6-keyring.json`だけを対象とする。親の`memory-objects/`・`memory-keys/`全体、共有file、元取込file、exportを削除対象へ広げない。
+
+userData、対象までの祖先、対象とその配下を`lstat`／`realpath`で検査し、包含範囲外、symlink／junction、想定外のfile種別を拒否する。payload treeとkeyringの事前検査を終えてから削除し、削除直前にも検査する。対象が既に存在しない場合は除去不要として扱う。既存V6 DBも、schema変更前にDB fileと祖先がlink経由でないことを確認する。この検査は外部参照を辿って削除する許可ではない。
+
+### 起動更新の失敗とデータ保護
+
+DBの専用table・設定除去は既存`ensure_v6_schema` savepoint内で行い、foreign keyを無効化せず、失敗したschema更新をrollbackして例外を返す。専用tableが存在する既存V6の更新失敗を、V4からの置換や空DB作成による起動成功へ変換しない。file検査・削除の失敗も起動入口へ伝播し、破棄成功として起動を継続しない。
+
+file除去とDB更新は一つのtransactionではない。file除去はschema更新より先に行われるため、後続DB更新の失敗で除去済みfileが復元される保証はない。file削除途中の失敗も全fileのrollbackとは扱わない。退避・自動復元・専用データの再生成による救済は行わず、障害解消後の再実行でも同じ限定された対象だけを処理する。
+
+契約のsynthetic検証は`tests/main/memory-affect-removal.test.ts`で、本番起動storage入口による専用破棄・共有行保持・再実行、SQL失敗時のDB rollbackと起動拒否、link先非削除を確認する。これは稼働環境への適用・実データ破棄の完了を意味しない。
+
+### 継続データの移行と退役データcleanup
 
 `resolveOrMigrateAppDatabasePath`は、既存のvalid V6を優先し、必要ならV4の継続データをV6へ取り込む。V6がない場合は、存在するvalid sourceに応じてV4→V6、V3→V4→V6、V2→V3→V4→V6、V1→V2→V3→V4→V6の経路を使う。sourceにないDBを選んで上書きせず、未対応の新しいV4 schemaを旧版migrationで上書きしない。V6の継続対象と非対象は[V6 Database Foundation](v6-database-foundation.md)に記す。
 
@@ -113,6 +167,6 @@ V6 schema更新は`character_affect_turn_settlements`を`DROP TABLE IF EXISTS`�
 
 起動時の退役データcleanupは、管理対象のV6・移行元DB・backupからCompanion専用table／行、専有file・blob・SessionFolderと専用Git namespaceだけを対象とする。
 
-通常Session／最小turn、共有Memory／Affect本文、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。
+通常Session／最小turn、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。
 
 詳細な対象判定は`src-electron/storage/migrations/companion-removal.ts`と関連helperを正本とし、一般のDB resetやmigrationによるユーザーデータの無断破棄へ拡張しない。

@@ -13,9 +13,9 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
-import { startHomeLaunch, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
+import { startHomeLaunch, type HomeLaunchCreationAttempt, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
-export type HomeLaunchLifetime = { starting: boolean };
+export type HomeLaunchLifetime = HomeLaunchCreationAttempt & { starting: boolean; draft?: HomeLaunchDraft };
 
 type HomeLaunchHandlersContext = {
   launchDraft: HomeLaunchDraft;
@@ -52,6 +52,7 @@ export type HomeLaunchHandlers = {
   onOpenLaunchDialog: () => Promise<void>;
   onCloseLaunchDialog: () => void;
   onSelectLaunchProvider: (providerId: string) => void;
+  onSelectLaunchRole: (role: HomeLaunchDraft["sessionRole"]) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
   onSelectRandomLaunchCharacter: () => void;
   onChangeTitle: (value: string) => void;
@@ -151,8 +152,13 @@ export function buildHomeLaunchHandlers({
       return;
     }
     lifetime.starting = true;
+    if (lifetime.draft !== launchDraft) {
+      lifetime.draft = launchDraft;
+      delete lifetime.request;
+    }
     try {
       await startHomeLaunch({
+        creationAttempt: lifetime,
         draft: launchDraft,
         launchStarting,
         mateState,
@@ -188,6 +194,10 @@ export function buildHomeLaunchHandlers({
     onOpenLaunchDialog,
     onCloseLaunchDialog,
     onSelectLaunchProvider,
+    onSelectLaunchRole: (sessionRole) => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => ({ ...current, sessionRole }));
+    },
     onSelectLaunchCharacter: (characterId) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => updateLaunchDraftForCharacterSelection(current, characterId));

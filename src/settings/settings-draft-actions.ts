@@ -1,37 +1,21 @@
-import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
-  addMateMemoryGenerationPriorityDraft,
-  removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
-  updateCharacterAffectContextEnabled,
   updateCharacterDefinitionEnabled,
-  updateConversationTimingEnabled,
+  updateCurrentDateEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPathDraft,
   updateLaunchAtLoginEnabled,
-  updateMateMemoryGenerationPriorityModelDraft,
-  updateMateMemoryGenerationPriorityProviderDraft,
-  updateMateMemoryGenerationPriorityReasoningEffortDraft,
-  updateMateMemoryGenerationPriorityTimeoutSecondsDraft,
-  updateMateMemoryGenerationTriggerIntervalMinutesDraft,
-  updateMemoryExtractionModelDraft,
-  updateMemoryExtractionReasoningEffortDraft,
-  updateMemoryExtractionThresholdDraft,
-  updateMemoryExtractionTimeoutSecondsDraft,
-  updateMemoryFileQuotaMegabytesDraft,
-  updateMemoryGenerationEnabled,
   updateKeyboardShortcuts,
   updateScrollToLatestOnSend,
   updatePreviewWheelZoomStep,
   updateSessionTurnNotificationEnabled,
   updateSessionApprovalNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
-  updateToolCallPresenceEnabled,
 } from "./settings-draft.js";
 
 type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void;
@@ -39,14 +23,6 @@ type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void
 type SettingsDraftActionInput = {
   setSettingsDraft: SetSettingsDraft;
 };
-
-type ModelCatalogActionInput = SettingsDraftActionInput & {
-  modelCatalog: ModelCatalogSnapshot | null;
-};
-
-function getProviderCatalog(modelCatalog: ModelCatalogSnapshot | null, providerId: string) {
-  return modelCatalog?.providers.find((provider) => provider.id === providerId) ?? null;
-}
 
 export function handleChangeProviderEnabled(input: SettingsDraftActionInput & {
   providerId: string;
@@ -78,12 +54,6 @@ export function handleChangeProviderInstructionRelativePath(input: SettingsDraft
     updateCodingProviderInstructionRelativePathDraft(current, input.providerId, input.instructionRelativePath));
 }
 
-export function handleChangeMemoryGenerationEnabled(input: SettingsDraftActionInput & {
-  enabled: boolean;
-}): void {
-  input.setSettingsDraft((current) => updateMemoryGenerationEnabled(current, input.enabled));
-}
-
 export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
@@ -96,22 +66,10 @@ export function handleChangeCharacterDefinitionEnabled(input: SettingsDraftActio
   input.setSettingsDraft((current) => updateCharacterDefinitionEnabled(current, input.enabled));
 }
 
-export function handleChangeCharacterAffectContextEnabled(input: SettingsDraftActionInput & {
+export function handleChangeCurrentDateEnabled(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
-  input.setSettingsDraft((current) => updateCharacterAffectContextEnabled(current, input.enabled));
-}
-
-export function handleChangeConversationTimingEnabled(input: SettingsDraftActionInput & {
-  enabled: boolean;
-}): void {
-  input.setSettingsDraft((current) => updateConversationTimingEnabled(current, input.enabled));
-}
-
-export function handleChangeToolCallPresenceEnabled(input: SettingsDraftActionInput & {
-  enabled: boolean;
-}): void {
-  input.setSettingsDraft((current) => updateToolCallPresenceEnabled(current, input.enabled));
+  input.setSettingsDraft((current) => updateCurrentDateEnabled(current, input.enabled));
 }
 
 export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput & {
@@ -155,113 +113,8 @@ export function handleChangeSessionTurnNotificationResponsePreviewEnabled(input:
     updateSessionTurnNotificationResponsePreviewEnabled(current, input.enabled));
 }
 
-export function handleChangeMemoryFileQuotaMegabytes(input: SettingsDraftActionInput & {
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateMemoryFileQuotaMegabytesDraft(current, input.value));
-}
-
 export function handleChangeGlossaryProactiveCreateLimit(input: SettingsDraftActionInput & {
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateGlossaryProactiveCreateLimitDraft(current, input.value));
-}
-
-export function handleChangeMemoryExtractionModel(input: ModelCatalogActionInput & {
-  providerId: string;
-  model: string;
-}): void {
-  const providerCatalog = getProviderCatalog(input.modelCatalog, input.providerId);
-  if (!providerCatalog) {
-    return;
-  }
-
-  input.setSettingsDraft((current) => updateMemoryExtractionModelDraft(current, providerCatalog, input.providerId, input.model));
-}
-
-export function handleChangeMemoryExtractionReasoningEffort(input: SettingsDraftActionInput & {
-  providerId: string;
-  reasoningEffort: AppSettings["memoryExtractionProviderSettings"][string]["reasoningEffort"];
-}): void {
-  input.setSettingsDraft((current) => updateMemoryExtractionReasoningEffortDraft(current, input.providerId, input.reasoningEffort));
-}
-
-export function handleChangeMemoryExtractionThreshold(input: SettingsDraftActionInput & {
-  providerId: string;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateMemoryExtractionThresholdDraft(current, input.providerId, input.value));
-}
-
-export function handleChangeMemoryExtractionTimeoutSeconds(input: SettingsDraftActionInput & {
-  providerId: string;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateMemoryExtractionTimeoutSecondsDraft(current, input.providerId, input.value));
-}
-
-export function handleChangeMateMemoryGenerationPriorityProvider(input: SettingsDraftActionInput & {
-  index: number;
-  providerId: string;
-}): void {
-  input.setSettingsDraft((current) => updateMateMemoryGenerationPriorityProviderDraft(current, input.index, input.providerId));
-}
-
-export function handleChangeMateMemoryGenerationPriorityModel(input: ModelCatalogActionInput & {
-  index: number;
-  providerId: string;
-  model: string;
-}): void {
-  const providerCatalog = getProviderCatalog(input.modelCatalog, input.providerId);
-  if (!providerCatalog) {
-    return;
-  }
-
-  input.setSettingsDraft((current) => updateMateMemoryGenerationPriorityModelDraft(
-    current,
-    providerCatalog,
-    input.index,
-    input.providerId,
-    input.model,
-  ));
-}
-
-export function handleChangeMateMemoryGenerationPriorityReasoningEffort(input: SettingsDraftActionInput & {
-  index: number;
-  reasoningEffort: AppSettings["mateMemoryGenerationSettings"]["priorityList"][number]["reasoningEffort"];
-}): void {
-  input.setSettingsDraft((current) => updateMateMemoryGenerationPriorityReasoningEffortDraft(
-    current,
-    input.index,
-    input.reasoningEffort,
-  ));
-}
-
-export function handleChangeMateMemoryGenerationPriorityTimeoutSeconds(input: SettingsDraftActionInput & {
-  index: number;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateMateMemoryGenerationPriorityTimeoutSecondsDraft(current, input.index, input.value));
-}
-
-export function handleAddMateMemoryGenerationPriority(input: ModelCatalogActionInput): void {
-  const provider = input.modelCatalog?.providers[0];
-  input.setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
-    provider: provider?.id ?? "codex",
-    model: provider?.defaultModelId ?? "",
-    reasoningEffort: provider?.defaultReasoningEffort ?? "",
-    timeoutSeconds: 180,
-  }));
-}
-
-export function handleRemoveMateMemoryGenerationPriority(input: SettingsDraftActionInput & {
-  index: number;
-}): void {
-  input.setSettingsDraft((current) => removeMateMemoryGenerationPriorityDraft(current, input.index));
-}
-
-export function handleChangeMateMemoryGenerationTriggerIntervalMinutes(input: SettingsDraftActionInput & {
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateMateMemoryGenerationTriggerIntervalMinutesDraft(current, input.value));
 }

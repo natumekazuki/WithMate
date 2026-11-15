@@ -44,7 +44,7 @@ export type SessionFilePreviewWindowGroup = {
   previews: SessionFilePreviewWindowSummary[];
 };
 
-export type SessionFileRootKind = "workspace" | "session-folder" | "additional";
+export type SessionFileRootKind = "workspace" | "session-folder" | "crew-folder" | "additional";
 
 export type SessionFilePin = {
   rootKind: SessionFileRootKind;

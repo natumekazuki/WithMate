@@ -3,10 +3,10 @@ import type { ProviderLogicalPrompt, ProviderDiagnosticMetadata, ProviderUsage, 
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { ConversationTimingContext } from "../session/conversation-timing.js";
-import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { ProviderOutput } from "../../src-shared/session/provider-output.js";
+import type { SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -18,27 +18,18 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
-  /** Independent native execution; the source Session remains authorization/workspace context. */
-  executionTarget?: {
-    id: string;
-    threadId: string | null;
-    prompt: ProviderPromptComposition;
-  };
-  runtimeOwner?: {
-    kind: "main" | "auxiliary";
-    id: string;
-    incarnationId: string;
-  };
+  runtimeOwner?: { kind: "main" | "auxiliary"; id: string; incarnationId: string };
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
+  crewFolderPath?: string;
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
+  inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
-  conversationTimingContext?: ConversationTimingContext;
-  characterContext?: CharacterAffectContext;
+  currentDateTime?: string;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
   /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */
@@ -48,10 +39,6 @@ export type RunSessionTurnInput = {
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
-
-export function resolveRunExecutionTarget(input: Pick<RunSessionTurnInput, "session" | "executionTarget">): { id: string; threadId: string | null } {
-  return input.executionTarget ?? input.session;
-}
 
 export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "session" | "executionWorkspacePath">): string {
   const normalized = input.executionWorkspacePath?.trim() ?? "";
@@ -101,6 +88,7 @@ export type ListProviderModelsInput = {
 };
 
 export type RunSessionTurnResult = {
+  output?: ProviderOutput;
   threadId: string | null;
   assistantText: string;
   assistantQuestionRanges?: LiveSessionRunState["assistantQuestionRanges"];

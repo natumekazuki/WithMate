@@ -13,15 +13,14 @@ import {
 } from "../../src-electron/glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "../../src-electron/glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
-import type { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
+import { startAgentRuntimeApi } from "../../src-electron/platform/agent-runtime/runtime-api.js";
 import {
   GLOSSARY_RUNTIME_OPERATION_PATHS,
   getGlossaryAgentRuntimeOperations,
 } from "../../src-shared/glossary/glossary-operation-schema.js";
 import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src-shared/glossary/glossary-contract.js";
-import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+import { callAgentRuntime, resolveAgentRuntimeApi } from "../../src-electron/platform/agent-runtime/runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/agent-runtime/runtime-exchange.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -53,6 +52,7 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
     authoritySnapshot: { glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(target) },
     operationGrants: getGlossaryAgentRuntimeOperations(),
   });
+  const turns = new ProviderAgentRuntimeTurnCoordinator();
   const runtime = new GlossaryRuntimeService({
     applicationService,
     bindingRegistry: registry,
@@ -61,7 +61,7 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
       return sessionId === actor.id ? actor : null;
     },
     getProactiveCreateLimit: async () => options.proactiveLimit,
-    providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
+    providerAgentRuntimeTurns: turns,
   });
   const call = (
     operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS,
@@ -77,7 +77,24 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
       bindingReference: reference,
       turnCapability,
     });
-  return { actor, applicationService, binding, call, registry, runtime, target };
+  return { actor, applicationService, binding, call, registry, runtime, target, turns };
+}
+
+async function startExchangeRuntime(root: string, registry: AgentRuntimeBindingRegistry, turns: ProviderAgentRuntimeTurnCoordinator, runtime: GlossaryRuntimeService) {
+  const registryDirectoryPath = path.join(root, "runtime-registry");
+  const server = await startAgentRuntimeApi({
+    applicationInstanceId: "11111111-1111-4111-8111-111111111111", buildChannel: "development",
+    registryDirectoryPath, runtimePathSecurity: async () => {},
+    agentRuntimeBindingRegistry: registry, providerAgentRuntimeTurns: turns,
+    routeAgentRuntimeExtension: (request) => runtime.route(request),
+  });
+  const resolve = async (adapter: "cli" | "mcp") => {
+    const result = await resolveAgentRuntimeApi({ env: {}, adapter, registryRootDirectoryPath: registryDirectoryPath,
+      applicationInstanceId: server.applicationInstanceId, runtimeGenerationId: server.runtimeGenerationId });
+    if (result.kind !== "selected") throw new Error(JSON.stringify(result));
+    return result.connection;
+  };
+  return { server, mcp: await resolve("mcp"), cli: await resolve("cli") };
 }
 
 describe("GLOSSARY-CHECKOUT-AUTHORITY runtime service", () => {
@@ -382,20 +399,14 @@ describe("Glossary authenticated runtime exchange", () => {
   it("CLIとMCPは明示repositoryで同じ保存契約を使い認証とscopeを維持する", async () => {
     const root = await createRepository();
     const other = await createRepository();
-    const { actor, binding, registry, runtime } = await createRuntime(root);
-    const server = createMemoryV6HttpServer({
-      service: {} as MemoryV6Service, apiSecret: "api-secret", operatorApiSecret: "operator-secret", mcpApiSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-a", agentRuntimeBindingRegistry: registry,
-      resolveActorSession: (id) => id === actor.id ? actor : null, routeAgentRuntimeExtension: (request) => runtime.route(request),
-    });
-    await server.start();
+    const { actor, binding, registry, runtime, turns } = await createRuntime(root);
+    const { server, mcp: mcpConnection, cli: cliConnection } = await startExchangeRuntime(root, registry, turns, runtime);
     try {
-      const address = server.address(); assert.ok(address);
-      const api = { baseUrl: `http://127.0.0.1:${address.port}`, apiSecret: "api-secret", runtimeInstanceId: "runtime-a", runtimeGenerationId: "runtime-a" };
+      const api = mcpConnection.api;
       for (const adapter of ["cli", "mcp"] as const) {
         const selector = { kind: "repository", path: other };
         const exchange = async (operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS, body: Record<string, unknown> = {}, bindingReference?: string, secret?: string) => {
-          const response = await callWithMateMemoryRuntime({ api, credential: { adapter, adapterSecret: secret ?? (adapter === "cli" ? "operator-secret" : "mcp-secret") } }, {
+          const response = await callAgentRuntime({ api, credential: { adapter, adapterSecret: secret ?? (adapter === "cli" ? cliConnection.credential.adapterSecret : mcpConnection.credential.adapterSecret) } }, {
             method: "POST", path: GLOSSARY_RUNTIME_OPERATION_PATHS[operation], body: { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, selector, ...body },
           }, { signal: AbortSignal.timeout(10_000), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH, bindingReference });
           return { status: response.status, value: response.value as Record<string, unknown> };
@@ -441,7 +452,7 @@ describe("Glossary authenticated runtime exchange", () => {
   // claim = "Glossaryのauthenticated exchangeはMCP/CLI adapterへ同じapplication routeをdispatchし、direct HTTPを公開しない"
   // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
   // fault = "MCP/CLI routeのauthorityを迂回してdirect HTTPへGlossary operationを公開する"
-  // observable = "MCP・CLI・generic exchange・direct HTTP・extension exchangeのstatusと保存結果"
+  // observable = "MCP・CLI・direct HTTP・extension exchangeのstatusと保存結果"
   // observation_boundary = "public-boundary"
   // scope = "glossary-authenticated-runtime-exchange"
   // lifecycle = "permanent"
@@ -450,22 +461,10 @@ describe("Glossary authenticated runtime exchange", () => {
   // @end-test-value
   it("MCPとCLI adapterを同じschema・authority・application serviceへdispatchし、direct HTTPは公開しない", async () => {
     const root = await createRepository();
-    const { actor, binding, registry, runtime } = await createRuntime(root, { proactiveLimit: 1 });
-    const server = createMemoryV6HttpServer({
-      service: {} as MemoryV6Service,
-      apiSecret: "api-secret",
-      operatorApiSecret: "operator-secret",
-      mcpApiSecret: "mcp-secret",
-      runtimeInstanceId: "runtime-a",
-      agentRuntimeBindingRegistry: registry,
-      resolveActorSession: (sessionId) => sessionId === actor.id ? actor : null,
-      routeAgentRuntimeExtension: (request) => runtime.route(request),
-    });
-    await server.start();
+    const { actor, binding, registry, runtime, turns } = await createRuntime(root, { proactiveLimit: 1 });
+    const { server, mcp: mcpConnection, cli: cliConnection } = await startExchangeRuntime(root, registry, turns, runtime);
     try {
-      const address = server.address();
-      assert.ok(address);
-      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const baseUrl = server.baseUrl;
       const operation = {
         method: "POST" as const,
         path: GLOSSARY_RUNTIME_OPERATION_PATHS.list,
@@ -474,14 +473,9 @@ describe("Glossary authenticated runtime exchange", () => {
           selector: { kind: "primary" },
         },
       };
-      const api = {
-        baseUrl,
-        apiSecret: "api-secret",
-        runtimeInstanceId: "runtime-a",
-        runtimeGenerationId: "runtime-a",
-      };
-      const mcp = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+      const api = mcpConnection.api;
+      const mcp = await callAgentRuntime(
+        mcpConnection,
         operation,
         {
           signal: new AbortController().signal,
@@ -489,8 +483,8 @@ describe("Glossary authenticated runtime exchange", () => {
           exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
         },
       );
-      const cli = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "cli", adapterSecret: "operator-secret" } },
+      const cli = await callAgentRuntime(
+        cliConnection,
         operation,
         {
           signal: new AbortController().signal,
@@ -501,16 +495,10 @@ describe("Glossary authenticated runtime exchange", () => {
       assert.equal(mcp.status, 200);
       assert.deepEqual(cli.value, mcp.value);
 
-      const genericSmallExchange = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
-        operation,
-        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
-      );
-      assert.equal(genericSmallExchange.status, 404);
 
       const providerTurn = await runtime.beginProviderTurn(actor.id, binding);
-      const proactive = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+      const proactive = await callAgentRuntime(
+        mcpConnection,
         {
           method: "POST",
           path: GLOSSARY_RUNTIME_OPERATION_PATHS.create,
@@ -536,7 +524,7 @@ describe("Glossary authenticated runtime exchange", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-withmate-memory-api-secret": "api-secret",
+          "x-withmate-agent-runtime-api-secret": api.apiSecret,
         },
         body: JSON.stringify(operation.body),
       });
@@ -555,16 +543,10 @@ describe("Glossary authenticated runtime exchange", () => {
           })),
         },
       };
-      const genericExchange = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
-        largeBatchOperation,
-        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
-      );
-      assert.equal(genericExchange.status, 413);
 
       const batchTurn = await runtime.beginProviderTurn(actor.id, binding);
-      const extensionExchange = await callWithMateMemoryRuntime(
-        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+      const extensionExchange = await callAgentRuntime(
+        mcpConnection,
         largeBatchOperation,
         {
           signal: new AbortController().signal,

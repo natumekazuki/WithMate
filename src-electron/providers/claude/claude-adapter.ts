@@ -1,4 +1,4 @@
-import { resolveRunExecutionTarget } from "../provider-runtime.js";
+import { projectProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -39,7 +39,9 @@ export type ClaudeAdapterOptions = {
 
 type ClaudeTrace = {
   threadId: string | null;
-  messages: Array<{ id: string; text: string }>;
+  messages: Array<{ id: string; text: string; deliveries: Array<{ uuid: string; blocks: { index?: number; text: string | null; type: string }[] }> }>;
+  streamingBlocks: Map<number, string>;
+  pendingBlockIndexes: number[];
   streamingText: string;
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
@@ -50,6 +52,7 @@ type ClaudeTrace = {
   redactor: ProviderAgentRuntimeBindingRedactor;
   usage: ProviderUsage | null;
   result: SDKResultMessage | null;
+  resultOutputCurrent: boolean;
   errorMessage: string;
 };
 
@@ -112,7 +115,7 @@ function assistantText(trace: ClaudeTrace): string {
 
 function liveText(trace: ClaudeTrace): string {
   return [assistantText(trace), trace.streamingText].filter(Boolean).join("\n\n")
-    || (trace.result?.subtype === "success" && !trace.result.is_error ? trace.result.result : "");
+    || (trace.resultOutputCurrent && trace.result?.subtype === "success" && !trace.result.is_error ? trace.result.result : "");
 }
 
 function signalRace<T>(promise: Promise<T> | T, signal: AbortSignal): Promise<T> {
@@ -327,7 +330,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
 
   private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, errorMessage: "" };
+    return { threadId, messages: [], streamingBlocks: new Map(), pendingBlockIndexes: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, resultOutputCurrent: false, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -376,20 +379,43 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       if (event.type === "message_start") {
         trace.streamingId = event.message.id;
         trace.streamingText = "";
-      }
-      if (event.type === "message_stop") {
-        trace.streamingId = null;
+        trace.streamingBlocks.clear();
+        trace.pendingBlockIndexes = [];
       }
       if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        trace.streamingText += event.delta.text;
+        if (event.delta.text) trace.resultOutputCurrent = false;
+        trace.streamingBlocks.set(event.index, (trace.streamingBlocks.get(event.index) ?? "") + event.delta.text);
+        trace.streamingText = [...trace.streamingBlocks.values()].join("\n");
       }
+      if (event.type === "content_block_start") trace.pendingBlockIndexes.push(event.index);
+      if (event.type === "content_block_stop") trace.pendingBlockIndexes = trace.pendingBlockIndexes.filter((index) => index !== event.index);
       return;
     }
     if (message.type === "assistant" && !message.parent_tool_use_id) {
       const content = message.message.content;
       const text = content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-      if (text && !trace.messages.some((entry) => entry.id === message.uuid)) {
-        trace.messages.push({ id: message.uuid, text });
+      const messageId = message.message.id ?? message.uuid;
+      let entry = trace.messages.find((entry) => entry.id === messageId);
+      if (!entry) {
+        entry = { id: messageId, text: "", deliveries: [] };
+        trace.messages.push(entry);
+      }
+      const existing = entry.deliveries.findIndex((delivery) => delivery.uuid === message.uuid);
+      const previous = entry.deliveries[existing];
+      // Each SDK notification contains completed blocks, not a message-wide snapshot.
+      const indexes = trace.streamingId === messageId && !previous ? trace.pendingBlockIndexes.splice(0, content.length) : [];
+      const delivery = { uuid: message.uuid, blocks: content.map((block, localIndex) => ({
+        index: previous?.blocks[localIndex]?.index ?? indexes[localIndex],
+        text: block.type === "text" ? block.text : null, type: block.type,
+      })) };
+      if (!previous || previous.blocks.length !== delivery.blocks.length || previous.blocks.some((block, index) => {
+        const current = delivery.blocks[index];
+        return block.index !== current.index || block.text !== current.text || block.type !== current.type;
+      })) trace.resultOutputCurrent = false;
+      if (previous) entry.deliveries[existing] = delivery;
+      else entry.deliveries.push(delivery);
+      entry.text = entry.deliveries.flatMap((delivery) => delivery.blocks.flatMap((block) => block.text === null ? [] : [block.text])).join("\n");
+      if (text && !previous) {
         trace.operations.push({ id: message.uuid, type: "agent_message", summary: toProviderTextPreview(text, 300) ?? "", details: toProviderTextPreview(text), truncated: text.length > PROVIDER_TEXT_PREVIEW_LIMIT });
       }
       for (const block of content) {
@@ -400,8 +426,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         trace.steps.set(block.id, step);
         trace.operations.push(step);
       }
-      if (text && trace.streamingId === message.message.id) {
-        trace.streamingText = "";
+      if (trace.streamingId === messageId) {
+        for (const block of delivery.blocks) if (block.index !== undefined) trace.streamingBlocks.delete(block.index);
+        trace.streamingText = [...trace.streamingBlocks.values()].join("\n");
       }
       if (message.error) trace.errorMessage = message.error;
       return;
@@ -427,6 +454,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
     if (message.type === "result") {
       trace.result = message;
+      trace.resultOutputCurrent = true;
       trace.threadId = message.session_id;
       trace.usage = usageFromResult(message, resumed);
       if (message.subtype !== "success") trace.errorMessage = message.errors.join("\n") || message.subtype;
@@ -447,6 +475,17 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   private result(input: RunSessionTurnInput, trace: ClaudeTrace): RunSessionTurnResult {
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const text = liveText(trace);
+    const nativeFinal = trace.result?.subtype === "success" && !trace.result.is_error && trace.resultOutputCurrent && !trace.streamingText ? trace.result.result : null;
+    const terminal = trace.messages.at(-1);
+    const matched = nativeFinal && terminal?.text === nativeFinal && terminal.deliveries.at(-1)?.blocks.at(-1)?.type === "text" ? terminal : undefined;
+    const units: ProviderOutputTextUnit[] = trace.messages.flatMap((message) => message.deliveries.flatMap((delivery) => delivery.blocks.flatMap((block, localIndex) => block.text === null ? [] : [{
+      id: `${message.id}:${delivery.uuid}:${localIndex}`, messageId: message.id, ...(block.index !== undefined ? { blockIndex: block.index } : {}), text: block.text,
+      role: matched?.id === message.id ? "answer" : "unclassified", phase: null, completion: "complete", final: matched?.id === message.id,
+      evidence: matched?.id === message.id ? "claude.result:matching-assistant-blocks" : null,
+    }])));
+    if (trace.streamingText) for (const [blockIndex, value] of trace.streamingBlocks) units.push({ id: `${trace.streamingId ?? "stream"}:${blockIndex}`, messageId: trace.streamingId ?? undefined, blockIndex, text: value, role: "unclassified", phase: null, completion: "partial", final: false, evidence: null });
+    if (nativeFinal && !matched) units.push({ id: `result:${trace.result!.uuid}`, text: nativeFinal, role: "answer", phase: null, completion: "complete", final: true, evidence: "claude.result:success-text" });
+    const projected = projectProviderOutput(units, nativeFinal ? "identified" : units.length ? "unknown" : "none", redactor.sanitizeText, (previous, current) => previous?.messageId && previous.messageId === current.messageId ? "\n" : "\n\n");
     const operations = redactor.sanitize(trace.operations);
     const emptySnapshot = createDisabledWorkspaceSnapshotCapture();
     const artifact = buildArtifactFromOperations({
@@ -465,8 +504,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     this.addExecutionChecks(artifact, input, trace);
     return {
       threadId: trace.threadId,
-      assistantText: redactor.sanitizeText(text),
-      lastNonEmptyAssistantMessageText: redactor.sanitizeText(trace.streamingText || trace.messages.at(-1)?.text || text),
+      ...projected,
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(nativeFinal || trace.streamingText || trace.messages.at(-1)?.text || text),
       artifact: redactor.sanitize(artifact),
       usage: trace.usage,
     };
@@ -476,7 +515,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const permissionMode = mapApprovalModeToClaudePermissionMode(input.executionOptions.approvalMode, input.executionOptions.codexReviewer);
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-    const trace = this.makeTrace(resolveRunExecutionTarget(input).threadId || null, redactor);
+    const trace = this.makeTrace(input.session.threadId || null, redactor);
     const workspacePath = resolveRunWorkspacePath(input);
     const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
     const controller = new AbortController();
@@ -506,7 +545,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const steps = trace.steps.takeProgress(redactor);
       const backgroundTasks = trace.backgroundTasks.takeProgress(redactor);
       const state = {
-        sessionId: resolveRunExecutionTarget(input).id,
+        sessionId: input.session.id,
         threadId: trace.threadId ?? "",
         assistantText: redactor.sanitizeText(liveText(trace)),
         steps: steps.snapshot,
@@ -532,7 +571,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       permissionMode,
       allowDangerouslySkipPermissions: input.executionOptions.approvalMode === "never",
       settings: { fastMode: input.executionOptions.codexSpeed === "fast" },
-      resume: resolveRunExecutionTarget(input).threadId || undefined,
+      resume: input.session.threadId || undefined,
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },
       additionalDirectories: prompt.additionalDirectories,
       settingSources: ["user", "project", "local"],
@@ -578,7 +617,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       canUseTool: async (toolName, toolInput, context) => {
         if (controller.signal.aborted || context.signal.aborted) return { behavior: "deny", message: "Canceled" };
         if (permissionMode === "dontAsk") return { behavior: "deny", message: "Only preapproved tools are allowed" };
-        const requestId = context.toolUseID || `${resolveRunExecutionTarget(input).id}:${Date.now()}`;
+        const requestId = context.toolUseID || `${input.session.id}:${Date.now()}`;
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
           try {
@@ -672,7 +711,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           if (reportFailure) throw new Error(terminal.subtype === "success" ? terminal.result : terminal.errors.join("\n") || terminal.subtype);
           if (!matchesInput && !sessionFailure) continue;
         }
-        this.receive(next.value, trace, Boolean(resolveRunExecutionTarget(input).threadId));
+        this.receive(next.value, trace, Boolean(input.session.threadId));
         if (next.value.type === "system" && next.value.subtype === "init") {
           if (next.value.permissionMode && next.value.permissionMode !== permissionMode) {
             throw new Error(`Claude did not apply the requested permission mode (${permissionMode}); active mode: ${next.value.permissionMode}.`);
