@@ -647,6 +647,7 @@ export function useAuxiliaryWorkspace(input: {
     cacheDetail(saved.id, saved);
     setSelectedId(saved.id);
     setSelectedSession(saved);
+    setTargetState("auxiliary");
     persistPrefs({ selectedId: saved.id });
   }, [cacheDetail, persistPrefs]);
 

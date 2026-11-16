@@ -729,15 +729,17 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main/Auxiliary対象の切替とAuxiliary追加は選択中の幅を変更せず、確定した幅0は同一親の再マウントでも復元する"
-// oracle = { type = "contract", ref = "issue-710-auxiliary-width-target-separation" }
-// fault = "対象切替や新規追加で幅が暗黙に変わる、幅0から対象切替だけで再展開する、または確定した幅0を親セッション再マウントで失う"
+// claim = "Auxiliary追加は新しい会話を送信対象にし、対象切替と追加は幅を変更せず、確定した幅0を同一親へ戻った際に復元する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI Flow" }
+// fault = "追加後もMainを送信対象にする、対象切替や追加で幅が暗黙に変わる、または確定した幅0を親セッション切替後に失う"
 // observable = "hookのtarget、selectedId、widthRatioと親セッション切替後のwidthRatio"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-layout"
 // lifecycle = "permanent"
+// impact = "追加したAuxiliaryへ送るつもりの入力をMainへ誤送信することを防ぎ、会話領域の表示設定を保持する"
+// distinction = "型検査や作成serviceのtestでは作成後の送信対象と表示幅のrenderer状態を確認できない"
 // @end-test-value
-test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持する", async () => {
+test("Auxiliary追加は送信対象を切り替え、対象切替と追加は幅0を保持する", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
   const api: AuxiliaryWorkspaceApi = {
@@ -758,7 +760,7 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
   assert.equal(view.current.widthRatio, 0);
   await act(async () => { view.current.addSession(b); });
   assert.equal(view.current.selectedId, "b");
-  assert.equal(view.current.target, "main");
+  assert.equal(view.current.target, "auxiliary");
   assert.equal(view.current.widthRatio, 0);
   await view.render("parent-2");
   await view.render("parent-1");
