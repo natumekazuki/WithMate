@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { coordinationDeliveryText } from "../../../src-shared/coordination/coordination-delivery.js";
+import { coordinationDeliveryText, readCoordinationNotification } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
 import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
@@ -97,7 +97,11 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   // A direct additional input belongs to its own sender, not the Turn's start input.
   const origin = input && !receiptId ? input.origin : observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
   const text = message.role === "user" ? receipt?.captured.coordination ? coordinationDeliveryText(receipt.dispatched ?? receipt.captured) : observed?.coordination?.text ?? message.text : message.text;
-  return { input, text, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
+  const captured = receipt?.dispatched ?? receipt?.captured;
+  const coordination = message.role !== "user" ? null : captured?.coordination
+    ? { id: captured.coordination.id, consultation: readCoordinationNotification(captured)?.consultation ?? text }
+    : observed?.coordination ?? null;
+  return { input, text, coordination, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
 export function TurnExecutionDetails(props: TurnInputProps & { hasRunChecks?: boolean }) {
@@ -157,7 +161,7 @@ function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false 
     {hasDelivery ? <details className="artifact-fold" aria-label="Input State" open>
       <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Input State</strong></span></summary>
       <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Input State">
-        {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
+        {sourceWaitState === "unknown" ? <InputDetailRow label="Delivery"><span className="turn-input-state">Source Turn State Unknown</span></InputDetailRow> : null}
         <InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow>
         <InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow>
         {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
