@@ -414,6 +414,7 @@ export class AuxiliarySessionStorage {
     if (!input.nativeTurnId?.trim() || input.queuedInput) throw new Error("A direct Auxiliary Steer target is required.");
     return this.appendAuxiliarySteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
+      ...(input.userMessage.turnInput?.questionRequestId ? { questionRequestId: input.userMessage.turnInput.questionRequestId } : {}),
     } } });
   }
 

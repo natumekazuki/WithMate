@@ -1005,7 +1005,52 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "async質問の回答は通常steerと区別され、ACK前は入力をpendingで保存し、ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
+  // claim = "４Providerの通常質問は送信を確認した回答だけを終端履歴へ保存し、未確認の回答を保存しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; docs/design/database-schema.md: 質問formの記録" }
+  // fault = "送信確認前の値を保存するか、確認済みの選択と自由回答を再読込時に失う"
+  // observable = "各Providerの送信通知前後のlive recordと終端messageの回答"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService question reply history"
+  // lifecycle = "permanent"
+  // impact = "送られていない回答を送信済みと誤認するか、送信内容を後から確認できない"
+  // distinction = "adapter単体は共通serviceからterminal保存までの回答の伝播を検証しない"
+  // @end-test-value
+  it("各Providerの質問回答は送信通知後だけ履歴に残す", async () => {
+    for (const providerId of ["codex", "copilot", "claude", "opencode"] as const) for (const delivered of [false, true]) {
+      let stored = createSession({ provider: providerId, approvalMode: "on-request", codexReviewer: "user" });
+      let live: LiveSessionRunState | null = null;
+      const questions = new SessionElicitationService({ updateLiveSessionRun: (_id, recipe) => { live = recipe(live!); return live; } });
+      const adapter: ProviderCodingAdapter = {
+        composePrompt: () => ({ systemBodyText: "", inputBodyText: "", logicalPrompt: { systemText: "", inputText: "", composedText: "" }, imagePaths: [], additionalDirectories: [] }),
+        getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+        runSessionTurn: async (input) => {
+          const request: LiveElicitationRequest = { requestId: "question", provider: providerId, kind: "question", mode: "form", message: "Choose",
+            fields: [{ type: "select", name: "choice", title: "Choose", required: true, options: [{ value: "a", label: "A" }] }] };
+          const answer = input.onElicitationRequest!(request);
+          questions.resolveLiveElicitation(input.session.id, "question", { action: "accept", content: { choice: "a" }, answerPresentation: { choice: { selected: [0], text: [] } } });
+          await answer;
+          assert.equal(live?.elicitationRecords?.[0].fields[0].answer, undefined);
+          if (delivered) input.onElicitationDelivered?.("question");
+          return createPartialResult({ assistantText: "done" });
+        },
+      };
+      const service = createTestRuntime({ getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+        resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [providerId]: { enabled: true } } }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) }),
+        getProviderCodingAdapter: () => adapter, createSessionTurn: createSessionTurnBase, updateSessionTurn() {},
+        setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+        waitForApprovalDecision: () => "deny", waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+        setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest: (id) => questions.cancelSession(id),
+      });
+      await service.runSessionTurn(stored.id, { executionOptions: captureSessionExecutionOptions(stored), userMessage: "start" });
+      assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.[0].fields[0].answer, delivered ? { selected: [0], text: [] } : undefined);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "async質問の回答はACK前に表示用回答を確定せず、ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
   // oracle = { type = "contract", ref = "Issue #823; Issue #780 explicit same-turn input" }
   // fault = "通常steerで質問を回答済みにする、provider progressで質問を消す、ACK前に回答済みへ進める、または終端保存が回答ACKを追い越して質問履歴を失う"
   // observable = "実SessionElicitationServiceのlive要求・record、adapter steer入力、保存Sessionのuser本文とterminal elicitationRecords"
@@ -1030,7 +1075,7 @@ describe("SessionRuntimeService", () => {
       let service!: SessionRuntimeService;
       const questions = new SessionElicitationService({
         updateLiveSessionRun: (_id, recipe) => { live = recipe(currentLive()); return live; },
-        sendUserMessage: async (id, turnId, message, answer) => { await service.answerSessionQuestion(id, turnId, message, answer); },
+        sendUserMessage: async (id, turnId, message, answer, requestId) => { await service.answerSessionQuestion(id, turnId, message, answer, requestId); },
       });
       const adapter: ProviderCodingAdapter = {
         composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
@@ -1078,11 +1123,14 @@ describe("SessionRuntimeService", () => {
         await publishProgress();
         assert.equal(currentLive().elicitationRequests?.length, 2, "provider progress preserves active questions");
         assert.equal(currentLive().elicitationRecords?.length, 2, "provider progress preserves history");
-        const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" } });
+        const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" },
+          answerPresentation: { answer: { selected: [], text: ["Take option A"] } } });
         await waitForCondition(() => sent.length === 2, "answer dispatched through existing steer");
         assert.equal(currentLive().elicitationRecords?.[0].status, "pending", "ACK is required before answered");
+        assert.equal(currentLive().elicitationRecords?.[0].fields[0].answer, undefined);
         assert.deepEqual(stored.messages.map(message => message.text), ["start", "ordinary steer", "Take option A"]);
         assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
+        assert.equal(stored.messages.at(-1)?.turnInput?.questionRequestId, "answer-me");
         if (outcome === "canceled") service.cancelRun(stored.id);
         finishProvider();
         await waitForCondition(() => currentLive().inputAvailable === false, "provider terminal stops input admission");
@@ -1095,6 +1143,7 @@ describe("SessionRuntimeService", () => {
         assert.deepEqual(sent, ["ordinary steer", "【質問】\nChoose a direction\n【回答】\nTake option A"]);
         assert.deepEqual(stored.messages.filter(message => message.role === "user").map(message => message.text), ["start", "ordinary steer", "Take option A"]);
         assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.map(record => [record.requestId, record.status]), [["answer-me", "answered"], ["unanswered", "expired"]]);
+        assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.[0].fields[0].answer, { selected: [], text: ["Take option A"] });
         assert.equal(phases.at(-1), outcome);
         assert.throws(() => questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "duplicate" } }), /no longer exists/);
       } finally {

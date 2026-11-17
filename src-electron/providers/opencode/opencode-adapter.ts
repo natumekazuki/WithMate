@@ -3,6 +3,7 @@ import { access, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import type { OpenCodeClient, OpenCodeEvent, PermissionRuleset, SessionInfo, SessionMessageInfo } from "@opencode/client";
 import { composeProviderPrompt } from "../provider-prompt.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
@@ -225,6 +226,13 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     let interactionTail = Promise.resolve();
     let interactionsClosed = false;
     const interactionControllers = new Map<string, AbortController>();
+    const pendingFormReplies = new Map<string, { sessionId: string; requestId: string; answer: unknown }>();
+    const confirmFormReply = (formId: string) => {
+      const pending = pendingFormReplies.get(formId);
+      if (!pending) return;
+      pendingFormReplies.delete(formId);
+      input.onElicitationDelivered?.(pending.requestId);
+    };
     const closeInteractions = () => {
       interactionsClosed = true;
       for (const pending of interactionControllers.values()) pending.abort();
@@ -323,7 +331,12 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         if (next.done) throw new Error("OpenCode event stream disconnected before root completion");
         const event = next.value;
         if (event.type === "permission.replied") interactionControllers.get(`permission:${event.data.requestID}`)?.abort();
-        if (event.type === "form.replied" || event.type === "form.cancelled") interactionControllers.get(`form:${event.data.id}`)?.abort();
+        if (event.type === "form.replied" || event.type === "form.cancelled") {
+          const pending = pendingFormReplies.get(event.data.id);
+          if (event.type === "form.replied" && pending && pending.sessionId === event.data.sessionID && isDeepStrictEqual(pending.answer, event.data.answer)) confirmFormReply(event.data.id);
+          else pendingFormReplies.delete(event.data.id);
+          interactionControllers.get(`form:${event.data.id}`)?.abort();
+        }
         if (event.type === "permission.asked") {
           const request = event.data;
           if (!await belongs(request.sessionID)) {
@@ -348,7 +361,14 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
           enqueue(`form:${form.id}`, async (pendingSignal) => {
             const response = await withSignal(Promise.resolve(input.onElicitationRequest?.(request, pendingSignal) ?? { action: "cancel" as const }), pendingSignal);
             if (pendingSignal.aborted || interactionsClosed) return;
-            if (response.action === "accept") await native.session.form.reply({ sessionID: form.sessionID, formID: form.id, answer: response.content ?? {} }, { signal: pendingSignal });
+            if (response.action === "accept") {
+              const answer = response.content ?? {};
+              pendingFormReplies.set(form.id, { sessionId: form.sessionID, requestId: request.requestId, answer });
+              try {
+                await native.session.form.reply({ sessionID: form.sessionID, formID: form.id, answer }, { signal: pendingSignal });
+                confirmFormReply(form.id);
+              } finally { pendingFormReplies.delete(form.id); }
+            }
             else await native.session.form.cancel({ sessionID: form.sessionID, formID: form.id }, { signal: pendingSignal });
           });
           continue;

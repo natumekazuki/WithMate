@@ -13,7 +13,7 @@ export type CodexInteractionRequest = {
   reject(error: { code: number; message: string; data?: unknown }): Promise<void>;
 };
 
-type InteractionInput = Pick<RunSessionTurnInput, "onApprovalRequest" | "onElicitationRequest" | "signal">;
+type InteractionInput = Pick<RunSessionTurnInput, "onApprovalRequest" | "onElicitationRequest" | "onElicitationDelivered" | "signal">;
 type PendingRequest = { request: CodexInteractionRequest; controller: AbortController; responded: boolean };
 const mcpDateTimePattern = regexes.datetime({ offset: true });
 
@@ -302,6 +302,7 @@ export class CodexTurnInteractions {
         answers[text(question.id)] = { answers: [value] };
       }
       await reply({ answers });
+      this.input.onElicitationDelivered?.(requestId);
     } else {
       if (response.action === "accept" && !validContent(projected.fields, response)) throw new Error("Invalid MCP form content");
       await reply({ action: response.action, content: response.action === "accept" && projected.mode === "form" ? response.content ?? {} : null });

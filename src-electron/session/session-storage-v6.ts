@@ -716,6 +716,7 @@ export class SessionStorageV6 {
     return this.appendSessionSteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
       ...(input.userMessage.turnInput?.origin ? { origin: input.userMessage.turnInput.origin } : {}),
+      ...(input.userMessage.turnInput?.questionRequestId ? { questionRequestId: input.userMessage.turnInput.questionRequestId } : {}),
     } } });
   }
 

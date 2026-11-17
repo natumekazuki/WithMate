@@ -1926,6 +1926,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
                 } })
               : await session.rpc.ui.handlePendingElicitation({ requestId: event.data.requestId, result: response });
             if (!result.success) throw new Error("Copilot input request is no longer pending.");
+            if (event.type === "user_input.requested" && response.action === "accept") input.onElicitationDelivered?.(event.data.requestId);
           })
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {

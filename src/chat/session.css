@@ -2255,6 +2255,12 @@
   overflow-wrap: anywhere;
 }
 
+.elicitation-record-selected,
+.elicitation-record-answer {
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
 .live-elicitation-field {
   display: grid;
   min-width: 0;

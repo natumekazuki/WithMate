@@ -56,6 +56,7 @@ type MessageRichTextProps = {
   embeddedMedia?: "allow" | "text";
   sourceStart?: number;
   inlineContent?: MessageInlineContent;
+  selectedRanges?: Array<{ start: number; end: number }>;
   className?: string;
   forceFullRender?: boolean;
   isStreaming?: boolean;
@@ -87,6 +88,24 @@ function createInlineContentPlugin(position: number): Plugin<[], Root> {
       type: "paragraph", children: [],
       data: { hName: "div", hProperties: { className: ["message-inline-content"] } },
     });
+  };
+}
+
+function createQuestionSelectionPlugin(ranges: Array<{ start: number; end: number }>): Plugin<[], Root> {
+  return () => (tree) => {
+    for (const node of tree.children) {
+      const blocks = node.type === "list" ? node.children : [node];
+      for (const block of blocks) {
+        if (!ranges.some((range) => range.start === block.position?.start.offset && range.end === block.position?.end.offset)) continue;
+        const paragraph = block.type === "listItem" ? block.children.find((child) => child.type === "paragraph") : block.type === "paragraph" ? block : undefined;
+        if (!paragraph || paragraph.type !== "paragraph") continue;
+        paragraph.children.unshift({ type: "text", value: "✓ " });
+        const data = block.data ?? (block.data = {});
+        const properties = data.hProperties ?? (data.hProperties = {});
+        const classes = properties.className;
+        properties.className = [...(Array.isArray(classes) ? classes : typeof classes === "string" ? [classes] : []), "elicitation-record-selected"];
+      }
+    }
   };
 }
 
@@ -123,6 +142,7 @@ function MessageMarkdownPreview({
   embeddedMedia = "allow",
   sourceStart,
   inlineContent,
+  selectedRanges,
   className = "message-body",
   forceFullRender = false,
   isStreaming = false,
@@ -230,9 +250,10 @@ function MessageMarkdownPreview({
       parseProjection,
       sharedRemarkHtmlLineBreaks,
       remarkReferenceSourceRanges,
+      ...(selectedRanges?.length ? [createQuestionSelectionPlugin(selectedRanges)] : []),
       ...(inlineContent ? [createInlineContentPlugin(inlineContent.position)] : []),
     ],
-    [responseProvider, parseProjection, inlineContent?.position],
+    [responseProvider, parseProjection, inlineContent?.position, selectedRanges],
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown
@@ -297,17 +318,29 @@ function MessageRichTextComponent({
 }: MessageRichTextProps) {
   if (displayMode === "source") {
     const className = props.className ?? "message-body";
+    const sourceContent = (start: number, end: number) => {
+      const pieces: ReactNode[] = [];
+      let offset = start;
+      for (const range of [...props.selectedRanges ?? []].sort((a, b) => a.start - b.start)) {
+        if (range.start < offset || range.start < start || range.end > end || range.end <= range.start) continue;
+        pieces.push(props.text.slice(offset, range.start));
+        pieces.push(<span className="elicitation-record-selected" key={`${range.start}:${range.end}`}>✓ {props.text.slice(range.start, range.end)}</span>);
+        offset = range.end;
+      }
+      pieces.push(props.text.slice(offset, end));
+      return pieces;
+    };
     if (props.inlineContent) {
       const position = Math.max(0, Math.min(props.inlineContent.position, props.text.length));
       return <>
-        {position > 0 ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>{props.text.slice(0, position)}</pre> : null}
+        {position > 0 ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>{sourceContent(0, position)}</pre> : null}
         {props.inlineContent.content}
-        {position < props.text.length ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + position}>{props.text.slice(position)}</pre> : null}
+        {position < props.text.length ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + position}>{sourceContent(position, props.text.length)}</pre> : null}
       </>;
     }
     return (
       <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>
-        {props.text}
+        {sourceContent(0, props.text.length)}
       </pre>
     );
   }

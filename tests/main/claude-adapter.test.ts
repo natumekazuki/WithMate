@@ -1534,10 +1534,10 @@ it("rejects unavailable Claude modes without silently changing the selection", a
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Preapproved Only以外の全modeのAskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
+// claim = "Preapproved Only以外の全modeのAskUserQuestionは自由入力をSDK answersへ戻し、回答の引渡しを履歴へ通知する"
 // oracle = { type = "contract", ref = "Issue #751; src-shared/session/runtime-state.ts LiveElicitationRequest" }
 // fault = "Questionをapprovalへ誤配送する、またはOther入力を破棄する"
-// observable = "Elicitation cardのfieldsとSDK permission updatedInput.answers"
+// observable = "Elicitation cardのfields、SDK permission updatedInput.answers、回答引渡し通知"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
 // lifecycle = "permanent"
@@ -1557,6 +1557,8 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
       yield result("thread-question");
     }) });
     const request = input();
+    const delivered: string[] = [];
+    request.onElicitationDelivered = (id) => { delivered.push(id); };
     request.executionOptions = { ...request.executionOptions, approvalMode, codexReviewer };
     request.onElicitationRequest = (card) => {
       allowsFreeText = card.fields.some((field) => field.name === "0" && field.type === "select" && field.allowFreeText === true);
@@ -1564,6 +1566,7 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
     };
     await adapter.runSessionTurn(request);
     assert.equal(allowsFreeText, true);
+    assert.deepEqual(delivered, ["question-1"]);
     assert.deepEqual(permission, { behavior: "allow", updatedInput: {
       questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }], answers: { "Which path?": "A custom path" },
     } });

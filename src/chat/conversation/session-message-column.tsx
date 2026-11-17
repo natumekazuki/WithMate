@@ -661,6 +661,9 @@ export function SessionMessageColumn({
   const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
   const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
   const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
+  const visibleAnsweredQuestionIds = new Set([...messages.flatMap((message) => message.elicitationRecords ?? []), ...visibleLiveElicitationRecords ?? []]
+    .filter((record) => record.status === "answered" && record.fields.length > 0 && record.fields.every((field) => field.answer !== undefined))
+    .map((record) => record.requestId));
   const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const hasLiveRequests = hasElicitationRequests || isRunning && liveApprovalRequest !== null;
   const liveRequestMessageIndex = hasLiveRequests ? pendingResponseMessageIndex : -1;
@@ -1330,7 +1333,7 @@ export function SessionMessageColumn({
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart, inlineContent) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} isStreaming={isRunning} responseProvider={provider}
+        renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} selectedRanges={selectedRanges} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath} onFind={openFind}
           onCopyText={onCopyMessageText} onQuoteText={onQuoteMessageText}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1436,6 +1439,10 @@ export function SessionMessageColumn({
             const message = messages[absoluteIndex];
             if (!message) {
               return null;
+            }
+            if (message.role === "user" && message.turnInput?.state === "confirmed" && message.turnInput.questionRequestId
+              && visibleAnsweredQuestionIds.has(message.turnInput.questionRequestId)) {
+              return <div key={`question-answer-${getRowKey(absoluteIndex)}`} ref={messageVirtualizer.measureElement} data-index={absoluteIndex} aria-hidden="true" />;
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
@@ -1611,10 +1618,11 @@ export function SessionMessageColumn({
                             elicitationAction={elicitationAction}
                             onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            renderText={(text, key, sourceStart, inlineContent) => <MessageRichText
+                            renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText
                               key={key}
                               sourceStart={sourceStart}
                               inlineContent={inlineContent}
+                              selectedRanges={selectedRanges}
                               resolveImageSource={resolveImageSource}
                               text={text}
                               responseProvider={message.role === "assistant" ? provider : undefined}

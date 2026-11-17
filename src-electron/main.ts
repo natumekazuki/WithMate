@@ -2632,7 +2632,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
         appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
-        beginRunningInput: (session, text, turnId, nativeTurnId, attachments) => requireAuxiliarySessionService().beginRunningInput(session, text, turnId, nativeTurnId, attachments),
+        beginRunningInput: (session, text, turnId, nativeTurnId, attachments, origin, questionRequestId) => requireAuxiliarySessionService().beginRunningInput(session, text, turnId, nativeTurnId, attachments, origin, questionRequestId),
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
@@ -2904,9 +2904,9 @@ function requireSessionApprovalService(): SessionApprovalService {
 function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
-      sendUserMessage: async (sessionId, turnId, message, answer) => {
+      sendUserMessage: async (sessionId, turnId, message, answer, requestId) => {
         const { runtime } = await resolveQueueSessionRuntime(sessionId);
-        await runtime.answerSessionQuestion(sessionId, turnId, message, answer);
+        await runtime.answerSessionQuestion(sessionId, turnId, message, answer, requestId);
       },
       notifyQuestion: (sessionId, signal) => {
         void notifyLiveCodexQuestion(sessionId, signal).catch((error: unknown) => {

@@ -36,6 +36,7 @@ export type RunSessionTurnInput = {
   onCleanupPending?: (completion: Promise<void>) => void;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
+  onElicitationDelivered?: (requestId: string) => void;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };

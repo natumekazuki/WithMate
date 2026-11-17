@@ -24,7 +24,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; form?: FormInfo1; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -32,6 +32,7 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   let formDone!: () => void;
   const permissionReply = new Promise<void>((resolve) => { permissionDone = resolve; });
   const formReply = new Promise<void>((resolve) => { formDone = resolve; });
+  const formDispatched = Promise.withResolvers<unknown>();
   const mcpRegistrations: Array<{ server: string; location?: { directory?: string }; config: unknown }> = [];
   const root: SessionInfo = { id: "root", projectID: "project", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
     location: { directory: turn.executionWorkspacePath ?? turn.session.workspacePath }, metadata: { withmateOwner: { schema: 1, ...turn.runtimeOwner } } };
@@ -48,7 +49,13 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
         withmateOwner: { schema: 1, ...turn.runtimeOwner, ...(options.unknownInbox === "owner-id" ? { id: "other-session" } : {}), ...(options.unknownInbox === "incarnation" ? { incarnationId: "other-incarnation" } : {}) },
         withmateRequestID: "old" } } }] : [], cancel: async () => { calls.push("cancel-inbox"); pending = false; } },
       prompt: async (value: SessionPromptInput) => { calls.push("prompt"); prompt = value; return { id: value.id, sessionID: "root", type: "user", payload: { text: value.text }, delivery: "queue" }; },
-      interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }) => { calls.push(`form:${JSON.stringify(answer)}`); formDone(); }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
+      interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }, requestOptions?: { signal?: AbortSignal }) => {
+        calls.push(`form:${JSON.stringify(answer)}`);
+        if (options.replyEvent) {
+          formDispatched.resolve(answer);
+          await new Promise<void>((_resolve, reject) => requestOptions?.signal?.addEventListener("abort", () => reject(new Error("request aborted")), { once: true }));
+        } else formDone();
+      }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
     },
     message: { list: async () => { calls.push("snapshot"); await options.holdSnapshot?.(); return { data: messages(), cursor: {} }; } },
     mcp: { add: async (registration: typeof mcpRegistrations[number]) => { mcpRegistrations.push(registration); }, list: async () => ({ data: mcpRegistrations.map((entry) => ({ name: entry.server, status: { status: "connected" } })) }) },
@@ -67,7 +74,10 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       if (options.lateInteraction === "permission") yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
       if (options.form) {
         yield event("form.created", { form: options.form });
-        await formReply;
+        if (options.replyEvent) {
+          const answer = await formDispatched.promise;
+          yield event("form.replied", { id: options.form.id, sessionID: options.form.sessionID, answer: options.replyEvent === "matching" ? answer : { different: "answer" } });
+        } else await formReply;
       }
       if (options.lateInteraction === "form") yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
       yield event("session.text.delta", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, delta: "partial" });
@@ -355,10 +365,10 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
 
 // @test-value v2
 // kind = "contract"
-// claim = "OpenCode questionの単一・複数質問は選択と自由入力を共通UIへ提示し、元のkeyと値で回答してturnを完了する"
+// claim = "OpenCode questionの単一・複数質問は選択と自由入力を共通UIへ提示し、元のkeyと値で回答して受付を履歴へ通知する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/914" }
 // fault = "customを拒否する、自由入力や必須指定・選択肢説明を失う、または単一文字列と複数回答配列を取り違える"
-// observable = "質問callbackのfields、native form.replyのanswer、完了したassistantText"
+// observable = "質問callbackのfields、native form.replyのanswer、受付通知と完了したassistantText"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode question tool form round trip"
 // lifecycle = "permanent"
@@ -379,8 +389,12 @@ it("OpenCode completes question forms with selected and custom answers", async (
   for (const scenario of cases) {
     const turn = input();
     let questions = 0;
+    let displayedRequestId = "";
+    const delivered: string[] = [];
+    turn.onElicitationDelivered = (id) => { delivered.push(id); };
     turn.onElicitationRequest = (request) => {
       questions++;
+      displayedRequestId = request.requestId;
       assert.equal(request.provider, "opencode");
       assert.equal(request.kind, "question");
       assert.equal(request.blocking, true);
@@ -399,8 +413,35 @@ it("OpenCode completes question forms with selected and custom answers", async (
     const run = fixture(turn, { form: { id: "form", sessionID: "root", title: "Questions", metadata: { kind: "question" }, fields: scenario.fields } });
     const result = await run.adapter.runSessionTurn(turn);
     assert.equal(questions, 1);
+    assert.deepEqual(delivered, [displayedRequestId]);
     assert.equal(result.assistantText, "final");
     assert.deepEqual(run.calls.filter((call) => call.startsWith("form:")), [`form:${JSON.stringify(scenario.answer)}`]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCode form.repliedがreply応答より先に届いても、送信値と一致する同一formの回答だけを確定する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; @opencode/client FormReplied" }
+// fault = "先着イベントによるabortで受理済みの回答を失うか、別の回答を利用者の送信として記録する"
+// observable = "matching・異なる回答イベントに対する元request IDの受付通知"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode form reply event race"
+// lifecycle = "permanent"
+// impact = "送信済み選択を見返せないか、選んでいない回答を表示する"
+// distinction = "通常往復fixtureはnative reply完了がイベントより先に返るため競合を検出しない"
+// @end-test-value
+it("OpenCode confirms only the matching early form reply", async () => {
+  for (const replyEvent of ["matching", "different"] as const) {
+    const turn = input();
+    const delivered: string[] = [];
+    let requestId = "";
+    turn.onElicitationRequest = (request) => { requestId = request.requestId; return { action: "accept", content: { q: "a" } }; };
+    turn.onElicitationDelivered = (id) => { delivered.push(id); };
+    const run = fixture(turn, { replyEvent, form: { id: "form", sessionID: "root", title: "Choose", metadata: { kind: "question" },
+      fields: [{ key: "q", type: "string", options: [{ value: "a", label: "A" }] }] } });
+    await run.adapter.runSessionTurn(turn);
+    assert.deepEqual(delivered, replyEvent === "matching" ? [requestId] : []);
   }
 });
 

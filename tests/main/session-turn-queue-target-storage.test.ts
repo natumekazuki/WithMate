@@ -172,8 +172,8 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接SteerはMain/Auxの既存messageへ送信前pendingを保存し、同じ本文とTurn対応を保って確定・不明・未送信へ収束し再openでも判別できる"
-// oracle = { type = "contract", ref = "GitHub Issue #832: 同じTurnへの追加入力、送信前markerと確定入力列" }
+// claim = "直接SteerはMain/Auxへ送信前pendingを保存し、本文・Turn・質問との対応を保って各配送状態と再openを経ても判別できる"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 同じTurnへの追加入力、送信前markerと確定入力列; docs/design/desktop-ui.md#question-forms" }
 // fault = "ack後にだけ入力を保存する、状態更新で本文を差し替える、確定済みを不明へ戻す、送信先Turnを取り違える"
 // observable = "実Worker再open後のmessage text/turnInput/seq、状態更新失敗後のpending、確定後のdowngrade拒否"
 // observation_boundary = "public-boundary"
@@ -202,7 +202,7 @@ test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに
       for (const [index, state] of (["confirmed", "unknown", "not-sent"] as const).entries()) {
         const seq = index + 1;
         const input = { expectedMessageCount: seq, turnId, nativeTurnId: "native-target", attachments: [],
-          userMessage: { role: "user" as const, text: `input-${state}` }, updatedAt: "pending" };
+          userMessage: { role: "user" as const, text: `input-${state}`, turnInput: { turnId: String(turnId), nativeTurnId: "native-target", state: "pending" as const, attachments: [], questionRequestId: `question-${state}` } }, updatedAt: "pending" };
         if (auxiliary) await f.bundle.stores.auxiliary.beginAuxiliarySteer({ ...target, ...input });
         else await f.bundle.stores.session.beginSessionSteer({ ...owner, ...input });
         const read = auxiliary ? await f.bundle.stores.auxiliary.getAuxiliarySession(id) : await f.bundle.stores.session.getSession(id);
@@ -233,8 +233,8 @@ test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに
     for (const target of expected) {
       const saved: { messages: Message[] } | null = target.auxiliary ? await reopened.stores.auxiliary.getAuxiliarySession(target.id) : await reopened.stores.session.getSession(target.id);
       assert.deepEqual(saved?.messages.slice(1).map((message) => ({ text: message.text, turnId: message.turnInput?.turnId,
-        nativeTurnId: message.turnInput?.nativeTurnId, state: message.turnInput?.state })),
-      ["confirmed", "unknown", "not-sent"].map((state) => ({ text: `input-${state}`, turnId: target.turnId, nativeTurnId: "native-target", state })));
+        nativeTurnId: message.turnInput?.nativeTurnId, state: message.turnInput?.state, questionRequestId: message.turnInput?.questionRequestId })),
+      ["confirmed", "unknown", "not-sent"].map((state) => ({ text: `input-${state}`, turnId: target.turnId, nativeTurnId: "native-target", state, questionRequestId: `question-${state}` })));
     }
   } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
 });

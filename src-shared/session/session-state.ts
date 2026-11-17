@@ -53,6 +53,7 @@ export type TurnInputMetadata = {
   nativeTurnId: string;
   state: TurnInputDeliveryState;
   queueId?: string;
+  questionRequestId?: string;
   origin?: import("./session-turn-queue.js").SessionSteerOrigin;
   attachments: ComposerAttachment[];
 };
@@ -410,6 +411,11 @@ function normalizeElicitationRecords(value: unknown): ElicitationRecord[] | unde
         title: field.title,
         ...(typeof field.description === "string" ? { description: field.description } : {}),
         ...(Array.isArray(field.options) ? { options: field.options.filter((option): option is string => typeof option === "string") } : {}),
+        ...(field.answer && Array.isArray(field.answer.selected) && Array.isArray(field.answer.text)
+          && (field.options === undefined || (Array.isArray(field.options) && field.options.every((option) => typeof option === "string")))
+          && field.answer.selected.every((index) => Number.isSafeInteger(index) && index >= 0 && index < (Array.isArray(field.options) ? field.options.length : 0))
+          && field.answer.text.every((text) => typeof text === "string")
+          ? { answer: { selected: [...field.answer.selected], text: [...field.answer.text] } } : {}),
       })),
     });
   }
