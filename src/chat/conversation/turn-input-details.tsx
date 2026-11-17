@@ -11,13 +11,6 @@ import { approvalModeLabel } from "../../../src-shared/settings/approval-mode.js
 import { reasoningEffortLabel } from "../../../src-shared/settings/model-catalog.js";
 import { codexSandboxModeOptions } from "../../../src-shared/settings/codex-sandbox-mode.js";
 
-const deliveryLabels = {
-  pending: "Input Acceptance Pending",
-  confirmed: "Additional Input Confirmed",
-  unknown: "Input Delivery Unknown",
-  "not-sent": "Input Not Sent",
-} as const;
-
 export function getQueuedSourceWaitState(receipt?: SessionTurnQueueReceipt): "waiting" | "unknown" | null {
   const origin = receipt?.accepted?.origin ?? receipt?.captured.origin;
   if (receipt?.state !== "queued" || origin?.deliveryTiming !== "after_source_turn") return null;
@@ -125,9 +118,8 @@ export function TurnInputStatus({ message }: { message: Message }) {
   const input = message.turnInput;
   if (message.role !== "user" || !input) return null;
   return <>
-    <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p>
-    {input.state === "unknown" ? <p>Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
-    {input.state === "not-sent" ? <p>This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
+    {input.state === "unknown" ? <p role="alert">Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
+    {input.state === "not-sent" ? <p role="alert">This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
   </>;
 }
 

@@ -1771,7 +1771,6 @@ export function SessionMessageColumn({
             {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
-            {sentDeliveries.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.loadMore}>Load More Sent Messages</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

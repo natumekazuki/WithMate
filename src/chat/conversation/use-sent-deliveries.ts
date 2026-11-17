@@ -18,29 +18,27 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const attempt = useRef(0);
-  const load = useCallback(async (cursor?: number) => {
+  const load = useCallback(async () => {
     if (!enabled || !context || (!messageSeqs.length && !liveTurnIds.length)) return;
     const api = getWithMateApi();
     if (!api?.readSessionExecution) { setError("Saved outgoing deliveries are unavailable."); return; }
     const current = ++attempt.current;
     const previous = loadedData.current?.identity === identity ? loadedData.current.page : null;
-    const desiredCount = cursor === undefined ? Math.max(20, previous?.items.length ?? 0) : 20;
     setBusy(true); setError("");
     try {
       const items: SentDelivery[] = [];
-      let nextCursor = cursor;
-      let result: SentPage;
+      let nextCursor: number | undefined;
       do {
         const response = await api.readSessionExecution(context.ownerSessionId, "list_sent_deliveries", { target: context.target, messageSeqs, liveTurnIds, ...(nextCursor === undefined ? {} : { cursor: nextCursor }), limit: 20 });
         if (attempt.current !== current) return;
         if (!response.ok) { setError(response.message); return; }
-        result = response;
-        items.push(...result.items);
-        nextCursor = result.nextCursor ?? undefined;
-      } while (nextCursor !== undefined && items.length < desiredCount);
-      const next = { identity, page: { ...result, items: cursor !== undefined && previous ? [...previous.items, ...items.filter((item) => !previous.items.some((existing) => existing.receiptId === item.receiptId))] : items } };
-      loadedData.current = next;
-      setData(next);
+        items.push(...response.items);
+        nextCursor = response.nextCursor ?? undefined;
+        const remaining = nextCursor === undefined ? [] : (previous?.items ?? []).filter((item) => item.sequence > nextCursor!);
+        const next = { identity, page: { ...response, items: [...items, ...remaining] } };
+        loadedData.current = next;
+        setData(next);
+      } while (nextCursor !== undefined);
     } catch (failure) {
       if (attempt.current === current) setError(failure instanceof Error ? failure.message : "Could not read outgoing deliveries.");
     } finally { if (attempt.current === current) setBusy(false); }
@@ -58,5 +56,5 @@ export function useSentDeliveries(context: TurnInputReadContext | undefined, mes
     return () => { ++attempt.current; };
   }, [load, revision]);
   const page = data?.identity === identity ? data.page : null;
-  return { items: page?.items ?? [], nextCursor: page?.nextCursor ?? null, error, busy, retry: () => void load(), loadMore: () => { if (page?.nextCursor != null && !busy) void load(page.nextCursor); } };
+  return { items: page?.items ?? [], error, busy, retry: () => void load() };
 }

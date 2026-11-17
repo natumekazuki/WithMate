@@ -12,7 +12,7 @@ import type { SessionSteerOrigin } from "../../src-shared/session/session-turn-q
 // claim = "直接Steerは保存された入力自身の親発言者・avatar・From導線を再表示後も保ち、開始Turnの別actorを通常ユーザーや旧入力へ帰属させない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/942; docs/design/desktop-ui.md#turn-input-details" }
 // fault = "queueのないSteerをユーザー表示する、開始actorで置換する、または全追加入力を親発言へ変える"
-// observable = "実SessionMessageColumnのrow種別・保存名・avatar・@宛先・FromのopenSession対象、reload相当のremount後の一致と配送状態"
+// observable = "実SessionMessageColumnのrow種別・保存名・avatar・@宛先・FromのopenSession対象、reload相当のremount後の一致と配送不明の理由"
 // observation_boundary = "consumer"
 // scope = "保存message→実chat column→turn-input readerとheader、IPC execution読取をfixture化"
 // lifecycle = "permanent"
@@ -57,13 +57,12 @@ test("direct Steer attribution survives remount and stays separate from the Turn
       assert.match(parent.querySelector("img")?.getAttribute("src") ?? "", /parent\.png/);
       assert.equal(parent.querySelector(".session-message-mention")?.textContent, "@Saved Child");
       assert.equal(parent.querySelector(".related-session-direction")?.textContent, "From");
-      assert.equal(parent.querySelector(".turn-input-state")?.textContent, "Additional Input Confirmed");
       await act(async () => (parent.querySelector('[aria-label="Open Sender: Parent Work"]') as HTMLButtonElement).click());
       assert.deepEqual(opened.at(-1), ["parent", undefined]);
       for (const row of rows.slice(1, 3)) {
         assert.ok(row.classList.contains("user")); assert.equal(row.querySelector(".session-message-address"), null);
       }
-      assert.equal(rows[2].querySelector(".turn-input-state")?.textContent, "Input Delivery Unknown");
+      assert.match(rows[2].querySelector('[role="alert"]')?.textContent ?? "", /could not be confirmed/);
       assert.equal(rows[3].querySelector(".message-character-name")?.textContent, "Turn Starter");
       if (reload === 0) { await act(async () => root.unmount()); root = createRoot(dom.window.document.getElementById("root")!); }
     }

@@ -55,7 +55,7 @@ export type ConversationColumnCache = {
   messageJumpRequest: MessageJumpRequest | null;
   messageJumpRequestId: number;
   pageStart?: number;
-  anchor?: { key: string; offset: number };
+  anchor?: { key: string; offset: number; messageIndex?: number };
 };
 
 export type UseConversationMessageColumnInput = {
@@ -204,7 +204,7 @@ export function useConversationMessageColumn({
         const ordered = [...merged.entries()].sort(([left], [right]) => left - right);
         const retained = direction === "earlier" ? ordered.slice(0, CONVERSATION_WINDOW_SIZE) : ordered.slice(-CONVERSATION_WINDOW_SIZE);
         // The reader may have reversed direction while the request was in flight.
-        if (!retained.some(([index]) => `session-${sessionId}-${index}` === anchor.key)) return;
+        if (anchor.messageIndex === undefined || !retained.some(([index]) => index === anchor.messageIndex)) return;
         nextPage = { ...page, startIndex: retained[0][0], messages: retained.map(([, message]) => message) };
       }
       conversation.pageStart = startIndex === undefined ? undefined : nextPage.startIndex;
@@ -226,8 +226,8 @@ export function useConversationMessageColumn({
     setPageError("");
     setPageLoading(false);
     if (conversation.pageStart !== undefined) {
-      const anchorIndex = Number(conversation.anchor?.key.slice(`session-${sessionId}-`.length));
-      void loadPage(Number.isInteger(anchorIndex) ? Math.max(0, anchorIndex - CONVERSATION_PAGE_SIZE / 2) : conversation.pageStart);
+      const anchorIndex = conversation.anchor?.messageIndex;
+      void loadPage(anchorIndex !== undefined ? Math.max(0, anchorIndex - CONVERSATION_PAGE_SIZE / 2) : conversation.pageStart);
     }
     return () => { ++pageRevision.current; };
   }, [pageOwner]);
@@ -386,10 +386,12 @@ export function useConversationMessageColumn({
   const historyProjection = useMemo(() => {
     const history = buildMessageListProjection(messages, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
     return { ...history, keys: history.keys.map((key, index) => {
-      const stable = stableKeys.get(getMessageHistoryIndex(messages[index], index));
-      return stable?.role === messages[index].role ? stable.key : key;
+      const messageIndex = getMessageHistoryIndex(messages[index], index);
+      const stable = stableKeys.get(messageIndex);
+      return stable?.role === messages[index].role ? stable.key
+        : conversation.anchor?.messageIndex === messageIndex ? conversation.anchor.key : key;
     }) };
-  }, [messages, sessionId, messageSourceKind, stableKeySignature]);
+  }, [messages, sessionId, messageSourceKind, stableKeySignature, conversation.anchor?.messageIndex, conversation.anchor?.key]);
   const keyedHistory = useMemo(() => projectLiveAssistantOnSessionHistory(
     historyProjection, messages, sessionId,
     hasSavedBridge ? bridge : null,
@@ -523,14 +525,18 @@ export function useConversationMessageColumn({
     for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
       const rect = row.getBoundingClientRect();
       if (rect.bottom <= listTop || rect.top >= listBottom) continue;
-      const key = projection.keys[Number(row.dataset.index)];
+      const rowIndex = Number(row.dataset.index);
+      const key = projection.keys[rowIndex];
       if (key) {
-        conversation.anchor = { key, offset: rect.top - listTop };
+        const source = projection.sources[rowIndex];
+        const messageIndex = source?.kind === "session" || source?.kind === "auxiliary" ? source.messageIndex
+          : source?.kind === "turn-queue" ? source.receipt.userMessageSeq ?? undefined : undefined;
+        conversation.anchor = { key, offset: rect.top - listTop, messageIndex };
         return conversation.anchor;
       }
       break;
     }
-  }, [conversation, enabled, isBrowsing, projection.keys]);
+  }, [conversation, enabled, isBrowsing, projection.keys, projection.sources]);
   capturePageAnchor.current = captureAnchor;
   const scheduleAnchorCapture = useCallback(() => {
     const element = following.messageListRef.current;
