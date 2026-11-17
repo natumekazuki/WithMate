@@ -22,7 +22,7 @@ import {
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
-import { captureSessionTurnQueueDisplay } from "../src-shared/session/session-turn-queue.js";
+import { captureSessionTurnQueueDisplay, type SessionTurnQueueReceipt } from "../src-shared/session/session-turn-queue.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
 import type { AgentRuntimeSourceRef } from "../src-shared/agent-runtime/agent-runtime-source.js";
@@ -740,6 +740,38 @@ const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
 });
+const pendingSourceDisplay = new Map<string, { sessionId: string; incarnationId: string; turnId: string; text: string }>();
+function rememberSourceDisplay(receipt: SessionTurnQueueReceipt, text: string): void {
+  const origin = receipt.accepted?.origin;
+  if (!receipt.sourceDisplayInserted || !origin?.actorSessionId || !origin.actorIncarnationId || !origin.actorTurnId) return;
+  pendingSourceDisplay.set(receipt.id, { sessionId: origin.actorSessionId, incarnationId: origin.actorIncarnationId, turnId: origin.actorTurnId, text });
+}
+async function verifySourceDisplays(session: Session, turnId: string): Promise<void> {
+  const incarnationId = getSessionIncarnationId(session);
+  const text = session.messages.at(-1)?.text ?? "";
+  let updated = false;
+  for (const [id, pending] of pendingSourceDisplay) {
+    if (pending.sessionId !== session.id || pending.incarnationId !== incarnationId || pending.turnId !== turnId) continue;
+    pendingSourceDisplay.delete(id);
+    try {
+      const owner = requireActivePersistentStoreOwnerForFactory("Sent delivery position");
+      if (owner.storageWorker) {
+        await owner.storageWorker.stores.queue.verifySourceDisplayPosition(id, session.id, incarnationId, turnId, text.startsWith(pending.text));
+        updated = true;
+      }
+    } catch (error) {
+      writeAppLog({ level: "warn", kind: "sent-delivery.position-verification-failed", process: "main", message: "A sent delivery position could not be verified", error: appLogService.errorToLogError(error) });
+    }
+  }
+  if (updated) {
+    try {
+      const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
+      requireWindowBroadcastService().broadcastSessionTurnQueueChanged(session.id, auxiliary?.parentSessionId ?? session.id);
+    } catch (error) {
+      writeAppLog({ level: "warn", kind: "sent-delivery.position-broadcast-failed", process: "main", message: "A sent delivery position update could not be broadcast", error: appLogService.errorToLogError(error) });
+    }
+  }
+}
 const coordinationApplicationService = new CoordinationApplicationService({
   getStore: () => {
     const owner = requireActivePersistentStoreOwnerForFactory("Coordination");
@@ -752,10 +784,11 @@ const coordinationApplicationService = new CoordinationApplicationService({
     const sender = actor.kind === "user" ? null : actor.kind === "main" ? await getRuntimeSession(actor.sessionId) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.sessionId);
     const auxiliarySender = actor.kind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(actor.sessionId) : null;
     if (!recipient || getSessionIncarnationId(recipient) !== target.incarnationId || (actor.kind !== "user" && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId))) throw new Error("The Coordination sender or recipient changed.");
-    return { ...captured, origin: { kind: actor.kind === "user" ? "gui" : "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
+    const live = actor.kind === "user" ? null : getLiveSessionRun(actor.sessionId);
+    return { ...captured, ...(actor.kind !== "user" && live?.sessionTurnId === actor.turnId ? { sourceDisplayPosition: live.assistantText.length, sourceDisplayText: live.assistantText } : {}), origin: { kind: actor.kind === "user" ? "gui" : "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
       targetSnapshot: captureSessionTurnQueueDisplay(recipient), ...(sender ? { actorSnapshot: captureSessionTurnQueueDisplay(sender) } : {}), ...(auxiliarySender ? { actorMainSessionId: auxiliarySender.parentSessionId } : {}) } };
   },
-  onAccepted: (receipt) => requireMainSessionTurnQueueService().acceptCommittedReceipt(receipt),
+  onAccepted: (receipt, text) => { if (text !== undefined) rememberSourceDisplay(receipt, text); requireMainSessionTurnQueueService().acceptCommittedReceipt(receipt); },
   onNotificationError: (error) => writeAppLog({ level: "warn", kind: "coordination.notification-failed", process: "main", message: "A saved Coordination notification failed", error: appLogService.errorToLogError(error) }),
 });
 const sessionManagementRuntimeService = new SessionManagementRuntimeService({
@@ -2451,6 +2484,11 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
     const store = owner.storageWorker?.stores.queue;
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     mainSessionTurnQueueFacade = new MainSessionTurnQueueFacade({
+      captureSourceDisplayText: (origin) => {
+        const live = origin.actorSessionId ? getLiveSessionRun(origin.actorSessionId) : null;
+        return live && origin.actorTurnId && live.sessionTurnId === origin.actorTurnId ? live.assistantText : undefined;
+      },
+      rememberSourceDisplay,
       getUnreleasedSourceTurnIds: () => sessionRuntimeService?.getUnreleasedTurnIds() ?? [],
       assertActive: () => assertPersistentStoreOwnerIsActive(owner, "Queue acceptance"),
       assertAccepting: () => {
@@ -2508,6 +2546,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
         appendTerminalSession: async (session, terminalCommit) => {
           const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
+          await verifySourceDisplays(session, String(terminalCommit.turnId));
           sessionResultReadService.recordResult(terminalCommit);
           return persisted;
         },
@@ -2641,6 +2680,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
+          await verifySourceDisplays(session, String(commit.turnId));
           sessionResultReadService.recordResult(commit);
           return persisted;
         },

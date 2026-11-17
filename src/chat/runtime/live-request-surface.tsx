@@ -576,8 +576,8 @@ export function InlineResponseContent({ text, records = [], requests = [], rende
   responseProvider?: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
-  inlineContent?: MessageInlineContent;
-  renderText: (text: string, key: string, sourceStart: number, inlineContent?: MessageInlineContent, selectedRanges?: Array<{ start: number; end: number }>) => ReactNode;
+  inlineContent?: MessageInlineContent | readonly MessageInlineContent[];
+  renderText: (text: string, key: string, sourceStart: number, inlineContent?: readonly MessageInlineContent[], selectedRanges?: Array<{ start: number; end: number }>) => ReactNode;
 } & Omit<LiveElicitationCardProps, "request">) {
   const entries = records.map((record) => ({ record, request: requests.find((request) => request.requestId === record.requestId) }));
   for (const request of requests) {
@@ -587,12 +587,16 @@ export function InlineResponseContent({ text, records = [], requests = [], rende
   }
   const fragments: ReactNode[] = [];
   let offset = 0;
-  let contentInserted = false;
+  const contents = (inlineContent ? Array.isArray(inlineContent) ? inlineContent : [inlineContent as MessageInlineContent] : []).slice().sort((a, b) => a.position - b.position);
+  let nextContent = 0;
   const appendText = (end: number, key: string, selectedRanges?: Array<{ start: number; end: number }>) => {
-    const content = inlineContent && !contentInserted && Math.min(inlineContent.position, text.length) <= end
-      ? { ...inlineContent, position: Math.max(0, inlineContent.position - offset) } : undefined;
-    if (content) contentInserted = true;
-    if (end > offset || content) fragments.push(renderText(text.slice(offset, end), content?.key ?? key, offset, content, selectedRanges?.map((range) => ({ start: range.start - offset, end: range.end - offset }))));
+    const selected: MessageInlineContent[] = [];
+    while (nextContent < contents.length && Math.min(contents[nextContent].position, text.length) <= end) {
+      const content = contents[nextContent++];
+      selected.push({ ...content, position: Math.max(0, content.position - offset) });
+    }
+    const owner = selected.find((content) => content.stableOwner) ?? selected[0];
+    if (end > offset || selected.length) fragments.push(renderText(text.slice(offset, end), owner?.key ?? key, offset, selected.length ? selected : undefined, selectedRanges?.map((range) => ({ start: range.start - offset, end: range.end - offset }))));
   };
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;

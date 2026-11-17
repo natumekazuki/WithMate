@@ -22,6 +22,8 @@ export type MainSessionTurnQueueFacadeDeps = {
   store: SessionTurnQueueStore;
   service: SessionTurnQueueService;
   getUnreleasedSourceTurnIds?(): readonly string[];
+  captureSourceDisplayText?(origin: SessionTurnQueueOrigin): string | undefined;
+  rememberSourceDisplay?(receipt: SessionTurnQueueReceipt, text: string): void;
 };
 
 export class SessionTurnQueuePreflightRejectedError extends Error {}
@@ -125,10 +127,16 @@ export class MainSessionTurnQueueFacade {
       // No queue mutation was issued, so this reply can safely reject acceptance.
       throw new SessionTurnQueuePreflightRejectedError(error instanceof Error ? error.message : "Turn preflight failed.", { cause: error });
     }
-    return this.deps.service.enqueue(owner, {
+    const sourceDisplayText = acceptedOrigin.kind === "session" ? this.deps.captureSourceDisplayText?.(acceptedOrigin) : undefined;
+    const receipt = await this.deps.service.enqueue(owner, {
       ...prepared,
       origin: acceptedOrigin,
+      ...(sourceDisplayText === undefined ? {} : { sourceDisplayPosition: sourceDisplayText.length }),
     }, assertActorCurrent);
+    if (receipt.sourceDisplayInserted && sourceDisplayText !== undefined) this.deps.rememberSourceDisplay?.(receipt, sourceDisplayText);
+    if (receipt.sourceDisplayInserted === undefined) return receipt;
+    const { sourceDisplayInserted: _inserted, ...result } = receipt;
+    return result;
   }
 
   async prepareCoordinationDelivery(target: SessionTurnQueueOwner & { kind: "main" | "auxiliary" }, operationId: string): Promise<SessionTurnQueueCapturedInput> {

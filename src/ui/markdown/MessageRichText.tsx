@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
@@ -38,24 +38,32 @@ import { rehypeSourceRanges, remarkReferenceSourceRanges } from "./markdown-sour
 
 export type MessageViewMode = "preview" | "source";
 
-export type MessageInlineContent = { key: string; position: number; content: ReactNode };
+export type MessageInlineContent = { key: string; position: number; content: ReactNode; stableOwner?: boolean };
 
-const InlineContentContext = createContext<MessageInlineContent | undefined>(undefined);
-const inlineMarkdownComponents: Components = {
-  ...markdownComponents,
-  div: function InlineContent({ node, className, ...props }) {
-    const content = useContext(InlineContentContext);
-    return node && className === "message-inline-content"
-      ? <div className={className} key={content?.key}>{content?.content}</div>
-      : <div className={className} {...props} />;
-  },
+function inlineContentList(value: MessageInlineContent | readonly MessageInlineContent[] | undefined): readonly MessageInlineContent[] {
+  return value ? Array.isArray(value) ? value : [value as MessageInlineContent] : [];
+}
+
+const InlineContentContext = createContext<readonly MessageInlineContent[]>([]);
+const InlineContent: NonNullable<Components["div"]> = function InlineContent({ node, className, ...props }) {
+  const contents = useContext(InlineContentContext);
+  const match = className?.match(/(?:^|\s)message-inline-content-(\d+)(?:\s|$)/);
+  const content = match ? contents[Number(match[1])] : undefined;
+  return node && match
+    ? <div className="message-inline-content" key={content?.key}>{content?.content}</div>
+    : <div className={className} {...props} />;
 };
+const inlineMarkdownComponents = {
+  ...markdownComponents,
+  div: InlineContent,
+  "withmate-stable-inline": InlineContent,
+} as Components;
 
 type MessageRichTextProps = {
   text: string;
   embeddedMedia?: "allow" | "text";
   sourceStart?: number;
-  inlineContent?: MessageInlineContent;
+  inlineContent?: MessageInlineContent | readonly MessageInlineContent[];
   selectedRanges?: Array<{ start: number; end: number }>;
   className?: string;
   forceFullRender?: boolean;
@@ -75,18 +83,22 @@ type MessageRichTextProps = {
   onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
-function createInlineContentPlugin(position: number): Plugin<[], Root> {
+function createInlineContentPlugin(contents: readonly MessageInlineContent[]): Plugin<[], Root> {
   return () => (tree) => {
-    let index = 0;
-    for (const node of tree.children) {
-      if ((node.position?.start.offset ?? 0) >= position) break;
-      index += 1;
-      if ((node.position?.end.offset ?? 0) >= position) break;
-    }
-    // Insert at a block boundary without reparsing fragments or losing document references.
-    tree.children.splice(index, 0, {
+    const original = tree.children.slice();
+    const insertions = contents.map((content, contentIndex) => {
+      let index = 0;
+      for (const node of original) {
+        if ((node.position?.start.offset ?? 0) >= content.position) break;
+        index += 1;
+        if ((node.position?.end.offset ?? 0) >= content.position) break;
+      }
+      return { index, contentIndex };
+    }).sort((a, b) => b.index - a.index || b.contentIndex - a.contentIndex);
+    for (const { index, contentIndex } of insertions) tree.children.splice(index, 0, {
       type: "paragraph", children: [],
-      data: { hName: "div", hProperties: { className: ["message-inline-content"] } },
+      // Give stateful content a separate ReactMarkdown sibling key from ordinary cards.
+      data: { hName: contents[contentIndex].stableOwner ? "withmate-stable-inline" : "div", hProperties: { className: ["message-inline-content", `message-inline-content-${contentIndex}`] } },
     });
   };
 }
@@ -241,6 +253,8 @@ function MessageMarkdownPreview({
     ],
     [footnoteLabelId, glossaryAnnotations.rehypePlugin, katexProjection],
   );
+  const inlineContents = inlineContentList(inlineContent);
+  const inlinePositions = JSON.stringify(inlineContents.map(({ position, stableOwner }) => [position, Boolean(stableOwner)]));
   const remarkPlugins = useMemo<PluggableList>(
     () => [
       remarkFrontmatter,
@@ -251,9 +265,9 @@ function MessageMarkdownPreview({
       sharedRemarkHtmlLineBreaks,
       remarkReferenceSourceRanges,
       ...(selectedRanges?.length ? [createQuestionSelectionPlugin(selectedRanges)] : []),
-      ...(inlineContent ? [createInlineContentPlugin(inlineContent.position)] : []),
+      ...(inlineContents.length ? [createInlineContentPlugin(inlineContents)] : []),
     ],
-    [responseProvider, parseProjection, inlineContent?.position, selectedRanges],
+    [responseProvider, parseProjection, inlinePositions, selectedRanges],
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown
@@ -292,7 +306,7 @@ function MessageMarkdownPreview({
         controller={glossaryAnnotations.controller}
       >
         <MarkdownRenderContext.Provider value={markdownRenderContext}>
-          <InlineContentContext.Provider value={inlineContent}>
+          <InlineContentContext.Provider value={inlineContents}>
             {markdownContent}
           </InlineContentContext.Provider>
         </MarkdownRenderContext.Provider>
@@ -322,21 +336,26 @@ function MessageRichTextComponent({
       const pieces: ReactNode[] = [];
       let offset = start;
       for (const range of [...props.selectedRanges ?? []].sort((a, b) => a.start - b.start)) {
-        if (range.start < offset || range.start < start || range.end > end || range.end <= range.start) continue;
-        pieces.push(props.text.slice(offset, range.start));
-        pieces.push(<span className="elicitation-record-selected" key={`${range.start}:${range.end}`}>✓ {props.text.slice(range.start, range.end)}</span>);
-        offset = range.end;
+        const rangeStart = Math.max(range.start, start, offset);
+        const rangeEnd = Math.min(range.end, end);
+        if (rangeEnd <= rangeStart) continue;
+        pieces.push(props.text.slice(offset, rangeStart));
+        pieces.push(<span className="elicitation-record-selected" key={`${range.start}:${range.end}`}>{rangeStart === range.start ? "✓ " : ""}{props.text.slice(rangeStart, rangeEnd)}</span>);
+        offset = rangeEnd;
       }
       pieces.push(props.text.slice(offset, end));
       return pieces;
     };
-    if (props.inlineContent) {
-      const position = Math.max(0, Math.min(props.inlineContent.position, props.text.length));
-      return <>
-        {position > 0 ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>{sourceContent(0, position)}</pre> : null}
-        {props.inlineContent.content}
-        {position < props.text.length ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + position}>{sourceContent(position, props.text.length)}</pre> : null}
-      </>;
+    const contents = inlineContentList(props.inlineContent).slice().sort((a, b) => a.position - b.position);
+    if (contents.length) {
+      let offset = 0;
+      const fragments = contents.map((content) => {
+        const position = Math.max(offset, Math.min(content.position, props.text.length));
+        const fragment = <Fragment key={content.key}>{position > offset ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + offset}>{sourceContent(offset, position)}</pre> : null}{content.content}</Fragment>;
+        offset = position;
+        return fragment;
+      });
+      return <>{fragments}{offset < props.text.length ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + offset}>{sourceContent(offset, props.text.length)}</pre> : null}</>;
     }
     return (
       <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>

@@ -487,13 +487,15 @@ test("旧Main queue schema移行はreceiptと受付順を保持する", async ()
     const before = db.prepare("SELECT * FROM session_turn_queue_v6").get();
     ensureV6Schema(db);
     const after = db.prepare("SELECT * FROM session_turn_queue_v6").get() as Record<string, unknown>;
-    const { auxiliary_session_id, input_turn_id, queue_position, accepted_json, dispatched_json, ...retained } = after;
+    const { auxiliary_session_id, input_turn_id, queue_position, accepted_json, dispatched_json, source_display_position, source_display_verified, ...retained } = after;
     assert.deepEqual(retained, { ...before });
     assert.equal(queue_position, 42);
     assert.equal(auxiliary_session_id, null);
     assert.equal(input_turn_id, null);
     assert.equal(accepted_json, null);
     assert.equal(dispatched_json, null);
+    assert.equal(source_display_position, null);
+    assert.equal(source_display_verified, 0);
     ensureV6Schema(db);
     db.prepare(`INSERT INTO session_turn_queue_v6 (id,session_id,incarnation_id,request_id,state,captured_json,created_at,updated_at)
       VALUES ('next',?,?, 'next', 'queued', '{}', 'now','now')`).run(f.session.id, f.session.incarnationId!);
