@@ -136,7 +136,8 @@ export function useConversationMessageColumn({
   const submissionStore = baseProps.turnSubmissions ?? emptySubmissions.current;
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
-  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions);
+  const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
+  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, liveRun);
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
     const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);
@@ -280,7 +281,6 @@ export function useConversationMessageColumn({
     });
   }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh, liveReadRevision]);
 
-  const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const previousResponse = responsePresentation.current;
   // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
   const isResponseBindingPending = !!api?.listSessionTurnQueue && !!(liveRun?.sessionTurnId || liveRun?.turnId)
