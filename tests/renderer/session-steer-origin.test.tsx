@@ -9,10 +9,10 @@ import type { SessionSteerOrigin } from "../../src-shared/session/session-turn-q
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接Steerは保存された入力自身の親発言者・avatar・From導線を再表示後も保ち、開始Turnの別actorを通常ユーザーや旧入力へ帰属させない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/942; docs/design/desktop-ui.md#turn-input-details" }
-// fault = "queueのないSteerをユーザー表示する、開始actorで置換する、または全追加入力を親発言へ変える"
-// observable = "実SessionMessageColumnのrow種別・保存名・avatar・@宛先・FromのopenSession対象、reload相当のremount後の一致と配送状態"
+// claim = "直接Steerは保存された入力自身の親発言者・avatar・色・From導線を再表示後も保ち、送信元変更を色へ反映し、開始Turnの別actorを通常ユーザーや旧入力へ帰属させない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/942; https://github.com/natumekazuki/WithMate/issues/958; docs/design/desktop-ui.md#turn-input-details" }
+// fault = "queueのないSteerをユーザー表示する、開始actorで置換する、個別messageと異なる色を使う、または全追加入力を親発言へ変える"
+// observable = "実SessionMessageColumnのrow種別・保存名・avatar・色・@宛先・FromのopenSession対象、remount後の一致、送信元更新・削除後の色と配送状態"
 // observation_boundary = "consumer"
 // scope = "保存message→実chat column→turn-input readerとheader、IPC execution読取をfixture化"
 // lifecycle = "permanent"
@@ -28,11 +28,14 @@ test("direct Steer attribution survives remount and stays separate from the Turn
   const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom.window : (dom.window as any)[key] });
   const opened: string[][] = [];
+  const invalidationListeners = new Set<(event: { scope: "all" } | { scope: "ids"; sessionIds: string[] }) => void>();
+  let senderTheme: { main: string; sub: string } | null = { main: "#ff8c3c", sub: "#f6ebef" };
+  let reads = 0;
   const origin: SessionSteerOrigin = { kind: "session", operation: "steer", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "p-inc", actorTurnId: "7", targetSessionId: "child", targetIncarnationId: "c-inc",
     actorSnapshot: { sessionTitle: "Parent Work", character: { id: "parent-character", name: "Saved Parent", iconPath: "C:/fixture/parent.png" } },
     targetSnapshot: { sessionTitle: "Child Work", character: { id: "child-character", name: "Saved Child", iconPath: "" } } };
   const starter = { ...origin, operation: "send", actorSessionId: "starter", actorSnapshot: { sessionTitle: "Starter Work", character: { id: "starter-character", name: "Turn Starter", iconPath: "" } } };
-  Object.defineProperty(dom.window, "withmate", { value: { openSession: async (...ids: string[]) => { opened.push(ids); }, readSessionExecution: async () => ({ ok: true, origin: starter, receiptId: null, turnId: "42", turnState: "running", userMessageSeq: 0, executionSettings: null }) } });
+  Object.defineProperty(dom.window, "withmate", { value: { openSession: async (...ids: string[]) => { opened.push(ids); }, subscribeSessionInvalidation: (listener: (event: { scope: "all" } | { scope: "ids"; sessionIds: string[] }) => void) => { invalidationListeners.add(listener); return () => invalidationListeners.delete(listener); }, readSessionExecution: async (_owner: string, _op: string, request: { messageSeq?: number }) => { reads++; return { ok: true, origin: starter, senderTheme: request.messageSeq === 4 ? senderTheme : null, receiptId: null, turnId: "42", turnState: "running", userMessageSeq: 0, executionSettings: null }; } } });
   const direct: Message = { role: "user", text: "Parent additional instruction", historyIndex: 4, turnInput: { turnId: "42", nativeTurnId: "native", state: "confirmed", attachments: [], origin } };
   const messages: Message[] = [direct,
     { role: "user", text: "User additional instruction", historyIndex: 5, turnInput: { ...direct.turnInput!, origin: undefined } },
@@ -54,6 +57,7 @@ test("direct Steer attribution survives remount and stays separate from the Turn
       const parent = rows[0];
       assert.ok(parent.classList.contains("session-origin"));
       assert.equal(parent.querySelector(".message-character-name")?.textContent, "Saved Parent");
+      assert.equal((parent.querySelector(".message-card") as HTMLElement).style.getPropertyValue("--sender-main"), "#ff8c3c");
       assert.match(parent.querySelector("img")?.getAttribute("src") ?? "", /parent\.png/);
       assert.equal(parent.querySelector(".session-message-mention")?.textContent, "@Saved Child");
       assert.equal(parent.querySelector(".related-session-direction")?.textContent, "From");
@@ -67,6 +71,16 @@ test("direct Steer attribution survives remount and stays separate from the Turn
       assert.equal(rows[3].querySelector(".message-character-name")?.textContent, "Turn Starter");
       if (reload === 0) { await act(async () => root.unmount()); root = createRoot(dom.window.document.getElementById("root")!); }
     }
+    const parentCard = dom.window.document.querySelector("article.session-origin .message-card") as HTMLElement;
+    const readsBeforeUnrelated = reads;
+    await act(async () => { for (const listener of invalidationListeners) listener({ scope: "ids", sessionIds: ["unrelated"] }); });
+    assert.equal(reads, readsBeforeUnrelated);
+    senderTheme = { main: "#123456", sub: "#abcdef" };
+    await act(async () => { for (const listener of invalidationListeners) listener({ scope: "ids", sessionIds: ["parent"] }); });
+    assert.equal(parentCard.style.getPropertyValue("--sender-main"), "#123456");
+    senderTheme = null;
+    await act(async () => { for (const listener of invalidationListeners) listener({ scope: "all" }); });
+    assert.equal(parentCard.style.getPropertyValue("--sender-main"), "");
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

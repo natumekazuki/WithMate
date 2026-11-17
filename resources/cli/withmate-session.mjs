@@ -6297,6 +6297,10 @@ var executionOperationResultSchemas = {
 			text: string()
 		}).optional(),
 		executionSettings: executionSettings.nullable(),
+		senderTheme: object({
+			main: string(),
+			sub: string()
+		}).nullable().optional(),
 		output: object({
 			finality: _enum([
 				"identified",

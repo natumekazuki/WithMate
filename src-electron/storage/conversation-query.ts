@@ -18,7 +18,7 @@ export type ConversationQuerySnapshot = {
   incarnationId: string;
   messageCount: number;
 };
-export type ConversationQueryRow = { seq: number; role: string; body: string; runFailure?: string | null };
+export type ConversationQueryRow = { seq: number; role: string; body: string; runFailure?: string | null; inputOriginJson?: string | null };
 
 export function conversationMessageColumns(table: MessageTable, db: DatabaseSync): string {
   // Auxiliary transcripts are also read during schema initialization, before minimal turns exist.
@@ -33,7 +33,7 @@ export function conversationMessageColumns(table: MessageTable, db: DatabaseSync
 }
 
 /** A cursor read ends synchronously; neither its statement nor a transaction crosses an await. */
-export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number): ConversationQueryRow[] {
+export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number, includeSpeakers = true): ConversationQueryRow[] {
   const owner = table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
   const rows: ConversationQueryRow[] = [];
   let bytes = 0;
@@ -44,6 +44,19 @@ export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable
     rows.push(row);
     bytes += size;
     if (bytes >= 256 * 1024) break;
+  }
+  if (includeSpeakers && rows.some((row) => row.role === "user")) {
+    const main = table === "session_messages_v6";
+    const identity = main
+      ? db.prepare("SELECT incarnation_id AS incarnation FROM sessions_v6 WHERE id = ?").get(id) as { incarnation: string | null } | undefined
+      : db.prepare("SELECT created_at AS incarnation FROM auxiliary_sessions WHERE id = ?").get(id) as { incarnation: string | null } | undefined;
+    const receipts = db.prepare(`SELECT user_message_seq AS seq, json_extract(COALESCE(dispatched_json, accepted_json), '$.origin') AS origin
+      FROM session_turn_queue_v6 WHERE ${owner} = ? ${main ? "AND auxiliary_session_id IS NULL" : ""}
+        AND incarnation_id = ? AND user_message_seq BETWEEN ? AND ? ORDER BY sequence`).all(
+          id, identity?.incarnation?.trim() || `legacy:${id}`, rows[0].seq, rows[rows.length - 1].seq,
+        ) as { seq: number; origin: string | null }[];
+    const bySequence = new Map(receipts.map((receipt) => [receipt.seq, receipt.origin]));
+    for (const row of rows) if (bySequence.has(row.seq)) row.inputOriginJson = bySequence.get(row.seq) ?? null;
   }
   return rows;
 }

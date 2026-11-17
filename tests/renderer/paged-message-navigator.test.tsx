@@ -58,6 +58,31 @@ async function withNavigator(run: (fixture: {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Messages一覧は同じuser roleのSession送信者と人間を識別し選択した発言へ移動する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/958" }
+// fault = "保存送信者をUserとして表示するか選択したmessage keyを取り違える"
+// observable = "paged navigatorのaccessible nameとクリック時のjump key"
+// observation_boundary = "component-behavior"
+// scope = "Messages送信者表示とjump"
+// lifecycle = "permanent"
+// impact = "他Sessionからの発言をユーザー本人の入力と誤認する"
+// distinction = "storageのspeaker testでは実際の一覧行の表示と選択先を検証できない"
+// @end-test-value
+test("paged navigator identifies incoming sender and preserves its jump", async () => withNavigator(async ({ element, render, jumps }) => {
+  const page: MessageNavigatorPage = { items: [
+    { key: "sender-message", sourceKind: "session", role: "user", speaker: { kind: "agent", name: "Rika", iconPath: "" }, preview: "hello", accent: false, isCollapsed: false, isBookmarked: false },
+    { key: "user-message", sourceKind: "session", role: "user", speaker: { kind: "user" }, preview: "reply", accent: false, isCollapsed: false, isBookmarked: false },
+  ], offset: 0, totalCount: 2, filter: "all", loading: false, error: "", onFilterChange() {}, onRequestRange() {}, onRetry() {} };
+  await act(async () => render(page));
+  const rows = element.querySelectorAll<HTMLButtonElement>(".messages-navigator-row");
+  assert.match(rows[0].getAttribute("aria-label")!, /Rika.*hello/);
+  assert.match(rows[1].getAttribute("aria-label")!, /Your message.*reply/);
+  await act(async () => rows[0].click());
+  assert.deepEqual(jumps, ["sender-message"]);
+}));
+
+// @test-value v2
+// kind = "contract"
 // claim = "有限pageのMessages navigatorでもHome/End/Arrow/Enterは全件の位置へ移動し、Bookmarkは読込済みpage外を含む対象へ切り替える"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Messages navigatorと全履歴query page" }
 // fault = "keyboard移動が手元pageに限定される、未取得末尾へのfocusを失う、またはBookmark切替を現在pageだけに適用する"

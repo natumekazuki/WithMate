@@ -1,4 +1,17 @@
 import type { Message } from "./session-state.js";
+import type { SessionSteerOrigin, SessionTurnQueueOrigin } from "./session-turn-queue.js";
+
+export type ConversationInputSpeaker =
+  | { kind: "user" }
+  | { kind: "unknown" }
+  | { kind: "agent"; name: string; iconPath: string };
+
+export function conversationInputSpeaker(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): ConversationInputSpeaker {
+  if (!origin) return { kind: "unknown" };
+  if (origin.kind === "gui") return { kind: "user" };
+  const character = origin.actorSnapshot?.character;
+  return { kind: "agent", name: character?.name?.trim() || "Unknown Sender", iconPath: character?.iconPath || "" };
+}
 
 export const CONVERSATION_PAGE_SIZE = 60;
 
@@ -83,6 +96,7 @@ export type ConversationNavigatorEntry = {
   preview: string;
   accent: boolean;
   isBookmarked: boolean;
+  speaker?: ConversationInputSpeaker;
 };
 
 export function getMessageHistoryIndex(message: Message, localIndex: number): number {

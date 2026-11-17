@@ -14,6 +14,7 @@ import { projectProviderOutput } from "../../src-shared/session/provider-output.
 import { executionOperationResultSchemas, type ExecutionReadOperation } from "../../src-shared/session/session-execution-read.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
+import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -24,6 +25,105 @@ async function fixture(action: (context: { sessions: SessionStorageV6; turns: Se
   finally { auxiliary.close(); read.close(); queue.close(); turns.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); }
 }
 function session() { return buildNewSession({ id: "read-main", taskTitle: "Read", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "受信側の一覧と実行読取は同じ保存messageから送信元CharacterとそのSession色を得る"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/958" }
+// fault = "user roleから人間と誤判定するか別Session世代の色を混ぜる"
+// observable = "実SQLite receiptとmessage seqを経由したnavigator speakerとexecution senderTheme"
+// observation_boundary = "public-boundary"
+// scope = "受信一覧とカードの保存来歴"
+// lifecycle = "permanent"
+// impact = "発言者とカード色を別の人やSessionと取り違える"
+// distinction = "renderer fixtureや個別role testでは保存receiptからUI用一覧とカード両方への結合を検証できない"
+// @end-test-value
+test("incoming sender and theme follow the exact saved receipt", async () => {
+  await fixture(({ sessions, queue, turns, read }) => {
+    const sender = sessions.insertSession({ ...session(), id: "sender", characterId: "sender-character", character: "Sender", characterThemeColors: { main: "#ff8c3c", sub: "#f6ebef" } });
+    const recipient = sessions.insertSession({ ...session(), messages: [{ role: "user", text: "from sender" }, { role: "user", text: "from user" }] });
+    const owner = { sessionId: recipient.id, incarnationId: getSessionIncarnationId(recipient) };
+    const target = { kind: "main" as const, ...owner };
+    const origin = { kind: "session" as const, operation: "send" as const, actorKind: "main" as const, actorSessionId: sender.id, actorIncarnationId: getSessionIncarnationId(sender), actorSnapshot: captureSessionTurnQueueDisplay(sender), targetSessionId: recipient.id, targetIncarnationId: owner.incarnationId };
+    const send = (text: string, source: typeof origin | { kind: "gui"; operation: "send"; targetSessionId: string; targetIncarnationId: string }) => queue.enqueue(owner, { request: { userMessage: text, clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(recipient) }, provider: recipient.provider, workspacePath: recipient.workspacePath, attachments: [], origin: source });
+    const receipt = send("from sender", origin);
+    const get = (request: { receiptId: string } | { messageSeq: number }) => executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, ...request } }));
+    assert.deepEqual(get({ receiptId: receipt.id }).senderTheme, sender.characterThemeColors);
+    const turn = turns.createSessionTurn({ sessionId: recipient.id, phase: "running", provider: recipient.provider, model: recipient.model, reasoningEffort: recipient.reasoningEffort, approvalMode: recipient.approvalMode, threadId: "", errorMessage: "", userMessageSeq: 0, createdAt: "2026-11-17T00:00:00Z" });
+    queue.claimNext(owner); queue.markStarted(owner, receipt.id, { turnId: String(turn.id), userMessageSeq: 0 }); queue.settle(owner, receipt.id, "completed");
+    const gui = send("from user", { kind: "gui", operation: "send", targetSessionId: recipient.id, targetIncarnationId: owner.incarnationId });
+    const userTurn = turns.createSessionTurn({ sessionId: recipient.id, phase: "running", provider: recipient.provider, model: recipient.model, reasoningEffort: recipient.reasoningEffort, approvalMode: recipient.approvalMode, threadId: "", errorMessage: "", userMessageSeq: 1, createdAt: "2026-11-17T00:00:00Z" });
+    queue.claimNext(owner); queue.markStarted(owner, gui.id, { turnId: String(userTurn.id), userMessageSeq: 1 });
+    const rows = sessions.readConversationQueryBatch(recipient.id, -1);
+    const nav = projectConversationBatch({ cacheScope: "sender-test", provider: recipient.provider, rows, query: { kind: "navigator", filter: "all" }, offset: 0, countBefore: 0 });
+    assert.deepEqual(nav.items.map((item) => "speaker" in item ? item.speaker : null), [{ kind: "agent", name: "Sender", iconPath: "" }, { kind: "user" }]);
+    assert.deepEqual(get({ messageSeq: 0 }).senderTheme, sender.characterThemeColors);
+    const stale = send("stale", { ...origin, actorIncarnationId: "other-generation" });
+    assert.equal(get({ receiptId: stale.id }).senderTheme, null);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary送信者の色はその保存SessionのCharacterから取得し、世代と親の異なるSessionを混ぜない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/958" }
+// fault = "Auxiliaryの親の色を使うか別世代または別の親の色を使う"
+// observable = "受信receiptのexecution senderThemeと誤った親・世代の結果"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary送信元の保存色"
+// lifecycle = "permanent"
+// impact = "他の発言者の色を受信カードに表示する"
+// distinction = "Mainの色testではAuxiliaryの別テーブルと親identityの確認を通らない"
+// @end-test-value
+test("incoming Auxiliary theme uses its exact saved identity", async () => {
+  await fixture(({ sessions, auxiliary, queue, read }) => {
+    const parent = sessions.insertSession({ ...session(), id: "aux-parent" });
+    const recipient = sessions.insertSession(session());
+    const snapshot = { characterId: "aux-character", name: "Aux Sender", description: "", iconFilePath: "", theme: { main: "#ff8c3c", sub: "#f6ebef" }, definitionMarkdown: "definition", definitionSha256: "", definitionByteSize: 0, snapshotAt: "now" };
+    const aux = auxiliary.upsertAuxiliarySession({ ...captureSessionExecutionOptions(parent), id: "sender-aux", parentSessionId: parent.id, runState: "idle", title: "Aux", provider: "codex", catalogRevision: 1, threadId: "", composerDraft: "", messages: [], displayAfterMessageIndex: null, createdAt: "2026-11-07T00:00:00.000Z", updatedAt: "2026-11-07T00:00:00.000Z", characterId: snapshot.characterId, characterRuntimeSnapshot: snapshot });
+    const owner = { sessionId: recipient.id, incarnationId: getSessionIncarnationId(recipient) }, target = { kind: "main" as const, ...owner };
+    const origin = { kind: "session" as const, operation: "send" as const, actorKind: "auxiliary" as const, actorSessionId: aux.id, actorMainSessionId: parent.id, actorIncarnationId: aux.createdAt, actorSnapshot: { sessionTitle: aux.title, character: { id: snapshot.characterId, name: snapshot.name, iconPath: "" } }, targetSessionId: recipient.id, targetIncarnationId: owner.incarnationId };
+    const readTheme = (source: typeof origin) => {
+      const receipt = queue.enqueue(owner, { request: { userMessage: "incoming", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(recipient) }, provider: recipient.provider, workspacePath: recipient.workspacePath, attachments: [], origin: source });
+      return executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, receiptId: receipt.id } })).senderTheme;
+    };
+    assert.deepEqual(readTheme(origin), snapshot.theme);
+    assert.equal(readTheme({ ...origin, actorIncarnationId: "different" }), null);
+    assert.equal(readTheme({ ...origin, actorMainSessionId: "different" }), null);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "直接Steer入力の色はTurn開始者ではなく入力自身の保存送信者から解決する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/958" }
+// fault = "追加入力を開始Turnの送信者に帰属させる"
+// observable = "直接Steer message seqのexecution senderThemeとnavigator speaker"
+// observation_boundary = "public-boundary"
+// scope = "直接Steerの保存送信者と色"
+// lifecycle = "permanent"
+// impact = "親Sessionの追加指示を別の発言者の色で表示する"
+// distinction = "queue receiptのtestではmessage本文に保存された直接Steer originを通らない"
+// @end-test-value
+test("direct Steer uses the input sender theme and speaker", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const sender = sessions.insertSession({ ...session(), id: "steer-sender", characterId: "parent-character", character: "Parent", characterThemeColors: { main: "#ff8c3c", sub: "#f6ebef" } });
+    const starter = sessions.insertSession({ ...session(), id: "starter", characterId: "starter-character", character: "Starter" });
+    const origin = { kind: "session" as const, operation: "steer" as const, actorKind: "main" as const, actorSessionId: sender.id, actorIncarnationId: getSessionIncarnationId(sender), actorTurnId: "7", actorSnapshot: captureSessionTurnQueueDisplay(sender), targetSessionId: "read-main", targetIncarnationId: "recipient-inc" };
+    const recipient = sessions.insertSession({ ...session(), incarnationId: "recipient-inc", messages: [{ role: "user", text: "start" }, { role: "user", text: "steer", turnInput: { turnId: "1", nativeTurnId: "native", attachments: [], state: "confirmed", origin } }] });
+    const turn = turns.createSessionTurn({ sessionId: recipient.id, phase: "running", provider: recipient.provider, model: recipient.model, reasoningEffort: recipient.reasoningEffort, approvalMode: recipient.approvalMode, threadId: "", errorMessage: "", userMessageSeq: 0, createdAt: "2026-11-17T00:00:00Z" });
+    assert.equal(String(turn.id), "1");
+    const target = { kind: "main" as const, sessionId: recipient.id, incarnationId: getSessionIncarnationId(recipient) };
+    const startOrigin = { ...origin, operation: "send" as const, actorSessionId: starter.id, actorIncarnationId: getSessionIncarnationId(starter), actorSnapshot: captureSessionTurnQueueDisplay(starter) };
+    const receipt = queue.enqueue({ sessionId: recipient.id, incarnationId: target.incarnationId }, { request: { userMessage: "start", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(recipient) }, provider: recipient.provider, workspacePath: recipient.workspacePath, attachments: [], origin: startOrigin });
+    queue.claimNext(target); queue.markStarted(target, receipt.id, { turnId: String(turn.id), userMessageSeq: 0 });
+    const result = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, messageSeq: 1 } }));
+    assert.deepEqual(result.senderTheme, sender.characterThemeColors);
+    const rows = sessions.readConversationQueryBatch(recipient.id, -1);
+    const nav = projectConversationBatch({ cacheScope: "steer-test", provider: recipient.provider, rows, query: { kind: "navigator", filter: "all" }, offset: 0, countBefore: 0 });
+    assert.deepEqual(nav.items.map((item) => "speaker" in item && item.speaker), [{ kind: "agent", name: "Starter", iconPath: "" }, { kind: "agent", name: "Parent", iconPath: "" }]);
+  });
+});
 
 // @test-value v2
 // kind = "contract"
