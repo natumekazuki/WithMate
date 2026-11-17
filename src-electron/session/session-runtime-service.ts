@@ -1042,6 +1042,7 @@ export class SessionRuntimeService {
     let runningSession: Session;
     let initialLiveState: LiveSessionRunState;
     let runningTurn!: SessionTurnRecord;
+    let queueReceipt: LiveSessionRunState["queueReceipt"];
     let setupLiveRun = false;
     let setupRunningSessionSaved = false;
     try {
@@ -1064,6 +1065,7 @@ export class SessionRuntimeService {
         this.unreleasedTurnIds.set(sessionId, String(runningTurn.id));
         if (typeof runningTurn.userMessageSeq !== "number") throw new Error("The queued turn message identity was not persisted.");
         await queued.onStarted({ turnId: String(runningTurn.id), userMessageSeq: runningTurn.userMessageSeq });
+        queueReceipt = { id: queued.receipt.id, incarnationId: queued.receipt.incarnationId, userMessageSeq: runningTurn.userMessageSeq };
       } else {
         runningSession = await this.deps.persistRunningTurnStart(runningSession, session.messageCount ?? session.messages.length);
       }
@@ -1078,7 +1080,7 @@ export class SessionRuntimeService {
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
         ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
-        ...(queued ? { sessionTurnId: String(runningTurn.id) } : {}),
+        ...(queued ? { sessionTurnId: String(runningTurn.id), queueReceipt } : {}),
         backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
         reasoningText: "",
       };
@@ -1232,6 +1234,7 @@ export class SessionRuntimeService {
         const nextLiveState: LiveSessionRunState = {
           ...state,
           sessionTurnId: String(runningTurn.id),
+          queueReceipt,
           steps: changes.snapshot === false
             ? applyProviderProgressChanges(currentLiveState?.steps ?? [], changes.steps) : state.steps,
           backgroundTasks: changes.snapshot === false
@@ -1332,6 +1335,7 @@ export class SessionRuntimeService {
           this.setRuntimeLiveState(sessionId, {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
             sessionTurnId: String(runningTurn.id),
+            ...(queueReceipt ? { queueReceipt } : {}),
             backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
           });
         }

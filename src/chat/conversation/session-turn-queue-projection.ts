@@ -2,6 +2,7 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import { coordinationDeliveryText } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { MessageListProjection } from "../auxiliary/auxiliary-session-message-projection.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
+import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 
 export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean; responseKeys?: ReadonlyMap<string, string> }) {
   const owned = receipts.filter((receipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId)
@@ -15,7 +16,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
         && !history.sources.some((source, index) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId)
           && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
-      ?? (!hasUnreleasedInterruption ? owned.find((receipt) => receipt.state === "queued") : undefined) : undefined) : undefined;
+      ?? (!hasUnreleasedInterruption ? owned.find((receipt) => receipt.state === "queued" && getQueuedSourceWaitState(receipt) === null) : undefined) : undefined) : undefined;
   for (const receipt of owned) {
     const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
