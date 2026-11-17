@@ -104,6 +104,16 @@ storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogServ
 
 集計と即時診断は同じ`AppLogService`の5MiBローテーションを使う。非同期append bufferは設けず、重要イベントの書込み時点と正常終了の同期flushを保つ。
 
+## Session Folder Cleanup Diagnostic Log Policy
+
+`Clean Session Files`の容量計算は、通常運用でも計算ごとに`session-folder-cleanup.scan-completed`（完了）または`session-folder-cleanup.scan-failed`（中断）を1行記録する。追加のdebug設定は不要。保存先は同じ`logs/withmate.jsonl`で、Settingsの`Open Logs`から取得できる。削除せず容量計算だけでも採取できる。
+
+条件（From／Through、MiBと換算byte）、Mainの`updatedAt`をlocal日付で比較する日付基準、採取時のtimezone offset、全Session数、無効日時・期間前・期間後・期間一致の件数を記録する。その後の実行中・Workspace重複による除外、走査を試みたfolder・走査したfolder・通常fileを観測しなかったfolder・消失folder、link除外、通常fileと候補fileの件数・容量、最小サイズ未満のfile件数、entry失敗・消失entry件数、処理段階と経過時間を集計する。後段の件数は前段を通過した対象だけであり、`managedRoot=missing`ならfolder走査前に正常終了する。消失entry件数はentry失敗件数の内数で、通常fileを観測しなかったfolderにはlinkのみ・読取失敗も含みうる。
+
+entry失敗は`entryFailureCategories`、計算自体の中断は`scanFailureCategory`で、`permission`（EACCES／EPERM）、`io`（EIO）、`missing`（ENOENT／ENOTDIR）、`other`へ固定分類する。正常完了の`scanFailureCategory`は`null`。例外のcode原文は記録しない。
+
+この診断イベントにはSession ID、scan ID、path、filename、個別Sessionの日時、会話本文、例外のmessage／stackを渡さない。中断は到達した`stage`と固定分類で区別し、元の失敗を呼出元へ返す。ログ出力の失敗は容量計算の成否を変えない。
+
 ## Provider Diagnostic Log Policy
 
 通常のProvider診断と背景の失敗専用ファイルは別の記録先とする。
