@@ -156,17 +156,17 @@ test("sent messages show full content while refreshing exact delivery state", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信通知は長い問いの条件とMarkdownをその場で読み、本文中のリンクと独立した操作から正確な相談詳細を開き、当時本文を一度だけ表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: Coordinationの全文引用・当時本文・独立した詳細操作" }
-// fault = "長い問いを切り捨てる/段落やリンクを壊す、別Session/相談を開く、または当時本文を隠す/Detailsと二重表示する"
-// observable = "全文末尾・段落・強調・独立したリンクとbutton、移動先identityと相談ID、送信本文の表示数と閉じた詳細外での可読性"
+// claim = "送信通知は問いで識別できる正確な相談入口を持ち、別送本文と問い未記録の旧本文を一度だけ初期表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談の識別表示・当時本文・旧データ" }
+// fault = "別Session/相談を開く、問いの識別を失う、または別送本文/旧本文を隠す/Detailsと二重表示する"
+// observable = "plain textの問いとaccessible name、移動先identityと相談ID、送信本文の表示数と閉じた詳細外での可読性"
 // observation_boundary = "consumer"
 // scope = "SentDeliveryRowから保存済みCoordination表示・既存詳細navigationへの接続"
 // lifecycle = "permanent"
 // impact = "利用者が相談を読めず、対応先を取り違える"
 // distinction = "storage schemaや型検査では共通APIの投影が本文・詳細操作へ正しく接続されることを保証できない"
 // @end-test-value
-test("Coordination notifications show readable text and open their exact consultation", async () => {
+test("Coordination notifications identify exact consultations and preserve separately sent and legacy content", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -179,24 +179,18 @@ test("Coordination notifications show readable text and open their exact consult
     await act(async () => root.render(<SentDeliveryRow item={{ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } }} context={context} />));
     const button = dom.window.document.querySelector(".coordination-notice-link") as HTMLButtonElement;
     assert.ok(button);
-    const question = dom.window.document.querySelector(".coordination-question")!;
-    assert.match(question.textContent!, /Final condition: preserve the source/);
-    assert.equal(question.querySelectorAll("p").length, 2);
-    assert.equal(question.querySelector("strong")?.textContent, "condition");
-    assert.equal(question.querySelector("a")?.closest("button"), null);
-    assert.equal(dom.window.document.getElementById(button.getAttribute("aria-describedby")!)?.querySelector("a")?.getAttribute("href"), "https://example.com/source");
+    assert.match(button.textContent!, /Final condition: preserve the source/);
+    assert.match(button.getAttribute("aria-label")!, /Open Consultation:.*Final condition/);
     await act(async () => button.click());
     assert.deepEqual(opened, [{ ...item.target, id: "consultation" }]);
     await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
     assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
+    assert.match(dom.window.document.querySelector('[aria-label="Sent Content"] .rich-text')?.textContent ?? "", /Final condition/);
     assert.equal(dom.window.document.querySelector('[aria-label="Sent Content"]')?.closest('[aria-label="Delivery Details"]'), null);
     await act(async () => (dom.window.document.querySelector('[aria-label="Hide Delivery Details"]') as HTMLButtonElement).click());
     await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation, text: consultation } }} context={context} />));
-    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
     await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
-    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
-    assert.match(dom.window.document.querySelector('[aria-label="Sent Content"] .rich-text')?.textContent ?? "", /Final condition: preserve the source/);
-    assert.equal(dom.window.document.querySelectorAll(".rich-text").length, 1);
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 0);
     await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation: "Which approach?", text: "The saved reply." } }} context={context} />));
     const reply = dom.window.document.querySelector('[aria-label="Sent Content"]')!;
     assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);

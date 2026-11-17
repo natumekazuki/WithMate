@@ -93,9 +93,7 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
       style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">
       {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
       {read.coordination && props.inputReadContext ? <>
-        <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target}
-          contentLabel={read.coordination.consultation === undefined || read.coordination.consultation === read.text ? "Received Content" : undefined}
-          messageContext={{ resolveImageSource: props.resolveImageSource, markdownImageContext: props.markdownImageContext, markdownLinkFileContext: props.markdownImageContext }} />
+        <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target} />
         <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
           <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
         </ReceivedCoordinationContent>

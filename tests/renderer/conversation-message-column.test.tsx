@@ -1452,7 +1452,7 @@ test("sent deliveries render full content with the source conversation file cont
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxの新旧通知は問いを全文一度だけ表示し、異なる当時本文も開閉なしで読み、通常JSONと保存した発言者を維持する"
+// claim = "Main/Auxの新旧通知は問いで相談を識別でき、異なる当時本文を開閉なしで読み、通常JSONと保存した発言者を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
 // fault = "受信本文に通知JSONを表示する、問いと本文を二重に並べる/異なる本文を隠す、通常JSONを相談として解釈する、または再読込で送信者を取り違える"
 // observable = "本番Columnとqueue行のMarkdown本文、Character名、送信元リンク、正確なmessageSeqとtargetへの読取"
@@ -1488,11 +1488,12 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
         const input = structuredClone(captured);
         if (legacy) { input.request.userMessage = raw; delete input.coordination!.notification; }
         await act(async () => root.render(<SessionTurnQueueRow inputReadContext={context} receipt={{ ...receipt, captured: input }} character={{ name: "Receiver", iconPath: "" }} busy={false} onCancel={() => {}} onRelease={() => {}} />));
-        assert.match(dom.window.document.querySelector(".coordination-question .rich-text")?.textContent ?? "", /Which approach\?/);
+        assert.match(dom.window.document.querySelector(".coordination-notice-link")?.textContent ?? "", /Which approach\?/);
         const content = dom.window.document.querySelector<HTMLElement>('[aria-label="Received Content"]')!;
-        assert.equal(content.closest("details:not([open])"), null);
-        assert.equal(content.querySelector(".rich-text")?.textContent, operation === "answer" ? "Use the agreed approach." : "Which approach?");
-        assert.equal(dom.window.document.querySelectorAll(".rich-text").length, operation === "answer" ? 2 : 1);
+        if (operation === "answer") {
+          assert.equal(content.closest("details:not([open])"), null);
+          assert.equal(content.querySelector(".rich-text")?.textContent, "Use the agreed approach.");
+        }
       }
       const requests: number[] = [];
       Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, op: string, request: { target: unknown; messageSeq: number }) => {
@@ -1503,10 +1504,9 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
       await act(async () => root.render(<SessionMessageColumn key={`${kind}-${operation}`} {...createBaseProps("receiver")} inputReadContext={context}
         messages={[{ role: "user", text: raw, historyIndex: 3 }, { role: "user", text: raw, historyIndex: 4 }]} messageKeys={["received", "ordinary"]} />));
       const rows = [...dom.window.document.querySelectorAll("[data-message-body]")];
-      assert.match(rows[0]?.querySelector(".coordination-question .rich-text")?.textContent ?? "", /Which approach\?/);
-      assert.equal(rows[0]?.querySelector('[aria-label="Received Content"]')?.closest("details:not([open])"), null);
-      assert.equal(rows[0]?.querySelector('[aria-label="Received Content"] .rich-text')?.textContent, operation === "answer" ? "Use the agreed approach." : "Which approach?");
-      assert.equal(rows[0]?.querySelectorAll(".rich-text").length, operation === "answer" ? 2 : 1);
+      assert.match(rows[0]?.querySelector(".coordination-notice-link")?.textContent ?? "", /Which approach\?/);
+      if (operation === "answer") assert.equal(rows[0]?.querySelector('[aria-label="Received Content"]')?.closest("details:not([open])"), null);
+      assert.equal(rows[0]?.querySelector('[aria-label="Received Content"] .rich-text')?.textContent, operation === "answer" ? "Use the agreed approach." : undefined);
       assert.equal(rows[1]?.textContent, raw.replaceAll("**", ""));
       assert.match(dom.window.document.querySelector(".message-row.session-origin")?.textContent ?? "", /Saved Sender.*Saved Sender Session/);
       assert.deepEqual(requests.sort(), [3, 4]);

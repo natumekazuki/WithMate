@@ -46,7 +46,7 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
     return () => { active = false; queueChanged?.(); turnUpdated?.(); };
   }, [open, identity, item.state, statusRevision]);
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
-  const distinctContent = item.coordination?.consultation !== undefined && item.coordination.text !== item.coordination.consultation;
+  const distinctContent = item.coordination && (item.coordination.consultation === undefined || item.coordination.text !== item.coordination.consultation);
   return <article className="message-row assistant session-outbound" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={open && statusBusy || undefined}>
     <div className="message-avatar-stack">
       <CharacterAvatar character={character} size="small" className="message-avatar" />
@@ -56,7 +56,7 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
     <div className="message-card assistant session-outbound"><div className="message-card-content">
       <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
       {item.coordination
-        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} messageContext={messageContext} contentLabel={!distinctContent ? "Sent Content" : undefined} />
+        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} />
         : <MessageRichText {...messageContext} text={item.text} />}
       {item.coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={item.coordination.text} /></section> : null}
       {error ? <p role="alert">{error}</p> : null}

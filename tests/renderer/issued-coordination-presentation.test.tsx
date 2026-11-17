@@ -33,8 +33,8 @@ function props(): SessionMessageColumnProps {
 
 // @test-value v2
 // kind = "contract"
-// claim = "チャットは起票元応答に問いをまとめ、receiptで重複させず、関連する問いの直下で当時の受信本文を読み、正確な詳細導線・collapseを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: Coordinationの全文引用・当時本文・起票表示; docs/design/ui-design-guidelines.md#読込空失敗" }
+// claim = "チャットは起票元応答に相談入口をまとめ、receiptで重複させず、当時の別送受信本文を読み、正確な詳細導線・collapseを保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談入口・当時本文・起票表示; docs/design/ui-design-guidelines.md#読込空失敗" }
 // fault = "未取得を正常0件に見せる、別rowへ起票を置く、receipt取得で重複させる、受信本文を閉じた詳細へ隠す/現在回答で置換する、またはcollapse後も本文を表示する"
 // observable = "実chat columnの読込status、起票rowとリンク数、初期表示の当時本文、openCoordination引数、失敗表示とcollapse preview"
 // observation_boundary = "consumer"
@@ -72,7 +72,7 @@ test("issued chat notices align with their source response and preserve exact re
     assert.ok(issued.closest(".message-card")?.textContent?.includes("Source response"));
     const link = issued.querySelector<HTMLButtonElement>("button")!;
     fail = true; await act(async () => link.click());
-    assert.match(issued.querySelector('[role="alert"]')!.textContent!, /Could not open/);
+    assert.ok(issued.querySelector('[aria-label="Could Not Open Consultation"]'));
     fail = false; await act(async () => link.click());
     assert.deepEqual(opened.at(-1), { id: "issued", ...target });
     const received = h.document.querySelector(".received-coordination-content")!;

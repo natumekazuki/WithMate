@@ -1,6 +1,21 @@
-.coordination-question { margin: 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--muted); }
+.coordination-notice { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.issued-coordination-notice { min-width: 0; max-width: 100%; }
 .related-session-route.coordination-notice-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  width: 100%;
   max-width: 100%;
+  padding-block: 4px;
+  font-size: 0.82rem;
 }
+.coordination-notice-link > svg, .coordination-notice-state { flex-shrink: 0; }
+.coordination-notice-link .related-session-title { color: var(--ink); font-weight: 400; }
+.coordination-notice-state { font-size: 0.72rem; }
 .issued-coordination-tail { margin-block: 10px; margin-inline-start: 64px; padding-inline: 16px; }
 .received-coordination-content { margin-top: 10px; }
+@media (max-width: 600px) {
+  .coordination-notice-link { flex-wrap: wrap; }
+  .coordination-notice-link .related-session-title { flex: 1; }
+}
