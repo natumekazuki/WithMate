@@ -138,14 +138,14 @@ test("outgoing deliveries batch exact source Turns with full immutable content a
     const natural = queue.enqueue(recipientOwner, { ...legacy, request: { ...legacy.request, clientRequestId: randomUUID(), userMessage: answer }, coordination: { ...legacy.coordination, notification: snapshot } });
     const projected = call({ limit: 20 });
     const item = projected.items.find((entry) => entry.receiptId === coordinated.id)!;
-    assert.deepEqual(item.coordination, { id: "coordination", text: answer });
+    assert.deepEqual(item.coordination, { id: "coordination", text: answer, consultation: "Saved question" });
     assert.equal(item.text, notification);
     assert.equal(projected.items.find((entry) => entry.receiptId === ordinary.id)?.coordination, undefined);
-    assert.deepEqual(projected.items.find((entry) => entry.receiptId === natural.id)?.coordination, { id: "coordination", text: answer });
+    assert.deepEqual(projected.items.find((entry) => entry.receiptId === natural.id)?.coordination, { id: "coordination", text: answer, consultation: "Saved question" });
     const recipientTarget = { kind: "main" as const, ...recipientOwner };
     for (const receipt of [coordinated, natural, ordinary]) {
       const execution = executionOperationResultSchemas.get_execution.parse(read.execute({ target: recipientTarget, operation: "get_execution", request: { target: recipientTarget, receiptId: receipt.id } }));
-      assert.deepEqual(execution.coordination, receipt === ordinary ? undefined : { id: "coordination", text: answer });
+      assert.deepEqual(execution.coordination, receipt === ordinary ? undefined : { id: "coordination", text: answer, consultation: "Saved question" });
       const original = executionOperationResultSchemas.get_execution_input.parse(read.execute({ target: recipientTarget, operation: "get_execution_input", request: { target: recipientTarget, receiptId: receipt.id, stage: "original" } }));
       assert.equal(original.text, receipt === natural ? answer : notification);
     }

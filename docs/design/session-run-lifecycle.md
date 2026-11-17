@@ -91,7 +91,7 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止・Steerの権限を与えない。通常送信は実際の直属親子だけ、取消・停止・Steerは親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、ユーザー回答・承認はこのAPIから公開しない。
 
-`steer`は親が明示した直属子の`target`（Session・incarnation）と`turnId`へ補足を送る。`get.currentTurn.turnId`で実行中のWithMate Turnを取得し、Provider native IDや最新Turnへ読み替えない。現在の対応宛先はCodexのみで、実行中TurnのModel・Depth・権限をそのまま使い、新Turn・receiptの作成や保存設定の変更はしない。通常送信の`enqueue`とは別操作であり、子からの報告やCoordinationは従来の配送を使う。
+`steer`は親が明示した直属子の`target`（Session・incarnation）と`turnId`へ補足を送る。`get.currentTurn.turnId`で実行中のWithMate Turnを取得し、Provider native IDや最新Turnへ読み替えない。現在の対応宛先はCodexのみで、実行中TurnのModel・Depth・権限をそのまま使い、新Turn・receiptの作成や保存設定の変更はしない。通常送信の`enqueue`とは別操作であり、子からの報告は通常送信、Coordinationは以下の専用配送を使う。
 
 `applied`はProviderの受理と追加入力保存の確定、`not-applied`はProvider未呼出を表す。終了・交代・非対応・送信準備中の失効では送信せず、別Turnや通常キューへ自動転送しない。Provider呼出後に受理または保存が確認できない場合は`SESSION_STEER_UNKNOWN`／`effect: unknown`と既知なら`result.messageSeq`を返す。自動再送せず、同じTurnの`list_execution_inputs`（不明分は`state: unresolved`）と`get_execution_input`で本文・配送状態・`inputOrigin`を照会する。`inputOrigin`はその補足を送った実親であり、開始入力の`origin`とは別に保持する。
 
@@ -109,6 +109,12 @@ Coordinationの配送は送信元Turnの終了を待たない即時経路を使�
 `list_directories`／`add_directory`／`remove_directory`は実行元自身または保存済みの直属子Mainを対象とし、正確なSession incarnationを要求する。Mainと配下Auxiliaryは追加Directory一覧を共有し、別のMainは親子でも独立する。Workspace、Session Folder、Crew Folderは追加登録一覧と分けて返す。追加は実在する絶対directoryを検証し、削除は登録解除のみでファイルを消さない。更新は開始済みTurnを変更せず、後から開始するTurnへ反映する。実際のfilesystemアクセスはProviderの権限設定とOS権限にも依存する。
 
 MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布する。背景実行の限定履歴scopeを通常Agentに流用しない。受付成功とTurn完了を区別し、送信後の応答喪失は`effect: unknown`とする。enqueueの再確認は元request keyを使い、保存された送信元・操作・対象に照合する。取消は開始済み受付をTurn停止へ自動変換せず、Turn停止も最新Turnへ付け替えない。
+
+### Coordinationの関連Turn配送
+
+相談・GUI回答・Agent回答は、Coordinationと通常queue receiptを原子的に保存してから、入力可能なCodexの関連TurnへのSteerを既定で試す。回答はimmutable起票元のkind・Session・incarnation・起票Turnとの完全一致を必要とする。相談は起票Turnの元依頼を開始したreceiptのcaller kind・Session・incarnation・actorTurnIdが、宛先の実行中Turnと完全一致する場合だけ対象にする。追加Steerは開始originを置換せず、本文や別Turnの意味から関係を補わない。親依頼の実行中に子が起票しユーザーへ昇格された回答も、同じ起票Turnなら対象となる。関係不明・不一致・非対応Provider・非実行中の場合は同じreceiptの通常queue配送を維持する。
+
+来歴をclaim transactionで照合し、runtimeはProvider呼出前にexact incarnation、WithMate Turn、native Turnを再確認する。Steerは実行中のModel・Depth・権限を維持する。Provider未呼出と確定した拒否や終了競合は同じreceiptをqueuedへ復元するが、呼出後の結果不明はinterruptedで保留し、通常配送や新しい操作IDで自動再送しない。再起動でも保留を維持する。Main／AuxiliaryのSteer入力保存・回答取得済み・receipt完了は同一transactionで確定し、consume・resolveとは区別する。通常送信・起票元/実ユーザーのResolve権限は変更しない。
 
 ## Ownership
 

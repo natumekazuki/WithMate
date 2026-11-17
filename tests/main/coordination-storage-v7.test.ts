@@ -148,14 +148,14 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
     try {
       const target = { kind: "main" as const, sessionId: source.id, incarnationId: actor.incarnationId };
       const get = () => executionOperationResultSchemas.get_execution.parse(executions.execute({ target, operation: "get_execution", request: { target, messageSeq: 0 } }));
-      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct" });
+      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct", consultation: "Which?" });
       // Reproduce a released saved input, not a migration of the user's database.
       const legacy = structuredClone(beforeRun.dispatched!);
       legacy.request.userMessage = JSON.stringify(legacy.coordination!.notification);
       delete legacy.coordination!.notification;
       db.prepare("UPDATE session_turn_queue_v6 SET captured_json=?,accepted_json=?,dispatched_json=? WHERE id=?").run(JSON.stringify(legacy), JSON.stringify(legacy), JSON.stringify(legacy), finished.id);
       db.prepare("UPDATE session_messages_v6 SET body=json_set(body,'$.text',?) WHERE session_id=? AND seq=0").run(legacy.request.userMessage, source.id);
-      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct" });
+      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct", consultation: "Which?" });
       assert.deepEqual(get().origin, legacy.origin);
       assert.equal(sessions.getSession(source.id)?.messages[0]?.text, legacy.request.userMessage);
       const input = executionOperationResultSchemas.get_execution_input.parse(executions.execute({ target, operation: "get_execution_input", request: { target, messageSeq: 0, stage: "original" } }));

@@ -683,6 +683,16 @@ export class SessionRuntimeService {
     return this.sendSessionInput(receipt.sessionId, { expectedTurnId, userMessage: receipt.dispatched.request.userMessage }, receipt);
   }
 
+  async getCoordinationInputTurnId(receipt: SessionTurnQueueReceipt): Promise<string | null> {
+    const live = this.deps.getLiveSessionRun(receipt.sessionId);
+    const session = await this.deps.getSession(receipt.sessionId);
+    const kind = await this.deps.isAuxiliarySession?.(receipt.sessionId) ? "auxiliary" : "main";
+    if (!session || getSessionIncarnationId(session) !== receipt.incarnationId || session.provider !== "codex"
+      || receipt.captured.coordination?.targetKind !== kind || !live?.turnId
+      || !this.canAcceptSessionInput(receipt.sessionId, live.turnId)) return null;
+    return live.turnId;
+  }
+
   private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput): Promise<SteerSessionTurnResult> {
     const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
@@ -743,14 +753,14 @@ export class SessionRuntimeService {
         assertActiveTurn();
         dispatched = true;
         if (parent) parent.dispatched = true;
-        const inputText = providerMessage ?? request.userMessage.trim();
+        const inputText = providerMessage ?? (queued ? request.userMessage : request.userMessage.trim());
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId,
-          userMessage: queued ? composeProviderInput(inputText, queuedInputProvenance(queued, queued.dispatched!))
+          userMessage: queued ? composeProviderInput(inputText, queuedInputProvenance(queued, queued.dispatched!), true)
             : parent ? composeProviderInput(inputText, { origin: parent.origin, originalChanged: false }) : inputText, attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, "confirmed");
-        else await appendInput(request.userMessage.trim(), queued, request.expectedTurnId);
+        else await appendInput(queued ? request.userMessage : request.userMessage.trim(), queued, request.expectedTurnId);
         return result;
       } catch (error) {
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, dispatched ? "unknown" : "not-sent");

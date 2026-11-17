@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { coordinationDeliveryText } from "../../src-shared/coordination/coordination-delivery.js";
+import { coordinationDeliveryText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
 import type { ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
 import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
@@ -76,8 +76,8 @@ export class SessionExecutionReadStorage {
     const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
     const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
-    if (operation === "list_sent_deliveries") {
-      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries>;
+    if (operation === "list_sent_deliveries" || operation === "list_issued_coordinations") {
+      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
       const messageSeqs = [...new Set(options.messageSeqs)];
       const liveTurnIds = options.liveTurnIds ?? [];
       if (!messageSeqs.length && !liveTurnIds.length) return { ok: true, items: [], nextCursor: null };
@@ -88,6 +88,20 @@ export class SessionExecutionReadStorage {
       if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
       const turnIds = sourceTurns.map((turn) => String(turn.id));
       const limit = options.limit ?? 20;
+      const messageForTurn = (turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">) =>
+        turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
+          : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
+      if (operation === "list_issued_coordinations") {
+        const records = this.db.prepare(`SELECT id, json_extract(payload_json,'$.initiatorTurnId') AS source_turn_id,
+          json_extract(payload_json,'$.body') AS consultation FROM coordination_records_v7
+          WHERE initiator_kind=? AND initiator_session_id=? AND initiator_incarnation_id=?
+            AND json_extract(payload_json,'$.initiatorTurnId') IN (${marks(turnIds)}) AND id>?
+          ORDER BY id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? "", limit + 1) as Array<{ id: string; source_turn_id: string; consultation: string }>;
+        return { ok: true, items: records.slice(0, limit).map((record) => ({
+          id: record.id, sourceTurnId: record.source_turn_id, consultation: record.consultation,
+          sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === record.source_turn_id)!),
+        })), nextCursor: records.length > limit ? records[limit - 1].id : null };
+      }
       const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
         parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json
         FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
@@ -104,8 +118,8 @@ export class SessionExecutionReadStorage {
         const origin = input.origin!;
         const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
         const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
-        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: sourceTurn.assistant_message_seq !== null && messageSeqs.includes(sourceTurn.assistant_message_seq) ? sourceTurn.assistant_message_seq : sourceTurn.user_message_seq !== null && messageSeqs.includes(sourceTurn.user_message_seq) ? sourceTurn.user_message_seq : null, target: recipient, state: row.state, origin, text: input.request.userMessage,
-          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}) };
+        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn), target: recipient, state: row.state, origin, text: input.request.userMessage,
+          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}) };
       }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
     }
     const getMessage = (seq: number | null): Message | null => {
@@ -190,7 +204,7 @@ export class SessionExecutionReadStorage {
         : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
           approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
       return { ok: true, ...description, executionSettings,
-        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}),
+        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}),
         output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
     }
     if (operation === "list_execution_inputs") {

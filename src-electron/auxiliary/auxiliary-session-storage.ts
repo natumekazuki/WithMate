@@ -395,6 +395,7 @@ export class AuxiliarySessionStorage {
         if (!captured || captured.request.userMessage !== input.userMessage.text) {
           throw new Error("The Auxiliary queued input does not match its captured message.");
         }
+        acquireCoordinationAnswer(db, captured, { kind: "auxiliary", sessionId: current.id, incarnationId: current.createdAt });
         message = { ...message, turnInput: { turnId: String(input.turnId), nativeTurnId: input.queuedInput.inputTurnId,
           state: "confirmed", queueId: input.queuedInput.queueId, attachments: captured.attachments } };
       }

@@ -689,6 +689,7 @@ export class SessionStorageV6 {
         if (!captured || captured.request.userMessage !== message.text) {
           throw new Error("The queued input does not match its captured message.");
         }
+        acquireCoordinationAnswer(this.db, captured, { kind: "main", sessionId: input.sessionId, incarnationId: input.incarnationId });
         message = { ...message, turnInput: { turnId: String(input.turnId), nativeTurnId: input.queuedInput.inputTurnId,
           state: "confirmed", queueId: input.queuedInput.queueId, attachments: captured.attachments } };
       }
