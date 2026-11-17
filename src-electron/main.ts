@@ -1154,6 +1154,7 @@ const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
 let databaseMaintenanceRequested = false;
 let sessionFolderCleanupLoadedSessions: readonly Session[] | null = null;
 const sessionFolderCleanupService = new SessionFolderCleanupService({
+  writeLog: writeAppLog,
   get userDataPath() { return app.getPath("userData"); },
   readState: async () => {
     const owner = requireActivePersistentStoreOwnerForFactory("Session Folder cleanup");
