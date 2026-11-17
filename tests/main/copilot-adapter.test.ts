@@ -161,6 +161,8 @@ function interactionTurn(event: SessionEvent, response?: LiveElicitationResponse
   input.signal = signal;
   const calls = { send: 0, abort: 0 };
   const requests: LiveElicitationRequest[] = [];
+  const delivered: string[] = [];
+  input.onElicitationDelivered = (requestId) => { delivered.push(requestId); };
   const replies: { method: string; payload: unknown }[] = [];
   const interests: string[] = [];
   const released: string[] = [];
@@ -206,7 +208,7 @@ function interactionTurn(event: SessionEvent, response?: LiveElicitationResponse
   };
   ports.getSession = async () => ({ session, selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" },
     client: { stop: async () => [], forceStop: async () => {} }, clientKey: "interaction-client" });
-  return { run: () => ports.runSessionTurnOnce(input, EMPTY_PROMPT), requests, replies, interests, released, logs, calls, listeners };
+  return { run: () => ports.runSessionTurnOnce(input, EMPTY_PROMPT), requests, replies, interests, released, logs, calls, listeners, delivered };
 }
 
 // @test-value v2
@@ -240,10 +242,10 @@ it("Copilotの質問は選択肢と自由回答の制約を共通fieldへ保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilot質問を同一request IDでUIへ渡し、選択・自由回答・Close・UI不在をnative回答へ変換してturnを完了する"
+// claim = "Copilot質問を同一request IDでUIへ渡し、選択・自由回答の受付だけを履歴へ通知し、Close・UI不在でもturnを完了する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "interestを登録しない、別requestへ返信する、wasFreeformを誤る、またはCloseでturnを中断する"
-// observable = "UI callbackのrequestと本文位置、SDK回答payload、interest解放と正常turn result"
+// observable = "UI callbackのrequestと本文位置、SDK回答payload、受付通知、interest解放と正常turn result"
 // observation_boundary = "public-boundary"
 // scope = "Copilot turn interaction bridge"
 // lifecycle = "permanent"
@@ -259,6 +261,7 @@ it("Copilot質問の回答とCloseを元のnative requestへ返す", async () =>
       answer: response?.action === "accept" ? response.content.answer : "", wasFreeform: response?.action !== "accept" || response.content.answer !== "Blue",
     } } }]);
     assert.deepEqual(fixture.released, fixture.interests);
+    assert.deepEqual(fixture.delivered, response?.action === "accept" ? ["ask-1"] : []);
     assert.equal(fixture.requests.length, response ? 1 : 0);
     if (response) {
       assert.equal(fixture.requests[0].kind, "question");
@@ -316,6 +319,7 @@ it("Copilotはidleが先でも回答ACKを待ち拒否とRPC失敗を報告す�
     void result.then(() => { settled = true; }, () => { settled = true; });
     while (fixture.replies.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(settled, false);
+    assert.deepEqual(fixture.delivered, []);
     if (rejectRpc) ack.reject(new Error("input RPC unavailable"));
     else ack.resolve({ success: false });
     await assert.rejects(result, (error: unknown) => {
@@ -324,6 +328,7 @@ it("Copilotはidleが先でも回答ACKを待ち拒否とRPC失敗を報告す�
       assert.match(error.message, rejectRpc ? /input RPC unavailable/ : /no longer pending/);
       return true;
     });
+    assert.deepEqual(fixture.delivered, []);
   }
 });
 

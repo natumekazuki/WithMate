@@ -1197,14 +1197,14 @@ export class AuxiliarySessionService {
   }
 
   async beginRunningInput(runtimeSession: Session, text: string, turnId: number, nativeTurnId: string,
-    attachments: ComposerAttachment[]): Promise<Session> {
+    attachments: ComposerAttachment[], _origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin, questionRequestId?: string): Promise<Session> {
     const storage = this.deps.getStorage();
     const identity = this.deps.captureStorageIdentity?.();
     const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
     if (current) this.assertCharacterSnapshotValid(current);
     this.assertStorageIdentity(storage, identity);
     if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) throw new Error("The Auxiliary Session incarnation does not match.");
-    const userMessage = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+    const userMessage = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(questionRequestId ? { questionRequestId } : {}) } };
     const stored = await storage.beginAuxiliarySteer({ auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
       expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length, userMessage, turnId, nativeTurnId, attachments, updatedAt: currentTimestampLabel() });
     if (!stored) throw new Error("The Auxiliary Steer input could not be saved.");

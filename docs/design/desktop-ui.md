@@ -64,13 +64,13 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 書式指定・secretではないtextと、単一／複数選択の`Custom Answer`は複数行入力にする。`Enter`は改行し、Settingsで設定したComposer送信shortcutはfocus中の質問だけを送信する。IME変換中とkey repeatでは送信しない。
 - 自由回答の`Attach`は`Close / Submit`と同じ操作行の左端に置き、確定操作は右端へ寄せる。添付先は初期状態では先頭の自由回答欄とし、以降は最後にfocusした回答欄にする。自由回答欄が複数ある場合だけ、Attachの横とaccessible name・tooltipに対象欄名を示す。選択・保存中にfocusが移っても、結果は開始時の欄へ挿入する。
 - `Attach`はActionDockと同じ`File / Folder / Image`、`Session Files`の`Copy / File / Folder / Image`を提供する。既存ファイルは参照し、clipboardから貼り付けた画像・ファイルは質問を所有するSession Filesへ保存して本文へ参照を挿入する。本文とパスを元の質問への回答として渡し、内容の読取・活用はエージェント側の権限と機能に委ねる。添付専用の回答型や通常チャットへの別送は設けず、非同期質問の既存の画像解決は維持する。
-- 非同期質問の`Submit`は`【質問】`、質問原文、`【回答】`、回答をそれぞれ改行で区切って現在turnへ通常追加入力として送る。複数質問は質問・回答の組を空行で連結する。UI事情の説明は加えず、チャットのuser messageには回答だけを保存・表示する。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの構造化応答とする。
+- 非同期質問の`Submit`は`【質問】`、質問原文、`【回答】`、回答をそれぞれ改行で区切って現在turnへ通常追加入力として送る。複数質問は質問・回答の組を空行で連結する。UI事情の説明は加えない。追加入力の記録は維持し、対応する質問内に回答を表示できる場合は回答だけのuser messageを重複表示しない。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの構造化応答とする。
 - 同じturnの複数質問は個別formとし、他の質問の受信、通常チャット割り込み、履歴スクロールで未送信回答を消さない。過去pageへ移動した間は質問を別の位置へ移さず、元のpageへ戻った時にdraftを復元する。
 - 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
 - 添付の選択・保存中は対象入力と`Submit`を無効化する。単一選択では同じfieldの通常・自由回答radioも無効化し、添付完了による回答選択の上書きを防ぐ。他fieldと`Close`は維持し、成功・失敗後に対象fieldの再選択を許可する。添付失敗時は入力を保持してerrorを表示し、要求の終了・切替後に完了した選択・保存結果を別のSession・質問・fieldへ挿入しない。
-- 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。回答済み等の状態ラベルは表示しない。通常チャットで回答したかどうかは判定しない。
+- 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。通常質問で送信した選択肢を強調し、自由回答を質問に続けて表示する。色だけに依存せず選択を識別できるようにする。通常チャットで回答したかどうかは判定しない。
 - 通常質問の操作は`Close / Submit`とし、×と通常送信と共通の紙飛行機iconを使う。操作名はtooltipとaccessible nameへ残し、busy中もbuttonの寸法を維持する。Closeは質問だけを終了する。Codex nativeでは空の`answers`、Copilotでは空の`answer`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`の可視labelを維持する。
-- 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。記録にはformの入力値・既定値を保存しない。非同期回答を受け付けた本文は通常user messageとして保存する。強制終了前のlive formや未送信回答の復元は行わない。
+- 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。通常質問は送信された選択と秘密でない自由回答を記録し、秘密入力・一般formの値と未送信の既定値は保存しない。非同期回答を受け付けた本文は通常user messageとしても保存する。強制終了前のlive formや未送信回答の復元は行わない。
 
 ## UI Implementation Boundary
 
@@ -598,9 +598,13 @@ queueを持たない直接Steerの発言者は、各messageの`turnInput.origin`
 
 入力のチャット枠は送信者・送信した本文・添付を表示し、実行詳細の入口を持たない。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、発言者名を本文上に置く。本文側の先頭行は左に`@宛先Character`、右に独立した小さな`From 送信元Session名`リンクを置く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定して開く。宛先の呼びかけとSession識別を一つの文字列・buttonにせず、長い名前は省略とtooltip・accessible nameでの全文確認を両立する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送受信者を補わない。通常のユーザー入力へこのAgent間ヘッダーを追加しない。応答前の予約・配送不明・失敗の理由と、編集・取消・Steer等の必要な状態・操作は対象入力の近くに残す。送信元Turnの状態不明は未開始のqueueに表示する。
 
+受信カードは保存originの送信元Sessionとincarnation、Character IDが一致する場合、そのSessionの応答と同じCharacterカラーを使う。送信元を解決できない場合は中立色とし、受信側の色へ置き換えない。Messages一覧も保存された入力来歴からAgent・ユーザー・不明を区別し、各messageの元の位置へ移動する。
+
 実行設定・配送状態は、対応するassistantレスポンスの既存Detailsへ集約する。Detailsの展開時だけ保存応答のmessage sequenceまたは明示された実行中WithMate Turnから共通execution読取を行い、保存されたuser message sequenceから正確な開始入力の受付へつなぐ。会話内の隣接関係や現在選択から対応を推測しない。再展開時には取得し直し、閉じた後の古い読取を後の表示へ適用しない。本文・送信者表示のための入力origin読取とは取得契機を分ける。
 
 送信側は既存receiptを表示中のsource WithMate Turnから件数単位で一括取得し、自身の保存Character avatarと発言者名を左側に置く。本文側の先頭行は受信側と同じ`@宛先Character`を左、独立した小さな`To 宛先Session名`リンクを右に置く。Session名は複数Sessionを区別するため通常表示に残す。呼びかけは保存本文を書き換えない表示要素として扱う。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。表示対象の保存原文は最初から全文を表示する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。詳細の配送・Turn状態は再展開と宛先の通知で再取得し、本文とは分ける。
+
+表示範囲の送信は追加操作を待たずにpage単位で取得して順次表示する。取得失敗は表示済みの内容を保って示し、再試行できる。
 
 Coordination由来の送受信通知は保存metadataで識別し、相談の問いと届いた本文を一緒に読む。内部用語の種別labelは置かず、問いの冒頭を引用として示し、その引用全体から保存された正確なSession／incarnation・Coordination IDの詳細を開く。冒頭は会話の検索・縮小表示と共通のplain text投影を使い、全文や保存原文は変えない。問いと当時本文が異なる場合は、送受信とも引用の直下へ当時本文を通常の文字組みで初期表示し、回答を読むための開閉を要求しない。問いと当時本文が同じ場合は同文を二重に並べず、短い問いから詳細へ進む。送信全文は既存の`Delivery Details`、受信全文は`Full Message`から確認できる。問いが未記録の旧データもこの全文経路を保持し、回答や関係を推測しない。既に本文を初期表示している場合はDetailsへ同文を複製しない。現在の回答と当時本文を区別し、旧形式も正確な受付のexecution読取で投影する。通常JSONを本文の形だけでCoordinationに分類しない。
 
@@ -608,7 +612,7 @@ Coordination由来の送受信通知は保存metadataで識別し、相談の問
 
 レスポンスDetailsは既存の`Run Checks`にあるProvider・Model等の実行情報と`Operations`を保持し、同じ設定を別の`Execution Settings`へ重複表示しない。Provider内部thread IDは表示しない。Run Checksが記録されていない場合だけ、保存された設定を`Execution Settings`へ表示する。受付のない過去TurnはそのTurnに保存された設定だけを表示し、未記録の値を現在選択や既定値で補わない。捕捉された設定はProviderが実際に適用した結果とは扱わない。受付・Turnの状態と配送タイミングをまとめる`Input State`は受付がある場合に表示し、`Run Checks`または`Execution Settings`と初期展開から個別に開閉できる。受付・Session・Turnの内部参照や原文比較・分類別入力一覧はユーザーUIへ表示しない。入力比較はエージェント向けAPIに残し、全編集履歴の保存・表示は持たない。送信側の`Delivery Details`も既存Detailsと同じ項目行・見出し・開閉表現を使う。
 
-追加入力のチャット枠では`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別する。未送信や未確定を確認済みと扱わない。受付の配送完了とTurn全体の終端は別に表示する。過去の原文・対応関係が記録されていない場合は推測で補わない。
+追加入力のチャット枠に通常の受付状態ラベルは表示しない。配送・保存が不明または未送信の場合は理由を示し、確認済みと扱わない。過去の原文・対応関係が記録されていない場合は推測で補わない。
 
 ## Diff Window
 

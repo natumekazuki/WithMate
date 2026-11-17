@@ -11,6 +11,7 @@ import type { MessageArtifact, Session } from "../../../src-shared/session/sessi
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
+import { diagnosticBoolean, diagnosticEfforts, diagnosticModelId } from "../../../src-shared/settings/copilot-depth-diagnostic.js";
 import {
   resolveModelSelection,
   type ModelReasoningEffort,
@@ -89,6 +90,7 @@ type CopilotAdapterLogInput = {
   level: "debug" | "info" | "warn" | "error";
   kind: string;
   message: string;
+  correlationId?: string;
   data?: unknown;
   error?: { name?: string; message: string; stack?: string };
 };
@@ -1395,6 +1397,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           if (signal.aborted) abort();
         }),
       ]);
+      for (const model of metadata) {
+        const modelId = diagnosticModelId(model.id);
+        if (!modelId) continue;
+        const supports = (model.capabilities?.supports ?? {}) as unknown as Record<string, unknown>;
+        this.writeLog({ level: "info", kind: "copilot.model-depth.discovery", message: "Copilot model depth discovery",
+          correlationId: input.diagnosticId,
+          data: { modelId, policy: model.policy?.state === "enabled" ? "enabled" : model.policy ? "not-enabled" : "missing",
+            supportsReasoningEffort: diagnosticBoolean(supports.reasoningEffort),
+            supportedReasoningEfforts: diagnosticEfforts(model.supportedReasoningEfforts),
+            alternateReasoningEffort: diagnosticEfforts(supports.reasoning_effort),
+            defaultReasoningEffort: diagnosticEfforts(model.defaultReasoningEffort === undefined ? undefined : [model.defaultReasoningEffort]) } });
+      }
       const models = metadata.filter((model) => !model.policy || model.policy.state === "enabled").map((model) => ({
         id: model.id, label: model.name,
         reasoningEfforts: model.capabilities.supports.reasoningEffort ? model.supportedReasoningEfforts ?? [] : [],
@@ -1926,6 +1940,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
                 } })
               : await session.rpc.ui.handlePendingElicitation({ requestId: event.data.requestId, result: response });
             if (!result.success) throw new Error("Copilot input request is no longer pending.");
+            if (event.type === "user_input.requested" && response.action === "accept") input.onElicitationDelivered?.(event.data.requestId);
           })
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {

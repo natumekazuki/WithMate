@@ -11,9 +11,11 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
 import { it } from "node:test";
 import { SessionFolderCleanupService } from "../../src-electron/files/session-folder-cleanup-service.js";
 import { parseSessionFolderCleanupRequest } from "../../src-shared/session/session-folder-cleanup.js";
+import type { AppLogInput } from "../../src-shared/window/app-log-types.js";
 
 const all = { fromDate: "", toDate: "", minimumFileSizeMiB: 0 };
 const session = (
@@ -27,12 +29,17 @@ const session = (
   status: "saved" as const,
   runState: "idle",
 });
-async function fixture() {
+async function fixture(writeLog?: (input: AppLogInput) => void) {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-cleanup-"));
   let identity = {};
   const sessions = [session("main")];
   const running = new Set<string>();
+  const logs: AppLogInput[] = [];
   const service = new SessionFolderCleanupService({
+    writeLog: (input) => {
+      logs.push(input);
+      writeLog?.(input);
+    },
     userDataPath: root,
     readState: async () => ({ identity, sessions }),
     assertCurrent: (value) => {
@@ -55,6 +62,7 @@ async function fixture() {
     root,
     sessions,
     running,
+    logs,
     service,
     folder,
     file,
@@ -116,6 +124,273 @@ it("local日付とMiB境界を含め、rootと条件外fileを保持する", asy
     assert.equal((await stat(outside)).size, 1024 * 1024);
     assert.equal(f.sessions.length, 3);
   } finally {
+    await f.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "期間と0MiBでの計算診断は日時・保護・folder・fileの段階別件数を記録し、個別データを含めない"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Session Folder Cleanup Diagnostic Log Policy" }
+// fault = "期間除外と後段除外を混同する、0byteを候補から落とす、または個別識別子をログへ混入する"
+// observable = "scanの候補数とwriteLogへ渡された集計eventの完全なdata項目"
+// observation_boundary = "public-boundary"
+// scope = "SessionFolderCleanupService scan diagnostics"
+// lifecycle = "permanent"
+// impact = "問題PCの候補0件の切分けを可能にし、共有する診断ログの個別情報漏えいを防ぐ"
+// distinction = "合成filesystemでscanのみ実行し、型checkでは保証できない実分岐の集計とログpayloadを検証する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("期間と0MiBのscan診断を個別情報なしで集計する", async () => {
+  const f = await fixture();
+  try {
+    f.sessions.push(
+      session("before", new Date(2026, 4, 11, 23, 59).toISOString()),
+      session("after", new Date(2026, 4, 13, 0).toISOString()),
+      session("invalid", "not-a-date"),
+      session("running"),
+      session("workspace"),
+      session("missing"),
+      session("empty"),
+    );
+    f.running.add("running");
+    f.sessions[5]!.workspacePath = f.folder("workspace");
+    await mkdir(f.folder("empty"), { recursive: true });
+    await f.file("private-filename", "private-content");
+    await f.file("zero", "");
+    const request = { ...all, fromDate: "2026-05-12", toDate: "2026-05-12" };
+    const scan = await f.service.scan(request);
+    assert.equal(scan.matchedFileCount, 2);
+    assert.equal(f.logs.length, 1);
+    const log = f.logs[0]!;
+    assert.equal(log.kind, "session-folder-cleanup.scan-completed");
+    assert.equal(log.level, "info");
+    assert.equal(log.process, "main");
+    const data = log.data as Record<string, unknown>;
+    assert.ok(Number(data.elapsedMs) >= 0);
+    assert.deepEqual(data, {
+      ...request,
+      minimumFileSizeBytes: 0,
+      dateBasis: "session.updatedAt/local-date",
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      stage: "assert-current",
+      managedRoot: "present",
+      totalSessionCount: 8,
+      invalidUpdatedAtSessionCount: 1,
+      outsideDateSessionCount: 2,
+      beforeFromDateSessionCount: 1,
+      afterToDateSessionCount: 1,
+      dateMatchedSessionCount: 5,
+      skippedRunningSessionCount: 1,
+      skippedWorkspaceSessionCount: 1,
+      attemptedFolderCount: 3,
+      scannedFolderCount: 2,
+      foldersWithoutRegularFilesCount: 1,
+      missingFolderCount: 1,
+      skippedLinkCount: 0,
+      totalFileCount: 2,
+      totalBytes: 15,
+      belowMinimumFileCount: 0,
+      matchedFileCount: 2,
+      matchedBytes: 15,
+      failedEntryCount: 0,
+      missingEntryCount: 0,
+      elapsedMs: data.elapsedMs,
+      entryFailureCategories: { permission: 0, io: 0, missing: 0, other: 0 },
+      scanFailureCategory: null,
+    });
+    assert.deepEqual(Object.keys(log).sort(), [
+      "data",
+      "kind",
+      "level",
+      "message",
+      "process",
+    ]);
+    for (const privateValue of [
+      f.root,
+      "private-filename",
+      "private-content",
+      scan.scanId,
+      "incarnation-main",
+    ])
+      assert.equal(JSON.stringify(log).includes(privateValue), false);
+    const sized = await f.service.scan({ ...request, minimumFileSizeMiB: 1 });
+    assert.equal(sized.matchedFileCount, 0);
+    assert.equal(
+      (f.logs[1]!.data as Record<string, unknown>).belowMinimumFileCount,
+      2,
+    );
+    assert.equal(
+      await readFile(path.join(f.folder(), "private-filename"), "utf8"),
+      "private-content",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "managed rootの消失による正常0件と不正rootによる中断をログで区別し、元の例外を保持する"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Session Folder Cleanup Diagnostic Log Policy" }
+// fault = "消失rootを走査済みと報告する、または中断を正常完了として記録する"
+// observable = "scanの結果またはrejectと診断eventのkind、stage、managedRoot、件数"
+// observation_boundary = "public-boundary"
+// scope = "SessionFolderCleanupService root diagnostics"
+// lifecycle = "permanent"
+// impact = "候補0件と容量計算失敗を混同する誤診を防ぐ"
+// distinction = "実filesystemのmissingと通常file rootを作り、返却結果と記録を同時に観測する"
+// @end-test-value
+it("managed rootのmissingと失敗を診断で区別する", async () => {
+  const f = await fixture();
+  try {
+    const scan = await f.service.scan(all);
+    assert.equal(scan.matchedFileCount, 0);
+    const missing = f.logs[0]!;
+    assert.equal(missing.kind, "session-folder-cleanup.scan-completed");
+    assert.equal(
+      (missing.data as Record<string, unknown>).managedRoot,
+      "missing",
+    );
+    assert.equal(
+      (missing.data as Record<string, unknown>).attemptedFolderCount,
+      0,
+    );
+    await writeFile(path.join(f.root, "session-files"), "not-a-directory");
+    await assert.rejects(f.service.scan(all), /not a regular directory/);
+    const failed = f.logs[1]!;
+    assert.equal(failed.kind, "session-folder-cleanup.scan-failed");
+    assert.equal(failed.level, "warn");
+    assert.equal(
+      (failed.data as Record<string, unknown>).stage,
+      "check-managed-root",
+    );
+    assert.equal(
+      (failed.data as Record<string, unknown>).managedRoot,
+      "not-regular-directory",
+    );
+    assert.equal(failed.error, undefined);
+    assert.equal(JSON.stringify(failed).includes(f.root), false);
+    assert.equal(f.logs.length, 2);
+  } finally {
+    await f.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "診断writerの失敗はscanの正常結果も元の失敗も変更しない"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Session Folder Cleanup Diagnostic Log Policy" }
+// fault = "ログ書込失敗で容量計算をrejectする、または元の例外を置換する"
+// observable = "writeLogをthrowさせたscanの返却候補数とreject理由"
+// observation_boundary = "public-boundary"
+// scope = "SessionFolderCleanupService diagnostic writer failure"
+// lifecycle = "permanent"
+// impact = "ログ保存先の障害で掃除の容量計算が利用不能になることを防ぐ"
+// distinction = "通常loggerの静的接続や型checkでは確認できない実行時throwを注入する"
+// @end-test-value
+it("ログ書込失敗はscanの成否を変えない", async () => {
+  const f = await fixture(() => {
+    throw new Error("log-writer-failed");
+  });
+  try {
+    assert.equal((await f.service.scan(all)).matchedFileCount, 0);
+    await writeFile(path.join(f.root, "session-files"), "not-a-directory");
+    await assert.rejects(f.service.scan(all), /not a regular directory/);
+    assert.equal(f.logs.length, 2);
+  } finally {
+    await f.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "entry失敗とscan中断はpermission・io・missing・otherへ固定分類し、例外の自由文字列をログへ出さない"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Session Folder Cleanup Diagnostic Log Policy" }
+// fault = "読取障害の種類を失う、未知のcodeをログへ転記する、または部分失敗をscan中断として扱う"
+// observable = "scan結果のissues件数、entryFailureCategories、scanFailureCategoryと元例外の同一性"
+// observation_boundary = "public-boundary"
+// scope = "SessionFolderCleanupService filesystem and state failure diagnostics"
+// lifecycle = "permanent"
+// impact = "問題PCの権限障害とI/O障害を識別し、例外に含まれるpathや本文の漏えいを防ぐ"
+// distinction = "実walk内のdirectory読取とreadStateへ同じerrnoを注入し、継続と中断の両経路を確認する"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("失敗を固定分類し例外の個別情報を診断へ出さない", async () => {
+  const f = await fixture();
+  const originalReaddir = fs.readdir;
+  try {
+    await f.file("blocked/private-file", "private-content");
+    for (const [code, category] of [
+      ["EACCES", "permission"],
+      ["EPERM", "permission"],
+      ["EIO", "io"],
+      ["ENOENT", "missing"],
+      ["ENOTDIR", "missing"],
+      ["private-code", "other"],
+    ] as const) {
+      const error = Object.assign(new Error(`private-error ${f.root}`), {
+        code,
+      });
+      fs.readdir = (async (
+        target: Parameters<typeof fs.readdir>[0],
+        ...options: unknown[]
+      ) => {
+        if (String(target) === path.join(f.folder(), "blocked")) throw error;
+        return Reflect.apply(originalReaddir, fs, [target, ...options]);
+      }) as typeof fs.readdir;
+      syncBuiltinESMExports();
+      const scan = await f.service.scan(all);
+      assert.equal(scan.issues.length, 1);
+      const partial = f.logs.at(-1)!;
+      assert.equal(partial.kind, "session-folder-cleanup.scan-completed");
+      const data = partial.data as Record<string, unknown>;
+      assert.equal(data.failedEntryCount, 1);
+      assert.equal(data.missingEntryCount, code === "ENOENT" ? 1 : 0);
+      assert.deepEqual(data.entryFailureCategories, {
+        permission: 0,
+        io: 0,
+        missing: 0,
+        other: 0,
+        [category]: 1,
+      });
+      assert.equal(data.scanFailureCategory, null);
+      const failing = new SessionFolderCleanupService({
+        userDataPath: f.root,
+        readState: async () => {
+          throw error;
+        },
+        assertCurrent: () => {},
+        isRunning: () => false,
+        writeLog: (input) => {
+          f.logs.push(input);
+        },
+      });
+      await assert.rejects(failing.scan(all), (actual) => actual === error);
+      const aborted = f.logs.at(-1)!;
+      assert.equal(aborted.kind, "session-folder-cleanup.scan-failed");
+      assert.equal(
+        (aborted.data as Record<string, unknown>).stage,
+        "read-state",
+      );
+      assert.equal(
+        (aborted.data as Record<string, unknown>).scanFailureCategory,
+        category,
+      );
+      for (const log of [partial, aborted]) {
+        for (const privateValue of [
+          f.root,
+          "private-file",
+          "private-content",
+          "private-error",
+          "private-code",
+        ])
+          assert.equal(JSON.stringify(log).includes(privateValue), false);
+      }
+    }
+  } finally {
+    fs.readdir = originalReaddir;
+    syncBuiltinESMExports();
     await f.close();
   }
 });

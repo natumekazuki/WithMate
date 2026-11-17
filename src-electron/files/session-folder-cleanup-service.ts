@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import fs, { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
+import type { AppLogInput } from "../../src-shared/window/app-log-types.js";
 import {
   isSessionFolderCleanupDateMatch,
   type SessionFolderCleanupRequest,
@@ -65,6 +66,22 @@ function message(error: unknown): string {
 function errorCode(error: unknown): unknown {
   return (error as NodeJS.ErrnoException)?.code;
 }
+function failureCategory(
+  error: unknown,
+): "permission" | "io" | "missing" | "other" {
+  switch (errorCode(error)) {
+    case "EACCES":
+    case "EPERM":
+      return "permission";
+    case "EIO":
+      return "io";
+    case "ENOENT":
+    case "ENOTDIR":
+      return "missing";
+    default:
+      return "other";
+  }
+}
 
 export class SessionFolderCleanupService {
   private latest: Snapshot | null = null;
@@ -76,6 +93,7 @@ export class SessionFolderCleanupService {
       readState(): Promise<State>;
       assertCurrent(identity: object): void;
       isRunning(sessionId: string): boolean;
+      writeLog?(input: AppLogInput): void;
     },
   ) {}
 
@@ -111,8 +129,62 @@ export class SessionFolderCleanupService {
       throw new Error("Session Folder cleanup is already in progress.");
     this.busy = true;
     this.latest = null;
+    const startedAt = performance.now();
+    const diagnostics = {
+      // Only conditions and aggregate counts belong in logs, never Session/file data.
+      fromDate: request.fromDate,
+      toDate: request.toDate,
+      minimumFileSizeMiB: request.minimumFileSizeMiB,
+      minimumFileSizeBytes: Math.ceil(request.minimumFileSizeMiB * 1024 * 1024),
+      dateBasis: "session.updatedAt/local-date",
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      stage: "read-state",
+      managedRoot: "unchecked",
+      totalSessionCount: 0,
+      invalidUpdatedAtSessionCount: 0,
+      outsideDateSessionCount: 0,
+      beforeFromDateSessionCount: 0,
+      afterToDateSessionCount: 0,
+      dateMatchedSessionCount: 0,
+      skippedRunningSessionCount: 0,
+      skippedWorkspaceSessionCount: 0,
+      attemptedFolderCount: 0,
+      scannedFolderCount: 0,
+      foldersWithoutRegularFilesCount: 0,
+      missingFolderCount: 0,
+      skippedLinkCount: 0,
+      totalFileCount: 0,
+      totalBytes: 0,
+      belowMinimumFileCount: 0,
+      matchedFileCount: 0,
+      matchedBytes: 0,
+      failedEntryCount: 0,
+      missingEntryCount: 0,
+      entryFailureCategories: { permission: 0, io: 0, missing: 0, other: 0 },
+    };
+    let completed = false;
+    let scanFailureCategory: ReturnType<typeof failureCategory> | null = null;
     try {
       const state = await this.deps.readState();
+      diagnostics.totalSessionCount = state.sessions.length;
+      for (const session of state.sessions) {
+        if (!Number.isFinite(new Date(session.updatedAt).getTime()))
+          diagnostics.invalidUpdatedAtSessionCount++;
+        else if (isSessionFolderCleanupDateMatch(session.updatedAt, request))
+          diagnostics.dateMatchedSessionCount++;
+        else {
+          diagnostics.outsideDateSessionCount++;
+          if (
+            !isSessionFolderCleanupDateMatch(session.updatedAt, {
+              ...request,
+              toDate: "",
+            })
+          )
+            diagnostics.beforeFromDateSessionCount++;
+          else diagnostics.afterToDateSessionCount++;
+        }
+      }
+      diagnostics.stage = "resolve-workspaces";
       const workspaces = await this.workspacePaths(state.sessions);
       const scan: SessionFolderCleanupScan = {
         scanId: randomUUID(),
@@ -130,23 +202,32 @@ export class SessionFolderCleanupService {
       const folders: Folder[] = [];
       const managedRoot = path.join(this.deps.userDataPath, "session-files");
       let managedStat: Stats;
+      diagnostics.stage = "check-managed-root";
       try {
         managedStat = await lstat(managedRoot);
-        if (managedStat.isSymbolicLink() || !managedStat.isDirectory())
+        if (managedStat.isSymbolicLink() || !managedStat.isDirectory()) {
+          diagnostics.managedRoot = "not-regular-directory";
           throw new Error(
             "The Session Folder storage root is not a regular directory.",
           );
+        }
       } catch (error) {
         if (errorCode(error) !== "ENOENT") throw error;
+        diagnostics.managedRoot = "missing";
+        diagnostics.stage = "assert-current";
         this.deps.assertCurrent(state.identity);
         this.latest = { scan, identity: state.identity, folders };
+        completed = true;
         return scan;
       }
+      diagnostics.managedRoot = "present";
+      diagnostics.stage = "scan-folders";
       for (const session of state.sessions) {
         if (!isSessionFolderCleanupDateMatch(session.updatedAt, request))
           continue;
         if (this.running(session)) {
           scan.skippedRunningSessionCount++;
+          diagnostics.skippedRunningSessionCount++;
           continue;
         }
         const root = resolveSessionFilesDirectory(
@@ -158,6 +239,8 @@ export class SessionFolderCleanupService {
           canonicalRoot = await realpath(root);
         } catch (error) {
           if (errorCode(error) !== "ENOENT") {
+            diagnostics.failedEntryCount++;
+            diagnostics.entryFailureCategories[failureCategory(error)]++;
             scan.issues.push({
               sessionId: session.id,
               relativePath: "",
@@ -174,6 +257,7 @@ export class SessionFolderCleanupService {
           )
         ) {
           scan.skippedWorkspaceSessionCount++;
+          diagnostics.skippedWorkspaceSessionCount++;
           continue;
         }
         const folder: Folder = {
@@ -183,12 +267,15 @@ export class SessionFolderCleanupService {
           files: [],
           directories: [],
         };
+        diagnostics.attemptedFolderCount++;
+        let regularFileCount = 0;
         const walk = async (relativePath: string): Promise<void> => {
           const absolutePath = path.join(root, relativePath);
           try {
             const stat = await lstat(absolutePath);
             if (stat.isSymbolicLink()) {
               scan.skippedLinkCount++;
+              diagnostics.skippedLinkCount++;
               return;
             }
             if (stat.isDirectory()) {
@@ -196,18 +283,29 @@ export class SessionFolderCleanupService {
               for (const name of await readdir(absolutePath))
                 await walk(path.join(relativePath, name));
             } else if (stat.isFile()) {
+              regularFileCount++;
               scan.totalFileCount++;
               scan.totalBytes += stat.size;
+              diagnostics.totalFileCount++;
+              diagnostics.totalBytes += stat.size;
               if (
                 stat.size >= Math.ceil(request.minimumFileSizeMiB * 1024 * 1024)
               ) {
                 folder.files.push({ relativePath, stat });
                 scan.matchedFileCount++;
                 scan.matchedBytes += stat.size;
-              }
+                diagnostics.matchedFileCount++;
+                diagnostics.matchedBytes += stat.size;
+              } else diagnostics.belowMinimumFileCount++;
             }
           } catch (error) {
-            if (relativePath === "" && errorCode(error) === "ENOENT") return;
+            if (relativePath === "" && errorCode(error) === "ENOENT") {
+              diagnostics.missingFolderCount++;
+              return;
+            }
+            diagnostics.failedEntryCount++;
+            diagnostics.entryFailureCategories[failureCategory(error)]++;
+            if (errorCode(error) === "ENOENT") diagnostics.missingEntryCount++;
             scan.issues.push({
               sessionId: session.id,
               relativePath,
@@ -218,15 +316,41 @@ export class SessionFolderCleanupService {
         };
         await walk("");
         if (folder.directories.length) {
+          diagnostics.scannedFolderCount++;
+          if (!regularFileCount) diagnostics.foldersWithoutRegularFilesCount++;
           scan.sessionCount++;
           folders.push(folder);
         }
       }
+      diagnostics.stage = "assert-current";
       this.deps.assertCurrent(state.identity);
       this.latest = { scan, identity: state.identity, folders, managedStat };
+      completed = true;
       return scan;
+    } catch (error) {
+      scanFailureCategory = failureCategory(error);
+      throw error;
     } finally {
       this.busy = false;
+      try {
+        this.deps.writeLog?.({
+          level: completed ? "info" : "warn",
+          kind: completed
+            ? "session-folder-cleanup.scan-completed"
+            : "session-folder-cleanup.scan-failed",
+          process: "main",
+          message: completed
+            ? "Session Folder cleanup scan completed"
+            : "Session Folder cleanup scan failed",
+          data: {
+            ...diagnostics,
+            scanFailureCategory,
+            elapsedMs: Math.round(performance.now() - startedAt),
+          },
+        });
+      } catch {
+        // Diagnostic output must not change scan results or mask the original failure.
+      }
     }
   }
 

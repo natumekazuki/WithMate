@@ -638,6 +638,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
               return { behavior: "deny", message: "Question answer is incomplete" };
             }
             const answers = Object.fromEntries(entries);
+            input.onElicitationDelivered?.(requestId);
             return { behavior: "allow", updatedInput: { ...toolInput, answers } };
           } catch { return { behavior: "deny", message: "Canceled" }; }
         }

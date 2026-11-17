@@ -415,6 +415,7 @@ export class AuxiliarySessionStorage {
     if (!input.nativeTurnId?.trim() || input.queuedInput) throw new Error("A direct Auxiliary Steer target is required.");
     return this.appendAuxiliarySteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
+      ...(input.userMessage.turnInput?.questionRequestId ? { questionRequestId: input.userMessage.turnInput.questionRequestId } : {}),
     } } });
   }
 
@@ -514,8 +515,8 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => readConversationQuerySnapshot(db, "auxiliary_session_messages", sessionId));
   }
 
-  readConversationQueryBatch(sessionId: string, afterSeq: number) {
-    return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq));
+  readConversationQueryBatch(sessionId: string, afterSeq: number, includeSpeakers = true) {
+    return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq, includeSpeakers));
   }
 
   readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {

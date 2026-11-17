@@ -588,8 +588,8 @@ export class SessionStorageV6 {
     return readConversationQuerySnapshot(this.db, "session_messages_v6", sessionId);
   }
 
-  readConversationQueryBatch(sessionId: string, afterSeq: number) {
-    return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq);
+  readConversationQueryBatch(sessionId: string, afterSeq: number, includeSpeakers = true) {
+    return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq, includeSpeakers);
   }
 
   readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
@@ -717,6 +717,7 @@ export class SessionStorageV6 {
     return this.appendSessionSteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
       ...(input.userMessage.turnInput?.origin ? { origin: input.userMessage.turnInput.origin } : {}),
+      ...(input.userMessage.turnInput?.questionRequestId ? { questionRequestId: input.userMessage.turnInput.questionRequestId } : {}),
     } } });
   }
 

@@ -4545,6 +4545,33 @@ test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "質問内に表示できる受付済み回答だけを重複する入力行から隠し未確認や未取得の入力は維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "質問内に回答がないまま元の入力を隠す、または質問と入力を二重表示する"
+// observable = "対応する質問の回答と各入力状態におけるuser row"
+// observation_boundary = "component-behavior"
+// scope = "Codex question response history projection"
+// lifecycle = "permanent"
+// impact = "回答を閲覧できなくなるか、同じ回答が会話内に重複する"
+// distinction = "入力storageのtestだけでは現在pageでの質問と回答の表示関係を検証できない"
+// @end-test-value
+test("question-linked input is hidden only when its confirmed answer is visible", async () => {
+  const question: Message = { role: "assistant", text: "Question", elicitationRecords: [{ requestId: "q", kind: "question", message: "Question",
+    fields: [{ title: "Question", answer: { selected: [], text: ["A response"] } }], status: "answered" }] };
+  const input: Message = { role: "user", text: "A response", turnInput: { turnId: "1", nativeTurnId: "n", state: "confirmed", questionRequestId: "q", attachments: [] } };
+  const mounted = await mountSessionMessageColumn({ messages: [input, question], isRunning: false });
+  try {
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 0);
+    assert.match(mounted.container.textContent ?? "", /A response/);
+    await mounted.rerender({ messages: [{ ...input, turnInput: { ...input.turnInput!, state: "unknown" } }, question] });
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
+    await mounted.rerender({ messages: [input] });
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
+  } finally { await mounted.cleanup(); }
+});
+
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),

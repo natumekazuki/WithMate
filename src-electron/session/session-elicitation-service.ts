@@ -11,7 +11,7 @@ type PendingElicitationRequest = {
 
 type SessionElicitationServiceOptions = {
   notifyQuestion?: (sessionId: string, signal: AbortSignal) => void;
-  sendUserMessage?: (sessionId: string, turnId: string, message: string, answer: string) => Promise<void>;
+  sendUserMessage?: (sessionId: string, turnId: string, message: string, answer: string, requestId: string) => Promise<void>;
   updateLiveSessionRun: (
     sessionId: string,
     recipe: (current: LiveSessionRunState) => LiveSessionRunState,
@@ -58,7 +58,7 @@ export class SessionElicitationService {
       pending.sending = true;
       return Promise.resolve().then(() => {
         if (pending.expired) throw new Error("The input request no longer exists.");
-        return this.options.sendUserMessage!(sessionId, turnId, message, answer);
+        return this.options.sendUserMessage!(sessionId, turnId, message, answer, pending.request.requestId);
       }).then(() => {
         pending.settle(response, "answered");
       }, (error: unknown) => {

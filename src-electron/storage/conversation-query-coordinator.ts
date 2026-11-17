@@ -13,7 +13,7 @@ type Item = ConversationSearchMatch | ConversationNavigatorEntry;
 type Query = ConversationProjectionInput["query"];
 export type ConversationQueryReader = {
   getConversationQuerySnapshot(id: string): ConversationQuerySnapshot | null;
-  readConversationQueryBatch(id: string, afterSeq: number): ConversationQueryRow[];
+  readConversationQueryBatch(id: string, afterSeq: number, includeSpeakers?: boolean): ConversationQueryRow[];
 };
 export type ScheduleConversationRead = <T>(read: () => T) => Promise<T>;
 type Producer = {
@@ -190,7 +190,7 @@ export class ConversationQueryCoordinator {
     let anchorOrdinal: number | undefined;
     const items: Item[] = [];
     while (!job.stopped && !(producer.query.kind === "search" && !producer.query.query.trim())) {
-      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq));
+      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq, producer.query.kind === "navigator"));
       if (job.stopped) return { status: job.stopped };
       if (!rows.length) break;
       const result = await this.project({ cacheScope: `${snapshot.ownerIdentity}:${producer.stamp.contentRevision}`,

@@ -1,6 +1,8 @@
 import { isMessageBookmarked, type Message } from "../../../src-shared/session/session-state.js";
 import type { MessageListSource } from "../auxiliary/auxiliary-session-message-projection.js";
 import { projectMessagePlainText } from "../../../src-shared/session/message-search.js";
+import { conversationInputSpeaker, type ConversationInputSpeaker } from "../../../src-shared/session/conversation-page.js";
+import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 
 export type MessageCollapseTarget = Readonly<{
   key: string;
@@ -13,6 +15,7 @@ export type MessageCollapseTarget = Readonly<{
   responseProvider?: string;
   accent: boolean;
   isBookmarked: boolean;
+  speaker?: ConversationInputSpeaker;
 }>;
 
 export type MessageCollapseStateEntry = Readonly<{
@@ -31,6 +34,7 @@ export type MessageNavigatorEntry = Readonly<{
   accent: boolean;
   isCollapsed: boolean;
   isBookmarked: boolean;
+  speaker?: ConversationInputSpeaker;
 }>;
 
 export type MessageJumpRequest = Readonly<{
@@ -68,6 +72,7 @@ export function buildMessageCollapseTargets(
   keys: readonly string[],
   previousTargets: readonly MessageCollapseTarget[] = [],
   provider?: string,
+  receipts: readonly SessionTurnQueueReceipt[] = [],
 ): MessageCollapseTarget[] {
   const previousTargetsBySourceIdentity = new Map(
     previousTargets.map((target) => [target.sourceIdentity, target]),
@@ -83,6 +88,10 @@ export function buildMessageCollapseTargets(
 
     const sourceIdentity = messageSourceIdentity(source);
     const responseProvider = message.role === "assistant" ? provider : undefined;
+    const receipt = message.role === "user" ? receipts.find((value) => value.userMessageSeq === source.messageIndex) : undefined;
+    const origin = message.turnInput && !message.turnInput.queueId ? message.turnInput.origin
+      : receipt?.dispatched?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
+    const speaker = message.role === "user" ? conversationInputSpeaker(origin) : undefined;
     const previousTarget = previousTargetsBySourceIdentity.get(sourceIdentity);
     if (
       previousTarget?.key === key
@@ -92,6 +101,7 @@ export function buildMessageCollapseTargets(
       && previousTarget.sourceKind === source.kind
       && previousTarget.accent === (message.accent === true)
       && previousTarget.isBookmarked === isMessageBookmarked(message)
+      && JSON.stringify(previousTarget.speaker) === JSON.stringify(speaker)
     ) {
       targets.push({ ...previousTarget, source });
       continue;
@@ -113,6 +123,7 @@ export function buildMessageCollapseTargets(
         : projectMessagePlainText(message.text, responseProvider),
       accent: message.accent === true,
       isBookmarked: isMessageBookmarked(message),
+      speaker,
     });
   }
   return targets;
@@ -190,6 +201,7 @@ export function buildMessageNavigatorEntries(
     accent: target.accent,
     isCollapsed: state.has(target.key),
     isBookmarked: target.isBookmarked,
+    speaker: target.speaker,
   }));
 }
 

@@ -1,5 +1,5 @@
 import { createProviderAgentRuntimeBindingRedactor, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
-import { PROVIDER_TEXT_PREVIEW_LIMIT, stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem, stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
 import { buildCodexStableRawItems, buildCodexProviderMetadata } from "./codex-event-projection.js";
 import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, collectCodexQuestionRanges, createCodexTurnStreamState, getLiveCodexAssistantPreview, getLiveCodexReasoningPreview, type CodexNativeNotification } from "./codex-turn-events.js";
 import type { CodexProjectionStart, CodexProjectionProgress, CodexProjectionFinal, CodexProjectionEvent } from "./codex-projection-protocol.js";
@@ -61,9 +61,18 @@ export class CodexProjectionOwner {
         }
       }
     }
-    applyCodexTurnEvent(this.state, event);
+    const disposition = applyCodexTurnEvent(this.state, event);
     return {
       changed: this.input.progress && revision !== this.state.revision,
+      ...(disposition === "unhandled" ? {
+        unhandledNotification: boundProviderRawItem({
+          type: "withmate.codex.unhandled_notification",
+          data: {
+            sessionId: this.input.sessionId, threadId: this.input.threadId, turnId: this.input.turnId,
+            method: event.method, params: event.params,
+          },
+        }, undefined, this.redactor.sanitizeText),
+      } : {}),
       ...(this.input.progress && errorMessage !== this.state.streamErrorMessage
         ? { errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage) } : {}),
     };

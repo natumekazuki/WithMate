@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
 import type { CodexProjectionFinal, CodexProjectionProgress, CodexProjectionStart, CodexProjectionEvent, CodexProjectionRequest, CodexProjectionResponse } from "../../src-electron/providers/codex/codex-projection-protocol.js";
-import { PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
+import { PROVIDER_RAW_ITEM_CLONE_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 
 function input(name: string): CodexProjectionStart {
   return {
@@ -12,6 +12,52 @@ function input(name: string): CodexProjectionStart {
     binding: { bindingId: name, bindingReference: `binding-${name}`, turnCapability: `cap-${name}`, providerId: "codex", executionGeneration: name, transport: "env", expiresAt: null },
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "専用分岐のないscope内通知のmethodとparamsをWorker境界で秘匿化・制限して返し、既存通知とscope外を未対応へ混同しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#codex-projection-owner" }
+// fault = "未対応通知を落とす、既知secretを残す、payload上限を適用しない、または無変更の扱い済み通知を未対応にする"
+// observable = "実Workerのevent結果のunhandledNotification、changed、後続finishのterminalと本文"
+// observation_boundary = "public-boundary"
+// scope = "Codex unhandled notification projection"
+// lifecycle = "permanent"
+// impact = "捨てられた通知のUI投影要否を判断できないか、既知認証情報が診断へ流出する"
+// distinction = "型検査ではWorker cloneを通る未知payloadとredactionの順序を保証できず、固定合成通知で確認する"
+// risk_tags = ["privacy"]
+// @end-test-value
+test("Worker returns bounded redacted diagnostics only for unhandled in-scope notifications", async () => {
+  const client = new CodexProjectionClient();
+  const run = await client.begin({ ...input("unhandled"), progress: false });
+  const apply = (method: string, params?: unknown) => client.call<CodexProjectionEvent>(run, { type: "event", event: { method, params } });
+  try {
+    const result = await apply("future/api-unhandled", {
+      threadId: "thread", turnId: "turn", category: "display-candidate",
+      nested: { "binding-unhandled": ["cap-unhandled", "api-unhandled", "synthetic conversation"] },
+      large: "x".repeat(PROVIDER_RAW_ITEM_CLONE_LIMIT * 2),
+      many: Array.from({ length: 1000 }, () => "y".repeat(500)),
+    });
+    assert.equal(result.changed, false);
+    const diagnostic = result.unhandledNotification!;
+    const serialized = JSON.stringify(diagnostic);
+    assert.ok(serialized.length <= PROVIDER_RAW_ITEM_CLONE_LIMIT);
+    for (const secret of ["binding-unhandled", "cap-unhandled", "api-unhandled"]) assert.ok(!serialized.includes(secret));
+    assert.match(serialized, /synthetic conversation/);
+    assert.match(serialized, /truncated/);
+    assert.equal((diagnostic.data!.params as { category: string }).category, "display-candidate");
+    assert.match(diagnostic.data!.method as string, /^future\//);
+    assert.ok((await apply("future/no-params")).unhandledNotification);
+    for (const params of [{ threadId: "foreign" }, { turnId: "foreign" }]) {
+      assert.equal((await apply("future/scoped", params)).unhandledNotification, undefined);
+    }
+    assert.equal((await apply("item/agentMessage/delta", { itemId: "missing", delta: "noop" })).unhandledNotification, undefined);
+    await apply("turn/completed", { turn: { id: "turn", status: "completed", items: [{ id: "answer", type: "agentMessage", text: "done" }] } });
+    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.equal(final.terminalStatus, "completed");
+    assert.equal(final.assistantText, "done");
+    assert.deepEqual(final.providerMetadata, []);
+  } finally { await client.release(run); }
+});
 
 // @test-value v2
 // kind = "contract"

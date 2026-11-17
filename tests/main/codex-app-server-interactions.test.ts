@@ -57,10 +57,10 @@ test("native Close returns empty answers and continues serving requests", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方を通知対象として識別できる"
+// claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方で回答送信を通知する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "native質問の種別を落とすかMCP入力要求もquestionとして投影する"
-// observable = "onElicitationRequestへ渡すkindとblockingおよび元RPCの応答"
+// observable = "onElicitationRequestへ渡すkindとblocking、元RPCの応答と回答送信通知"
 // observation_boundary = "consumer"
 // scope = "Codex native question discrimination"
 // lifecycle = "permanent"
@@ -69,10 +69,11 @@ test("native Close returns empty answers and continues serving requests", async 
 // @end-test-value
 test("distinguishes native questions from MCP input requests", async () => {
   const displayed: LiveElicitationRequest[] = [];
+  const delivered: string[] = [];
   const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
     displayed.push(ui);
     return { action: "accept", content: { q: "answer" } };
-  } });
+  }, onElicitationDelivered: (id) => { delivered.push(id); } });
   const requests = [
     request(1, inputMethod, { isBlocking: true, questions: [question("q")] }),
     request(2, inputMethod, { isBlocking: false, questions: [question("q")] }),
@@ -88,6 +89,7 @@ test("distinguishes native questions from MCP input requests", async () => {
     { kind: undefined, blocking: undefined },
   ]);
   assert.deepEqual(requests.map(({ results, errors }) => [results.length, errors.length]), [[1, 0], [1, 0], [1, 0]]);
+  assert.deepEqual(delivered, displayed.slice(0, 2).map((item) => item.requestId));
   helper.close();
 });
 

@@ -666,6 +666,9 @@ export function SessionMessageColumn({
   const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
   const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
   const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
+  const visibleAnsweredQuestionIds = new Set([...messages.flatMap((message) => message.elicitationRecords ?? []), ...visibleLiveElicitationRecords ?? []]
+    .filter((record) => record.status === "answered" && record.fields.length > 0 && record.fields.every((field) => field.answer !== undefined))
+    .map((record) => record.requestId));
   const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const hasLiveRequests = hasElicitationRequests || isRunning && liveApprovalRequest !== null;
   const liveRequestMessageIndex = hasLiveRequests ? pendingResponseMessageIndex : -1;
@@ -1335,7 +1338,7 @@ export function SessionMessageColumn({
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart, inlineContent) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} isStreaming={isRunning} responseProvider={provider}
+        renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} selectedRanges={selectedRanges} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath} onFind={openFind}
           onCopyText={onCopyMessageText} onQuoteText={onQuoteMessageText}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1442,6 +1445,10 @@ export function SessionMessageColumn({
             if (!message) {
               return null;
             }
+            if (message.role === "user" && message.turnInput?.state === "confirmed" && message.turnInput.questionRequestId
+              && visibleAnsweredQuestionIds.has(message.turnInput.questionRequestId)) {
+              return <div key={`question-answer-${getRowKey(absoluteIndex)}`} ref={messageVirtualizer.measureElement} data-index={absoluteIndex} aria-hidden="true" />;
+            }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
@@ -1540,7 +1547,8 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
                 {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
+                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}
+                  style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
                     {artifact && !isAssistant ? (
@@ -1621,10 +1629,11 @@ export function SessionMessageColumn({
                             elicitationAction={elicitationAction}
                             onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            renderText={(text, key, sourceStart, inlineContent) => <MessageRichText
+                            renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText
                               key={key}
                               sourceStart={sourceStart}
                               inlineContent={inlineContent}
+                              selectedRanges={selectedRanges}
                               resolveImageSource={resolveImageSource}
                               text={text}
                               responseProvider={message.role === "assistant" ? provider : undefined}
@@ -1783,7 +1792,6 @@ export function SessionMessageColumn({
             {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId).map(renderIssued)}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
-            {sentDeliveries.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.loadMore}>Load More Sent Messages</button> : null}
             {issued.busy ? <LoadingIndicator inline label="Loading Coordination" /> : null}
             {issued.error ? <p role="alert">{issued.error} <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.retry}>Retry Coordination</button></p> : null}
             {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}

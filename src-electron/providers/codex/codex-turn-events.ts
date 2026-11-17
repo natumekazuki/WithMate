@@ -417,10 +417,10 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
 export function applyCodexTurnEvent(
   state: CodexTurnStreamState,
   event: CodexNativeNotification,
-): void {
+): "handled" | "ignored" | "unhandled" {
   const params = record(event.params);
   if (typeof params.threadId === "string" && params.threadId !== state.threadId)
-    return;
+    return "ignored";
   const turn = record(params.turn);
   const incomingTurnId =
     typeof params.turnId === "string"
@@ -431,7 +431,7 @@ export function applyCodexTurnEvent(
   if (state.turnId && incomingTurnId && incomingTurnId !== state.turnId) {
     if (event.method === "thread/tokenUsage/updated" && state.usage === null)
       state.usageBaseline = usageBreakdown(record(params.tokenUsage).total);
-    return;
+    return "ignored";
   }
   const previousRevision = state.revision;
   const previousTurnId = state.turnId;
@@ -554,6 +554,8 @@ export function applyCodexTurnEvent(
             ? (record(turn.error).message as string)
             : `Codex turn ${turn.status}`;
       break;
+    default:
+      return "unhandled";
   }
   const usageChanged = previousUsage !== state.usage
     && JSON.stringify(previousUsage) !== JSON.stringify(state.usage);
@@ -561,4 +563,5 @@ export function applyCodexTurnEvent(
     || previousTurnId !== state.turnId || previousError !== state.streamErrorMessage
     || previousCompleted !== state.turnCompleted || previousStatus !== state.terminalStatus
     || usageChanged);
+  return "handled";
 }

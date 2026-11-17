@@ -31,6 +31,7 @@ import { formatCurrentDateTime } from "./current-date.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
+import { questionAnswerHistory } from "./question-answer-history.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -55,7 +56,7 @@ export type SessionRuntimeServiceDeps = {
   onSessionRunReleased?(sessionId: string): void;
   getQueuedInputReceipt?(receipt: SessionTurnQueueReceipt): Awaitable<SessionTurnQueueReceipt | null>;
   appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Awaitable<Session>;
-  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Awaitable<Session>;
+  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin, questionRequestId?: string): Awaitable<Session>;
   settleRunningInput?(session: Session, messageSeq: number, turnId: number, state: Exclude<TurnInputDeliveryState, "pending">): Awaitable<Session>;
   checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
   appendTerminalSession(
@@ -496,7 +497,7 @@ export class SessionRuntimeService {
   private readonly dispatchedSessionInputs = new Set<string>();
   private readonly finishingSessionTurns = new Set<string>();
   private readonly appendSessionInput = new Map<string, (text: string, queued?: SessionTurnQueueReceipt, inputTurnId?: string) => Promise<void>>();
-  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
+  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin, questionRequestId?: string): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
   private readonly pendingRuns = new Set<Promise<Session>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
@@ -674,8 +675,8 @@ export class SessionRuntimeService {
     }
   }
 
-  answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string): Promise<SteerSessionTurnResult> {
-    return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message);
+  answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string, requestId?: string): Promise<SteerSessionTurnResult> {
+    return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message, undefined, requestId);
   }
 
   steerQueuedSessionTurn(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<SteerSessionTurnResult> {
@@ -693,7 +694,7 @@ export class SessionRuntimeService {
     return live.turnId;
   }
 
-  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput): Promise<SteerSessionTurnResult> {
+  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput, questionRequestId?: string): Promise<SteerSessionTurnResult> {
     const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
       || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
@@ -748,7 +749,7 @@ export class SessionRuntimeService {
       this.dispatchedSessionInputs.add(sessionId);
       let inputSeq: number | undefined;
       try {
-        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin);
+        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin, questionRequestId);
         if (parent) parent.messageSeq = inputSeq ?? null;
         assertActiveTurn();
         dispatched = true;
@@ -1139,17 +1140,17 @@ export class SessionRuntimeService {
     let queuedInputRecoveryError: QueuedInputRuntimeRecoveryError | null = null;
     if (runningSession.provider === "codex" && this.deps.beginRunningInput && this.deps.settleRunningInput) {
       this.directSessionInput.set(sessionId, {
-        begin: async (text, nativeTurnId, attachments, origin) => {
+        begin: async (text, nativeTurnId, attachments, origin, questionRequestId) => {
           const messageSeq = activeRunningSession.messageCount ?? activeRunningSession.messages.length;
           try {
-            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin);
+            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin, questionRequestId);
           } catch (error) {
             // A lost append reply must not lead to Provider dispatch or a second append.
             const canonical = await this.deps.getSession(sessionId);
             if (canonical && getSessionIncarnationId(canonical) === getSessionIncarnationId(activeRunningSession)
               && canonical.messageCount === messageSeq + 1) {
               activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text,
-                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending", ...(origin ? { origin } : {}) } }] };
+                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending", ...(origin ? { origin } : {}), ...(questionRequestId ? { questionRequestId } : {}) } }] };
               activeRunningSession = await this.deps.settleRunningInput!(activeRunningSession, messageSeq, runningTurn.id, "not-sent");
             } else if (!canonical || canonical.messageCount !== messageSeq) {
               queuedInputRecoveryError = new QueuedInputRuntimeRecoveryError("The direct input append outcome could not be confirmed.");
@@ -1190,6 +1191,19 @@ export class SessionRuntimeService {
     const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
       const elicitationResponses: Promise<LiveElicitationResponse>[] = [];
+      const pendingQuestionAnswers = new Map<string, { request: LiveElicitationRequest; response: LiveElicitationResponse }>();
+      const recordQuestionAnswer = (requestId: string) => {
+        const answer = pendingQuestionAnswers.get(requestId);
+        pendingQuestionAnswers.delete(requestId);
+        if (!answer || terminalSettled || progressGeneration !== liveProgressGeneration) return;
+        const fields = questionAnswerHistory(answer.request, answer.response);
+        const live = this.deps.getLiveSessionRun(sessionId);
+        if (!fields || !live) return;
+        this.setRuntimeLiveState(sessionId, { ...live, elicitationRecords: live.elicitationRecords?.map((record) =>
+          record.requestId !== requestId ? record : { ...record, fields: record.fields.map((field, index) =>
+            fields[index] ? { ...field, answer: fields[index] } : field) }) });
+        this.deps.broadcastLiveSessionRun(sessionId);
+      };
       const effectiveTurnSession = { ...await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession),
         allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
       const providerPromise = providerAdapter.runSessionTurn({
@@ -1223,10 +1237,17 @@ export class SessionRuntimeService {
         onElicitationRequest: (elicitationRequest, requestSignal) => {
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return { action: "cancel" };
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
-          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
+          const response = Promise.resolve(this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal)).then((value) => {
+            if (value.action === "accept") {
+              pendingQuestionAnswers.set(elicitationRequest.requestId, { request: elicitationRequest, response: value });
+              if (elicitationRequest.delivery === "user-message") recordQuestionAnswer(elicitationRequest.requestId);
+            }
+            return value;
+          });
           if (elicitationRequest.delivery === "user-message") elicitationResponses.push(Promise.resolve(response));
           return response;
         },
+        onElicitationDelivered: recordQuestionAnswer,
         onProviderQuotaTelemetry: (telemetry) => {
           this.deps.setProviderQuotaTelemetry(telemetry);
         },

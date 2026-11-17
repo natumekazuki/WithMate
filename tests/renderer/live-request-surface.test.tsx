@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationSelectField } from "../../src-shared/session/runtime-state.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +31,7 @@ async function mountElicitation(request: LiveElicitationRequest, initialProps: P
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   const responses: unknown[] = [];
+  const answerPresentations: unknown[] = [];
   const render = async (nextRequest: LiveElicitationRequest, props: Partial<LiveRequestSurfaceProps> = {}) => {
     await act(async () => root.render(React.createElement(LiveRequestSurface, {
       liveApprovalRequest: null,
@@ -37,13 +39,17 @@ async function mountElicitation(request: LiveElicitationRequest, initialProps: P
       liveElicitationRequest: nextRequest,
       elicitationActionRequestId: null,
       onResolveLiveApproval() {},
-      onResolveLiveElicitation(_request, response) { responses.push(response); },
+      onResolveLiveElicitation(_request, response) {
+        const { answerPresentation, ...providerResponse } = response;
+        responses.push(providerResponse);
+        answerPresentations.push(answerPresentation);
+      },
       ...props,
     })));
   };
   await render(request, initialProps);
   return {
-    container, dom, responses, render,
+    container, dom, responses, answerPresentations, render,
     async cleanup() {
       await act(async () => root.unmount());
       globalThis.window = previousWindow;
@@ -79,6 +85,35 @@ async function pasteFiles(dom: JSDOM, input: HTMLTextAreaElement, files: Array<{
   await act(async () => { input.dispatchEvent(event); });
   return event;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "候補と同じ文字列を自由入力で送った場合も候補の選択とは区別して回答表示用情報を渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "自由入力を候補の選択と誤認するか、送信値を変更する"
+// observable = "同一文字列の候補選択・自由入力それぞれの回答と表示用情報"
+// observation_boundary = "component-behavior"
+// scope = "question answer presentation"
+// lifecycle = "permanent"
+// impact = "実際に選んでいない候補を履歴で選択済みと誤認する"
+// distinction = "payloadだけの確認では同じ値の入力方法を区別できない"
+// @end-test-value
+test("question response distinguishes a choice from identical custom text", async () => {
+  const mounted = await mountElicitation({ requestId: "same", provider: "claude", kind: "question", mode: "form", message: "Choose",
+    fields: [{ type: "select", name: "choice", title: "Choice", required: true, allowFreeText: true, options: [{ value: "same", label: "Same" }] }] });
+  try {
+    const radios = mounted.container.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    const input = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Choice Custom Answer"]');
+    assert.ok(input);
+    await act(async () => radios[0].click());
+    await submit(mounted.container);
+    await enterText(mounted.dom, input, "same");
+    await act(async () => radios[1].click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { choice: "same" } }, { action: "accept", content: { choice: "same" } }]);
+    assert.deepEqual(mounted.answerPresentations, [{ choice: { selected: [0], text: [] } }, { choice: { selected: [], text: ["same"] } }]);
+  } finally { await mounted.cleanup(); }
+});
 
 function pastedFile(name: string, type: string) {
   return { name, type, arrayBuffer: async () => new TextEncoder().encode(name).buffer };
@@ -1164,5 +1199,38 @@ test("InlineResponseContent retains structured choices when a source question re
         assert.equal(body.querySelectorAll("input,button,select,textarea").length, 0);
       } finally { dom.window.close(); }
     }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "回答済み質問では本文内の選択肢を重複せず強調し自由回答を質問の位置へ残す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "既存本文の候補を選択済みにできない、候補を重複表示する、または自由回答を失う"
+// observable = "描画された選択肢と自由回答のDOM・順序・重複数"
+// observation_boundary = "component-behavior"
+// scope = "InlineResponseContent question answer history"
+// lifecycle = "permanent"
+// impact = "利用者が元の質問と送信した回答を結び付けて見返せない"
+// distinction = "回答投影の単体testはMarkdown本文への選択強調と重複を検出できない"
+// @end-test-value
+test("resolved question highlights source choice and displays free answer in place", () => {
+  const source = "Choose a provider\n\n- Exa\n- Tavily";
+  const record: ElicitationRecord = { requestId: "source", kind: "question", message: "Question", status: "answered",
+    textRange: { start: 7, end: 7 + source.length }, fields: [{ title: "Choose a provider", options: ["Exa", "Tavily"], answer: { selected: [1], text: ["Use it\ncarefully"] } }] };
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
+      text: `Before\n${source}\nAfter`, records: [record], requests: [],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (text, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      const document = dom.window.document;
+      const selected = document.querySelector(".elicitation-record-selected");
+      assert.ok(selected?.textContent?.includes("Tavily"));
+      assert.equal(document.body.textContent?.split("Tavily").length, 2);
+      assert.equal(document.querySelector(".elicitation-record-answer")?.textContent, "Answer: Use it\ncarefully");
+      assert.ok(document.body.textContent!.indexOf("Use it") < document.body.textContent!.indexOf("After"));
+    } finally { dom.window.close(); }
   }
 });

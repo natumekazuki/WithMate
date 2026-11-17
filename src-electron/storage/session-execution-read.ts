@@ -4,7 +4,9 @@ import type { ExecutionReadInput } from "../../src-shared/session/session-execut
 import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
-import type { SessionSteerOrigin, SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionSteerOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
+import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";
+import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
@@ -24,6 +26,39 @@ const captured = (json: string | null) => json === null ? null : JSON.parse(json
 const publicInput = (value: SessionTurnQueueCapturedInput | null) => value ? { text: value.request.userMessage, attachments: attachments(value.attachments) } : null;
 const comparisonInput = (value: SessionTurnQueueCapturedInput | null) => value ? JSON.stringify([value.request.userMessage, value.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]) : null;
 const page = <T>(all: T[], offset = 0, limit = 32) => ({ items: all.slice(offset, offset + limit), total: all.length, offset, nextOffset: offset + limit < all.length ? offset + limit : null });
+
+function senderTheme(db: DatabaseSync, origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): { main: string; sub: string } | null {
+  if (origin?.kind !== "session" || !origin.actorSessionId || !origin.actorIncarnationId || !origin.actorKind) return null;
+  const expected = origin.actorSnapshot?.character.id;
+  if (!expected || isUnknownCharacterOwnerId(expected) || expected === NEUTRAL_CHARACTER_ID) return null;
+  const readMain = (id: string) => db.prepare("SELECT incarnation_id, character_id, character_snapshot_json, runtime_policy_json FROM sessions_v6 WHERE id = ?").get(id) as
+    { incarnation_id: string; character_id: string | null; character_snapshot_json: string | null; runtime_policy_json: string } | undefined;
+  if (origin.actorKind === "main") {
+    const row = readMain(origin.actorSessionId);
+    if (!row || (row.incarnation_id?.trim() || `legacy:${origin.actorSessionId}`) !== origin.actorIncarnationId) return null;
+    const policy = JSON.parse(row.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
+    if ((row.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
+    const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
+    if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== expected)) return null;
+    const theme = snapshot?.theme ?? policy.characterThemeColors;
+    return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+  }
+  const row = db.prepare("SELECT parent_session_id, created_at, character_id, character_snapshot_json, character_snapshot_invalid FROM auxiliary_sessions WHERE id = ?").get(origin.actorSessionId) as
+    { parent_session_id: string; created_at: string; character_id: string | null; character_snapshot_json: string | null; character_snapshot_invalid: number } | undefined;
+  if (!row || row.character_snapshot_invalid || row.created_at !== origin.actorIncarnationId || !readMain(row.parent_session_id)) return null;
+  if ("actorMainSessionId" in origin && origin.actorMainSessionId && row.parent_session_id !== origin.actorMainSessionId) return null;
+  const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
+  if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== row.character_id)) return null;
+  if (snapshot && row.character_id === expected) return snapshot.theme;
+  if (row.character_id || row.character_snapshot_json) return null;
+  const parent = readMain(row.parent_session_id)!;
+  const policy = JSON.parse(parent.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
+  if ((parent.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
+  const parentSnapshot = parseCharacterRuntimeSnapshotJson(parent.character_snapshot_json);
+  if (parent.character_snapshot_json && (!parentSnapshot || parentSnapshot.characterId !== expected)) return null;
+  const theme = parentSnapshot?.theme ?? policy.characterThemeColors;
+  return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+}
 
 /** Synchronous snapshot on the existing DB. No execution state or output copies are owned here. */
 export class SessionExecutionReadStorage {
@@ -175,9 +210,11 @@ export class SessionExecutionReadStorage {
     let receipt = ref.receiptId ? this.db.prepare(`${receiptQuery} AND id = ?`).get(...queueParams, ref.receiptId) as Receipt | undefined : undefined;
     if (ref.receiptId && !receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
     let turn = getTurn(receipt?.turn_id ?? ref.turnId ?? null);
+    let messageOrigin: SessionSteerOrigin | undefined;
     if (ref.messageSeq !== undefined) {
       const message = getMessage(ref.messageSeq);
       if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
+      if (message.turnInput && !message.turnInput.queueId) messageOrigin = message.turnInput.origin;
       const matchingReceipts = this.db.prepare(`${receiptQuery} AND user_message_seq = ?`).all(...queueParams, ref.messageSeq) as Receipt[];
       if (matchingReceipts.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
       receipt = matchingReceipts[0];
@@ -203,7 +240,8 @@ export class SessionExecutionReadStorage {
       const executionSettings = input ? { source: "input", provider: input.provider, ...input.request.executionOptions }
         : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
           approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
-      return { ok: true, ...description, executionSettings,
+      const inputOrigin = messageOrigin ?? captured(receipt?.dispatched_json ?? receipt?.accepted_json ?? receipt?.captured_json ?? null)?.origin;
+      return { ok: true, ...description, executionSettings, senderTheme: senderTheme(this.db, inputOrigin),
         ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}),
         output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
     }
