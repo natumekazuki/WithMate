@@ -410,7 +410,8 @@ export function SessionContextPane({
   const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
   const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
     if (entry.role === "user") {
-      return "Your message";
+      return entry.speaker?.kind === "agent" ? entry.speaker.name
+        : entry.speaker?.kind === "unknown" ? "Unknown sender" : "Your message";
     }
     return entry.sourceKind === "auxiliary"
       ? `${messageNavigatorCharacterName}（Auxiliary）`
@@ -419,6 +420,8 @@ export function SessionContextPane({
 
   const renderMessageNavigatorSpeaker = (entry: MessageNavigatorEntry) => {
     if (entry.role === "user") {
+      if (entry.speaker?.kind === "agent") return <CharacterAvatar character={entry.speaker} size="tiny" />;
+      if (entry.speaker?.kind === "unknown") return <span className="messages-navigator-speaker-glyph" aria-hidden="true">?</span>;
       return <span className="messages-navigator-speaker-glyph user" aria-hidden="true">↗</span>;
     }
     if (entry.sourceKind === "session" && messageNavigatorCharacter) {

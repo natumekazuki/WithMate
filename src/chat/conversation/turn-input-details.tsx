@@ -65,10 +65,14 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const [revision, setRevision] = useState(0);
   const receiptId = receipt?.id ?? input?.queueId;
   const reference: InputReference | null = receiptId ? { receiptId } : input || turnId ? { turnId: input?.turnId ?? turnId! } : null;
-  const statusReference = reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
+  const statusReference = input && !receiptId && message.historyIndex !== undefined
+    ? { messageSeq: message.historyIndex } : reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
   const referenceIdentity = JSON.stringify([context, statusReference]);
   const loadedReference = useRef(referenceIdentity);
   const identity = JSON.stringify([context, statusReference, receipt?.updatedAt, input?.state, revision]);
+  const sourceOrigin = input && !receiptId ? input.origin : execution?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
+  const sourceSessionId = sourceOrigin?.kind === "session" ? sourceOrigin.actorSessionId : undefined;
+  const sourceOwnerId = sourceOrigin?.kind === "session" && sourceOrigin.actorKind === "auxiliary" ? sourceOrigin.actorMainSessionId : sourceSessionId;
   useEffect(() => {
     const api = getWithMateApi();
     if (!active || !context) return;
@@ -77,6 +81,14 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
     const turnUpdated = api?.onSessionTurnUpdated?.(refresh);
     return () => { queueChanged?.(); turnUpdated?.(); };
   }, [context?.target.sessionId, context?.ownerSessionId, active]);
+  useEffect(() => {
+    if (!active || !sourceSessionId) return;
+    return getWithMateApi()?.subscribeSessionInvalidation?.((event) => {
+      if (event.scope === "ids" && !event.sessionIds.includes(sourceSessionId) && (!sourceOwnerId || !event.sessionIds.includes(sourceOwnerId))) return;
+      setExecution((value) => value ? { ...value, senderTheme: null } : value);
+      setRevision((value) => value + 1);
+    });
+  }, [active, sourceSessionId, sourceOwnerId]);
   useEffect(() => {
     if (loadedReference.current !== referenceIdentity) { setExecution(null); loadedReference.current = referenceIdentity; }
     setReadError("");
@@ -101,7 +113,7 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const coordination = message.role !== "user" ? null : captured?.coordination
     ? { id: captured.coordination.id, consultation: readCoordinationNotification(captured)?.consultation ?? text }
     : observed?.coordination ?? null;
-  return { input, text, coordination, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
+  return { input, text, coordination, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, senderTheme: observed?.senderTheme ?? null, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
 export function TurnExecutionDetails(props: TurnInputProps & { hasRunChecks?: boolean }) {

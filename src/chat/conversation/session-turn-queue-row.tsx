@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import type { CSSProperties } from "react";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import type { MarkdownImageContext, MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
@@ -87,7 +88,8 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
   const role = isSessionOrigin ? "session-origin" : "user";
   return <><article className={`message-row ${role}`} data-message-source="turn-queue">
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-    <div className={`message-card ${role}`}><div className="message-card-content">
+    <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
+      style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">
       {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
       <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
       {read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}

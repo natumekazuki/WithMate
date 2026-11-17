@@ -472,8 +472,8 @@ export function useConversationMessageColumn({
     + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`
     + `:submissions:${submissions.map((submission) => `${submission.requestId}:${submission.error}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
-  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current, session?.provider),
-    [keyedHistory, session?.provider]);
+  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current, session?.provider, queue.receipts),
+    [keyedHistory, session?.provider, queue.receipts]);
   const columnCharacter = useMemo(() => session?.characterId ? {
     id: session.characterId,
     name: session.character ?? "",
@@ -669,8 +669,8 @@ export function useConversationMessageColumn({
     const history = buildMessageListProjection(unsaved, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
     const keyed = projectLiveAssistantOnSessionHistory(history, unsaved, sessionId,
       hasPersistedLiveAssistantMessage(unsaved, [], bridge, sessionId) ? bridge : null);
-    return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys, [], session?.provider);
-  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey, session?.provider]);
+    return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys, [], session?.provider, queue.receipts);
+  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey, session?.provider, queue.receipts]);
   const unsavedNavigatorTargets = tailNavigatorTargets.filter((target) =>
     target.source.messageIndex >= Math.max(totalCount, navigator.messageCount ?? totalCount)
     && (navigatorFilter === "all" || target.isBookmarked));
@@ -693,6 +693,7 @@ export function useConversationMessageColumn({
       sourceKind: messageSourceKind, role: entry?.role ?? target!.role,
       preview: entry?.preview ?? target!.preview, accent: entry?.accent ?? target!.accent,
       isBookmarked: entry?.isBookmarked ?? target!.isBookmarked,
+      speaker: entry?.speaker ?? target?.speaker,
       isCollapsed: isHistoryCollapsed(target?.source.messageIndex ?? entry!.messageIndex),
     });
   }
