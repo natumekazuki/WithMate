@@ -20,7 +20,7 @@ export type CodexProjectionProgress = {
   state: LiveSessionRunState;
   changes: RunSessionTurnProgressChanges;
 };
-export type CodexProjectionEvent = { changed: boolean; errorMessage?: string };
+export type CodexProjectionEvent = { changed: boolean; errorMessage?: string; unhandledNotification?: BoundedProviderRawItem };
 export type CodexProjectionFinal = {
   output: import("../../../src-shared/session/provider-output.js").ProviderOutput;
   items: CodexTurnItem[];

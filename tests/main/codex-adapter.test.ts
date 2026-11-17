@@ -816,6 +816,52 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 
 // @test-value v2
 // kind = "contract"
+// claim = "未対応通知はprogress callbackの有無やterminal成否にかかわらず受信ごとに既存loggerへ出し、取得済み本文とnative terminal結果を維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#codex-projection-owner; docs/design/app-log-base.md#provider-diagnostic-log-policy" }
+// fault = "progressなしや失敗時に診断を失う、通知をまとめて消す、scope外・Main処理済み通知も記録する、または診断でterminalを変える"
+// observable = "Adapter loggerの種別・相関ID・method/params列、返却本文またはProviderTurnErrorのpartial本文"
+// observation_boundary = "public-boundary"
+// scope = "Codex adapter unhandled notification logging"
+// lifecycle = "permanent"
+// impact = "正常な未対応通知を利用者が調査できず、または実行の成功失敗を誤認する"
+// distinction = "Worker単体testではMain loggerへの配線、callbackなしの経路、失敗時のbatch回収を検出できない"
+// @end-test-value
+it("未対応通知を既存loggerへ出しterminal結果とpartialを維持する", async () => workspace(async (directory) => {
+  for (const status of ["completed", "failed"]) {
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("future/display", { value: "synthetic text", sequence: 1 }),
+      notification("future/display", { value: "synthetic text", sequence: 2 }),
+      notification("future/foreign", { threadId: "other" }),
+      notification("future/foreign", { turnId: "other" }),
+      notification("serverRequest/resolved", { requestId: "synthetic-request" }),
+      notification("item/agentMessage/delta", { itemId: "missing", delta: "noop" }),
+      completed([message("answer", "done")], status),
+    ];
+    const logs: CodexLog[] = [];
+    const input = createCodexRunSessionTurnInput(directory);
+    const run = new CodexAdapter((entry) => logs.push(entry), { createTransport: () => transport })
+      .runSessionTurn(input, status === "failed" ? () => {} : undefined);
+    if (status === "completed") assert.equal((await run).assistantText, "done");
+    else await assert.rejects(run, (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.match(error.message, /provider failed/);
+      assert.equal(error.partialResult.assistantText, "done");
+      return true;
+    });
+    const diagnostics = logs.filter(entry => entry.kind === "codex.run.unhandled-notification");
+    assert.equal(diagnostics.length, 2);
+    assert.deepEqual(diagnostics.map(entry => entry.level), ["info", "info"]);
+    assert.deepEqual(diagnostics.map(entry => entry.data), [1, 2].map(sequence => ({
+      sessionId: input.session.id, threadId: "thread-1", turnId: "turn-1", method: "future/display",
+      params: { threadId: "thread-1", turnId: "turn-1", value: "synthetic text", sequence },
+    })));
+    assert.equal(transport.closed, true);
+  }
+}));
+
+// @test-value v2
+// kind = "contract"
 // claim = "idle受信中の取消とtransport失敗は待機を解除し元の原因・取得済み本文とDetailsをpartialに保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: CodexAdapter / Error Handling" }
 // fault = "idle waiterを解除しない、closeの汎用errorで元原因を隠す、またはpartial本文と操作結果を捨てる"

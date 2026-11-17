@@ -55,7 +55,7 @@ flowchart LR
 - `message`: 人間が短く読める要約。
 - `appVersion` / `electronVersion` / `chromeVersion` / `nodeVersion` / `platform` / `arch` / `isPackaged`: Main Process で付与する runtime 情報。
 - `windowId`: Window に紐づく場合だけ付与する。
-- `data`: 調査用の構造化メタデータ。payload 本文は入れない。
+- `data`: 調査用の構造化メタデータ。Codexの未対応notification診断に限り、下記の制限付きpayloadを含む。
 - `error`: `name` / `message` / `stack`。
 
 ## Storage
@@ -108,7 +108,9 @@ storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogServ
 
 通常のProvider診断と背景の失敗専用ファイルは別の記録先とする。
 
-provider 実行ログは、通常運用では turn 単位の summary を残し、stream event 単位の詳細ログは出さない。
+provider 実行ログは、通常運用では turn 単位の summary を残す。例外として、Codexのscope内で専用分岐のない正常なnotificationは、UI投影要否の調査用に受信ごとに記録する。
+
+`codex.run.unhandled-notification`はinfoでsession/thread/turn ID、method、paramsを記録する。Workerの既存redactorでAPI key・既知binding情報を除去し、既存raw item上限（128 Ki文字、個々の文字列は64 Ki文字）で制限する。app logではさらに文字列4,000文字、serialized data 12,000文字へ切り詰め、既存rotationで保持する。methodとparamsが大きい場合は部分情報となる。任意の秘密・会話・tool結果・path等を含みうるため、共有前に内容を確認する。対象と除外は[Codex projection owner](provider-adapter.md#codex-projection-owner)を参照する。
 
 Codex の通常ログに残す summary:
 
@@ -124,7 +126,7 @@ Codex の通常ログに残す summary:
 
 `codex.run.completed` / `codex.run.failed` / `codex.run.provider-error` / `codex.run.stream-error` には、原因分析に必要な `providerErrorReason`、`turnCompleted`、`hasUsage`、`itemCount`、`liveStepCount`、`streamErrorMessage` などの構造化 summary を残す。
 
-Codex stream の event-level 診断ログは通常運用では出さない。
+上記の未対応notificationを除き、Codex stream の event-level 診断ログは通常運用では出さない。
 
 - `codex.run.stream.opened`
 - `codex.run.stream.event`
@@ -134,8 +136,8 @@ Codex stream の event-level 診断ログは通常運用では出さない。
 
 ## Privacy And Redaction
 
-- IPC payload、API request / response body、API key、添付ファイル内容は記録しない。
-- `data` は JSON 化できるメタデータに限定する。
+- IPC payload、API request / response body、API key、添付ファイル内容は通常記録しない。Codexの未対応notificationは上記の限定診断としてparamsを含みうる。既知redactor対象以外の機密の除去は保証しない。
+- `data` は JSON 化できるメタデータと上記の限定診断にする。
 - 文字列と serialized data は上限を持ち、巨大データは preview に切り詰める。
 - 循環参照など JSON 化できない値は `"[unserializable]"` として記録する。
 

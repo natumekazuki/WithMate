@@ -345,6 +345,8 @@ CodexAdapterは同時turnで1つのprojection Workerを共有し、最後のturn
 
 assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示に影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
 
+scope内で専用分岐のない正常なnotificationは、受信ごとに`codex.run.unhandled-notification`をinfoで既存app logへ記録する。Workerでsession/thread/turn ID、methodとparamsをturn固有のredactor・`boundProviderRawItem`へ通し、Mainのloggerへ渡す。API keyと既知binding情報を除去してから切り詰め、app loggerの文字列・data上限とrotationも適用する。任意の秘密、会話、tool結果、path等の除去は保証しない。扱い済み通知（状態変更のない通知を含む）、scope外、Mainで処理する`serverRequest/resolved`、server requestはこの診断の対象ではない。診断はUI・通常履歴へ追加せず、terminal結果・順序・RPC処理を変更しない。
+
 live更新は33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。WorkerからMainへのstep配送は既存changesのupserts/removesだけとし、無変更operationのDetailsを再送しない。
 
 Codex progressは`changes.snapshot = false`、stateのcollectionsは空配列とし、制御通知も同じ契約を使う。`SessionRuntimeService`はchangesを既存のMain live stateへ統合し、同ID更新の位置と追加順を維持する。
