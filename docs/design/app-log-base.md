@@ -132,6 +132,8 @@ Codex stream の event-level 診断ログは通常運用では出さない。
 
 上記 3 種は、provider stream の lifecycle や SDK event payload を調べる必要がある場合だけ、`WITHMATE_CODEX_STREAM_DEBUG=1` で再有効化する。
 
+CopilotのDepth候補調査には`copilot.model-depth.discovery`、`copilot.model-depth.cache`、`copilot.model-depth.selection`を使う。探索結果とcache保存結果は探索ごとの相関IDで結び、保存結果の取得時刻と選択側の取得時刻を照合する。探索結果は対応フラグ・候補・policyの分類、選択側はcache取得状態・候補・表示条件を記録する。model IDは制限した公開モデル形式だけを記録し、その他は省略する。候補文字列も既知のeffort値だけとし、認証情報・Workspace path・provider応答本文は含めない。selectionの表示条件は実描画の成功を保証しない。同時刻の取得が重なる場合は取得時刻だけでは区別できない。
+
 ## Privacy And Redaction
 
 - IPC payload、API request / response body、API key、添付ファイル内容は記録しない。
