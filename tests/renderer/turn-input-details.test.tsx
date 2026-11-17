@@ -5,28 +5,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { TurnExecutionDetails, TurnInputStatus } from "../../src/chat/conversation/turn-input-details.js";
-import type { TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "追加入力のpending・confirmed・unknown・not-sentを入力枠の配送状態として表示する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837#追加入力の表示と取得" }
+// claim = "配送不明・未送信の追加入力は理由を表示し、確認済み入力と誤認させない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
 // fault = "不明や未送信を確認済み追加と表示する"
-// observable = "入力枠の配送labelと不明・未送信の説明"
+// observable = "入力枠の不明・未送信のalertと説明"
 // observation_boundary = "component-behavior"
 // scope = "TurnInputStatusの保存済み追加入力表示"
 // lifecycle = "permanent"
 // impact = "利用者が未送信や配送不明の指示を確認済み追加と誤認する"
-// distinction = "型検査と保存testでは入力枠の利用者向けlabelと説明を確認しない。小さいSSRで4状態を検証する"
+// distinction = "型検査と保存testでは入力枠の配送不明・未送信の説明を確認しない。小さいSSRで2状態を検証する"
 // @end-test-value
-test("input rows distinguish additional input delivery states", () => {
-  const cases: [TurnInputDeliveryState, string][] = [["pending", "Input Acceptance Pending"], ["confirmed", "Additional Input Confirmed"], ["unknown", "Input Delivery Unknown"], ["not-sent", "Input Not Sent"]];
-  for (const [state, label] of cases) {
+test("additional input failures remain visible", () => {
+  const cases = [["unknown", /not a confirmed addition/], ["not-sent", /not delivered to the Turn/]] as const;
+  for (const [state, reason] of cases) {
     const markup = renderToStaticMarkup(<TurnInputStatus message={{ role: "user", text: "instruction", turnInput: { turnId: "42", nativeTurnId: "native-turn-9", state, attachments: [] } }} />);
     const document = new JSDOM(markup).window.document;
-    assert.equal(document.querySelector(".turn-input-state")?.textContent, label);
-    if (state === "unknown") assert.match(document.body.textContent!, /not a confirmed addition/);
-    if (state === "not-sent") assert.match(document.body.textContent!, /not delivered to the Turn/);
+    assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", reason);
   }
 });
 

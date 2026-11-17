@@ -533,7 +533,7 @@ test("conversation column はownerと非表示期間を跨いで閲覧anchorと�
       assert.equal(rowReads, 0, "scroll handlers defer anchor layout reads");
       const pending = [...frames.values()]; frames.clear();
       pending.forEach((callback) => callback(0));
-      assert.deepEqual(cache.get("main")?.anchor, { key: "session-main-0", offset: -12 }, "the frame sees a stop before React commits its following flag");
+      assert.deepEqual(cache.get("main")?.anchor, { key: "session-main-0", offset: -12, messageIndex: 0 }, "the frame sees a stop before React commits its following flag");
     });
     assert.equal(rowReads, 1, "repeated scrolls share one anchor measurement per frame");
     rowTop = 150;
@@ -566,7 +566,7 @@ test("conversation column はownerと非表示期間を跨いで閲覧anchorと�
       list.dispatchEvent(new dom.window.Event("scroll"));
     });
     await flushFrames();
-    const readingAnchor = { key: "session-main-0", offset: -37 };
+    const readingAnchor = { key: "session-main-0", offset: -37, messageIndex: 0 };
     assert.equal(current().isMessageListFollowing, false);
     assert.equal(list.scrollTop, 360);
     assert.equal(cache.get("main")?.scrollState?.scrollTop, 360);
@@ -835,7 +835,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
   }
 });
 
-async function mountScrollingConversation() {
+async function mountScrollingConversation(stableAnchor = false) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
@@ -851,6 +851,11 @@ async function mountScrollingConversation() {
   const requests: Array<{ id: string; start: number; resolve: (page: ConversationPage) => void; reject: (error: Error) => void }> = [];
   const api: ConversationMessageColumnApi = {
     getConversationPage: (id, request) => new Promise((resolve, reject) => requests.push({ id, start: request?.startIndex ?? 540, resolve, reject })),
+    ...(stableAnchor ? { listSessionTurnQueue: async (id: string): Promise<SessionTurnQueueReceipt[]> => [{
+      sessionId: id, incarnationId: id, id: "receipt", requestId: "request", sequence: 1, queuePosition: 1,
+      state: "running", turnId: "42", userMessageSeq: 540, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+      captured: { request: { clientRequestId: "request", userMessage: "message 540", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+    }] } : {}),
   };
   const cache = new Map<string, ConversationColumnCache>();
   let latest: ReturnType<typeof useConversationMessageColumn> = null;
@@ -968,6 +973,39 @@ test("conversation scroll loads bounded history in both directions for Main and 
       const oldestReads = view.requests.length;
       await view.scroll(0);
       assert.equal(view.requests.length, oldestReads, "the oldest boundary does not reload overlapping pages");
+    }
+  } finally { await view.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryは送信受付に結び付いた保存行を読んでいても古い履歴を取得し、会話切替後に位置を復元する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの会話の追加読み込み" }
+// fault = "表示keyの形式を保存seqと混同し、取得した履歴を破棄するか復帰先を失う"
+// observable = "上端scroll後の履歴範囲、anchor keyとoffset、会話再選択時の取得位置"
+// observation_boundary = "component-behavior"
+// scope = "実conversation hookと受付済み行の表示key、制御されたpage APIと行矩形"
+// lifecycle = "permanent"
+// impact = "利用者が長い会話を先頭まで読めず、会話切替後に位置を見失う"
+// distinction = "通常履歴keyだけのscroll testでは受付済み行の表示keyと保存seqの違いを検出できない"
+// @end-test-value
+test("conversation paging retains receipt-backed anchors across session switches", async () => {
+  const view = await mountScrollingConversation(true);
+  try {
+    for (const id of ["main", "aux"]) {
+      await view.render(id);
+      await view.scroll(13);
+      assert.equal(view.requests.at(-1)?.start, 480);
+      await view.complete();
+      assert.equal(view.column().messages[0]?.historyIndex, 480);
+      assert.deepEqual({ key: view.column().messageJumpRequest?.key, offset: view.column().messageJumpRequest?.offset }, { key: `turn-submission-${id}-request`, offset: -13 });
+      await view.restore();
+      await view.render(id === "main" ? "aux" : "main");
+      await view.render(id);
+      assert.equal(view.requests.at(-1)?.start, 510);
+      await view.complete();
+      assert.ok(view.column().messageKeys?.includes(`turn-submission-${id}-request`));
+      await view.restore();
     }
   } finally { await view.close(); }
 });

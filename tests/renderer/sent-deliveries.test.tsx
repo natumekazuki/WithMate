@@ -34,17 +34,17 @@ async function harness(read: (request: ReadRequest) => Promise<Page>, action: (h
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信一覧は追加閲覧後のqueue通知でも閲覧済み範囲を20件ずつ再取得し、更新状態を反映して削除済みreceiptを残さない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window; https://github.com/natumekazuki/WithMate/issues/837" }
-// fault = "通知で先頭20件へ巻き戻す、古い追加pageを永久cacheから復元する、または更新された配送状態を表示しない"
+// claim = "送信一覧は表示範囲の全送信を自動取得し、queue通知後も更新状態を反映して削除済みreceiptを残さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
+// fault = "先頭20件だけを表示する、古いpageを残す、または通知後の配送状態を表示しない"
 // observable = "hook consumerのreceipt列と状態、共通読取requestのcursor列とlimit"
 // observation_boundary = "consumer"
-// scope = "送信一覧hookのkeyset追加読取と通知後refresh。storageは決定的page応答で代替"
+// scope = "送信一覧hookの自動page読取と通知後refresh。storageは決定的page応答で代替"
 // lifecycle = "permanent"
 // impact = "読み返し中の送信が消えたり、削除済み・古い配送状態を利用者が誤認することを防ぐ"
 // distinction = "storage paging testと型検査ではrendererの通知と追加閲覧状態の結合を検証できない"
 // @end-test-value
-test("sent delivery refresh retains the viewed range by rereading bounded pages", async () => {
+test("sent deliveries load all bounded pages and refresh automatically", async () => {
   let values = Array.from({ length: 50 }, (_, index) => delivery(index + 1));
   const requests: ReadRequest[] = [];
   await harness(async (request) => {
@@ -53,15 +53,45 @@ test("sent delivery refresh retains the viewed range by rereading bounded pages"
     return { ok: true, items, nextCursor: values.some((item) => item.sequence > items.at(-1)!.sequence) ? items.at(-1)!.sequence : null };
   }, async (h) => {
     await h.render("sender");
-    assert.equal(h.current().items.length, 20);
-    await act(async () => h.current().loadMore());
-    assert.equal(h.current().items.length, 40);
+    assert.equal(h.current().items.length, 50);
     values = values.filter((item) => item.sequence < 3 || item.sequence > 7).map((item) => ({ ...item, state: "completed" }));
     await act(async () => h.notify());
-    assert.equal(h.current().items.length, 40);
-    assert.deepEqual(h.current().items.map((item) => item.sequence), values.slice(0, 40).map((item) => item.sequence));
+    assert.equal(h.current().items.length, 45);
+    assert.deepEqual(h.current().items.map((item) => item.sequence), values.map((item) => item.sequence));
     assert.ok(h.current().items.every((item) => item.state === "completed"));
-    assert.deepEqual(requests.map((request) => [request.cursor ?? 0, request.limit]), [[0, 20], [20, 20], [0, 20], [25, 20]]);
+    assert.deepEqual(requests.map((request) => [request.cursor ?? 0, request.limit]), [[0, 20], [20, 20], [40, 20], [0, 20], [25, 20], [45, 20]]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "送信記録は後続pageの完了を待たずに表示し、取得失敗では既読分とエラーを保って再試行できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
+// fault = "最終pageまで本文を隠す、失敗を空の成功にする、または再試行で続きを取得できない"
+// observable = "後続page待機・失敗・再試行後の送信件数とエラー"
+// observation_boundary = "consumer"
+// scope = "表示範囲の自動page取得と失敗・再試行、APIを制御したhook consumer"
+// lifecycle = "permanent"
+// impact = "利用者が送信内容の欠落や取得失敗に気付けず、内容を確認できなくなる"
+// distinction = "storageのpaging testは画面側の段階表示と失敗時の回復を観測しない"
+// @end-test-value
+test("sent deliveries appear before later pages and recover from a read failure", async () => {
+  let fail = true;
+  let rejectSecond!: (error: Error) => void;
+  await harness(async (request) => {
+    if (request.cursor === undefined) return { ok: true, items: Array.from({ length: 20 }, (_, index) => delivery(index + 1)), nextCursor: 20 };
+    if (fail) return new Promise((_, reject) => { rejectSecond = reject; });
+    return { ok: true, items: [delivery(21)], nextCursor: null };
+  }, async (h) => {
+    await h.render("sender");
+    assert.equal(h.current().items.length, 20);
+    await act(async () => rejectSecond(new Error("page unavailable")));
+    assert.equal(h.current().items.length, 20);
+    assert.match(h.current().error, /page unavailable/);
+    fail = false;
+    await act(async () => h.current().retry());
+    assert.equal(h.current().items.length, 21);
+    assert.equal(h.current().error, "");
   });
 });
 
