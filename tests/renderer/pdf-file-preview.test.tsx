@@ -8,6 +8,7 @@ import { PdfFilePreview, type PdfFilePreviewHandle } from "../../src/file-explor
 import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 import { detectSessionFileResourceKind } from "../../src-shared/file-explorer/file-content-detection.js";
 import { PDF_READER_CHANNEL, PDF_READER_ORIGIN } from "../../src-shared/file-explorer/pdf-reader-contract.js";
+import { readPdfSelection } from "../../src/pdf-reader/pdf-reader-selection.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,8 +35,8 @@ test("PDF files are classified by extension or signature", () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Only the current reader frame can propose selections and links, and host actions require a host button click"
-// oracle = { type = "contract", ref = "Issue #853: PDF isolation and explicit user action boundary" }
+// claim = "Each reader accepts only its own frame proposals; fixed host controls act on a live selection response correlated to a host click"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: PDF Copy Text/Quote; docs/design/window-architecture.md#pdf-readerの隔離境界" }
 // fault = "A forged or stale frame message invokes clipboard, quote, or navigation callbacks without host user confirmation"
 // observable = "host callback calls, confirmation target, and transfer messages"
 // observation_boundary = "component-behavior"
@@ -45,19 +46,30 @@ test("PDF files are classified by extension or signature", () => {
 // distinction = "Type checking cannot enforce message origin/source identity or absence of automatic host side effects"
 // @end-test-value
 test("PDF frame proposals require matching identity and explicit host actions", async () => {
-  const dom = new JSDOM("<!doctype html><body><div id='root'></div></body>", { url: "https://withmate.test" });
+  const dom = new JSDOM("<!doctype html><body><header id='actions'></header><div id='root'></div></body>", { url: "https://withmate.test" });
   const previous = { window: globalThis.window, document: globalThis.document, MutationObserver: globalThis.MutationObserver };
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
+  const actions = dom.window.document.getElementById("actions")!;
+  const siblingContainer = dom.window.document.createElement("div");
+  const siblingActions = dom.window.document.createElement("header");
+  dom.window.document.body.append(siblingContainer, siblingActions);
+  const siblingRoot = createRoot(siblingContainer);
   const copied: string[] = [];
   const quoted: string[] = [];
   const opened: string[] = [];
   const bytes = Uint8Array.of(37, 80, 68, 70, 45);
   try {
-    await act(async () => root.render(<PdfFilePreview bytes={bytes} name="report.pdf"
+    await act(async () => root.render(<PdfFilePreview bytes={bytes} name="report.pdf" actionsContainer={actions}
       onCopyText={(text) => copied.push(text)} onQuoteText={(text) => quoted.push(text)} onOpenLink={(target) => opened.push(target)} />));
+    await act(async () => siblingRoot.render(<PdfFilePreview bytes={bytes} name="sibling.pdf" actionsContainer={siblingActions}
+      onCopyText={(text) => copied.push(`sibling:${text}`)} onOpenLink={(target) => opened.push(target)} />));
     const frame = container.querySelector("iframe")!;
+    const siblingFrame = siblingContainer.querySelector("iframe")!;
+    const siblingId = new URLSearchParams(new URL(siblingFrame.src).hash.slice(1)).get("instanceId")!;
+    const controls = [...actions.querySelectorAll("button")];
+    assert.deepEqual(controls.map((button) => [button.textContent, button.disabled]), [["Copy Text", true], ["Quote", true]]);
     assert.equal(frame.getAttribute("sandbox"), "allow-scripts allow-same-origin");
     const instanceId = new URLSearchParams(new URL(frame.src).hash.slice(1)).get("instanceId")!;
     const sent: Array<{ message: unknown; origin: string; transfer: Transferable[] }> = [];
@@ -68,6 +80,10 @@ test("PDF frame proposals require matching identity and explicit host actions", 
       await act(async () => { dom.window.dispatchEvent(new dom.window.MessageEvent("message", { origin, source,
         data: { channel: PDF_READER_CHANNEL, instanceId: id, type, ...extra } })); });
     };
+    await emit("ready", {}, PDF_READER_ORIGIN, siblingFrame.contentWindow, siblingId);
+    await emit("selection", { text: "sibling selection" }, PDF_READER_ORIGIN, siblingFrame.contentWindow, siblingId);
+    assert.ok(controls.every((button) => button.disabled));
+    assert.equal(siblingActions.querySelector("button")!.disabled, false);
     await emit("ready", {}, "https://attacker.test");
     await emit("ready", {}, PDF_READER_ORIGIN, dom.window as unknown as Window);
     await emit("ready", {}, PDF_READER_ORIGIN, frame.contentWindow, "obsolete");
@@ -83,12 +99,12 @@ test("PDF frame proposals require matching identity and explicit host actions", 
     await emit("loaded");
     for (const [origin, source, id] of [
       ["https://attacker.test", frame.contentWindow, instanceId],
-      [PDF_READER_ORIGIN, dom.window as unknown as Window, instanceId],
+      [PDF_READER_ORIGIN, siblingFrame.contentWindow, instanceId],
       [PDF_READER_ORIGIN, frame.contentWindow, "obsolete"],
     ] as const) {
       await emit("selection", { text: "forged selection" }, origin, source, id);
       await emit("open-link", { target: "https://attacker.test/forged" }, origin, source, id);
-      assert.equal(container.querySelector('[aria-label="Selected PDF Text"]'), null);
+      assert.ok(controls.every((button) => button.disabled));
       assert.equal(container.querySelector('[aria-label="Open PDF Link"]'), null);
     }
     await emit("selection", { text: "selected text" });
@@ -96,20 +112,47 @@ test("PDF frame proposals require matching identity and explicit host actions", 
     assert.deepEqual([copied, quoted, opened], [[], [], []]);
     assert.match(container.textContent!, /https:\/\/example.com\/document/);
     const click = async (label: string) => {
-      const button = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent === label)!;
+      const button = [...dom.window.document.querySelectorAll("button")].find((candidate) => candidate.textContent === label)!;
       await act(async () => button.click());
     };
-    await click("Copy");
+    assert.deepEqual([...actions.querySelectorAll("button")], controls);
+    assert.ok(controls.every((button) => !button.disabled));
+    const requestedId = () => (sent.at(-1)!.message as { requestId: string }).requestId;
+    await click("Copy Text");
+    const copyId = requestedId();
+    await emit("selection", { text: "unsolicited", requestId: "obsolete" });
+    for (const [origin, source, id] of [
+      ["https://attacker.test", frame.contentWindow, instanceId],
+      [PDF_READER_ORIGIN, siblingFrame.contentWindow, instanceId],
+      [PDF_READER_ORIGIN, frame.contentWindow, "obsolete"],
+    ] as const) await emit("selection", { text: "forged", requestId: copyId }, origin, source, id);
+    assert.deepEqual(copied, []);
+    await emit("selection", { text: "current text", requestId: copyId });
+    await emit("selection", { text: "duplicate", requestId: copyId });
     await click("Quote");
+    await emit("selection", { text: "current quote", requestId: requestedId() });
     await click("Open");
-    assert.deepEqual(copied, ["selected text"]);
-    assert.deepEqual(quoted, ["selected text"]);
+    assert.deepEqual(copied, ["current text"]);
+    assert.deepEqual(quoted, ["current quote"]);
     assert.deepEqual(opened, ["https://example.com/document"]);
+    await click("Copy Text");
+    await emit("selection", { text: "", requestId: requestedId() });
+    assert.ok(controls.every((button) => button.disabled));
+    assert.deepEqual(copied, ["current text"]);
+    await emit("selection", { text: "selected again" });
+    await click("Quote");
+    const clearedId = requestedId();
+    await emit("selection", { text: "" });
+    await emit("selection", { text: "old", requestId: clearedId });
+    assert.ok(controls.every((button) => button.disabled));
+    assert.deepEqual(quoted, ["current quote"]);
     await act(async () => root.unmount());
+    assert.equal(actions.childNodes.length, 0);
     await emit("open-link", { target: "https://example.com/stale" });
     assert.deepEqual(opened, ["https://example.com/document"]);
   } finally {
     if (container.childNodes.length) await act(async () => root.unmount());
+    await act(async () => siblingRoot.unmount());
     Object.assign(globalThis, previous);
     dom.window.close();
   }
@@ -135,6 +178,7 @@ test("PDF settings and host Find reach the existing frame without retransferring
   const ref = React.createRef<PdfFilePreviewHandle>();
   const bytes = Uint8Array.of(37, 80, 68, 70, 45);
   const render = (step: number | null) => <PreviewWheelZoomStepContext value={step}><PdfFilePreview ref={ref}
+    actionsContainer={null}
     bytes={bytes} name="report.pdf" onCopyText={() => {}} onOpenLink={() => {}} /></PreviewWheelZoomStepContext>;
   try {
     await act(async () => root.render(render(10)));
@@ -182,7 +226,7 @@ test("PDF startup waits finitely and a failed or removed reader cannot affect it
   const bytes = Uint8Array.of(37, 80, 68, 70, 45);
   const messages: unknown[] = [];
   const render = async (key: string) => {
-    await act(async () => root.render(<PdfFilePreview key={key} bytes={bytes} name="report.pdf"
+    await act(async () => root.render(<PdfFilePreview key={key} bytes={bytes} name="report.pdf" actionsContainer={null}
       onCopyText={() => {}} onOpenLink={() => {}} />));
     const frame = container.querySelector("iframe")!;
     const source = frame.contentWindow;
@@ -259,4 +303,43 @@ test("PDF startup waits finitely and a failed or removed reader cannot affect it
     dom.window.close();
     t.mock.timers.reset();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Host PDF text actions read only the current visible PDF range, not a cleared range, hidden document, toolbar or another document"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: PDF current selection; docs/design/window-architecture.md#pdf-readerの隔離境界" }
+// fault = "A non-PDF or hidden document range is returned as current selected PDF text"
+// observable = "text read from native DOM selection"
+// observation_boundary = "component-behavior"
+// scope = "reader-side selection used by both selection updates and explicit host requests"
+// lifecycle = "permanent"
+// impact = "Copy/Quote can reuse unrelated or obsolete text"
+// distinction = "Host message mocks cannot validate which native range the actual reader reports; type checks do not enforce DOM selection scope"
+// @end-test-value
+test("PDF selection reads only a range within one visible PDF document", () => {
+  const dom = new JSDOM('<section id="primary"><span>Toolbar</span><div class="pdfViewer">Primary text</div></section><section><div class="pdfViewer">Attachment text</div></section>');
+  try {
+    const document = dom.window.document;
+    const [primary, attachment] = [...document.querySelectorAll(".pdfViewer")];
+    const selection = dom.window.getSelection()!;
+    const select = (start: Node, end = start) => {
+      const range = document.createRange();
+      range.setStart(start, 0); range.setEnd(end, end.textContent!.length);
+      selection.removeAllRanges(); selection.addRange(range);
+    };
+    select(primary!.firstChild!);
+    assert.equal(readPdfSelection(document), "Primary text");
+    document.getElementById("primary")!.hidden = true;
+    assert.equal(readPdfSelection(document), "");
+    select(attachment!.firstChild!);
+    assert.equal(readPdfSelection(document), "Attachment text");
+    select(document.querySelector("span")!.firstChild!);
+    assert.equal(readPdfSelection(document), "");
+    document.getElementById("primary")!.hidden = false;
+    select(primary!.firstChild!, attachment!.firstChild!);
+    assert.equal(readPdfSelection(document), "");
+    selection.removeAllRanges();
+    assert.equal(readPdfSelection(document), "");
+  } finally { dom.window.close(); }
 });

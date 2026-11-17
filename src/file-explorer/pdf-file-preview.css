@@ -29,7 +29,11 @@
   pointer-events: none;
 }
 
-.session-pdf-selection-actions,
+.session-pdf-selection-actions {
+  display: contents;
+  user-select: none;
+}
+
 .session-pdf-link-confirmation {
   display: flex;
   align-items: center;

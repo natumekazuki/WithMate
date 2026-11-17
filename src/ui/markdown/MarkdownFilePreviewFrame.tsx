@@ -13,7 +13,7 @@ export type MarkdownFilePreviewProps = {
 };
 
 export function MarkdownFilePreviewFrame({
-  path, href, title, link, format, loading, onReload, shellRef, children, sourceAttributes,
+  path, href, title, link, format, loading, onReload, shellRef, children, sourceAttributes, headerActions,
 }: Omit<MarkdownFilePreviewProps, "children"> & {
   link: ReactNode;
   format: "HTML" | "PDF";
@@ -21,6 +21,7 @@ export function MarkdownFilePreviewFrame({
   onReload?: () => void;
   shellRef?: Ref<HTMLSpanElement>;
   children: ReactNode;
+  headerActions?: ReactNode;
 }) {
   const reloadLabel = `Reload ${format} Preview`;
   return (
@@ -28,6 +29,7 @@ export function MarkdownFilePreviewFrame({
       aria-label={title || `${format} Preview`}>
       <span {...sourceAttributes} className="message-file-preview-header">
         <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
+        {headerActions}
         {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
           <button type="button" onClick={onReload} disabled={loading}
             aria-busy={loading || undefined} aria-label={reloadLabel} title={reloadLabel}>

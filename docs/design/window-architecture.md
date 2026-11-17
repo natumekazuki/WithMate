@@ -23,7 +23,7 @@ iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWit
 
 ホストとreaderの通信契約は`src-shared/file-explorer/pdf-reader-contract.ts`に置く。両側で送信元window、origin、frame instance IDを照合し、ready後に一度だけ転送用bytesをコピーして渡す。テーマとwheel刻みの更新、Find commandは文書の再転送とは分離する。resource切替・Reloadではiframeを作り直し、旧frameのmessageを無視する。reader内の文書とworker・描画資源の破棄はreaderが所有する。
 
-readerからのselectionとlink messageだけではホストAPIを実行しない。Copy／Quoteはホストbuttonから既存callbackを呼び、文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
+readerからのselectionとlink messageだけではホストAPIを実行しない。`PdfFilePreview`は選択状態と操作を所有し、ホストheaderが渡す描画先へ`Copy Text`／`Quote`をportalで置く。ホストbuttonの明示操作で`get-selection`を送り、その要求IDと現在のframeが一致するselection応答を一度だけ既存callbackへ渡す。通常のselection通知は有効状態だけを更新し、本文外・非表示の文書・解除済みのrangeは操作に使わない。文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
 
 PDF readerは`src/pdf-reader/`を`vite.pdf-reader.config.ts`で独立buildし、PDF.js worker、cMap、font、WASM、ICC、画像を同梱する。開発時も同じ配信経路を使う。`electron:dev`は起動前に`build:pdf-reader`を実行し、`build:renderer`は通常rendererとPDF readerの両方をbuildする。`src/pdf-reader/`の変更はHMRでは反映されないため、`npm run build:pdf-reader`で再buildし、File Previewの`Reload`で読み直す。基本の起動・build手順は[README](../../README.md#ソースから起動する)を参照する。
 
