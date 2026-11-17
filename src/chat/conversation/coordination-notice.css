@@ -1,15 +1,6 @@
 .coordination-question { margin: 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--muted); }
 .related-session-route.coordination-notice-link {
-  align-items: baseline;
   max-width: 100%;
-  width: 100%;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: inherit;
-  line-height: 1.6;
 }
-.coordination-notice-open { flex: none; }
-.coordination-notice-preview { min-width: 0; overflow-wrap: anywhere; }
-.coordination-notice-link:hover .coordination-notice-preview { text-decoration: underline; text-underline-offset: 3px; }
 .issued-coordination-tail { margin-block: 10px; margin-inline-start: 64px; padding-inline: 16px; }
 .received-coordination-content { margin-top: 10px; }

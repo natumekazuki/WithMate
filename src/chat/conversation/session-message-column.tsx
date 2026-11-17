@@ -541,7 +541,7 @@ export function SessionMessageColumn({
   const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
   const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
   const issuedWithoutReceipt = issued.items.filter((record) => !sentDeliveries.items.some((receipt) => receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
-  const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
+  const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} messageContext={{ displayMode: messageViewMode, onOpenPath, resolveImageSource, markdownImageContext: markdownLinkFileContext, markdownLinkFileContext }} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
   const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
   const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
@@ -1609,7 +1609,9 @@ export function SessionMessageColumn({
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
                         {shouldRenderFullMessage && read.coordination && inputReadContext ? <>
-                          <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={inputReadContext.target} />
+                          <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={inputReadContext.target}
+                            contentLabel={read.coordination.consultation === undefined || read.coordination.consultation === read.text ? "Received Content" : undefined}
+                            messageContext={{ displayMode: messageViewMode, onOpenPath, resolveImageSource, markdownImageContext: markdownLinkFileContext, markdownLinkFileContext }} />
                           <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
                             <MessageRichText text={read.text} displayMode={messageViewMode} onOpenPath={onOpenPath} resolveImageSource={resolveImageSource} markdownImageContext={markdownLinkFileContext} markdownLinkFileContext={markdownLinkFileContext} />
                           </ReceivedCoordinationContent>
@@ -1657,7 +1659,7 @@ export function SessionMessageColumn({
                         )}
                       </div>
                     </div>
-                    {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq !== null && record.sourceMessageSeq === message.historyIndex).map(renderIssued)}
+                    {shouldRenderFullMessage ? issuedWithoutReceipt.filter((record) => record.sourceMessageSeq !== null && record.sourceMessageSeq === message.historyIndex).map(renderIssued) : null}
                     <TurnInputStatus message={message} />
                     {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}

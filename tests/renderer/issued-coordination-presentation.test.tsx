@@ -34,7 +34,7 @@ function props(): SessionMessageColumnProps {
 // @test-value v2
 // kind = "contract"
 // claim = "チャットは起票元応答に問いをまとめ、receiptで重複させず、関連する問いの直下で当時の受信本文を読み、正確な詳細導線・collapseを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: Coordinationの短リンク・当時本文・起票表示; docs/design/ui-design-guidelines.md#読込空失敗" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: Coordinationの全文引用・当時本文・起票表示; docs/design/ui-design-guidelines.md#読込空失敗" }
 // fault = "未取得を正常0件に見せる、別rowへ起票を置く、receipt取得で重複させる、受信本文を閉じた詳細へ隠す/現在回答で置換する、またはcollapse後も本文を表示する"
 // observable = "実chat columnの読込status、起票rowとリンク数、初期表示の当時本文、openCoordination引数、失敗表示とcollapse preview"
 // observation_boundary = "consumer"
@@ -82,10 +82,13 @@ test("issued chat notices align with their source response and preserve exact re
     await act(async () => h.root.render(<SessionMessageColumn {...column} messageCollapseTargets={collapse} collapsedMessageKeys={new Set(["received"])} onToggleMessageCollapse={() => {}} />));
     assert.equal(h.document.querySelector(".message-collapsed-preview")?.textContent, "Original question");
     assert.equal(h.document.querySelector('[aria-label="Expand message: Original question"]')?.getAttribute("aria-expanded"), "false");
+    await act(async () => h.root.render(<SessionMessageColumn {...column} messageCollapseTargets={collapse} collapsedMessageKeys={new Set(["response"])} onToggleMessageCollapse={() => {}} />));
+    assert.equal(h.document.querySelector(".issued-coordination-notice"), null);
+    assert.equal(h.document.querySelector(".message-collapsed-preview")?.textContent, "Source response");
     await act(async () => h.root.render(<SessionMessageColumn {...column} />));
     sent = [{ receiptId: "sent-receipt", sourceTurnId: "42", sourceMessageSeq: 1, sequence: 1, target, state: "queued", text: "Which approach?", coordination: { id: "issued", text: "Which approach?", consultation: "Which approach?" }, origin: { kind: "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId } }];
     await act(async () => changed.forEach((listener) => listener()));
-    assert.equal(h.document.querySelectorAll('[aria-label="Open Consultation: Which approach?"]').length, 1);
+    assert.equal(h.document.querySelectorAll(".session-outbound .coordination-notice-link").length, 1);
     assert.equal(h.document.querySelector(".issued-coordination-notice"), null);
     sent = []; live = true;
     await act(async () => h.root.render(<SessionMessageColumn {...column} messages={[{ role: "assistant", text: "Live response" }]} liveWithMateTurnId="42" isRunning />));

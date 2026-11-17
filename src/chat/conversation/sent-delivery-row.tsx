@@ -56,7 +56,7 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
     <div className="message-card assistant session-outbound"><div className="message-card-content">
       <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
       {item.coordination
-        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} />
+        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} messageContext={messageContext} contentLabel={!distinctContent ? "Sent Content" : undefined} />
         : <MessageRichText {...messageContext} text={item.text} />}
       {item.coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={item.coordination.text} /></section> : null}
       {error ? <p role="alert">{error}</p> : null}
@@ -69,7 +69,6 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
         <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
         <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
       </dl>
-      {item.coordination && !distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={item.coordination.text} /></section> : null}
       </section> : null}
     </div></div>
   </article>;
