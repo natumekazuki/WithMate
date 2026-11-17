@@ -195,6 +195,39 @@ it("Copilot discovery uses capability and policy metadata with an owned client",
 
 // @test-value v2
 // kind = "contract"
+// claim = "Copilot探索の診断は候補喪失の判定材料を残し任意のprovider文字列を記録しない"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Provider Diagnostic Log Policy" }
+// fault = "対応フラグと候補の不一致を隠すか未知のmodelまたはeffort文字列をログへ出す"
+// observable = "listModelsのcatalogと診断logのdata"
+// observation_boundary = "public-boundary"
+// scope = "Copilot model depth discovery diagnostic"
+// lifecycle = "permanent"
+// impact = "候補消失の切り分けができないかprovider設定の秘密がログへ残る"
+// distinction = "型検査と既存のcatalog testはログ内容や秘密値の混入を検証しない"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("Copilot depth discovery reports bounded metadata without copying provider strings", async () => {
+  const logs: unknown[] = [];
+  const incompatible = { ...copilotModel("claude-sonnet-4.6", false),
+    supportedReasoningEfforts: ["low", "private-effort"] } as unknown as CopilotModel;
+  const client = { start: async () => undefined, listModels: async () => [incompatible, copilotModel("private-model")],
+    stop: async () => [] } as unknown as CopilotClient;
+  const adapter = new CopilotAdapter({ createClient: () => client, log: (entry) => logs.push(entry) });
+  const catalog = await adapter.listModels({ ...input(), diagnosticId: "discovery-id" });
+  assert.equal((logs[0] as { correlationId: string }).correlationId, "discovery-id");
+  assert.deepEqual(catalog.models[0].reasoningEfforts, []);
+  assert.equal(logs.length, 1);
+  assert.deepEqual((logs[0] as { data: unknown }).data, {
+    modelId: "claude-sonnet-4.6", policy: "missing", supportsReasoningEffort: "false",
+    supportedReasoningEfforts: { shape: "array", values: ["low"], otherCount: 1 },
+    alternateReasoningEffort: { shape: "missing", values: [], otherCount: 0 },
+    defaultReasoningEffort: { shape: "missing", values: [], otherCount: 0 },
+  });
+  assert.doesNotMatch(JSON.stringify(logs), /private-(effort|model)/);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Copilot探索の取消はmetadata待ちを終了して所有clientを停止し失敗を成功へ変えない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "取消後もSDK応答を待ち続けるか終了処理を省略する"

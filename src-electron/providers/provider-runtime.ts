@@ -86,6 +86,7 @@ export type ListProviderModelsInput = {
   appSettings: AppSettings;
   workspacePath: string;
   signal?: AbortSignal;
+  diagnosticId?: string;
 };
 
 export type RunSessionTurnResult = {

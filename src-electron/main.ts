@@ -1945,6 +1945,10 @@ function requireProviderModelDiscoveryService(): ProviderModelDiscoveryService {
       upsertProvider: (entry) => owner.modelCatalogStorage.upsertProvider(entry),
       getAdapter: getProviderCodingAdapter,
       defaultWorkspace: () => mainStoreContext.sessions[0]?.workspacePath || app.getPath("home"),
+      logCopilotDiscovery: ({ correlationId, outcome, fetchedAt }) => writeAppLog({
+        level: outcome === "failed" ? "warn" : "info", kind: "copilot.model-depth.cache", process: "main",
+        message: "Copilot model depth discovery cache result", correlationId, data: { outcome, fetchedAt },
+      }),
       onChanged: (snapshot) => {
         void broadcastModelCatalog(snapshot).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.broadcast-failed", process: "main", message: "Model choices could not be updated", error: appLogService.errorToLogError(error) }));
       },

@@ -41,6 +41,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import { isSameModelCatalogWorkspace, startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
+import { diagnosticEfforts, diagnosticModelId } from "../../src-shared/settings/copilot-depth-diagnostic.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import {
@@ -965,6 +966,27 @@ export default function AgentSessionWindowApp() {
         : [],
     [displayedSession, selectedProviderCatalog],
   );
+  useEffect(() => {
+    if (displayedSession?.provider !== "copilot") return;
+    const modelId = diagnosticModelId(displayedSession.model);
+    const discovery = modelCatalog?.discovery?.copilot;
+    const fetchedAt = discovery?.fetchedAt;
+    try {
+      withmateApi?.reportRendererLog({
+        level: "info", kind: "copilot.model-depth.selection", message: "Copilot model depth selection projection",
+        data: {
+          modelId,
+          sessionKind: activeAuxiliarySession ? "auxiliary" : "main",
+          catalogWorkspaceMatches: isSameModelCatalogWorkspace(modelCatalog?.workspacePath, selectedSession?.workspacePath),
+          discoveryStatus: discovery?.status ?? "unavailable",
+          fetchedAt: fetchedAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(fetchedAt) ? fetchedAt : null,
+          modelFound: Boolean(selectedProviderCatalog?.models.some((model) => model.id === displayedSession.model)),
+          efforts: diagnosticEfforts(availableReasoningEfforts),
+          hasDepthOptions: availableReasoningEfforts.length > 0,
+        },
+      });
+    } catch { /* Diagnostics must not affect the session window. */ }
+  }, [Boolean(activeAuxiliarySession), availableReasoningEfforts, displayedSession?.provider, displayedSession?.model, modelCatalog, selectedProviderCatalog, selectedSession?.workspacePath, withmateApi]);
   const modelOptions = useMemo(() => {
     if (!selectedProviderCatalog) {
       return [];
