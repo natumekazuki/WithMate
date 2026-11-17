@@ -176,6 +176,44 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "Settingsは設定読込失敗時にもversion取得失敗を再試行し取得値を本文末尾に表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout; docs/design/settings-ui.md#settings-runtime" }
+  // fault = "設定読込失敗がversion表示や再試行を隠すか取得値を表示しない"
+  // observable = "本文末尾の取得失敗、Retry後のversionとSave Settingsのdisabled状態"
+  // observation_boundary = "component-behavior"
+  // scope = "Settings app version"
+  // lifecycle = "permanent"
+  // distinction = "IPC testは設定読込失敗との独立性と利用者に見える再試行を検証しない"
+  // @end-test-value
+  it("設定読込失敗時もApp versionを再試行して表示する", async () => {
+    await withSettingsDom(async (container, root) => {
+      let calls = 0;
+      window.withmate = { getAppVersion: async () => {
+        calls++;
+        if (calls === 1) throw new Error("unavailable");
+        return "7.0.1-preview.2";
+      } } as WithMateWindowApi;
+      await act(async () => root.render(React.cloneElement(buildSettingsContent(), {
+        settingsDraftLoaded: false,
+        appSettingsLoadStatus: "error",
+        appSettingsLoadError: "Settings unavailable",
+      })));
+      const version = container.querySelector<HTMLElement>(".settings-app-version")!;
+      assert.equal(version.parentElement?.lastElementChild, version);
+      assert.match(version.textContent!, /Could not load app version/);
+      const retry = version.querySelector<HTMLButtonElement>("button")!;
+      await act(async () => retry.click());
+      assert.match(version.textContent!, /7\.0\.1-preview\.2/);
+      assert.equal(container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')?.disabled, true);
+      assert.equal(calls, 2);
+      await act(async () => root.render(buildSettingsContent()));
+      assert.equal(container.querySelector(".settings-section")?.lastElementChild, version);
+      assert.match(version.textContent!, /7\.0\.1-preview\.2/);
+    });
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Settingsの親section開閉と別sectionのdraft更新を挟んでも、子disclosure状態とprovider入力DOM・選択・draftを保持し、開閉だけでは保存しない"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
   // fault = "親を閉じて子を再生成し入力や選択・開閉を失うか、別section更新でdraftを巻き戻すか、開閉時に保存する"

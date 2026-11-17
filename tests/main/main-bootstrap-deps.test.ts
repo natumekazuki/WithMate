@@ -121,6 +121,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getModelCatalog: () => ({ providers: [] }),
       } satisfies MainIpcCatalogDepsArgs,
       settings: {
+        getAppVersion: () => "1.0.0",
         getAppSettings: () =>
           ({ providers: {}, codingProviderSettings: {} }) as never,
         updateAppSettings: (settings) => settings,

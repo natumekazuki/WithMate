@@ -790,6 +790,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getAppDatabaseDiagnostics",
     "getAppBootStatus",
     "getAppSettings",
+    "getAppVersion",
     "getAuxiliarySession",
     "getAuxiliaryCreation",
     "getAuxiliaryCreationContext",

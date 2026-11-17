@@ -160,6 +160,7 @@ export const WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL = "withmate:get-unread-s
 export const WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL = "withmate:mark-session-result-read";
 export const WITHMATE_SESSION_TURN_UPDATED_EVENT = "withmate:session-turn-updated";
 export const WITHMATE_GET_APP_SETTINGS_CHANNEL = "withmate:get-app-settings";
+export const WITHMATE_GET_APP_VERSION_CHANNEL = "withmate:get-app-version";
 export const WITHMATE_UPDATE_APP_SETTINGS_CHANNEL = "withmate:update-app-settings";
 export const WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL = "withmate:update-chat-layout-preference";
 export const WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL = "withmate:list-prompt-templates";

@@ -93,6 +93,9 @@ export function createSettingsApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowSettingsApi {
   return {
+    getAppVersion() {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_APP_VERSION_CHANNEL);
+    },
     getAppSettings() {
       return ipcRenderer.invoke(channels.WITHMATE_GET_APP_SETTINGS_CHANNEL);
     },

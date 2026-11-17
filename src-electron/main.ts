@@ -1492,6 +1492,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getModelCatalog,
               },
               settings: {
+                getAppVersion: () => app.getVersion(),
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 updateChatLayoutPreference,

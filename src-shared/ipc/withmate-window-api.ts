@@ -304,6 +304,7 @@ export type WithMateWindowObservabilityApi = {
 };
 
 export type WithMateWindowSettingsApi = {
+  getAppVersion(): Promise<string>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void>;

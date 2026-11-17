@@ -45,6 +45,7 @@ import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
 import { SettingsActionButton } from "./SettingsActionButton.js";
 import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
+import { AppVersion } from "./AppVersion.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -633,6 +634,7 @@ export function HomeSettingsContent({
           />
           </fieldset> : null}
 
+          <AppVersion />
           </section>
           )}
         </div>
