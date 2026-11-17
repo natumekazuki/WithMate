@@ -651,6 +651,8 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
     accepted_json TEXT CHECK (accepted_json IS NULL OR json_valid(accepted_json)),
     dispatched_json TEXT CHECK (dispatched_json IS NULL OR json_valid(dispatched_json)),
+    source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0),
+    source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1)),
     turn_id TEXT,
     input_turn_id TEXT,
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
@@ -882,6 +884,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     if (!queueColumns.has(name)) {
       db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
     }
+  }
+  if (!queueColumns.has("source_display_position")) {
+    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0)");
+  }
+  if (!queueColumns.has("source_display_verified")) {
+    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1))");
   }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_sender ON session_turn_queue_v6(
     json_extract(accepted_json, '$.origin.actorKind'),

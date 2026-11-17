@@ -1472,6 +1472,50 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "複数宛先および同一宛先への複数送信は、実行中と保存後の対応するassistant本文内に、それぞれ一度ずつ順に表示する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "宛先ごとに複数receiptをまとめる、送信カードを別行や本文末尾へ移す、本文との順を変える、または重複表示する"
+// observable = "実行中と保存済みのassistant行の本文・各宛先の送信カードのDOM順と件数"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumnの送信位置投影"
+// lifecycle = "permanent"
+// impact = "利用者が同一Turnの発言と宛先付き送信の関係を見失う"
+// distinction = "Markdown単体とreceipt保存のテストは会話列への位置付きカードの接続を検証しない"
+// @end-test-value
+test("multiple sent cards retain recipients and order within live and saved responses", async () => {
+  for (const saved of [false, true]) {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+    const values = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+      Node: dom.window.Node, navigator: dom.window.navigator, MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true };
+    const previous = new Map(Object.keys(values).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, value });
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    dom.window.HTMLElement.prototype.scrollTo = () => {};
+    Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 600 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 600 }, clientWidth: { get: () => 800 } });
+    const intersection = installIntersectionObserver();
+    const origin = { kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "source-inc", actorTurnId: "42", operation: "send", targetIncarnationId: "recipient-inc" };
+    const items = [["a", "FIRST", 6], ["b", "SECOND", 6], ["a", "THIRD", 14]].map(([target, text, position], index) => ({ receiptId: `outgoing-${index}`, sequence: index + 1, sourceTurnId: "42", sourceMessageSeq: saved ? 1 : null, sourceDisplayPosition: position, target: { kind: "main", sessionId: target, incarnationId: "recipient-inc" }, state: "queued", origin: { ...origin, targetSessionId: target, targetSnapshot: { sessionTitle: `Session ${target}`, character: { id: target, name: `Mate ${target}`, iconPath: "" } } }, text }));
+    Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async () => ({ ok: true, items, nextCursor: null }) } });
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    try {
+      await act(async () => root.render(<SessionMessageColumn {...createBaseProps("sender")} provider="codex" isRunning={!saved} liveWithMateTurnId={saved ? undefined : "42"} liveRunAssistantText={saved ? "" : "BEFORE\n\nMIDDLE\n\nAFTER"} hasLiveRunAssistantText={!saved}
+        inputReadContext={{ ownerSessionId: "sender", target: { kind: "main", sessionId: "sender", incarnationId: "source-inc" } }} messages={saved ? [{ role: "assistant", text: "BEFORE\n\nMIDDLE\n\nAFTER", historyIndex: 1 }] : [{ role: "user", text: "Request", historyIndex: 0 }]} messageKeys={saved ? ["result"] : ["request"]} />));
+      const row = dom.window.document.querySelector(".message-row.assistant");
+      assert.ok(row, saved ? "saved" : "live");
+      const cards = [...row.querySelectorAll(".session-outbound-inline")];
+      assert.equal(cards.length, 3);
+      assert.deepEqual(cards.map((card) => card.getAttribute("aria-label")), ["Sent Message: Session a", "Sent Message: Session b", "Sent Message: Session a"]);
+      assert.equal(dom.window.document.querySelectorAll('.session-outbound-inline, article.session-outbound').length, 3);
+      assert.match(row.textContent ?? "", /BEFORE[\s\S]*FIRST[\s\S]*SECOND[\s\S]*MIDDLE[\s\S]*THIRD[\s\S]*AFTER/);
+    } finally {
+      await act(async () => root.unmount()); intersection.restore(); dom.window.close();
+      for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+    }
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

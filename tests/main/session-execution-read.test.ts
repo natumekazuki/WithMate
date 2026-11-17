@@ -27,6 +27,44 @@ function session() { return buildNewSession({ id: "read-main", taskTitle: "Read"
 
 // @test-value v2
 // kind = "contract"
+// claim = "複数宛先と同一宛先への受付を順に保持し、再試行では最初の位置を保ち、確定前の履歴では位置を公開しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "宛先や送信ごとにreceiptを失う、再試行で位置を上書きする、または未検証の位置を保存履歴へ公開する"
+// observable = "receipt IDと宛先の受付順、およびlist_sent_deliveriesの保存後のsourceDisplayPosition"
+// observation_boundary = "public-boundary"
+// scope = "送信receiptへの表示位置保存と履歴読み出し"
+// lifecycle = "permanent"
+// impact = "同じ送信が重複したり、異なる発言位置に表示されたりする"
+// distinction = "型検査と既存のreceiptテストは表示位置の受付と公開条件を検証しない"
+// @end-test-value
+test("sent position survives idempotent retry only after verification", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const sender = sessions.insertSession({ ...session(), messages: [{ role: "user", text: "start" }, { role: "assistant", text: "before after" }] });
+    const recipient = sessions.insertSession({ ...session(), id: "recipient-position" });
+    const otherRecipient = sessions.insertSession({ ...session(), id: "recipient-other" });
+    const source = { kind: "main" as const, sessionId: sender.id, incarnationId: getSessionIncarnationId(sender) };
+    const owner = { sessionId: recipient.id, incarnationId: getSessionIncarnationId(recipient) };
+    const turn = turns.createSessionTurn({ sessionId: sender.id, provider: sender.provider, model: sender.model, reasoningEffort: sender.reasoningEffort, approvalMode: sender.approvalMode, threadId: "", errorMessage: "", createdAt: "2026-11-07T00:00:00Z", phase: "completed", userMessageSeq: 0, assistantMessageSeq: 1 });
+    const origin = { kind: "session" as const, actorKind: "main" as const, actorSessionId: sender.id, actorIncarnationId: source.incarnationId, actorTurnId: String(turn.id), operation: "send" as const, targetSessionId: recipient.id, targetIncarnationId: owner.incarnationId };
+    const captured = { request: { userMessage: "message", clientRequestId: randomUUID(), submitSource: "composer" as const, executionOptions: captureSessionExecutionOptions(recipient) }, attachments: [], provider: recipient.provider, workspacePath: recipient.workspacePath, origin, sourceDisplayPosition: 6 };
+    const first = queue.enqueue(owner, captured);
+    assert.equal(queue.enqueue(owner, { ...captured, sourceDisplayPosition: 11 }).id, first.id);
+    const otherOwner = { sessionId: otherRecipient.id, incarnationId: getSessionIncarnationId(otherRecipient) };
+    const second = queue.enqueue(otherOwner, { ...captured, request: { ...captured.request, clientRequestId: randomUUID() }, origin: { ...origin, targetSessionId: otherOwner.sessionId, targetIncarnationId: otherOwner.incarnationId } });
+    const third = queue.enqueue(owner, { ...captured, request: { ...captured.request, clientRequestId: randomUUID() }, sourceDisplayPosition: 9 });
+    const readItems = () => executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target: source, operation: "list_sent_deliveries", request: { target: source, messageSeqs: [1] } })).items;
+    assert.deepEqual(readItems().map((item) => [item.receiptId, item.target.sessionId]), [[first.id, owner.sessionId], [second.id, otherOwner.sessionId], [third.id, owner.sessionId]]);
+    const readPosition = () => executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target: source, operation: "list_sent_deliveries", request: { target: source, messageSeqs: [1] } })).items[0].sourceDisplayPosition;
+    assert.equal(readPosition(), null);
+    queue.verifySourceDisplayPosition(first.id, sender.id, source.incarnationId, String(turn.id), true);
+    assert.equal(readPosition(), 6);
+    queue.verifySourceDisplayPosition(first.id, sender.id, source.incarnationId, String(turn.id), false);
+    assert.equal(readPosition(), null);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "execution読取は未開始と完了後も入力に捕捉した実行設定を返し、受付のない過去Turnでは保存済み設定と未記録を区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 現行のProvider等を保持して改善" }
 // fault = "現在のSession設定で受付を上書きする、完了後の保存message参照で設定を落とす、過去Turnへ未記録Reviewer等を補う"
