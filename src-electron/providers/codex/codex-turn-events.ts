@@ -12,7 +12,7 @@ import {
 import { ProviderProgressMap } from "../provider-progress.js";
 import { projectProviderOutput, type ProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 
-// The fields consumed here follow Codex App Server 0.166.0's ThreadItem schema.
+// The fields consumed here follow Codex App Server 0.171.0's ThreadItem schema.
 export type CodexFileChange = {
   path: string;
   kind: { type: "add" | "delete" | "update"; move_path?: string | null };
