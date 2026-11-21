@@ -17,7 +17,14 @@ export const CONVERSATION_PAGE_SIZE = 60;
 
 export type ConversationPageRequest = {
   startIndex?: number;
+  /** Sparse page of canonical message sequences; mutually exclusive with startIndex. */
+  messageIndexes?: number[];
 };
+
+export function isConversationMessageIndexes(value: unknown, max = Infinity): value is number[] {
+  return Array.isArray(value) && value.length <= max && value.every((index, i) =>
+    Number.isSafeInteger(index) && index >= 0 && (i === 0 || index > value[i - 1]));
+}
 
 export type ConversationPage = {
   sessionId: string;
@@ -41,6 +48,8 @@ export type ConversationQueryRequest = {
   producerId: string;
   offset?: number;
   stamp?: ConversationQueryStamp;
+  /** Restrict this producer to canonical messages in a reading projection. */
+  messageIndexes?: number[];
 };
 
 export type ConversationQueryPage<T> = {

@@ -6,11 +6,11 @@ import { StableSessionMessageColumn } from "./stable-session-message-column.js";
 import { buildLiveAssistantProjectionKey, buildMessageListProjection, hasPersistedLiveAssistantMessage, loadProjectedMessageArtifact, projectLiveAssistantOnSessionHistory, resolveLiveAssistantMessageIndex, type LiveAssistantProjection } from "./auxiliary/auxiliary-session-message-projection.js";
 import { buildMessageCollapseTargets, buildMessageNavigatorEntries, type MessageCollapseStateEntry, type MessageJumpRequest, type MessageNavigatorEntry } from "./conversation/session-message-collapse.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
-import type { Session } from "../../src-shared/session/session-state.js";
+import type { Message, Session } from "../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { replaceLiveRunAfterResolvedRequest } from "./runtime/session-live-run-state.js";
-import { CONVERSATION_PAGE_SIZE, CONVERSATION_QUERY_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage } from "../../src-shared/session/conversation-page.js";
+import { CONVERSATION_PAGE_SIZE, CONVERSATION_QUERY_PAGE_SIZE, getMessageHistoryIndex, type ConversationPage, type ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import { getSessionIncarnationId, setMessageBookmarked } from "../../src-shared/session/session-state.js";
 import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ingress.js";
 import { useConversationQueryPages } from "./conversation/use-conversation-query-pages.js";
@@ -23,9 +23,12 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 import { observeSessionResultRead } from "./conversation/observe-session-result-read.js";
+import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
+import { threadPageIndexes, type ThreadSelection } from "./conversation/use-main-conversation-threads.js";
 
 const CONVERSATION_WINDOW_SIZE = CONVERSATION_PAGE_SIZE * 3;
 const CONVERSATION_LOAD_MARGIN = 96;
+const EMPTY_MESSAGES: Message[] = [];
 type ConversationPageDirection = "earlier" | "later";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
@@ -69,6 +72,7 @@ export type UseConversationMessageColumnInput = {
   stateCache?: Map<string, ConversationColumnCache>;
   onColumnControls?: (controls: ConversationColumnControls) => void;
   composerRegistry?: ComposerControllerRegistry;
+  threadSelection?: ThreadSelection;
 };
 
 export type ConversationColumnControls = {
@@ -85,18 +89,23 @@ export type ConversationColumnControls = {
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
   messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
+  captureReadingPosition?: () => void;
 };
 
 export function useConversationMessageColumn({
   session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
+  threadSelection,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
   const sessionId = session?.id ?? baseProps.sessionId;
-  let cache = caches.get(sessionId);
+  const thread = threadSelection?.thread;
+  const peerKey = thread ? conversationPeerKey(thread.target) : undefined;
+  const cacheKey = peerKey ? JSON.stringify([sessionId, session?.incarnationId, peerKey]) : sessionId;
+  let cache = caches.get(cacheKey);
   if (!cache || (cache.incarnationId !== undefined && cache.incarnationId !== (session?.incarnationId ?? ""))) {
     cache = { incarnationId: session?.incarnationId ?? "", scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "", messageJumpRequest: null, messageJumpRequestId: 0 };
-    caches.set(sessionId, cache);
+    caches.set(cacheKey, cache);
   }
   const conversation = cache;
   const liveRunEventRevision = useRef(0);
@@ -110,7 +119,7 @@ export function useConversationMessageColumn({
   const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }>; responses: Map<string, string> }>({ owner: "", keys: new Map(), responses: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
   const responsePresentation = useRef<{ owner: string; requestId?: string; sessionTurnId?: string; turnId?: string; key: string } | null>(null);
-  const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
+  const [browsePage, setBrowsePage] = useState<{ owner: string; page: ConversationPage } | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
   const [navigatorFilter, setNavigatorFilter] = useState<"all" | "bookmarks">("all");
@@ -123,28 +132,45 @@ export function useConversationMessageColumn({
   const capturePageAnchor = useRef<() => ConversationColumnCache["anchor"]>(() => undefined);
   const loadAtBoundary = useRef<() => void>(() => {});
   const bookmarkRevision = useRef(0);
-  const pageOwner = `${sessionId}:${session?.incarnationId ?? ""}`;
+  const pageOwner = peerKey ? cacheKey : `${sessionId}:${session?.incarnationId ?? ""}`;
   const activePageOwner = useRef(pageOwner);
   activePageOwner.current = pageOwner;
   const displayEnabled = useRef(enabled);
   displayEnabled.current = enabled;
   const incomingTailMessages = session?.messages ?? baseProps.messages;
   const totalCount = session?.messageCount ?? incomingTailMessages.length;
+  const threadIndexes = useMemo(() => thread ? threadPageIndexes(thread) : undefined, [thread]);
+  const threadPageSignature = threadIndexes?.join(",");
+  const threadFullIndexes = useMemo(() => thread ? new Set(thread.messageIndexes) : undefined, [thread]);
+  const currentThreadIndexes = useRef(threadIndexes);
+  currentThreadIndexes.current = threadIndexes;
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
   const canonicalUserSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
   const emptySubmissions = useRef(new SessionTurnSubmissions());
   const submissionStore = baseProps.turnSubmissions ?? emptySubmissions.current;
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
-  const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
-  const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, liveRun);
+  const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
+  const liveRun = thread && (!rawLiveRun?.sessionTurnId || !thread.inboundTurnIds.includes(rawLiveRun.sessionTurnId)) ? null : rawLiveRun;
+  const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun);
+  const threadReceipts = useMemo(() => allQueue.receipts.filter((receipt) =>
+    receipt.userMessageSeq !== null && threadFullIndexes?.has(receipt.userMessageSeq)
+    || receipt.turnId != null && receipt.inputTurnId == null && thread?.inboundTurnIds.includes(receipt.turnId)),
+  [allQueue.receipts, threadFullIndexes, thread]);
+  const threadQueuedReceipts = useMemo(() => allQueue.queuedReceipts.filter((receipt) => {
+    const origin = receipt.captured.origin;
+    return origin?.kind === "session" && origin.actorKind === thread?.target.kind
+      && origin.actorSessionId === thread?.target.sessionId && origin.actorIncarnationId === thread?.target.incarnationId
+      && (thread?.target.kind !== "auxiliary" || origin.actorMainSessionId === thread.target.mainSessionId);
+  }), [allQueue.queuedReceipts, thread]);
+  const queue = thread ? { ...allQueue, receipts: threadReceipts, queuedReceipts: threadQueuedReceipts } : allQueue;
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
-    const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);
+    const receipt = allQueue.receipts.find((receipt) => receipt.requestId === submission.requestId);
     return (!submission.error || submission.uncertain) && receipt?.userMessageSeq == null
       ? Math.min(boundary, submission.historyMessageCount) : boundary;
   }, Infinity);
-  const unjoinedUser = canonicalUserSeqs.find((seq) => seq >= unboundBoundary && !queue.receipts.some((receipt) => receipt.userMessageSeq === seq));
+  const unjoinedUser = canonicalUserSeqs.find((seq) => seq >= unboundBoundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq));
   // Canonical history and its receipt are one display handoff, not two independent inserts.
   // A post-history receipt read also confirms unrelated inputs, such as answers to live questions.
   const isHistoryHandoffPending = unjoinedUser !== undefined && !queue.historyReconciled;
@@ -155,21 +181,21 @@ export function useConversationMessageColumn({
   presentedHistory.current = { owner: pageOwner, messages: tailMessages };
   useEffect(() => {
     const consumed = submissions.filter((submission) => {
-      const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);
+      const receipt = allQueue.receipts.find((receipt) => receipt.requestId === submission.requestId);
       const terminal = receipt && receipt.state !== "queued" && receipt.state !== "starting" && receipt.state !== "running";
       const hasResponse = receipt?.state !== "completed" || tailMessages.some((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) > receipt.userMessageSeq!);
       return terminal && (hasResponse && receipt.userMessageSeq !== null && canonicalUserSeqs.includes(receipt.userMessageSeq)
         || receipt.state === "canceled" && receipt.userMessageSeq === null);
     });
     if (consumed.length) submissionStore.forget(consumed.map((submission) => submission.requestId));
-  }, [submissions, queue.receipts, canonicalUserSeqs, tailMessages, submissionStore]);
+  }, [submissions, allQueue.receipts, canonicalUserSeqs, tailMessages, submissionStore]);
   const queueComposerOwner = useMemo(() => ({ kind: messageSourceKind === "auxiliary" ? "auxiliary" as const : "main" as const, id: sessionId }), [messageSourceKind, sessionId]);
   const subscribeFreeze = useCallback((listener: () => void) => composerRegistry.subscribe(queueComposerOwner, listener), [composerRegistry, queueComposerOwner]);
   const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
   const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
-  const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
+  const currentPage = browsePage?.owner === pageOwner ? browsePage.page : null;
   const isBrowsing = conversation.pageStart !== undefined;
-  const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
+  const messages = (isBrowsing || thread) && currentPage ? currentPage.messages : thread ? EMPTY_MESSAGES : tailMessages;
   const displayedHistory = useRef(messages);
   displayedHistory.current = messages;
   useEffect(() => {
@@ -187,12 +213,22 @@ export function useConversationMessageColumn({
     inFlightPage.current = revision;
     const mutationRevision = bookmarkRevision.current;
     const owner = pageOwner;
+    const scoped = currentThreadIndexes.current;
+    let request: ConversationPageRequest | undefined = startIndex === undefined ? undefined : { startIndex };
+    if (scoped) {
+      const ordinal = startIndex === undefined ? Math.max(0, scoped.length - CONVERSATION_PAGE_SIZE)
+        : scoped.findIndex((index) => index >= startIndex);
+      const indexes = ordinal >= 0 ? scoped.slice(ordinal, ordinal + CONVERSATION_PAGE_SIZE) : [];
+      request = { messageIndexes: indexes };
+    }
     setPageLoading(true);
     setPageError("");
     try {
-      const page = await api.getConversationPage(sessionId, startIndex === undefined ? undefined : { startIndex });
+      const page = await api.getConversationPage(sessionId, request);
       if (!mounted.current || activePageOwner.current !== owner || revision !== pageRevision.current) return;
       if (!page || page.sessionId !== sessionId || (session?.incarnationId && page.incarnationId !== session.incarnationId)) throw new Error("Conversation Is No Longer Available");
+      if (request?.messageIndexes?.some((index) =>
+        !page.messages.some((message) => message.historyIndex === index))) throw new Error("Some saved messages are no longer available.");
       if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex, direction);
       const anchor = direction ? capturePageAnchor.current() : conversation.anchor;
       let nextPage = page;
@@ -209,8 +245,8 @@ export function useConversationMessageColumn({
         nextPage = { ...page, startIndex: retained[0][0], messages: retained.map(([, message]) => message) };
       }
       conversation.pageStart = startIndex === undefined ? undefined : nextPage.startIndex;
-      setBrowsePage(startIndex === undefined ? null : nextPage);
-      if (anchor && startIndex !== undefined) conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
+      setBrowsePage(startIndex === undefined && !scoped ? null : { owner, page: nextPage });
+      if (anchor && (startIndex !== undefined || scoped)) conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
       return revision;
     } catch (error) {
       if (activePageOwner.current === owner && revision === pageRevision.current) setPageError(error instanceof Error ? error.message : String(error));
@@ -219,19 +255,43 @@ export function useConversationMessageColumn({
       if (activePageOwner.current === owner && revision === pageRevision.current) setPageLoading(false);
     }
   }, [api, conversation, pageOwner, session?.incarnationId, sessionId]);
+  const pageAround = (messageIndex: number) => threadIndexes
+    ? threadIndexes[Math.max(0, threadIndexes.indexOf(messageIndex) - Math.floor(CONVERSATION_PAGE_SIZE / 2))]
+    : Math.max(0, messageIndex - Math.floor(CONVERSATION_PAGE_SIZE / 2));
+  const appliedThreadJump = useRef<number>(undefined);
   useEffect(() => {
     ++pageRevision.current;
     requestedPageStart.current = conversation.pageStart;
     requestedPageDirection.current = undefined;
-    setBrowsePage(null);
+    setBrowsePage((previous) => previous?.owner === pageOwner ? previous : null);
     setPageError("");
     setPageLoading(false);
-    if (conversation.pageStart !== undefined) {
+    const jump = threadSelection?.jump;
+    if (jump && appliedThreadJump.current !== jump.id) {
+      appliedThreadJump.current = jump.id;
+      conversation.pageStart = jump.page?.startIndex;
+      conversation.anchor = undefined;
+      conversation.scrollState = { scrollTop: 0, isFollowing: false };
+      if (jump.page) setBrowsePage({ owner: pageOwner, page: jump.page });
+      else void loadPage();
+      refresh();
+    } else if (conversation.pageStart !== undefined) {
       const anchorIndex = conversation.anchor?.messageIndex;
-      void loadPage(anchorIndex !== undefined ? Math.max(0, anchorIndex - CONVERSATION_PAGE_SIZE / 2) : conversation.pageStart);
-    }
+      void loadPage(anchorIndex !== undefined ? pageAround(anchorIndex) : conversation.pageStart);
+    } else if (peerKey) void loadPage();
     return () => { ++pageRevision.current; };
-  }, [pageOwner]);
+  }, [pageOwner, threadSelection?.jump?.id]);
+  const previousThreadPage = useRef({ owner: pageOwner, signature: threadPageSignature });
+  useEffect(() => {
+    const previous = previousThreadPage.current;
+    previousThreadPage.current = { owner: pageOwner, signature: threadPageSignature };
+    if (peerKey && previous.owner === pageOwner && previous.signature !== threadPageSignature) {
+      const index = conversation.anchor?.messageIndex;
+      if (conversation.pageStart === undefined) void loadPage();
+      else if (index !== undefined && threadIndexes?.includes(index)) void loadPage(pageAround(index));
+      else if (conversation.pageStart !== undefined) void loadPage(conversation.pageStart);
+    }
+  }, [pageOwner, threadPageSignature]);
   useEffect(() => {
     if (!enabled && requestedPageDirection.current && inFlightPage.current === pageRevision.current) {
       ++pageRevision.current;
@@ -240,11 +300,11 @@ export function useConversationMessageColumn({
   }, [enabled]);
   useEffect(() => { setNavigatorFilter("all"); setNavigatorOffset(0); }, [pageOwner]);
   const navigator = useConversationQueryPages({
-    identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}`,
+    identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}:${thread?.messageIndexes.join(",") ?? ""}`,
     enabled: enabled && navigatorActive && session?.messageCount !== undefined,
     ordinal: navigatorOffset,
     read: api?.listConversationNavigator ? async (request) => {
-      const outcome = await api.listConversationNavigator!(sessionId, { ...request, filter: navigatorFilter });
+      const outcome = await api.listConversationNavigator!(sessionId, { ...request, filter: navigatorFilter, ...(thread ? { messageIndexes: thread.messageIndexes } : {}) });
       return outcome.status === "complete" && session?.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
     } : undefined,
     cancel: api?.cancelConversationQuery,
@@ -291,8 +351,8 @@ export function useConversationMessageColumn({
     && !queue.receipts.some((receipt) => !!liveRun?.sessionTurnId && receipt.turnId === liveRun.sessionTurnId && !receipt.inputTurnId);
   useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.sessionTurnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
-  const hasActiveRun = isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun);
-  const assistantText = isResponseBindingPending ? "" : api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
+  const hasActiveRun = (!thread || !!liveRun) && (isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun));
+  const assistantText = isResponseBindingPending ? "" : api || thread ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
       || receipt.state === "completed" && !!receipt.inputTurnId && receipt.inputTurnId === liveRun?.turnId;
@@ -415,7 +475,7 @@ export function useConversationMessageColumn({
   }, [currentLiveProjection, retainedSignature, messages, sessionId, bridgeKey, bridge?.text, isBrowsing]);
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
-  }, { submissions: isBrowsing ? [] : submissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, submissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
+  }, { submissions: isBrowsing || peerKey ? [] : submissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, peerKey, sessionId, queueIncarnationId, submissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
   const projection = queuedProjection.projection;
   const searchTailMessages = useMemo(() => {
     const missingBridges = [...retainedBridges.current.projections, ...(bridge ? [bridge] : [])]
@@ -427,10 +487,12 @@ export function useConversationMessageColumn({
     }), queue.receipts, { sessionId, incarnationId: queueIncarnationId }).projection;
     return searchProjection.messages.flatMap((message, index) => {
       const source = searchProjection.sources[index];
+      if (threadFullIndexes && source.kind === "session" && !threadFullIndexes.has(source.messageIndex)
+        && !missingBridges.some((candidate) => candidate.messageIndex === source.messageIndex)) return [];
       if (source.kind !== "turn-queue") return [message];
       return source.receipt.userMessageSeq === null ? [] : [{ ...message, historyIndex: source.receipt.userMessageSeq }];
     });
-  }, [tailMessages, bridgeKey, bridge?.text, retainedSignature, sessionId, messageSourceKind, queue.receipts, queueIncarnationId]);
+  }, [tailMessages, bridgeKey, bridge?.text, retainedSignature, sessionId, messageSourceKind, queue.receipts, queueIncarnationId, threadFullIndexes]);
   const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge
     ? projection.messages[index].historyIndex ?? bridge.messageIndex : source.kind === "turn-queue" && source.receipt.userMessageSeq !== null
     ? source.receipt.userMessageSeq : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
@@ -474,8 +536,9 @@ export function useConversationMessageColumn({
     + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`
     + `:submissions:${submissions.map((submission) => `${submission.requestId}:${submission.error}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
-  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current, session?.provider, queue.receipts),
-    [keyedHistory, session?.provider, queue.receipts]);
+  const collapseTargets = useMemo(() => buildMessageCollapseTargets(keyedHistory.messages, keyedHistory.sources, keyedHistory.keys, previousTargets.current, session?.provider, queue.receipts)
+    .filter((target) => !threadFullIndexes || threadFullIndexes.has(target.source.messageIndex)),
+    [keyedHistory, session?.provider, queue.receipts, threadFullIndexes]);
   const columnCharacter = useMemo(() => session?.characterId ? {
     id: session.characterId,
     name: session.character ?? "",
@@ -558,11 +621,11 @@ export function useConversationMessageColumn({
     };
   }, [captureAnchor]);
   useLayoutEffect(() => {
-    if (enabled && conversation.anchor && !conversation.scrollState?.isFollowing) {
+    if (enabled && !threadSelection?.jump && conversation.anchor && !conversation.scrollState?.isFollowing) {
       conversation.messageJumpRequest = { sessionId, ...conversation.anchor, requestId: ++conversation.messageJumpRequestId };
       refresh();
     }
-  }, [enabled, pageOwner]);
+  }, [enabled, pageOwner, threadSelection?.jump?.id]);
   const followLatest = useCallback(() => {
     ++pageRevision.current;
     requestedPageStart.current = undefined;
@@ -570,11 +633,12 @@ export function useConversationMessageColumn({
     conversation.pageStart = undefined;
     conversation.anchor = undefined;
     conversation.scrollState = { scrollTop: 0, isFollowing: true };
-    setBrowsePage(null);
+    if (peerKey) void loadPage();
+    else setBrowsePage(null);
     setPageError("");
     setPageLoading(false);
     following.followMessageListLatest();
-  }, [conversation, following.followMessageListLatest]);
+  }, [conversation, following.followMessageListLatest, loadPage, peerKey]);
   const revealRequest = useCallback(() => {
     const list = following.messageListRef.current;
     const request = list?.querySelector<HTMLElement>(".live-approval-card[data-live-request-id]")
@@ -595,7 +659,7 @@ export function useConversationMessageColumn({
     following.handleMessageListScroll();
     if (isBrowsing && conversation.scrollState?.isFollowing) {
       const last = messages.at(-1);
-      if (last && getMessageHistoryIndex(last, messages.length - 1) >= totalCount - 1) {
+      if (last && getMessageHistoryIndex(last, messages.length - 1) >= (threadIndexes?.at(-1) ?? (totalCount - 1))) {
         followLatest();
         return;
       }
@@ -603,19 +667,22 @@ export function useConversationMessageColumn({
       conversation.scrollState.isFollowing = false;
     }
     scheduleAnchorCapture();
-  }, [following.handleMessageListScroll, following.pauseMessageListFollowing, scheduleAnchorCapture, enabled, isBrowsing, conversation, messages, totalCount, followLatest]);
+  }, [following.handleMessageListScroll, following.pauseMessageListFollowing, scheduleAnchorCapture, enabled, isBrowsing, conversation, messages, totalCount, threadPageSignature, followLatest]);
   loadAtBoundary.current = () => {
     const element = following.messageListRef.current;
     if (!enabled || !paged || !element || pageLoading || pageError || inFlightPage.current === pageRevision.current
       || (!isBrowsing && conversation.scrollState?.isFollowing !== false) || !messages.length) return;
     const first = getMessageHistoryIndex(messages[0], 0);
     const end = getMessageHistoryIndex(messages[messages.length - 1], messages.length - 1) + 1;
-    if (element.scrollTop <= CONVERSATION_LOAD_MARGIN && first > 0) {
+    const firstOrdinal = threadIndexes?.indexOf(first) ?? first;
+    const endOrdinal = threadIndexes ? threadIndexes.indexOf(end - 1) + 1 : end;
+    if (element.scrollTop <= CONVERSATION_LOAD_MARGIN && firstOrdinal > 0) {
       following.pauseMessageListFollowing();
-      void loadPage(Math.max(0, first - CONVERSATION_PAGE_SIZE), "earlier");
-    } else if (isBrowsing && element.scrollHeight - element.clientHeight - element.scrollTop <= CONVERSATION_LOAD_MARGIN && end < totalCount) {
+      const start = Math.max(0, firstOrdinal - CONVERSATION_PAGE_SIZE);
+      void loadPage(threadIndexes?.[start] ?? start, "earlier");
+    } else if (isBrowsing && element.scrollHeight - element.clientHeight - element.scrollTop <= CONVERSATION_LOAD_MARGIN && endOrdinal < (threadIndexes?.length ?? totalCount)) {
       following.pauseMessageListFollowing();
-      void loadPage(end, "later");
+      void loadPage(threadIndexes?.[endOrdinal] ?? end, "later");
     }
   };
   const captureMessageListSend = useCallback((scrollToLatestOnSend: boolean) =>
@@ -717,7 +784,7 @@ export function useConversationMessageColumn({
     } else if (!projection.keys.includes(key)) {
       const index = Number(key.slice(`session-${sessionId}-`.length));
       if (!Number.isInteger(index)) return;
-      const revision = await loadPage(Math.max(0, index - Math.floor(CONVERSATION_PAGE_SIZE / 2)));
+      const revision = await loadPage(pageAround(index));
       if (revision === undefined || revision !== pageRevision.current || !mounted.current || activePageOwner.current !== pageOwner) return;
     } else {
       ++pageRevision.current;
@@ -729,7 +796,7 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequestId += 1;
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
-  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, followLatest, following.pauseMessageListFollowing]);
+  }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, threadPageSignature, followLatest, following.pauseMessageListFollowing]);
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -744,8 +811,9 @@ export function useConversationMessageColumn({
       messageNavigatorEntries,
       messageNavigatorPage,
       onJumpToMessage,
+      captureReadingPosition: captureAnchor,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -803,7 +871,7 @@ export function useConversationMessageColumn({
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
   }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
-  const queuedTurnIds = useMemo(() => queue.queuedReceipts.map((receipt) => receipt.id), [queue.queuedReceipts]);
+  const queuedTurnIds = useMemo(() => allQueue.queuedReceipts.map((receipt) => receipt.id), [allQueue.queuedReceipts]);
   const queueMoveFocus = useRef<{ owner: string; id: string; direction: string; element: Element } | null>(null);
   const moveQueuedTurn = useCallback((receipt: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./conversation/use-session-turn-queue.js").SessionTurnQueueMoveDirection) => {
     if (!enabled || composerRegistry.isFrozen || queue.busyId !== null || (session?.accessMode !== undefined && session.accessMode !== "active")) return;
@@ -845,7 +913,8 @@ export function useConversationMessageColumn({
     provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,
-    liveWithMateTurnId: responseSessionTurnId,
+    liveWithMateTurnId: responseSessionTurnId ?? (thread && !isBrowsing ? rawLiveRun?.sessionTurnId : undefined),
+    conversationThread: threadSelection,
     messages: projection.messages,
     messageKeys: projection.keys,
     turnQueueMetadata: queuedProjection.metadata,
@@ -893,7 +962,7 @@ export function useConversationMessageColumn({
     onMessageListLayout: scheduleAnchorCapture,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
-      loading: pageLoading, error: pageError,
+      loading: pageLoading || !!thread && !currentPage && !pageError, error: pageError,
       onRetry: () => {
         if (inFlightPage.current === pageRevision.current) return;
         setNavigatorRevision((revision) => revision + 1);
@@ -901,19 +970,19 @@ export function useConversationMessageColumn({
       },
     } : undefined,
     searchConversation: api?.searchConversation && session.messageCount !== undefined ? async (request) => {
-      const outcome = await api.searchConversation!(sessionId, request);
+      const outcome = await api.searchConversation!(sessionId, thread ? { ...request, messageIndexes: thread.messageIndexes } : request);
       return outcome.status === "complete" && session.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
     } : undefined,
     cancelConversationQuery: api?.cancelConversationQuery,
     conversationQueryOwner: pageOwner,
-    conversationQueryRevision: `${totalCount}:${session.updatedAt ?? ""}`,
+    conversationQueryRevision: `${totalCount}:${session.updatedAt ?? ""}:${thread?.messageIndexes.join(",") ?? ""}`,
     searchTailMessages: searchTailMessages,
     searchMessageIndexes,
     onLoadMessagePage: async (messageIndex) => {
       if (messageIndex >= totalCount) { followLatest(); return; }
       following.pauseMessageListFollowing();
       if (!messages.some((message, index) => getMessageHistoryIndex(message, index) === messageIndex)) {
-        await loadPage(Math.max(0, messageIndex - 30));
+        await loadPage(pageAround(messageIndex));
       } else {
         ++pageRevision.current;
         requestedPageStart.current = conversation.pageStart;
@@ -927,7 +996,8 @@ export function useConversationMessageColumn({
       await baseProps.onToggleMessageBookmark!(target);
       ++bookmarkRevision.current;
       if (activePageOwner.current !== pageOwner) return;
-      setBrowsePage((page) => page?.sessionId === sessionId ? { ...page, messages: page.messages.map((message, index) => getMessageHistoryIndex(message, index) === target.source.messageIndex ? setMessageBookmarked(message, !target.isBookmarked) : message) } : page);
+      setBrowsePage((entry) => entry?.owner === pageOwner ? { owner: pageOwner, page: { ...entry.page,
+        messages: entry.page.messages.map((message, index) => getMessageHistoryIndex(message, index) === target.source.messageIndex ? setMessageBookmarked(message, !target.isBookmarked) : message) } } : entry);
       setNavigatorRevision((revision) => revision + 1);
     } : undefined,
     onLoadArtifactDetail: baseProps.onLoadArtifactDetail
@@ -952,7 +1022,7 @@ export function ConversationMessageColumn(props: ConversationMessageColumnProps)
   const columnProps = useConversationMessageColumn(props);
   return columnProps ? (
     <div className="conversation-message-column" style={props.session?.characterThemeColors ? buildCharacterThemeStyle(props.session.characterThemeColors) : undefined}>
-      <StableSessionMessageColumn {...columnProps} />
+      <StableSessionMessageColumn key={props.messageSourceKind === "session" ? columnProps.conversationQueryOwner : undefined} {...columnProps} />
     </div>
   ) : null;
 }

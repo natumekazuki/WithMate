@@ -15,6 +15,7 @@ import { executionOperationResultSchemas, type ExecutionReadOperation } from "..
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
 import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
+import { conversationThreadsResultSchema, sentCardKey } from "../../src-shared/session/conversation-threads.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -25,6 +26,79 @@ async function fixture(action: (context: { sessions: SessionStorageV6; turns: Se
   finally { auxiliary.close(); read.close(); queue.close(); turns.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); }
 }
 function session() { return buildNewSession({ id: "read-main", taskTitle: "Read", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "相手別閲覧は60件より前でも開始入力と同Turnの通常応答を元相手に保ち、別宛先の発言は正確な受付／保存Steerとして同じ位置を共有する"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の相手別閲覧; https://github.com/natumekazuki/WithMate/issues/970" }
+// fault = "本文や同じTurnだけで相手を割り当てる、古い脱落・別世代を混ぜる、未保存から保存への切替時にカードの参照を変える"
+// observable = "実SQLiteの相手別message seq・受付とSteerのkey・live/保存後のanchor、および元の履歴page"
+// observation_boundary = "public-boundary"
+// scope = "Mainの相手別indexと既存送信一覧・本文pageとの実データ接続。人工fixtureのSessionだけを使用"
+// lifecycle = "permanent"
+// impact = "アクセス可能な過去の指示を失う、または別人への指示や応答を正しい返信と誤認する"
+// distinction = "既存の表示範囲の送信一覧、単独paging、型検査では相手帰属と正確な同一カードの対応を検証できない"
+// @end-test-value
+test("peer membership keeps canonical history and the exact delivery through live and saved positions", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const main = sessions.insertSession(session());
+    const peers = ["A", "B", "C", "stale"].map((id) => sessions.insertSession({ ...session(), id, taskTitle: `Peer ${id}` }));
+    const [a, b, c, stale] = peers;
+    const owner = (s: typeof main) => ({ sessionId: s.id, incarnationId: getSessionIncarnationId(s) });
+    const select = (s: typeof main) => ({ kind: "main" as const, ...owner(s) });
+    const target = select(main);
+    const send = (actor: typeof main, recipient: typeof main, actorTurnId?: string, actorIncarnationId = getSessionIncarnationId(actor)) => queue.enqueue(owner(recipient), {
+      request: { userMessage: "identical text", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(recipient) },
+      attachments: [], provider: recipient.provider, workspacePath: recipient.workspacePath,
+      origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: actor.id, actorIncarnationId, actorTurnId,
+        targetSessionId: recipient.id, targetIncarnationId: getSessionIncarnationId(recipient) },
+    });
+    const base = { sessionId: main.id, provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode, threadId: "", errorMessage: "", createdAt: "now", phase: "running" as const };
+    const fromA = send(a, main);
+    const mainTurn = turns.createSessionTurn({ ...base, userMessageSeq: 0 });
+    const turnId = String(mainTurn.id);
+    queue.claimNext(owner(main)); queue.markStarted(owner(main), fromA.id, { turnId, userMessageSeq: 0 });
+    const toA = send(main, a, turnId); const toB = send(main, b, turnId); const toC = send(main, c, turnId);
+    send(stale, main, undefined, "deleted-incarnation");
+    const fromB = send(b, main);
+    sessions.updateSession({ ...main, runState: "running", messages: [{ role: "user", text: "identical text" }] });
+    queue.claimForInput(owner(main), fromB.id, "native-main-turn");
+    sessions.appendSessionSteer({ ...owner(main), expectedMessageCount: 1, turnId: mainTurn.id, userMessage: { role: "user", text: "identical text" },
+      updatedAt: "input", queuedInput: { queueId: fromB.id, inputTurnId: "native-main-turn" } });
+    const readThreads = () => new Map(conversationThreadsResultSchema.parse(read.execute({ target, operation: "read_conversation_threads", request: { target } }))
+      .threads.map((thread) => [thread.target.sessionId, thread]));
+    const live = readThreads();
+    assert.deepEqual(live.get("A")?.messageIndexes, [0]);
+    assert.deepEqual(live.get("B")?.messageIndexes, [1]);
+    assert.deepEqual(live.get("B")?.sent, [{ key: toB.id, turnId, messageIndex: 0 }]);
+    assert.equal(live.has("stale"), false);
+    const steer = { role: "user" as const, text: "identical text", turnInput: { turnId: "22", nativeTurnId: "native", state: "confirmed" as const, attachments: [],
+      origin: { kind: "session" as const, operation: "steer" as const, actorKind: "main" as const, actorSessionId: main.id, actorIncarnationId: target.incarnationId, actorTurnId: turnId,
+        targetSessionId: b.id, targetIncarnationId: getSessionIncarnationId(b) } } };
+    sessions.updateSession({ ...b, messages: [steer] });
+    sessions.updateSession({ ...main, messages: [{ role: "user", text: "identical text" }, { role: "user", text: "identical text" },
+      { role: "assistant", text: "reply from the starting input" },
+      ...Array.from({ length: 65 }, () => ({ role: "assistant" as const, text: "unlinked legacy" }))] });
+    turns.updateSessionTurn(mainTurn.id, { ...base, phase: "completed", userMessageSeq: 0, assistantMessageSeq: 2 });
+    const saved = readThreads();
+    assert.deepEqual(saved.get("A")?.messageIndexes, [0, 2]);
+    assert.deepEqual(saved.get("B")?.messageIndexes, [1]);
+    assert.deepEqual(saved.get("C")?.messageIndexes, []);
+    const exact = executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target, operation: "list_sent_deliveries", request: { target, messageSeqs: [2] } }));
+    assert.deepEqual(exact.items.map(({ receiptId, sourceMessageSeq }) => [receiptId, sourceMessageSeq]), [[toA.id, 2], [toB.id, 2], [toC.id, 2]]);
+    const direct = executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [2] } }));
+    assert.deepEqual(direct.items.map(({ target, messageSeq, sourceMessageSeq }) => [target, messageSeq, sourceMessageSeq]), [[select(b), 0, 2]]);
+    assert.deepEqual(saved.get("B")?.sent, [
+      { key: toB.id, turnId, messageIndex: 2 },
+      { key: sentCardKey(direct.items[0]), turnId, messageIndex: 2 },
+    ]);
+    assert.ok(sessions.getConversationPage(main.id)!.startIndex > 2);
+    assert.deepEqual(sessions.getConversationPage(main.id, { messageIndexes: [1, 2, 67] })!.messages.map(({ historyIndex, text }) => [historyIndex, text]),
+      [[1, "identical text"], [2, "reply from the starting input"], [67, "unlinked legacy"]]);
+    assert.deepEqual(read.execute({ target: select(stale), operation: "read_conversation_threads", request: { target: select(stale) } }),
+      { ok: true, threads: [] });
+  });
+});
 
 // @test-value v2
 // kind = "contract"

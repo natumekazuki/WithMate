@@ -30,7 +30,7 @@ import type {
 
 import type { GlossarySearchRequest } from "../../src-shared/glossary/glossary-contract.js";
 import type { ConversationQueryRequest, ConversationSearchRequest, ConversationNavigatorRequest, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
-import { isConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
+import { isConversationMessageIndexes, isConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
 import {
   areSessionFileResourcesEqual,
   isFileRootGitHistoryComparisonDiffRequest,
@@ -266,6 +266,7 @@ export function registerSessionQueryHandlers(
     validateIdentity(request);
     if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
     if (request.offset !== undefined && (!Number.isSafeInteger(request.offset) || request.offset < 0)) throw new TypeError("Conversation query offset is invalid.");
+    if (request.messageIndexes !== undefined && !isConversationMessageIndexes(request.messageIndexes)) throw new TypeError("Conversation query message indexes are invalid.");
     if (request.stamp !== undefined && (!request.stamp || typeof request.stamp.generationId !== "string"
       || typeof request.stamp.ownerIdentity !== "string" || !Number.isSafeInteger(request.stamp.contentRevision)
       || request.stamp.contentRevision < 0 || request.stamp.requestId !== request.requestId)) throw new TypeError("Conversation query stamp is invalid.");

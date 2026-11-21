@@ -576,6 +576,29 @@
   min-height: 0;
 }
 
+.concurrent-chat-column-content.has-main-thread-header {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.main-thread-header {
+  position: relative;
+  z-index: 4;
+  min-width: 0;
+}
+
+.main-thread-header .session-switcher-popover {
+  background: rgb(from var(--surface-deep) r g b / 1);
+}
+
+.main-thread-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  overflow-wrap: anywhere;
+}
+
 .session-concurrent-chat-message-content {
   position: relative;
   display: grid;

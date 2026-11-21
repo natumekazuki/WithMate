@@ -6,6 +6,7 @@ import {
 } from "../../src-shared/session/session-state.js";
 import {
   CONVERSATION_PAGE_SIZE,
+  isConversationMessageIndexes,
   type ConversationPage,
   type ConversationPageRequest,
 } from "../../src-shared/session/conversation-page.js";
@@ -119,6 +120,10 @@ export function readConversationPage(
       .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${owner} = ?`)
       .get(sessionId) as { count: number }
   ).count;
+  const indexes = request?.messageIndexes;
+  if (indexes !== undefined && (request?.startIndex !== undefined || !isConversationMessageIndexes(indexes, CONVERSATION_PAGE_SIZE))) {
+    throw new TypeError("Conversation page message indexes are invalid.");
+  }
   if (
     request?.startIndex !== undefined &&
     (!Number.isInteger(request.startIndex) || request.startIndex < 0)
@@ -126,10 +131,12 @@ export function readConversationPage(
     throw new TypeError("Conversation page start index is invalid.");
   }
   const startIndex = Math.min(
-    request?.startIndex ?? Math.max(0, totalCount - CONVERSATION_PAGE_SIZE),
+    indexes?.[0] ?? request?.startIndex ?? Math.max(0, totalCount - CONVERSATION_PAGE_SIZE),
     totalCount,
   );
-  const rows = db
+  const rows = indexes !== undefined ? (indexes.length ? db.prepare(
+    `SELECT ${conversationMessageColumns(table, db)} FROM ${table} WHERE ${owner} = ? AND seq IN (${indexes.map(() => "?").join(",")}) ORDER BY seq`,
+  ).all(sessionId, ...indexes) : []) as ConversationQueryRow[] : db
     .prepare(
       `SELECT ${conversationMessageColumns(table, db)} FROM ${table} WHERE ${owner} = ? AND seq >= ? ORDER BY seq ASC LIMIT ?`,
     )

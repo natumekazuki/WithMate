@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { coordinationDeliveryText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
 import type { ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
-import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
+import { executionOperationRequestSchemas, executionWindowRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
 import type { SessionSteerOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
@@ -10,6 +10,7 @@ import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../../src-share
 import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
+import { readConversationThreads } from "./conversation-threads.js";
 import { readSessionHistory } from "./session-history-read.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -70,7 +71,7 @@ export class SessionExecutionReadStorage {
   close(): void { this.db.close(); }
   execute(input: ExecutionReadInput): Result {
     assertRuntimeTurnAdmission();
-    const parsed = executionOperationRequestSchemas[input.operation].safeParse(input.request);
+    const parsed = executionWindowRequestSchemas[input.operation].safeParse(input.request);
     if (!parsed.success) return failure("EXECUTION_INVALID_REQUEST", parsed.error.message);
     const identity = (target: SessionTarget) => JSON.stringify([target.kind, target.sessionId, target.incarnationId, target.kind === "auxiliary" ? target.mainSessionId : null, target.kind === "auxiliary" ? target.mainIncarnationId : null]);
     if (identity(parsed.data.target) !== identity(input.target)) return failure("EXECUTION_TARGET_MISMATCH", "The request and resolved target do not match.");
@@ -89,6 +90,10 @@ export class SessionExecutionReadStorage {
     const snapshot = readConversationQuerySnapshot(this.db, table, target.sessionId);
     if (!snapshot) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
     if (snapshot.incarnationId !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
+    if (operation === "read_conversation_threads") {
+      return target.kind === "main" ? { ok: true, threads: readConversationThreads(this.db, target) }
+        : failure("EXECUTION_TARGET_MISMATCH", "Conversation threads require a Main Session.");
+    }
     if (target.kind === "auxiliary") {
       const parent = this.db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ?").get(target.sessionId) as { parent_session_id: string };
       const main = readConversationQuerySnapshot(this.db, "session_messages_v6", target.mainSessionId);

@@ -592,6 +592,12 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 通常送信shortcutも編集中は更新を行い、直接Steer shortcutは予約編集に使わない。折りたたみ、Terminal、Main／Auxiliaryの切替では編集入力と保留を保持し、既存のPrompt・展開・対象切替から戻る。保存成功またはCancel Editで通常下書きとSendへ戻し、送信設定による自動折りたたみは行わない。保存待機中は入力と編集操作を固定し、失敗では入力を保持して理由と再操作手段を示す。
 
+### Main Conversation Switcher
+
+Main列の上部にAuxiliaryと共通の会話切替を置く。自Sessionタイトルの主会話には従来の時系列を残し、直接相手の項目にはSessionタイトルを表示する。各相手の閲覧位置は同じWindow内で独立して復帰する。閲覧切替や送信カードからの移動は、右のAuxiliary、Composerの送信対象・下書き、実行対象を変えない。
+
+送信カードの本文側から同じWindowの相手別表示へ移り、同じ受付（直接Steerなら宛先の保存message）へフォーカスする。「Open in Conversation」からキーボードでも実行できる。リンク・本文選択・詳細表示はそれぞれの操作を保つ。Session名リンクは対象Sessionそのものを開く別の操作。位置を確定できない場合はそのカードと元の位置を保ったまま理由と再試行を示す。
+
 ### Turn Input Details
 
 queueを持たない直接Steerの発言者は、各messageの`turnInput.origin`から表示する。親からのSteerには保存済みの親Character・送信元Sessionを使い、origin未記録の直接入力へTurn開始時の発言者を流用しない。配送状態や本文は同じ入力の記録を保持する。

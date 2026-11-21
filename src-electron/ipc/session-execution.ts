@@ -1,5 +1,5 @@
 import { WITHMATE_READ_SESSION_EXECUTION_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
-import { executionOperationRequestSchemas, executionOperationResultSchemas, type ExecutionReadInput, type ExecutionReadOperation } from "../../src-shared/session/session-execution-read.js";
+import { executionWindowRequestSchemas, executionWindowResultSchemas, type ExecutionReadInput, type ExecutionWindowReadOperation } from "../../src-shared/session/session-execution-read.js";
 import type { IpcHandleRegistrar, MainIpcEventWindowDeps, MainIpcSessionWindowDeps } from "./contracts.js";
 import { assertOwningSessionWindowSender } from "./shared.js";
 import { z } from "zod";
@@ -17,14 +17,17 @@ export function registerSessionExecutionHandlers(ipc: IpcHandleRegistrar, deps: 
       assertOwningSessionWindowSender(event, ownerSessionId, deps);
     };
     assertCurrent();
-    if (typeof operation !== "string" || !Object.hasOwn(executionOperationRequestSchemas, operation)) throw new TypeError("Invalid execution read operation.");
-    const readOperation = operation as ExecutionReadOperation;
-    const parsed = executionOperationRequestSchemas[readOperation].parse(request);
+    if (typeof operation !== "string" || !Object.hasOwn(executionWindowRequestSchemas, operation)) throw new TypeError("Invalid execution read operation.");
+    const readOperation = operation as ExecutionWindowReadOperation;
+    const parsed = executionWindowRequestSchemas[readOperation].parse(request);
+    if (readOperation === "read_conversation_threads" && (parsed.target.kind !== "main" || parsed.target.sessionId !== ownerSessionId)) {
+      throw new Error("Main conversation projection requires the owning Session.");
+    }
     // The common reader validates the saved target/incarnation and Auxiliary parent.
     // A GUI Session Window may read public saved information in any Crew.
     const result = await deps.readExecution({ target: parsed.target, operation: readOperation, request: parsed });
     assertCurrent();
     if (typeof result === "object" && result !== null && "ok" in result && result.ok === false) return readFailure.parse(result);
-    return executionOperationResultSchemas[readOperation].parse(result);
+    return executionWindowResultSchemas[readOperation].parse(result);
   });
 }

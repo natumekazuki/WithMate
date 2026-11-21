@@ -24,6 +24,9 @@ import { SessionRunFailure } from "./session-run-failure.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
+import type { ThreadSelection } from "./use-main-conversation-threads.js";
+import type { SentInstruction } from "./use-sent-deliveries.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 import { useIssuedCoordinations } from "./use-issued-coordinations.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
@@ -93,6 +96,8 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
 }
 export type SessionMessageColumnProps = {
   inputReadContext?: TurnInputReadContext;
+  conversationThread?: ThreadSelection;
+  onOpenSentThread?: (item: SentInstruction) => Promise<string | undefined>;
   liveWithMateTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
   responsePending?: boolean;
@@ -463,6 +468,8 @@ export function SelectionTextActionSurface({
 
 export function SessionMessageColumn({
   inputReadContext,
+  conversationThread,
+  onOpenSentThread,
   liveWithMateTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
@@ -538,9 +545,20 @@ export function SessionMessageColumn({
   glossaryAnnotationMatcher,
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
-  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
+  const peer = conversationThread && conversationPeerKey(conversationThread.thread.target);
+  const thread = conversationThread?.thread;
+  const threadMessages = useMemo(() => thread && new Set(thread.messageIndexes), [thread]);
+  const isSentOnly = (messageIndex: number | undefined) => messageIndex !== undefined && !!threadMessages && !threadMessages.has(messageIndex);
+  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, (isContentActive || !!onOpenSentThread) && artifactDetailsEnabled);
+  const jump = conversationThread?.jump;
+  const jumpItem = jump && (jump.messageIndex === null ? liveWithMateTurnId === jump.item.sourceTurnId
+    : suppliedMessages.some((message) => message.historyIndex === jump.messageIndex)) ? jump.item : undefined;
+  const sent = jumpItem && !sentDeliveries.items.some((item) => sentInstructionKey(item) === sentInstructionKey(jumpItem))
+    ? [...sentDeliveries.items, jumpItem] : sentDeliveries.items;
   const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
-  const issuedWithoutReceipt = issued.items.filter((record) => !sentDeliveries.items.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
+  const ownLive = !thread || !!liveWithMateTurnId && thread.inboundTurnIds.includes(liveWithMateTurnId);
+  const issuedWithoutReceipt = issued.items.filter((record) => (record.sourceMessageSeq === null ? ownLive : !isSentOnly(record.sourceMessageSeq))
+    && !sent.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
   const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
   const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
@@ -601,6 +619,10 @@ export function SessionMessageColumn({
   const sentMessageContext = { onOpenPath, markdownLinkFileContext, markdownImageContext: markdownLinkFileContext,
     resolveImageSource, displayMode: messageViewMode, responseProvider: provider, onFind: openFind,
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
+  const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
+    ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
+        positionUnknown={positionUnknown} onOpenThread={peer === conversationPeerKey(item.target) ? undefined : onOpenSentThread} {...sentMessageContext} />
+    : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
     () => {
@@ -709,6 +731,28 @@ export function SessionMessageColumn({
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  const attemptedSentJump = useRef<number | null>(null);
+  const completedSentJump = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const list = messageListRef.current;
+    if (!artifactDetailsEnabled || !jump || !list || completedSentJump.current === jump.id) return;
+    const key = sentInstructionKey(jump.item);
+    const card = [...list.querySelectorAll<HTMLElement>("[data-sent-card-key]")].find((element) => element.dataset.sentCardKey === key);
+    if (card) {
+      completedSentJump.current = jump.id;
+      onBrowseMessages?.();
+      messageVirtualizer.scrollToOffset(list.scrollTop + card.getBoundingClientRect().top - list.getBoundingClientRect().top);
+      card.focus({ preventScroll: true });
+      return;
+    }
+    if (attemptedSentJump.current === jump.id) return;
+    const index = messages.findIndex((message) => message.historyIndex === jump.messageIndex);
+    if (index >= 0) {
+      attemptedSentJump.current = jump.id;
+      onBrowseMessages?.();
+      messageVirtualizer.scrollToIndex(index, { align: "start" });
+    }
+  }, [artifactDetailsEnabled, jump, sent, messages, virtualMessages, messageVirtualizer, messageListRef, onBrowseMessages]);
   useLayoutEffect(() => {
     onMessageListLayout?.();
   }, [virtualMessages, onMessageListLayout]);
@@ -1322,13 +1366,13 @@ export function SessionMessageColumn({
       onOpenPath={onOpenPath}
     />,
   } : undefined;
-  const liveSent = sentDeliveries.items.filter((item) => item.sourceTurnId === liveWithMateTurnId);
+  const liveSent = sent.filter((item) => item.sourceTurnId === liveWithMateTurnId && (ownLive || conversationPeerKey(item.target) === peer));
   const inlineLivePossible = isRunning && (pendingResponseMessageIndex < 0 || messages[pendingResponseMessageIndex]?.role === "assistant");
   const renderInlineSent = (items: typeof liveSent, text: string) => !inputReadContext ? [] : items
     .map((item) => {
       const position = "sourceDisplayPosition" in item ? item.sourceDisplayPosition : null;
       const positionUnknown = position == null || position > text.length;
-      return { key: `sent-${sentInstructionKey(item)}`, position: positionUnknown ? text.length : position!, content: <SentDeliveryRow inline positionUnknown={"receiptId" in item && positionUnknown} item={item} context={inputReadContext} {...sentMessageContext} /> };
+      return { key: `sent-${sentInstructionKey(item)}`, position: positionUnknown ? text.length : position!, content: renderSent(item, true, "receiptId" in item && positionUnknown) };
     });
   const renderPendingContent = () => (
     <div className="pending-response-content">
@@ -1441,7 +1485,7 @@ export function SessionMessageColumn({
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} data-message-count={messages.length} tabIndex={0} role="region" aria-label="Conversation messages">
-        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail ? (
+        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail || liveSent.length || sentDeliveries.error ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1453,6 +1497,12 @@ export function SessionMessageColumn({
             const message = messages[absoluteIndex];
             if (!message) {
               return null;
+            }
+            if (isSentOnly(message.historyIndex) && messageKeys?.[absoluteIndex] !== pendingResponseMessageKey) {
+              return <div key={getRowKey(absoluteIndex)} ref={messageVirtualizer.measureElement} className="session-message-virtual-row" data-index={absoluteIndex}>
+                {sent.filter((item) => item.sourceMessageSeq === message.historyIndex && conversationPeerKey(item.target) === peer)
+                  .map((item) => renderSent(item))}
+              </div>;
             }
             if (message.role === "user" && message.turnInput?.state === "confirmed" && message.turnInput.questionRequestId
               && visibleAnsweredQuestionIds.has(message.turnInput.questionRequestId)) {
@@ -1523,7 +1573,7 @@ export function SessionMessageColumn({
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
-                const messageSent = isAssistant ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
+                const messageSent = isAssistant ? sent.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
@@ -1791,14 +1841,14 @@ export function SessionMessageColumn({
                 </div>
                 </article>;
               }}</TurnInputReadBoundary>
-                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex && !(item.sourceTurnId === liveWithMateTurnId && inlineLivePossible) && !(isAssistant && shouldRenderFullMessage)).map((item) => <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+                {inputReadContext ? sent.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex && !(item.sourceTurnId === liveWithMateTurnId && inlineLivePossible) && !(isAssistant && shouldRenderFullMessage)).map((item) => renderSent(item)) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => renderSent(item)) : null}
             {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId).map(renderIssued)}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
@@ -1807,6 +1857,8 @@ export function SessionMessageColumn({
             {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
+        ) : thread && !conversationPaging?.loading && !conversationPaging?.error ? (
+          <p className="session-message-empty">No recorded messages in this conversation. Older or unlinked messages remain in the main conversation.</p>
         ) : null}
         {selectionToolbar && selectionActionOverlay ? createPortal(
           <MessageResponseActions
