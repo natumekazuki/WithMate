@@ -156,18 +156,8 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
       if (active) { engine.viewer.setPageLabels(pageLabels); setLabels(pageLabels); setPageInput(pageLabels?.[0] ?? "1"); }
       await engine.viewer.pagesPromise;
     }).catch((failure) => { if (active) reportError(failure instanceof Error ? failure.message : "The PDF could not be loaded."); });
-    const selection = () => {
-      const current = window.getSelection();
-      const anchor = current?.anchorNode;
-      const focus = current?.focusNode;
-      if (current && anchor && focus && pages.contains(anchor) && pages.contains(focus)) {
-        callbacks.current.onSelection(current.toString().slice(0, 1_000_000));
-      } else if (!current || current.isCollapsed) callbacks.current.onSelection("");
-    };
-    document.addEventListener("selectionchange", selection);
     return () => {
       active = false;
-      document.removeEventListener("selectionchange", selection);
       callbacks.current.onSelection("");
       engine.destroy();
       engineRef.current = null;
@@ -339,13 +329,14 @@ export function PdfReaderApp(props: ReaderProps) {
   const [attachment, setAttachment] = useState<ReaderFile | null>(null);
   const incarnation = useRef(0);
   const openAttachment = useCallback((name: string, bytes: Uint8Array) => {
+    window.getSelection()?.removeAllRanges();
     props.onSelection("");
     setAttachment({ name, bytes: bytes.slice(), incarnation: ++incarnation.current });
   }, [props.onSelection]);
   return <main className="pdf-reader-app">
     <div className="pdf-primary-document" hidden={Boolean(attachment)}><PdfDocumentView {...props} active={!attachment} onOpenAttachment={openAttachment} /></div>
     {attachment && <section className="pdf-attachment" aria-label={`Attachment: ${attachment.name}`}>
-      <header><button type="button" onClick={() => { props.onSelection(""); setAttachment(null); }}>← Back To Document</button><strong>{attachment.name}</strong></header>
+      <header><button type="button" onClick={() => { window.getSelection()?.removeAllRanges(); props.onSelection(""); setAttachment(null); }}>← Back To Document</button><strong>{attachment.name}</strong></header>
       <AttachmentContent key={attachment.incarnation} attachment={attachment} props={props} onOpenAttachment={openAttachment} />
     </section>}
   </main>;
