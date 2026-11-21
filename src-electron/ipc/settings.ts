@@ -6,6 +6,7 @@ import { isChatLayoutPreferenceUpdate } from "../../src-shared/settings/chat-lay
 
 import {
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
+  WITHMATE_GET_APP_VERSION_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
@@ -43,6 +44,10 @@ export function registerSettingsHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSettingsDeps,
 ): void {
+  ipcMain.handle(WITHMATE_GET_APP_VERSION_CHANNEL, (event) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.getAppVersion();
+  });
   ipcMain.handle(WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, (event, request: unknown) => {
     assertSettingsWindowSender(event, deps);
     return deps.scanSessionFolderCleanup(parseSessionFolderCleanupRequest(request));

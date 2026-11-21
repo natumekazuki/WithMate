@@ -294,6 +294,7 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
   MainIpcSettingsWindowDeps &
   {
+    getAppVersion(): string;
     getAppSettings(): Awaitable<AppSettings>;
     updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
     updateChatLayoutPreference(
