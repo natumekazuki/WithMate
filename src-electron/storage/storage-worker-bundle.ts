@@ -58,7 +58,7 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn"],
-  queue: ["enqueue", "verifySourceDisplayPosition", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
+  queue: ["enqueue", "admit", "verifySourceDisplayPosition", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
@@ -110,7 +110,7 @@ const MUTATIONS = new Set([
   "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
-  "enqueue", "verifySourceDisplayPosition",
+  "enqueue", "admit", "verifySourceDisplayPosition",
 ]);
 
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;

@@ -112,8 +112,13 @@ export type SessionTurnQueueAcceptanceResult = SessionTurnQueueReceipt | {
   state: "rejected";
   reason: string;
 };
+export type SessionTurnQueueAdmission = {
+  receipt: SessionTurnQueueReceipt;
+  /** The single new claim to hand off, not a previously accepted receipt. */
+  claimed: SessionTurnQueueReceipt | null;
+};
 export type SessionTurnQueueStore = {
-  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt>;
+  admit(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, claim?: { unreleasedSourceTurnIds: readonly string[] }): Promise<SessionTurnQueueAdmission>;
   getReceipt(owner: SessionTurnQueueOwner, requestId: string): Promise<SessionTurnQueueReceipt | null>;
   getReceiptById(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt | null>;
   listActive(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt[]>;

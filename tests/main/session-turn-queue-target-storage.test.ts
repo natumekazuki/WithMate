@@ -356,9 +356,9 @@ test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent t
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary予約はdraftを受付と原子的に消費しtarget別にdedup、開始/入力/終端を既存履歴に保存し中断回復後に指定Auxだけ解放する"
-// oracle = { type = "contract", ref = "Issue #801: durable Auxiliary queue, draft CAS, atomic start/input/terminal and explicit release" }
-// fault = "別Auxにrequestが衝突、stale draftを消費、receiptと履歴が別commit、providerとSQLite turn IDを同一視、または指定Auxの解放で別Auxを変更する"
+// claim = "Auxiliary受付はdraft消費・受付・即時claimを一つの保存境界に含めtarget別にdedup、開始/入力/終端を既存履歴に保存し中断回復後に指定Auxだけ解放する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#turn-queue; docs/design/session-run-lifecycle.md#persistence-expectations" }
+// fault = "別Auxにrequestが衝突、stale draftやclaim失敗でdraftを消費、receiptと履歴が別commit、providerとSQLite turn IDを同一視、または指定Auxの解放で別Auxを変更する"
 // observable = "Worker draft text/revision、receipt id/state、Aux message count/text、turn id/phase、再open後owner一覧"
 // observation_boundary = "public-boundary"
 // scope = "実Storage WorkerとSQLiteのAux queue受付・開始・入力・終端・再open・解放"
@@ -382,20 +382,25 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
     captured.request.auxiliaryDraftIncarnation = draft.incarnation;
     captured.request.auxiliaryDraftDurableRevision = draft.durableRevision;
     captured.request.displayAnchorParentMessageCount = 2;
-    await assert.rejects(f.bundle.stores.queue.enqueue(owner, { ...captured, request: { ...captured.request, userMessage: "different" } }), /stale/);
+    const claim = { unreleasedSourceTurnIds: [] };
+    await assert.rejects(f.bundle.stores.queue.admit(owner, { ...captured, request: { ...captured.request, userMessage: "different" } }, claim), /stale/);
     assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, " queued\n");
-    db.exec("CREATE TRIGGER fail_accept BEFORE INSERT ON session_turn_queue_v6 BEGIN SELECT RAISE(ABORT, 'accept failed'); END");
-    await assert.rejects(f.bundle.stores.queue.enqueue(owner, captured), /accept failed/);
-    db.exec("DROP TRIGGER fail_accept");
+    db.exec("CREATE TRIGGER fail_claim BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'starting' BEGIN SELECT RAISE(ABORT, 'claim failed'); END");
+    await assert.rejects(f.bundle.stores.queue.admit(owner, captured, claim), /claim failed/);
+    db.exec("DROP TRIGGER fail_claim");
     assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.durableRevision, draft.durableRevision);
-    const receipt = await f.bundle.stores.queue.enqueue(owner, captured);
+    assert.equal(await f.bundle.stores.queue.getReceipt(owner, captured.request.clientRequestId), null);
+    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.displayAfterMessageIndex, null);
+    const { receipt, claimed } = await f.bundle.stores.queue.admit(owner, captured, claim);
+    assert.equal(receipt.state, "starting");
+    assert.equal(claimed?.id, receipt.id);
+    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.displayAfterMessageIndex, 1);
     assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, "");
-    assert.equal((await f.bundle.stores.queue.enqueue(owner, captured)).id, receipt.id);
+    assert.deepEqual(await f.bundle.stores.queue.admit(owner, captured, claim), { receipt, claimed: null });
     const draft2 = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux2.id))!;
     const second = await f.bundle.stores.queue.enqueue({ sessionId: aux2.id, incarnationId: aux2.createdAt },
       { ...captured, request: { ...captured.request, auxiliaryDraftIncarnation: draft2.incarnation } });
     assert.notEqual(receipt.id, second.id);
-    await f.bundle.stores.queue.claimNext(owner);
     const start = { ...writeOwner, expectedMessageCount: 0, userMessage: { role: "user" as const, text: "queued" }, updatedAt: "start",
       queuedTurn: { queueId: receipt.id, turn: f.turn(aux.id) } };
     db.exec("CREATE TRIGGER fail_start BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'running' BEGIN SELECT RAISE(ABORT, 'start failed'); END");

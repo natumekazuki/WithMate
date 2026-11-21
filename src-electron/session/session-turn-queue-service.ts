@@ -30,11 +30,10 @@ export class QueuedInputRuntimeRecoveryError extends Error {}
 export class SessionTurnQueueService {
   private readonly owners = new Map<string, SessionTurnQueueOwner>();
   private readonly locks = new Map<string, Promise<void>>();
-  private readonly drains = new Map<string, Promise<void>>();
+  private readonly dispatching = new Set<string>();
   private readonly pending = new Set<Promise<unknown>>();
   private readonly blocked = new Set<string>();
   private readonly lastClaim = new Map<string, SessionTurnQueueReceipt>();
-  private readonly wakeRequested = new Set<string>();
   private readonly edits = new Map<string, { incarnationId: string; id: string }>();
   private closing = false;
   private closed = false;
@@ -56,12 +55,21 @@ export class SessionTurnQueueService {
 
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
-    return this.track(this.withLock(owner.sessionId, async () => {
+    const admission = this.withLock(owner.sessionId, async () => {
+      const available = await this.canClaim(owner);
       await assertAuthorized?.();
-      const receipt = await this.deps.store.enqueue(owner, captured);
+      const claim = available && !this.claimHeld(owner)
+        ? { unreleasedSourceTurnIds: this.deps.getUnreleasedSourceTurnIds?.() ?? [] } : undefined;
+      const { receipt, claimed } = await this.deps.store.admit(owner, captured, claim);
       this.adoptOwner(owner);
+      if (claimed) this.reserveDispatch(claimed);
       this.notify(receipt);
-      this.wake(owner.sessionId);
+      if (claimed && claimed.id !== receipt.id) this.notify(claimed);
+      return { receipt, claimed };
+    });
+    return this.track(admission.then(({ receipt, claimed }) => {
+      if (claimed) this.dispatchClaim(claimed);
+      else this.wake(owner.sessionId);
       return receipt;
     }));
   }
@@ -317,27 +325,26 @@ export class SessionTurnQueueService {
 
   wake(sessionId: string): void {
     const owner = this.owners.get(sessionId);
-    if (this.closing || this.blocked.has(sessionId) || this.edits.has(sessionId) || !owner) return;
-    if (this.drains.has(sessionId)) {
-      this.wakeRequested.add(sessionId);
-      return;
-    }
-    const drain = this.track(this.drain(owner).catch(() => {
+    if (!owner || this.claimHeld(owner)) return;
+    const claim = this.withLock(sessionId, async () => {
+      if (!this.isCurrentOwner(owner) || !await this.canClaim(owner) || !this.isCurrentOwner(owner)) return null;
+      const receipt = await this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
+      if (!receipt || !this.isCurrentOwner(owner)) return null;
+      this.reserveDispatch(receipt);
+      this.notify(receipt);
+      return receipt;
+    });
+    void this.track(claim.then((receipt) => {
+      if (receipt) this.dispatchClaim(receipt);
+    }).catch(() => {
       // A claim or terminal commit may have succeeded before its reply failed.
       // Never retry an unknown dispatch or advance its followers automatically.
       if (this.isCurrentOwner(owner)) this.blocked.add(sessionId);
     }));
-    this.drains.set(sessionId, drain);
-    void drain.then(() => {
-      if (this.drains.get(sessionId) !== drain) return;
-      this.drains.delete(sessionId);
-      if (this.wakeRequested.delete(sessionId)) this.wake(sessionId);
-    });
   }
 
   beginShutdown(): void {
     this.closing = true;
-    this.wakeRequested.clear();
   }
 
   async waitForPending(): Promise<void> {
@@ -358,64 +365,69 @@ export class SessionTurnQueueService {
     await this.waitForPending();
   }
 
-  private async drain(owner: SessionTurnQueueOwner): Promise<void> {
+  private claimHeld(owner: SessionTurnQueueOwner): boolean {
     const { sessionId } = owner;
-    while (!this.closing && this.isCurrentOwner(owner) && !this.blocked.has(sessionId)) {
-      const receipt = await this.withLock(sessionId, async () => {
-        if (this.closing || !this.isCurrentOwner(owner) || this.blocked.has(sessionId) || this.edits.has(sessionId) || await this.deps.isRunInFlight(sessionId)) return null;
-        const active = await this.deps.store.listActive(owner);
-        if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
-        for (const released of active) {
-          if (released.state !== "interrupted" || released.releasedAt === null) continue;
-          await this.deps.store.releaseInterrupted(owner, released.id, { runReleased: true });
-          if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
-        }
-        return this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
+    return this.closing || this.dispatching.has(sessionId)
+      || (this.isCurrentOwner(owner) && (this.blocked.has(sessionId) || this.edits.has(sessionId)));
+  }
+
+  private async canClaim(owner: SessionTurnQueueOwner): Promise<boolean> {
+    return !this.claimHeld(owner) && !await this.deps.isRunInFlight(owner.sessionId) && !this.claimHeld(owner);
+  }
+
+  private reserveDispatch(receipt: SessionTurnQueueReceipt): void {
+    this.dispatching.add(receipt.sessionId);
+    this.lastClaim.set(receipt.sessionId, receipt);
+  }
+
+  private dispatchClaim(receipt: SessionTurnQueueReceipt): void {
+    const { sessionId } = receipt;
+    // Reservation is recorded under the lock; dispatch only runs after it.
+    // A confirmed claim stays tracked through settlement even during shutdown.
+    void this.track(this.executeClaim(receipt).catch(() => {
+      if (this.isCurrentOwner(receipt)) this.blocked.add(sessionId);
+    }).finally(() => {
+      this.dispatching.delete(sessionId);
+      // The next attempt still checks the actual runtime/cleanup guards.
+      this.wake(sessionId);
+    }));
+  }
+
+  private async executeClaim(receipt: SessionTurnQueueReceipt): Promise<void> {
+    const { sessionId } = receipt;
+    if (!this.isCurrentOwner(receipt)) return;
+    let result: SessionTurnQueueDispatchResult;
+    try {
+      result = await this.deps.dispatch(receipt, async (input) => {
+        if (!this.isCurrentOwner(receipt)) throw new Error("The queue owner changed before turn start.");
+        await this.deps.store.markStarted(receipt, receipt.id, input);
+        if (!this.isCurrentOwner(receipt)) throw new Error("The queue owner changed during turn start.");
+        this.notify(receipt);
       });
-      if (!receipt || !this.isCurrentOwner(owner)) return;
-      this.lastClaim.set(sessionId, receipt);
+    } catch (error) {
+      if (!this.isCurrentOwner(receipt)) return;
+      this.blocked.add(sessionId);
       this.notify(receipt);
-      // A committed claim is admitted work, including when shutdown begins while
-      // awaiting its reply. Shutdown waits for this dispatch and its terminal save.
-      let result: SessionTurnQueueDispatchResult;
-      try {
-        result = await this.deps.dispatch(receipt, async (input) => {
-          if (!this.isCurrentOwner(owner)) throw new Error("The queue owner changed before turn start.");
-          await this.deps.store.markStarted(receipt, receipt.id, input);
-          if (!this.isCurrentOwner(owner)) throw new Error("The queue owner changed during turn start.");
-          this.notify(receipt);
-        });
-      } catch (error) {
-        if (!this.isCurrentOwner(owner)) return;
-        this.blocked.add(sessionId);
-        this.notify(receipt);
-        const canonical = await this.deps.store.settle(receipt, receipt.id, "interrupted", error instanceof Error ? error.message : "The execution outcome could not be confirmed.");
-        if (!this.isCurrentOwner(owner)) return;
-        this.notify(receipt);
-        if (!isConfirmedTerminal(canonical)) return;
-        this.blocked.delete(sessionId);
-        if (await this.deps.isRunInFlight(sessionId)) return;
-        continue;
-      }
-      if (!this.isCurrentOwner(owner)) return;
-      try {
-        await this.deps.store.settle(receipt, receipt.id, result.state, result.reason);
-      } catch {
-        // Only canonical reads can resolve a lost commit reply; never repeat the
-        // mutation or provider dispatch to manufacture a known outcome.
-        if (!this.isCurrentOwner(owner)) return;
-        this.blocked.add(sessionId);
-        this.notify(receipt);
-        const current = await this.deps.store.getReceipt(receipt, receipt.requestId);
-        if (!this.isCurrentOwner(owner) || !current || !isConfirmedTerminal(current)) return;
-        this.blocked.delete(sessionId);
-      }
-      if (!this.isCurrentOwner(owner)) return;
+      const canonical = await this.deps.store.settle(receipt, receipt.id, "interrupted", error instanceof Error ? error.message : "The execution outcome could not be confirmed.");
+      if (!this.isCurrentOwner(receipt)) return;
       this.notify(receipt);
-      // A terminal response is not proof that provider/setup/terminal guards
-      // have been released. The runtime's actual release signal wakes this loop.
-      if (await this.deps.isRunInFlight(sessionId)) return;
+      if (isConfirmedTerminal(canonical)) this.blocked.delete(sessionId);
+      return;
     }
+    if (!this.isCurrentOwner(receipt)) return;
+    try {
+      await this.deps.store.settle(receipt, receipt.id, result.state, result.reason);
+    } catch {
+      // Only canonical reads can resolve a lost commit reply; never repeat the
+      // mutation or provider dispatch to manufacture a known outcome.
+      if (!this.isCurrentOwner(receipt)) return;
+      this.blocked.add(sessionId);
+      this.notify(receipt);
+      const current = await this.deps.store.getReceipt(receipt, receipt.requestId);
+      if (!this.isCurrentOwner(receipt) || !current || !isConfirmedTerminal(current)) return;
+      this.blocked.delete(sessionId);
+    }
+    if (this.isCurrentOwner(receipt)) this.notify(receipt);
   }
 
   private requireAccepting(): void {

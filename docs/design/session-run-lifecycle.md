@@ -61,6 +61,8 @@ Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り�
 
 `SessionTurnQueueService`はSessionごとに保存済み実行順で一件だけclaimする。初期は受付順で、queuedだけを個別取消・並べ替えできる。状態は`queued → starting → running → completed/failed/canceled/interrupted`で、starting以降や確定履歴の順序は変更しない。開始時のuser message・最小turn・receiptの対応付けとrunning状態は同じstorage transactionで確定し、終端本文・最小turn・receiptの終端も同じtransactionで確定する。
 
+Main／AuxiliaryのGUI送信と親子間の通常送信は、Session lock内で実行・編集・復旧・終了の保留を確認し、受付と実行可能な先頭一件のclaimを同じDB transactionで確定する。新規受付自身をclaimできた場合、受付応答と保存状態の初回公開は`starting`となる。先行予約が選ばれる場合や実行枠を確保できない場合は、新規受付を操作可能な`queued`として返す。claim済みの一件はlockの外で既存のdispatch／終端処理に一度だけ引き継ぎ、受付応答はProviderの開始・完了を待たない。既知のrequest IDの再照会から同じclaimを引き継ぎ直さない。本文の先行表示とCoordinationの関連Turn配送は変更しない。
+
 並べ替えは受付・取消・通常claim・Steerのclaimと同じSession lockを使う。表示時のqueued ID列が保存列と一致した場合だけ、その同一集合の新順序をtransactionで保存する。追加・取消・開始・別の並べ替えが先に確定していれば変更せず、最新列を再取得する。保存失敗や応答不明でmutationを自動再送せず、再取得した現在順序を過去の操作成功の証明にしない。再起動時も保存順と既存のinterrupted保留・明示解放を維持する。
 
 確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。結果不明の実行は自動再実行せず、同Sessionの後続を保留する。`Release Later Turns`は不明な要求そのものの再実行ではなく後続の明示解放であり、実guardを迂回しない。

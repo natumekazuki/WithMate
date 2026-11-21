@@ -61,7 +61,7 @@ async function openFixture() {
     return { receipt: result.receipt, request };
   };
   const port: SessionTurnQueueStore = {
-    enqueue: async (...args) => queue.enqueue(...args), getReceipt: async (...args) => queue.getReceipt(...args), getReceiptById: async (...args) => queue.getReceiptById(...args),
+    admit: async (...args) => queue.admit(...args), getReceipt: async (...args) => queue.getReceipt(...args), getReceiptById: async (...args) => queue.getReceiptById(...args),
     listActive: async (...args) => queue.listActive(...args), listReceipts: async (...args) => queue.listReceipts(...args), listPendingOwners: async (...args) => queue.listPendingOwners(...args),
     claimNext: async (...args) => queue.claimNext(...args), claimForInput: async (...args) => queue.claimForInput(...args), restoreQueuedInput: async (...args) => queue.restoreQueuedInput(...args),
     markStarted: async (...args) => queue.markStarted(...args), settle: async (...args) => queue.settle(...args), cancelQueued: async (...args) => queue.cancelQueued(...args),

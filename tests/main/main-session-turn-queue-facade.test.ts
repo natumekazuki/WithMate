@@ -150,13 +150,13 @@ function fixture() {
   const store: SessionTurnQueueStore = {
     updateQueued: unexpected,
     reorderQueued: unexpected,
-    enqueue: async (owner, captured) => {
+    admit: async (owner, captured) => {
       calls.acceptance += 1;
       const receipt: SessionTurnQueueReceipt = { ...owner, id: "durable-id", requestId: captured.request.clientRequestId,
         sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), accepted: structuredClone(captured), dispatched: null, turnId: null, userMessageSeq: null,
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
       rows.push(receipt);
-      return receipt;
+      return { receipt, claimed: null };
     },
     getReceipt: async (owner, id) => rows.find((row) => row.requestId === id && row.incarnationId === owner.incarnationId) ?? null,
     getReceiptById: async (owner, id) => rows.find((row) => row.id === id && row.incarnationId === owner.incarnationId) ?? null,
@@ -401,8 +401,8 @@ test("lookupとcommit返信の不明結果はknown rejectへ変換しない", as
     const failure = new Error(`${stage} unknown`);
     if (stage === "lookup") context.deps.store.getReceipt = async () => { throw failure; };
     else {
-      const enqueue = context.deps.store.enqueue;
-      context.deps.store.enqueue = async (...args) => { await enqueue(...args); throw failure; };
+      const admit = context.deps.store.admit;
+      context.deps.store.admit = async (...args) => { await admit(...args); throw failure; };
     }
     await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, context.input),
       (error) => error === failure && !(error instanceof SessionTurnQueuePreflightRejectedError));

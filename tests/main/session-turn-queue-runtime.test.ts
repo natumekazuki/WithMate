@@ -25,10 +25,10 @@ function gate() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Worker queued実行は捕捉入力/threadを維持し、受付/terminal返信喪失は正本へ収束し、開始保存後の不明結果は明示回復とguard解放後にFIFOを進める"
-// oracle = { type = "contract", ref = "GitHub Issue #801: durable FIFO captured input and atomic turn start; docs/design/session-run-lifecycle.md" }
-// fault = "捕捉入力/thread進行を失うか、保存返信喪失で再実行するか、明示回復後の保存runningが後続を不明結果へ連鎖させる"
-// observable = "受付mutation/preview回数、Provider入力/呼出順、実Worker receipt/minimum turn ID、guard保持中のrunning metadataと後続queued、回復後のthreadと終端状態"
+// claim = "実Workerの初回受付は実行枠を同時確保してACK・一覧ともstartingとなり、同時送信の後続だけが待機する。固定入力/threadを維持し、terminal返信喪失と開始保存後の不明実行から従来の契約で回復する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/electron-session-store.md#turn-queue" }
+// fault = "即時開始の受付を先にqueuedでcommitまたは通知する、同時送信も開始する、受付済み入力が変わる、または不明実行を自動再送する"
+// observable = "Worker commit直後と受付通知からの一覧、ACK、待機中の保存receipt、Provider入力/呼出順、実WorkerのTurn状態と解放後のthread・終端"
 // observation_boundary = "public-boundary"
 // scope = "MainSessionRuntimeAssembly + QueueFacade/Service + SessionPersistenceService + V6StorageWorkerBundle"
 // lifecycle = "permanent"
@@ -40,6 +40,9 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
   const bundle = createV6StorageWorkerBundle({ dbPath: path.join(temporary, "withmate-v6.db"), userDataPath: temporary });
   let queue: SessionTurnQueueService | undefined;
   const finishFirst = gate();
+  const allowDispatch = gate();
+  const firstCommit = gate();
+  const releaseFirstReply = gate();
   try {
     await bundle.initialize();
     await writeFile(path.join(temporary, "input.txt"), "captured path fixture");
@@ -121,18 +124,21 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
         resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {}, invalidateProviderSessionThread() {} },
       notification: { onSessionRunReleased: (id) => queue?.wake(id) }, timing: {},
     });
-    const enqueueWithLostReply = async (...args: Parameters<typeof bundle.stores.queue.enqueue>) => {
-      const receipt = await bundle.stores.queue.enqueue(...args);
+    const admitWithGatedReply = async (...args: Parameters<typeof bundle.stores.queue.admit>) => {
+      const result = await bundle.stores.queue.admit(...args);
       acceptanceWrites += 1;
-      if (acceptanceWrites === 1) throw new Error("Durable acceptance acknowledgement lost");
-      return receipt;
+      if (acceptanceWrites === 1) { firstCommit.resolve(); await releaseFirstReply.promise; }
+      return result;
     };
     const queueStore = new Proxy(bundle.stores.queue, {
-      get: (target, property) => property === "enqueue" ? enqueueWithLostReply : Reflect.get(target, property),
+      get: (target, property) => property === "admit" ? admitWithGatedReply : Reflect.get(target, property),
     });
+    const notifications: Array<ReturnType<MainSessionTurnQueueFacade["listSessionTurnQueue"]>> = [];
     queue = new SessionTurnQueueService({ store: queueStore, isRunInFlight: (id) => cleanupGuard || runtime.isRunInFlight(id),
-      dispatch: (receipt, started) => {
+      onChanged: () => { notifications.push(facade.listSessionTurnQueue(saved.id)); },
+      dispatch: async (receipt, started) => {
         dispatches += 1;
+        if (receipt.requestId === firstRequestId) await allowDispatch.promise;
         return runtime.runQueuedSessionTurn(receipt, async (input) => {
           if (rejectStarted) { rejectStarted = false; cleanupGuard = true; throw new Error("Atomic start acknowledgement lost"); }
           await started(input);
@@ -147,17 +153,25 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     const options = captureSessionExecutionOptions(saved);
     const firstInput = { incarnationId: owner.incarnationId, clientRequestId: firstRequestId,
       submitSource: "composer" as const, userMessage: "First @input.txt", executionOptions: options };
-    await assert.rejects(facade.enqueueSessionTurn(saved.id, firstInput), /Durable acceptance acknowledgement lost/);
-    assert.equal(dispatches, 0);
-    const reconciled = await facade.getSessionTurnQueueReceipt(saved.id, firstRequestId);
-    const first = await facade.enqueueSessionTurn(saved.id, firstInput);
-    assert.equal(first.id, reconciled?.id);
-    assert.equal(acceptanceWrites, 1);
-    assert.equal(previews, 1);
-    await startedFirst.promise;
     const secondInput = { incarnationId: owner.incarnationId, clientRequestId: secondRequestId, submitSource: "composer" as const,
       userMessage: "Second @input.txt", executionOptions: { ...options, reasoningEffort: "medium" as const } };
-    const second = await facade.enqueueSessionTurn(saved.id, secondInput);
+    const accepting = Promise.all([facade.enqueueSessionTurn(saved.id, firstInput), facade.enqueueSessionTurn(saved.id, secondInput)]);
+    await Promise.race([firstCommit.promise, accepting]);
+    const committed = (await facade.listSessionTurnQueue(saved.id)).map(({ requestId, state }) => [requestId, state]);
+    assert.equal(dispatches, 0);
+    releaseFirstReply.resolve();
+    const [first, second] = await accepting;
+    assert.deepEqual(committed, [[firstRequestId, "starting"]]);
+    assert.equal(first.state, "starting");
+    assert.equal(second.state, "queued");
+    assert.equal((await notifications[0])?.find((entry) => entry.id === first.id)?.state, "starting");
+    assert.equal(dispatches, 1);
+    const reconciled = await facade.enqueueSessionTurn(saved.id, firstInput);
+    assert.equal(reconciled.id, first.id);
+    assert.equal(reconciled.state, "starting");
+    assert.equal(acceptanceWrites, 2);
+    allowDispatch.resolve();
+    await startedFirst.promise;
     secondInput.userMessage = "Edited after durable ACK";
     secondInput.executionOptions = { ...secondInput.executionOptions, model: "invalid-after-ACK" };
     assert.equal(calls.length, 1);
@@ -204,6 +218,8 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     assert.equal((await bundle.stores.queue.getReceipt(owner, followerRequestId))?.id, follower.id);
     assert.equal((await bundle.stores.session.getSession(saved.id))?.threadId, "thread-3");
   } finally {
+    releaseFirstReply.resolve();
+    allowDispatch.resolve();
     finishFirst.resolve();
     await queue?.close();
     await bundle.client.close();

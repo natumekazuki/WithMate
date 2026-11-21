@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeSessionTurnClientRequestId } from "../../src-shared/session/runtime-state.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueAdmission, SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
@@ -64,6 +64,11 @@ export class SessionTurnQueueStorageV6 {
   close(): void { this.db.close(); }
 
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): SessionTurnQueueReceipt {
+    // Coordination must commit its record with the queued receipt before trying related-Turn input.
+    return this.admit(owner, captured).receipt;
+  }
+
+  admit(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, claim?: { unreleasedSourceTurnIds: readonly string[] }): SessionTurnQueueAdmission {
     const requestId = normalizeSessionTurnClientRequestId(captured.request.clientRequestId);
     if (!requestId || requestId !== captured.request.clientRequestId) throw new Error("Queue request ID is invalid.");
     const { sourceDisplayPosition, sourceDisplayText: _sourceDisplayText, ...acceptance } = captured;
@@ -78,7 +83,7 @@ export class SessionTurnQueueStorageV6 {
       if (existing) {
         if (existing.accepted_json === null) throw new Error("The original queue acceptance input is unavailable; query its receipt instead.");
         if (existing.accepted_json !== json) throw new Error("Queue request ID was reused with a different payload.");
-        return this.toReceipt(existing);
+        return { receipt: this.toReceipt(existing), claimed: null };
       }
       const id = randomUUID();
       const now = new Date().toISOString();
@@ -106,8 +111,9 @@ export class SessionTurnQueueStorageV6 {
         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
           auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, json, displayPosition, now, now);
       this.db.prepare("UPDATE session_turn_queue_v6 SET queue_position = sequence WHERE id = ?").run(id);
-      const receipt = this.required(owner, id);
-      return displayPosition === null ? receipt : { ...receipt, sourceDisplayInserted: true };
+      const claimed = claim ? this.claimNextInTransaction(owner, claim.unreleasedSourceTurnIds) : null;
+      const receipt = claimed?.id === id ? claimed : this.required(owner, id);
+      return { receipt: displayPosition === null ? receipt : { ...receipt, sourceDisplayInserted: true }, claimed };
     });
   }
 
@@ -171,24 +177,31 @@ export class SessionTurnQueueStorageV6 {
   }
 
   claimNext(owner: SessionTurnQueueOwner, unreleasedSourceTurnIds: readonly string[] = []): SessionTurnQueueReceipt | null {
-    return this.withOwner(owner, () => {
-      if (this.db.prepare(`SELECT 1 FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
-        AND (state IN ('starting', 'running') OR (state = 'interrupted' AND released_at IS NULL)) LIMIT 1`).get(owner.sessionId, owner.incarnationId)) return null;
-      const row = this.db.prepare(`SELECT q.* FROM session_turn_queue_v6 q WHERE COALESCE(q.auxiliary_session_id, q.session_id) = ? AND q.incarnation_id = ?
-        AND q.state = 'queued' AND ${eligibleDeliverySql}
-        ${unreleasedSourceTurnIds.length ? `AND (COALESCE(json_extract(q.accepted_json, '$.origin.deliveryTiming'), 'immediate') = 'immediate'
-          OR json_extract(q.accepted_json, '$.origin.actorTurnId') NOT IN (${unreleasedSourceTurnIds.map(() => "?").join(",")}))` : ""}
-        ORDER BY q.queue_position, q.sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId, ...unreleasedSourceTurnIds) as QueueRow | undefined;
-      if (!row) return null;
-      const captured = JSON.parse(coordinationDispatchJson(this.db, row.captured_json)) as SessionTurnQueueCapturedInput;
-      const sourceTurnPhase = this.toReceipt(row).sourceTurnPhase;
-      if (captured.origin?.deliveryTiming === "after_source_turn" && sourceTurnPhase && sourceTurnPhase !== "running" && sourceTurnPhase !== "unknown") {
-        captured.origin = { ...captured.origin, sourceTurnPhase };
-      }
-      this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, updated_at = ? WHERE id = ?")
-        .run(capturedJson(captured), new Date().toISOString(), row.id);
-      return this.required(owner, row.id);
-    });
+    return this.withOwner(owner, () => this.claimNextInTransaction(owner, unreleasedSourceTurnIds));
+  }
+
+  private claimNextInTransaction(owner: SessionTurnQueueOwner, unreleasedSourceTurnIds: readonly string[]): SessionTurnQueueReceipt | null {
+    const released = this.db.prepare(`SELECT turn_id AS turnId, user_message_seq AS userMessageSeq FROM session_turn_queue_v6
+      WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ? AND state = 'interrupted'
+        AND released_at IS NOT NULL AND input_turn_id IS NULL AND turn_id IS NOT NULL AND user_message_seq IS NOT NULL`)
+      .all(owner.sessionId, owner.incarnationId) as Array<{ turnId: string; userMessageSeq: number }>;
+    for (const turn of released) this.reconcileReleasedTurn(owner, turn.turnId, turn.userMessageSeq);
+    if (this.db.prepare(`SELECT 1 FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
+      AND (state IN ('starting', 'running') OR (state = 'interrupted' AND released_at IS NULL)) LIMIT 1`).get(owner.sessionId, owner.incarnationId)) return null;
+    const row = this.db.prepare(`SELECT q.* FROM session_turn_queue_v6 q WHERE COALESCE(q.auxiliary_session_id, q.session_id) = ? AND q.incarnation_id = ?
+      AND q.state = 'queued' AND ${eligibleDeliverySql}
+      ${unreleasedSourceTurnIds.length ? `AND (COALESCE(json_extract(q.accepted_json, '$.origin.deliveryTiming'), 'immediate') = 'immediate'
+        OR json_extract(q.accepted_json, '$.origin.actorTurnId') NOT IN (${unreleasedSourceTurnIds.map(() => "?").join(",")}))` : ""}
+      ORDER BY q.queue_position, q.sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId, ...unreleasedSourceTurnIds) as QueueRow | undefined;
+    if (!row) return null;
+    const captured = JSON.parse(coordinationDispatchJson(this.db, row.captured_json)) as SessionTurnQueueCapturedInput;
+    const sourceTurnPhase = this.toReceipt(row).sourceTurnPhase;
+    if (captured.origin?.deliveryTiming === "after_source_turn" && sourceTurnPhase && sourceTurnPhase !== "running" && sourceTurnPhase !== "unknown") {
+      captured.origin = { ...captured.origin, sourceTurnPhase };
+    }
+    this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, updated_at = ? WHERE id = ?")
+      .run(capturedJson(captured), new Date().toISOString(), row.id);
+    return this.required(owner, row.id);
   }
 
   markStarted(owner: SessionTurnQueueOwner, id: string, input: { turnId: string; userMessageSeq: number }): SessionTurnQueueReceipt {
@@ -331,7 +344,14 @@ export class SessionTurnQueueStorageV6 {
         this.db.prepare("UPDATE session_turn_queue_v6 SET released_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
       }
       if (options?.runReleased === true && !receipt.inputTurnId && receipt.turnId !== null && receipt.userMessageSeq !== null) {
-        this.db.prepare(`UPDATE sessions_v6
+        this.reconcileReleasedTurn(owner, receipt.turnId, receipt.userMessageSeq);
+      }
+      return this.required(owner, id);
+    });
+  }
+
+  private reconcileReleasedTurn(owner: SessionTurnQueueOwner, turnId: string, userMessageSeq: number): void {
+    this.db.prepare(`UPDATE sessions_v6
           SET runtime_policy_json = json_set(runtime_policy_json, '$.appStatus', 'idle', '$.runState', 'interrupted')
           WHERE id = ? AND incarnation_id = ?
             AND json_extract(runtime_policy_json, '$.appStatus') = 'running'
@@ -340,17 +360,14 @@ export class SessionTurnQueueStorageV6 {
               AND t.session_id = sessions_v6.id AND t.auxiliary_session_id IS NULL
               AND t.phase = 'running' AND t.user_message_seq = ?
               AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE session_id = sessions_v6.id))`)
-          .run(owner.sessionId, owner.incarnationId, receipt.turnId, receipt.userMessageSeq);
-        this.db.prepare(`UPDATE auxiliary_sessions SET run_state = 'error'
+      .run(owner.sessionId, owner.incarnationId, turnId, userMessageSeq);
+    this.db.prepare(`UPDATE auxiliary_sessions SET run_state = 'error'
           WHERE id = ? AND created_at = ? AND run_state = 'running'
           AND EXISTS (SELECT 1 FROM session_turns_v6 t WHERE CAST(t.id AS TEXT) = ?
             AND t.auxiliary_session_id = auxiliary_sessions.id AND t.session_id IS NULL
             AND t.phase = 'running' AND t.user_message_seq = ?
             AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = auxiliary_sessions.id))`)
-          .run(owner.sessionId, owner.incarnationId, receipt.turnId, receipt.userMessageSeq);
-      }
-      return this.required(owner, id);
-    });
+      .run(owner.sessionId, owner.incarnationId, turnId, userMessageSeq);
   }
 
   private required(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt {

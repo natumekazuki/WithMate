@@ -71,17 +71,23 @@ function boundary() {
     row.reason = reason ?? null;
     return structuredClone(row);
   };
-  const store: SessionTurnQueueStore = {
+  const enqueue = async (owned: typeof owner, input: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt> => {
+    const row: SessionTurnQueueReceipt = {
+      ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1, queuePosition: rows.length + 1,
+      state: "queued", captured: structuredClone(input), turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      createdAt: "now", updatedAt: "now",
+    };
+    rows.push(row);
+    return structuredClone(row);
+  };
+  const store: SessionTurnQueueStore & { enqueue: typeof enqueue } = {
     updateQueued: async () => { throw new Error("Unexpected edit"); },
     reorderQueued: async () => { throw new Error("Unexpected reorder"); },
-    enqueue: async (owned, input) => {
-      const row: SessionTurnQueueReceipt = {
-        ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1, queuePosition: rows.length + 1,
-        state: "queued", captured: structuredClone(input), turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
-        createdAt: "now", updatedAt: "now",
-      };
-      rows.push(row);
-      return structuredClone(row);
+    enqueue,
+    admit: async (owner, input, claim) => {
+      const receipt = await enqueue(owner, input);
+      const claimed = claim ? await store.claimNext(owner, claim.unreleasedSourceTurnIds) : null;
+      return { receipt: claimed?.id === receipt.id ? claimed : receipt, claimed };
     },
     getReceipt: async (owned, requestId) => rows.find((row) => row.incarnationId === owned.incarnationId && row.requestId === requestId) ?? null,
     getReceiptById: async (owned, id) => rows.find((row) => row.incarnationId === owned.incarnationId && row.id === id) ?? null,
@@ -198,8 +204,8 @@ test("queue lock取得後にactorの受付と取消権限を再検証する", as
   const { store, rows } = boundary();
   const held = deferred<void>();
   const entered = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { entered.resolve(); await held.promise; return enqueue(...args); };
+  const admit = store.admit;
+  store.admit = async (...args) => { entered.resolve(); await held.promise; return admit(...args); };
   let valid = true;
   const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => ({ state: "completed" }) });
@@ -436,7 +442,7 @@ test("queuedの取消は現在runを継続させる", async () => {
 // claim = "shutdownは受付と後続dispatchを止め、受付済み保存と現在runの終端保存を待つ"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md App Quit" }
 // fault = "closeを保存完了前に返すかshutdown開始後に後続をdispatchする"
-// observable = "close完了の時点、enqueue結果、dispatch ID、保存済みstate"
+// observable = "受付と終端のどちらか一方だけ保存中のclose完了状態、enqueue結果、dispatch ID、保存済みstate"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue shutdown persistence"
 // lifecycle = "permanent"
@@ -444,51 +450,61 @@ test("queuedの取消は現在runを継続させる", async () => {
 // distinction = "型検査ではpending mutationとdispatchの非同期待機を検証できない"
 // @end-test-value
 test("closeは受付済みmutationと実行終端を待ち後続を開始しない", async () => {
-  const { store, rows } = boundary();
-  const terminal = deferred<{ state: "completed" }>();
-  const terminalCommit = deferred<void>();
-  const settling = deferred<void>();
-  const settle = store.settle;
-  store.settle = async (...args) => {
-    settling.resolve();
-    await terminalCommit.promise;
-    return settle(...args);
-  };
-  const ids: string[] = [];
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
-    ids.push(receipt.id);
-    return terminal.promise;
-  } });
-  await service.enqueue(owner, captured("first"));
-  await flush();
-  const commit = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { await commit.promise; return enqueue(...args); };
-  const accepted = service.enqueue(owner, captured("second"));
-  let closed = false;
-  const closing = service.close().then(() => { closed = true; });
-  assert.throws(() => service.enqueue(owner, captured("third")), /shutting down/);
-  terminal.resolve({ state: "completed" });
-  await settling.promise;
-  await flush();
-  assert.equal(closed, false);
-  commit.resolve();
-  assert.equal((await accepted).state, "queued");
-  await flush();
-  assert.equal(closed, false);
-  assert.equal(rows[0]!.state, "starting");
-  terminalCommit.resolve();
-  await closing;
-  assert.deepEqual(ids, ["first"]);
-  assert.deepEqual(rows.map((row) => row.state), ["completed", "queued"]);
+  for (const firstCommit of ["admission", "terminal"]) {
+    const { store, rows } = boundary();
+    const terminal = deferred<{ state: "completed" }>();
+    const terminalCommit = deferred<void>();
+    const settling = deferred<void>();
+    const settle = store.settle;
+    store.settle = async (...args) => {
+      settling.resolve();
+      await terminalCommit.promise;
+      return settle(...args);
+    };
+    const ids: string[] = [];
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
+      ids.push(receipt.id);
+      return terminal.promise;
+    } });
+    await service.enqueue(owner, captured("first"));
+    const commit = deferred<void>();
+    const admit = store.admit;
+    store.admit = async (...args) => { await commit.promise; return admit(...args); };
+    const accepted = service.enqueue(owner, captured("second"));
+    let closed = false;
+    const closing = service.close().then(() => { closed = true; });
+    try {
+      assert.throws(() => service.enqueue(owner, captured("third")), /shutting down/);
+      terminal.resolve({ state: "completed" });
+      await settling.promise;
+      if (firstCommit === "admission") {
+        commit.resolve();
+        assert.equal((await accepted).state, "queued");
+        assert.equal(rows[0]!.state, "starting");
+      } else {
+        terminalCommit.resolve();
+      }
+      await flush();
+      if (firstCommit === "terminal") assert.deepEqual(rows.map((row) => row.state), ["completed"]);
+      assert.equal(closed, false, `close returned after only the ${firstCommit} commit`);
+    } finally {
+      terminal.resolve({ state: "completed" });
+      terminalCommit.resolve();
+      commit.resolve();
+      await closing;
+    }
+    assert.equal((await accepted).state, "queued");
+    assert.deepEqual(ids, ["first"]);
+    assert.deepEqual(rows.map((row) => row.state), ["completed", "queued"]);
+  }
 });
 
 // @test-value v2
 // kind = "contract"
 // claim = "ACKは保存commit後だけ返しobserver例外は受理と後続dispatchを壊さない"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Window Close" }
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close; docs/design/electron-session-store.md#turn-queue" }
 // fault = "保存前に受付ACKするか投影通知例外を保存失敗として扱う"
-// observable = "enqueue完了時点と返却receipt、dispatch ID列"
+// observable = "保存待ちとACK時の通知回数、返却receipt、dispatch ID列"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue acceptance notification"
 // lifecycle = "permanent"
@@ -497,20 +513,23 @@ test("closeは受付済みmutationと実行終端を待ち後続を開始しな�
 test("受理ACKはcommitを待ちobserver失敗でもdrainする", async () => {
   const { store } = boundary();
   const commit = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { await commit.promise; return enqueue(...args); };
+  const admit = store.admit;
+  store.admit = async (...args) => { await commit.promise; return admit(...args); };
   const ids: string[] = [];
+  let notifications = 0;
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => false,
     dispatch: async (receipt) => { ids.push(receipt.id); return { state: "completed" }; },
-    onChanged: () => { throw new Error("observer"); },
+    onChanged: () => { notifications += 1; throw new Error("observer"); },
   });
   let acknowledged = false;
   const accepting = service.enqueue(owner, captured("first")).then((receipt) => { acknowledged = true; return receipt; });
   await flush();
   assert.equal(acknowledged, false);
   assert.deepEqual(ids, []);
+  assert.equal(notifications, 0);
   commit.resolve();
   assert.equal((await accepting).id, "first");
+  assert.ok(notifications > 0);
   await service.enqueue(owner, captured("second"));
   await flush();
   assert.deepEqual(ids, ["first", "second"]);
@@ -719,7 +738,8 @@ test("旧ownerの遅延失敗は再作成ownerを保留しない", async () => {
       }
       return { state: "completed" };
     } });
-    await service.enqueue(owner, captured("old-request"));
+    if (stage === "claim") service.acceptCommittedReceipt(await store.enqueue(owner, captured("old-request")));
+    else await service.enqueue(owner, captured("old-request"));
     await started.promise;
     guarded = true;
     const accepting = service.enqueue(replacement, captured("new-request"));

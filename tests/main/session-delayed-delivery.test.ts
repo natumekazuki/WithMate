@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
-import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
+import { SessionTurnQueueService, type SessionTurnQueueServiceDeps } from "../../src-electron/session/session-turn-queue-service.js";
 import { buildNewSession, getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
@@ -49,7 +49,8 @@ async function fixture() {
         actorTurnId: String(sourceTurnId), deliveryTiming: timing, operation: "send", targetSessionId: recipient.id,
         targetIncarnationId: getSessionIncarnationId(recipient) } };
   }
-  function service(recipient: Session, dispatched: SessionTurnQueueReceipt[], getUnreleasedSourceTurnIds: () => readonly string[] = () => []) {
+  function service(recipient: Session, dispatched: SessionTurnQueueReceipt[], getUnreleasedSourceTurnIds: () => readonly string[] = () => [],
+    overrides?: Partial<Pick<SessionTurnQueueServiceDeps, "store" | "onChanged">>) {
     return new SessionTurnQueueService({ store: bundle.stores.queue, isRunInFlight: () => false,
       getUnreleasedSourceTurnIds,
       sendInput: async () => { throw new Error("Unexpected Provider input."); },
@@ -63,7 +64,7 @@ async function fixture() {
         dispatched.push(receipt);
         await finish(recipient, started.queuedTurn.id, "completed");
         return { state: "completed" };
-      } });
+      }, ...overrides });
   }
   return { get bundle() { return bundle; }, owner, create, start, finish, input, service,
     async reopen() { await bundle.client.close(); bundle = createV6StorageWorkerBundle(options); await bundle.initialize(); },
@@ -75,7 +76,7 @@ async function fixture() {
 // claim = "遅延報告は受付を返して送信元Turn保存までclaim/Steerを拒否し、後続即時入力を妨げず、exact Turn保存後wakeだけで通常Turnを実行する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
 // fault = "未保存報告を開始する、先頭待機で即時配送を塞ぐ、送信元の最新Turnまで待つ、またはwakeが実Workerで接続されない"
-// observable = "receipt状態、claim/Steer拒否、dispatch順、保存された送信元本文/phase、dispatch originと宛先本文/receipt終端"
+// observable = "遅延ACKのqueuedと即時ACKのstarting、claim/Steer拒否、dispatch順、保存された送信元本文/phase、dispatch originと宛先本文/receipt終端"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueServiceと実Storage Worker/SQLiteの受付・source終端transaction・claim・宛先終端transaction"
 // lifecycle = "permanent"
@@ -103,6 +104,7 @@ test("delayed delivery waits for exact saved source Turn without blocking immedi
     await assert.rejects(queue.enqueue(f.owner(recipient), { ...captured, origin: { ...captured.origin!, deliveryTiming: "immediate" } }), /different payload/);
     assert.equal((await f.bundle.stores.queue.listReceipts(f.owner(recipient))).receipts.length, 1);
     const immediate = await queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id, "immediate"));
+    assert.equal(immediate.state, "starting");
     await queue.waitForPending();
     assert.deepEqual(dispatched.map((receipt) => receipt.id), [immediate.id]);
     assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), delayed.id))?.state, "queued");
@@ -122,6 +124,98 @@ test("delayed delivery waits for exact saved source Turn without blocking immedi
     assert.equal(execution.origin?.sourceTurnPhase, "completed");
     assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), delayed.id))?.state, "completed");
     assert.equal((await f.bundle.stores.session.getSession(recipient.id))?.messages.length, 4);
+  } finally { await queue?.close(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常受付と同時に確保する枠は新着優先ではなく、送信元待ちから解放された先行予約に渡す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "先行予約が適格になった後でも新着を先にclaim・dispatchする"
+// observable = "新着のACKと最初の変更通知後のactive一覧、全dispatchの順番"
+// observation_boundary = "public-boundary"
+// scope = "実Storage Worker/SQLiteとSessionTurnQueueServiceの同時受付・claim。送信元の終端保存後、宛先wake前の新規受付"
+// lifecycle = "permanent"
+// impact = "受付済みの先行指示より後の依頼が先に実行される"
+// distinction = "通常wakeでのFIFOや適格性のtestでは、受付時claimが同じ選定を使うことを確認できない"
+// @end-test-value
+test("admission claims an eligible predecessor before the new send", async () => {
+  const f = await fixture();
+  let queue: SessionTurnQueueService | undefined;
+  try {
+    const source = await f.create("source");
+    const recipient = await f.create("recipient");
+    const turn = await f.start(source);
+    const owner = f.owner(recipient);
+    const previous = await f.bundle.stores.queue.enqueue(owner, f.input(recipient, source, turn.id));
+    await f.finish(source, turn.id, "completed");
+    const dispatched: SessionTurnQueueReceipt[] = [];
+    const snapshots: Array<ReturnType<typeof f.bundle.stores.queue.listActive>> = [];
+    queue = f.service(recipient, dispatched, undefined, { onChanged: () => { snapshots.push(f.bundle.stores.queue.listActive(owner)); } });
+    const incoming = await queue.enqueue(owner, f.input(recipient, source, turn.id, "immediate"));
+    assert.equal(incoming.state, "queued");
+    assert.deepEqual((await snapshots[0])?.map(({ id, state }) => [id, state]), [[previous.id, "starting"], [incoming.id, "queued"]]);
+    await queue.waitForPending();
+    assert.deepEqual(dispatched.map(({ id }) => id), [previous.id, incoming.id]);
+  } finally { await queue?.close(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同時claimのWorker返信を失っても元request IDの再照会で別claimやdispatchを作らず、再起動と明示解放後に後続だけ実行する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#turn-queue; docs/design/session-run-lifecycle.md#persistence-expectations" }
+// fault = "Worker返信喪失を未保存扱いして開始確保済みの入力を再実行する、または後続を不明な開始より先に進める"
+// observable = "元request IDのreceipt identityと状態、履歴件数、再open後のinterruptedとdispatchの順番"
+// observation_boundary = "public-boundary"
+// scope = "実Workerの受付・claim commit直後にアダプターで返信喪失を注入し、同一DBを再openする通常queue"
+// lifecycle = "permanent"
+// impact = "開始の結果が不明な依頼を重複実行したり、その成果を前提に後続を実行したりする"
+// distinction = "既存の再起動testは別transactionでclaimしたfixtureであり、受付とclaimの返信が一緒に失われる境界を通らない"
+// @end-test-value
+test("lost atomic admission reply never dispatches the unknown claim again", async () => {
+  const f = await fixture();
+  let queue: SessionTurnQueueService | undefined;
+  try {
+    const source = await f.create("source");
+    const recipient = await f.create("recipient");
+    const turn = await f.start(source);
+    const owner = f.owner(recipient);
+    const capture = f.input(recipient, source, turn.id, "immediate");
+    const underlying = f.bundle.stores.queue;
+    let writes = 0;
+    const store = new Proxy(underlying, {
+      get(target, property) {
+        if (property !== "admit") return Reflect.get(target, property);
+        return async (...args: Parameters<typeof underlying.admit>) => {
+          const result = await underlying.admit(...args);
+          if (++writes === 1) throw new Error("Atomic admission reply lost");
+          return result;
+        };
+      },
+    });
+    const dispatched: SessionTurnQueueReceipt[] = [];
+    queue = f.service(recipient, dispatched, undefined, { store });
+    await assert.rejects(queue.enqueue(owner, capture), /reply lost/);
+    const saved = await underlying.getReceipt(owner, capture.request.clientRequestId);
+    assert.equal(saved?.state, "starting");
+    const retried = await queue.enqueue(owner, capture);
+    assert.equal(retried.id, saved.id);
+    assert.equal(retried.state, "starting");
+    const follower = await queue.enqueue(owner, f.input(recipient, source, turn.id, "immediate"));
+    assert.equal(follower.state, "queued");
+    await queue.waitForPending();
+    assert.deepEqual(dispatched, []);
+    assert.equal((await underlying.listReceipts(owner)).receipts.length, 2);
+    await queue.close();
+    await f.reopen();
+    queue = f.service(recipient, dispatched);
+    await queue.start();
+    await queue.waitForPending();
+    assert.equal((await f.bundle.stores.queue.getReceiptById(owner, retried.id))?.state, "interrupted");
+    assert.deepEqual(dispatched, []);
+    await queue.releaseInterrupted(owner, retried.id);
+    await queue.waitForPending();
+    assert.deepEqual(dispatched.map(({ id }) => id), [follower.id]);
   } finally { await queue?.close(); await f.close(); }
 });
 
@@ -221,7 +315,7 @@ test("reopened Worker resumes saved eligible delayed receipt without another sen
 // claim = "取消終端の保存後も実解放前の送信元Turnは配送/Steerを開始せず、即時入力を進め、解放後は別Turn実行中でも配送する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api; docs/design/session-run-lifecycle.md#session-run-cancel" }
 // fault = "保存済canceledだけで実解放前にclaim/Steerする、待機を表示しない、または後続別Turnまで待つ"
-// observable = "宛先のdispatch順、Steer拒否、公開queue/receiptのsourceTurnPendingRelease、実解放後の同receipt完了"
+// observable = "即時ACKのstarting、宛先のdispatch順、Steer拒否、公開queue/receiptのsourceTurnPendingRelease、実解放後の同receipt完了"
 // observation_boundary = "public-boundary"
 // scope = "実Worker/SQLiteとSessionTurnQueueService/MainSessionTurnQueueFacadeのruntime解放port接続"
 // lifecycle = "permanent"
@@ -244,6 +338,7 @@ test("saved cancellation still waits for exact source execution release", async 
     await queue.waitForPending();
     await f.finish(source, turn.id, "canceled");
     const immediate = await queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id, "immediate"));
+    assert.equal(immediate.state, "starting");
     await queue.waitForPending();
     assert.deepEqual(dispatched.map((entry) => entry.id), [immediate.id]);
     await assert.rejects(queue.sendQueuedInput(f.owner(recipient), delayed.id, "receiver-turn"), /still releasing/);
