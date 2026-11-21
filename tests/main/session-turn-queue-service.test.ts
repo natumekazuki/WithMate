@@ -19,6 +19,50 @@ function deferred<T>() {
   return { promise, resolve };
 }
 async function flush() { await setImmediate(); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常受付・外部commit済受付・取消・queue経由追加入力は各操作でonChangedを呼び、同じreceiptの不変accepted originを渡す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/966; docs/design/database-schema.md: receiptのUUID・送信側の読取" }
+// fault = "各queue操作の通知が欠ける、ownerだけを通知し送信元を失う、または現在の編集入力から別actorを通知する"
+// observable = "各操作前後のonChanged件数の増加と新規通知のowner/origin、queued Input完了後のreceipt状態"
+// observation_boundary = "public-boundary"
+// scope = "production queue serviceの通常受付・外部受付・取消・queued Send Input通知。storeとProviderはfixture"
+// lifecycle = "permanent"
+// impact = "受付済指示やその配送変化が送信元チャットへ反映されない"
+// distinction = "Window routingとstorageのtestはqueue mutationから送信元originが渡る接続を検証しない"
+// @end-test-value
+test("queue changes retain accepted source origin for sender invalidation", async () => {
+  const { store, rows } = boundary();
+  const origin = { kind: "session" as const, actorKind: "main" as const, actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "7", operation: "send" as const, targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId };
+  const notices: Array<{ owner: typeof owner; origin: unknown }> = [];
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => { throw new Error("Unexpected dispatch"); },
+    onChanged: (owner, origin) => notices.push({ owner, origin }), sendInput: async (receipt) => { await store.settle(owner, receipt.id, "completed"); } });
+  const assertNewSourceNotices = (before: number) => {
+    const added = notices.slice(before);
+    assert.ok(added.length > 0, "The operation must publish a new source invalidation.");
+    for (const notice of added) assert.deepEqual(notice, { owner, origin });
+  };
+  try {
+    const beforeEnqueue = notices.length;
+    const receipt = await service.enqueue(owner, { ...captured("first"), origin });
+    assertNewSourceNotices(beforeEnqueue);
+    rows[0].accepted = structuredClone(rows[0].captured);
+    rows[0].captured.origin = { ...origin, actorSessionId: "not-the-original" };
+    const beforeCancel = notices.length;
+    await service.cancelQueued(owner, receipt.id);
+    assertNewSourceNotices(beforeCancel);
+    const external = await store.enqueue(owner, { ...captured("external"), origin });
+    const beforeExternalAcceptance = notices.length;
+    service.acceptCommittedReceipt(external);
+    assertNewSourceNotices(beforeExternalAcceptance);
+    const beforeQueuedInput = notices.length;
+    const result = await service.sendQueuedInput(owner, external.id, "native");
+    assert.equal(result.state, "completed");
+    assertNewSourceNotices(beforeQueuedInput);
+  } finally { await service.close(); }
+});
+
 function boundary() {
   const rows: SessionTurnQueueReceipt[] = [];
   const update = (id: string, state: SessionTurnQueueReceipt["state"], reason?: string) => {

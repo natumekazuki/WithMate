@@ -1557,6 +1557,7 @@ test("sent deliveries render full content with the source conversation file cont
     const record = (kind: string, request: { sessionId: string; target: string }) => { requests.push({ kind, request }); };
     Object.defineProperty(dom.window, "withmate", { value: {
       readSessionExecution: async (_owner: string, operation: string) => {
+        if (operation === "list_sent_steers") return { ok: true, items: [], nextCursor: null };
         assert.equal(operation, "list_sent_deliveries");
         return { ok: true, items: [{ receiptId: "outgoing", sequence: 1, sourceTurnId: "42", sourceMessageSeq: saved ? 3 : null,
           target: { kind: "main", sessionId: "recipient", incarnationId: "recipient-inc" }, state: "queued", origin, text }], nextCursor: null };
@@ -1664,7 +1665,7 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
       }
       const requests: number[] = [];
       Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, op: string, request: { target: unknown; messageSeq: number }) => {
-        if (op === "list_sent_deliveries" || op === "list_issued_coordinations") return { ok: true, items: [], nextCursor: null };
+        if (op === "list_sent_deliveries" || op === "list_issued_coordinations" || op === "list_sent_steers") return { ok: true, items: [], nextCursor: null };
         assert.deepEqual(request.target, target); requests.push(request.messageSeq);
         return { ok: true, origin: request.messageSeq === 3 ? origin : null, ...(request.messageSeq === 3 ? { coordination: { id: "consultation", text, consultation: notification.consultation } } : {}) };
       } } });
@@ -1709,7 +1710,7 @@ test("multiple sent cards retain recipients and order within live and saved resp
     const intersection = installIntersectionObserver();
     const origin = { kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "source-inc", actorTurnId: "42", operation: "send", targetIncarnationId: "recipient-inc" };
     const items = [["a", "FIRST", 6], ["b", "SECOND", 6], ["a", "THIRD", 14]].map(([target, text, position], index) => ({ receiptId: `outgoing-${index}`, sequence: index + 1, sourceTurnId: "42", sourceMessageSeq: saved ? 1 : null, sourceDisplayPosition: position, target: { kind: "main", sessionId: target, incarnationId: "recipient-inc" }, state: "queued", origin: { ...origin, targetSessionId: target, targetSnapshot: { sessionTitle: `Session ${target}`, character: { id: target, name: `Mate ${target}`, iconPath: "" } } }, text }));
-    Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async () => ({ ok: true, items, nextCursor: null }) } });
+    Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (_owner: string, operation: string) => ({ ok: true, items: operation === "list_sent_deliveries" ? items : [], nextCursor: null }) } });
     const root = createRoot(dom.window.document.getElementById("root")!);
     try {
       await act(async () => root.render(<SessionMessageColumn {...createBaseProps("sender")} provider="codex" isRunning={!saved} liveWithMateTurnId={saved ? undefined : "42"} liveRunAssistantText={saved ? "" : "BEFORE\n\nMIDDLE\n\nAFTER"} hasLiveRunAssistantText={!saved}

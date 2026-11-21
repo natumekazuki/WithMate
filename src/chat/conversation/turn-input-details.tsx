@@ -122,9 +122,13 @@ export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTur
 export function TurnInputStatus({ message }: { message: Message }) {
   const input = message.turnInput;
   if (message.role !== "user" || !input) return null;
+  return <AdditionalInputStatus state={input.state} />;
+}
+
+export function AdditionalInputStatus({ state }: { state: NonNullable<Message["turnInput"]>["state"] }) {
   return <>
-    {input.state === "unknown" ? <p role="alert">Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
-    {input.state === "not-sent" ? <p role="alert">This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
+    {state === "unknown" ? <p className="message-paragraph" role="alert">Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
+    {state === "not-sent" ? <p className="message-paragraph" role="alert">This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
   </>;
 }
 

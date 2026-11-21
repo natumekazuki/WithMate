@@ -18,6 +18,8 @@
 
 `list_issued_coordinations`は同じ保存message seq／明示live WithMate Turnの範囲と正確な起票元Session／incarnationに属する保存recordを読む。receiptがなくても起票Turnが一致するユーザー宛相談を含み、本文・起票Turn・表示中messageへの所属をrecord ID順のcursorと最大20件のpageで返す。表示中の同Turnのassistantを優先し、なければ表示中userへ付け、両方なければlive Turnのmessage参照はnullにする。出力内の厳密な位置や未記録の所属は推定しない。消去済みrecordは一覧から除き、別台帳や本文コピーを所有しない。MCPと配布CLIは同じSession操作schema・application dispatchで公開する。
 
+`list_sent_steers`は同じsource Turn解決を使い、直接Steerを宛先Mainの保存user messageの`turnInput.origin`から逆引きする。本文全文、正確な宛先とmessage seq、pending／confirmed／unknown／not-sentを返す。保存message行のsequenceをcursorに最大20件ずつ読み、receiptのcursorや状態とは混ぜない。queue経由のSend Inputは既存receiptを持つため`list_sent_deliveries`で扱う。直接Steerの詳細は返却された宛先とmessage seqで`get_execution`へ照会する。originのない入力を現在の親情報から補完しない。
+
 `list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
 
 ## 本文・操作詳細のpaging

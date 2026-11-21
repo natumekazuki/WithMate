@@ -4,8 +4,8 @@ import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
-import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
-import type { SentDelivery } from "./use-sent-deliveries.js";
+import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, AdditionalInputStatus, type TurnInputReadContext } from "./turn-input-details.js";
+import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
 import { CoordinationNotice } from "./coordination-notice.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
@@ -14,14 +14,16 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, ...messageContext }: { item: SentDelivery; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean } & SentMessageContext) {
+export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, ...messageContext }: { item: SentInstruction; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean } & SentMessageContext) {
+  const receipt = "receiptId" in item ? item : null;
+  const steer = "messageSeq" in item ? item : null;
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [execution, setExecution] = useState<Execution | null>(null);
   const [statusError, setStatusError] = useState("");
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusRevision, setStatusRevision] = useState(0);
-  const identity = JSON.stringify([context.ownerSessionId, item.receiptId, item.target]);
+  const identity = JSON.stringify([context.ownerSessionId, sentInstructionKey(item), item.target]);
   useEffect(() => {
     if (!open) return;
     const api = getWithMateApi();
@@ -32,7 +34,7 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
       if (!api?.readSessionExecution) { setStatusError("Saved delivery state reads are unavailable."); return; }
       setStatusBusy(true); setStatusError("");
       try {
-        const result = await api.readSessionExecution(context.ownerSessionId, "get_execution", { target: item.target, receiptId: item.receiptId });
+        const result = await api.readSessionExecution(context.ownerSessionId, "get_execution", { target: item.target, ...(receipt ? { receiptId: receipt.receiptId } : { messageSeq: steer!.messageSeq }) });
         if (!active || request !== current) return;
         if (result.ok) setExecution(result); else setStatusError(result.message);
       } catch (failure) {
@@ -43,10 +45,12 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
     const changed = (sessionId: string) => { if (sessionId === item.target.sessionId) void refresh(); };
     const queueChanged = api?.onSessionTurnQueueChanged?.(changed);
     const turnUpdated = api?.onSessionTurnUpdated?.(changed);
-    return () => { active = false; queueChanged?.(); turnUpdated?.(); };
+    const sentChanged = api?.onSessionSentDeliveriesChanged?.((sourceSessionId) => { if (sourceSessionId === context.target.sessionId) void refresh(); });
+    return () => { active = false; queueChanged?.(); turnUpdated?.(); sentChanged?.(); };
   }, [open, identity, item.state, statusRevision]);
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
-  const distinctContent = item.coordination && (item.coordination.consultation === undefined || item.coordination.text !== item.coordination.consultation);
+  const coordination = receipt?.coordination;
+  const distinctContent = coordination && (coordination.consultation === undefined || coordination.text !== coordination.consultation);
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
   const card = <div className="message-card assistant session-outbound"><div className="message-card-content">
       <div className="sent-delivery-header">
@@ -54,19 +58,20 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
         {inline ? detailsButton : null}
       </div>
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
-      {item.coordination
-        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} />
+      {coordination
+        ? <CoordinationNotice id={coordination.id} consultation={coordination.consultation ?? coordination.text} target={item.target} />
         : <MessageRichText {...messageContext} text={item.text} />}
-      {item.coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={item.coordination.text} /></section> : null}
+      {coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={coordination.text} /></section> : null}
+      {steer ? <AdditionalInputStatus state={steer.state} /> : null}
       {error ? <p role="alert">{error}</p> : null}
       {open ? <section className="artifact-block turn-input-details turn-input-panel" aria-label="Delivery Details">
       <div className="artifact-section-header"><strong>Delivery Details</strong></div>
       {statusBusy ? <LoadingIndicator inline label="Loading delivery state" /> : null}
       {statusError ? <p role="alert">{statusError} <button type="button" className="drawer-toggle compact secondary" disabled={statusBusy} onClick={() => setStatusRevision((value) => value + 1)}>Retry Delivery Details</button></p> : null}
       <dl className="check-list turn-input-rows" aria-label="Delivery State">
-        <InputDetailRow label="Receipt State">{inputDetailStateLabel(execution?.receiptState ?? item.state, "No Receipt")}</InputDetailRow>
+        {receipt ? <InputDetailRow label="Receipt State">{inputDetailStateLabel(execution?.receiptState ?? receipt.state, "No Receipt")}</InputDetailRow> : null}
         <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
-        <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
+        {receipt ? <InputDetailRow label="Delivery Timing">{receipt.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
       </dl>
       </section> : null}
     </div></div>;

@@ -896,6 +896,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     json_extract(accepted_json, '$.origin.actorSessionId'),
     json_extract(accepted_json, '$.origin.actorIncarnationId'),
     json_extract(accepted_json, '$.origin.actorTurnId'), sequence)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_messages_steer_sender ON session_messages_v6(
+    json_extract(body, '$.turnInput.origin.actorKind'),
+    json_extract(body, '$.turnInput.origin.actorSessionId'),
+    json_extract(body, '$.turnInput.origin.actorIncarnationId'),
+    json_extract(body, '$.turnInput.origin.actorTurnId'), id)
+    WHERE role='user' AND json_extract(body, '$.turnInput.origin.operation')='steer'`);
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

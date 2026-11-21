@@ -767,6 +767,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "releaseInterruptedSessionTurn",
     "sendQueuedSessionInput",
     "onSessionTurnQueueChanged",
+    "onSessionSentDeliveriesChanged",
     "acknowledgeSessionDraftFlush",
     "acknowledgeTerminalOutput",
     "cancelAuxiliarySessionRun",
@@ -949,7 +950,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
 // @test-value v2
 // kind = "contract"
-// claim = "キュー専用APIはSession/owner/request/cursor/item識別子を対応するIPCへ渡しchanged購読を解除する"
+// claim = "キュー専用APIはSession/owner/request/cursor/item識別子を対応するIPCへ渡し、queueと送信元変更の購読はIDを検証して解除できる"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts queue APIs and onSessionTurnQueueChanged" }
 // fault = "queue APIが誤channelや欠落引数で呼ばれるかchanged listenerを解除できない"
 // observable = "invoke channelとpayload、changed callbackのSession IDとremoveListenerの対象"
@@ -987,6 +988,16 @@ test("queue preloadは専用引数を伝達しchanged購読を解除する", asy
   dispose();
   assert.equal(listeners.has("withmate:session-turn-queue-changed"), false);
   assert.deepEqual(removedListeners.at(-1), { channel: "withmate:session-turn-queue-changed", listener });
+  const sent: string[] = [];
+  const disposeSent = api.onSessionSentDeliveriesChanged((id) => sent.push(id));
+  const sentListener = listeners.get("withmate:session-sent-deliveries-changed");
+  assert.ok(sentListener);
+  for (const invalid of [null, 4, {}, ""]) sentListener({}, invalid);
+  sentListener({}, "source");
+  assert.deepEqual(sent, ["source"]);
+  disposeSent();
+  assert.equal(listeners.has("withmate:session-sent-deliveries-changed"), false);
+  assert.deepEqual(removedListeners.at(-1), { channel: "withmate:session-sent-deliveries-changed", listener: sentListener });
 });
 
 test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {
