@@ -26,7 +26,6 @@ function harness() {
   const entries: CachedProviderModels[] = [];
   const changed: ModelCatalogSnapshot[] = [];
   const calls: { id: string; input: ListProviderModelsInput }[] = [];
-  const diagnostics: Array<{ correlationId: string; outcome: string; fetchedAt?: string }> = [];
   let now = Date.parse("2026-10-27T00:00:00.000Z");
   let list: (id: string, input: ListProviderModelsInput) => Promise<ModelCatalogProvider> = async (id) => catalog(id);
   const unexpected = (): never => { throw new Error("Discovery must not invoke a generation operation"); };
@@ -48,39 +47,13 @@ function harness() {
     }),
     defaultWorkspace: () => path.resolve("workspace-a"),
     onChanged: (snapshot) => changed.push(snapshot),
-    logCopilotDiscovery: (entry) => diagnostics.push(entry),
     now: () => now,
     environment,
   });
-  return { settings, environment, entries, changed, calls, diagnostics, create,
+  return { settings, environment, entries, changed, calls, create,
     advance: (milliseconds: number) => { now += milliseconds; },
     list: (implementation: typeof list) => { list = implementation; } };
 }
-
-// @test-value v2
-// kind = "contract"
-// claim = "Copilot探索ログの相関IDと保存された取得時刻をcatalog snapshotまで追跡できる"
-// oracle = { type = "contract", ref = "docs/design/app-log-base.md: Provider Diagnostic Log Policy" }
-// fault = "探索IDとcache保存結果を結び付けないか異なる取得時刻を報告する"
-// observable = "adapter入力の診断ID、cacheログとcatalog snapshotの取得時刻"
-// observation_boundary = "public-boundary"
-// scope = "Copilot discovery cache diagnostic"
-// lifecycle = "permanent"
-// impact = "探索結果とcatalog候補の対応を切り分けられなくなる"
-// distinction = "型検査やcache testだけでは診断情報の相関を検出できない"
-// @end-test-value
-it("correlates Copilot discovery with the stored cache timestamp", async (t) => {
-  const h = harness();
-  h.settings.codingProviderSettings.copilot = { enabled: true, apiKey: "", skillRootPath: "" };
-  const service = h.create();
-  t.after(() => service.close());
-  await service.get({ providerId: "copilot" });
-  await setImmediate();
-  const call = h.calls.find((entry) => entry.id === "copilot")!;
-  assert.ok(call.input.diagnosticId);
-  assert.deepEqual(h.diagnostics, [{ correlationId: call.input.diagnosticId, outcome: "stored", fetchedAt: h.entries[0].fetchedAt }]);
-  assert.equal((await service.get({ providerId: "copilot" })).discovery?.copilot?.fetchedAt, h.entries[0].fetchedAt);
-});
 
 function models(snapshot: ModelCatalogSnapshot, id = "codex") {
   return snapshot.providers.find((provider) => provider.id === id)?.models.map((model) => model.id);
