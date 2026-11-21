@@ -344,6 +344,7 @@ export type WithMateWindowPickerApi = {
 export type WithMateWindowSubscriptionApi = {
   onSessionTurnUpdated(listener: (sessionId: string) => void): () => void;
   onSessionTurnQueueChanged(listener: (sessionId: string) => void): () => void;
+  onSessionSentDeliveriesChanged(listener: (sourceSessionId: string) => void): () => void;
   subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
   subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
   acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;

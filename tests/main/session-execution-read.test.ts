@@ -28,6 +28,54 @@ function session() { return buildNewSession({ id: "read-main", taskTitle: "Read"
 
 // @test-value v2
 // kind = "contract"
+// claim = "直接Steerの送信元読取は正確なactor/incarnation/Turnと宛先に結び、4状態と本文全文を複数page・live/保存後で維持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/966; docs/design/database-schema.md: 親からの直接Steer・送信側の読取" }
+// fault = "queue専用一覧で直接入力を落とす、他世代・別actorの本文を混ぜる、pendingをconfirmed扱いする、cursorで同じTurnの複数入力を欠落させる"
+// observable = "実SQLiteから公開schemaを通して取得する送信元pageの本文、状態、宛先、messageSeq、sourceMessageSeq、cursor"
+// observation_boundary = "public-boundary"
+// scope = "保存済みrecipient message由来の一括送信元projection。通常receiptの一覧は既存testで確認"
+// lifecycle = "permanent"
+// impact = "送った訂正を追えない、未確定入力を受信済みと誤認する、別Sessionの指示を漏らす"
+// distinction = "型・schemaとrenderer fixtureではSQLiteの逆引き条件とmessage keysetの接続を検証できない。単一小型DBで必要な境界をまとめる"
+// @end-test-value
+test("outgoing direct Steers retain exact identity, full text and four states across pages", async () => {
+  await fixture(({ sessions, turns, read }) => {
+    const sender = sessions.insertSession({ ...session(), id: "source", taskTitle: "Original Source", messages: [{ role: "user", text: "request" }, { role: "assistant", text: "answer" }, { role: "user", text: "later" }] });
+    const base = { sessionId: sender.id, provider: sender.provider, model: sender.model, reasoningEffort: sender.reasoningEffort, approvalMode: sender.approvalMode, threadId: "", errorMessage: "", createdAt: "now", phase: "running" as const };
+    const source = turns.createSessionTurn({ ...base, userMessageSeq: 0 });
+    const later = turns.createSessionTurn({ ...base, userMessageSeq: 2 });
+    const recipient = sessions.insertSession({ ...session(), id: "recipient" });
+    const recipientIncarnation = getSessionIncarnationId(recipient);
+    const origin = { kind: "session" as const, operation: "steer" as const, actorKind: "main" as const, actorSessionId: sender.id,
+      actorIncarnationId: getSessionIncarnationId(sender), actorTurnId: String(source.id), actorSnapshot: captureSessionTurnQueueDisplay(sender),
+      targetSessionId: "recipient", targetIncarnationId: recipientIncarnation };
+    const states = ["pending", "confirmed", "unknown", "not-sent"] as const;
+    const messages = Array.from({ length: 24 }, (_, index) => ({ role: "user" as const, text: `${index}: ${"Full instruction ".repeat(40)}`,
+      turnInput: { turnId: "999", nativeTurnId: "native-target", attachments: [], state: states[index % 4], origin } }));
+    sessions.updateSession({ ...recipient, messages: [...messages,
+      ...[{ actorSessionId: "other" }, { actorIncarnationId: "old" }, { actorTurnId: String(later.id) }, { targetIncarnationId: "old" }, { targetSessionId: "other" }].map((patch) => ({ ...messages[0], text: "not in this source range", turnInput: { ...messages[0].turnInput, origin: { ...origin, ...patch } } })),
+      { ...messages[0], text: "GUI input", turnInput: { ...messages[0].turnInput, origin: undefined } },
+    ] });
+    sessions.patchSessionMetadata(sender.id, getSessionIncarnationId(sender), { title: "Renamed Source" });
+    const target = { kind: "main" as const, sessionId: sender.id, incarnationId: getSessionIncarnationId(sender) };
+    const call = (extra: object = {}) => executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [], liveTurnIds: [String(source.id)], limit: 20, ...extra } }));
+    const first = call();
+    assert.equal(first.items.length, 20);
+    const next = call({ cursor: first.nextCursor });
+    assert.equal(next.nextCursor, null);
+    const all = [...first.items, ...next.items];
+    assert.deepEqual(all.map((item) => [item.messageSeq, item.text, item.state, item.sourceMessageSeq]), messages.map((message, seq) => [seq, message.text, message.turnInput.state, null]));
+    assert.ok(all.every((item) => item.target.sessionId === "recipient" && item.target.incarnationId === recipientIncarnation && item.origin.actorSnapshot?.sessionTitle === "Original Source"));
+    turns.updateSessionTurn(source.id, { ...base, phase: "completed", userMessageSeq: 0, assistantMessageSeq: 1 });
+    const saved = call({ messageSeqs: [0, 1], liveTurnIds: [] });
+    assert.deepEqual(saved.items.map((item) => [item.sequence, item.sourceMessageSeq]), first.items.map((item) => [item.sequence, 1]));
+    assert.equal(call({ messageSeqs: [], liveTurnIds: [] }).items.length, 0);
+    assert.equal(call({ liveTurnIds: [String(later.id)] }).items.length, 1);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "受信側の一覧と実行読取は同じ保存messageから送信元CharacterとそのSession色を得る"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/958" }
 // fault = "user roleから人間と誤判定するか別Session世代の色を混ぜる"

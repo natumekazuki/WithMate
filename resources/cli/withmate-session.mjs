@@ -6029,6 +6029,13 @@ var reference = {
 	turnId: string().regex(/^[1-9]\d*$/).optional(),
 	messageSeq: number().int().nonnegative().optional()
 };
+var sentRequest = object({
+	target: sessionTargetSchema,
+	messageSeqs: array(number().int().nonnegative()).max(180),
+	liveTurnIds: array(string().regex(/^[1-9]\d*$/)).max(1).optional(),
+	cursor: number().int().nonnegative().optional(),
+	limit: number().int().min(1).max(20).optional()
+}).strict();
 var exactReference = (extra) => object({
 	...reference,
 	...extra
@@ -6048,13 +6055,8 @@ var executionOperationRequestSchemas = {
 		cursor: id$1.optional(),
 		limit: number().int().min(1).max(20).optional()
 	}).strict(),
-	list_sent_deliveries: object({
-		target: sessionTargetSchema,
-		messageSeqs: array(number().int().nonnegative()).max(180),
-		liveTurnIds: array(string().regex(/^[1-9]\d*$/)).max(1).optional(),
-		cursor: number().int().nonnegative().optional(),
-		limit: number().int().min(1).max(20).optional()
-	}).strict(),
+	list_sent_deliveries: sentRequest,
+	list_sent_steers: sentRequest,
 	list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
 	get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
 	list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
@@ -6232,6 +6234,25 @@ var executionSettings = object({
 	customAgentName: string().nullable()
 });
 var executionOperationResultSchemas = {
+	list_sent_steers: object({
+		...ok,
+		items: array(object({
+			sequence: number().int().nonnegative(),
+			sourceTurnId: id$1,
+			sourceMessageSeq: number().nullable(),
+			target: sessionTargetSchema,
+			messageSeq: number().int().nonnegative(),
+			state: _enum([
+				"pending",
+				"confirmed",
+				"unknown",
+				"not-sent"
+			]),
+			origin: steerOrigin,
+			text: string()
+		})),
+		nextCursor: number().int().nonnegative().nullable()
+	}),
 	list_issued_coordinations: object({
 		...ok,
 		items: array(object({
@@ -6407,6 +6428,7 @@ var executionOperationResultSchemas = {
 	}).passthrough()])
 };
 var EXECUTION_OPERATION_DESCRIPTIONS = {
+	list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
 	list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
 	list_sent_deliveries: "Read outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor. Each text contains the full original input. Stored Coordination notifications also include coordination.id, the full then-delivered human-readable coordination.text and saved consultation text in coordination.consultation when available. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
 	list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",

@@ -18,6 +18,7 @@ import {
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_SESSION_TURN_UPDATED_EVENT,
   WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT,
+  WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT,
 } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import {
   OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX,
@@ -107,6 +108,11 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   public broadcastSessionTurnQueueChanged(sessionId: string, ownerSessionId = sessionId): void {
     const window = this.options.getLiveSessionRunWindow(ownerSessionId);
     if (window) this.broadcastTo([window], WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT, sessionId);
+  }
+
+  public broadcastSessionSentDeliveriesChanged(sourceSessionId: string, ownerSessionId = sourceSessionId): void {
+    const window = this.options.getLiveSessionRunWindow(ownerSessionId);
+    if (window) this.broadcastTo([window], WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT, sourceSessionId);
   }
 
   public broadcastAuxiliarySessionSelection(parentSessionId: string, auxiliarySessionId: string): void {

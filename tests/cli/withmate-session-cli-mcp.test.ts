@@ -180,6 +180,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       steer: { target, turnId: "1", message: "check loading first" },
       list_sent_deliveries: { target, messageSeqs: [0, 1] },
       list_issued_coordinations: { target, messageSeqs: [0, 1] },
+      list_sent_steers: { target: { kind: "main", sessionId: "parent", incarnationId: "parent-v1" }, messageSeqs: [0, 1] },
       list_executions: { target },
       get_execution: exact,
       list_execution_inputs: exact,
@@ -339,6 +340,8 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId },
         text: "Original input ".repeat(40), coordination: { id: "consultation", text: "Saved answer ".repeat(40) },
       }], nextCursor: null },
+      list_sent_steers: { items: [{ sequence: 1, sourceTurnId: "1", sourceMessageSeq: 1, target, messageSeq: 2, state: "unknown",
+        origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "steer", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId }, text: "Saved direct input" }], nextCursor: null },
       list_executions: {
         ...page,
         kind: "receipts",
@@ -479,6 +482,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
           assert.deepEqual(command.value.coordination, values.get_execution.coordination);
         }
         if (!rejected && operation === "list_sent_deliveries") assert.deepEqual(command.value.items, values.list_sent_deliveries.items);
+        if (!rejected && operation === "list_sent_steers") assert.deepEqual(command.value.items, values.list_sent_steers.items);
         if (rejected) assert.equal(command.value.effect, "none");
         assert.deepEqual(calls.at(-1), calls.at(-2));
         assert.deepEqual(calls.at(-1), {

@@ -26,7 +26,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
   interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
-  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased">;
+  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased" | "onSentInputChanged">;
   timing: {
     currentTimestampLabel?: () => string;
   };
@@ -90,6 +90,9 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolvePendingApprovalRequest: deps.interaction.resolvePendingApprovalRequest,
     resolvePendingElicitationRequest: deps.interaction.resolvePendingElicitationRequest,
     notifySessionTurnTerminal: deps.notification.notifySessionTurnTerminal,
+    onSentInputChanged: (origin) => {
+      if (deps.owner.isActive()) deps.notification.onSentInputChanged?.(origin);
+    },
     onSessionRunReleased: (sessionId) => {
       if (deps.owner.isActive()) deps.notification.onSessionRunReleased?.(sessionId);
     },

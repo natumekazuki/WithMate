@@ -22,7 +22,7 @@ import {
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
-import { captureSessionTurnQueueDisplay, type SessionTurnQueueReceipt } from "../src-shared/session/session-turn-queue.js";
+import { captureSessionTurnQueueDisplay, type SessionTurnQueueReceipt, type SessionTurnQueueOrigin, type SessionSteerOrigin } from "../src-shared/session/session-turn-queue.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
 import type { AgentRuntimeSourceRef } from "../src-shared/agent-runtime/agent-runtime-source.js";
@@ -2414,6 +2414,20 @@ async function getQueueRuntimeSession(sessionId: string): Promise<Session | null
   return requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
 }
 
+function publishSentInputChanged(origin: SessionTurnQueueOrigin | SessionSteerOrigin | undefined): void {
+  if (origin?.kind !== "session" || !origin.actorSessionId || !origin.actorIncarnationId) return;
+  const owner = mainStoreContext.activePersistentStoreOwner;
+  void (async () => {
+    const source = await getQueueRuntimeSession(origin.actorSessionId!);
+    const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(origin.actorSessionId!);
+    if (!source || getSessionIncarnationId(source) !== origin.actorIncarnationId
+      || (auxiliary ? "auxiliary" : "main") !== origin.actorKind
+      || (auxiliary && (!("actorMainSessionId" in origin) || auxiliary.parentSessionId !== origin.actorMainSessionId))
+      || mainStoreContext.activePersistentStoreOwner !== owner) return;
+    requireWindowBroadcastService().broadcastSessionSentDeliveriesChanged(source.id, auxiliary?.parentSessionId ?? source.id);
+  })().catch((error) => writeAppLog({ level: "warn", kind: "session.sent-input.broadcast-failed", process: "main", message: "Outgoing input change publication failed", error: appLogService.errorToLogError(error) }));
+}
+
 async function resolveQueueSessionRuntime(sessionId: string) {
   const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId);
   const runtime = auxiliary
@@ -2473,8 +2487,9 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
         assertPersistentStoreOwnerIsActive(owner, "Coordination input");
         return turnId;
       },
-      onChanged: ({ sessionId }) => {
+      onChanged: ({ sessionId }, origin) => {
         if (mainStoreContext.activePersistentStoreOwner === owner) {
+          publishSentInputChanged(origin);
           void requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId).then((auxiliary) => {
             if (mainStoreContext.activePersistentStoreOwner === owner) {
               requireWindowBroadcastService().broadcastSessionTurnQueueChanged(sessionId, auxiliary?.parentSessionId ?? sessionId);
@@ -2582,6 +2597,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
+        onSentInputChanged: publishSentInputChanged,
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
         onSessionRunReleased: wakeSessionQueueAfterRunReleased,
       },

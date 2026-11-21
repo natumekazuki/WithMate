@@ -114,6 +114,7 @@ export type SessionRuntimeServiceDeps = {
   endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
+  onSentInputChanged?(origin: SessionSteerOrigin): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
@@ -672,6 +673,12 @@ export class SessionRuntimeService {
     } catch (error) {
       return { outcome: parent?.dispatched ? "unknown" : "not-applied", turnId, messageSeq: parent?.messageSeq ?? null,
         reason: error instanceof Error ? error.message : "The Steer result could not be confirmed." };
+    } finally {
+      // A lost storage reply may still have committed pending/not-sent input.
+      // Invalidate its exact source without treating the operation as accepted.
+      if (parent) {
+        try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot change the input outcome. */ }
+      }
     }
   }
 
@@ -751,6 +758,9 @@ export class SessionRuntimeService {
       try {
         if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin, questionRequestId);
         if (parent) parent.messageSeq = inputSeq ?? null;
+        if (parent) {
+          try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot interrupt Provider dispatch. */ }
+        }
         assertActiveTurn();
         dispatched = true;
         if (parent) parent.dispatched = true;

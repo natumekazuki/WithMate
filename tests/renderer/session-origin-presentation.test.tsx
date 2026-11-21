@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import { SentDeliveryRow } from "../../src/chat/conversation/sent-delivery-row.js";
 import { SessionOriginRoute } from "../../src/chat/conversation/turn-input-details.js";
-import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
+import type { SentDelivery, SentSteer } from "../../src/chat/conversation/use-sent-deliveries.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 const origin = { kind: "session" as const, actorKind: "auxiliary" as const, actorSessionId: "sender-aux", actorMainSessionId: "sender-main", actorIncarnationId: "sender-inc", actorTurnId: "42", operation: "send" as const, targetSessionId: "target", targetIncarnationId: "target-inc",
@@ -17,6 +17,47 @@ const receipt: SessionTurnQueueReceipt = { id: "receipt", sessionId: "target", i
   captured: { origin, request: { userMessage: "Saved Instruction", clientRequestId: "request", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" } };
 const context = { ownerSessionId: "sender-main", target: { kind: "main" as const, sessionId: "sender-main", incarnationId: "source-inc" } };
 const item: SentDelivery = { receiptId: "receipt", sequence: 1, sourceTurnId: "42", sourceMessageSeq: 3, target: { kind: "main", sessionId: "target", incarnationId: "target-inc" }, state: "queued", origin, text: `${"Saved instruction. ".repeat(40)}End of full message.` };
+
+// @test-value v2
+// kind = "contract"
+// claim = "直接Steerの送信カードは保存宛先・全文と不明/未送信理由を示し、状態詳細はreceiptではなく正確な宛先messageで読む"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/966" }
+// fault = "直接入力を通常受付として表示する、未確定を確認済みにする、または別の入力・Turnの状態を読む"
+// observable = "送信カードの全文・宛先・unknown/not-sent理由とget_executionのtarget/messageSeq、Delivery Detailsの項目"
+// observation_boundary = "consumer"
+// scope = "本番SentDeliveryRowと共通AdditionalInputStatus。execution応答はfixture"
+// lifecycle = "permanent"
+// impact = "訂正の宛先や受信状態を誤認し、未送信を完了した指示として扱う"
+// distinction = "型検査とstorage testでは実DOMの表示と詳細入口からの正確な照会を検証できない。4状態は同じ小型DOMで確認する"
+// @end-test-value
+test("direct Steer cards show the recorded input state and read the exact message", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const requests: unknown[] = [];
+  Object.defineProperty(dom.window, "withmate", { value: { openSession: async () => {}, readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
+    assert.equal(operation, "get_execution"); requests.push(request); return { ok: true, turnState: "running", receiptState: null };
+  } } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const steer: SentSteer = { sequence: 1, sourceTurnId: "42", sourceMessageSeq: 3, target: item.target, messageSeq: 7, state: "pending", text: item.text,
+    origin: { ...origin, actorKind: "main", actorSessionId: "sender-main", operation: "steer" } };
+  try {
+    for (const [state, reason] of [["pending", null], ["unknown", "Delivery or saving could not be confirmed. This input is not a confirmed addition."], ["not-sent", "This input was not delivered to the Turn. It has not been sent as a new Turn."], ["confirmed", null]] as const) {
+      await act(async () => root.render(<SentDeliveryRow item={{ ...steer, state }} context={context} />));
+      const row = dom.window.document.querySelector("article")!;
+      assert.ok(row.textContent?.includes(item.text));
+      assert.equal(row.querySelector(".session-message-mention")?.textContent, "@Saved Target");
+      assert.equal(row.querySelector('[role="alert"]')?.textContent ?? null, reason);
+    }
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Show Delivery Details"]')!.click());
+    assert.deepEqual(requests, [{ target: item.target, messageSeq: 7 }]);
+    assert.deepEqual([...dom.window.document.querySelectorAll("dt")].map((element) => element.textContent), ["Turn State"]);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

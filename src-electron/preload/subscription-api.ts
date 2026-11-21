@@ -58,6 +58,11 @@ export function createSubscriptionApi(
         if (typeof payload === "string" && payload) listener(payload);
       });
     },
+    onSessionSentDeliveriesChanged(listener) {
+      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT, (payload: unknown) => {
+        if (typeof payload === "string" && payload) listener(payload);
+      });
+    },
     onSessionTurnUpdated(listener) {
       return subscribe(ipcRenderer, channels.WITHMATE_SESSION_TURN_UPDATED_EVENT, (payload: unknown) => {
         if (typeof payload === "string" && payload) listener(payload);

@@ -3,6 +3,7 @@ import type {
   SessionTurnQueueOwner,
   SessionTurnQueueReceipt,
   SessionTurnQueueStore,
+  SessionTurnQueueOrigin,
 } from "../../src-shared/session/session-turn-queue.js";
 
 export type SessionTurnQueueDispatchResult = {
@@ -20,7 +21,7 @@ export type SessionTurnQueueServiceDeps = {
     receipt: SessionTurnQueueReceipt,
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
   ): Promise<SessionTurnQueueDispatchResult>;
-  onChanged?(owner: SessionTurnQueueOwner): void;
+  onChanged?(owner: SessionTurnQueueOwner, origin?: SessionTurnQueueOrigin): void;
 };
 
 export class QueuedInputPreDispatchError extends Error {}
@@ -59,7 +60,7 @@ export class SessionTurnQueueService {
       await assertAuthorized?.();
       const receipt = await this.deps.store.enqueue(owner, captured);
       this.adoptOwner(owner);
-      this.notify(owner);
+      this.notify(receipt);
       this.wake(owner.sessionId);
       return receipt;
     }));
@@ -113,7 +114,7 @@ export class SessionTurnQueueService {
       this.assertNotEditing(owner, id);
       const receipt = await this.deps.store.cancelQueued(owner, id);
       if (this.isCurrentOwner(owner)) {
-        this.notify(owner);
+        this.notify(receipt);
         this.wake(owner.sessionId);
       }
       return receipt;
@@ -148,7 +149,7 @@ export class SessionTurnQueueService {
       const input = await prepare(current);
       const receipt = await this.deps.store.updateQueued(owner, id, input);
       this.edits.delete(owner.sessionId);
-      this.notify(owner);
+      this.notify(receipt);
       this.wake(owner.sessionId);
       return receipt;
     }));
@@ -230,12 +231,12 @@ export class SessionTurnQueueService {
           } catch {
             if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
           }
-          this.notify(owner);
+          this.notify(candidate);
           throw error;
         }
         this.adoptOwner(owner);
         this.lastClaim.set(owner.sessionId, claimed);
-        this.notify(owner);
+        this.notify(claimed);
         return claimed;
       });
       try {
@@ -243,7 +244,7 @@ export class SessionTurnQueueService {
         const canonical = await this.deps.store.getReceipt(owner, receipt.requestId);
         if (!canonical || canonical.state !== "completed") throw new Error("The queued input commit could not be confirmed.");
         this.reconcileKnownReceipt(canonical);
-        this.notify(owner);
+        this.notify(canonical);
         return canonical;
       } catch (error) {
         return this.withLock(owner.sessionId, async () => {
@@ -251,11 +252,11 @@ export class SessionTurnQueueService {
           const canonical = await this.deps.store.getReceipt(owner, receipt.requestId);
           if (canonical?.state === "completed") {
             if (error instanceof QueuedInputRuntimeRecoveryError) {
-              this.notify(owner);
+              this.notify(canonical);
               throw error;
             }
             this.reconcileKnownReceipt(canonical);
-            this.notify(owner);
+            this.notify(canonical);
             return canonical;
           }
           if (error instanceof QueuedInputPreDispatchError) {
@@ -267,7 +268,7 @@ export class SessionTurnQueueService {
                 this.wake(owner.sessionId);
               }
             } finally {
-              this.notify(owner);
+              this.notify(receipt);
             }
             throw error;
           }
@@ -275,7 +276,7 @@ export class SessionTurnQueueService {
           try {
             await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
           } finally {
-            this.notify(owner);
+            this.notify(receipt);
           }
           throw error;
         });
@@ -307,7 +308,7 @@ export class SessionTurnQueueService {
         : await this.deps.store.releaseInterrupted(owner, id, { runReleased: !await this.deps.isRunInFlight(owner.sessionId) });
       if (this.isCurrentOwner(owner)) {
         this.blocked.delete(owner.sessionId);
-        this.notify(owner);
+        this.notify(receipt);
         this.wake(owner.sessionId);
       }
       return receipt;
@@ -434,9 +435,10 @@ export class SessionTurnQueueService {
     this.owners.set(owner.sessionId, { ...owner });
   }
 
-  private notify(owner: SessionTurnQueueOwner): void {
+  private notify(owner: SessionTurnQueueOwner | SessionTurnQueueReceipt): void {
     try {
-      this.deps.onChanged?.({ sessionId: owner.sessionId, incarnationId: owner.incarnationId });
+      const origin = "captured" in owner ? (owner.accepted ?? owner.captured).origin : undefined;
+      this.deps.onChanged?.({ sessionId: owner.sessionId, incarnationId: owner.incarnationId }, origin);
     } catch {
       // Durable acceptance and queue progress do not depend on projection observers.
     }

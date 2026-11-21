@@ -6,11 +6,13 @@ import { providerOutputSchema } from "./provider-output.js";
 const id = z.string().min(1).max(256);
 const page = { offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() };
 const reference = { target: sessionTargetSchema, receiptId: id.optional(), turnId: z.string().regex(/^[1-9]\d*$/).optional(), messageSeq: z.number().int().nonnegative().optional() };
+const sentRequest = z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(20).optional() }).strict();
 const exactReference = <T extends z.ZodRawShape>(extra: T) => z.object({ ...reference, ...extra }).strict()
   .refine((value) => { const ref = value as { receiptId?: string; turnId?: string; messageSeq?: number }; return [ref.receiptId, ref.turnId, ref.messageSeq].filter((value) => value !== undefined).length === 1; }, "Specify exactly one receiptId, WithMate turnId or saved messageSeq.");
 export const executionOperationRequestSchemas = {
   list_issued_coordinations: z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: id.optional(), limit: z.number().int().min(1).max(20).optional() }).strict(),
-  list_sent_deliveries: z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(20).optional() }).strict(),
+  list_sent_deliveries: sentRequest,
+  list_sent_steers: sentRequest,
   list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
   get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
   list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
@@ -48,6 +50,7 @@ const executionSettings = z.object({
   codexReviewer: z.string().nullable(), codexSpeed: z.string().nullable(), customAgentName: z.string().nullable(),
 });
 export const executionOperationResultSchemas = {
+  list_sent_steers: z.object({ ...ok, items: z.array(z.object({ sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, messageSeq: z.number().int().nonnegative(), state: z.enum(["pending", "confirmed", "unknown", "not-sent"]), origin: steerOrigin, text: z.string() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_issued_coordinations: z.object({ ...ok, items: z.array(z.object({ id, sourceTurnId: id, sourceMessageSeq: z.number().nullable(), consultation: z.string() })), nextCursor: id.nullable() }),
   list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), sourceDisplayPosition: z.number().int().nonnegative().nullable().optional(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, text: z.string(), coordination: coordinationDisplay.optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
@@ -67,6 +70,7 @@ export const executionOperationResultSchemas = {
   ]),
 } as const;
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
+  list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
   list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
   list_sent_deliveries: "Read outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor. Each text contains the full original input. Stored Coordination notifications also include coordination.id, the full then-delivered human-readable coordination.text and saved consultation text in coordination.consultation when available. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
   list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",

@@ -111,7 +111,7 @@ export class SessionExecutionReadStorage {
     const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
     const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
-    if (operation === "list_sent_deliveries" || operation === "list_issued_coordinations") {
+    if (operation === "list_sent_deliveries" || operation === "list_sent_steers" || operation === "list_issued_coordinations") {
       const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
       const messageSeqs = [...new Set(options.messageSeqs)];
       const liveTurnIds = options.liveTurnIds ?? [];
@@ -126,6 +126,30 @@ export class SessionExecutionReadStorage {
       const messageForTurn = (turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">) =>
         turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
           : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
+      if (operation === "list_sent_steers") {
+        // Direct parent Steer is Main -> Main. Its recipient message is the
+        // existing durable input record, not a second receipt or sender copy.
+        const rows = this.db.prepare(`SELECT m.id, m.seq, m.body, m.session_id, recipient.incarnation_id
+          FROM session_messages_v6 m JOIN sessions_v6 recipient ON recipient.id=m.session_id
+          WHERE json_extract(m.body, '$.turnInput.origin.actorKind')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorSessionId')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorIncarnationId')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorTurnId') IN (${marks(turnIds)})
+            AND json_extract(m.body, '$.turnInput.origin.kind')='session'
+            AND json_extract(m.body, '$.turnInput.origin.operation')='steer'
+            AND json_extract(m.body, '$.turnInput.origin.targetSessionId')=m.session_id
+            AND json_extract(m.body, '$.turnInput.origin.targetIncarnationId')=recipient.incarnation_id
+            AND json_extract(m.body, '$.turnInput.queueId') IS NULL AND m.role='user' AND m.id>?
+          ORDER BY m.id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: number; seq: number; body: string; session_id: string; incarnation_id: string }>;
+        return { ok: true, items: rows.slice(0, limit).map((row) => {
+          const message = normalizeMessage({ ...JSON.parse(row.body), role: "user" });
+          if (!message?.turnInput?.origin) throw new Error("Invalid saved outgoing Steer input.");
+          const origin = message.turnInput.origin;
+          return { sequence: row.id, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!),
+            target: { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id }, messageSeq: row.seq,
+            state: message.turnInput.state, origin, text: message.text };
+        }), nextCursor: rows.length > limit ? rows[limit - 1].id : null };
+      }
       if (operation === "list_issued_coordinations") {
         const records = this.db.prepare(`SELECT id, json_extract(payload_json,'$.initiatorTurnId') AS source_turn_id,
           json_extract(payload_json,'$.body') AS consultation FROM coordination_records_v7

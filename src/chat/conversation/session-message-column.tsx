@@ -22,7 +22,7 @@ import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts }
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
-import { useSentDeliveries } from "./use-sent-deliveries.js";
+import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 import { useIssuedCoordinations } from "./use-issued-coordinations.js";
@@ -540,7 +540,7 @@ export function SessionMessageColumn({
 }: SessionMessageColumnProps) {
   const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
   const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
-  const issuedWithoutReceipt = issued.items.filter((record) => !sentDeliveries.items.some((receipt) => receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
+  const issuedWithoutReceipt = issued.items.filter((record) => !sentDeliveries.items.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
   const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
   const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
@@ -1326,8 +1326,9 @@ export function SessionMessageColumn({
   const inlineLivePossible = isRunning && (pendingResponseMessageIndex < 0 || messages[pendingResponseMessageIndex]?.role === "assistant");
   const renderInlineSent = (items: typeof liveSent, text: string) => !inputReadContext ? [] : items
     .map((item) => {
-      const positionUnknown = item.sourceDisplayPosition == null || item.sourceDisplayPosition > text.length;
-      return { key: `sent-${item.receiptId}`, position: positionUnknown ? text.length : item.sourceDisplayPosition!, content: <SentDeliveryRow inline positionUnknown={positionUnknown} item={item} context={inputReadContext} {...sentMessageContext} /> };
+      const position = "sourceDisplayPosition" in item ? item.sourceDisplayPosition : null;
+      const positionUnknown = position == null || position > text.length;
+      return { key: `sent-${sentInstructionKey(item)}`, position: positionUnknown ? text.length : position!, content: <SentDeliveryRow inline positionUnknown={"receiptId" in item && positionUnknown} item={item} context={inputReadContext} {...sentMessageContext} /> };
     });
   const renderPendingContent = () => (
     <div className="pending-response-content">
@@ -1790,14 +1791,14 @@ export function SessionMessageColumn({
                 </div>
                 </article>;
               }}</TurnInputReadBoundary>
-                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex && !(item.sourceTurnId === liveWithMateTurnId && inlineLivePossible) && !(isAssistant && shouldRenderFullMessage)).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex && !(item.sourceTurnId === liveWithMateTurnId && inlineLivePossible) && !(isAssistant && shouldRenderFullMessage)).map((item) => <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
             {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId).map(renderIssued)}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
