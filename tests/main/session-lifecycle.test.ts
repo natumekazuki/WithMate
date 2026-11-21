@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { it } from "node:test";
+import { it, type TestContext } from "node:test";
 import { mkdtemp, mkdir, rm, stat, writeFile, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -52,6 +52,112 @@ function lifecycleFacade(storage: SessionStorageV6, directory: string, harness: 
     ...overrides,
   });
 }
+
+function activeCharacter(id: string) {
+  return { id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active" as const, createdAt: "now", updatedAt: "now", archivedAt: null };
+}
+
+async function childCharacterFixture(t: TestContext, activeIds: string[], crewCharacterIds: string[], random = 0) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-child-character-"));
+  const dbPath = path.join(directory, "app.db");
+  const storage = new SessionStorageV6(dbPath);
+  const auxiliary = new AuxiliarySessionStorage(dbPath);
+  t.after(async () => { auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true }); });
+  const setup = new DatabaseSync(dbPath);
+  try {
+    for (const id of ["azki", "sora", "miko"]) {
+      setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES(?,?,'now','now')").run(id, id);
+    }
+  } finally {
+    setup.close();
+  }
+  const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator", characterId: "sora" });
+  const parent = storage.insertSession({ ...buildNewSession(input("parent")), sessionRole: "task-coordinator",
+    rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+  crewCharacterIds.forEach((characterId, index) => {
+    storage.insertSession({ ...buildNewSession(input(`member-${index}`)), sessionRole: "executor", characterId,
+      rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+  });
+  const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+  const facade = lifecycleFacade(storage, directory, lifecyclePersistence(storage, catalog), {
+    listActiveCharacters: async () => activeIds.map(activeCharacter),
+    createCharacterRuntimeSnapshot: async (id) => ({ characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character\nCharacter", definitionSha256: "snapshot", definitionByteSize: 21, snapshotAt: "now" }),
+    initializeCreatedSession: async (session) => {
+      auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } });
+    },
+    randomCharacter: () => random,
+  });
+  return {
+    storage,
+    create: () => facade.createChildSession({ id: parent.id, incarnationId: parent.incarnationId! },
+      { requestId: "character-selection", role: "executor", provider: "codex", model: "model", reasoningEffort: "high",
+        approvalMode: "on-request", codexSandboxMode: "read-only", workspacePath: "C:/prepared-worktree" }, () => {}),
+  };
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "直接の親の使用数が1で別候補が2と3でも親を除外し、残りで使用数2のCharacterを子に割り当てる"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: Crewの作成・削除（Agentの子作成のCharacter選定）" }
+// fault = "直接の親を候補に残す、Crew起点を除外する、または残った候補の使用数を比較しない"
+// observable = "子作成が返すCharacter ID"
+// observation_boundary = "component-behavior"
+// scope = "通常子Mainの新規Character選定と実SQLiteの同Crew使用数"
+// lifecycle = "permanent"
+// impact = "別Characterが使えるのに親子が同じCharacterになったり、残候補の割当てが偏ったりする"
+// @end-test-value
+it("excludes the direct parent before choosing the least-used alternative for a new child", async (t) => {
+  const fixture = await childCharacterFixture(t, ["miko", "azki", "sora"], ["sora", "miko", "miko", "miko"]);
+  assert.equal((await fixture.create()).characterId, "sora");
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "親を除いた最少使用候補が同数のときに、抽選値に応じて異なる候補を割り当てる"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: Crewの作成・削除（Agentの子作成のCharacter選定）" }
+// fault = "親を除いた後の同数候補から抽選値を無視して固定のCharacterを選ぶ"
+// observable = "抽選値0と0.99のそれぞれで子作成が返すCharacter ID"
+// observation_boundary = "component-behavior"
+// scope = "親を除いた残候補の同数抽選"
+// lifecycle = "permanent"
+// @end-test-value
+it("keeps the existing draw among equally used non-parent Characters", async (t) => {
+  const first = await childCharacterFixture(t, ["azki", "sora", "miko"], ["miko"], 0);
+  const last = await childCharacterFixture(t, ["azki", "sora", "miko"], ["miko"], 0.99);
+  const selected = [(await first.create()).characterId, (await last.create()).characterId];
+  assert.deepEqual(new Set(selected), new Set(["sora", "miko"]));
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "直接の親がactive候補外でも、全active候補から同Crewの最少使用Characterを割り当てる"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: Crewの作成・削除（Agentの子作成のCharacter選定）" }
+// fault = "親が候補にいないと作成を拒否するか、最少使用の候補を選定から外す"
+// observable = "子作成が返すCharacter ID"
+// observation_boundary = "component-behavior"
+// scope = "親がactive候補外での通常子Main新規作成"
+// lifecycle = "permanent"
+// @end-test-value
+it("uses all active Characters when the direct parent is outside the catalog", async (t) => {
+  const fixture = await childCharacterFixture(t, ["sora", "miko"], []);
+  assert.equal((await fixture.create()).characterId, "miko");
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "active候補が0件のときに親などで補完せず、専用の失敗理由を返して子Mainを保存しない"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: Crewの作成・削除（Agentの子作成のCharacter選定）" }
+// fault = "active候補が空でも親で作成するか、候補不足であることを呼出元に返さない"
+// observable = "子作成の拒否理由と予約IDに対応するSQLiteの子Mainの不在"
+// observation_boundary = "component-behavior"
+// scope = "active候補0件での通常子Main新規作成"
+// lifecycle = "permanent"
+// @end-test-value
+it("rejects creation without saving a child when there is no active Character", async (t) => {
+  const fixture = await childCharacterFixture(t, [], []);
+  await assert.rejects(fixture.create(), /No active Character is available for the child Session\./);
+  assert.equal(fixture.storage.getSession("reserved-child"), null);
+});
 
 // @test-value v2
 // kind = "invariant"
@@ -372,10 +478,10 @@ it("protects unpublished saved and reserved Workspaces before deletion and clean
 
 // @test-value v2
 // kind = "invariant"
-// claim = "未保存の子作成再試行は現在のModelとDepth対応を再検証し、予約済みidentityとCharacterを保持して、完成済み再照会には再検証を課さない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/833" }
-// fault = "初回Files失敗後にcatalogから消えたModelや非対応Depthで子Sessionを新規保存する"
-// observable = "拒否理由、未保存Main、同じprepared Session・snapshot、完成後の同identity再照会"
+// claim = "親だけがactiveなら親を予約し、別候補が増えても同じ要求は予約したidentityとCharacterを保持する。未保存の再試行では現在のModelとDepth対応を再検証し、完成済み再照会には再検証を課さない"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md: Crewの作成・削除（Agentの子作成のCharacter選定）; https://github.com/natumekazuki/WithMate/issues/833（作成再試行）" }
+// fault = "親のみの選定を拒否する、別候補が現れた後に予約を再抽選する、または現在非対応のModelやDepthで子Sessionを新規保存する"
+// observable = "拒否理由、未保存Main、同じprepared Sessionとsnapshot作成回数、完成した子のID・Characterと再照会のincarnation ID"
 // observation_boundary = "component-behavior"
 // scope = "pending child creation retry execution-setting validation"
 // lifecycle = "permanent"
@@ -387,16 +493,17 @@ it("revalidates pending child execution support without redrawing its prepared C
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   try {
     const setup = new DatabaseSync(dbPath);
-    setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now')").run();
+    setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now'),('sora','Sora','now','now')").run();
     setup.close();
     const parent = storage.insertSession({ ...buildNewSession(input("parent")), sessionRole: "overall-coordinator" });
     const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
     const harness = lifecyclePersistence(storage, catalog);
     let filesFail = true;
     let snapshots = 0;
+    const activeIds = ["azki"];
     const facade = lifecycleFacade(storage, directory, harness, {
       prepareSessionLifecycleFiles: async (input) => { if (filesFail) { filesFail = false; throw new Error("Files failed"); } return prepareSessionLifecycleFiles(input); },
-      listActiveCharacters: async () => [{ id: "azki", name: "AZKi", description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active", createdAt: "now", updatedAt: "now", archivedAt: null }],
+      listActiveCharacters: async () => activeIds.map(activeCharacter),
       createCharacterRuntimeSnapshot: async (id) => { snapshots += 1; return { characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character", definitionSha256: "snapshot", definitionByteSize: 11, snapshotAt: "now" }; },
       initializeCreatedSession: async (session) => { auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } }); },
     });
@@ -404,6 +511,8 @@ it("revalidates pending child execution support without redrawing its prepared C
     const request = { requestId: "same", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, workspacePath: "C:/prepared-worktree" };
     await assert.rejects(facade.createChildSession(actor, request, () => {}), /Files failed/);
     const prepared = storage.listPendingSessionLifecycleOperations()[0].preparedSession!;
+    assert.equal(prepared.characterId, "azki");
+    activeIds.push("sora");
     catalog.models = [];
     await assert.rejects(facade.createChildSession(actor, request, () => {}), /not in the discovered model list/);
     catalog.models = [{ id: "model", label: "Model", reasoningEfforts: ["low"] }];
@@ -414,6 +523,7 @@ it("revalidates pending child execution support without redrawing its prepared C
     catalog.models = [{ id: "model", label: "Model", reasoningEfforts: ["high"] }];
     const child = await facade.createChildSession(actor, request, () => {});
     assert.equal(child.id, prepared.id);
+    assert.equal(child.characterId, "azki");
     catalog.models = [];
     assert.equal((await facade.createChildSession(actor, request, () => {})).incarnationId, child.incarnationId);
     assert.equal(snapshots, 1);

@@ -104,8 +104,10 @@ export class MainSessionCommandFacade {
         }
         if (!operation.preparedSession) {
           if (!this.deps.listActiveCharacters || !this.deps.createCharacterRuntimeSnapshot) throw new Error("Child Character selection is unavailable.");
-          const candidates = await this.deps.listActiveCharacters();
-          if (candidates.length === 0) throw new Error("No active Character is available for the child Session.");
+          const activeCharacters = await this.deps.listActiveCharacters();
+          if (activeCharacters.length === 0) throw new Error("No active Character is available for the child Session.");
+          const alternatives = activeCharacters.filter((candidate) => candidate.id !== parent.characterId);
+          const candidates = alternatives.length > 0 ? alternatives : activeCharacters;
           const pending = await persistence.listPendingSessionLifecycleOperations();
           const pendingSessions = (await Promise.all(pending.filter((item) => item.kind === "create").flatMap((item) => item.targets).map((item) => persistence.readSessionForLifecycle(item.id))))
             .filter((item): item is Session => item !== null);
