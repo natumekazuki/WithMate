@@ -2456,10 +2456,22 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       sendInput: async (receipt, expectedTurnId) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
-        const { runtime } = await resolveQueueSessionRuntime(receipt.sessionId);
+        const kind = receipt.captured.coordination?.targetKind;
+        const runtime = kind === "main" ? requireSessionRuntimeService() : kind === "auxiliary" ? requireAuxiliarySessionRuntimeService()
+          : (await resolveQueueSessionRuntime(receipt.sessionId)).runtime;
         const result = await runtime.steerQueuedSessionTurn(receipt, expectedTurnId);
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
         return result;
+      },
+      getCoordinationInputTurnId: async (receipt) => {
+        assertPersistentStoreOwnerIsActive(owner, "Coordination input");
+        if (databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()) return null;
+        const kind = receipt.captured.coordination?.targetKind;
+        if (!kind) return null;
+        const runtime = kind === "main" ? requireSessionRuntimeService() : requireAuxiliarySessionRuntimeService();
+        const turnId = await runtime.getCoordinationInputTurnId(receipt);
+        assertPersistentStoreOwnerIsActive(owner, "Coordination input");
+        return turnId;
       },
       onChanged: ({ sessionId }) => {
         if (mainStoreContext.activePersistentStoreOwner === owner) {

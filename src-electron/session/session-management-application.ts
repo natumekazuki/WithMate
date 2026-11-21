@@ -283,6 +283,7 @@ export class SessionManagementApplication {
           )),
         };
       }
+      case "list_issued_coordinations":
       case "list_sent_deliveries":
       case "list_executions":
       case "list_messages":

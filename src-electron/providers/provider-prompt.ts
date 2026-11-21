@@ -48,7 +48,7 @@ function buildFolderContextSection(
   ].join("\n");
 }
 
-export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"]): string {
+export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false): string {
   if (!userMessage.trim()) return "";
   const sections: string[] = [];
   if (provenance) {
@@ -69,7 +69,7 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
     sections.push(lines.join("\n"));
   }
   const heading = provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
-  sections.push("# " + heading + "\n\n" + userMessage.trim());
+  sections.push("# " + heading + "\n\n" + (preserveWhitespace ? userMessage : userMessage.trim()));
   return sections.join("\n\n");
 }
 

@@ -179,6 +179,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       stop_turn: { target, turnId: "1" },
       steer: { target, turnId: "1", message: "check loading first" },
       list_sent_deliveries: { target, messageSeqs: [0, 1] },
+      list_issued_coordinations: { target, messageSeqs: [0, 1] },
       list_executions: { target },
       get_execution: exact,
       list_execution_inputs: exact,
@@ -332,6 +333,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       cancel_receipt: { result: { outcome: "not-applied", receipt } },
       stop_turn: { result: { outcome: "applied", turnId: "1" } },
       steer: { result: { outcome: "applied", turnId: "1", messageSeq: 1 } },
+      list_issued_coordinations: { items: [{ id: "consultation", sourceTurnId: "1", sourceMessageSeq: 1, consultation: "Saved consultation" }], nextCursor: null },
       list_sent_deliveries: { items: [{
         receiptId: "receipt", sequence: 1, sourceTurnId: "1", sourceMessageSeq: 1, target, state: "completed",
         origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId },

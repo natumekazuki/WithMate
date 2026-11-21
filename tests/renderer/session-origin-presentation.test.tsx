@@ -156,17 +156,17 @@ test("sent messages show full content while refreshing exact delivery state", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存Coordination通知は相談本文の投影を読み、明示操作から正確な宛先のCoordination詳細を開ける"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user: Coordinationを理解しやすいUIへ改修" }
-// fault = "通知の内部JSONを通常本文として読むか、別Sessionや別相談の詳細を開く"
-// observable = "送信rowの全文とDelivery Details内のRelated Consultation clickがopenCoordinationへ渡す対象identityと相談ID"
+// claim = "送信通知は問いで識別できる正確な相談入口を持ち、別送本文と問い未記録の旧本文を一度だけ初期表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談の識別表示・当時本文・旧データ" }
+// fault = "別Session/相談を開く、問いの識別を失う、または別送本文/旧本文を隠す/Detailsと二重表示する"
+// observable = "plain textの問いとaccessible name、移動先identityと相談ID、送信本文の表示数と閉じた詳細外での可読性"
 // observation_boundary = "consumer"
 // scope = "SentDeliveryRowから保存済みCoordination表示・既存詳細navigationへの接続"
 // lifecycle = "permanent"
 // impact = "利用者が相談を読めず、対応先を取り違える"
 // distinction = "storage schemaや型検査では共通APIの投影が本文・詳細操作へ正しく接続されることを保証できない"
 // @end-test-value
-test("Coordination notifications show readable text and open their exact consultation", async () => {
+test("Coordination notifications identify exact consultations and preserve separately sent and legacy content", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -175,14 +175,27 @@ test("Coordination notifications show readable text and open their exact consult
   Object.defineProperty(dom.window, "withmate", { value: { openCoordination: async (request: unknown) => { opened.push(request); }, readSessionExecution: async () => ({ ok: true, receiptState: "completed", turnState: "completed" }) } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    const consultation = `${"Which approach should we use? ".repeat(20)}Final question.`;
+    const consultation = `${"Which approach should we use? ".repeat(20)}\n\nFinal **condition**: preserve [the source](https://example.com/source).`;
     await act(async () => root.render(<SentDeliveryRow item={{ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } }} context={context} />));
-    assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, consultation);
-    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
-    const button = dom.window.document.querySelector('[aria-label="Delivery Details"] [aria-label="Open Related Consultation"]') as HTMLButtonElement;
+    const button = dom.window.document.querySelector(".coordination-notice-link") as HTMLButtonElement;
     assert.ok(button);
+    assert.match(button.textContent!, /Final condition: preserve the source/);
+    assert.match(button.getAttribute("aria-label")!, /Open Consultation:.*Final condition/);
     await act(async () => button.click());
     assert.deepEqual(opened, [{ ...item.target, id: "consultation" }]);
+    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
+    assert.match(dom.window.document.querySelector('[aria-label="Sent Content"] .rich-text')?.textContent ?? "", /Final condition/);
+    assert.equal(dom.window.document.querySelector('[aria-label="Sent Content"]')?.closest('[aria-label="Delivery Details"]'), null);
+    await act(async () => (dom.window.document.querySelector('[aria-label="Hide Delivery Details"]') as HTMLButtonElement).click());
+    await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation, text: consultation } }} context={context} />));
+    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 0);
+    await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation: "Which approach?", text: "The saved reply." } }} context={context} />));
+    const reply = dom.window.document.querySelector('[aria-label="Sent Content"]')!;
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
+    assert.equal(reply.querySelector(".rich-text")?.textContent, "The saved reply.");
+    assert.equal(reply.closest('[aria-label="Delivery Details"]'), null);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

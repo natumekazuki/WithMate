@@ -14,7 +14,9 @@
 
 `get_execution_input`は不変受付原文と予定／dispatch固定入力の`inputPair`を一つのsnapshotで返す。原文不明は`null`である。本文は`maxChars`と`offset`で分割し、各pieceの実offset・続き・全長を返す。続きは最初の応答の`expectedInput`を指定し、予定入力が編集された場合は`EXECUTION_INPUT_RESTART_REQUIRED`として先頭からの再取得を要求する。cursorには既存の更新時刻と参照identityを使い、本文全体・独自hash・別revision台帳は保持しない。添付はID・種類・名前の参照だけを返し、内部の絶対pathを公開しない。
 
-`list_sent_deliveries`は表示中の保存message seqまたは明示live WithMate Turnに属する送信を、既存の不変receipt originから一括逆引きする。受付順のcursor、20件までのpage、原文全文の`text`を返す。保存metadataがCoordinationを示す通知には、`coordination.id`と相談／回答全文の`coordination.text`を併記する。元の`text`は原文のままとし、通常本文をJSONらしい形だけでCoordination扱いしない。エージェント向けの原文・入力比較の必要時読取には`get_execution_input`を使う。
+`list_sent_deliveries`は表示中の保存message seqまたは明示live WithMate Turnに属する送信を、既存の不変receipt originから一括逆引きする。受付順のcursor、20件までのpage、原文全文の`text`を返す。保存metadataがCoordinationを示す通知には、`coordination.id`、相談／回答全文の`coordination.text`、通知に保存された相談原文の`coordination.consultation`を併記する。`get_execution`も同じ通知投影を返す。元の`text`は原文のままとし、通常本文をJSONらしい形だけでCoordination扱いしない。エージェント向けの原文・入力比較の必要時読取には`get_execution_input`を使う。
+
+`list_issued_coordinations`は同じ保存message seq／明示live WithMate Turnの範囲と正確な起票元Session／incarnationに属する保存recordを読む。receiptがなくても起票Turnが一致するユーザー宛相談を含み、本文・起票Turn・表示中messageへの所属をrecord ID順のcursorと最大20件のpageで返す。表示中の同Turnのassistantを優先し、なければ表示中userへ付け、両方なければlive Turnのmessage参照はnullにする。出力内の厳密な位置や未記録の所属は推定しない。消去済みrecordは一覧から除き、別台帳や本文コピーを所有しない。MCPと配布CLIは同じSession操作schema・application dispatchで公開する。
 
 `list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
 

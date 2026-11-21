@@ -38,7 +38,7 @@ export type SessionTurnQueueCapturedInput = {
   sourceDisplayPosition?: number;
   /** Kept in memory only until the source Turn is finalized. */
   sourceDisplayText?: string;
-  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
+  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; targetKind?: "main" | "auxiliary"; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
   request: RunSessionTurnRequest & { clientRequestId: string };
   attachments: ComposerAttachment[];
   provider: string;

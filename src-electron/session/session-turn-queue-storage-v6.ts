@@ -6,7 +6,7 @@ import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
 import { assertSessionLifecycleReady } from "./session-lifecycle-operation.js";
-import { coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
+import { assertCoordinationInputTurn, coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
 
 type QueueRow = {
   id: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; request_id: string; sequence: number;
@@ -213,7 +213,9 @@ export class SessionTurnQueueStorageV6 {
       if (receipt.accepted?.origin?.deliveryTiming === "after_source_turn" && unreleasedSourceTurnIds.includes(receipt.accepted.origin.actorTurnId!)) {
         throw new Error("The sender Turn is still releasing its execution.");
       }
-      const turn = this.db.prepare(`SELECT t.id FROM session_turns_v6 t WHERE t.phase = 'running'
+      const targetKind = receipt.captured.coordination?.targetKind;
+      const turn = this.db.prepare(`SELECT t.id, t.auxiliary_session_id FROM session_turns_v6 t WHERE t.phase = 'running'
+        ${targetKind === "main" ? "AND t.auxiliary_session_id IS NULL" : targetKind === "auxiliary" ? "AND t.session_id IS NULL" : ""}
         AND ((t.session_id = ? AND t.auxiliary_session_id IS NULL AND EXISTS
           (SELECT 1 FROM sessions_v6 s WHERE s.id = t.session_id AND s.incarnation_id = ?
             AND json_extract(s.runtime_policy_json, '$.runState') = 'running')
@@ -221,11 +223,14 @@ export class SessionTurnQueueStorageV6 {
         OR (t.auxiliary_session_id = ? AND t.session_id IS NULL AND EXISTS
           (SELECT 1 FROM auxiliary_sessions a WHERE a.id = t.auxiliary_session_id AND a.created_at = ? AND a.run_state = 'running')
           AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = t.auxiliary_session_id)))`)
-        .get(owner.sessionId, owner.incarnationId, owner.sessionId, owner.incarnationId) as { id: number } | undefined;
+        .get(owner.sessionId, owner.incarnationId, owner.sessionId, owner.incarnationId) as { id: number; auxiliary_session_id: string | null } | undefined;
       if (!turn) throw new Error("The current running turn no longer matches.");
-      if (receipt.captured.coordination) throw new Error("Coordination delivery requires a new normal Turn.");
-      const captured = receipt.captured.origin?.deliveryTiming === "after_source_turn" && receipt.sourceTurnPhase
-        ? { ...receipt.captured, origin: { ...receipt.captured.origin, sourceTurnPhase: receipt.sourceTurnPhase as "completed" | "failed" | "canceled" } } : receipt.captured;
+      if (receipt.captured.coordination) assertCoordinationInputTurn(this.db, receipt.captured,
+        { ...owner, kind: turn.auxiliary_session_id === null ? "main" : "auxiliary" }, String(turn.id));
+      const dispatch = receipt.captured.coordination
+        ? JSON.parse(coordinationDispatchJson(this.db, JSON.stringify(receipt.captured))) as SessionTurnQueueCapturedInput : receipt.captured;
+      const captured = dispatch.origin?.deliveryTiming === "after_source_turn" && receipt.sourceTurnPhase
+        ? { ...dispatch, origin: { ...dispatch.origin, sourceTurnPhase: receipt.sourceTurnPhase as "completed" | "failed" | "canceled" } } : dispatch;
       const result = this.db.prepare(`UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, turn_id = ?, input_turn_id = ?, updated_at = ?
         WHERE id = ? AND state = 'queued'`).run(capturedJson(captured), String(turn.id), expectedTurnId, new Date().toISOString(), id);
       if (Number(result.changes) !== 1) throw new Error("The queued input could not be claimed.");

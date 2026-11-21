@@ -15,6 +15,7 @@ export type SessionTurnQueueServiceDeps = {
   isRunInFlight(sessionId: string): boolean | Promise<boolean>;
   getUnreleasedSourceTurnIds?(): readonly string[];
   sendInput?(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<unknown>;
+  getCoordinationInputTurnId?(receipt: SessionTurnQueueReceipt): Promise<string | null>;
   dispatch(
     receipt: SessionTurnQueueReceipt,
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
@@ -67,7 +68,19 @@ export class SessionTurnQueueService {
   acceptCommittedReceipt(receipt: SessionTurnQueueReceipt): void {
     this.adoptOwner(receipt);
     this.notify(receipt);
-    this.wake(receipt.sessionId);
+    if (receipt.state === "queued" && receipt.captured.coordination && this.deps.getCoordinationInputTurnId) {
+      void this.track((async () => {
+        try {
+          const turnId = await this.deps.getCoordinationInputTurnId!(receipt);
+          if (turnId) await this.sendInput(receipt, receipt.id, turnId, true);
+        } finally {
+          this.wake(receipt.sessionId);
+        }
+      })().catch(() => {
+        // The existing queue records pre-dispatch recovery or an unknown outcome.
+        // An accepted operation never creates a second receipt to hide a failure.
+      }));
+    } else this.wake(receipt.sessionId);
   }
 
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
@@ -176,16 +189,21 @@ export class SessionTurnQueueService {
   }
 
   sendQueuedInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt> {
+    return this.sendInput(owner, id, expectedTurnId, false);
+  }
+
+  private sendInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string, coordination: boolean): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     if (!expectedTurnId?.trim()) return Promise.reject(new Error("The active turn is required."));
     return this.track((async () => {
       const receipt = await this.withLock(owner.sessionId, async () => {
         this.requireAccepting();
+        if (coordination && (this.blocked.has(owner.sessionId) || this.edits.has(owner.sessionId))) throw new Error("The queue is held for recovery or editing.");
         this.assertNotEditing(owner, id);
         if (!this.deps.sendInput) throw new Error("Queued Session input is unavailable.");
         const candidate = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
         if (!candidate || candidate.state !== "queued") throw new Error("The queued input is no longer available.");
-        if (candidate.captured.coordination) throw new Error("Coordination delivery cannot be sent as additional input.");
+        if (Boolean(candidate.captured.coordination) !== coordination) throw new Error("Coordination input requires automatic related-Turn delivery.");
         let claimed: SessionTurnQueueReceipt;
         try {
           claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId, this.deps.getUnreleasedSourceTurnIds?.());

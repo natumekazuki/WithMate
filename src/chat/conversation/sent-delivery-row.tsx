@@ -6,6 +6,7 @@ import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import type { SentDelivery } from "./use-sent-deliveries.js";
+import { CoordinationNotice } from "./coordination-notice.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
 type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
@@ -45,6 +46,7 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
     return () => { active = false; queueChanged?.(); turnUpdated?.(); };
   }, [open, identity, item.state, statusRevision]);
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
+  const distinctContent = item.coordination && (item.coordination.consultation === undefined || item.coordination.text !== item.coordination.consultation);
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
   const card = <div className="message-card assistant session-outbound"><div className="message-card-content">
       <div className="sent-delivery-header">
@@ -52,7 +54,10 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
         {inline ? detailsButton : null}
       </div>
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
-      <MessageRichText {...messageContext} text={item.coordination?.text ?? item.text} />
+      {item.coordination
+        ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} />
+        : <MessageRichText {...messageContext} text={item.text} />}
+      {item.coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={item.coordination.text} /></section> : null}
       {error ? <p role="alert">{error}</p> : null}
       {open ? <section className="artifact-block turn-input-details turn-input-panel" aria-label="Delivery Details">
       <div className="artifact-section-header"><strong>Delivery Details</strong></div>
@@ -63,10 +68,6 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
         <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
         <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
       </dl>
-      {item.coordination ? <div className="sent-delivery-related-link"><button type="button" className="related-session-route" title="Open Related Consultation" aria-label="Open Related Consultation" disabled={!getWithMateApi()?.openCoordination} onClick={() => {
-        const api = getWithMateApi();
-        if (api) void api.openCoordination({ kind: item.target.kind, sessionId: item.target.sessionId, incarnationId: item.target.incarnationId, id: item.coordination!.id }).catch((failure) => setError(failure instanceof Error ? failure.message : "Could not open Coordination."));
-      }}><span className="related-session-title">Related Consultation</span><span aria-hidden="true">↗</span></button></div> : null}
       </section> : null}
     </div></div>;
   if (inline) return <section className="session-outbound-inline" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={open && statusBusy || undefined}>{card}</section>;

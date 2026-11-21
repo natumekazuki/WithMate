@@ -24,6 +24,8 @@ import { SessionRunFailure } from "./session-run-failure.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
+import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
+import { useIssuedCoordinations } from "./use-issued-coordinations.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -537,6 +539,9 @@ export function SessionMessageColumn({
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
+  const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
+  const issuedWithoutReceipt = issued.items.filter((record) => !sentDeliveries.items.some((receipt) => receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
+  const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
   const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
   const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
@@ -1518,7 +1523,7 @@ export function SessionMessageColumn({
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
                 const messageSent = isAssistant ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
-                const collapsedPreview = read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
+                const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
                 className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
@@ -1612,7 +1617,12 @@ export function SessionMessageColumn({
                         data-message-body="true"
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
-                        {shouldRenderFullMessage ? (
+                        {shouldRenderFullMessage && read.coordination && inputReadContext ? <>
+                          <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={inputReadContext.target} />
+                          <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
+                            <MessageRichText text={read.text} displayMode={messageViewMode} onOpenPath={onOpenPath} resolveImageSource={resolveImageSource} markdownImageContext={markdownLinkFileContext} markdownLinkFileContext={markdownLinkFileContext} />
+                          </ReceivedCoordinationContent>
+                        </> : shouldRenderFullMessage ? (
                           <InlineResponseContent
                             sessionId={sessionId}
                             workspacePath={workspacePath}
@@ -1656,6 +1666,7 @@ export function SessionMessageColumn({
                         )}
                       </div>
                     </div>
+                    {shouldRenderFullMessage ? issuedWithoutReceipt.filter((record) => record.sourceMessageSeq !== null && record.sourceMessageSeq === message.historyIndex).map(renderIssued) : null}
                     <TurnInputStatus message={message} />
                     {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
@@ -1787,8 +1798,12 @@ export function SessionMessageColumn({
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
             {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+            {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId).map(renderIssued)}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
+            {issued.busy ? <LoadingIndicator inline label="Loading Coordination" /> : null}
+            {issued.error ? <p role="alert">{issued.error} <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.retry}>Retry Coordination</button></p> : null}
+            {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
