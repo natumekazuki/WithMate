@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { getProviderAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -17,7 +17,6 @@ type Dependencies = {
   getAdapter(providerId: string): ProviderCodingAdapter;
   defaultWorkspace(): string;
   onChanged(snapshot: ModelCatalogSnapshot): void;
-  logCopilotDiscovery?: (input: { correlationId: string; outcome: "stored" | "discarded" | "failed"; fetchedAt?: string }) => void;
   now?: () => number;
   environment?: NodeJS.ProcessEnv;
 };
@@ -120,27 +119,20 @@ export class ProviderModelDiscoveryService {
     this.attempts.set(key, this.now());
     this.states.set(key, { status: "loading", ...(previous ? { fetchedAt: previous.fetchedAt } : {}) });
     const controller = new AbortController();
-    const diagnosticId = id === "copilot" ? randomUUID() : undefined;
-    const logResult = (outcome: "stored" | "discarded" | "failed", fetchedAt?: string) => {
-      if (!diagnosticId) return;
-      try { this.deps.logCopilotDiscovery?.({ correlationId: diagnosticId, outcome, ...(fetchedAt ? { fetchedAt } : {}) }); } catch { /* Diagnostics must not change discovery. */ }
-    };
     const completion = Promise.resolve().then(async () => {
       const timeout = setTimeout(() => controller.abort(), 20_000);
       try {
         const adapter = this.deps.getAdapter(id);
         if (!adapter.listModels) throw new Error("Model discovery is unavailable.");
-        const provider = await adapter.listModels({ appSettings: settings, workspacePath: workspace, signal: controller.signal, ...(diagnosticId ? { diagnosticId } : {}) });
-        if (controller.signal.aborted || this.closed) { logResult("discarded"); return; }
+        const provider = await adapter.listModels({ appSettings: settings, workspacePath: workspace, signal: controller.signal });
+        if (controller.signal.aborted || this.closed) return;
         const currentSettings = await this.deps.getAppSettings();
-        if (this.context(id, workspace, currentSettings) !== key) { logResult("discarded"); return; }
+        if (this.context(id, workspace, currentSettings) !== key) return;
         const fetchedAt = new Date(this.now()).toISOString();
         await this.deps.upsertProvider({ provider, contextKey: key, fetchedAt });
-        logResult("stored", fetchedAt);
         if (this.closed) return;
         this.states.set(key, { status: "ready", fetchedAt });
       } catch {
-        logResult("failed");
         if (!this.closed) this.states.set(key, { status: "error", ...(previous ? { fetchedAt: previous.fetchedAt } : {}), error: "Could not load models. Check the provider connection." });
       } finally {
         clearTimeout(timeout);
