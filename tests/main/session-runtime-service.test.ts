@@ -641,10 +641,10 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行のlive stateは保存済みturn IDとprovider native IDを区別し、複数回の進捗でも両方を維持する"
+// claim = "queued実行のlive stateは保存済みturn ID・receiptの対応とprovider native IDを区別し、複数回の進捗でも維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ; src-shared/session/runtime-state.ts: LiveSessionRunState" }
-// fault = "保存済みturn IDをlive stateへ渡さないか、providerの進捗で上書きするか、native IDを保存IDへ置換する"
-// observable = "開始通知のturn IDと、Main/Auxiliaryの初期・進捗live stateにあるsessionTurnId・turnId・本文"
+// fault = "保存済みturn IDやreceiptの対応をlive stateへ渡さないか、providerの進捗で上書きするか、native IDを保存IDへ置換する"
+// observable = "開始通知のturn IDと、Main/Auxiliaryの初期・進捗live stateにあるreceipt identity・sessionTurnId・turnId・本文"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeServiceのqueued開始とprovider進捗合流"
 // lifecycle = "permanent"
@@ -671,9 +671,13 @@ it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する"
       setLiveSessionRun: (_id, state) => { live = state; if (state) states.push(state); },
       getLiveSessionRun: () => live,
     });
-    assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(session), async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
+    const receipt = queuedReceipt(session);
+    assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
     assert.deepEqual(starts, ["41"]);
     assert.equal(states[0]?.sessionTurnId, "41");
+    const startedStates = states.filter((state) => state.sessionTurnId === "41");
+    assert.ok(startedStates.length >= 3);
+    for (const state of startedStates) assert.deepEqual(state.queueReceipt, { id: receipt.id, incarnationId: receipt.incarnationId, userMessageSeq: 0 });
     assert.deepEqual(states.filter((state) => state.inputAvailable).map((state) => [state.sessionTurnId, state.turnId, state.assistantText]), [
       ["41", "native-turn", "partial"], ["41", "native-turn", "partial updated"],
     ]);

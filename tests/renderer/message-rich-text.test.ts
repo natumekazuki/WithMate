@@ -31,6 +31,34 @@ function renderToStaticMarkup(element: React.ReactNode): string {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "複数の送信内容はMarkdownの構文を壊さず本文の対応するブロック境界へ順に表示される"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "複数の挿入が同じカードになる、順序を入れ替える、またはコードブロックを分断する"
+// observable = "レンダリングされた本文と3つの挿入内容のDOM順序"
+// observation_boundary = "component-behavior"
+// scope = "Markdown本文への複数inline content"
+// lifecycle = "permanent"
+// impact = "送信と前後の発言の関係を誤って読む"
+// distinction = "既存の単一inline要素テストは複数要素の同一ブロックでの順序を確認しない"
+// @end-test-value
+test("multiple inline contents preserve block boundaries and ordering", () => {
+  const text = "before\n\n```txt\ncode\n```\n\nafter";
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text, inlineContent: [
+    { key: "first", position: 2, content: React.createElement("span", null, "CARD-A") },
+    { key: "second", position: 4, content: React.createElement("span", null, "CARD-B") },
+    { key: "third", position: text.indexOf("code") + 2, content: React.createElement("span", null, "CARD-C") },
+  ] }));
+  const dom = new JSDOM(html);
+  const body = dom.window.document.body;
+  assert.match(body.textContent ?? "", /before[\s\S]*CARD-A[\s\S]*CARD-B[\s\S]*code[\s\S]*CARD-C[\s\S]*after/);
+  assert.equal(body.querySelectorAll("pre code").length, 1);
+  assert.equal(body.querySelector("pre code")?.textContent?.trim(), "code");
+  assert.equal(body.querySelectorAll(".message-inline-content").length, 3);
+  dom.window.close();
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Previewの意味要素は元Markdownの範囲を保持し、参照定義も最初の参照を選択できる範囲として渡す"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }

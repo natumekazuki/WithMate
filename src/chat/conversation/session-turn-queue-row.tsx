@@ -10,7 +10,8 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, getQueuedSourceWaitState, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {

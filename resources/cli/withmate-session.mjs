@@ -6249,6 +6249,7 @@ var executionOperationResultSchemas = {
 			sequence: number().int().nonnegative(),
 			sourceTurnId: id$1,
 			sourceMessageSeq: number().nullable(),
+			sourceDisplayPosition: number().int().nonnegative().nullable().optional(),
 			target: sessionTargetSchema,
 			state: _enum([
 				"queued",

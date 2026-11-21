@@ -66,7 +66,9 @@ export class SessionTurnQueueStorageV6 {
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): SessionTurnQueueReceipt {
     const requestId = normalizeSessionTurnClientRequestId(captured.request.clientRequestId);
     if (!requestId || requestId !== captured.request.clientRequestId) throw new Error("Queue request ID is invalid.");
-    const json = capturedJson(captured);
+    const { sourceDisplayPosition, sourceDisplayText: _sourceDisplayText, ...acceptance } = captured;
+    const json = capturedJson(acceptance);
+    const displayPosition = typeof sourceDisplayPosition === "number" && Number.isSafeInteger(sourceDisplayPosition) && sourceDisplayPosition >= 0 ? sourceDisplayPosition : null;
     return this.withOwner(owner, () => {
       const target = this.db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ? AND created_at = ?")
         .get(owner.sessionId, owner.incarnationId) as { parent_session_id: string } | undefined;
@@ -100,12 +102,20 @@ export class SessionTurnQueueStorageV6 {
         }
       }
       this.db.prepare(`INSERT INTO session_turn_queue_v6
-        (id, session_id, auxiliary_session_id, incarnation_id, request_id, state, captured_json, accepted_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
-          auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, json, now, now);
+        (id, session_id, auxiliary_session_id, incarnation_id, request_id, state, captured_json, accepted_json, source_display_position, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
+          auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, json, displayPosition, now, now);
       this.db.prepare("UPDATE session_turn_queue_v6 SET queue_position = sequence WHERE id = ?").run(id);
-      return this.required(owner, id);
+      const receipt = this.required(owner, id);
+      return displayPosition === null ? receipt : { ...receipt, sourceDisplayInserted: true };
     });
+  }
+
+  verifySourceDisplayPosition(id: string, actorSessionId: string, actorIncarnationId: string, actorTurnId: string, valid: boolean): void {
+    this.db.prepare(`UPDATE session_turn_queue_v6 SET source_display_verified = ?, source_display_position = CASE WHEN ? THEN source_display_position ELSE NULL END
+      WHERE id = ? AND json_extract(accepted_json, '$.origin.actorSessionId') = ?
+        AND json_extract(accepted_json, '$.origin.actorIncarnationId') = ? AND json_extract(accepted_json, '$.origin.actorTurnId') = ?`)
+      .run(valid ? 1 : 0, valid ? 1 : 0, id, actorSessionId, actorIncarnationId, actorTurnId);
   }
 
   getReceipt(owner: SessionTurnQueueOwner, requestId: string): SessionTurnQueueReceipt | null {

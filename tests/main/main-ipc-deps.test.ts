@@ -157,6 +157,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       getModelCatalog: () => ({ providers: [] }),
     } satisfies MainIpcCatalogDepsArgs,
     settings: {
+      getAppVersion: () => "1.0.0",
       getAppSettings: () => createDefaultAppSettings(),
       updateAppSettings: (settings) => settings,
       updateChatLayoutPreference: () => ({}) as never,

@@ -406,7 +406,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - ファイル名・操作のheaderと本文の間に、絶対パス専用の全幅領域を置く。pathはread-onlyで、長い場合は折り返して全文を表示し、Tabでfocusして選択・copyできる。狭幅では操作群も折り返す。通常fileはMainが解決したcanonical path、commit snapshotは選択root内の対応pathを表示し、Commit表示で本文の版を区別する。resourceの識別・認可や読込先は表示pathから変更しない
   - Text、Markdown、Mermaid（`.mmd`）、HTML（`.html` / `.htm`）、raster image、SVG、PDF、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - PDFは中央・独立PreviewとCodexの`visualize`による本文埋め込みで同じ閲覧専用readerを使う。本文埋め込みは会話の幅に収めた独立scroll領域とし、上部に元fileのlinkとReloadを置く。文書を主面積とし、reader上部にページ番号／label指定、前後ページ・移動履歴、10%〜800%の倍率、100% reset、Fit Width／Page、90度回転、Continuous／Single Page／Two Pages／Two Pages With CoverとFindを置く。本文はnative scrollとCtrl＋左dragによるpanを持ち、Ctrl＋wheelは保存済みの`Preview Wheel Zoom Step`を次の操作から適用する。折り畳みsidebarはThumbnails、Outline、Layers、Attachments、Infoを切り替える
-  - PDFのFindは全文検索・一致強調・次前移動を提供し、ホスト側でのFile Preview Find shortcutもreaderへ渡す。文字選択後のCopyと、中央Preview・本文埋め込みで利用可能なQuoteはホスト側の明示buttonから実行する。既存注釈・コメント・フォーム値は閲覧のみとし、編集・保存・印刷は提供しない。画像PDFは表示できるがOCRは行わず、署名の外観表示は電子署名の検証を意味しない
+  - PDFのFindは全文検索・一致強調・次前移動を提供し、ホスト側でのFile Preview Find shortcutもreaderへ渡す。選択テキスト用の`Copy Text`と、中央Preview・本文埋め込みで利用可能な`Quote`は既存ホストheaderに常設し、未選択ではdisabled、選択中だけ有効にする。`Copy File`とは別操作とし、選択・解除によって操作行やheader・本文の高さを変えない。クリック・keyboard操作時に現在のreaderの選択を確認し、解除・resource切替・Reload後に古い選択を使わない。独立Previewは`Copy Text`だけを提供する。既存注釈・コメント・フォーム値は閲覧のみとし、編集・保存・印刷は提供しない。画像PDFは表示できるがOCRは行わず、署名の外観表示は電子署名の検証を意味しない
   - パスワード付きPDFはreader内のdialogで入力し、誤入力時に再入力できる。Cancelでは解析を終了し、再入力はPreviewのReloadから行う。パスワードは永続化しない。readerの初期起動確認は15秒で打ち切り、応答がなければLoadingを終了してReloadを案内する。この期限は起動確認後のPDF解析・描画には適用せず、期限後の遅延応答では自動復帰しない。破損・解析失敗・XFAフォーム等の未対応は理由を示し、空白の表示成功へ置き換えない。通常fileのOpen等は既存の利用条件を維持する
   - PDF添付は一覧から明示的にreader内で開く。PDF、PNG／JPEG／GIF／WebP／BMP画像、対応拡張子のUTF-8テキストを扱い、HTMLも文字列として表示する。未対応形式はその旨を表示し、添付の実行・保存・自動openは行わない。文書外linkはホストで対象を表示し、Openを選んだ場合だけ既存のMainのlink解決・認可へ渡す。iframe自身は外部へ遷移しない
   - PDFも既存のfile認可・全量byte取得と50MiB以上のLoad Anyway確認を使い、原本は変更しない。Git commit snapshotは同じreaderで表示し、working treeのOpen／Show In Explorer等を追加しない。resource切替・Reload・unmountでは旧frameを破棄し、旧messageと解析・描画資源を残さない。隔離とasset配信は[Window Architecture](window-architecture.md#pdf-readerの隔離境界)を参照する
@@ -602,7 +602,7 @@ queueを持たない直接Steerの発言者は、各messageの`turnInput.origin`
 
 実行設定・配送状態は、対応するassistantレスポンスの既存Detailsへ集約する。Detailsの展開時だけ保存応答のmessage sequenceまたは明示された実行中WithMate Turnから共通execution読取を行い、保存されたuser message sequenceから正確な開始入力の受付へつなぐ。会話内の隣接関係や現在選択から対応を推測しない。再展開時には取得し直し、閉じた後の古い読取を後の表示へ適用しない。本文・送信者表示のための入力origin読取とは取得契機を分ける。
 
-送信側は既存receiptを表示中のsource WithMate Turnから件数単位で一括取得し、自身の保存Character avatarと発言者名を左側に置く。本文側の先頭行は受信側と同じ`@宛先Character`を左、独立した小さな`To 宛先Session名`リンクを右に置く。Session名は複数Sessionを区別するため通常表示に残す。呼びかけは保存本文を書き換えない表示要素として扱う。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。表示対象の保存原文は最初から全文を表示する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。詳細の配送・Turn状態は再展開と宛先の通知で再取得し、本文とは分ける。
+送信側は既存receiptを表示中のsource WithMate Turnから件数単位で一括取得する。新しい送信は受付時に観測した本文位置へ同じassistant応答内で表示し、Markdownの段落・コードブロックを分断しない境界へ寄せる。位置は進行表示の遅延により厳密な送信位置と異なり得る。確定本文へ対応できない位置や旧履歴の位置は不明として同じ応答の末尾へ置く。送信者のavatarを重複表示せず、先頭行は`@宛先Character`と独立した`To 宛先Session名`リンクを示す。Session名は複数Sessionを区別するため残し、呼びかけは保存本文を書き換えない。表示対象の保存原文は全文を表示する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別し、再展開と宛先の通知で再取得する。
 
 表示範囲の送信は追加操作を待たずにpage単位で取得して順次表示する。取得失敗は表示済みの内容を保って示し、再試行できる。
 

@@ -98,6 +98,22 @@
   gap: 10px;
 }
 
+.settings-app-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-app-version .settings-provider-name {
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+}
+
 .settings-section-card {
   display: grid;
   gap: 16px;

@@ -118,8 +118,8 @@ export class SessionExecutionReadStorage {
       if (!messageSeqs.length && !liveTurnIds.length) return { ok: true, items: [], nextCursor: null };
       const marks = (values: unknown[]) => values.map(() => "?").join(",");
       const clauses = [...(messageSeqs.length ? [`user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`] : []), ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : [])];
-      const sourceTurns = this.db.prepare(`SELECT id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
-        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "user_message_seq" | "assistant_message_seq">[];
+      const sourceTurns = this.db.prepare(`SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
+        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">[];
       if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
       const turnIds = sourceTurns.map((turn) => String(turn.id));
       const limit = options.limit ?? 20;
@@ -138,7 +138,7 @@ export class SessionExecutionReadStorage {
         })), nextCursor: records.length > limit ? records[limit - 1].id : null };
       }
       const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
-        parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json
+        parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json, q.source_display_position, q.source_display_verified
         FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
         LEFT JOIN auxiliary_sessions auxiliary ON auxiliary.id=q.auxiliary_session_id AND auxiliary.parent_session_id=parent.id
         WHERE json_extract(q.accepted_json, '$.origin.actorKind')=?
@@ -147,13 +147,15 @@ export class SessionExecutionReadStorage {
           AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
           AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
           AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
-        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string }>;
+        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string; source_display_position: number | null; source_display_verified: number }>;
       return { ok: true, items: rows.slice(0, limit).map((row) => {
         const input = captured(row.input_json)!;
         const origin = input.origin!;
         const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
         const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
-        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn), target: recipient, state: row.state, origin, text: input.request.userMessage,
+        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn),
+          sourceDisplayPosition: row.source_display_verified === 1 || (sourceTurn.phase === "running" && liveTurnIds.includes(String(sourceTurn.id))) ? row.source_display_position : null,
+          target: recipient, state: row.state, origin, text: input.request.userMessage,
           ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}) };
       }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
     }

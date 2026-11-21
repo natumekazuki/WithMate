@@ -1234,3 +1234,94 @@ test("resolved question highlights source choice and displays free answer in pla
     } finally { dom.window.close(); }
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "回答済み質問と複数の送信カードが同じ本文にあっても選択肢の強調とカードの順序を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "複数カードの挿入で選択強調を落とす、またはカードの順序を入れ替える"
+// observable = "PreviewとSourceで描画された選択部分、カードの個数と順序、自由回答"
+// observation_boundary = "component-behavior"
+// scope = "InlineResponseContentとMessageRichTextの質問履歴・送信カードの共存"
+// lifecycle = "permanent"
+// impact = "回答した選択肢や送信の前後関係を読み違える"
+// distinction = "質問だけとカードだけの表示testでは両方が同じ本文にあるときの干渉を検出できない"
+// @end-test-value
+test("resolved question selection and multiple sent cards coexist in preview and source", () => {
+  const source = "Choose a provider\n\n- Exa\n- Tavily";
+  const text = `Before\n${source}\nAfter`;
+  const record: ElicitationRecord = { requestId: "source", kind: "question", message: "Question", status: "answered",
+    textRange: { start: 7, end: 7 + source.length }, fields: [{ title: "Choose a provider", options: ["Exa", "Tavily"], answer: { selected: [1], text: ["Use it"] } }] };
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
+      text, records: [record], requests: [],
+      inlineContent: [
+        { key: "first", position: text.indexOf("Exa") + 1, content: React.createElement("span", { className: "test-card" }, "CARD-A") },
+        { key: "second", position: text.indexOf("Tavily") + 2, content: React.createElement("span", { className: "test-card" }, "CARD-B") },
+      ],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (body, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text: body, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      const document = dom.window.document;
+      const selected = Array.from(document.querySelectorAll(".elicitation-record-selected"), (node) => node.textContent ?? "").join("");
+      assert.match(selected, /Tavily/);
+      assert.deepEqual(Array.from(document.querySelectorAll(".test-card"), (node) => node.textContent), ["CARD-A", "CARD-B"]);
+      assert.equal(document.querySelector(".elicitation-record-answer")?.textContent, "Answer: Use it");
+    } finally { dom.window.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ承認の操作位置は送信カードと質問の追加・削除を通して維持される"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "別のinline内容や本文分割が変わった時に承認を再mountしてfocusを失う"
+// observable = "PreviewとSourceでの承認ボタンのDOM同一性とactiveElement"
+// observation_boundary = "component-behavior"
+// scope = "複数inline内容と質問が共存するInlineResponseContent"
+// lifecycle = "permanent"
+// impact = "承認の確認中にkeyboardの操作位置を失う"
+// distinction = "既存の承認継続testは送信カードの追加・削除を通らない"
+// @end-test-value
+test("approval focus survives sent cards and question changes", async () => {
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    const previousNode = globalThis.Node;
+    globalThis.window = dom.window as unknown as Window & typeof globalThis;
+    globalThis.document = dom.window.document;
+    globalThis.HTMLElement = dom.window.HTMLElement;
+    globalThis.Node = dom.window.Node;
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    const text = "Before approval\n\nAfter approval";
+    const approval = { key: "approval", position: 15, stableOwner: true, content: React.createElement("button", null, "Approval") };
+    const sent = { key: "sent", position: 3, content: React.createElement("span", null, "Sent") };
+    const record: ElicitationRecord = { requestId: "question", kind: "question", message: "Question", status: "answered", fields: [{ title: "Branch" }], textRange: { start: 0, end: 0 } };
+    const render = async (withSent: boolean, withQuestion: boolean) => act(async () => root.render(React.createElement(InlineResponseContent, {
+      text, inlineContent: withSent ? [sent, approval] : [approval], records: withQuestion ? [record] : [],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (body, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text: body, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      await render(false, false);
+      const button = dom.window.document.querySelector<HTMLButtonElement>("button")!;
+      button.focus();
+      for (const [withSent, withQuestion] of [[true, false], [true, true], [false, true], [false, false]]) {
+        await render(withSent, withQuestion);
+        assert.equal(dom.window.document.querySelector("button") === button, true, `${displayMode}: sent=${withSent}, question=${withQuestion}`);
+        assert.equal(dom.window.document.activeElement === button, true, `${displayMode}: sent=${withSent}, question=${withQuestion}`);
+      }
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.window = previousWindow;
+      globalThis.document = previousDocument;
+      globalThis.HTMLElement = previousHTMLElement;
+      globalThis.Node = previousNode;
+      dom.window.close();
+    }
+  }
+});

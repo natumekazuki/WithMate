@@ -29,6 +29,173 @@ import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared
 
 // @test-value v2
 // kind = "contract"
+// claim = "送信元Turn待ち・状態不明・実解放待ちの予約は応答待ちを始めず、配送可能な別予約や開始済みTurnの応答を妨げない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Bound Session API; https://github.com/natumekazuki/WithMate/issues/963" }
+// fault = "送信元待ちを実行中の応答として描画する、後続の即時配送を隠す、または開始後も予約操作を残す"
+// observable = "実Columnの応答待ち状態、入力順序と予約取消操作"
+// observation_boundary = "component-behavior"
+// scope = "Main/Auxiliaryの遅延配送と通常queue投影"
+// lifecycle = "permanent"
+// impact = "実行できない予約が処理開始済みと誤認され、別の配送の進行を見失う"
+// distinction = "storageの配送条件testや単体projection testでは会話Columnの応答待機と予約操作を検証できない"
+// @end-test-value
+test("conversation column keeps source-blocked deliveries queued until dispatch", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      let changed: ((id: string) => void) | undefined;
+      const blocked: SessionTurnQueueReceipt = {
+        sessionId: kind, incarnationId: "inc", id: "blocked", requestId: "blocked-request", sequence: 1, queuePosition: 1,
+        state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+        sourceTurnPhase: "running",
+        captured: { origin: { kind: "session", operation: "send", deliveryTiming: "after_source_turn", targetSessionId: kind, targetIncarnationId: "inc" },
+          request: { clientRequestId: "blocked-request", userMessage: "delayed prompt", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      };
+      let active = [blocked];
+      const api: ConversationMessageColumnApi = {
+        listSessionTurnQueue: async () => active,
+        onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+      };
+      let latest: SessionMessageColumnProps | null = null;
+      function View() {
+        latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: [], runState: "idle" },
+          baseProps: createBaseProps(kind), enabled: true, api, messageSourceKind: kind, liveRun: null });
+        return latest ? <SessionMessageColumn {...latest} /> : null;
+      }
+      await act(async () => root.render(<View key={kind} />));
+      const column = () => latest!;
+      for (const source of [{ sourceTurnPhase: "running" as const }, { sourceTurnPhase: "unknown" as const }, { sourceTurnPhase: undefined }, { sourceTurnPhase: "canceled" as const, sourceTurnPendingRelease: true }]) {
+        active = [{ ...blocked, ...source }];
+        await act(async () => changed?.(kind));
+        assert.equal(column().responsePending, false, `${kind}: source-blocked input is not a pending response`);
+        assert.equal(dom.window.document.querySelectorAll(".pending-row").length, 0);
+        assert.ok(dom.window.document.querySelector('button[aria-label="Cancel queued turn 1"]'));
+      }
+      active = [{ ...blocked, sourceTurnPhase: "completed" }];
+      await act(async () => changed?.(kind));
+      assert.equal(column().responsePending, true, `${kind}: released delivery can own the response`);
+      const immediate = { ...blocked, id: "immediate", requestId: "immediate-request", sequence: 2, queuePosition: 2,
+        captured: { ...blocked.captured, origin: { ...blocked.captured.origin!, deliveryTiming: "immediate" as const }, request: { ...blocked.captured.request, clientRequestId: "immediate-request", userMessage: "immediate prompt" } } };
+      active = [blocked, immediate];
+      await act(async () => changed?.(kind));
+      assert.equal(column().responsePending, true, `${kind}: immediate work can pass the blocked delivery`);
+      assert.equal(column().messages.at(-1)?.text, "immediate prompt");
+      assert.ok(dom.window.document.body.textContent?.includes("delayed prompt"));
+      active = [blocked, { ...immediate, state: "starting" }];
+      await act(async () => changed?.(kind));
+      assert.equal(column().responsePending, true, `${kind}: starting owns the response`);
+      assert.equal(dom.window.document.querySelector('[data-queue-receipt-id="immediate"]'), null);
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="blocked"]'));
+      await act(async () => root.render(<></>));
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryのlive開始が先に届いても、同じ予約の待機操作を外し、別の予約と保存済み入力を保つ"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/963; docs/design/desktop-ui.md: pending 中の live activity / streaming response" }
+// fault = "古いqueued receiptで開始済み入力のQueue操作を残す、異なる予約の操作を消す、または保存済み入力を二重表示する"
+// observable = "Column DOMの予約操作、user本文の件数とlive応答、開始失敗の表示"
+// observation_boundary = "consumer"
+// scope = "Main/Auxiliaryのqueue snapshotとlive実行の表示結合。IPCと保存はfixture"
+// lifecycle = "permanent"
+// impact = "利用者が実行中の予約を操作可能と誤認したり、別の待機予約や入力の対応を見失う"
+// distinction = "renderer queue購読単体ではlive開始通知と古いreceipt・保存履歴が別順序で到着する画面を検証できない"
+// @end-test-value
+test("conversation column binds live starts to the matching stale queued receipt", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      let changed: ((id: string) => void) | undefined;
+      const makeReceipt = (id: string, sequence: number): SessionTurnQueueReceipt => ({
+        sessionId: kind, incarnationId: "inc", id, requestId: `request-${id}`, sequence, queuePosition: sequence,
+        state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+        captured: { request: { clientRequestId: `request-${id}`, userMessage: `prompt ${id}`, executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      });
+      const first = makeReceipt("first", 1);
+      const second = makeReceipt("second", 2);
+      let active = [first, second];
+      let holdReads = false;
+      const heldReads: Array<() => void> = [];
+      const api: ConversationMessageColumnApi = {
+        listSessionTurnQueue: () => {
+          const snapshot = [...active];
+          return holdReads ? new Promise((resolve) => heldReads.push(() => resolve(snapshot))) : Promise.resolve(snapshot);
+        },
+        onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+      };
+      let live: LiveSessionRunState | null = null;
+      let messages: SessionMessageColumnProps["messages"] = [];
+      let latest: SessionMessageColumnProps | null = null;
+      function View() {
+        const column = latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages, runState: live ? "running" : "idle" },
+          baseProps: createBaseProps(kind), enabled: true, api, messageSourceKind: kind, liveRun: live });
+        return column ? <SessionMessageColumn {...column} /> : null;
+      }
+      await act(async () => root.render(<View key={kind} />));
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="first"]'));
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="second"]'));
+
+      live = { sessionId: kind, threadId: "thread", runState: "running", sessionTurnId: "42", turnId: "native",
+        queueReceipt: { id: "first", incarnationId: "other", userMessageSeq: 0 }, assistantText: "live answer", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      await act(async () => root.render(<View key={kind} />));
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="first"]'), "another incarnation must not claim the receipt");
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="second"]'));
+
+      holdReads = true;
+      await act(async () => changed?.(kind));
+      active = [{ ...first, state: "running", turnId: "42", userMessageSeq: 0 }, second];
+      live = { ...live, queueReceipt: { id: "first", incarnationId: "inc", userMessageSeq: 0 } };
+      messages = [{ role: "user", text: "prompt first", historyIndex: 0 }];
+      await act(async () => root.render(<View key={kind} />));
+      assert.equal(dom.window.document.querySelector('[data-queue-receipt-id="first"]'), null, "a known start must not retain queued actions");
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="second"]'), "the other queued receipt remains actionable");
+      assert.equal(dom.window.document.body.textContent?.split("prompt first").length, 2, "canonical and queued copies merge");
+      assert.equal((latest as SessionMessageColumnProps | null)?.liveRunAssistantText, "live answer");
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+      assert.match(dom.window.document.body.textContent ?? "", /live answer/);
+
+      live = null;
+      active = [{ ...first, state: "failed", turnId: "42", userMessageSeq: 0, reason: "start failed" }, second];
+      await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      assert.equal(dom.window.document.querySelector('[data-queue-receipt-id="first"]'), null, "an in-flight stale read must not restore queued actions");
+      assert.equal(dom.window.document.body.textContent?.split("prompt first").length, 2);
+      holdReads = false;
+      await act(async () => { heldReads.reverse().forEach((resolve) => resolve()); });
+      assert.match(dom.window.document.body.textContent ?? "", /start failed/);
+      assert.ok(dom.window.document.querySelector('[data-queue-receipt-id="second"]'));
+      await act(async () => root.render(<></>));
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "新規・既存のMain/Auxiliaryは保存turn IDとnative IDが異なっても初回送信からlive本文を更新し、保存応答へ同じ応答面を引き継ぐ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending 中の live activity / streaming response" }
 // fault = "receiptの保存IDをnative IDと比較して本文を隠すか、保存履歴への切替で本文を欠落・重複させる"
@@ -1514,6 +1681,50 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "複数宛先および同一宛先への複数送信は、実行中と保存後の対応するassistant本文内に、それぞれ一度ずつ順に表示する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "宛先ごとに複数receiptをまとめる、送信カードを別行や本文末尾へ移す、本文との順を変える、または重複表示する"
+// observable = "実行中と保存済みのassistant行の本文・各宛先の送信カードのDOM順と件数"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumnの送信位置投影"
+// lifecycle = "permanent"
+// impact = "利用者が同一Turnの発言と宛先付き送信の関係を見失う"
+// distinction = "Markdown単体とreceipt保存のテストは会話列への位置付きカードの接続を検証しない"
+// @end-test-value
+test("multiple sent cards retain recipients and order within live and saved responses", async () => {
+  for (const saved of [false, true]) {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+    const values = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+      Node: dom.window.Node, navigator: dom.window.navigator, MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true };
+    const previous = new Map(Object.keys(values).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, value });
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    dom.window.HTMLElement.prototype.scrollTo = () => {};
+    Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 600 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 600 }, clientWidth: { get: () => 800 } });
+    const intersection = installIntersectionObserver();
+    const origin = { kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "source-inc", actorTurnId: "42", operation: "send", targetIncarnationId: "recipient-inc" };
+    const items = [["a", "FIRST", 6], ["b", "SECOND", 6], ["a", "THIRD", 14]].map(([target, text, position], index) => ({ receiptId: `outgoing-${index}`, sequence: index + 1, sourceTurnId: "42", sourceMessageSeq: saved ? 1 : null, sourceDisplayPosition: position, target: { kind: "main", sessionId: target, incarnationId: "recipient-inc" }, state: "queued", origin: { ...origin, targetSessionId: target, targetSnapshot: { sessionTitle: `Session ${target}`, character: { id: target, name: `Mate ${target}`, iconPath: "" } } }, text }));
+    Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async () => ({ ok: true, items, nextCursor: null }) } });
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    try {
+      await act(async () => root.render(<SessionMessageColumn {...createBaseProps("sender")} provider="codex" isRunning={!saved} liveWithMateTurnId={saved ? undefined : "42"} liveRunAssistantText={saved ? "" : "BEFORE\n\nMIDDLE\n\nAFTER"} hasLiveRunAssistantText={!saved}
+        inputReadContext={{ ownerSessionId: "sender", target: { kind: "main", sessionId: "sender", incarnationId: "source-inc" } }} messages={saved ? [{ role: "assistant", text: "BEFORE\n\nMIDDLE\n\nAFTER", historyIndex: 1 }] : [{ role: "user", text: "Request", historyIndex: 0 }]} messageKeys={saved ? ["result"] : ["request"]} />));
+      const row = dom.window.document.querySelector(".message-row.assistant");
+      assert.ok(row, saved ? "saved" : "live");
+      const cards = [...row.querySelectorAll(".session-outbound-inline")];
+      assert.equal(cards.length, 3);
+      assert.deepEqual(cards.map((card) => card.getAttribute("aria-label")), ["Sent Message: Session a", "Sent Message: Session b", "Sent Message: Session a"]);
+      assert.equal(dom.window.document.querySelectorAll('.session-outbound-inline, article.session-outbound').length, 3);
+      assert.match(row.textContent ?? "", /BEFORE[\s\S]*FIRST[\s\S]*SECOND[\s\S]*MIDDLE[\s\S]*THIRD[\s\S]*AFTER/);
+    } finally {
+      await act(async () => root.unmount()); intersection.restore(); dom.window.close();
+      for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+    }
   }
 });
 

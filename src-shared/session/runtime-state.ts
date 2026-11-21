@@ -198,6 +198,8 @@ export type LiveSessionRunState = {
   runState?: string;
   /** Persisted WithMate session turn ID, distinct from the provider's turn ID. */
   sessionTurnId?: string;
+  /** Queue receipt and saved input belonging to this live normal turn. */
+  queueReceipt?: { id: string; incarnationId: string; userMessageSeq: number };
   turnId?: string;
   inputAvailable?: boolean;
   cancellationState?: "requested" | "terminating";

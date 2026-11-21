@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
 export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
@@ -13,7 +14,7 @@ export type SessionTurnQueueActionKind = "cancel" | "release" | "input" | "move-
 export type SessionTurnQueueMoveDirection = "up" | "down";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
-export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = []) {
+export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = [], liveRun?: LiveSessionRunState | null) {
   const owner = `${sessionId}:${incarnationId}`;
   const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true, ready: false });
   const stateRef = useRef(state);
@@ -33,6 +34,25 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const reload = useCallback(() => setRevision((current) => current + 1), []);
+  const startedId = liveRun?.sessionId === sessionId && liveRun.queueReceipt?.incarnationId === incarnationId ? liveRun.queueReceipt.id : undefined;
+  const startedSeq = startedId ? liveRun?.queueReceipt?.userMessageSeq : undefined;
+  const startedTurnId = startedId ? liveRun?.sessionTurnId : undefined;
+  useLayoutEffect(() => {
+    if (!enabled || !startedId || startedSeq === undefined || !startedTurnId) return;
+    // The live start is committed. Discard reads begun before it and retain the
+    // identity until a fresh canonical read replaces the queue snapshot.
+    ++generation.current;
+    setState((current) => {
+      if (current.owner !== owner) return current;
+      const existing = [...current.active, ...current.bridges].find((receipt) => receipt.id === startedId)
+        ?? submissionsRef.current.find((submission) => submission.receipt?.id === startedId)?.receipt;
+      if (!existing || existing.inputTurnId || existing.state !== "queued" && existing.state !== "starting") return current;
+      const started = { ...existing, state: "running" as const, turnId: startedTurnId, userMessageSeq: startedSeq };
+      return { ...current, active: [...current.active.filter((receipt) => receipt.id !== startedId), started],
+        bridges: current.bridges.filter((receipt) => receipt.id !== startedId) };
+    });
+    reload();
+  }, [enabled, owner, startedId, startedSeq, startedTurnId, reload]);
   const observedCanonical = useRef({ owner, signature: canonicalSignature });
   useEffect(() => { setPendingAction(null); }, [owner]);
   useEffect(() => {
@@ -153,8 +173,11 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const receipts = useMemo(() => {
     if (!enabled) return EMPTY_RECEIPTS;
     const known = state.owner === owner ? [...state.active, ...state.bridges] : [];
-    return [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
-  }, [enabled, state.owner, owner, state.active, state.bridges, submissions]);
+    const all = [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
+    if (!startedId || startedSeq === undefined || !startedTurnId) return all;
+    return all.map((receipt) => receipt.id === startedId && !receipt.inputTurnId && (receipt.state === "queued" || receipt.state === "starting")
+      ? { ...receipt, state: "running" as const, turnId: startedTurnId, userMessageSeq: startedSeq } : receipt);
+  }, [enabled, state.owner, owner, state.active, state.bridges, submissions, startedId, startedSeq, startedTurnId]);
   const queuedReceipts = useMemo(() => receipts.filter((receipt) => receipt.state === "queued").sort((left, right) => left.queuePosition - right.queuePosition), [receipts]);
   const move = useCallback((receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => {
     const expectedQueuedIds = queuedReceipts.map((item) => item.id);

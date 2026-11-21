@@ -777,6 +777,34 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Settingsはpreload経由でMainの実行中versionを読み、他Windowは同じIPCを呼べない"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout; src-electron/ipc/settings.ts" }
+// fault = "異なる値やchannelを使うかSettings以外へversion取得を許す"
+// observable = "preload経由で返るversionと別Windowからの拒否"
+// observation_boundary = "public-boundary"
+// scope = "Settings app version IPC"
+// lifecycle = "permanent"
+// distinction = "型検査や表示testではpreloadからMain handlerまでの接続とsender境界を確認できない"
+// @end-test-value
+test("app version IPC returns the Main value to Settings", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("file:///home.html?mode=settings");
+  const otherWindow = createWindowStub("file:///home.html");
+  let sender = settingsWindow;
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    getAppVersion: () => "7.0.1-preview.2",
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({ invoke: (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args) } as never);
+  assert.equal(await api.getAppVersion(), "7.0.1-preview.2");
+  sender = otherWindow;
+  await assert.rejects(() => api.getAppVersion(), /Settings window/);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "MainとAuxiliaryのsteer IPCは対象の親Session Windowだけから同turn入力を受け付ける"
 // oracle = { type = "contract", ref = "Issue #780 explicit steer ownership" }
 // fault = "別Windowから同turn入力を送信できるか、turn IDがIPCで失われる"

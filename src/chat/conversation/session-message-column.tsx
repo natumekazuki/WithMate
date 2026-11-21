@@ -1310,6 +1310,7 @@ export function SessionMessageColumn({
   const inlineApproval = isRunning && liveApprovalRequest ? {
     key: `approval-${liveApprovalRequest.requestId}`,
     position: liveApprovalRequest.textPosition ?? liveRunAssistantText.length,
+    stableOwner: true,
     content: <LiveRequestSurface
       liveApprovalRequest={liveApprovalRequest}
       approvalActionRequestId={approvalActionRequestId}
@@ -1321,6 +1322,13 @@ export function SessionMessageColumn({
       onOpenPath={onOpenPath}
     />,
   } : undefined;
+  const liveSent = sentDeliveries.items.filter((item) => item.sourceTurnId === liveWithMateTurnId);
+  const inlineLivePossible = isRunning && (pendingResponseMessageIndex < 0 || messages[pendingResponseMessageIndex]?.role === "assistant");
+  const renderInlineSent = (items: typeof liveSent, text: string) => !inputReadContext ? [] : items
+    .map((item) => {
+      const positionUnknown = item.sourceDisplayPosition == null || item.sourceDisplayPosition > text.length;
+      return { key: `sent-${item.receiptId}`, position: positionUnknown ? text.length : item.sourceDisplayPosition!, content: <SentDeliveryRow inline positionUnknown={positionUnknown} item={item} context={inputReadContext} {...sentMessageContext} /> };
+    });
   const renderPendingContent = () => (
     <div className="pending-response-content">
       {pendingResponseMessageIndex < 0 ? <InlineResponseContent
@@ -1331,7 +1339,7 @@ export function SessionMessageColumn({
         responseProvider={provider}
         records={visibleLiveElicitationRecords}
         requests={activeQuestions}
-        inlineContent={inlineApproval}
+        inlineContent={[...renderInlineSent(liveSent, liveRunAssistantText), ...(inlineApproval ? [inlineApproval] : [])]}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
@@ -1514,6 +1522,7 @@ export function SessionMessageColumn({
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
+                const messageSent = isAssistant ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
@@ -1622,7 +1631,7 @@ export function SessionMessageColumn({
                             responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
                             requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
-                            inlineContent={absoluteIndex === pendingResponseMessageIndex ? inlineApproval : undefined}
+                            inlineContent={[...renderInlineSent(messageSent, read.text), ...(absoluteIndex === pendingResponseMessageIndex && inlineApproval ? [inlineApproval] : [])]}
                             inputAvailable={elicitationInputAvailable}
                             drafts={elicitationDrafts}
                             elicitationActionRequestId={elicitationActionRequestId}
@@ -1781,14 +1790,14 @@ export function SessionMessageColumn({
                 </div>
                 </article>;
               }}</TurnInputReadBoundary>
-                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex && !(item.sourceTurnId === liveWithMateTurnId && inlineLivePossible) && !(isAssistant && shouldRenderFullMessage)).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
             {issuedWithoutReceipt.filter((record) => record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId).map(renderIssued)}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}

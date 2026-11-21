@@ -229,6 +229,7 @@ export type MainIpcCatalogDepsArgs = {
 };
 
 export type MainIpcSettingsDepsArgs = {
+  getAppVersion(): string;
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;

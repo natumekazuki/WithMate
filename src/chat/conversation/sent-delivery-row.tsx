@@ -14,7 +14,7 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context, ...messageContext }: { item: SentDelivery; context: TurnInputReadContext } & SentMessageContext) {
+export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, ...messageContext }: { item: SentDelivery; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean } & SentMessageContext) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [execution, setExecution] = useState<Execution | null>(null);
@@ -47,14 +47,13 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
   }, [open, identity, item.state, statusRevision]);
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
   const distinctContent = item.coordination && (item.coordination.consultation === undefined || item.coordination.text !== item.coordination.consultation);
-  return <article className="message-row assistant session-outbound" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={open && statusBusy || undefined}>
-    <div className="message-avatar-stack">
-      <CharacterAvatar character={character} size="small" className="message-avatar" />
-      <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>
-    </div>
-    <div className="message-character-name">{character.name}</div>
-    <div className="message-card assistant session-outbound"><div className="message-card-content">
-      <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
+  const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
+  const card = <div className="message-card assistant session-outbound"><div className="message-card-content">
+      <div className="sent-delivery-header">
+        <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
+        {inline ? detailsButton : null}
+      </div>
+      {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
       {item.coordination
         ? <CoordinationNotice id={item.coordination.id} consultation={item.coordination.consultation ?? item.coordination.text} target={item.target} />
         : <MessageRichText {...messageContext} text={item.text} />}
@@ -70,6 +69,14 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
         <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
       </dl>
       </section> : null}
-    </div></div>
+    </div></div>;
+  if (inline) return <section className="session-outbound-inline" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={open && statusBusy || undefined}>{card}</section>;
+  return <article className="message-row assistant session-outbound" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={open && statusBusy || undefined}>
+    <div className="message-avatar-stack">
+      <CharacterAvatar character={character} size="small" className="message-avatar" />
+      {detailsButton}
+    </div>
+    <div className="message-character-name">{character.name}</div>
+    {card}
   </article>;
 }

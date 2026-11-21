@@ -101,7 +101,17 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     assert.ok(document.querySelector('p > .message-file-preview[data-format="pdf"]'));
     assert.equal(document.querySelector('.message-file-preview')?.querySelector("div"), null);
     const sent: unknown[] = [];
-    frame.contentWindow!.postMessage = (message: unknown) => sent.push(message);
+    frame.contentWindow!.postMessage = (message: unknown) => {
+      sent.push(message);
+      const request = message as { type: string; requestId?: string };
+      if (request.type === "get-selection") queueMicrotask(() => document.defaultView!.dispatchEvent(new document.defaultView!.MessageEvent("message", {
+        source: frame.contentWindow, origin: PDF_READER_ORIGIN,
+        data: { channel: PDF_READER_CHANNEL, instanceId: new URLSearchParams(new URL(frame.src).hash.slice(1)).get("instanceId"),
+          type: "selection", text: "PDF selected text", requestId: request.requestId },
+      })));
+    };
+    const controls = [...document.querySelectorAll<HTMLButtonElement>(".message-file-preview-header .session-pdf-selection-actions button")];
+    assert.deepEqual(controls.map((button) => [button.textContent, button.disabled]), [["Copy Text", true], ["Quote", true]]);
     await emit("ready");
     await render(`${text} more`, { ...props });
     await emit("ready");
@@ -111,11 +121,19 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     await emit("selection", { text: "PDF selected text" });
     await emit("open-link", { target: "../other.pdf" });
     assert.deepEqual([copied, quoted, opened], [[], [], []]);
-    await click("Copy"); await click("Quote"); await click("Open");
+    assert.ok(controls.every((button) => !button.disabled));
+    await click("Copy Text"); await click("Quote"); await click("Open");
     assert.deepEqual(copied, ["PDF selected text"]); assert.deepEqual(quoted, ["PDF selected text"]);
     assert.deepEqual(opened, [{ kind: "link", sessionId: "session", target: "../other.pdf", baseResource: file }]);
+    await emit("selection", { text: "" });
+    assert.deepEqual([...document.querySelectorAll(".message-file-preview-header .session-pdf-selection-actions button")], controls);
+    assert.ok(controls.every((button) => button.disabled));
     const index = createRenderedTextSearchIndex(document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
     assert.equal(index.normalizedText, projectMessageRenderedSearchText(`${text} more`, "codex").toLocaleLowerCase());
+    await emit("selection", { text: "before reload" });
+    await click("Reload");
+    assert.notEqual(document.querySelector("iframe"), frame);
+    assert.ok([...document.querySelectorAll<HTMLButtonElement>(".session-pdf-selection-actions button")].every((button) => button.disabled));
     await render(text, { displayMode: "source" });
     assert.equal(document.querySelector("iframe"), null);
     assert.equal(document.querySelector("pre")?.textContent, text);
@@ -126,7 +144,7 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     for (const responseProvider of [undefined, "claude", "copilot"]) {
       await render(marker(), { responseProvider }); assert.equal(document.querySelector('.message-file-preview[data-format="pdf"]'), null);
     }
-    assert.equal(inspected.length, 1);
+    assert.equal(inspected.length, 2);
   });
 });
 

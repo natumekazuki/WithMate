@@ -1,4 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { createPortal } from "react-dom";
 
 import {
   isPdfReaderFrameMessage,
@@ -18,6 +19,7 @@ type PdfFilePreviewProps = {
   ref?: Ref<PdfFilePreviewHandle>;
   bytes: Uint8Array;
   name: string;
+  actionsContainer: HTMLElement | null;
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
   onOpenLink: (target: string) => void;
@@ -28,14 +30,15 @@ function readThemeTokens(element: HTMLElement): PdfReaderThemeTokens {
   return Object.fromEntries(PDF_READER_THEME_TOKENS.map((token) => [token, style.getPropertyValue(token).trim()]));
 }
 
-export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOpenLink }: PdfFilePreviewProps) {
+export function PdfFilePreview({ ref, bytes, name, actionsContainer, onCopyText, onQuoteText, onOpenLink }: PdfFilePreviewProps) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const openLinkButtonRef = useRef<HTMLButtonElement>(null);
   const [instanceId] = useState(() => crypto.randomUUID());
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [selection, setSelection] = useState("");
+  const [hasSelection, setHasSelection] = useState(false);
+  const pendingSelectionAction = useRef<{ requestId: string; action: "copy" | "quote" } | null>(null);
   const [pendingLink, setPendingLink] = useState<string | null>(null);
   useEffect(() => { if (pendingLink !== null) openLinkButtonRef.current?.focus(); }, [pendingLink]);
   const cancelLink = () => { setPendingLink(null); frameRef.current?.focus(); };
@@ -55,6 +58,14 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
   }, [instanceId, zoomWheelStep]);
   const callbacksRef = useRef({ onCopyText, onQuoteText, onOpenLink });
   callbacksRef.current = { onCopyText, onQuoteText, onOpenLink };
+  const actOnSelection = (action: "copy" | "quote") => {
+    if (!initializedRef.current || !hasSelection) return;
+    const requestId = crypto.randomUUID();
+    pendingSelectionAction.current = { requestId, action };
+    // The enabled state is only a hint: read the live range after this host gesture.
+    frameRef.current?.contentWindow?.postMessage({ channel: PDF_READER_CHANNEL, instanceId,
+      type: "get-selection", requestId } satisfies PdfReaderHostMessage, PDF_READER_ORIGIN);
+  };
 
   useEffect(() => {
     let active = true;
@@ -64,6 +75,8 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
       if (!active || failed) return;
       failed = true;
       initializedRef.current = false;
+      pendingSelectionAction.current = null;
+      setHasSelection(false);
       clearTimeout(startupTimer);
       setError(message);
       setState("error");
@@ -92,7 +105,20 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
       } else if (message.type === "error") {
         fail(message.message || "The PDF could not be displayed.");
       } else if (message.type === "selection") {
-        setSelection(message.text);
+        if (!sent) return;
+        if (message.requestId !== undefined) {
+          const pending = pendingSelectionAction.current;
+          if (!pending || pending.requestId !== message.requestId) return;
+          pendingSelectionAction.current = null;
+          setHasSelection(Boolean(message.text.trim()));
+          if (message.text.trim()) {
+            if (pending.action === "copy") callbacksRef.current.onCopyText(message.text);
+            else callbacksRef.current.onQuoteText?.(message.text);
+          }
+          return;
+        }
+        setHasSelection(Boolean(message.text.trim()));
+        if (!message.text.trim()) pendingSelectionAction.current = null;
       } else if (message.type === "open-link") {
         // A document message can propose a destination, never invoke a host API.
         setPendingLink((current) => current ?? message.target);
@@ -109,6 +135,7 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
       active = false;
       clearTimeout(startupTimer);
       initializedRef.current = false;
+      pendingSelectionAction.current = null;
       observer.disconnect();
       window.removeEventListener("message", handleMessage);
     };
@@ -116,12 +143,12 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
 
   return (
     <span ref={hostRef} className="session-pdf-preview" aria-label="PDF Reader" aria-busy={state === "loading" || undefined}>
-      {selection.trim() ? (
-        <span className="session-pdf-selection-actions" role="group" aria-label="Selected PDF Text">
-          <button type="button" onClick={() => callbacksRef.current.onCopyText(selection)}>Copy</button>
-          {onQuoteText ? <button type="button" onClick={() => callbacksRef.current.onQuoteText?.(selection)}>Quote</button> : null}
-        </span>
-      ) : null}
+      {actionsContainer ? createPortal(<>
+        <button type="button" disabled={!hasSelection || state !== "ready"}
+          onMouseDown={(event) => event.preventDefault()} onClick={() => actOnSelection("copy")}>Copy Text</button>
+        {onQuoteText ? <button type="button" disabled={!hasSelection || state !== "ready"}
+          onMouseDown={(event) => event.preventDefault()} onClick={() => actOnSelection("quote")}>Quote</button> : null}
+      </>, actionsContainer) : null}
       {pendingLink !== null ? (
         <span className="session-pdf-link-confirmation" role="region" aria-label="Open PDF Link" onKeyDown={(event) => {
           if (event.key === "Escape") { event.stopPropagation(); cancelLink(); }

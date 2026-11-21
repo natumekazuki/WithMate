@@ -34,6 +34,10 @@ export type SessionTurnQueueOrigin = {
   targetSnapshot?: SessionTurnQueueDisplaySnapshot;
 };
 export type SessionTurnQueueCapturedInput = {
+  /** Transient observation; excluded from the idempotent acceptance payload. */
+  sourceDisplayPosition?: number;
+  /** Kept in memory only until the source Turn is finalized. */
+  sourceDisplayText?: string;
   coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; targetKind?: "main" | "auxiliary"; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
   request: RunSessionTurnRequest & { clientRequestId: string };
   attachments: ComposerAttachment[];
@@ -96,6 +100,8 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   releasedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Internal enqueue result; not part of the accepted request. */
+  sourceDisplayInserted?: boolean;
 };
 export type SessionTurnQueueReceiptPage = { receipts: SessionTurnQueueReceipt[]; nextCursor: number | null };
 export type ReorderQueuedSessionTurnsRequest = { incarnationId: string; expectedQueuedIds: string[]; queuedIds: string[] };

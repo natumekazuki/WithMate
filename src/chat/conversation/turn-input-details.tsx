@@ -10,14 +10,7 @@ import { CharacterAvatar } from "../../ui/ui-utils.js";
 import { approvalModeLabel } from "../../../src-shared/settings/approval-mode.js";
 import { reasoningEffortLabel } from "../../../src-shared/settings/model-catalog.js";
 import { codexSandboxModeOptions } from "../../../src-shared/settings/codex-sandbox-mode.js";
-
-export function getQueuedSourceWaitState(receipt?: SessionTurnQueueReceipt): "waiting" | "unknown" | null {
-  const origin = receipt?.accepted?.origin ?? receipt?.captured.origin;
-  if (receipt?.state !== "queued" || origin?.deliveryTiming !== "after_source_turn") return null;
-  const phase = receipt.sourceTurnPhase;
-  if (phase === undefined || phase === "unknown") return "unknown";
-  return receipt.sourceTurnPendingRelease || phase === "running" ? "waiting" : null;
-}
+import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 
 export type TurnInputReadContext = { ownerSessionId: string; target: SessionTarget };
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
