@@ -26,6 +26,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_STEER_SESSION_TURN_CHANNEL,
   WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
+  WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL,
   WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
@@ -158,6 +159,21 @@ export function registerSessionRuntimeHandlers(
     assertOwningSessionWindowSender(event, parentId, deps);
     try {
       return await queue().enqueueSessionTurn(sessionId, request);
+    } catch (error) {
+      if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
+      throw error;
+    }
+  });
+  ipcMain.handle(WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest) => {
+    const parentId = await assertQueueSender(event, sessionId);
+    const frame = event.senderFrame;
+    const assertCurrent = () => {
+      if (!frame || event.sender.isDestroyed() || event.sender.mainFrame !== frame) throw new Error("Retry requires the owning main application frame.");
+      assertOwningSessionWindowSender(event, parentId, deps);
+    };
+    assertCurrent();
+    try {
+      return await queue().retryFailedSessionTurn(sessionId, request, assertCurrent);
     } catch (error) {
       if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
       throw error;

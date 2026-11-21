@@ -60,6 +60,7 @@ import {
   useMainAuxiliaryRuntimeSession,
 } from "../chat/auxiliary/auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
+import { FailedTurnRetryContext } from "../chat/runtime/failed-turn-retry-context.js";
 import { resolveConversationAttentionEntries, type ConversationAttention } from "../chat/conversation-attention.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
@@ -2408,6 +2409,11 @@ export default function AgentSessionWindowApp() {
     <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
+      <FailedTurnRetryContext.Provider value={{ submit: (request) => {
+        const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
+        if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
+        return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
+      }, blocked: (id) => mainSessionRuntime.hasUncertainTurnFor(id) || isSelectedSessionReadOnly }}>
       <ChatWindow
         {...chatWindowProps}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
@@ -2446,6 +2452,7 @@ export default function AgentSessionWindowApp() {
         conversationAttention={conversationAttention}
         providerQuota={isAuxiliaryTargetUnavailable ? null : <ProviderQuota key={renderedSession.provider} api={withmateApi} providerId={renderedSession.provider} />}
       />
+      </FailedTurnRetryContext.Provider>
       <SessionFilesFeature
         ref={filesFeatureRef}
         api={withmateApi}

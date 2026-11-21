@@ -572,11 +572,11 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `lastUserMessage` がない session では retry 不能のため surface を出さない
   - 共通 `ChatWindow` が回復操作を所有し、Action Dockの既存上段操作列へ配置する。Prompt展開・compact・Terminal・中央file previewのいずれでも到達でき、activeな列だけに描画する。通常時は回復用の空領域を予約せず、既存Cancelの予約領域を維持する
   - Mainと選択中Auxiliaryは同じ操作を使う。対象会話、前回依頼、最新turn、編集先draftを同じownerへ束縛し、会話・incarnation・依頼の切替で古い置換確認を無効にする
-  - 通常の回復表示は`Resend` / `Edit`の2つのicon-only操作に限定する。操作対象は既存のMain / Auxiliary切替、前回依頼・停止状態・失敗理由はtranscriptから確認する。tooltipとaccessible nameには対象会話と操作名を含める
+  - 回復表示の`Edit`と、interrupted／canceledで利用できる`Resend`はicon-only操作とする。操作対象は既存のMain / Auxiliary切替、前回依頼・停止状態・失敗理由はtranscriptから確認する。tooltipとaccessible nameには対象会話と操作名を含める
   - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
-  - retry CTA は `Resend` と `Edit`
-    - `Resend`: 選択会話の既存送信経路で前回本文を即時再送し、現在のdraftを送信・消去・書換えしない。受付不明時は再送を無効にし、既存の`Check Receipt` / `Retry Original Turn`を使う
+  - 回復操作は次のとおり
+    - `Resend`: interrupted／canceledの既存回復導線では選択会話の前回本文を送信し、現在のdraftを送信・消去・書換えしない。失敗確定Turnは会話内の失敗表示から`Retry Failed Turn`を選ぶ。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
     - `Edit`: 前回本文を対象会話のdraftへ戻し、Promptを開いてtextareaへfocusする。自動送信はしない
   - 異なる非空draftで`Edit`を押した場合は、`Your current draft is preserved.`を示す確認dialogを開く。`Keep Current Draft`または`Escape`で保持し、`Replace With Previous Request`を明示選択した場合だけ置換する。確認中も背面のDock選択は維持する
   - 最新turnの取得失敗からの`Retry`、実行受付不明の確認、後続turnの`Release Later Turns`はそれぞれ別の操作として維持する
@@ -586,7 +586,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 ### Queued Message Edit
 
-Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表示する。Coordination由来の予約は回答と配送の対応を維持するためEdit／Steerの対象にしない。Steer非対応のproviderでも通常予約は編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
+Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表示する。Coordination由来の予約と失敗Turnの再実行は、対応する入力・来歴を維持するためEdit／Steerの対象にしない。Steer非対応のproviderでも通常予約は編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
 
 編集中だけ既存Sendの紙飛行機をチェックiconへ替え、tooltipとaccessible nameを`Submit`にする。その左に×のicon buttonを置き、`Cancel Edit`とする。追加の状態label、bubbleの強調枠、専用pane、復帰用buttonは設けない。上段の実行中TurnのCancelは別操作として維持する。予約時の実行設定は変更せず既存controlで参照し、本文・添付を更新する。
 

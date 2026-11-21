@@ -255,6 +255,7 @@ export type WithMateWindowSessionApi = {
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
+  retryFailedSessionTurn(sessionId: string, request: import("../session/session-turn-queue.js").RetryFailedSessionTurnRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
   sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   getSessionTurnQueueReceipt(sessionId: string, requestId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt | null>;
   listSessionTurnQueue(sessionId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt[]>;

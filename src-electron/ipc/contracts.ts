@@ -591,6 +591,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       "enqueueSessionTurn" | "getSessionTurnQueueReceipt" | "listSessionTurnQueue" | "reorderQueuedSessionTurns" |
       "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" |
       "beginQueuedSessionTurnEdit" | "updateQueuedSessionTurn" | "cancelQueuedSessionTurnEdit"> & {
+        retryFailedSessionTurn(sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest, assertCurrent?: () => void): Promise<import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
         releaseQueuedSessionTurnEdit(sessionId: string): Promise<void>;
       };
     getAuxiliarySessionStatus?(sessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;

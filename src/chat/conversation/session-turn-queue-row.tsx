@@ -42,7 +42,7 @@ export function SessionTurnQueueStatus(props: {
 function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
-  const editableInput = !receipt.captured.coordination;
+  const editableInput = !receipt.captured.coordination && !receipt.captured.retrySource;
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -92,6 +92,7 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
     <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
       style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">
+      {props.receipt.captured.retrySource ? <p className="message-paragraph">Retried by you · Originally from {props.receipt.captured.retrySource.origin.kind === "session" ? props.receipt.captured.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}</p> : null}
       {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
       {read.coordination && props.inputReadContext ? <>
         <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target} />

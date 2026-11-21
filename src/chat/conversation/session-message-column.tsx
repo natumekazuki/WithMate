@@ -21,6 +21,7 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
+import { FailedTurnRetry } from "./failed-turn-retry.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
@@ -1561,6 +1562,7 @@ export function SessionMessageColumn({
                   style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
+                    {message.role === "user" && read.observed?.retrySource ? <p className="message-paragraph">Retried by you · Originally from {read.observed.retrySource.origin.kind === "session" ? read.observed.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}</p> : null}
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -1671,6 +1673,7 @@ export function SessionMessageColumn({
                     <TurnInputStatus message={message} />
                     {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
+                    {isAssistant && message.runFailure !== undefined && message.historyIndex !== undefined && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} /> : null}
                     {artifact || hasExecutionDetails ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (

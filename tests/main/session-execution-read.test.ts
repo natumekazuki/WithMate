@@ -15,16 +15,107 @@ import { executionOperationResultSchemas, type ExecutionReadOperation } from "..
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
 import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
+import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-turn-queue-facade.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
+import { registerSessionRuntimeHandlers } from "../../src-electron/ipc/session-runtime.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import type { MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts.js";
+import type { IpcMainInvokeEvent } from "electron";
 
-async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
+async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void | Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
   const db = join(directory, "app.db");
   const sessions = new SessionStorageV6(db), turns = new SessionTurnStorageV6(db), queue = new SessionTurnQueueStorageV6(db), read = new SessionExecutionReadStorage(db);
   const auxiliary = new AuxiliarySessionStorage(db);
-  try { action({ sessions, turns, queue, read, auxiliary }); }
+  try { await action({ sessions, turns, queue, read, auxiliary }); }
   finally { auxiliary.close(); read.close(); queue.close(); turns.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); }
 }
 function session() { return buildNewSession({ id: "read-main", taskTitle: "Read", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "後続Turnのある保存履歴から選んだ失敗開始receiptは認可IPCを通り、元来歴付きGUIの新しい受付になる"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/database-schema.md: retrySource" }
+// fault = "最新Turnを代用する、履歴や元受付を変更する、Session送信者を新actorにする"
+// observable = "実SQLiteで読んだ選択Turn、新受付の本文と送信来歴、履歴本文と元受付"
+// observation_boundary = "public-boundary"
+// scope = "IPC、MainSessionTurnQueueFacade、queue service、SQLite実行履歴"
+// lifecycle = "permanent"
+// impact = "古い失敗とは異なる指示を実行したり既存履歴を書き換える"
+// distinction = "facadeとUIのfake receiptだけでは実SQLiteのTurn・receipt対応を確認できない"
+// @end-test-value
+test("IPC retries the selected older failed Turn from real saved execution state", async () => {
+  await fixture(async ({ sessions, turns, queue, read }) => {
+    const saved = sessions.insertSession({ ...session(), model: "current-model", reasoningEffort: "medium", messages: [
+      { role: "user", text: "fixed instruction" }, { role: "assistant", text: "failed response", runFailure: "failed" },
+      { role: "user", text: "later instruction" }, { role: "assistant", text: "later response" },
+    ] });
+    const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
+    const target = { kind: "main" as const, ...owner };
+    const sourceOrigin = { kind: "session" as const, operation: "send" as const, targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId,
+      actorKind: "main" as const, actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "91", actorSnapshot: { sessionTitle: "Sender", character: { id: "sender-character", name: "Sender", iconPath: "" } } };
+    const original = queue.enqueue(owner, { request: { userMessage: "fixed instruction", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) }, provider: saved.provider, workspacePath: saved.workspacePath, attachments: [], origin: sourceOrigin });
+    const turnBase = { sessionId: saved.id, provider: saved.provider, model: saved.model, reasoningEffort: saved.reasoningEffort, approvalMode: saved.approvalMode, threadId: "", errorMessage: "", createdAt: "now" };
+    const failed = turns.createSessionTurn({ ...turnBase, phase: "running", userMessageSeq: 0 });
+    queue.claimNext(owner); queue.markStarted(owner, original.id, { turnId: String(failed.id), userMessageSeq: 0 });
+    turns.updateSessionTurn(failed.id, { ...turnBase, phase: "failed", userMessageSeq: 0, assistantMessageSeq: 1 });
+    queue.settle(owner, original.id, "failed", "failed");
+    const later = turns.createSessionTurn({ ...turnBase, phase: "running", userMessageSeq: 2 });
+    turns.updateSessionTurn(later.id, { ...turnBase, phase: "completed", userMessageSeq: 2, assistantMessageSeq: 3 });
+    const store = new Proxy(queue, { get(instance, key) { const value = Reflect.get(instance, key); return typeof value === "function" ? async (...args: unknown[]) => value.apply(instance, args) : value; } }) as unknown as SessionTurnQueueStore;
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => { throw new Error("No provider calls in fixture"); } });
+    const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession: async (id) => sessions.getSession(id),
+      getAppSettings: async () => createDefaultAppSettings(), validateWorkspace: async () => {},
+      validateProvider: async () => ({ provider: { id: "codex", label: "Codex", defaultModelId: saved.model, defaultReasoningEffort: saved.reasoningEffort, models: [{ id: saved.model, label: "Model", reasoningEfforts: [saved.reasoningEffort] }] } }),
+      preview: async () => { throw new Error("must not reconstruct captured attachments"); }, validateRetryAttachments: async () => {},
+      readRetryExecution: async (input) => executionOperationResultSchemas.get_execution.parse(read.execute({ target: input.target, operation: "get_execution", request: { target: input.target, receiptId: input.receiptId } })), store, service });
+    const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: any[]) => any>();
+    const window = {}, frame = {}, sender = { mainFrame: frame, isDestroyed: () => false };
+    const deps = { queue: { retryFailedSessionTurn: facade.retryFailedSessionTurn.bind(facade) }, resolveEventWindow: () => window, resolveSessionWindow: () => window,
+      getAuxiliarySessionStatus: async () => null } as unknown as MainIpcSessionRuntimeDeps;
+    registerSessionRuntimeHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, deps);
+    try {
+      const result = await handlers.get("withmate:retry-failed-session-turn")!({ sender, senderFrame: frame } as unknown as IpcMainInvokeEvent, saved.id,
+        { target, receiptId: original.id, turnId: String(failed.id), clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) });
+      assert.equal(result.captured.request.userMessage, "fixed instruction");
+      assert.equal(result.captured.origin.kind, "gui");
+      assert.deepEqual(result.captured.retrySource.origin, sourceOrigin);
+      assert.equal(result.captured.retrySource.turnId, String(failed.id));
+      assert.deepEqual(sessions.getSession(saved.id)?.messages.map((message) => message.text), ["fixed instruction", "failed response", "later instruction", "later response"]);
+      assert.equal(queue.getReceiptById(owner, original.id)?.state, "failed");
+      const reread = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, receiptId: result.id } }));
+      assert.equal(reread.retrySource?.receiptId, original.id);
+    } finally { await service.close(); }
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "GUIによる失敗Turn再実行の保存済receiptから今回のactorと元の送信者を別々に読み出せる"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: retrySource; docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "queue JSONから再実行元を落とす、元Sessionを今回のactorへ投影する"
+// observable = "実SQLiteの受付をexecution schema経由で読んだoriginとretrySource"
+// observation_boundary = "public-boundary"
+// scope = "queue storageからexecution readへの再実行来歴"
+// lifecycle = "permanent"
+// impact = "会話表示とProviderが再実行者と元送信者を混同する"
+// distinction = "facade fixtureだけではSQLite保存とexecution schemaを通した再読込を検出できない"
+// @end-test-value
+test("failed Turn retry provenance survives queue storage and execution reads", async () => {
+  await fixture(({ sessions, queue, read }) => {
+    const saved = sessions.insertSession(session());
+    const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
+    const target = { kind: "main" as const, ...owner };
+    const gui = { kind: "gui" as const, operation: "send" as const, targetSessionId: saved.id, targetIncarnationId: owner.incarnationId };
+    const original = { ...gui, kind: "session" as const, actorKind: "main" as const, actorSessionId: "source", actorIncarnationId: "source-inc", actorTurnId: "12", actorSnapshot: { sessionTitle: "Source", character: { id: "character", name: "Sender", iconPath: "" } } };
+    const retrySource = { receiptId: "old-receipt", turnId: "42", origin: original, changedSinceAcceptance: true };
+    const stored = queue.enqueue(owner, { request: { userMessage: "fixed instruction", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) }, provider: saved.provider, workspacePath: saved.workspacePath, attachments: [], origin: gui, retrySource });
+    const result = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, receiptId: stored.id } }));
+    assert.deepEqual(result.origin, gui);
+    assert.deepEqual(result.retrySource, retrySource);
+  });
+});
 
 // @test-value v2
 // kind = "contract"
