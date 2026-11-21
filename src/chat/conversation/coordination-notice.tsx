@@ -6,6 +6,17 @@ import { useCoordinationQuery } from "../../coordination/use-coordination-query.
 import { ErrorDetailsButton } from "../../ui/error-details.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
+const consultationStates = {
+  awaitingUser: { label: "Awaiting Your Reply", path: "M4 16a6 5 0 0 1 12 0M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" },
+  awaitingReply: { label: "Awaiting Reply", path: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 3v4l3 2" },
+  replyRecorded: { label: "Reply Recorded", path: "M8 4 3 9l5 5M3 9h9a5 5 0 0 1 5 5v2" },
+  resolved: { label: "Resolved", path: "m4 10 4 4 8-8" },
+  withdrawn: { label: "Withdrawn", path: "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM7 10h6" },
+  corrected: { label: "Corrected", path: "m4 12-1 5 5-1 9-9-4-4Zm7-7 4 4" },
+  deleted: { label: "Deleted", path: "M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6m4-6v6" },
+  unavailable: { label: "State Unavailable", path: "m10 3 8 14H2Zm0 5v3m0 2.5v.5" },
+};
+
 export function CoordinationNotice({ id, consultation, target }: {
   id: string; consultation: string; target: CoordinationIdentity;
 }) {
@@ -23,14 +34,15 @@ export function CoordinationNotice({ id, consultation, target }: {
   const api = getWithMateApi();
   const query = useCoordinationQuery({ operation: "get", id }, visible && Boolean(api?.executeCoordination));
   const record = query.result && "record" in query.result ? query.result.record : null;
-  const status = query.deleted ? "Deleted" : query.error || !api?.executeCoordination ? "State Unavailable"
-    : !record ? null : record.state !== "open"
-      ? { resolved: "Resolved", withdrawn: "Withdrawn", corrected: "Corrected" }[record.state]
-      : record.answers.length ? "Reply Recorded" : record.respondent.kind === "user" ? "Awaiting Your Reply" : "Awaiting Reply";
+  const state = query.deleted ? "deleted" : query.error || !api?.executeCoordination ? "unavailable"
+    : !record ? null : record.state !== "open" ? record.state
+      : record.answers.length ? "replyRecorded" : record.respondent.kind === "user" ? "awaitingUser" : "awaitingReply";
+  const status = state && consultationStates[state];
   const preview = projectMessageRenderedSearchText(consultation).replace(/\s+/gu, " ").trim();
   const identity = JSON.stringify([id, target.kind, target.sessionId, target.incarnationId]);
   return <section ref={shell} className="coordination-notice" aria-label="Consultation">
-    <button type="button" className="related-session-route coordination-notice-link" aria-label={`Open Consultation: ${preview}`} aria-describedby={statusId} title={`Open Consultation: ${preview}`}
+    <button type="button" className="related-session-route coordination-notice-link" aria-label={`Open Consultation: ${preview}`} aria-describedby={statusId}
+      title={status ? `${status.label} · Open Consultation: ${preview}` : `Open Consultation: ${preview}`}
       disabled={!api?.openCoordination} onClick={() => {
         setFailure(null);
         void getWithMateApi()?.openCoordination({ id, kind: target.kind, sessionId: target.sessionId, incarnationId: target.incarnationId })
@@ -38,8 +50,13 @@ export function CoordinationNotice({ id, consultation, target }: {
       }}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Z" /><path d="M7 9h10M7 13h6" /></svg>
       <span className="related-session-title">{preview}</span>
-      <span id={statusId} className="coordination-notice-state">{status}</span><span aria-hidden="true">›</span>
+      {status && !(state === "unavailable" && query.error) ? <svg className="coordination-notice-state" width="16" height="16" viewBox="0 0 20 20"
+        fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d={status.path} />
+      </svg> : null}
+      <span aria-hidden="true">›</span>
     </button>
+    <span id={statusId} className="visually-hidden">{status?.label ?? (query.loading ? "Loading Consultation State" : null)}</span>
     {query.loading ? <LoadingIndicator inline label="Loading Consultation State" /> : null}
     {query.error && !query.deleted ? <><ErrorDetailsButton message={query.error} label="Consultation State Error" /><button type="button" className="related-session-route" disabled={query.loading} onClick={query.refresh}>Retry</button></> : null}
     {failure?.identity === identity ? <ErrorDetailsButton message={failure.text} label="Could Not Open Consultation" /> : null}

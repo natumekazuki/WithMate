@@ -12,7 +12,7 @@ import type { CoordinationInvalidation } from "../../src-shared/coordination/coo
 // claim = "表示範囲の相談だけ正確なIDで状態を取得し、現行回答と解決を区別し、通知・再表示・失敗回復・削除と対象変更を反映する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談状態の取得・状態文言・失敗・消去" }
 // fault = "非表示/無関係通知で取得する、改訂番号を回答と誤認する、別IDの遅い応答を表示する、または失敗を解決済みとして扱う"
-// observable = "get request列、状態label、loading、再試行と削除後の表示、詳細操作のexact identity/ID"
+// observable = "get request列、詳細buttonの状態説明、回答待ち/回答あり/解決/削除の異なる描画形状、loading、再試行、詳細操作のexact identity/ID"
 // observation_boundary = "consumer"
 // scope = "CoordinationNoticeと既存useCoordinationQuery、IPCはfixture"
 // lifecycle = "permanent"
@@ -52,26 +52,44 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
   const root = createRoot(dom.window.document.getElementById("root")!);
   const notify = async (id = record.id) => act(async () => { for (const listener of [...listeners]) listener({ id, crewRootSessionId: "crew", initiator: target }); });
   const visible = async (value: boolean) => act(async () => { for (const callback of intersections.values()) callback(value); });
-  const state = () => dom.window.document.querySelector(".coordination-notice-state")?.textContent;
+  const document = dom.window.document;
+  const state = () => {
+    const description = document.querySelector(".coordination-notice-link")?.getAttribute("aria-describedby");
+    return description ? document.getElementById(description)?.textContent : null;
+  };
+  const shapes = new Set<string>();
+  const checkShape = () => {
+    const icon = document.querySelector(".coordination-notice-state");
+    const path = icon?.querySelector("path")?.getAttribute("d");
+    assert.ok(path && !shapes.has(path), `Missing or reused state shape: ${state()}`);
+    assert.equal(icon?.getAttribute("aria-hidden"), "true");
+    shapes.add(path);
+  };
   try {
     await act(async () => root.render(<CoordinationNotice id="first" consultation="First **question**" target={target} />));
     assert.equal(requests.length, 0);
     await visible(true);
     assert.deepEqual(requests, [{ operation: "get", id: "first" }]);
     assert.equal(state(), "Awaiting Your Reply"); // Retiring an answer can leave a positive revision without an answer.
+    checkShape();
     const count = requests.length;
     await notify("unrelated");
     assert.equal(requests.length, count);
     record = { ...record, respondent: { ...target, sessionId: "respondent" } };
     await notify(); assert.equal(state(), "Awaiting Reply");
+    checkShape();
     record = { ...record, answers: [{ id: "answer", revision: 3, actor: { kind: "user" }, body: "Answer", selectedChoices: [], createdAt: "now" }] };
     await notify(); assert.equal(state(), "Reply Recorded");
+    checkShape();
     record = { ...record, state: "resolved" };
     await notify(); assert.equal(state(), "Resolved");
+    checkShape();
     record = { ...record, state: "withdrawn" };
     await notify(); assert.equal(state(), "Withdrawn");
+    checkShape();
     record = { ...record, state: "corrected" };
     await notify(); assert.equal(state(), "Corrected");
+    checkShape();
     failure = true;
     await notify(); assert.equal(state(), "State Unavailable");
     assert.ok(dom.window.document.querySelector('[aria-label="Consultation State Error"]'));
@@ -100,6 +118,7 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-notice-link")!.click());
     assert.deepEqual(opened.at(-1), { id: "second", ...target });
     deleted = true; await notify(); assert.equal(state(), "Deleted");
+    checkShape();
     assert.equal(dom.window.document.querySelector(".coordination-notice-link .related-session-title")?.textContent, "Second question");
   } finally {
     await act(async () => root.unmount()); dom.window.close();

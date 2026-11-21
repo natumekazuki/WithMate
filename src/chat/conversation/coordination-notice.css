@@ -10,9 +10,8 @@
   padding-block: 4px;
   font-size: 0.82rem;
 }
-.coordination-notice-link > svg, .coordination-notice-state { flex-shrink: 0; }
+.coordination-notice-link > svg { flex-shrink: 0; }
 .coordination-notice-link .related-session-title { color: var(--ink); font-weight: 400; }
-.coordination-notice-state { font-size: 0.72rem; }
 .issued-coordination-tail { margin-block: 10px; margin-inline-start: 64px; padding-inline: 16px; }
 .received-coordination-content { margin-top: 10px; }
 @media (max-width: 600px) {
