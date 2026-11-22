@@ -96,6 +96,7 @@ describe("HomeSettingsContent", () => {
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
       onChangeModelAvailability={noOp}
+      onChangeWithMateAutoReview={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -173,6 +174,59 @@ describe("HomeSettingsContent", () => {
       dom.window.close();
     }
   }
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認審査は既定Offで、送信先の開示と、対応するModel・Depthの明示選択を既存Saveにつなぐ"
+  // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+  // fault = "保存前に自動審査を有効にする、機微な履歴の送付を表示しない、または不完全な設定で保存できる"
+  // observable = "Provider初期値と説明の関連、各選択後のSaveボタンと保存payload"
+  // observation_boundary = "component-behavior"
+  // scope = "SettingsのWithMate Auto Review設定と既存Save"
+  // lifecycle = "permanent"
+  // risk_tags = ["privacy"]
+  // distinction = "永続化testでは画面の同意に必要な開示とSaveの操作条件を扱えない"
+  // @end-test-value
+  it("keeps approval review off until a complete disclosed selection is saved", async () => {
+    await withSettingsDom(async (container, root) => {
+      const initial = createDefaultAppSettings();
+      initial.codingProviderSettings.claude = { enabled: true, apiKey: "", skillRootPath: "" };
+      const catalog = { providers: [...modelCatalog.providers, { id: "claude", label: "Claude", defaultModelId: "reviewer", defaultReasoningEffort: "",
+        models: [{ id: "reviewer", label: "Review Model", reasoningEfforts: ["low", "high"] }] }] };
+      let saved: typeof initial.withMateAutoReview | undefined;
+      function View() {
+        const [draft, setDraft] = useState(initial);
+        return React.cloneElement(buildSettingsContent(), { settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(catalog, draft), settingsDirty: draft !== initial,
+          onChangeWithMateAutoReview: (withMateAutoReview: typeof initial.withMateAutoReview) => setDraft((current) => ({ ...current, withMateAutoReview })),
+          onSaveSettings: () => { saved = draft.withMateAutoReview; },
+        });
+      }
+      await act(async () => root.render(<View />));
+      const area = [...container.querySelectorAll("details")].find((element) => element.querySelector("summary")?.textContent === "WithMate Auto Review")!;
+      const controls = () => area.querySelectorAll("select");
+      const save = () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!;
+      const choose = async (index: number, value: string) => {
+        const control = controls()[index];
+        await act(async () => {
+          control.value = value;
+          control.dispatchEvent(new window.Event("change", { bubbles: true }));
+        });
+      };
+      assert.equal(controls()[0].value, "");
+      const description = document.getElementById(controls()[0].getAttribute("aria-describedby")!);
+      assert.match(description?.textContent ?? "", /selected provider receives.*saved conversation history/);
+      await choose(0, "claude");
+      assert.equal(save().disabled, true);
+      await choose(1, "reviewer");
+      assert.equal(save().disabled, true);
+      await choose(2, "high");
+      assert.equal(save().disabled, false);
+      assert.equal(saved, undefined);
+      await act(async () => save().click());
+      assert.deepEqual(saved, { providerId: "claude", model: "reviewer", reasoningEffort: "high" });
+    });
+  });
 
   // @test-value v2
   // kind = "contract"

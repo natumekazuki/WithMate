@@ -909,7 +909,7 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
       );
     case "on-request":
     default:
-      return async (request) => {
+      return async (request, invocation) => {
         if (isReadOnlyPermissionRequest(request)) {
           return toPermissionDecision("approved");
         }
@@ -923,8 +923,13 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
           requestId = randomUUID();
           requestIds.set(request, requestId);
         }
+        const promptRequest = invocation?.promptRequest;
+        const providerRequiresManual = request.managedApprovalRequired || invocation?.assistedApprovalAssessment
+          || (promptRequest && "managedApprovalRequired" in promptRequest && promptRequest.managedApprovalRequired);
         const decision = await input.onApprovalRequest(
           redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, resolveRunWorkspacePath(input))),
+          undefined,
+          providerRequiresManual ? undefined : { operation: redactor.sanitize({ request, workspacePath: resolveRunWorkspacePath(input) }) },
         );
         return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
       };

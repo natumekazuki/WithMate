@@ -2456,10 +2456,10 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "provider-controlled permissionはapproval callbackのapprove/denyとhandler不在をlegacy kindへ変換する"
-  // oracle = { type = "contract", ref = "src-electron/providers/copilot/copilot-adapter.ts: permission handler" }
-  // fault = "approval decisionを誤変換し、provider permissionを許可または拒否できない"
-  // observable = "approval callback入力と返却legacy kind"
+  // claim = "provider-controlled permissionは個別の決定をnativeへ返し、審査には資格を除いた実要求を渡すが本人必須の要求は渡さない"
+  // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+  // fault = "許可・拒否を誤変換する、実要求の引数を落とす、本人必須の操作を審査に出す、または資格を渡す"
+  // observable = "approval callbackの表示・審査入力と返却native kind"
   // observation_boundary = "public-boundary"
   // scope = "copilot-provider-permission"
   // lifecycle = "permanent"
@@ -2470,9 +2470,9 @@ describe("CopilotAdapter session settings", () => {
     const bindingReference = approvedInput.agentRuntimeBinding?.bindingReference ?? "";
     approvedInput.session.approvalMode = "on-request";
     approvedInput.executionOptions = captureSessionExecutionOptions(approvedInput.session);
-    const approvalRequests: unknown[] = [];
-    approvedInput.onApprovalRequest = async (request) => {
-      approvalRequests.push(request);
+    const approvalRequests: Array<{ request: LiveApprovalRequest; review: unknown }> = [];
+    approvedInput.onApprovalRequest = async (request, _signal, review) => {
+      approvalRequests.push({ request, review });
       return "approve" as LiveApprovalDecision;
     };
     const approvedSettings = buildCopilotSessionSettings(approvedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
@@ -2489,6 +2489,12 @@ describe("CopilotAdapter session settings", () => {
     assert.equal(approvalRequests.length, 1);
     assert.doesNotMatch(JSON.stringify(approvalRequests), new RegExp(bindingReference));
     assert.match(JSON.stringify(approvalRequests), new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+    const cleanWrite = { ...createWritePermissionRequest(), fileName: "F:/repo/review-target.txt", intention: "Create draft" } as PermissionRequest;
+    await approvedSettings.config.onPermissionRequest?.(cleanWrite, { sessionId: "session-1" });
+    assert.deepEqual(approvalRequests[1].review, { operation: { request: cleanWrite, workspacePath: "F:/repo" } });
+    await approvedSettings.config.onPermissionRequest?.({ ...createWritePermissionRequest(), managedApprovalRequired: true }, { sessionId: "session-1" });
+    assert.equal(approvalRequests.length, 3);
+    assert.equal(approvalRequests[2].review, undefined);
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";

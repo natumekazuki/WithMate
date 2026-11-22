@@ -122,6 +122,10 @@ import { SessionWindowRestoreService } from "./windows/session-window-restore-se
 import { SettingsCatalogService } from "./settings/settings-catalog-service.js";
 import { SessionObservabilityService } from "./session/session-observability-service.js";
 import { SessionApprovalService } from "./session/session-approval-service.js";
+import { ApprovalReviewInputFence, WithMateApprovalReviewTurn, type PendingApprovalReview, type StartWithMateApprovalReview } from "./session/withmate-approval-review.js";
+import { openClaudeApprovalReviewer } from "./providers/claude/claude-approval-reviewer.js";
+import type { OpenApprovalReviewer } from "./providers/approval-reviewer.js";
+import type { WithMateReviewProviderId } from "../src-shared/settings/withmate-auto-review.js";
 import { SessionElicitationService } from "./session/session-elicitation-service.js";
 import { WindowBroadcastService } from "./windows/window-broadcast-service.js";
 import { WindowDialogService } from "./windows/window-dialog-service.js";
@@ -199,6 +203,7 @@ import {
 } from "./skills/managed-skill-distribution-service.js";
 import { hydrateSessionsFromSummaries } from "./session/session-summary-adapter.js";
 import { getProviderAppSettings, type AppSettings } from "../src-shared/settings/provider-settings-state.js";
+import { assertModelEnabled } from "../src-shared/settings/model-availability.js";
 import { resolveWorkspaceDirectoryValidationMessage } from "../src-shared/window/workspace-directory-validation.js";
 import type { ChatLayoutPreferenceUpdate } from "../src-shared/settings/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skills/skill-discovery.js";
@@ -221,7 +226,7 @@ import {
   projectGlossaryCheckoutAuthority,
 } from "./glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
-import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
+import { ProviderAgentRuntimeTurnCoordinator, type ProviderAgentRuntimeTurnHandle } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossary-operation-schema.js";
@@ -388,6 +393,8 @@ let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
 let allowQuitWithInFlightRuns = false;
 let agentRuntimeApi: AgentRuntimeApiHandle | null = null;
+const approvalReviewInputs = new ApprovalReviewInputFence();
+let approvalReviewSettingsRevision = 0;
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 const mainWindowComposition = new MainWindowComposition(
   preloadPath,
@@ -944,6 +951,28 @@ function endManagedProviderTurn(handle: unknown): void {
   agentRuntimeApi?.managedMcp?.release(turn);
   glossaryRuntimeService.endProviderTurn(turn);
 }
+
+const approvalReviewAdapters = { claude: openClaudeApprovalReviewer } satisfies Record<WithMateReviewProviderId, OpenApprovalReviewer>;
+
+const startWithMateApprovalReview: StartWithMateApprovalReview = ({ selection, runtimeHandle, ...source }) => {
+  const host = agentRuntimeApi?.managedMcp;
+  if (!host || !runtimeHandle) return undefined;
+  const settingsRevision = approvalReviewSettingsRevision;
+  return new WithMateApprovalReviewTurn({ ...source, selection, inputs: approvalReviewInputs,
+    policyCurrent: () => approvalReviewSettingsRevision === settingsRevision,
+    acquireHistory: () => host.issueReviewHistory(runtimeHandle as ProviderAgentRuntimeTurnHandle),
+    open: async (input) => {
+      const settings = await requireAppSettingsStorage().getSettings();
+      const current = settings.withMateAutoReview;
+      if (approvalReviewSettingsRevision !== settingsRevision || !getProviderAppSettings(settings, selection.providerId).enabled
+        || current?.providerId !== selection.providerId || current.model !== selection.model || current.reasoningEffort !== selection.reasoningEffort) {
+        throw new Error("Approval reviewer settings are not current.");
+      }
+      assertModelEnabled(settings.modelAvailability, selection.providerId, selection.model);
+      return approvalReviewAdapters[selection.providerId](input);
+    },
+  });
+};
 
 
 async function issueProviderAgentRuntimeBinding(
@@ -1538,7 +1567,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppVersion: () => app.getVersion(),
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
-                updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
+                updateAppSettings: (settings) => approvalReviewInputs.during(() => {
+                  approvalReviewSettingsRevision++;
+                  return requireSettingsCatalogService().updateAppSettings(settings);
+                }),
                 updateChatLayoutPreference,
                 getAppDatabaseDiagnostics,
                 scanSessionFolderCleanup: (request) => providerRuntimeOperationCoordinator.runExclusive(
@@ -1710,6 +1742,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return updated;
                 },
                 runAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
+                  approvalReviewInputs.invalidate();
                   const owner = requireActivePersistentStoreOwnerForFactory("Auxiliary run admission");
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
                     throw new Error("The app is quitting, so a new message cannot be sent.");
@@ -1757,7 +1790,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     auxiliaryLiveRunParents.releaseIfUnused(auxiliarySessionId, owner);
                   }
                 }),
-                steerAuxiliarySessionTurn: (auxiliarySessionId, request) => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
+                steerAuxiliarySessionTurn: (auxiliarySessionId, request) => approvalReviewInputs.during(() => requireAuxiliarySessionService().trackPendingDraftSend(async () => {
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
                   const service = requireAuxiliarySessionService();
                   const session = await service.getAuxiliarySessionMetadata(auxiliarySessionId);
@@ -1774,21 +1807,23 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   if (!accepted) throw new Error("The provider did not confirm the input.");
                   broadcastSessions([session.parentSessionId]);
                   return accepted;
-                }),
-                cancelAuxiliarySessionRun: (auxiliarySessionId) =>
-                  requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId),
+                })),
+                cancelAuxiliarySessionRun: (auxiliarySessionId) => {
+                  approvalReviewInputs.invalidate();
+                  requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId);
+                },
               },
               sessionRuntime: {
                 queue: {
-                  sendQueuedSessionInput: (sessionId, id, expectedTurnId) => requireMainSessionTurnQueueFacade().sendQueuedSessionInput(sessionId, id, expectedTurnId),
-                  enqueueSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, request),
-                  retryFailedSessionTurn: (sessionId, request, assertCurrent) => requireMainSessionTurnQueueFacade().retryFailedSessionTurn(sessionId, request, assertCurrent),
+                  sendQueuedSessionInput: (sessionId, id, expectedTurnId) => approvalReviewInputs.during(() => requireMainSessionTurnQueueFacade().sendQueuedSessionInput(sessionId, id, expectedTurnId)),
+                  enqueueSessionTurn: (sessionId, request) => approvalReviewInputs.during(() => requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, request)),
+                  retryFailedSessionTurn: (sessionId, request, assertCurrent) => approvalReviewInputs.during(() => requireMainSessionTurnQueueFacade().retryFailedSessionTurn(sessionId, request, assertCurrent)),
                   getSessionTurnQueueReceipt: (sessionId, requestId) => requireMainSessionTurnQueueFacade().getSessionTurnQueueReceipt(sessionId, requestId),
                   listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
                   listSessionTurnQueueReceipts: (sessionId, options) => requireMainSessionTurnQueueFacade().listSessionTurnQueueReceipts(sessionId, options),
-                  cancelQueuedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id),
+                  cancelQueuedSessionTurn: (sessionId, id) => approvalReviewInputs.during(() => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id)),
                   beginQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().beginQueuedSessionTurnEdit(sessionId, request),
-                  updateQueuedSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().updateQueuedSessionTurn(sessionId, request),
+                  updateQueuedSessionTurn: (sessionId, request) => approvalReviewInputs.during(() => requireMainSessionTurnQueueFacade().updateQueuedSessionTurn(sessionId, request)),
                   cancelQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurnEdit(sessionId, request),
                   releaseQueuedSessionTurnEdit: (sessionId) => sessionTurnQueueService?.releaseQueuedEdit(sessionId) ?? Promise.resolve(),
                   reorderQueuedSessionTurns: (sessionId, request) => requireMainSessionTurnQueueFacade().reorderQueuedSessionTurns(sessionId, request),
@@ -1799,7 +1834,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getProviderQuotaTelemetry: (providerId, options) => getOrRefreshProviderQuotaTelemetry(providerId, options),
                 getSessionContextTelemetry: (sessionId) => getSessionContextTelemetry(sessionId),
                 resolveLiveApproval,
-                resolveLiveElicitation,
+                resolveLiveElicitation: (...args) => approvalReviewInputs.during(() => resolveLiveElicitation(...args)),
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: async (session) => toConversationView(await requireMainSessionCommandFacade().updateSession(session)),
                 changeSessionAdditionalDirectory: async (request) => { await requireSessionPersistenceService().changeAdditionalDirectory(request); },
@@ -1816,7 +1851,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   for (const sessionId of result.deletedSessionIds) terminalService?.releaseSession(sessionId);
                   return result;
                 },
-                runSessionTurn: async (sessionId, request) => {
+                runSessionTurn: (sessionId, request) => approvalReviewInputs.during(async () => {
                   const owner = requireActivePersistentStoreOwnerForFactory("Turn result projection");
                   const current = await getRuntimeSession(sessionId);
                   assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
@@ -1827,14 +1862,17 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   assertPersistentStoreOwnerIsActive(owner, "Turn result projection");
                   if (!session) throw new Error("The saved Session could not be loaded.");
                   return session;
-                },
-                steerSessionTurn: async (sessionId, request) => {
+                }),
+                steerSessionTurn: (sessionId, request) => approvalReviewInputs.during(async () => {
                   if (mainWindowRuntime.getSessionWindowBridge().isQuitPending()) throw new Error("The app is quitting, so input cannot be sent.");
                   const result = await requireMainSessionCommandFacade().steerSessionTurn(sessionId, request);
                   broadcastSessions([sessionId]);
                   return result;
+                }),
+                cancelSessionRun: (sessionId) => {
+                  approvalReviewInputs.invalidate();
+                  requireMainSessionCommandFacade().cancelSessionRun(sessionId);
                 },
-                cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               mate: {
                 getMateState: () => requireMateStorage().getMateState(),
@@ -2295,6 +2333,8 @@ async function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): P
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
+  approvalReviewSettingsRevision++;
+  approvalReviewInputs.invalidate();
   const settings = await requireAppSettingsStorage().resetSettings();
   requireMainObservabilityFacade().configureProviderQuotaPolling(settings);
   applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
@@ -2605,8 +2645,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         settleRunningInput: (...args) => requireMainSessionPersistenceFacade().settleRunningInput(...args),
         getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
         checkpointRuntimeMetadata: (session, expected) => requireMainSessionPersistenceFacade().checkpointRuntimeMetadata(session, expected),
-        persistRunningTurnStart: (session, expectedMessageCount) => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
-        persistQueuedTurnStart: (session, count, queueId, turn) => requireMainSessionPersistenceFacade().persistQueuedTurnStart(session, count, queueId, turn),
+        persistRunningTurnStart: (session, expectedMessageCount) => approvalReviewInputs.during(() => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount)),
+        persistQueuedTurnStart: (session, count, queueId, turn) => approvalReviewInputs.during(() => requireMainSessionPersistenceFacade().persistQueuedTurnStart(session, count, queueId, turn)),
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
         appendTerminalSession: async (session, terminalCommit) => {
           const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
@@ -2636,7 +2676,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
-      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
+      interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, startWithMateApprovalReview, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
         onSentInputChanged: publishSentInputChanged,
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
@@ -2739,8 +2779,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           if (auxiliary) auxiliaryLiveRunParents.remember(auxiliary, owner);
           return auxiliary;
         },
-        persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
-        persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
+        persistRunningTurnStart: (session, expectedMessageCount) => approvalReviewInputs.during(() => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount)),
+        persistQueuedTurnStart: (session, count, queueId, turn) => approvalReviewInputs.during(() => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn)),
         appendRunningInput: (...args) => requireAuxiliarySessionService().appendRunningInput(...args),
         beginRunningInput: (...args) => requireAuxiliarySessionService().beginRunningInput(...args),
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
@@ -2788,6 +2828,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       },
       interaction: {
         waitForApprovalDecision: waitForLiveApprovalDecision,
+        startWithMateApprovalReview,
         waitForElicitationResponse: waitForLiveElicitationResponse,
         cancelApprovals: (sessionId) => requireSessionApprovalService().cancelSession(sessionId),
         cancelElicitations: (sessionId) => requireSessionElicitationService().cancelSession(sessionId),
@@ -3540,8 +3581,9 @@ function waitForLiveApprovalDecision(
   sessionId: string,
   request: LiveApprovalRequest,
   signal: AbortSignal,
+  review?: PendingApprovalReview,
 ): Promise<LiveApprovalDecision> {
-  return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal);
+  return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal, review);
 }
 
 function resolveLiveElicitation(

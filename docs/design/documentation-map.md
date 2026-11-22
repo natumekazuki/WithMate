@@ -56,6 +56,7 @@
 | [Electron Session Store](electron-session-store.md) | Session・turn・設定・catalogの読書きと保存owner |
 | [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
 | [Session History](session-history.md) | 通常Session APIによる保存済み会話・実行・操作記録の読取 |
+| [WithMate Auto Review](withmate-auto-review.md) | 審査設定、Turn単位の履歴読取と判定、手動承認への復帰 |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
