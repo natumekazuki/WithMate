@@ -7,7 +7,62 @@ import {
   getDefaultApprovalModeForProvider,
   getSandboxOptionsForProvider,
   getSandboxOptionsForProviderSelection,
+  resolveChildSessionPermissions,
 } from "../../src-shared/settings/provider-runtime-options.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "非CodexのProvider ControlledからCodexへ子を作るとRead Onlyが選ばれる"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api の create_child" }
+// fault = "非Codexでは効いていないSandbox値を引き継ぐか、CodexのSandboxを未指定にする"
+// observable = "子の権限変換が返すCodex Sandbox"
+// observation_boundary = "component-behavior"
+// scope = "非CodexのProvider ControlledからCodexへの新規子の権限変換"
+// lifecycle = "permanent"
+// impact = "親で確認対象だった書込みを子の初期Sandboxで許可することを防ぐ"
+// distinction = "Provider設定の候補や実行値の型は変換時に選んだSandboxを検証しない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("非CodexのProvider ControlledはCodexの子でRead Onlyを選ぶ", () => {
+  for (const provider of ["claude", "copilot", "opencode"]) {
+    const inherited = resolveChildSessionPermissions(provider, {
+      approvalMode: "on-request",
+      codexSandboxMode: "danger-full-access",
+      codexReviewer: "user",
+    }, "codex");
+    assert.equal(inherited.codexSandboxMode, "read-only", provider);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "異種の子ではAuto RunやProvider固有のApprovalを移さない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api の create_child" }
+// fault = "同名のApprovalをそのまま渡すか、等価でないApprovalを別の方針へ変換する"
+// observable = "子の権限変換が返すApproval継承拒否エラー"
+// observation_boundary = "component-behavior"
+// scope = "Auto Run、Claude固有のApproval、Codex/CopilotのSafety Focusedの異種変換"
+// lifecycle = "permanent"
+// impact = "子のProviderで表現できない親の承認制限を失う作成が通ることを防ぐ"
+// distinction = "送信時の実行値検証は宛先で同名のApprovalが使えても意味の違いを検出しない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("異種の子はAuto Runと非等価なApprovalの継承を拒否する", () => {
+  for (const [source, target, approvalMode] of [
+    ["claude", "codex", "never"],
+    ["claude", "codex", "accept-edits"],
+    ["claude", "codex", "dont-ask"],
+    ["claude", "codex", "plan"],
+    ["codex", "copilot", "untrusted"],
+    ["copilot", "codex", "untrusted"],
+  ] as const) {
+    assert.throws(() => resolveChildSessionPermissions(source, {
+      approvalMode,
+      codexSandboxMode: "danger-full-access",
+      codexReviewer: "user",
+    }, target), /Cannot inherit .* approval mode/, `${source} → ${target}: ${approvalMode}`);
+  }
+});
 
 // @test-value v2
 // kind = "contract"

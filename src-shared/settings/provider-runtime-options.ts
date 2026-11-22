@@ -61,6 +61,49 @@ export function getApprovalReviewerOptionsForProvider(
   }));
 }
 
+type ChildSessionPermissions = {
+  approvalMode: ApprovalMode;
+  codexReviewer: CodexReviewer;
+  codexSandboxMode?: CodexSandboxMode;
+};
+
+const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "opencode"]);
+
+/**
+ * Maps a validated parent Turn's permissions to a child provider.
+ * Throws if the transfer would discard a restriction; it does not select a different provider.
+ */
+export function resolveChildSessionPermissions(
+  sourceProviderId: string,
+  source: Readonly<Required<ChildSessionPermissions>>,
+  targetProviderId: string,
+): ChildSessionPermissions {
+  const { approvalMode, codexSandboxMode, codexReviewer } = source;
+  if (sourceProviderId === targetProviderId) {
+    return { approvalMode, codexSandboxMode, codexReviewer };
+  }
+
+  if (!CHILD_PERMISSION_PROVIDERS.has(sourceProviderId) || !CHILD_PERMISSION_PROVIDERS.has(targetProviderId)) {
+    throw new Error(`Child permission inheritance is not supported from ${sourceProviderId} to ${targetProviderId}.`);
+  }
+  if (sourceProviderId === "codex" && codexSandboxMode !== "danger-full-access") {
+    throw new Error(`Cannot inherit the Codex sandbox mode "${codexSandboxMode}" in ${targetProviderId}.`);
+  }
+  // Auto Run and provider-specific modes do not have equivalent restrictions in other providers.
+  if (approvalMode !== "on-request") {
+    throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}.`);
+  }
+
+  const sourceHasReviewer = getApprovalReviewerOptionsForProvider(sourceProviderId, approvalMode).length > 0;
+  const targetHasReviewer = getApprovalReviewerOptionsForProvider(targetProviderId, approvalMode).length > 0;
+  return {
+    approvalMode,
+    codexReviewer: sourceHasReviewer && targetHasReviewer ? codexReviewer : "user",
+    // Keep writes and network access outside the initial sandbox so they can require approval.
+    ...(targetProviderId === "codex" ? { codexSandboxMode: "read-only" } : {}),
+  };
+}
+
 export function resolveExecutionOptionsReviewerUpdate(
   current: { provider: string; approvalMode: ApprovalMode; codexReviewer: CodexReviewer },
   requested: { approvalMode: ApprovalMode; codexReviewer: CodexReviewer },

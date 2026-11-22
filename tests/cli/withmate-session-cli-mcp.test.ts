@@ -109,6 +109,88 @@ test("MCP tools list distinguishes operating policy replacement from read-only q
 
 // @test-value v2
 // kind = "contract"
+// claim = "create_childとenqueueのCLI/MCP公開入力はModel・Depthを公開するが権限上書きを公開せず、CLIは旧権限フラグをdispatch前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "schemaやhelpが呼出元に権限選択を案内する、または旧CLIフラグで送信・作成をdispatchする"
+// observable = "SDK MCPのtools/listとCLI schemaの入力項目、CLI helpの旧指定の不在、実引数解析のusageエラーとdispatch件数"
+// observation_boundary = "public-boundary"
+// scope = "SDK MCPとbound CLIのcreate_child/enqueueの公開schemaとCLI help・引数解析"
+// lifecycle = "permanent"
+// impact = "呼出元が無効な権限指定に誘導されるか、宛先または作成元Turnから決まる権限を変更できてしまう"
+// distinction = "JSON入力と実Storageの受入テストでは公開schema・helpや旧CLIフラグの実引数解析を検証しない"
+// @end-test-value
+test("CLI and MCP publish only caller-selectable execution settings for create and send", async () => {
+  let calls = 0;
+  const runtimeCall: typeof callAgentRuntime = async () => {
+    calls++;
+    throw new Error("Permission flags must not dispatch");
+  };
+  const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
+  const client = new Client({ name: "permission-input-parity", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    const { tools } = await client.listTools();
+    const schema = await cli("schema", {}, runtimeCall);
+    assert.equal(schema.exit, 0);
+    const cliOperations = schema.value.operations as Record<string, { input: { properties: Record<string, unknown>; additionalProperties: boolean } }>;
+    const obsolete = [
+      ["approvalMode", "--approval-mode", "on-request"],
+      ["codexSandboxMode", "--codex-sandbox-mode", "workspace-write"],
+      ["codexReviewer", "--codex-reviewer", "auto-review"],
+      ["inheritTargetPermissions", "--inherit-target-permissions", "true"],
+    ] as const;
+    let help = "";
+    assert.equal(await runWithMateSessionCli(["help"], {
+      stdout: { write: (value) => { help += String(value); return true; } },
+    }), 0);
+    for (const [field, flag] of obsolete) {
+      assert.equal(help.includes(field), false, field);
+      assert.equal(help.includes(flag), false, flag);
+    }
+    const create = { requestId: "child-create", role: "executor", provider: "codex", model: "model", reasoningEffort: "medium", workspacePath: "workspace" };
+    const enqueue = {
+      requestId: randomUUID(), target: { kind: "main", sessionId: "child", incarnationId: "child-v1" },
+      message: "work", model: "model", reasoningEffort: "medium",
+    };
+    for (const [operation, input] of Object.entries({ create_child: create, enqueue })) {
+      const published = tools.find((tool) => tool.name === `session.${operation}`);
+      assert.ok(published, operation);
+      for (const publicInput of [cliOperations[operation].input, published.inputSchema]) {
+        assert.equal(publicInput.additionalProperties, false, operation);
+        assert.equal(Object.hasOwn(publicInput.properties ?? {}, "model"), true, operation);
+        assert.equal(Object.hasOwn(publicInput.properties ?? {}, "reasoningEffort"), true, operation);
+        for (const [field] of obsolete) {
+          assert.equal(Object.hasOwn(publicInput.properties ?? {}, field), false, `${operation}: ${field}`);
+        }
+      }
+      for (const [, flag, value] of obsolete) {
+        let output = "";
+        const exit = await runWithMateSessionCli(
+          [operation.replaceAll("_", "-"), "--json", JSON.stringify(input), flag, value],
+          {
+            env, connection, runtimeCall,
+            stdout: { write: (part) => { output += String(part); return true; } },
+            stderr: { write: () => true },
+          },
+        );
+        assert.equal(exit, 2, `${operation}: ${flag}`);
+        const result = JSON.parse(output);
+        assert.equal(result.code, "SESSION_INVALID_REQUEST");
+        assert.equal(result.effect, "none");
+        assert.ok(result.message.includes(flag), flag);
+      }
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Session MCPとbound CLIは保存実行設定・Coordination自然文投影・送信全文を含む同一binding/turn付き操作と結果・拒否を共有し、queue requestIdはUUIDのみ受け付け、送信応答喪失を未適用と偽らない"
 // oracle = { type = "contract", ref = "GitHub #835 MCPとbound CLIの入力・結果・拒否の同一契約" }
 // fault = "CLIが別actorで実行する、保存実行設定や送信本文を落とす、非UUIDをdispatchするかenqueue通信失敗をeffect noneとして返す"
@@ -158,7 +240,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       incarnationId: "child-v1",
     };
     const requestId = "11111111-1111-4111-8111-111111111111";
-    const body = { target, requestId, message: "work", model: "model", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "workspace-write" };
+    const body = { target, requestId, message: "work", model: "model", reasoningEffort: "high" };
     const exact = { target, turnId: "1" };
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
@@ -221,9 +303,6 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         provider: "codex",
         model: "model",
         reasoningEffort: "medium",
-        approvalMode: "on-request",
-        codexSandboxMode: "workspace-write",
-        codexReviewer: "auto-review",
         workspacePath: "workspace",
       },
       get_catalog: {},
@@ -575,7 +654,7 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
     assert.equal(await runWithMateSessionCli(["help"], { stdout: { write: (value) => { help += String(value); return true; } } }), 0);
     assert.match(help, /deliveryTiming.*immediate.*after_source_turn/);
     for (const deliveryTiming of [undefined, "immediate", "after_source_turn"]) {
-      const input = { target, requestId, message: "report", approvalMode: "on-request", ...(deliveryTiming ? { deliveryTiming } : {}) };
+      const input = { target, requestId, message: "report", ...(deliveryTiming ? { deliveryTiming } : {}) };
       const command = await cli("enqueue", input, runtimeCall);
       const tool = await client.callTool({ name: "session.enqueue", arguments: input });
       assert.equal(command.exit, 0);
@@ -594,7 +673,7 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
     }
     for (const deliveryTiming of ["later", null, 1]) {
       const before = calls.length;
-      const input = { target, requestId, message: "report", approvalMode: "on-request", deliveryTiming };
+      const input = { target, requestId, message: "report", deliveryTiming };
       const command = await cli("enqueue", input, runtimeCall);
       const tool = await client.callTool({ name: "session.enqueue", arguments: input });
       assert.equal(command.exit, 2);

@@ -3,8 +3,7 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import { assertSameSessionRelationship, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
 import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 import type { SessionLifecycleOperation } from "./session-lifecycle-operation.js";
-import type { CreateChildSessionRequest } from "../../src-shared/session/session-child-creation.js";
-import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import type { ResolvedChildSessionCreation } from "../../src-shared/session/session-child-creation.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import type { CrewDeletionStatus } from "../../src-shared/session/session-crew-deletion.js";
 import {
@@ -223,7 +222,7 @@ export class SessionPersistenceService {
     return this.upsertSession(created, "create", deferPublication);
   }
 
-  async validateChildSessionCreation(input: CreateChildSessionRequest): Promise<void> {
+  async validateChildSessionCreation(input: ResolvedChildSessionCreation): Promise<void> {
     const settings = await this.deps.getAppSettings();
     const catalog = await this.deps.getModelCatalogSnapshot(input.workspacePath, input.provider);
     const provider = this.resolveEnabledProviderCatalog(catalog, settings, input.provider, true);
@@ -231,9 +230,7 @@ export class SessionPersistenceService {
     if (!model) throw new Error("The selected child model is not in the discovered model list.");
     if (model.reasoningEfforts.length === 0 ? input.reasoningEffort !== "" : !model.reasoningEfforts.includes(input.reasoningEffort)) throw new Error("The selected child depth is not supported by this model.");
     assertModelEnabled(settings.modelAvailability, provider.id, model.id);
-    const sandbox = getSandboxOptionsForProvider(provider.id);
-    if (sandbox.length === 0 ? input.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === input.codexSandboxMode)) throw new Error("The selected child sandbox option is not supported by this provider.");
-    if (input.codexReviewer !== undefined && provider.id !== "codex") throw new Error("Only Codex supports codexReviewer for child creation.");
+    if (provider.id === "codex" && input.codexSandboxMode === undefined) throw new Error("The resolved Codex sandbox mode is unavailable.");
     validateSessionExecutionOptions({ model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode,
       codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER, customAgentName: "" }, provider);
     validateSessionMetadataPatch({ title: input.title ?? "New task", description: input.description ?? "" });

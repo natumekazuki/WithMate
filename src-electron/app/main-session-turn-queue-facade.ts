@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from "node:util";
 import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, type ComposerPreview, type RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions, validateSessionExecutionOptions, type SessionExecutionOptions, type SessionMessageExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionOperationRequest } from "../../src-shared/session/session-management-contract.js";
-import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -39,10 +38,8 @@ export class MainSessionTurnQueueFacade {
 
   async enqueueSessionMessage(input: SessionOperationRequest<"enqueue">, origin: SessionTurnQueueOrigin, assertActorCurrent: () => void | Promise<void>) {
     const requested: SessionMessageExecutionOptions = {
-      approvalMode: input.approvalMode,
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
-      ...(input.codexSandboxMode === undefined ? {} : { codexSandboxMode: input.codexSandboxMode }),
     };
     return this.withAcceptanceLock(input.target.sessionId, async () => this.projectSourceRelease(await this.accept(input.target.sessionId, {
       incarnationId: input.target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer",
@@ -114,12 +111,6 @@ export class MainSessionTurnQueueFacade {
       if (request.auxiliaryDraftIncarnation !== undefined && (typeof request.auxiliaryDraftIncarnation !== "string" || !request.auxiliaryDraftIncarnation.trim())) throw new Error("The Auxiliary draft identity is invalid.");
       if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
       if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");
-      if (requested) {
-        const sandbox = getSandboxOptionsForProvider(session.provider);
-        if (sandbox.length === 0 ? requested.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === requested.codexSandboxMode)) {
-          throw new Error("Codex messages require codexSandboxMode; other Providers do not accept this unsupported setting.");
-        }
-      }
       prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), true, requested !== undefined);
       await assertActorCurrent?.();
     } catch (error) {
