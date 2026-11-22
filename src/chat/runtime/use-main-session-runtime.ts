@@ -43,6 +43,7 @@ export function useMainSessionRuntime({
     | "previewComposerInput"
     | "runSessionTurn"
     | "enqueueSessionTurn"
+    | "retryFailedSessionTurn"
     | "getSessionTurnQueueReceipt"
     | "getLiveSessionRun"
     | "setSessionPinned"
@@ -308,6 +309,21 @@ export function useMainSessionRuntime({
     }
   };
 
+  const submitFailedRetry = async (request: import("../../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest) => {
+    if (!api || composerRegistry.isFrozen) throw new Error("Failed Turn retry is unavailable.");
+    const ownerId = request.target.sessionId;
+    const lease = submitCoordinatorRef.current.tryAcquire(ownerId);
+    if (!lease) throw new Error("Another submission is in progress.");
+    setPendingSubmitSessionId(ownerId);
+    try {
+      return await acceptanceRef.current.submitFailedRetry(api, ownerId, request);
+    } finally {
+      lease.release();
+      setPendingSubmitSessionId((current) => current === ownerId ? null : current);
+      setReadRevision((current) => current + 1);
+    }
+  };
+
   return {
     sessions,
     readStatus: readState.ownerId === selectedId ? readState.status : "loading" as const,
@@ -326,6 +342,7 @@ export function useMainSessionRuntime({
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn,
+    submitFailedRetry,
     turnSubmissions: acceptanceRef.current.submissions,
     hasUncertainTurn: selectedId ? acceptanceRef.current.hasUncertain(selectedId) : false,
     hasUncertainTurnFor: (sessionId: string | null) => sessionId ? acceptanceRef.current.hasUncertain(sessionId) : false,

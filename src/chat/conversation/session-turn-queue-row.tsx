@@ -42,7 +42,7 @@ export function SessionTurnQueueStatus(props: {
 function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
-  const editableInput = !receipt.captured.coordination;
+  const editableInput = !receipt.captured.coordination && !receipt.captured.retrySource;
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -63,7 +63,9 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
-  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} aria-label={label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}>
+  const retryOrigin = receipt.captured.retrySource?.origin;
+  const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} title={retryLabel} aria-label={`${label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}${retryLabel ? ` · ${retryLabel}` : ""}`}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
     {label ? <span>{label}</span> : null}
@@ -88,7 +90,9 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
   const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
   const isSessionOrigin = read.origin?.kind === "session";
   const role = isSessionOrigin ? "session-origin" : "user";
-  return <><article className={`message-row ${role}`} data-message-source="turn-queue">
+  const retryOrigin = props.receipt.captured.retrySource?.origin;
+  const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+  return <><article className={`message-row ${role}`} data-message-source="turn-queue" aria-label={retryLabel} title={retryLabel}>
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
     <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
       style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">

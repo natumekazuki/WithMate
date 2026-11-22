@@ -143,6 +143,7 @@ export const WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL = "withmate:list-work
 export const WITHMATE_RUN_SESSION_TURN_CHANNEL = "withmate:run-session-turn";
 export const WITHMATE_STEER_SESSION_TURN_CHANNEL = "withmate:steer-session-turn";
 export const WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL = "withmate:enqueue-session-turn";
+export const WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL = "withmate:retry-failed-session-turn";
 export const WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL = "withmate:get-session-turn-queue-receipt";
 export const WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL = "withmate:list-session-turn-queue";
 export const WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL = "withmate:list-session-turn-queue-receipts";

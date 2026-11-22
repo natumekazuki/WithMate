@@ -38,6 +38,46 @@ function session(): Session {
 
 // @test-value v2
 // kind = "contract"
+// claim = "失敗Turnの新規受付が不明なら同一request IDを照会し、現在のdraftを保持して他送信を保留する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "不明な受付を別IDで自動再送する、別receiptを受け入れる、既存draftを消す"
+// observable = "enqueue回数、照会request ID、不明状態、照合されたreceiptとdraft本文"
+// observation_boundary = "consumer"
+// scope = "SessionTurnAcceptance failed Turn retry"
+// lifecycle = "permanent"
+// impact = "受付済みの外部作用を重複実行し、編集中の指示を失う"
+// distinction = "main facadeの保存検証ではrendererのACK喪失とdraft保持を再現できない"
+// @end-test-value
+test("failed Turn retry resolves an uncertain acknowledgement without replacing the draft", async () => {
+  const acceptance = new SessionTurnAcceptance();
+  const registry = new ComposerControllerRegistry();
+  registry.setDraft(owner, "Keep this draft");
+  const retry = { target: { kind: "main" as const, sessionId: owner.id, incarnationId: request.incarnationId }, receiptId: "source", turnId: "42", clientRequestId: request.clientRequestId, executionOptions: request.executionOptions };
+  const origin = { kind: "gui" as const, operation: "send" as const, targetSessionId: owner.id, targetIncarnationId: request.incarnationId };
+  const acceptedInput = { request, provider: "codex", workspacePath: "workspace", attachments: [], origin,
+    retrySource: { receiptId: "source", turnId: "42", origin, changedSinceAcceptance: false } };
+  const saved = receipt({ captured: acceptedInput, accepted: acceptedInput });
+  let lookups = 0;
+  let sends = 0;
+  const api = {
+    enqueueSessionTurn: async () => { throw new Error("unexpected normal send"); },
+    retryFailedSessionTurn: async () => { sends++; throw new Error("ack lost"); },
+    getSessionTurnQueueReceipt: async (_sessionId: string, id: string) => { assert.equal(id, retry.clientRequestId); lookups++; return lookups === 1 ? null : lookups === 2 ? { ...saved, requestId: "wrong" } : saved; },
+  };
+  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /acceptance could not be confirmed/);
+  assert.equal(acceptance.hasUncertain(owner.id), true);
+  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /previous turn/);
+  await assert.rejects(acceptance.check(api, owner.id, registry), /does not match/);
+  assert.equal(acceptance.hasUncertain(owner.id), true);
+  assert.equal(await acceptance.check(api, owner.id, registry), saved);
+  assert.equal(acceptance.hasUncertain(owner.id), false);
+  assert.equal(sends, 1);
+  assert.equal(lookups, 3);
+  assert.equal(registry.get(owner).draft, "Keep this draft");
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Main/Auxiliaryのfailed receiptは保存応答到着まで理由と部分本文を応答側に保持し、開始前と後続予約の受付失敗も同じ欄へ表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 確定した送信・実行失敗; docs/design/session-run-lifecycle.md: GUI Turn Queue" }
 // fault = "terminal先着で理由が消える、本文到着で二重化する、または後続予約だけ送信側へ失敗表示する"

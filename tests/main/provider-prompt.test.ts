@@ -25,6 +25,30 @@ function input(): RunSessionTurnInput {
 
 // @test-value v2
 // kind = "contract"
+// claim = "失敗TurnのSession指示はGUIが再実行した事実と元のSession送信者を分けてProviderへ渡す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "元Sessionの本文を新規GUIユーザー指示に偽装するか再実行した主体を落とす"
+// observable = "構成した入力のGUI actor、元Session、本文見出しと本文"
+// observation_boundary = "consumer"
+// scope = "Providerへの失敗Turn再実行の来歴"
+// lifecycle = "permanent"
+// impact = "Agentが過去の別Session指示をユーザーの新規指示と誤認する"
+// distinction = "storage testはProvider向けpromptにおける実行主体と本文の表現を検証しない"
+// @end-test-value
+it("Session指示の再実行はGUI操作と元送信者を分ける", () => {
+  const target = { targetSessionId: "recipient", targetIncarnationId: "recipient-inc" };
+  const text = composeProviderInput("元の指示", { origin: { kind: "gui", operation: "send", ...target }, originalChanged: false,
+    retrySource: { receiptId: "source-receipt", turnId: "12", changedSinceAcceptance: true,
+      origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "5",
+        actorSnapshot: { sessionTitle: "Source", character: { id: "mate", name: "Sender", iconPath: "" } }, ...target } } });
+  assert.match(text, /Retry requested by: GUI user/);
+  assert.match(text, /Original sender: Session/);
+  assert.match(text, /Original session: "sender"/);
+  assert.match(text, /# Retried Session Input\n\n元の指示$/);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "4Providerの新規/継続入力は同じ人格・Role・現在日時・元依頼をsystem/inputの所定境界へ渡す"
 // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
 // fault = "Provider固有経路で日時をsystemへ固定するかRole・人格・元依頼を取り落とす"

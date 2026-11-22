@@ -469,6 +469,7 @@ function queuedInputProvenance(receipt: SessionTurnQueueReceipt, input: SessionT
     originalChanged: receipt.accepted ? !isDeepStrictEqual(
       { text: receipt.accepted.request.userMessage, attachments: receipt.accepted.attachments },
       { text: input.request.userMessage, attachments: input.attachments }) : null,
+    ...(input.retrySource ? { retrySource: input.retrySource } : {}),
     ...(input.coordination ? { coordinationOperation: input.coordination.operation, coordination: readCoordinationNotification(input) ?? undefined } : {}) };
 }
 

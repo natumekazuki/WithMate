@@ -4,6 +4,13 @@ import { LOCAL_USER_ID, type ConversationParticipant } from "../character/charac
 import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../character/character-owner.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
+export type RetryFailedSessionTurnRequest = {
+  target: import("./session-target.js").SessionTarget;
+  receiptId: string;
+  turnId: string;
+  clientRequestId: string;
+  executionOptions: import("./session-execution-options.js").SessionExecutionOptions;
+};
 export type SessionMessageDeliveryTiming = "immediate" | "after_source_turn";
 export type SessionMessageSourceTurnPhase = "running" | "completed" | "failed" | "canceled" | "unknown";
 export type SessionTurnQueueDisplaySnapshot = {
@@ -44,6 +51,13 @@ export type SessionTurnQueueCapturedInput = {
   provider: string;
   workspacePath: string;
   origin?: SessionTurnQueueOrigin;
+  /** Original delivery provenance for a new GUI-requested execution, not its actor. */
+  retrySource?: {
+    receiptId: string;
+    turnId: string;
+    origin: SessionTurnQueueOrigin;
+    changedSinceAcceptance: boolean;
+  };
 };
 
 export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | "targetSessionId" | "targetIncarnationId" | "targetSnapshot"> & {

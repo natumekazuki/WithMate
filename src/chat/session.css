@@ -3558,6 +3558,8 @@
   border-radius: 10px;
 }
 
+.failed-turn-resend svg { width: 15px; height: 15px; }
+
 .composer-icon-button:focus-visible,
 .session-recovery-actions dialog button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);

@@ -379,7 +379,7 @@ test("ChatWindow は preview と compact ActionDock 内に recovery actions を�
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");
   props.recoveryActions = {
-    retryState: { kind: "failed", lastRequestText: "Retry this request" },
+    retryState: { kind: "interrupted", lastRequestText: "Retry this request" },
     requestKey: "main:incarnation:0", targetLabel: "Main",
     isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,
     onResendLastMessage() {}, onEditLastMessage() {}, onConfirmRetryDraftReplace() {}, onCancelRetryDraftReplace() {},

@@ -358,6 +358,43 @@ function queueGate() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "GUIが選んだ失敗Turnの固定開始入力はruntime dispatchを通って元Session来歴と共にProviderへ届く"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "receiptに保存したretrySourceをruntimeが落とす、本文をGUI新規指示として分類する"
+// observable = "実runtimeからadapterに渡るprovenanceと組み立てたProvider入力"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeService.runQueuedSessionTurnの失敗Turn再実行"
+// lifecycle = "permanent"
+// impact = "Agentが元Session指示をGUIユーザー自身の新規指示と誤解する"
+// distinction = "prompt単体testはqueueからruntime経由でretrySourceが渡ることを検証しない"
+// @end-test-value
+it("queue runtimeはGUI再実行と元Session来歴をProviderへ渡す", async () => {
+  const session = createSession();
+  const receipt = queuedReceipt(session);
+  const target = { targetSessionId: session.id, targetIncarnationId: getSessionIncarnationId(session) };
+  const gui = { kind: "gui" as const, operation: "send" as const, ...target };
+  const origin = { kind: "session" as const, operation: "send" as const, actorKind: "main" as const,
+    actorSessionId: "parent", actorIncarnationId: "parent-inc", actorTurnId: "12", ...target,
+    actorSnapshot: { sessionTitle: "Source", character: { id: "sender", name: "Sender", iconPath: "" } } };
+  receipt.dispatched!.origin = gui;
+  receipt.dispatched!.retrySource = { receiptId: "old-receipt", turnId: "41", origin, changedSinceAcceptance: true };
+  receipt.accepted = structuredClone(receipt.dispatched);
+  const runtime = createProgressRuntime(session, async (input) => {
+    assert.deepEqual(input.inputProvenance?.origin, gui);
+    assert.deepEqual(input.inputProvenance?.retrySource, receipt.dispatched!.retrySource);
+    const prompt = composeProviderPrompt(input).inputBodyText;
+    assert.match(prompt, /Retry requested by: GUI user/);
+    assert.match(prompt, /Original sender: Session/);
+    assert.match(prompt, /# Retried Session Input\n\ncaptured message/);
+    return createPartialResult({ assistantText: "done" });
+  }, { assertCapturedComposerAttachmentsAvailable: async () => {},
+    persistQueuedTurnStart: async (next, count, _queueId, turn) => ({ session: { ...next, messageCount: count + 1 }, turn: { ...turn, id: 42 } }),
+    appendTerminalSession: async (next) => next });
+  assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async () => {}), { state: "completed" });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "queue runtimeは予定入力でなくclaim固定本文と添付を実行し、受付時originと原文変更有無を実Provider compositionへ渡す"
 // oracle = { type = "contract", ref = "GitHub Issue #832: claim時固定入力; GitHub Issue #837: Provider入力の実送信元" }
 // fault = "captured本文を実行へ流す、固定添付を予定添付へ差し替える、originや原文変更値をadapter呼出で落とす"

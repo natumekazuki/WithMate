@@ -107,7 +107,7 @@ export function TurnExecutionDetails(props: TurnInputProps & { hasRunChecks?: bo
 }
 
 export function TurnInputReadBoundary({ children, ...props }: TurnInputProps & { children: (read: ReturnType<typeof useTurnInputRead>) => ReactNode }) {
-  return children(useTurnInputRead({ ...props, active: props.message.role === "user" }));
+  return children(useTurnInputRead({ ...props, active: props.message.role === "user" || (props.message.role === "assistant" && props.message.runFailure !== undefined) }));
 }
 
 export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTurnInputRead> }) {
@@ -150,7 +150,7 @@ export function SessionOriginRoute({ origin, target, onError }: { origin: Sessio
   </button></div>;
 }
 
-function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; hasRunChecks?: boolean }) {
+export function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; hasRunChecks?: boolean }) {
   const { execution, observed, origin, statusReference, readError, setRevision } = read;
   if (message.role !== "assistant" || !statusReference) return null;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
@@ -165,6 +165,9 @@ function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false 
         {sourceWaitState === "unknown" ? <InputDetailRow label="Delivery"><span className="turn-input-state">Source Turn State Unknown</span></InputDetailRow> : null}
         <InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow>
         <InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow>
+        {observed?.inputs?.entry?.comparison === "changed" ? <InputDetailRow label="Starting Input">Edited before this Turn started</InputDetailRow> : null}
+        {observed?.retrySource?.changedSinceAcceptance ? <InputDetailRow label="Original Input">Edited before the original Turn started</InputDetailRow> : null}
+        {observed?.retrySource ? <InputDetailRow label="Retry">By you · Originally from {observed.retrySource.origin.kind === "session" ? observed.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
       </dl>

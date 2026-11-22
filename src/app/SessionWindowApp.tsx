@@ -60,6 +60,7 @@ import {
   useMainAuxiliaryRuntimeSession,
 } from "../chat/auxiliary/auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
+import { FailedTurnRetryContext } from "../chat/runtime/failed-turn-retry-context.js";
 import { resolveConversationAttentionEntries, type ConversationAttention } from "../chat/conversation-attention.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
@@ -325,6 +326,7 @@ export default function AgentSessionWindowApp() {
     ownerId: string;
     message: string;
   } | null>(null);
+  const [failedRetryFeedback, setFailedRetryFeedback] = useState<{ ownerId: string; incarnationId: string; lastUserSeq: number | null; message: string } | null>(null);
   const mainSessionRuntime = useMainSessionRuntime({
     api: withmateApi,
     selectedId,
@@ -2277,9 +2279,24 @@ export default function AgentSessionWindowApp() {
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
   const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
+  const feedbackLastUserSeq = resolveRetrySource({ sessionId: renderedSession.id, messages: renderedSession.messages,
+    latestUserMessage: activeAuxiliarySession ? null : selectedSession.latestUserMessage, latestTurn: null, runState: "error" })?.userMessageSeq ?? null;
+  const feedbackIncarnation = activeAuxiliarySession?.createdAt ?? getSessionIncarnationId(selectedSession);
+  const failedRetry = retryState?.kind === "failed" && !latestRecoveryTurn.loading && !latestRecoveryTurn.error && latestRecoveryTurn.turn?.phase === "failed" && recoverySession
+    ? {
+        context: {
+          ownerSessionId: selectedSession.id,
+          target: activeAuxiliarySession
+            ? { kind: "auxiliary" as const, sessionId: activeAuxiliarySession.id, incarnationId: activeAuxiliarySession.createdAt, mainSessionId: selectedSession.id, mainIncarnationId: getSessionIncarnationId(selectedSession) }
+            : { kind: "main" as const, sessionId: selectedSession.id, incarnationId: getSessionIncarnationId(selectedSession) },
+        },
+        turnId: String(latestRecoveryTurn.turn.id),
+      }
+    : undefined;
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryState,
+      failedRetry,
       requestKey: retryRequestKey,
       targetLabel: activeAuxiliarySession ? (activeAuxiliarySession.title.trim() ? `Aux · ${activeAuxiliarySession.title}` : "Aux") : "Main",
       latestTurnLoading: latestRecoveryTurn.loading,
@@ -2408,9 +2425,24 @@ export default function AgentSessionWindowApp() {
     <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
+      <FailedTurnRetryContext.Provider value={{ submit: (request) => {
+        setFailedRetryFeedback((current) => current?.ownerId === request.target.sessionId ? null : current);
+        const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
+        if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
+        return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
+      }, blocked: (id) => mainSessionRuntime.hasUncertainTurnFor(id) || mainSessionRuntime.pendingSubmitSessionId === id || isSelectedSessionReadOnly
+        || (id === selectedSession.id ? selectedSessionRunState === "running" : id !== activeAuxiliarySession?.id || activeAuxiliarySession.runState === "running"),
+      onError: (ownerId, message, target) => {
+        const owner = ownerId === selectedSession.id ? selectedSession : activeAuxiliarySession;
+        if (owner?.id === ownerId && !message.includes("Check Receipt")) setFailedRetryFeedback({ ownerId,
+          incarnationId: ownerId === selectedSession.id ? getSessionIncarnationId(selectedSession) : activeAuxiliarySession!.createdAt,
+          lastUserSeq: resolveRetrySource({ sessionId: ownerId, messages: owner.messages, latestUserMessage: ownerId === selectedSession.id ? selectedSession.latestUserMessage : null, latestTurn: null, runState: "error" })?.userMessageSeq ?? null,
+          message: `Resend failed (${target}): ${message}` });
+      },
+      dockTurn: failedRetry ? { sessionId: failedRetry.context.target.sessionId, turnId: failedRetry.turnId } : undefined }}>
       <ChatWindow
         {...chatWindowProps}
-        errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
+        errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors, ...(failedRetryFeedback?.ownerId === renderedSession.id && failedRetryFeedback.incarnationId === feedbackIncarnation && failedRetryFeedback.lastUserSeq === feedbackLastUserSeq ? [{ id: "failed-turn-retry", message: failedRetryFeedback.message, dismissLabel: "Dismiss resend error", onDismiss: () => setFailedRetryFeedback(null) }] : [])]}
         composerProps={{
           ...chatWindowProps.composerProps,
           externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
@@ -2446,6 +2478,7 @@ export default function AgentSessionWindowApp() {
         conversationAttention={conversationAttention}
         providerQuota={isAuxiliaryTargetUnavailable ? null : <ProviderQuota key={renderedSession.provider} api={withmateApi} providerId={renderedSession.provider} />}
       />
+      </FailedTurnRetryContext.Provider>
       <SessionFilesFeature
         ref={filesFeatureRef}
         api={withmateApi}

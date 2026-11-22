@@ -9,7 +9,7 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session画面は最新turn取得中と失敗時にも回復操作を保持し、選択Main/Auxiliaryの前回本文を再送して各draftを保持し、Editの明示置換を対象draftだけに適用し、会話切替で確認を無効化する"
+// claim = "実Session画面のMain中断とAuxiliary取消の回復は選択会話の前回本文を再送して各draftを保持し、Editの明示置換を対象draftだけに適用し、会話切替で確認を無効化する。Main中断は最新turn取得中と取得失敗時にも操作を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
 // fault = "再送に現在draftや別会話を使う、draftを消す、Editで無確認上書きする、または切替後も旧確認を適用する"
 // observable = "実SessionWindowAppの最新turn loading/errorとRetry、enqueueSessionTurn引数、各ownerのtextarea値、確認dialog.open、focusとAuxiliary durable draft"
@@ -52,9 +52,9 @@ test("Main/AuxiliaryのResendとEditは前回依頼とdraftのownerを維持す�
   };
  const main = (await api.getSession("benchmark-main"))!;
   const auxiliary = (await api.getAuxiliarySession("benchmark-aux-1"))!;
-  main.runState = "error";
+  main.runState = "interrupted";
   main.messages = [{ role: "user", text: "Previous Main request" }];
-  auxiliary.runState = "error";
+  auxiliary.runState = "idle";
   auxiliary.messages = [{ role: "user", text: "Previous Auxiliary request" }];
   auxiliary.composerDraft = "Preserve Auxiliary draft";
   let rejectLatestTurn!: (reason: Error) => void;
@@ -62,6 +62,7 @@ test("Main/AuxiliaryのResendとEditは前回依頼とdraftのownerを維持す�
   let mainLatestTurnReads = 0;
   api.getLatestSessionTurn = (owner) => {
     if (owner === main.id && ++mainLatestTurnReads === 1) return latestTurnRead;
+    if (owner === auxiliary.id) return Promise.resolve({ id: 1, sessionId: owner, phase: "canceled", createdAt: "now", provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "never", threadId: "thread", errorMessage: "", userMessageSeq: 0 });
     return Promise.resolve(null);
   };
   const sent: { owner: string; text: string }[] = [];

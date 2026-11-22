@@ -236,6 +236,7 @@ import { SessionGraphWindowService } from "./session-graph/session-graph-window-
 import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
 import { registerSessionRoleHandlers } from "./ipc/session-role.js";
 import { registerSessionExecutionHandlers } from "./ipc/session-execution.js";
+import { executionOperationResultSchemas } from "../src-shared/session/session-execution-read.js";
 import { registerSessionCrewHandlers } from "./ipc/session-crew.js";
 import { assertOwningSessionWindowSender } from "./ipc/shared.js";
 import { registerCoordinationHandlers } from "./ipc/coordination.js";
@@ -1772,6 +1773,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 queue: {
                   sendQueuedSessionInput: (sessionId, id, expectedTurnId) => requireMainSessionTurnQueueFacade().sendQueuedSessionInput(sessionId, id, expectedTurnId),
                   enqueueSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().enqueueSessionTurn(sessionId, request),
+                  retryFailedSessionTurn: (sessionId, request, assertCurrent) => requireMainSessionTurnQueueFacade().retryFailedSessionTurn(sessionId, request, assertCurrent),
                   getSessionTurnQueueReceipt: (sessionId, requestId) => requireMainSessionTurnQueueFacade().getSessionTurnQueueReceipt(sessionId, requestId),
                   listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
                   listSessionTurnQueueReceipts: (sessionId, options) => requireMainSessionTurnQueueFacade().listSessionTurnQueueReceipts(sessionId, options),
@@ -2538,6 +2540,17 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
         const providerSession = await resolveManagedProviderSession(session, auxiliary?.parentSessionId);
         return resolveComposerPreview(providerSession, message);
+      },
+      readRetryExecution: async (input) => {
+        const result = await owner.storageWorker!.stores.execution.execute({ target: input.target, operation: "get_execution", request: { target: input.target, receiptId: input.receiptId } });
+        assertPersistentStoreOwnerIsActive(owner, "Failed Turn retry");
+        if (!result.ok) return result;
+        return executionOperationResultSchemas.get_execution.parse(result);
+      },
+      validateRetryAttachments: async (session, attachments) => {
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
+        const providerSession = await resolveManagedProviderSession(session, auxiliary?.parentSessionId);
+        await assertCapturedComposerAttachmentsAvailable(providerSession, attachments);
       },
       store,
       service: requireMainSessionTurnQueueService(),

@@ -7,7 +7,8 @@ import { getSessionIncarnationId, type Session } from "../../src-shared/session/
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
-import type { QueuedSessionTurnEditRequest, UpdateQueuedSessionTurnRequest, ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore, SessionTurnQueueOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { QueuedSessionTurnEditRequest, UpdateQueuedSessionTurnRequest, ReorderQueuedSessionTurnsRequest, RetryFailedSessionTurnRequest, SessionTurnQueueOwner, SessionTurnQueueStore, SessionTurnQueueOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionExecutionReadResult } from "../../src-shared/session/session-execution-window-contract.js";
 import type { SessionTurnQueueService } from "../session/session-turn-queue-service.js";
 
 export type MainSessionTurnQueueFacadeDeps = {
@@ -19,6 +20,8 @@ export type MainSessionTurnQueueFacadeDeps = {
   validateWorkspace(session: Session): Promise<void>;
   validateProvider(session: Session): Promise<{ provider: ModelCatalogProvider }>;
   preview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  readRetryExecution?(input: RetryFailedSessionTurnRequest): Promise<SessionExecutionReadResult<"get_execution">>;
+  validateRetryAttachments?(session: Session, attachments: SessionTurnQueueCapturedInput["attachments"]): Promise<void>;
   store: SessionTurnQueueStore;
   service: SessionTurnQueueService;
   getUnreleasedSourceTurnIds?(): readonly string[];
@@ -47,6 +50,84 @@ export class MainSessionTurnQueueFacade {
     return this.withAcceptanceLock(input.target.sessionId, async () => this.projectSourceRelease(await this.accept(input.target.sessionId, {
       incarnationId: input.target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer",
     }, { ...origin, deliveryTiming: input.deliveryTiming ?? "immediate", requestedExecutionOptions: requested }, assertActorCurrent, requested)));
+  }
+
+  async retryFailedSessionTurn(sessionId: string, input: RetryFailedSessionTurnRequest, assertActorCurrent?: () => void | Promise<void>) {
+    return this.withAcceptanceLock(sessionId, async () => {
+      await assertActorCurrent?.();
+      const session = await this.readSession(sessionId);
+      const owner = this.owner(session);
+      const requestId = normalizeSessionTurnClientRequestId(input?.clientRequestId);
+      if (!requestId || input?.target?.sessionId !== sessionId || input.target.incarnationId !== owner.incarnationId
+        || typeof input.receiptId !== "string" || !input.receiptId.trim() || !/^[1-9]\d*$/.test(input.turnId)) {
+        throw new SessionTurnQueuePreflightRejectedError("The failed Turn identity is invalid or has changed.");
+      }
+      const previous = await this.deps.store.getReceipt(owner, requestId);
+      if (previous) {
+        const source = previous.accepted?.retrySource;
+        if (!source || source.receiptId !== input.receiptId || source.turnId !== input.turnId || previous.accepted?.origin?.kind !== "gui") {
+          throw new SessionTurnQueuePreflightRejectedError("This request identity was already used for a different operation.");
+        }
+        await assertActorCurrent?.();
+        this.deps.service.reconcileKnownReceipt(previous);
+        return previous;
+      }
+      let captured: SessionTurnQueueCapturedInput;
+      try {
+        this.deps.assertAccepting();
+        if (!input.executionOptions || !isDeepStrictEqual(captureSessionExecutionOptions(session), input.executionOptions)) {
+          throw new Error("Execution settings changed or are still being saved. Check the current settings and try again.");
+        }
+        if (!this.deps.readRetryExecution || !this.deps.validateRetryAttachments) throw new Error("Failed Turn retry is unavailable.");
+        const execution = await this.deps.readRetryExecution(input);
+        const source = await this.deps.store.getReceiptById(owner, input.receiptId);
+        if (!execution.ok || execution.turnState !== "failed" || execution.receiptState !== "failed"
+          || execution.turnId !== input.turnId || execution.receiptId !== input.receiptId
+          || execution.inputs.entry?.kind !== "start" || execution.inputs.entry.stage !== "fixed"
+          || !source || source.state !== "failed" || source.turnId !== input.turnId || source.inputTurnId
+          || source.userMessageSeq === null || source.userMessageSeq !== execution.userMessageSeq || !source.accepted || !source.dispatched) {
+          throw new Error("This Turn is not a confirmed failed start with a saved fixed input.");
+        }
+        const fixed = source.dispatched;
+        const original = source.accepted;
+        const origin = fixed.origin;
+        const initialOrigin = original.origin;
+        const instructionOrigin = fixed.retrySource?.origin ?? origin;
+        const comparableOrigin = (value: SessionTurnQueueOrigin | undefined) => {
+          if (!value) return null;
+          const { sourceTurnPhase: _phase, ...rest } = value;
+          return rest;
+        };
+        if (!origin || !initialOrigin || !instructionOrigin || !isDeepStrictEqual(comparableOrigin(origin), comparableOrigin(initialOrigin))
+          || !isDeepStrictEqual(fixed.retrySource, original.retrySource)
+          || origin.operation !== "send" || !["gui", "session"].includes(origin.kind)
+          || origin.targetSessionId !== sessionId || origin.targetIncarnationId !== owner.incarnationId
+          || instructionOrigin.operation !== "send" || !["gui", "session"].includes(instructionOrigin.kind)
+          || instructionOrigin.targetSessionId !== sessionId || instructionOrigin.targetIncarnationId !== owner.incarnationId
+          || (instructionOrigin.kind === "session" && (!instructionOrigin.actorSessionId?.trim() || !instructionOrigin.actorIncarnationId?.trim() || !instructionOrigin.actorTurnId?.trim()
+            || !["main", "auxiliary"].includes(instructionOrigin.actorKind ?? "") || !instructionOrigin.actorSnapshot?.character?.id?.trim() || !instructionOrigin.actorSnapshot.character.name?.trim()))
+          || typeof fixed.request?.userMessage !== "string" || !fixed.request.userMessage.trim() || !Array.isArray(fixed.attachments)) {
+          throw new Error("The original fixed input or its sender is unavailable or inconsistent.");
+        }
+        await this.deps.validateRetryAttachments(session, fixed.attachments);
+        const request: SessionTurnQueueCapturedInput["request"] = {
+          clientRequestId: requestId, userMessage: fixed.request.userMessage, submitSource: "retry",
+          executionOptions: captureSessionExecutionOptions(input.executionOptions),
+        };
+        const prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), false);
+        const current = await this.readSession(sessionId);
+        if (!isDeepStrictEqual(captureSessionExecutionOptions(current), request.executionOptions)) throw new Error("Execution settings changed while preparing the retry.");
+        captured = { ...prepared, attachments: structuredClone(fixed.attachments),
+          origin: { kind: "gui", operation: "send", targetSessionId: sessionId, targetIncarnationId: owner.incarnationId },
+          retrySource: { receiptId: source.id, turnId: input.turnId, origin: structuredClone(instructionOrigin),
+            changedSinceAcceptance: !isDeepStrictEqual({ text: original.request.userMessage, attachments: original.attachments },
+              { text: fixed.request.userMessage, attachments: fixed.attachments }) } };
+        await assertActorCurrent?.();
+      } catch (error) {
+        throw new SessionTurnQueuePreflightRejectedError(error instanceof Error ? error.message : "Failed Turn retry could not be prepared.", { cause: error });
+      }
+      return this.deps.service.enqueue(owner, captured, assertActorCurrent);
+    });
   }
 
   private projectSourceRelease<T extends SessionTurnQueueReceipt | null>(receipt: T): T {
