@@ -5,28 +5,27 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { FailedTurnRetry } from "../../src/chat/conversation/failed-turn-retry.js";
 import { FailedTurnRetryContext } from "../../src/chat/runtime/failed-turn-retry-context.js";
+import { SessionRecoveryActions } from "../../src/chat/runtime/session-recovery-actions.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { RetryFailedSessionTurnRequest, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "履歴の確定失敗だけに再実行操作を示し、確定前に元送信者、編集差と副作用を知らせる"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 確定した送信・実行失敗; docs/design/session-run-lifecycle.md#gui-turn-queue" }
-// fault = "失敗以外に操作を出す、確認前に送る、編集差や副作用を伏せる、対象identityを取り違える"
-// observable = "失敗表示に付く操作、確認dialogの内容、送信された対象と要求数"
+// claim = "確定失敗を履歴またはDockから一操作で再実行し、編集差と取得失敗を示して再取得でき、二重送信と別Turnへのエラー持越しを防ぐ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock・回復操作; docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "失敗以外に操作を出す、編集差や取得失敗を伏せる、対象identityを取り違える、受付中に二重送信する、別Turnにエラーを持ち越す"
+// observable = "履歴とDockの操作の出し分け、編集差と失敗の表示・回復、送信された対象と要求数"
 // observation_boundary = "component-behavior"
-// scope = "保存済み失敗messageの再実行確認 UI。IPCはfixture"
+// scope = "保存済み失敗messageの再実行 UI。IPCはfixture"
 // lifecycle = "permanent"
-// impact = "過去指示や外部副作用を認識せず別の会話を再実行する"
-// distinction = "main facadeとstorageのtestは利用者への確認と画面の対象選択を検証しない"
+// impact = "意図しない対象や入力を再実行し、二重受付する"
+// distinction = "main facadeとstorageのtestは画面の対象選択と受付中の操作を検証しない"
 // @end-test-value
-test("failed message requires an explicit confirmation with the source and side effects", async () => {
+test("failed message resends its saved Turn once and reports edited input", async () => {
   const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true, url: "https://fixture.invalid" });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, IS_REACT_ACT_ENVIRONMENT: true };
   const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
-  dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   const root = createRoot(dom.window.document.getElementById("root")!);
   const target = { kind: "main" as const, sessionId: "recipient", incarnationId: "recipient-inc" };
   let turnState = "failed";
@@ -35,29 +34,62 @@ test("failed message requires an explicit confirmation with the source and side 
   const execution = () => executionOperationResultSchemas.get_execution.parse({ ok: true, origin, receiptId: "source", receiptState: turnState, turnId: "42", turnState, resultState: "partial", userMessageSeq: 4, assistantMessageSeq: 5,
     inputs: { entry: { receiptId: "source", inputSeq: 4, kind: "start", stage: "fixed", comparison: "changed", detail: { operation: "get_execution_input", receiptId: "source" } }, startChanged: true,
       additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null });
-  Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async () => execution() } });
+  const reads: unknown[] = [];
+  let dockReadFails = false;
+  Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, _operation: string, request: { turnId?: string }) => { reads.push(request); if (dockReadFails && request.turnId) throw new Error("Fixture read unavailable"); return { ...execution(), turnId: request.turnId ?? "42" }; } } });
   const sent: Array<Omit<RetryFailedSessionTurnRequest, "executionOptions">> = [];
-  const context = { submit: async (request: Omit<RetryFailedSessionTurnRequest, "executionOptions">) => { sent.push(request); return {} as SessionTurnQueueReceipt; }, blocked: () => false };
+  let finish: (() => void) | undefined;
+  let submissionError = "";
+  const context = { submit: async (request: Omit<RetryFailedSessionTurnRequest, "executionOptions">) => { sent.push(request); if (submissionError) throw new Error(submissionError); await new Promise<void>((resolve) => { finish = resolve; }); return {} as SessionTurnQueueReceipt; }, blocked: () => false };
   const render = () => <FailedTurnRetryContext.Provider value={context}><FailedTurnRetry message={{ role: "assistant", text: "failure", runFailure: "failed", historyIndex: 5 }} context={{ ownerSessionId: "recipient", target }} /></FailedTurnRetryContext.Provider>;
   try {
     await act(async () => root.render(render()));
     const button = dom.window.document.querySelector<HTMLButtonElement>("button")!;
-    assert.equal(button.textContent, "Retry Failed Turn");
+    assert.deepEqual(reads[0], { target, messageSeq: 5 });
+    assert.equal(button.getAttribute("aria-label"), "Main: Resend Failed Turn");
+    assert.match(dom.window.document.body.textContent!, /edited before/);
     assert.equal(sent.length, 0);
-    await act(async () => button.click());
-    assert.equal(sent.length, 0);
-    const dialog = dom.window.document.querySelector("dialog")!;
-    assert.equal(dialog.open, true);
-    assert.match(dialog.textContent!, /Sender/);
-    assert.match(dialog.textContent!, /edited before/);
-    assert.match(dialog.textContent!, /may already have taken effect/);
-    assert.equal(dom.window.document.activeElement?.textContent, "Cancel");
-    const confirm = [...dialog.querySelectorAll("button")].find((item) => item.textContent === "Retry Failed Turn")!;
-    await act(async () => confirm.click());
+    await act(async () => { button.click(); button.click(); });
     assert.equal(sent.length, 1);
+    assert.equal(button.disabled, true);
     assert.equal(sent[0]?.receiptId, "source");
     assert.equal(sent[0]?.turnId, "42");
     assert.deepEqual(sent[0]?.target, target);
+    await act(async () => finish?.());
+    const message = { role: "assistant" as const, text: "failure", runFailure: "failed", historyIndex: 5 };
+    const readContext = { ownerSessionId: "recipient", target };
+    await act(async () => root.render(<FailedTurnRetryContext.Provider value={{ ...context, dockTurn: { sessionId: "recipient", turnId: "42" } }}>
+      <FailedTurnRetry message={message} context={readContext} />
+      <SessionRecoveryActions retryState={{ kind: "failed", lastRequestText: "A later input" }} requestKey="recipient:42" targetLabel="Main" isRetryActionDisabled={false} isRetryEditDisabled={false} isRetryDraftReplacePending={false}
+        onResendLastMessage={() => { throw new Error("must not send latest message text"); }} onEditLastMessage={() => {}} onConfirmRetryDraftReplace={() => {}} onCancelRetryDraftReplace={() => {}}
+        failedRetry={{ context: readContext, turnId: "42" }} />
+    </FailedTurnRetryContext.Provider>));
+    const dockButton = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Main: Resend Previous Request"]');
+    assert.ok(dockButton);
+    assert.equal(dom.window.document.querySelector('button[aria-label="Main: Resend Failed Turn"]'), null);
+    assert.ok(reads.some((request) => JSON.stringify(request) === JSON.stringify({ target, turnId: "42" })));
+    await act(async () => dockButton.click());
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1]?.turnId, "42");
+    await act(async () => finish?.());
+    await act(async () => root.render(<></>));
+    dockReadFails = true;
+    const dockView = (turnId: string) => <FailedTurnRetryContext.Provider value={{ ...context, dockTurn: { sessionId: "recipient", turnId } }}>
+      <SessionRecoveryActions retryState={{ kind: "failed", lastRequestText: "A later input" }} requestKey="recipient" targetLabel="Main" isRetryActionDisabled={false} isRetryEditDisabled={false} isRetryDraftReplacePending={false}
+        onResendLastMessage={() => { throw new Error("must not send latest message text"); }} onEditLastMessage={() => {}} onConfirmRetryDraftReplace={() => {}} onCancelRetryDraftReplace={() => {}}
+        failedRetry={{ context: readContext, turnId }} />
+    </FailedTurnRetryContext.Provider>;
+    await act(async () => root.render(dockView("42")));
+    assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /Fixture read unavailable/);
+    dockReadFails = false;
+    const retryRead = [...dom.window.document.querySelectorAll("button")].find((item) => item.textContent === "Retry")!;
+    await act(async () => retryRead.click());
+    submissionError = "Path not found: fixture.txt";
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Main: Resend Previous Request"]')!.click());
+    assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /Path not found: fixture.txt/);
+    await act(async () => root.render(dockView("43")));
+    assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
+    assert.ok(dom.window.document.querySelector('button[aria-label="Main: Resend Previous Request"]'));
     turnState = "canceled";
     await act(async () => root.render(<></>));
     await act(async () => root.render(render()));

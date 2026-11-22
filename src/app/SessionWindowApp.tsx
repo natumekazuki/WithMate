@@ -2278,9 +2278,21 @@ export default function AgentSessionWindowApp() {
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
   const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
+  const failedRetry = retryState?.kind === "failed" && !latestRecoveryTurn.loading && !latestRecoveryTurn.error && latestRecoveryTurn.turn?.phase === "failed" && recoverySession
+    ? {
+        context: {
+          ownerSessionId: selectedSession.id,
+          target: activeAuxiliarySession
+            ? { kind: "auxiliary" as const, sessionId: activeAuxiliarySession.id, incarnationId: activeAuxiliarySession.createdAt, mainSessionId: selectedSession.id, mainIncarnationId: getSessionIncarnationId(selectedSession) }
+            : { kind: "main" as const, sessionId: selectedSession.id, incarnationId: getSessionIncarnationId(selectedSession) },
+        },
+        turnId: String(latestRecoveryTurn.turn.id),
+      }
+    : undefined;
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryState,
+      failedRetry,
       requestKey: retryRequestKey,
       targetLabel: activeAuxiliarySession ? (activeAuxiliarySession.title.trim() ? `Aux · ${activeAuxiliarySession.title}` : "Aux") : "Main",
       latestTurnLoading: latestRecoveryTurn.loading,
@@ -2413,7 +2425,9 @@ export default function AgentSessionWindowApp() {
         const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
         if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
         return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
-      }, blocked: (id) => mainSessionRuntime.hasUncertainTurnFor(id) || isSelectedSessionReadOnly }}>
+      }, blocked: (id) => mainSessionRuntime.hasUncertainTurnFor(id) || mainSessionRuntime.pendingSubmitSessionId === id || isSelectedSessionReadOnly
+        || (id === selectedSession.id ? selectedSessionRunState === "running" : id !== activeAuxiliarySession?.id || activeAuxiliarySession.runState === "running"),
+      dockTurn: failedRetry ? { sessionId: failedRetry.context.target.sessionId, turnId: failedRetry.turnId } : undefined }}>
       <ChatWindow
         {...chatWindowProps}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}

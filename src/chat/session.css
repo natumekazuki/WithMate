@@ -3352,6 +3352,11 @@
   white-space: normal;
 }
 
+.session-recovery-actions > .failed-turn-retry-feedback {
+  order: 1;
+  flex-basis: 100%;
+}
+
 .pasted-file-replacement-modal {
   padding: 16px;
   backdrop-filter: none;
@@ -3538,6 +3543,7 @@
 
 .composer .composer-icon-button,
 .session-recovery-actions .composer-icon-button,
+.failed-turn-resend,
 .live-elicitation-card .live-approval-actions .composer-icon-button,
 .coordination-answer-form .composer-icon-button,
 .session-action-dock-compact-actions .composer-icon-button {
@@ -3553,9 +3559,14 @@
 
 .composer .drawer-toggle.composer-icon-button,
 .session-recovery-actions .drawer-toggle.composer-icon-button,
+.drawer-toggle.failed-turn-resend,
 .live-elicitation-card .live-approval-actions .drawer-toggle.composer-icon-button,
 .session-action-dock-compact-actions .drawer-toggle.composer-icon-button {
   border-radius: 10px;
+}
+
+.message-card-content > .failed-turn-resend {
+  justify-self: start;
 }
 
 .composer-icon-button:focus-visible,
