@@ -25,10 +25,12 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/window/workspace-directory-validation.js";
 import { assertChildSessionRole, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
 import { getSessionIncarnationId } from "../../src-shared/session/session-state.js";
-import type { CreateChildSessionRequest } from "../../src-shared/session/session-child-creation.js";
+import type { CreateChildSessionRequest, ResolvedChildSessionCreation } from "../../src-shared/session/session-child-creation.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { resolveChildSessionPermissions } from "../../src-shared/settings/provider-runtime-options.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { captureSessionLifecycleResource, cleanupSessionLifecycleResource, prepareSessionLifecycleFiles } from "../session/session-lifecycle-files.js";
-import type { SessionLifecycleOperation, SessionLifecycleResource } from "../session/session-lifecycle-operation.js";
+import { canonicalSessionLifecycleInput, type SessionLifecycleOperation, type SessionLifecycleResource } from "../session/session-lifecycle-operation.js";
 import { ChildSessionCreationRejectedError } from "../session/session-storage-errors.js";
 
 type MainSessionCommandFacadeDeps = {
@@ -61,23 +63,38 @@ type MainSessionCommandFacadeDeps = {
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
 
+function childCreationRequest(input: ResolvedChildSessionCreation): CreateChildSessionRequest {
+  const { approvalMode: _approval, codexSandboxMode: _sandbox, codexReviewer: _reviewer, ...request } = input;
+  return request;
+}
+
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
-  async createChildSession(actor: { id: string; incarnationId: string }, input: CreateChildSessionRequest, assertCurrent: () => void): Promise<Session> {
-    if (!input.requestId.trim()) throw new ChildSessionCreationRejectedError("A stable child creation request ID is required.");
+  /** New operations use the admitted Turn's permissions; retries and recovery use the accepted lifecycle input. */
+  async createChildSession(actor: { id: string; incarnationId: string }, request: CreateChildSessionRequest, assertCurrent: () => void, actorExecution?: { providerId: string; executionOptions: SessionExecutionOptions }): Promise<Session> {
+    if (!request.requestId.trim()) throw new ChildSessionCreationRejectedError("A stable child creation request ID is required.");
     const prepared = await this.deps.runProviderRuntimeOperationExclusive(async () => {
       assertCurrent();
       const persistence = this.deps.getSessionPersistenceService();
       const parent = await persistence.readSessionForLifecycle(actor.id);
       if (!parent || getSessionIncarnationId(parent) !== actor.incarnationId || parent.sessionKind !== "default") throw new ChildSessionCreationRejectedError("The child creation parent no longer exists or is not a normal Session.");
       const relationship = normalizeSessionRelationship(parent);
-      try { assertChildSessionRole(relationship.sessionRole, input.role); }
+      try { assertChildSessionRole(relationship.sessionRole, request.role); }
       catch (error) { throw new ChildSessionCreationRejectedError(error instanceof Error ? error.message : String(error)); }
-      const operationId = JSON.stringify(["create", "agent", actor.id, actor.incarnationId, input.requestId]);
+      const operationId = JSON.stringify(["create", "agent", actor.id, actor.incarnationId, request.requestId]);
       let operation = await persistence.getSessionLifecycleOperation(operationId);
+      let input: ResolvedChildSessionCreation;
       let inputValidated = false;
       if (!operation) {
+        if (!actorExecution || actorExecution.providerId !== parent.provider) {
+          throw new ChildSessionCreationRejectedError("The parent Turn's effective permissions are unavailable.");
+        }
+        try {
+          input = { ...request, ...resolveChildSessionPermissions(actorExecution.providerId, actorExecution.executionOptions, request.provider) };
+        } catch (error) {
+          throw new ChildSessionCreationRejectedError(error instanceof Error ? error.message : String(error));
+        }
         const validation = await this.deps.validateWorkspaceDirectory(input.workspacePath);
         if (!validation.valid) throw new ChildSessionCreationRejectedError(`Workspace is unavailable. ${resolveWorkspaceDirectoryValidationMessage(validation)}`);
         try { await persistence.validateChildSessionCreation(input); }
@@ -87,7 +104,10 @@ export class MainSessionCommandFacade {
         operation = await persistence.beginSessionLifecycleOperation({ operationId, kind: "create", input,
           targets: [{ id: this.issueSessionId(), rootSessionId: relationship.rootSessionId, parentSessionId: parent.id, parentIncarnationId: actor.incarnationId }] });
       } else {
-        operation = await persistence.beginSessionLifecycleOperation({ operationId, kind: "create", input, targets: operation.targets });
+        input = operation.input as ResolvedChildSessionCreation;
+        if (canonicalSessionLifecycleInput(childCreationRequest(input)) !== canonicalSessionLifecycleInput(request)) {
+          throw new ChildSessionCreationRejectedError("The child creation request ID is already associated with different input.");
+        }
       }
       const target = operation.targets[0];
       let session = await persistence.readSessionForLifecycle(target.id);
@@ -387,7 +407,7 @@ export class MainSessionCommandFacade {
           if (!session) {
             const target = operation.targets[0];
             if (target.parentSessionId && target.parentIncarnationId) {
-              await this.createChildSession({ id: target.parentSessionId, incarnationId: target.parentIncarnationId }, operation.input as CreateChildSessionRequest, () => {});
+              await this.createChildSession({ id: target.parentSessionId, incarnationId: target.parentIncarnationId }, childCreationRequest(operation.input as ResolvedChildSessionCreation), () => {});
             } else if (!target.parentSessionId) {
               await this.createSessionFromRequest(operation.input as CreateSessionRequest, operation);
             } else throw new Error("The pending child creation has no saved parent incarnation.");

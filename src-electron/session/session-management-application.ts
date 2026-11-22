@@ -29,7 +29,7 @@ import {
   getSessionIncarnationId,
   type Session,
 } from "../../src-shared/session/session-state.js";
-import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import {
   getApprovalOptionsForProvider,
   getApprovalReviewerOptionsForProvider,
@@ -48,6 +48,7 @@ export type SessionCurrentTurn = {
 export type SessionManagementContext = {
   actor: SessionTarget;
   assertCurrent(): void;
+  actorExecution?: { providerId: string; executionOptions: SessionExecutionOptions };
 };
 export type SessionManagementApplicationDeps = {
   operatingPolicy(actor: RelatedSession, operation: SessionOperatingPolicyOperation, request: unknown, assertCurrent: () => void): Promise<SessionOperationResult>;
@@ -114,6 +115,7 @@ export type SessionManagementApplicationDeps = {
     actor: RelatedSession,
     request: SessionOperationRequest<"create_child">,
     assertCurrent: () => void,
+    actorExecution: SessionManagementContext["actorExecution"],
   ): Promise<Session>;
   catalog(
     actor: RelatedSession,
@@ -222,6 +224,7 @@ export class SessionManagementApplication {
           actor,
           request,
           context.assertCurrent,
+          context.actorExecution,
         );
         const relationship = normalizeSessionRelationship(created);
         const incarnationId = getSessionIncarnationId(created);

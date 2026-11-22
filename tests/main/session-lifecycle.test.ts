@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { captureSessionLifecycleResource, cleanupSessionLifecycleResource, prepareSessionLifecycleFiles } from "../../src-electron/session/session-lifecycle-files.js";
@@ -91,7 +92,7 @@ async function childCharacterFixture(t: TestContext, activeIds: string[], crewCh
     storage,
     create: () => facade.createChildSession({ id: parent.id, incarnationId: parent.incarnationId! },
       { requestId: "character-selection", role: "executor", provider: "codex", model: "model", reasoningEffort: "high",
-        approvalMode: "on-request", codexSandboxMode: "read-only", workspacePath: "C:/prepared-worktree" }, () => {}),
+        workspacePath: "C:/prepared-worktree" }, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent) }),
   };
 }
 
@@ -297,9 +298,9 @@ it("reprepares a rejected Crew deletion for the current children and owned Files
 
 // @test-value v2
 // kind = "invariant"
-// claim = "同一子作成要求のFiles失敗・初期Aux失敗後の再試行はCharacterとidentityを再利用し、親指定設定を保存して完成後だけ公開する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/833" }
-// fault = "途中失敗の再試行で再抽選・重複Sessionを作成するか、親指定設定をGUI defaultsで置換する"
+// claim = "同一子作成要求のFiles失敗・初期Aux失敗後の再試行はCharacterとidentityを再利用し、受付時のモデル・深度と親Turnの権限を保持して完成後だけ公開する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/833; docs/features/parent-child-session-rules.md: 親として依頼するとき" }
+// fault = "途中失敗の再試行で再抽選・重複Sessionを作成するか、受付済みの実行設定をGUI defaultsで置換する"
 // observable = "実DBの子Session件数・Character・実行設定、初期Aux、公開一覧、抽選snapshot作成回数"
 // observation_boundary = "component-behavior"
 // scope = "common child Session application with real SQLite and Files"
@@ -352,10 +353,11 @@ it("retries child creation without redrawing its Character or replacing parent e
     randomCharacter: () => 0,
     openCreatedChildSession: (session) => { openedChildren.push(session.id); },
   });
-  const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, codexReviewer: "auto-review" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
+  const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
+  const actorExecution = { providerId: "codex", executionOptions: { ...captureSessionExecutionOptions(root), codexSandboxMode: "read-only" as const, codexReviewer: "auto-review" as const } };
   try {
     const actor = { id: root.id, incarnationId: root.incarnationId! };
-    await assert.rejects(facade.createChildSession(actor, request, () => {}), /Files failed/);
+    await assert.rejects(facade.createChildSession(actor, request, () => {}, actorExecution), /Files failed/);
     assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.characterId, "sora");
     assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.codexReviewer, "auto-review");
     await assert.rejects(facade.createChildSession(actor, request, () => {}), /initial Auxiliary failed/);
@@ -508,8 +510,8 @@ it("revalidates pending child execution support without redrawing its prepared C
       initializeCreatedSession: async (session) => { auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } }); },
     });
     const actor = { id: parent.id, incarnationId: parent.incarnationId! };
-    const request = { requestId: "same", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, workspacePath: "C:/prepared-worktree" };
-    await assert.rejects(facade.createChildSession(actor, request, () => {}), /Files failed/);
+    const request = { requestId: "same", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree" };
+    await assert.rejects(facade.createChildSession(actor, request, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent) }), /Files failed/);
     const prepared = storage.listPendingSessionLifecycleOperations()[0].preparedSession!;
     assert.equal(prepared.characterId, "azki");
     activeIds.push("sora");
@@ -581,9 +583,9 @@ it("converges GUI and child creation across each staging publication crash bound
           initializeCreatedSession: async (session) => { auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } }); },
         });
         const guiRequest = { provider: "codex", taskTitle: "Root", characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, workspace: { kind: "session-folder" as const }, clientRequestId: `gui-${boundary}` };
-        const childRequest = { requestId: `child-${boundary}`, role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, workspacePath: "C:/prepared-worktree" };
+        const childRequest = { requestId: `child-${boundary}`, role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree" };
         const invoke = (facade: MainSessionCommandFacade) => mode === "gui" ? facade.createSessionFromRequest(guiRequest)
-          : facade.createChildSession({ id: parent!.id, incarnationId: parent!.incarnationId! }, childRequest, () => {});
+          : facade.createChildSession({ id: parent!.id, incarnationId: parent!.incarnationId! }, childRequest, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent!) });
         await assert.rejects(invoke(makeFacade()), /simulated crash/);
         const pending = storage.listPendingSessionLifecycleOperations()[0];
         const target = pending.targets[0].id;

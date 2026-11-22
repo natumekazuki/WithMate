@@ -105,6 +105,10 @@ export class SessionManagementRuntimeService {
         this.deps.application.execute(operation, request.body, {
           actor: actor.data,
           assertCurrent,
+          actorExecution: admission.handle.executionOptions && {
+            providerId: admission.handle.providerId,
+            executionOptions: admission.handle.executionOptions,
+          },
         });
       // Reads, Coordination, policy and directory changes carry admission into Worker.
       // Coordination detaches its postcommit queue wake from this sender scope.

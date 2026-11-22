@@ -17,9 +17,8 @@
 - 通常送信（enqueue）の受付と、送信先での実行完了を区別する。
   送信結果が不明なら元のrequestIdで受付を照会し、別のrequestIdで重複送信しない。
 - 通常送信では宛先のproviderとworkspacePathをget/listで確認し、get_catalogで選択肢を取得する。
-  毎回approvalModeを指定し、Codex宛はcodexSandboxModeも指定する。
-  他ProviderへSandboxを渡さない。設定指定は当該通常Turnだけに適用され、
-  保存設定や実行中Turnを変更せず、ユーザーの個別操作承認を代替しない。
+  権限は親子のどちらの方向でも受付時の宛先の保存Approval・Sandbox・Reviewerを使う。
+  受付済みの設定や実行中Turnは変更せず、ユーザーの個別操作承認を代替しない。
 - enqueueのdeliveryTimingは送信者が明示選択する。省略時のimmediateは即時配送、
   after_source_turnは今回送信した正確なTurnの終端・結果保存後の配送である。
   どちらも受付は直ちに返る。同じrequestIdの再確認で配送タイミングを変えない。
@@ -34,10 +33,10 @@
   未設定をSession Folder/Crew Folderで代替しない。単発の配置先は恒久設定へ反映しない。
   Git操作、base branch、作成先とWorkspaceの検証・承認は別途行う。
 - 通常送信では毎回modelとreasoningEffortを明示する。Depth非対応Modelでは空文字列を指定する。
-- Codex子の作成時にReviewerを選ぶ場合はget_catalogのoptions[].reviewersを確認し、
-  create_childへcodexReviewerを指定する。省略時はuser。on-requestとauto-reviewの組合せも指定できる。
-  この選択は子へ保存され、以後の通常送信でも使われる。enqueueやsteerの引数には追加せず、
-  非対応Providerへ指定しない。Reviewerの指定は作業範囲・操作権限の追加承認ではない。
+- 子のApproval・Sandbox・Reviewerは作成元の実行中TurnからWithMateが解決する。
+  同じProviderではその設定を継承し、異なるProviderでは保護を広げない対応を使う。
+  対応先でアクセス制限を表現できない場合は作成を受け付けない。
+  create_childとenqueueには権限の上書きや継承スイッチを指定しない。
 - 子へ目的、担当範囲、必要な成果、実行条件・禁止事項を明示する。
   子が親の会話やProvider contextを共有していると仮定しない。
 - 子のtargetと依頼のreceiptIdを保持し、後から同じ依頼を確認できるようにする。

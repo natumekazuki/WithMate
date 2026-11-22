@@ -16,9 +16,8 @@ export type SessionExecutionOptions = Readonly<{
   customAgentName: string;
 }>;
 
-/** Explicit per-message choices; omitted Model/Depth are resolved only at acceptance. */
-export type SessionMessageExecutionOptions = Pick<SessionExecutionOptions, "approvalMode"> &
-  Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort" | "codexSandboxMode">>;
+/** Public per-message selections; the recipient supplies saved permissions. */
+export type SessionMessageExecutionOptions = Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort">>;
 
 export function captureSessionExecutionOptions(source: Pick<Session, keyof SessionExecutionOptions>): SessionExecutionOptions {
   return Object.freeze({

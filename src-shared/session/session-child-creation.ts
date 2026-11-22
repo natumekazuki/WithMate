@@ -9,10 +9,14 @@ export type CreateChildSessionRequest = {
   provider: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
-  approvalMode: ApprovalMode;
-  codexSandboxMode?: CodexSandboxMode;
-  codexReviewer?: CodexReviewer;
   workspacePath: string;
   title?: string;
   description?: string;
+};
+
+/** Accepted lifecycle input, including permissions resolved before persistence. */
+export type ResolvedChildSessionCreation = CreateChildSessionRequest & {
+  approvalMode: ApprovalMode;
+  codexSandboxMode?: CodexSandboxMode;
+  codexReviewer?: CodexReviewer;
 };

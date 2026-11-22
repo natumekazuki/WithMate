@@ -6017,6 +6017,30 @@ var providerOutputSchema = object({
 		"unknown"
 	])
 });
+// src-shared/session/conversation-threads.ts
+var sequence = number().int().nonnegative();
+object({ target: sessionTargetSchema }).strict();
+object({
+	ok: literal(true),
+	initialMessageIndexes: array(sequence),
+	children: array(object({
+		target: sessionTargetSchema,
+		title: string(),
+		messageIndexes: array(sequence),
+		inboundTurnIds: array(string()),
+		sentMessageIndexes: array(sequence)
+	}))
+});
+// src-shared/session/session-reply.ts
+var turnId = string().regex(/^[1-9]\d*$/);
+var sessionReplySchema = union([object({
+	target: sessionTargetSchema,
+	seq: number().int().nonnegative(),
+	finalAnswerTurnId: turnId.optional()
+}).strict(), object({
+	target: sessionTargetSchema,
+	receiptId: string().uuid()
+}).strict()]);
 // src-shared/session/session-execution-read.ts
 var id$1 = string().min(1).max(256);
 var page$1 = {
@@ -6091,6 +6115,7 @@ var executionOperationRequestSchemas = {
 	list_execution_operations: exactReference(sessionHistoryOperationRequestSchemas.list_operations.omit({ seq: true }).shape),
 	get_execution_operation_detail: exactReference(sessionHistoryOperationRequestSchemas.get_operation_detail.omit({ seq: true }).shape)
 };
+({ ...executionOperationRequestSchemas });
 var nullableId = string().nullable();
 var summary = object({
 	entry: object({
@@ -6160,6 +6185,12 @@ var origin = object({
 });
 var description = object({
 	origin: origin.nullable(),
+	retrySource: object({
+		receiptId: id$1,
+		turnId: id$1,
+		origin,
+		changedSinceAcceptance: boolean()
+	}).nullable().optional(),
 	receiptId: nullableId,
 	receiptState: nullableId,
 	turnId: nullableId,
@@ -6283,6 +6314,7 @@ var executionOperationResultSchemas = {
 			]),
 			origin,
 			text: string(),
+			replyTo: sessionReplySchema.optional(),
 			coordination: coordinationDisplay.optional()
 		})),
 		nextCursor: number().int().nonnegative().nullable()
@@ -6427,6 +6459,7 @@ var executionOperationResultSchemas = {
 		totalRows: number()
 	}).passthrough()])
 };
+({ ...executionOperationResultSchemas });
 var EXECUTION_OPERATION_DESCRIPTIONS = {
 	list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
 	list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
@@ -6637,13 +6670,10 @@ var child = object({
 	provider,
 	model: string().min(1).max(500),
 	reasoningEffort: string().max(100),
-	approvalMode: _enum(APPROVAL_MODE_VALUES),
-	codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES).optional(),
-	codexReviewer: _enum(CODEX_REVIEWER_VALUES).optional(),
 	workspacePath: string().min(1).max(32768),
 	title: string().trim().min(1).max(500).optional(),
 	description: string().max(1e4).optional()
-}).strict().refine((value) => value.provider === "codex" ? value.codexSandboxMode !== void 0 : value.codexSandboxMode === void 0, "Codex requires codexSandboxMode; other Providers do not accept this unsupported setting.").refine((value) => value.provider === "codex" || value.codexReviewer === void 0, "Only Codex supports codexReviewer for child creation.");
+}).strict();
 var sessionOperationRequestSchemas = {
 	...executionOperationRequestSchemas,
 	...sessionCoordinationRequestSchemas,
@@ -6692,9 +6722,7 @@ var sessionOperationRequestSchemas = {
 		message: string().trim().min(1).max(1e5),
 		deliveryTiming: _enum(["immediate", "after_source_turn"]).optional(),
 		model: string().min(1).max(500).optional(),
-		reasoningEffort: string().max(100).optional(),
-		approvalMode: _enum(APPROVAL_MODE_VALUES),
-		codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES).optional()
+		reasoningEffort: string().max(100).optional()
 	}).strict(),
 	get_receipt: object({
 		target: sessionTargetSchema,
@@ -6929,8 +6957,8 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	...Object.fromEntries(Object.entries(EXECUTION_OPERATION_DESCRIPTIONS).map(([operation, description]) => [operation, `${description} ${SESSION_HISTORY_USAGE_NOTICE}`])),
 	...SESSION_COORDINATION_DESCRIPTIONS,
 	...SESSION_OPERATING_POLICY_DESCRIPTIONS,
-	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode and optionally accepts codexReviewer from get_catalog options[].reviewers (default user). Other Providers reject these unsupported settings. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
-	get_catalog: "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. options[].reviewers contains Codex child creation Reviewer choices; other Providers return an empty list. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
+	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Specify Provider, model, reasoningEffort and a prepared workspacePath. WithMate resolves permissions from the calling Turn's effective settings, preserving them on the same Provider and rejecting a cross-Provider mapping that cannot retain access restrictions. Approval, Sandbox, Reviewer and inheritance switches are not request inputs. Character selection is automatic, never caller-selected. For a new selection, exclude the direct parent's Character if another active candidate exists, then choose uniformly among the remaining active candidates with the lowest usage by normal Mains in this Crew. Use the parent's Character if it is the only active candidate; fail if there are no active candidates. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
+	get_catalog: "Read available Provider/model/depth catalog and informational native permission options. options[].reviewers lists Codex Reviewer choices; other Providers return an empty list. Permission options are not create_child or enqueue inputs. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
 	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
 	list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
 	get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
@@ -6939,7 +6967,7 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
 	remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
 	update_metadata: "Update only this actor's title and/or description. Title is a short purpose/subject/target name: keep it for progress alone, but update it when the purpose or target materially changes. Description is a few sentences of scope and current situation; replace it rather than appending history, and retain the handled subject after completion. Omit fields that remain accurate. This does not change Role, execution settings or another Session's metadata.",
-	enqueue: "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. Each request requires approvalMode and, for Codex recipients, codexSandboxMode; other Providers reject sandbox. Parent-to-child requires model and reasoningEffort (\"\" explicitly means no Depth); child-to-parent may omit either to capture the parent's saved value at acceptance. Validate the effective Model/Depth against the recipient's Provider/Workspace get_catalog. Retain Reviewer; incompatible Approval is rejected, not silently downgraded. Settings affect only this receipt's normal Turn, not saved defaults or a running Turn, and do not grant user approval. deliveryTiming defaults to immediate; after_source_turn waits for this exact source Session/incarnation/Turn's saved completed/failed/canceled state. Both return a durable receipt immediately; unknown source state does not release it. No auto-Steer or blocking immediate/GUI inputs. requestId must be a UUID; identical retries preserve explicit choices (including omissions) and timing. Inspect receipt.accepted.request.executionOptions for frozen effective settings. A receipt is acceptance, not completion. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
+	enqueue: "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. WithMate captures the recipient's saved Approval, Sandbox and Reviewer at acceptance in both directions. Permission overrides and inheritance switches are not request inputs. Parent-to-child requires model and reasoningEffort (\"\" explicitly means no Depth); child-to-parent may omit either to capture the parent's saved value at acceptance. Validate the effective Model/Depth against the recipient's Provider/Workspace get_catalog. Retain Reviewer; incompatible Approval is rejected, not silently downgraded. Settings affect only this receipt's normal Turn, not saved defaults or a running Turn, and do not grant user approval. deliveryTiming defaults to immediate; after_source_turn waits for this exact source Session/incarnation/Turn's saved completed/failed/canceled state. Both return a durable receipt immediately; unknown source state does not release it. No auto-Steer or blocking immediate/GUI inputs. requestId must be a UUID; identical retries preserve explicit choices (including omissions) and timing. Inspect receipt.accepted.request.executionOptions for frozen effective settings. A receipt is acceptance, not completion. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
 	get_receipt: "Recover this sender's receipt by its original UUID requestId and exact target. Delayed receipts expose sourceTurnPhase (running, completed, failed, canceled or unknown); sourceTurnPendingRelease marks execution still releasing even when a terminal phase is saved. Source failure or cancellation is not successful work. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
 	cancel_receipt: "Cancel one exact pending receipt of a direct child. Parent authority does not depend on who sent the receipt. If started, report its actual state without stopping its Turn.",
 	stop_turn: "Stop one specified WithMate Turn of a direct child, including all committed additional inputs. Never stop the latest Turn instead. A terminal Turn reports not-applied; this does not withdraw one instruction."
@@ -8981,10 +9009,10 @@ Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. 
 Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
 Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.
-Every enqueue requires approvalMode and, for Codex recipients, codexSandboxMode (unsupported for other Providers). Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
+Enqueue captures the recipient's saved Approval, Sandbox and Reviewer in both directions. Permission overrides and inheritance switches are not accepted. Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts, stop a specified child Turn, or explicitly steer a running child Turn. Steer requires target and get.currentTurn.turnId (WithMate, not native Provider ID) and message; only Codex currently supports it. It uses the running settings and never starts a Turn or automatically falls back to enqueue. applied/not-applied and SESSION_STEER_UNKNOWN (effect unknown) are distinct; inspect list-execution-inputs/get-execution-input and inputOrigin, including unresolved records, before deciding what to do. Never automatically resend unknown delivery. Queue editing, Role promotion, user answering or approval is not exposed.
-Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Codex children optionally accept codexReviewer from options[].reviewers (default user); other Providers reject it. This creation choice is saved for subsequent normal sends, not an enqueue or Steer argument, and grants no new authority. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
+Create children with explicit Provider/model/depth and a prepared Workspace; get-catalog returns supported model choices. WithMate resolves permissions from the effective calling Turn and rejects cross-Provider creation when it cannot retain access restrictions. Do not pass Approval, Sandbox or Reviewer. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
 ${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.

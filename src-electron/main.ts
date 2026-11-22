@@ -802,9 +802,9 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       getStore: () => requireAppSettingsStorage(),
       getQuota: getProviderQuotaTelemetry,
     }).execute(operation, request, actor.workspacePath, assertCurrent),
-    createChild: async (actor, request, assertCurrent) => {
+    createChild: async (actor, request, assertCurrent, actorExecution) => {
       try {
-        return await requireMainSessionCommandFacade().createChildSession({ id: actor.id, incarnationId: actor.incarnationId }, request, assertCurrent);
+        return await requireMainSessionCommandFacade().createChildSession({ id: actor.id, incarnationId: actor.incarnationId }, request, assertCurrent, actorExecution);
       } catch (error) {
         if (error instanceof ChildSessionCreationRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
         throw error;

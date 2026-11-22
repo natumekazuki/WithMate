@@ -428,7 +428,7 @@ async function fixture(provider = "codex") {
 // @test-value v2
 // kind = "contract"
 // claim = "MCPとCLIの親Steerは同じ子Turnへ本文と実親来歴を保存し、pendingとconfirmed保存後それぞれ送信元無効化callbackを呼び、通常enqueueは次Turnを待ち保存設定を変えない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/938; https://github.com/natumekazuki/WithMate/issues/966; docs/design/desktop-ui.md#turn-input-details" }
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/938; https://github.com/natumekazuki/WithMate/issues/966; docs/design/desktop-ui.md#turn-input-details; docs/design/session-run-lifecycle.md#bound-session-api" }
 // fault = "pendingまたは確定後の通知を欠落させる、Steerを通常queueへ送る、来歴をGUI扱いする、確定追加入力を取得できない、進行中設定や保存設定を変更する"
 // observable = "両入口の結果、実Workerの送信元・受信元読取と入力状態、Provider到達時および確定保存応答時からのruntime通知件数の増加と新規origin、Providerへのnative Turnと来歴、receipt状態とTurn設定"
 // observation_boundary = "public-boundary"
@@ -520,8 +520,6 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
       message: "next Turn",
       model: "model",
       reasoningEffort: "high",
-      approvalMode: "on-request",
-      codexSandboxMode: "workspace-write",
     });
     assert.equal(queued.receipt.state, "queued");
     assert.equal(f.sent.length, 2);
