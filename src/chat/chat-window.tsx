@@ -555,12 +555,9 @@ export function ChatWindow({
   const mainThreads = useMainConversationThreads(concurrentChats?.main.inputReadContext, mainVisible,
     `${concurrentChats?.mainSession?.messageCount ?? 0}:${concurrentChats?.mainSession?.updatedAt ?? ""}`, captureMainPosition);
   const threadOptions: SessionSwitcherOption[] = [
-    { id: "", label: headerProps.taskTitle, preview: "Main conversation" },
-    ...mainThreads.threads.map((thread) => ({ id: conversationPeerKey(thread.target), label: thread.title })),
+    { id: "", label: headerProps.taskTitle, preview: "Initial Conversation" },
+    ...mainThreads.children.map((thread) => ({ id: conversationPeerKey(thread.target), label: thread.title })),
   ];
-  if (mainThreads.selection && !threadOptions.some((option) => option.id === mainThreads.selectedId)) {
-    threadOptions.push({ id: mainThreads.selectedId, label: mainThreads.selection.thread.title });
-  }
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
   const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);
   const [, setColumnControlsRevision] = useState(0);
@@ -725,8 +722,15 @@ export function ChatWindow({
   const revealRequestRef = useRef<(() => boolean) | null>(null);
   revealRequestRef.current = targetColumnControls?.revealRequest ?? null;
   useEffect(() => {
-    if (!followAfterRevealRef.current || !isConversationVisible || !targetColumnControls
-      || concurrentChats?.target === "main" && mainThreads.selection) return;
+    if (!followAfterRevealRef.current || !isConversationVisible || !targetColumnControls) return;
+    if (concurrentChats?.target === "main" && mainThreads.canRead) {
+      if (!mainThreads.ready || (targetColumnControls.frameId ?? "") !== mainThreads.selectedId) return;
+      const liveFrame = targetColumnControls.liveFrameId ?? "";
+      if (liveFrame !== mainThreads.selectedId) {
+        mainThreads.select(liveFrame);
+        return;
+      }
+    }
     followAfterRevealRef.current = false;
     // Bring the pending request form into view; scrolling never focuses or answers it.
     targetColumnControls.followLatest();
@@ -741,7 +745,7 @@ export function ChatWindow({
       revealFrameRef.current = window.requestAnimationFrame(poll);
     };
     revealFrameRef.current = window.requestAnimationFrame(poll);
-  }, [isConversationVisible, targetColumnControls, concurrentChats?.target, mainThreads.selectedId]);
+  }, [isConversationVisible, targetColumnControls, concurrentChats?.target, mainThreads.canRead, mainThreads.ready, mainThreads.selectedId, mainThreads.select]);
   useEffect(() => () => {
     if (revealFrameRef.current !== null) window.cancelAnimationFrame(revealFrameRef.current);
   }, []);
@@ -750,7 +754,6 @@ export function ChatWindow({
       ...conversationAttention,
       onShowConversation: (kinds) => {
         followAfterRevealRef.current = kinds.some((kind) => kind !== "new-messages");
-        if (followAfterRevealRef.current && concurrentChats?.target === "main" && mainThreads.selection) mainThreads.select("");
         conversationAttention.onShowConversation(kinds);
       },
     }} />
@@ -830,13 +833,13 @@ export function ChatWindow({
                 const index = threadOptions.findIndex(({ id }) => id === mainThreads.selectedId);
                 mainThreads.select(threadOptions[(index + direction + threadOptions.length) % threadOptions.length].id);
               }} />
-            {mainVisible && mainThreads.loading && !mainThreads.threads.length ? <LoadingIndicator inline label="Loading conversations" /> : null}
+            {mainVisible && mainThreads.loading && !mainThreads.ready ? <LoadingIndicator inline label="Loading conversations" /> : null}
             {mainThreads.error ? <div className="main-thread-feedback"><span role="alert">{mainThreads.error}</span>
               <button type="button" className="drawer-toggle compact secondary" onClick={mainThreads.retry}>Retry Conversations</button>
             </div> : null}
             {concurrentChats?.mainReadFeedback}
           </div> : concurrentChats?.mainReadFeedback}
-          {concurrentChats && concurrentChats.mainContentReady === false ? null : concurrentChats ? (
+          {concurrentChats && (concurrentChats.mainContentReady === false || !mainThreads.ready) ? null : concurrentChats ? (
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
               messageSourceKind="session"
@@ -844,7 +847,6 @@ export function ChatWindow({
               baseProps={{
                 ...resolvedMessageColumnProps,
                 inputReadContext: concurrentChats.main.inputReadContext,
-                onOpenSentThread: mainThreads.canRead ? mainThreads.openThread : undefined,
                 isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
                   && concurrentChats.target === "main",
                 messageViewMode: renderedMessageViewMode,
@@ -853,7 +855,7 @@ export function ChatWindow({
               api={concurrentChats.api}
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
-              threadSelection={mainThreads.selection}
+              frame={mainThreads.frame}
               onColumnControls={handleMainColumnControls}
               navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "main"}
             />
@@ -863,7 +865,7 @@ export function ChatWindow({
               messageViewMode={renderedMessageViewMode}
             />
           )}
-          {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent && !mainThreads.selection ? (
+          {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent && !mainThreads.selectedId ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </div>

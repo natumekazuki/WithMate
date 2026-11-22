@@ -15,7 +15,7 @@ import { executionOperationResultSchemas, type ExecutionReadOperation } from "..
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
 import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
-import { conversationThreadsResultSchema, sentCardKey } from "../../src-shared/session/conversation-threads.js";
+import { conversationThreadsResultSchema } from "../../src-shared/session/conversation-threads.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -29,21 +29,24 @@ function session() { return buildNewSession({ id: "read-main", taskTitle: "Read"
 
 // @test-value v2
 // kind = "contract"
-// claim = "相手別閲覧は60件より前でも開始入力と同Turnの通常応答を元相手に保ち、別宛先の発言は正確な受付／保存Steerとして同じ位置を共有する"
-// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の相手別閲覧; https://github.com/natumekazuki/WithMate/issues/970" }
-// fault = "本文や同じTurnだけで相手を割り当てる、古い脱落・別世代を混ぜる、未保存から保存への切替時にカードの参照を変える"
-// observable = "実SQLiteの相手別message seq・受付とSteerのkey・live/保存後のanchor、および元の履歴page"
+// claim = "作成済みの直接の子だけが送受信前から枠を持つ。開始入力と正確に対応する応答はその子の枠に属し、別の子への指示はカード取得用の位置だけを共有する"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠" }
+// fault = "送受信相手から枠を作る、本文や同じTurnだけで所属を推定する、子の会話を初期枠にも載せる"
+// observable = "実SQLiteが返す子Sessionの一覧・初期枠と各子の正本seq・別枠送信の位置、および元の履歴page"
 // observation_boundary = "public-boundary"
-// scope = "Mainの相手別indexと既存送信一覧・本文pageとの実データ接続。人工fixtureのSessionだけを使用"
+// scope = "初期枠・直接の子の枠と既存送信一覧・本文pageの接続。人工fixtureだけを使用"
 // lifecycle = "permanent"
 // impact = "アクセス可能な過去の指示を失う、または別人への指示や応答を正しい返信と誤認する"
-// distinction = "既存の表示範囲の送信一覧、単独paging、型検査では相手帰属と正確な同一カードの対応を検証できない"
+// distinction = "既存の送信一覧や単独pagingでは、枠の親子選定、初期枠への重複による混在、別枠送信と正本の対応を検証できない"
 // @end-test-value
-test("peer membership keeps canonical history and the exact delivery through live and saved positions", async () => {
+test("Main conversation frames keep only created children and preserve unattributed history in the initial frame", async () => {
   await fixture(({ sessions, turns, queue, read }) => {
-    const main = sessions.insertSession(session());
-    const peers = ["A", "B", "C", "stale"].map((id) => sessions.insertSession({ ...session(), id, taskTitle: `Peer ${id}` }));
-    const [a, b, c, stale] = peers;
+    const parent = sessions.insertSession({ ...session(), id: "parent", sessionRole: "overall-coordinator", rootSessionId: "parent" });
+    const main = sessions.insertSession({ ...session(), sessionRole: "task-coordinator", rootSessionId: parent.id, parentSessionId: parent.id, createdBySessionId: parent.id });
+    const [a, b, c] = ["A", "B", "C"].map((id) => sessions.insertSession({ ...session(), id, taskTitle: `Child ${id}`,
+      sessionRole: "executor", rootSessionId: parent.id, parentSessionId: main.id, createdBySessionId: main.id }));
+    const sibling = sessions.insertSession({ ...session(), id: "sibling", sessionRole: "task-coordinator",
+      rootSessionId: parent.id, parentSessionId: parent.id, createdBySessionId: parent.id });
     const owner = (s: typeof main) => ({ sessionId: s.id, incarnationId: getSessionIncarnationId(s) });
     const select = (s: typeof main) => ({ kind: "main" as const, ...owner(s) });
     const target = select(main);
@@ -58,45 +61,56 @@ test("peer membership keeps canonical history and the exact delivery through liv
     const mainTurn = turns.createSessionTurn({ ...base, userMessageSeq: 0 });
     const turnId = String(mainTurn.id);
     queue.claimNext(owner(main)); queue.markStarted(owner(main), fromA.id, { turnId, userMessageSeq: 0 });
-    const toA = send(main, a, turnId); const toB = send(main, b, turnId); const toC = send(main, c, turnId);
-    send(stale, main, undefined, "deleted-incarnation");
+    const toA = send(main, a, turnId); const toB = send(main, b, turnId); const toParent = send(main, parent, turnId);
     const fromB = send(b, main);
     sessions.updateSession({ ...main, runState: "running", messages: [{ role: "user", text: "identical text" }] });
     queue.claimForInput(owner(main), fromB.id, "native-main-turn");
     sessions.appendSessionSteer({ ...owner(main), expectedMessageCount: 1, turnId: mainTurn.id, userMessage: { role: "user", text: "identical text" },
       updatedAt: "input", queuedInput: { queueId: fromB.id, inputTurnId: "native-main-turn" } });
-    const readThreads = () => new Map(conversationThreadsResultSchema.parse(read.execute({ target, operation: "read_conversation_threads", request: { target } }))
-      .threads.map((thread) => [thread.target.sessionId, thread]));
-    const live = readThreads();
-    assert.deepEqual(live.get("A")?.messageIndexes, [0]);
-    assert.deepEqual(live.get("B")?.messageIndexes, [1]);
-    assert.deepEqual(live.get("B")?.sent, [{ key: toB.id, turnId, messageIndex: 0 }]);
-    assert.equal(live.has("stale"), false);
-    const steer = { role: "user" as const, text: "identical text", turnInput: { turnId: "22", nativeTurnId: "native", state: "confirmed" as const, attachments: [],
-      origin: { kind: "session" as const, operation: "steer" as const, actorKind: "main" as const, actorSessionId: main.id, actorIncarnationId: target.incarnationId, actorTurnId: turnId,
-        targetSessionId: b.id, targetIncarnationId: getSessionIncarnationId(b) } } };
-    sessions.updateSession({ ...b, messages: [steer] });
-    sessions.updateSession({ ...main, messages: [{ role: "user", text: "identical text" }, { role: "user", text: "identical text" },
-      { role: "assistant", text: "reply from the starting input" },
-      ...Array.from({ length: 65 }, () => ({ role: "assistant" as const, text: "unlinked legacy" }))] });
+    const projection = () => conversationThreadsResultSchema.parse(read.execute({ target, operation: "read_conversation_threads", request: { target } }));
+    const live = projection();
+    assert.deepEqual(live.children.map(({ target }) => target).sort((x, y) => x.sessionId.localeCompare(y.sessionId)), [select(a), select(b), select(c)]);
+    assert.deepEqual(live.children.find((child) => child.target.sessionId === b.id)?.sentMessageIndexes, [0]);
+    assert.deepEqual(live.initialMessageIndexes, []);
     turns.updateSessionTurn(mainTurn.id, { ...base, phase: "completed", userMessageSeq: 0, assistantMessageSeq: 2 });
-    const saved = readThreads();
+    queue.settle(owner(main), fromA.id, "completed");
+    const bind = (actor: typeof main, userMessageSeq: number, assistantMessageSeq: number | undefined, incarnationId?: string) => {
+      const receipt = send(actor, main, undefined, incarnationId);
+      const turn = turns.createSessionTurn({ ...base, userMessageSeq });
+      queue.claimNext(owner(main));
+      queue.markStarted(owner(main), receipt.id, { turnId: String(turn.id), userMessageSeq });
+      queue.settle(owner(main), receipt.id, "completed");
+      turns.updateSessionTurn(turn.id, { ...base, phase: "completed", userMessageSeq, assistantMessageSeq });
+      return String(turn.id);
+    };
+    const steerSourceTurnId = bind(parent, 3, undefined);
+    const steer = { role: "user" as const, text: "identical text", turnInput: { turnId: "22", nativeTurnId: "native", state: "confirmed" as const, attachments: [],
+      origin: { kind: "session" as const, operation: "steer" as const, actorKind: "main" as const, actorSessionId: main.id, actorIncarnationId: target.incarnationId,
+        actorTurnId: steerSourceTurnId, targetSessionId: b.id, targetIncarnationId: getSessionIncarnationId(b) } } };
+    sessions.updateSession({ ...b, messages: [steer] });
+    bind(a, 4, undefined, "deleted-incarnation");
+    bind(b, 5, 6);
+    bind(sibling, 7, undefined);
+    sessions.updateSession({ ...main, messages: [{ role: "user", text: "identical text" }, { role: "user", text: "identical text" },
+      { role: "assistant", text: "reply from the starting input" }, { role: "user", text: "parent" }, { role: "user", text: "identical text" },
+      { role: "user", text: "B report" }, { role: "assistant", text: "B report response" },
+      { role: "user", text: "identical text" }, { role: "user", text: "unattributed supervisor input" },
+      ...Array.from({ length: 65 }, () => ({ role: "assistant" as const, text: "unlinked legacy" }))] });
+    const history = projection();
+    assert.deepEqual(history.initialMessageIndexes, [3, 4, 7, 8, ...Array.from({ length: 65 }, (_, i) => i + 9)]);
+    const saved = new Map(history.children.map((thread) => [thread.target.sessionId, thread]));
+    assert.deepEqual([...saved.keys()].sort(), [a.id, b.id, c.id]);
     assert.deepEqual(saved.get("A")?.messageIndexes, [0, 2]);
-    assert.deepEqual(saved.get("B")?.messageIndexes, [1]);
-    assert.deepEqual(saved.get("C")?.messageIndexes, []);
+    assert.deepEqual(saved.get("B")?.messageIndexes, [1, 5, 6]);
+    assert.deepEqual(saved.get("B")?.sentMessageIndexes, [2, 3]);
+    assert.deepEqual(saved.get("C"), { target: select(c), title: "Child C", messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [] });
     const exact = executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target, operation: "list_sent_deliveries", request: { target, messageSeqs: [2] } }));
-    assert.deepEqual(exact.items.map(({ receiptId, sourceMessageSeq }) => [receiptId, sourceMessageSeq]), [[toA.id, 2], [toB.id, 2], [toC.id, 2]]);
-    const direct = executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [2] } }));
-    assert.deepEqual(direct.items.map(({ target, messageSeq, sourceMessageSeq }) => [target, messageSeq, sourceMessageSeq]), [[select(b), 0, 2]]);
-    assert.deepEqual(saved.get("B")?.sent, [
-      { key: toB.id, turnId, messageIndex: 2 },
-      { key: sentCardKey(direct.items[0]), turnId, messageIndex: 2 },
-    ]);
+    assert.deepEqual(exact.items.map(({ receiptId, sourceMessageSeq }) => [receiptId, sourceMessageSeq]), [[toA.id, 2], [toB.id, 2], [toParent.id, 2]]);
+    const direct = executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [3] } }));
+    assert.deepEqual(direct.items.map(({ target, messageSeq, sourceMessageSeq }) => [target, messageSeq, sourceMessageSeq]), [[select(b), 0, 3]]);
     assert.ok(sessions.getConversationPage(main.id)!.startIndex > 2);
     assert.deepEqual(sessions.getConversationPage(main.id, { messageIndexes: [1, 2, 67] })!.messages.map(({ historyIndex, text }) => [historyIndex, text]),
       [[1, "identical text"], [2, "reply from the starting input"], [67, "unlinked legacy"]]);
-    assert.deepEqual(read.execute({ target: select(stale), operation: "read_conversation_threads", request: { target: select(stale) } }),
-      { ok: true, threads: [] });
   });
 });
 

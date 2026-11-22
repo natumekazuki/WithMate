@@ -22,13 +22,13 @@
 
 `list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
 
-## Main列の相手別閲覧
+## Main列の初期枠・子Session枠
 
-Session Windowの主会話は従来の時系列を保持し、直接の送受信相手はその同じ正本からの閲覧投影として選択する。所有Main Sessionとincarnationを確認したWindow専用の`read_conversation_threads`は、保存された送信元・宛先とTurnの開始入力／応答から、相手の正確なidentity、保存message seqおよび送信カードの参照を返す。別のProvider会話、履歴の複製、配送は作らない。
+Session WindowのMain列は、初期枠と、保存された直接の親子関係・作成元・Crewが一致する作成済みの子Sessionごとに、同じ履歴を読み分ける。やり取りのない子も枠を持つ。Window専用の`read_conversation_threads`は所有Main Sessionとincarnationを確認し、既存の受付来歴・保存message・Turn記録から表示範囲の正本seqを返す。子に帰属が確定した本文は初期枠に重複させず、初期の内容や帰属不明の記録は初期枠に残す。履歴の変更・複製や別Provider会話、配送の追加は行わない。
 
-開始入力と応答が保存Turnに明示的に対応する場合、その応答と同じ応答内の全送信カードを既存の順に表示する。別の相手へのカードは、宛先の表示では元の受付ID（直接Steerは宛先の正確な保存message seq）を使って同じ一通を表示する。追加の入力はそれ自体の来歴から帰属させ、同じTurnの応答を専用の返信として推定しない。所属が記録されていない履歴も主会話に残る。
+子からの開始入力に正確に対応する応答と、その応答中の送信カードは元の順に表示する。別枠から子宛てに送った記録がある場合は、その子の枠にも該当する一通だけを表示する。追加の入力はそれ自体の来歴から帰属させ、同じTurnの応答を専用の返信として扱わない。現在選んでいる枠・本文・時刻から所属を推定しない。
 
-本文は既存の会話pageで取得し、相手別表示では1 page分の正本seqを指定する。Find・Messages navigatorは同じ所属範囲の保存本文を全履歴から検索し、Bookmarkは元の正本seqの状態を変える。送信カードは従来の一括読取と状態の区別を共用する。
+本文は既存の会話pageで取得し、絞り込む場合は1 page分の正本seqを指定する。Find・Messages navigatorは表示枠に属する保存本文を全履歴から検索し、Bookmarkは正本seqの状態を変える。送信カードは従来の一括読取と状態の区別を共用する。
 
 ## 本文・操作詳細のpaging
 

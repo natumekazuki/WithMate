@@ -594,9 +594,9 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 ### Main Conversation Switcher
 
-Main列の上部にAuxiliaryと共通の会話切替を置く。自Sessionタイトルの主会話には従来の時系列を残し、直接相手の項目にはSessionタイトルを表示する。各相手の閲覧位置は同じWindow内で独立して復帰する。閲覧切替や送信カードからの移動は、右のAuxiliary、Composerの送信対象・下書き、実行対象を変えない。
+Main列の上部にAuxiliaryと共通の会話切替を置く。自Sessionタイトルの初期枠と、作成済みの直接の子Sessionごとの枠を選べる。子の枠にはその子に帰属が確定したやり取りを表示し、初期枠には初期の内容や帰属不明の記録を残す。各枠の閲覧位置は同じWindow内で独立して復帰する。閲覧切替で右のAuxiliary、Composerの送信対象・下書き、実行対象は変わらない。
 
-送信カードの本文側から同じWindowの相手別表示へ移り、同じ受付（直接Steerなら宛先の保存message）へフォーカスする。「Open in Conversation」からキーボードでも実行できる。リンク・本文選択・詳細表示はそれぞれの操作を保つ。Session名リンクは対象Sessionそのものを開く別の操作。位置を確定できない場合はそのカードと元の位置を保ったまま理由と再試行を示す。
+送信カードのSession名リンクは対象Sessionを開く。本文の選択・リンク・詳細表示は従来どおり操作できる。
 
 ### Turn Input Details
 

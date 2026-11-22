@@ -91,7 +91,7 @@ export class SessionExecutionReadStorage {
     if (!snapshot) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
     if (snapshot.incarnationId !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
     if (operation === "read_conversation_threads") {
-      return target.kind === "main" ? { ok: true, threads: readConversationThreads(this.db, target) }
+      return target.kind === "main" ? { ok: true, ...readConversationThreads(this.db, target) }
         : failure("EXECUTION_TARGET_MISMATCH", "Conversation threads require a Main Session.");
     }
     if (target.kind === "auxiliary") {

@@ -25,7 +25,7 @@ import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInput
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
-import type { ThreadSelection } from "./use-main-conversation-threads.js";
+import type { ConversationThread } from "../../../src-shared/session/conversation-threads.js";
 import type { SentInstruction } from "./use-sent-deliveries.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 import { useIssuedCoordinations } from "./use-issued-coordinations.js";
@@ -96,8 +96,7 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
 }
 export type SessionMessageColumnProps = {
   inputReadContext?: TurnInputReadContext;
-  conversationThread?: ThreadSelection;
-  onOpenSentThread?: (item: SentInstruction) => Promise<string | undefined>;
+  conversationChild?: ConversationThread;
   liveWithMateTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
   responsePending?: boolean;
@@ -468,8 +467,7 @@ export function SelectionTextActionSurface({
 
 export function SessionMessageColumn({
   inputReadContext,
-  conversationThread,
-  onOpenSentThread,
+  conversationChild: thread,
   liveWithMateTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
@@ -545,16 +543,12 @@ export function SessionMessageColumn({
   glossaryAnnotationMatcher,
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
-  const peer = conversationThread && conversationPeerKey(conversationThread.thread.target);
-  const thread = conversationThread?.thread;
+  const peer = thread && conversationPeerKey(thread.target);
   const threadMessages = useMemo(() => thread && new Set(thread.messageIndexes), [thread]);
   const isSentOnly = (messageIndex: number | undefined) => messageIndex !== undefined && !!threadMessages && !threadMessages.has(messageIndex);
-  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, (isContentActive || !!onOpenSentThread) && artifactDetailsEnabled);
-  const jump = conversationThread?.jump;
-  const jumpItem = jump && (jump.messageIndex === null ? liveWithMateTurnId === jump.item.sourceTurnId
-    : suppliedMessages.some((message) => message.historyIndex === jump.messageIndex)) ? jump.item : undefined;
-  const sent = jumpItem && !sentDeliveries.items.some((item) => sentInstructionKey(item) === sentInstructionKey(jumpItem))
-    ? [...sentDeliveries.items, jumpItem] : sentDeliveries.items;
+  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId,
+    (isContentActive || inputReadContext?.target.kind === "main") && artifactDetailsEnabled);
+  const sent = sentDeliveries.items;
   const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
   const ownLive = !thread || !!liveWithMateTurnId && thread.inboundTurnIds.includes(liveWithMateTurnId);
   const issuedWithoutReceipt = issued.items.filter((record) => (record.sourceMessageSeq === null ? ownLive : !isSentOnly(record.sourceMessageSeq))
@@ -621,7 +615,7 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} onOpenThread={peer === conversationPeerKey(item.target) ? undefined : onOpenSentThread} {...sentMessageContext} />
+        positionUnknown={positionUnknown} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
@@ -731,28 +725,6 @@ export function SessionMessageColumn({
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
-  const attemptedSentJump = useRef<number | null>(null);
-  const completedSentJump = useRef<number | null>(null);
-  useLayoutEffect(() => {
-    const list = messageListRef.current;
-    if (!artifactDetailsEnabled || !jump || !list || completedSentJump.current === jump.id) return;
-    const key = sentInstructionKey(jump.item);
-    const card = [...list.querySelectorAll<HTMLElement>("[data-sent-card-key]")].find((element) => element.dataset.sentCardKey === key);
-    if (card) {
-      completedSentJump.current = jump.id;
-      onBrowseMessages?.();
-      messageVirtualizer.scrollToOffset(list.scrollTop + card.getBoundingClientRect().top - list.getBoundingClientRect().top);
-      card.focus({ preventScroll: true });
-      return;
-    }
-    if (attemptedSentJump.current === jump.id) return;
-    const index = messages.findIndex((message) => message.historyIndex === jump.messageIndex);
-    if (index >= 0) {
-      attemptedSentJump.current = jump.id;
-      onBrowseMessages?.();
-      messageVirtualizer.scrollToIndex(index, { align: "start" });
-    }
-  }, [artifactDetailsEnabled, jump, sent, messages, virtualMessages, messageVirtualizer, messageListRef, onBrowseMessages]);
   useLayoutEffect(() => {
     onMessageListLayout?.();
   }, [virtualMessages, onMessageListLayout]);
@@ -1858,7 +1830,7 @@ export function SessionMessageColumn({
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : thread && !conversationPaging?.loading && !conversationPaging?.error ? (
-          <p className="session-message-empty">No recorded messages in this conversation. Older or unlinked messages remain in the main conversation.</p>
+          <p className="session-message-empty">No messages yet.</p>
         ) : null}
         {selectionToolbar && selectionActionOverlay ? createPortal(
           <MessageResponseActions

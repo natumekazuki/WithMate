@@ -29,8 +29,8 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "相手別のFindとMessages navigatorは表示外の元message seqも対象にし、継続pageとBookmark絞込みでも別の投影を混ぜない"
-// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の相手別閲覧" }
+// claim = "枠のFindとMessages navigatorは表示外の元message seqも対象にし、継続pageとBookmark絞込みでも別の枠を混ぜない"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠" }
 // fault = "全件検索や表示中のsliceへ誤って戻る、継続pageの表示先が旧スレッドのままになる"
 // observable = "実Workerの検索件数、2 page目の正本message seq、投影が違うstampのinvalidated、Bookmark一覧"
 // observation_boundary = "public-boundary"

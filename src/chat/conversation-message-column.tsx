@@ -24,7 +24,8 @@ import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 import { observeSessionResultRead } from "./conversation/observe-session-result-read.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
-import { threadPageIndexes, type ThreadSelection } from "./conversation/use-main-conversation-threads.js";
+import { threadPageIndexes, type MainConversationFrame } from "./conversation/use-main-conversation-threads.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 const CONVERSATION_WINDOW_SIZE = CONVERSATION_PAGE_SIZE * 3;
 const CONVERSATION_LOAD_MARGIN = 96;
@@ -72,7 +73,7 @@ export type UseConversationMessageColumnInput = {
   stateCache?: Map<string, ConversationColumnCache>;
   onColumnControls?: (controls: ConversationColumnControls) => void;
   composerRegistry?: ComposerControllerRegistry;
-  threadSelection?: ThreadSelection;
+  frame?: MainConversationFrame;
 };
 
 export type ConversationColumnControls = {
@@ -90,17 +91,19 @@ export type ConversationColumnControls = {
   messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
   captureReadingPosition?: () => void;
+  frameId?: string;
+  liveFrameId?: string;
 };
 
 export function useConversationMessageColumn({
   session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
-  threadSelection,
+  frame,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
   const sessionId = session?.id ?? baseProps.sessionId;
-  const thread = threadSelection?.thread;
-  const peerKey = thread ? conversationPeerKey(thread.target) : undefined;
+  const child = frame?.child;
+  const peerKey = child ? conversationPeerKey(child.target) : undefined;
   const cacheKey = peerKey ? JSON.stringify([sessionId, session?.incarnationId, peerKey]) : sessionId;
   let cache = caches.get(cacheKey);
   if (!cache || (cache.incarnationId !== undefined && cache.incarnationId !== (session?.incarnationId ?? ""))) {
@@ -139,9 +142,10 @@ export function useConversationMessageColumn({
   displayEnabled.current = enabled;
   const incomingTailMessages = session?.messages ?? baseProps.messages;
   const totalCount = session?.messageCount ?? incomingTailMessages.length;
-  const threadIndexes = useMemo(() => thread ? threadPageIndexes(thread) : undefined, [thread]);
+  const threadIndexes = useMemo(() => frame ? threadPageIndexes(frame) : undefined, [frame]);
   const threadPageSignature = threadIndexes?.join(",");
-  const threadFullIndexes = useMemo(() => thread ? new Set(thread.messageIndexes) : undefined, [thread]);
+  const threadFullIndexes = useMemo(() => frame ? new Set(frame.messageIndexes) : undefined, [frame]);
+  const pageIndexes = useMemo(() => threadIndexes && new Set(threadIndexes), [threadIndexes]);
   const currentThreadIndexes = useRef(threadIndexes);
   currentThreadIndexes.current = threadIndexes;
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
@@ -151,19 +155,23 @@ export function useConversationMessageColumn({
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
   const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
-  const liveRun = thread && (!rawLiveRun?.sessionTurnId || !thread.inboundTurnIds.includes(rawLiveRun.sessionTurnId)) ? null : rawLiveRun;
   const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun);
+  const receiptChild = useCallback((receipt: SessionTurnQueueReceipt) => {
+    const origin = (receipt.dispatched ?? receipt.accepted ?? receipt.captured).origin;
+    if (origin?.kind !== "session" || origin.actorKind !== "main"
+      || origin.targetSessionId !== sessionId || origin.targetIncarnationId !== queueIncarnationId) return undefined;
+    return frame?.children.find(({ target }) => target.sessionId === origin.actorSessionId && target.incarnationId === origin.actorIncarnationId);
+  }, [frame?.children, sessionId, queueIncarnationId]);
+  const currentTurnId = rawLiveRun?.sessionTurnId;
+  const entry = currentTurnId ? allQueue.receipts.find((receipt) => receipt.turnId === currentTurnId && receipt.inputTurnId == null) : undefined;
+  const liveChild = currentTurnId ? frame?.children.find(({ inboundTurnIds }) => inboundTurnIds.includes(currentTurnId))
+    ?? (entry && receiptChild(entry)) : undefined;
+  const liveBelongsHere = child === liveChild;
+  const liveRun = liveBelongsHere ? rawLiveRun : null;
   const threadReceipts = useMemo(() => allQueue.receipts.filter((receipt) =>
-    receipt.userMessageSeq !== null && threadFullIndexes?.has(receipt.userMessageSeq)
-    || receipt.turnId != null && receipt.inputTurnId == null && thread?.inboundTurnIds.includes(receipt.turnId)),
-  [allQueue.receipts, threadFullIndexes, thread]);
-  const threadQueuedReceipts = useMemo(() => allQueue.queuedReceipts.filter((receipt) => {
-    const origin = receipt.captured.origin;
-    return origin?.kind === "session" && origin.actorKind === thread?.target.kind
-      && origin.actorSessionId === thread?.target.sessionId && origin.actorIncarnationId === thread?.target.incarnationId
-      && (thread?.target.kind !== "auxiliary" || origin.actorMainSessionId === thread.target.mainSessionId);
-  }), [allQueue.queuedReceipts, thread]);
-  const queue = thread ? { ...allQueue, receipts: threadReceipts, queuedReceipts: threadQueuedReceipts } : allQueue;
+    receipt.userMessageSeq !== null ? threadFullIndexes?.has(receipt.userMessageSeq) : receiptChild(receipt) === child),
+  [allQueue.receipts, threadFullIndexes, receiptChild, child]);
+  const queue = frame ? { ...allQueue, receipts: threadReceipts } : allQueue;
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
     const receipt = allQueue.receipts.find((receipt) => receipt.requestId === submission.requestId);
@@ -195,7 +203,10 @@ export function useConversationMessageColumn({
   const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
   const currentPage = browsePage?.owner === pageOwner ? browsePage.page : null;
   const isBrowsing = conversation.pageStart !== undefined;
-  const messages = (isBrowsing || thread) && currentPage ? currentPage.messages : thread ? EMPTY_MESSAGES : tailMessages;
+  const messages = useMemo(() => {
+    if (pageIndexes) return currentPage?.messages.filter((message, index) => pageIndexes.has(getMessageHistoryIndex(message, index))) ?? EMPTY_MESSAGES;
+    return isBrowsing && currentPage ? currentPage.messages : tailMessages;
+  }, [pageIndexes, currentPage, isBrowsing, tailMessages]);
   const displayedHistory = useRef(messages);
   displayedHistory.current = messages;
   useEffect(() => {
@@ -258,7 +269,6 @@ export function useConversationMessageColumn({
   const pageAround = (messageIndex: number) => threadIndexes
     ? threadIndexes[Math.max(0, threadIndexes.indexOf(messageIndex) - Math.floor(CONVERSATION_PAGE_SIZE / 2))]
     : Math.max(0, messageIndex - Math.floor(CONVERSATION_PAGE_SIZE / 2));
-  const appliedThreadJump = useRef<number>(undefined);
   useEffect(() => {
     ++pageRevision.current;
     requestedPageStart.current = conversation.pageStart;
@@ -266,26 +276,17 @@ export function useConversationMessageColumn({
     setBrowsePage((previous) => previous?.owner === pageOwner ? previous : null);
     setPageError("");
     setPageLoading(false);
-    const jump = threadSelection?.jump;
-    if (jump && appliedThreadJump.current !== jump.id) {
-      appliedThreadJump.current = jump.id;
-      conversation.pageStart = jump.page?.startIndex;
-      conversation.anchor = undefined;
-      conversation.scrollState = { scrollTop: 0, isFollowing: false };
-      if (jump.page) setBrowsePage({ owner: pageOwner, page: jump.page });
-      else void loadPage();
-      refresh();
-    } else if (conversation.pageStart !== undefined) {
+    if (conversation.pageStart !== undefined) {
       const anchorIndex = conversation.anchor?.messageIndex;
       void loadPage(anchorIndex !== undefined ? pageAround(anchorIndex) : conversation.pageStart);
-    } else if (peerKey) void loadPage();
+    } else if (frame) void loadPage();
     return () => { ++pageRevision.current; };
-  }, [pageOwner, threadSelection?.jump?.id]);
+  }, [pageOwner]);
   const previousThreadPage = useRef({ owner: pageOwner, signature: threadPageSignature });
   useEffect(() => {
     const previous = previousThreadPage.current;
     previousThreadPage.current = { owner: pageOwner, signature: threadPageSignature };
-    if (peerKey && previous.owner === pageOwner && previous.signature !== threadPageSignature) {
+    if (previous.owner === pageOwner && previous.signature !== threadPageSignature) {
       const index = conversation.anchor?.messageIndex;
       if (conversation.pageStart === undefined) void loadPage();
       else if (index !== undefined && threadIndexes?.includes(index)) void loadPage(pageAround(index));
@@ -300,11 +301,11 @@ export function useConversationMessageColumn({
   }, [enabled]);
   useEffect(() => { setNavigatorFilter("all"); setNavigatorOffset(0); }, [pageOwner]);
   const navigator = useConversationQueryPages({
-    identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}:${thread?.messageIndexes.join(",") ?? ""}`,
+    identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}:${frame?.messageIndexes.join(",") ?? ""}`,
     enabled: enabled && navigatorActive && session?.messageCount !== undefined,
     ordinal: navigatorOffset,
     read: api?.listConversationNavigator ? async (request) => {
-      const outcome = await api.listConversationNavigator!(sessionId, { ...request, filter: navigatorFilter, ...(thread ? { messageIndexes: thread.messageIndexes } : {}) });
+      const outcome = await api.listConversationNavigator!(sessionId, { ...request, filter: navigatorFilter, ...(frame ? { messageIndexes: frame.messageIndexes } : {}) });
       return outcome.status === "complete" && session?.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
     } : undefined,
     cancel: api?.cancelConversationQuery,
@@ -351,8 +352,8 @@ export function useConversationMessageColumn({
     && !queue.receipts.some((receipt) => !!liveRun?.sessionTurnId && receipt.turnId === liveRun.sessionTurnId && !receipt.inputTurnId);
   useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.sessionTurnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
-  const hasActiveRun = (!thread || !!liveRun) && (isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun));
-  const assistantText = isResponseBindingPending ? "" : api || thread ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
+  const hasActiveRun = liveBelongsHere && (isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun));
+  const assistantText = isResponseBindingPending ? "" : api || frame ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
       || receipt.state === "completed" && !!receipt.inputTurnId && receipt.inputTurnId === liveRun?.turnId;
@@ -388,6 +389,11 @@ export function useConversationMessageColumn({
     text: assistantText,
   } : null;
   if (retainedBridges.current.owner !== pageOwner) retainedBridges.current = { owner: pageOwner, projections: [] };
+  if (!liveBelongsHere && rawLiveRun?.turnId && displayedBridge.current?.owner === pageOwner
+    && displayedBridge.current.turnId === rawLiveRun.turnId) {
+    displayedBridge.current = null;
+    conversation.bridge = null;
+  }
   if (currentBridge && displayedBridge.current?.owner === pageOwner && displayedBridge.current.turnId !== liveRun?.turnId
     && displayedBridge.current.projection.messageIndex !== currentBridge.messageIndex) {
     const previous = displayedBridge.current.projection;
@@ -621,11 +627,11 @@ export function useConversationMessageColumn({
     };
   }, [captureAnchor]);
   useLayoutEffect(() => {
-    if (enabled && !threadSelection?.jump && conversation.anchor && !conversation.scrollState?.isFollowing) {
+    if (enabled && conversation.anchor && !conversation.scrollState?.isFollowing) {
       conversation.messageJumpRequest = { sessionId, ...conversation.anchor, requestId: ++conversation.messageJumpRequestId };
       refresh();
     }
-  }, [enabled, pageOwner, threadSelection?.jump?.id]);
+  }, [enabled, pageOwner]);
   const followLatest = useCallback(() => {
     ++pageRevision.current;
     requestedPageStart.current = undefined;
@@ -633,12 +639,12 @@ export function useConversationMessageColumn({
     conversation.pageStart = undefined;
     conversation.anchor = undefined;
     conversation.scrollState = { scrollTop: 0, isFollowing: true };
-    if (peerKey) void loadPage();
+    if (currentThreadIndexes.current) void loadPage();
     else setBrowsePage(null);
     setPageError("");
     setPageLoading(false);
     following.followMessageListLatest();
-  }, [conversation, following.followMessageListLatest, loadPage, peerKey]);
+  }, [conversation, following.followMessageListLatest, loadPage]);
   const revealRequest = useCallback(() => {
     const list = following.messageListRef.current;
     const request = list?.querySelector<HTMLElement>(".live-approval-card[data-live-request-id]")
@@ -737,13 +743,15 @@ export function useConversationMessageColumn({
     const boundary = Math.max(totalCount, navigator.messageCount ?? totalCount);
     const unsaved = tailMessages.flatMap((message, index) => {
       const historyIndex = getMessageHistoryIndex(message, index);
-      return historyIndex >= boundary ? [{ ...message, historyIndex }] : [];
+      return historyIndex >= boundary && (!frame || threadFullIndexes?.has(historyIndex)
+        || historyIndex === bridge?.messageIndex || !child && !frame.children.some(({ messageIndexes }) => messageIndexes.includes(historyIndex)))
+        ? [{ ...message, historyIndex }] : [];
     });
     const history = buildMessageListProjection(unsaved, [], sessionId, { primaryMessageSourceKind: messageSourceKind });
     const keyed = projectLiveAssistantOnSessionHistory(history, unsaved, sessionId,
       hasPersistedLiveAssistantMessage(unsaved, [], bridge, sessionId) ? bridge : null);
     return buildMessageCollapseTargets(keyed.messages, keyed.sources, keyed.keys, [], session?.provider, queue.receipts);
-  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey, session?.provider, queue.receipts]);
+  }, [paged, api?.listConversationNavigator, tailMessages, totalCount, navigator.messageCount, sessionId, messageSourceKind, bridgeKey, session?.provider, queue.receipts, threadFullIndexes, child, frame]);
   const unsavedNavigatorTargets = tailNavigatorTargets.filter((target) =>
     target.source.messageIndex >= Math.max(totalCount, navigator.messageCount ?? totalCount)
     && (navigatorFilter === "all" || target.isBookmarked));
@@ -797,6 +805,7 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
   }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, threadPageSignature, followLatest, following.pauseMessageListFollowing]);
+  const liveFrameId = liveChild ? conversationPeerKey(liveChild.target) : undefined;
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -812,8 +821,10 @@ export function useConversationMessageColumn({
       messageNavigatorPage,
       onJumpToMessage,
       captureReadingPosition: captureAnchor,
+      frameId: peerKey,
+      liveFrameId,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId, peerKey, liveFrameId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -913,8 +924,8 @@ export function useConversationMessageColumn({
     provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,
-    liveWithMateTurnId: responseSessionTurnId ?? (thread && !isBrowsing ? rawLiveRun?.sessionTurnId : undefined),
-    conversationThread: threadSelection,
+    liveWithMateTurnId: responseSessionTurnId ?? (child && !isBrowsing ? rawLiveRun?.sessionTurnId : undefined),
+    conversationChild: child,
     messages: projection.messages,
     messageKeys: projection.keys,
     turnQueueMetadata: queuedProjection.metadata,
@@ -962,7 +973,7 @@ export function useConversationMessageColumn({
     onMessageListLayout: scheduleAnchorCapture,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
-      loading: pageLoading || !!thread && !currentPage && !pageError, error: pageError,
+      loading: pageLoading || !!frame && !currentPage && !pageError, error: pageError,
       onRetry: () => {
         if (inFlightPage.current === pageRevision.current) return;
         setNavigatorRevision((revision) => revision + 1);
@@ -970,12 +981,12 @@ export function useConversationMessageColumn({
       },
     } : undefined,
     searchConversation: api?.searchConversation && session.messageCount !== undefined ? async (request) => {
-      const outcome = await api.searchConversation!(sessionId, thread ? { ...request, messageIndexes: thread.messageIndexes } : request);
+      const outcome = await api.searchConversation!(sessionId, frame ? { ...request, messageIndexes: frame.messageIndexes } : request);
       return outcome.status === "complete" && session.incarnationId && outcome.incarnationId !== session.incarnationId ? { status: "invalidated" } : outcome;
     } : undefined,
     cancelConversationQuery: api?.cancelConversationQuery,
     conversationQueryOwner: pageOwner,
-    conversationQueryRevision: `${totalCount}:${session.updatedAt ?? ""}:${thread?.messageIndexes.join(",") ?? ""}`,
+    conversationQueryRevision: `${totalCount}:${session.updatedAt ?? ""}:${frame?.messageIndexes.join(",") ?? ""}`,
     searchTailMessages: searchTailMessages,
     searchMessageIndexes,
     onLoadMessagePage: async (messageIndex) => {
