@@ -1618,7 +1618,7 @@ export function SessionMessageColumn({
                         <div className="message-collapse-control">
                           {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
                             aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
-                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>{replySelected ? "✓" : "↩"}</button> : null}
+                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}
                           {messageCollapseTarget && onToggleMessageCollapse ? (
                             <button
                               className="message-collapse-toggle"

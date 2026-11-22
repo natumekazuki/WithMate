@@ -63,10 +63,10 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
   const card = <div className={`message-card assistant session-outbound${replySelected ? " is-reply-selected" : ""}`}><div className="message-card-content">
       <div className="sent-delivery-header">
         <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
-        {onSelectReply ? <button type="button" className="artifact-toggle artifact-toggle-icon reply-toggle"
-          title={replySelected ? "Clear reply target" : "Reply to sent message"} aria-label="Reply to sent message" aria-pressed={replySelected}
-          onClick={() => onSelectReply(replyKey, receipt ? { target: item.target, receiptId: receipt.receiptId } : { target: item.target, seq: steer!.messageSeq })}>{replySelected ? "✓" : "↩"}</button> : null}
         {inline ? detailsButton : null}
+        {onSelectReply ? <button type="button" className="message-bookmark-toggle reply-toggle"
+          title={replySelected ? "Clear reply target" : "Reply to sent message"} aria-label="Reply to sent message" aria-pressed={replySelected}
+          onClick={() => onSelectReply(replyKey, receipt ? { target: item.target, receiptId: receipt.receiptId } : { target: item.target, seq: steer!.messageSeq })}>↩</button> : null}
       </div>
       {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} /> : null}
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
