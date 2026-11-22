@@ -13,10 +13,10 @@ const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 
 // @test-value v2
 // kind = "contract"
-// claim = "失敗確定の開始入力は固定済み本文と元来歴を保持し、GUIの現設定で別受付として一度だけ再実行する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
-// fault = "受付原文や後続入力を再生する、元actorや過去設定を新受付へ継承する、同じrequest IDを二重受付する"
-// observable = "新receiptの本文、添付、GUI origin、元来歴、実行設定と受付回数"
+// claim = "失敗確定の開始入力は固定済み本文・添付をGUIの現設定で別受付として一度だけ再実行する。再実行の失敗を再試行するときは、元のSession入力がそのまま固定されたかGUI編集されたかで来歴を区別する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queue; docs/design/prompt-composition.md: 来歴と原依頼" }
+// fault = "受付原文や後続入力を再生する、元actorや過去設定を新受付へ継承する、同じrequest IDを二重受付する、GUI編集後の固定入力に古いSession指示の来歴を付ける"
+// observable = "新receiptの本文、添付、GUI origin、元来歴、実行設定、受付回数と再実行の再試行で使う固定入力の来歴"
 // observation_boundary = "public-boundary"
 // scope = "MainSessionTurnQueueFacade.retryFailedSessionTurn"
 // lifecycle = "permanent"
@@ -24,7 +24,7 @@ const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 // distinction = "queue storage単体では元の開始入力とGUI受付を組み合わせるfacadeを通らない"
 // @end-test-value
 test("失敗Turnの固定入力を元来歴付きGUI新規受付として一度だけ捕捉する", async () => {
-  for (const kind of ["gui", "session"] as const) {
+  for (const [kind, edit] of [["gui", "none"], ["session", "none"], ["session", "message"], ["session", "attachment"]] as const) {
     const f = retryFixture(kind);
     try {
       const [first, second] = await Promise.all([f.facade.retryFailedSessionTurn(f.session.id, f.retry), f.facade.retryFailedSessionTurn(f.session.id, f.retry)]);
@@ -44,15 +44,22 @@ test("失敗Turnの固定入力を元来歴付きGUI新規受付として一度�
       if (kind === "session") {
         first.state = "failed"; first.turnId = "43"; first.userMessageSeq = 8;
         first.dispatched = structuredClone(first.captured);
+        if (edit === "message") first.dispatched.request.userMessage = "Replacement by GUI user";
+        if (edit === "attachment") first.dispatched.attachments = [];
         const prior = await f.deps.readRetryExecution!(f.retry);
         assert.equal(prior.ok, true);
         if (!prior.ok || !prior.inputs.entry) throw new Error("Expected saved source execution");
         f.deps.readRetryExecution = async () => ({ ...prior, receiptId: first.id, turnId: "43", userMessageSeq: 8,
           inputs: { ...prior.inputs, entry: { ...prior.inputs.entry!, receiptId: first.id, inputSeq: 8 } } });
+        f.deps.validateRetryAttachments = async (_session, attachments) => { assert.deepEqual(attachments, first.dispatched?.attachments); };
         const again = await f.facade.retryFailedSessionTurn(f.session.id, { ...f.retry, receiptId: first.id, turnId: "43", clientRequestId: "49f27f3e-6436-4a58-831f-f81b28cc0a19" });
+        assert.equal(again.captured.request.userMessage, first.dispatched.request.userMessage);
+        assert.deepEqual(again.captured.attachments, first.dispatched.attachments);
         assert.equal(again.captured.retrySource?.receiptId, first.id);
         assert.equal(again.captured.retrySource?.turnId, "43");
-        assert.deepEqual(again.captured.retrySource?.origin, f.source.dispatched?.origin);
+        assert.equal(again.captured.retrySource.changedSinceAcceptance, edit !== "none");
+        assert.deepEqual(again.captured.retrySource.origin, edit === "none" ? f.source.dispatched?.origin : first.dispatched.origin);
+        assert.deepEqual(first.dispatched.retrySource?.origin, f.source.dispatched?.origin);
       }
     } finally { await f.service.close(); }
   }

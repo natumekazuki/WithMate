@@ -24,6 +24,10 @@ export function inputDetailStateLabel(value: string | null | undefined, fallback
   return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
 }
 
+export function retrySourceLabel(origin: SessionTurnQueueOrigin | undefined) {
+  return origin ? `Retry requested by you · Previous input from ${origin.kind === "session" ? origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+}
+
 function ExecutionSettings({ settings }: { settings: NonNullable<Execution["executionSettings"]> }) {
   const providerLabel = ({ codex: "Codex", claude: "Claude", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[settings.provider] ?? settings.provider;
   const supportsReviewerAndSpeed = settings.provider === "codex" || settings.provider === "claude";
@@ -167,7 +171,7 @@ export function TurnInputDetailsContent({ message, receipt, read, hasRunChecks =
         <InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow>
         {observed?.inputs?.entry?.comparison === "changed" ? <InputDetailRow label="Starting Input">Edited before this Turn started</InputDetailRow> : null}
         {observed?.retrySource?.changedSinceAcceptance ? <InputDetailRow label="Original Input">Edited before the original Turn started</InputDetailRow> : null}
-        {observed?.retrySource ? <InputDetailRow label="Retry">By you · Originally from {observed.retrySource.origin.kind === "session" ? observed.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}</InputDetailRow> : null}
+        {observed?.retrySource ? <InputDetailRow label="Retry Source">{retrySourceLabel(observed.retrySource.origin)}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
       </dl>

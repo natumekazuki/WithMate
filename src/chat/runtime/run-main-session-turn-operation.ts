@@ -34,7 +34,7 @@ export async function runMainSessionTurnOperation(input: {
   validateWorkspace: () => Promise<unknown>;
   state: {
     setComposerPreview: (preview: ComposerPreview) => void;
-    setPendingSubmitSessionId: (update: string | null | ((current: string | null) => string | null)) => void;
+    onSubmitStateChanged: () => void;
     setForceComposerBlockedFeedback: (value: boolean) => void;
     collapseActionDock: () => void;
     commitSubmission?: (publish: () => void) => void;
@@ -49,13 +49,13 @@ export async function runMainSessionTurnOperation(input: {
   const lease = input.submitCoordinator.tryAcquire(sessionId);
   if (!lease) return null;
   let acceptanceStarted = false;
-  state.setPendingSubmitSessionId(sessionId);
+  state.onSubmitStateChanged();
   try {
     if (composerRegistry.isFrozen || input.blockedReason || input.isReadOnly || !messageText.trim()) {
       state.setForceComposerBlockedFeedback(true);
       return null;
     }
-    if (input.acceptance.hasUncertain(sessionId)) throw new Error("A previous turn's acceptance is unknown. Check Receipt before sending another turn.");
+    if (input.acceptance.hasUncertain(sessionId, request.incarnationId)) throw new Error("A previous turn's acceptance is unknown. Check Receipt before sending another turn.");
     const publish = () => input.acceptance.submissions.start({
       sessionId, incarnationId: request.incarnationId, requestId: request.clientRequestId!,
       historyMessageCount: input.selectedSession.messageCount ?? input.selectedSession.messages.reduce((count, message, index) => Math.max(count, getMessageHistoryIndex(message, index) + 1), 0),
@@ -120,10 +120,10 @@ export async function runMainSessionTurnOperation(input: {
       input.acceptance.submissions.forget([request.clientRequestId!]);
       return null;
     }
-    input.acceptance.submissions.fail(request.clientRequestId!, error instanceof Error ? error.message : String(error), input.acceptance.hasUncertain(sessionId));
+    input.acceptance.submissions.fail(request.clientRequestId!, error instanceof Error ? error.message : String(error), input.acceptance.hasUncertain(sessionId, request.incarnationId));
     throw error;
   } finally {
     lease.release();
-    state.setPendingSubmitSessionId((current) => current === sessionId ? null : current);
+    state.onSubmitStateChanged();
   }
 }

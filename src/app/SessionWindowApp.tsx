@@ -335,7 +335,7 @@ export default function AgentSessionWindowApp() {
   });
   const {
     sessions,
-    pendingSubmitSessionId,
+    hasPendingSubmitFor,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
     toggleSessionPin,
@@ -848,12 +848,15 @@ export default function AgentSessionWindowApp() {
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
   const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence });
+  const hasUncertainTurnFor = (id: string | null) => id === activeAuxiliarySession?.id
+    ? mainSessionRuntime.hasUncertainTurnFor(id, activeAuxiliarySession.createdAt)
+    : id === selectedSession?.id && mainSessionRuntime.hasUncertainTurnFor(id, getSessionIncarnationId(selectedSession));
   const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId && !isActiveCancelRequested;
   const steeringError = activeRunSessionId && turnInput.errors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
     ? turnInput.errors[activeRunSessionId].message : "";
   const composerBusyReason = activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId)
     ? "Input submission is in progress."
-    : pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
+    : hasPendingSubmitFor(activeRunSessionId)
     ? "Message submission is in progress."
     : auxiliaryWorkspace.target === "main" && !loadedSession && !mainSessionRuntime.readError
       ? "The conversation is loading."
@@ -1021,7 +1024,7 @@ export default function AgentSessionWindowApp() {
     retryState,
     hasLastUserMessage: !!retrySource,
     composerBlocked: !!composerBlockedReason || composerRegistry.isFrozen
-      || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id) || !!activeQueuedTurnEdit,
+      || hasUncertainTurnFor(composerOwner.id) || !!activeQueuedTurnEdit,
     isReadOnly: isSelectedSessionReadOnly,
     runState: visibleSessionRunState,
   });
@@ -1127,7 +1130,7 @@ export default function AgentSessionWindowApp() {
     }
     if (activeAuxiliarySession) {
       const currentComposerState = composerRegistry.get(composerOwner);
-      if (composerBusyReason || mainSessionRuntime.hasUncertainTurnFor(activeAuxiliarySession.id)) {
+      if (composerBusyReason || hasUncertainTurnFor(activeAuxiliarySession.id)) {
         return;
       }
       if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
@@ -1150,7 +1153,7 @@ export default function AgentSessionWindowApp() {
     }
 
     const currentComposerState = composerRegistry.get(composerOwner);
-    if (isComposerDisabled || mainSessionRuntime.hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
+    if (isComposerDisabled || hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
       || currentComposerState.preview.errors.length > 0 || !getComposerDraft().trim()) {
       triggerComposerBlockedFeedback();
       return;
@@ -1173,7 +1176,7 @@ export default function AgentSessionWindowApp() {
   const handleSendInput = async () => {
     if (activeQueuedTurnEdit) return;
     const selectionContext = dockContextRef.current;
-    if (mainSessionRuntime.hasUncertainTurnFor(composerOwner.id)) return;
+    if (hasPendingSubmitFor(composerOwner.id) || hasUncertainTurnFor(composerOwner.id)) return;
     const mainSession = getCurrentMainSession();
     if (!activeAuxiliarySession && !mainSession) return;
     await turnInput.send({
@@ -1214,7 +1217,8 @@ export default function AgentSessionWindowApp() {
       return composerRegistry.isFrozen
         || current.isImeComposing
         || current.saveState === "error"
-        || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id);
+        || hasPendingSubmitFor(composerOwner.id)
+        || hasUncertainTurnFor(composerOwner.id);
     },
     isSubmitBlocked: () => {
       const current = composerRegistry.get(composerOwner);
@@ -2100,9 +2104,10 @@ export default function AgentSessionWindowApp() {
     runtime: {
       isRunning: renderedIsRunning,
       canSendInput: !activeQueuedTurnEdit && canSendInput,
-      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : pendingSubmitSessionId === renderedSession.id,
-      hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
-      inputError: activeQueuedTurnEdit?.error || steeringError,
+      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : hasPendingSubmitFor(renderedSession.id),
+      hasUncertainTurn: hasUncertainTurnFor(renderedSession.id),
+      inputError: activeQueuedTurnEdit?.error || steeringError
+        || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
@@ -2161,8 +2166,8 @@ export default function AgentSessionWindowApp() {
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
         queue: handleSend,
-        checkReceipt: () => mainSessionRuntime.checkTurnReceipt(renderedSession.id),
-        retryOriginal: () => mainSessionRuntime.retryOriginalTurn(renderedSession.id),
+        checkReceipt: () => mainSessionRuntime.checkTurnReceipt(renderedSession.id, getSessionIncarnationId(renderedSession)),
+        retryOriginal: () => mainSessionRuntime.retryOriginalTurn(renderedSession.id, getSessionIncarnationId(renderedSession)),
       },
       runtimeOptions: {
         runMain: async (option) => {
@@ -2398,7 +2403,7 @@ export default function AgentSessionWindowApp() {
     mainSession: selectedSession,
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
     api: withmateApi ?? undefined,
-    messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions },
+    messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions, onTurnReceiptsObserved: mainSessionRuntime.observeTurnReceipts },
     onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
     mainOnOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
@@ -2430,7 +2435,7 @@ export default function AgentSessionWindowApp() {
         const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
         if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
         return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
-      }, blocked: (id) => mainSessionRuntime.hasUncertainTurnFor(id) || mainSessionRuntime.pendingSubmitSessionId === id || isSelectedSessionReadOnly
+      }, blocked: (id) => hasUncertainTurnFor(id) || hasPendingSubmitFor(id) || isSelectedSessionReadOnly
         || (id === selectedSession.id ? selectedSessionRunState === "running" : id !== activeAuxiliarySession?.id || activeAuxiliarySession.runState === "running"),
       onError: (ownerId, message, target) => {
         const owner = ownerId === selectedSession.id ? selectedSession : activeAuxiliarySession;

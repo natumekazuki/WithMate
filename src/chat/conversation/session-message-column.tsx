@@ -22,7 +22,7 @@ import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts }
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import { FailedTurnRetryWithRead } from "./failed-turn-retry.js";
-import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputDetailsContent, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputDetailsContent, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
@@ -96,6 +96,7 @@ export type SessionMessageColumnProps = {
   inputReadContext?: TurnInputReadContext;
   liveWithMateTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
+  onTurnReceiptsObserved?: (receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[]) => void;
   responsePending?: boolean;
   submissionError?: string;
   submissionUncertain?: boolean;
@@ -1526,8 +1527,7 @@ export function SessionMessageColumn({
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
-                const retryOrigin = message.role === "user" ? read.observed?.retrySource?.origin : undefined;
-                const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+                const retryLabel = message.role === "user" ? retrySourceLabel(read.observed?.retrySource?.origin) : undefined;
                 const messageSent = isAssistant ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;

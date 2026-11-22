@@ -25,10 +25,10 @@ function input(): RunSessionTurnInput {
 
 // @test-value v2
 // kind = "contract"
-// claim = "失敗TurnのSession指示はGUIが再実行した事実と元のSession送信者を分けてProviderへ渡す"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
-// fault = "元Sessionの本文を新規GUIユーザー指示に偽装するか再実行した主体を落とす"
-// observable = "構成した入力のGUI actor、元Session、本文見出しと本文"
+// claim = "失敗Turnの再実行はGUI要求と元のSession送信者を分け、固定入力が変わった場合はGUI編集としてProviderへ渡す"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md: 来歴と原依頼" }
+// fault = "元Session指示を新規GUI指示に偽装する、GUI編集後の入力を元Session指示として渡す、再実行した主体や元来歴を落とす"
+// observable = "変更の有無に対応する入力のGUI actor、元Session、編集者、本文見出しと本文"
 // observation_boundary = "consumer"
 // scope = "Providerへの失敗Turn再実行の来歴"
 // lifecycle = "permanent"
@@ -37,14 +37,22 @@ function input(): RunSessionTurnInput {
 // @end-test-value
 it("Session指示の再実行はGUI操作と元送信者を分ける", () => {
   const target = { targetSessionId: "recipient", targetIncarnationId: "recipient-inc" };
-  const text = composeProviderInput("元の指示", { origin: { kind: "gui", operation: "send", ...target }, originalChanged: false,
+  const provenance: NonNullable<RunSessionTurnInput["inputProvenance"]> = { origin: { kind: "gui", operation: "send", ...target }, originalChanged: false,
     retrySource: { receiptId: "source-receipt", turnId: "12", changedSinceAcceptance: true,
       origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "5",
-        actorSnapshot: { sessionTitle: "Source", character: { id: "mate", name: "Sender", iconPath: "" } }, ...target } } });
-  assert.match(text, /Retry requested by: GUI user/);
-  assert.match(text, /Original sender: Session/);
-  assert.match(text, /Original session: "sender"/);
-  assert.match(text, /# Retried Session Input\n\n元の指示$/);
+        actorSnapshot: { sessionTitle: "Source", character: { id: "mate", name: "Sender", iconPath: "" } }, ...target } } };
+  const exact = composeProviderInput("元の指示", provenance);
+  const edited = composeProviderInput("今回の指示", { ...provenance, originalChanged: true });
+  for (const text of [exact, edited]) {
+    assert.match(text, /Retry requested by: GUI user/);
+    assert.match(text, /Original sender: Session/);
+    assert.match(text, /Original session: "sender"/);
+  }
+  assert.match(exact, /# Retried Session Input\n\n元の指示$/);
+  assert.doesNotMatch(exact, /Starting input edited by/);
+  assert.match(edited, /Starting input edited by: GUI user/);
+  assert.match(edited, /# User Input\n\n今回の指示$/);
+  assert.doesNotMatch(edited, /# Retried Session Input/);
 });
 
 // @test-value v2

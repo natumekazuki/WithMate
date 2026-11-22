@@ -76,12 +76,13 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
       }
       lines.push("Original receipt: " + value(source.receiptId), "Failed Turn: " + value(source.turnId),
         "Original input changed before dispatch: " + value(source.changedSinceAcceptance));
+      if (provenance.originalChanged === true) lines.push("Starting input edited by: GUI user (" + LOCAL_USER_ID + ")");
     }
     if (provenance.coordinationOperation) lines.push("Coordination operation: " + value(provenance.coordinationOperation));
     if (provenance.coordination) lines.push("Coordination:", JSON.stringify(provenance.coordination, null, 2));
     sections.push(lines.join("\n"));
   }
-  const heading = provenance?.retrySource ? provenance.retrySource.origin.kind === "session" ? "Retried Session Input" : "Retried User Input"
+  const heading = provenance?.retrySource && provenance.originalChanged === false ? provenance.retrySource.origin.kind === "session" ? "Retried Session Input" : "Retried User Input"
     : provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
   sections.push("# " + heading + "\n\n" + (preserveWhitespace ? userMessage : userMessage.trim()));
   return sections.join("\n\n");

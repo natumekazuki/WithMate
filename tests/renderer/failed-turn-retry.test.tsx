@@ -95,7 +95,7 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     retried = true;
     await act(async () => root.render(<TurnExecutionDetails message={message} context={readContext} />));
     assert.match(dom.window.document.body.textContent!, /Edited before the original Turn started/);
-    assert.match(dom.window.document.body.textContent!, /By you · Originally from Sender/);
+    assert.match(dom.window.document.body.textContent!, /Retry requested by you · Previous input from Sender/);
     retried = false;
     await act(async () => root.render(<></>));
     let failHistoryRead = true;

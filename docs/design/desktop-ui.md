@@ -375,7 +375,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
-  - 通常送信はworkspace確認・preview・受付ACKを待たず、対象Columnへ送信文と通常の応答待機枠をDOM反映してから、設定に従ってcompactへ戻し、`Scroll To Latest On Send`を一度適用する。既に実行中なら次Turnの予約本文を現在の応答より後へ置く。内部の準備・受付・実行は表示から独立して進め、固定delayやdockのtransition完了待ちは追加しない。受付再照会・元要求の再試行によってdock開閉や末尾追従を繰り返さず、後続の手動操作を上書きしない
+  - 通常送信は送信操作時に設定に従ってcompactへ戻し、`Scroll To Latest On Send`を対象Columnへ一度適用する。送信文と応答待機枠は受付確認後に表示し、既に実行中なら次Turnの予約本文を現在の応答より後へ置く。内部の準備・受付・実行は表示から独立して進め、固定delayやdockのtransition完了待ちは追加しない。受付再照会・元要求の再試行によってdock開閉や末尾追従を繰り返さず、後続の手動操作を上書きしない
   - 送信時のhandoffは入力から会話へ読む位置を渡す一つの遷移とする。送信前のscroll位置から末尾までの差を、dockの外寸変化と共通の300msのease-outで解消し、途中の本文高・viewport高の変化を吸収する。新しい送信文と応答待機枠だけを180msでfade-inし、既存行や本文到着・保存時には入場演出を繰り返さない。dock内の共通操作列は上端からの位置を揃え、内容は独立した上下移動を加えず120msで切り替える
   - auto close OFFでも送信時のhandoffを使う。`Scroll To Latest On Send`がOFFで読み返し中なら位置を動かさない。遷移中のwheel・scrollbar・touch・scroll keyは手動操作を優先し、会話owner変更・非表示では旧Columnの補正を破棄する。`prefers-reduced-motion`では移動とfadeを省き、同じ状態・操作可否へ直接切り替える
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
@@ -452,10 +452,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
   - 追従停止中だけ列内overlayの`Jump to latest`を表示する。本文・予約状態の更新有無によらず、通常の下矢印icon-only buttonの外観と操作名を維持する
   - `Jump to latest`は履歴pageを解除して末尾へ復帰し、ボタンが消えた後はmessage listにfocusを戻す
-  - 通常Send・送信shortcut・実行中の予約送信は、先行表示を反映した送信時に`Scroll To Latest On Send`を対象Columnへ一度適用する。受付ACK・再照会・元要求の再試行は新たな移動を起こさず、送信後の読み返しや会話・送信対象切替を維持する
+  - 通常Send・送信shortcut・実行中の予約送信は、送信操作時に`Scroll To Latest On Send`を対象Columnへ一度適用する。受付ACK・再照会・元要求の再試行は新たな移動を起こさず、送信後の読み返しや会話・送信対象切替を維持する
 - pending 中の live activity / streaming response
-- Main／Auxiliaryは送信直後に会話ID・incarnation・request IDと捕捉本文のWindow内表示を作る。準備・受付待ちは正常な待機枠または予約本文を保ち、明示的な処理エラー・timeoutだけを対象送信のerror表示へ切り替える。受付後は同じrequest IDのreceiptへ、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない。先行表示から保存済み本文・実行状態を生成しない
-- streamingの`assistantText`は会話本文として表示する。送信時から応答用のassistant行にCharacter avatarとdot bubbleを置き、準備・受付・実行開始を待たず通常の応答面を確保する。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
+- Main／Auxiliaryは送信を会話ID・incarnation・request IDで照合する。受付済みの送信文と応答面は同じrequest IDのreceiptを使い、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない
+- streamingの`assistantText`は会話本文として表示する。受付済みTurnの通常の応答用assistant行にCharacter avatarとdot bubbleを置く。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - Main／Auxiliaryの通常応答はrequest／turnの表示identityを保ち、待機・live本文・保存済み本文への接続でassistant行・avatar・応答cardを差し替えない。表示中の応答本文はPreview／Source共通で100ms単位の最新snapshotへ集約し、通信の細かな到着間隔をそのまま高さ更新へ流さない。timerの実行が遅れても中間本文を順次再生せず最新を表示する。終了・失敗・取消・承認・質問・本文検索では集約待ちを解除し、会話切替・非表示・unmount時は旧応答の待機更新を破棄する。実行・保存と操作可否は実状態のままとし、表示待ちにはしない
 - 確定した送信・実行失敗は応答側の共通エラー欄へ`Failed`と理由を一度だけ表示する。開始前・本文なしでは同じ欄だけを置き、途中失敗では受信済み本文・Detailsを保持して本文の下へ置く。失敗通知は生成本文に追記せず、Copy／Quote対象の本文と分離し、本文を折りたたんでも理由を隠さない。送信側の失敗理由・Failed表示は重ねない。`Resend`／`Edit`、結果不明の`Interrupted`と`Release Later Turns`、取得失敗の`Retry`はそれぞれの責務を維持する
 - 確定失敗の応答枠はCharacter色ではなく固定のエラー色で左線と薄い背景を表示し、エラー欄自体には枠・背景を重ねない。通常応答のCharacter色とavatarによる識別は維持する
@@ -491,7 +491,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- 応答内のdot bubbleは準備・受付・応答の待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断し、先行表示で有効化しない
+- 応答内のdot bubbleは受付済みのTurnの応答待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断する
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
 - 実run終了後も確定応答の取得待ちなら同じ応答面と取得済み本文を保つ。予約を受付順と逆に実行しても、応答境界は保存済みuserの履歴位置と実際の投影順から求め、未保存部分は保存済み実行順に従う。受付番号を応答境界に使わず、後続の本文・質問・承認を旧応答へ接続しない。確定本文への接続または明示失敗で待機表示を終え、success固定の完了表現にはしない
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
@@ -507,7 +507,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ保存済み実行順に置く。初期は受付順とし、Main／Auxiliaryとも未開始項目の`Move Up`／`Move Down`で1件ずつ移動できる。本文を主役にし、下部に右寄せの上下icon、個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順は上から下への配置で示し、開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅でも操作buttonは内容に合う幅を保ち、収まらない時だけ操作行を折り返す。本文を縮小しない
 - 上下操作はTabで到達しEnter／Spaceで実行できる。対象と方向のaccessible name、visible focus、busy stateを維持し、端を越える方向、read-only／入力凍結中は無効にする。保存後も先頭との入れ替えを含めて移動対象へfocusを保ち、端へ移動して元buttonが無効になった場合は同じ項目の操作groupへfocusを置く。開始・取消でfocus中の操作面が消える場合は会話一覧へ退避する。待機中に利用者が別controlへ移したfocusは奪わない。保存済みの変更後位置はaccessible statusで通知する。受付IDと本文の対応は変えず、現在Turnへの入力・質問回答・取消とは別操作にする
 - 並べ替え中は取得済みの順序を保ち、保存確定後に反映する。追加・取消・開始等で待機列が変わっていたら変更せず、最新列を再取得して再操作を案内する。再取得に失敗した場合は競合の案内で取得失敗を隠さず、表示が古い可能性と`Retry Queue`を示す。保存失敗・応答不明では成功表示や自動再送をせず、取得済み本文を保持して再取得手段を示す。開始済み項目と確定履歴は移動しない
-- 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
+- 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答を失い自動照会でも結果を確認できない場合はComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。通常送信の受付ACKは一致するdraft revisionだけを消す
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は会話内のQuestion Formsで回答し、secret textはpassword inputで扱う。nonblockingの質問も受付状態の見出しは置かず、必須待ちと区別して応答生成中のstatusを維持する
 - Main／Auxiliaryとも取消click直後から同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。通知前の要求待ちは対象会話・Turnに限定し、liveの取消受付・終了待ちへつなぐ。失敗では理由を示して再操作できる状態へ戻し、旧取消要求の遅いACKで後続Turnを巻き戻さない。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する
 - 取消は送信の逆再生にしない。受信済み本文・応答枠・avatarを保持し、同じ枠内の待機状態を停止確定までつなぐ。本文未着では同じ待機枠を使い、停止を完了応答に見せない。取消を理由にdockを自動展開・折りたたみしたり、draft・閲覧位置を巻き戻したりしない
@@ -558,7 +558,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる
 - send button の `title` には current blocked reason を載せ、hover でも送信不可理由を確認できるようにする
 - disabledなSendの説明要素へTabで到達できるようにし、操作名と現在の理由への説明参照を保つ。理由・回復操作が既に表示されている場合はその案内を使い、それ以外はSend近傍のoverlayで理由を示す。overlayはEscapeまたはfocusを外すと閉じる。focus時の理由表示はComposerの高さやscroll位置を変えず、上段toolbarとSendを押し出さない
-- Composerの下書き保存・送信失敗は短い状態文とerror icon付きの`Details`入口で示し、診断原文は非modal popoverで開く。受付不明は失敗と区別して案内と`Check Receipt` / `Retry Original Turn`を維持し、回復操作の失敗詳細も同じ入口から確認できる。入力修正・権限・安全に必要な説明は折りたたまない
+- Composerの下書き保存・送信失敗は短い状態文とerror icon付きの`Details`入口で示し、診断原文は非modal popoverで開く。通常送信と`Resend`では、受付応答・自動照会を待つ間は二重送信を防ぐだけで、案内・回復ボタン・仮のキュー行を増やさない。応答を失い照会でも確認できないときだけ、同じ要求IDの`Check Receipt` / `Retry Original Turn`を案内する。会話切替・再取得後もこの状態を会話ごとに維持し、同じ受付がキューから確認できた時点で受付不明を解消する。確定した受理・拒否は受付不明と混同せず、回復操作の失敗詳細は同じ入口から確認できる。入力修正・権限・安全に必要な説明は折りたたまない
 - 診断popoverは回復操作列を覆わず、viewport内で長文をscroll・選択できる。詳細の開閉でComposerの高さを変えない。Escape／閉じるbuttonは入口へfocusを戻し、入口の再操作／外側clickでも閉じる。会話切替や対象エラーの更新で古い詳細を閉じる
 - 受付不明の回復案内では`Details`入口の自然寸法を予約し、診断の有無や回復操作の待機・失敗で`Check Receipt` / `Retry Original Turn`の位置と寸法を変えない。診断がない予約領域は不可視とし、操作・読み上げの対象から外す。狭幅では同じ領域を保って折り返す
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
@@ -586,7 +586,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 ### Queued Message Edit
 
-Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表示する。Coordination由来の予約と失敗Turnの再実行は、対応する入力・来歴を維持するためEdit／Steerの対象にしない。Steer非対応のproviderでも通常予約は編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
+Main／Auxiliaryの未開始の予約は、失敗Turnの再実行も通常予約と同じ条件で`Edit`と`Cancel`を使う。`Edit`は今回の予約の本文・添付だけを変更し、元Turnの入力・送信来歴や通常下書きは変更しない。再実行は新しいTurnとして開始するため`Steer`には転用しない。Coordination由来の予約はEdit／Steerの対象にしない。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
 
 編集中だけ既存Sendの紙飛行機をチェックiconへ替え、tooltipとaccessible nameを`Submit`にする。その左に×のicon buttonを置き、`Cancel Edit`とする。追加の状態label、bubbleの強調枠、専用pane、復帰用buttonは設けない。上段の実行中TurnのCancelは別操作として維持する。予約時の実行設定は変更せず既存controlで参照し、本文・添付を更新する。
 

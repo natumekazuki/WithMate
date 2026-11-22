@@ -96,7 +96,7 @@ test("新規Auxiliaryの初回draft保存からqueue受付まで成立する", a
       composerRegistry: registry, composerOwner, submitCoordinator: new SessionSubmitCoordinator(), acceptance: new SessionTurnAcceptance(),
       auxiliaryDraftOwner: persistence.getOwner(auxiliary)!, queueTurn: true, clearDraft: true, collapseActionDock: false,
       selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-      state: { setComposerPreview: (preview) => registry.setPreview(composerOwner, preview), setPendingSubmitSessionId() {},
+      state: { setComposerPreview: (preview) => registry.setPreview(composerOwner, preview), onSubmitStateChanged() {},
         setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
     });
     assert.ok(receipt);

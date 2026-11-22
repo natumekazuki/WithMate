@@ -39,9 +39,18 @@ async function mount() {
     state: "queued", captured: { request: { clientRequestId: `request-${index}`, userMessage: `Original queued message ${index}`, executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath },
     turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
   }));
+  const retry = rows[1];
+  const target = { targetSessionId: retry.sessionId, targetIncarnationId: retry.incarnationId };
+  retry.captured.origin = { kind: "gui", operation: "send", ...target };
+  retry.captured.retrySource = { receiptId: "failed-receipt", turnId: "5", changedSinceAcceptance: false,
+    origin: { kind: "session", operation: "send", actorSessionId: "sender", actorIncarnationId: "sender-incarnation", actorKind: "main", actorTurnId: "2",
+      actorSnapshot: { sessionTitle: "Sender Session", character: { id: "sender", name: "Fixture Sender", iconPath: "" } }, ...target } };
+  const ordinaryAux = { ...structuredClone(retry), id: "aux-ordinary", requestId: "aux-ordinary-request", sequence: 12, queuePosition: 12 };
+  ordinaryAux.captured.request.clientRequestId = ordinaryAux.requestId;
+  delete ordinaryAux.captured.retrySource;
   const queueListeners = new Set<(id: string) => void>();
   api.onSessionTurnQueueChanged = (listener) => { queueListeners.add(listener); return () => { queueListeners.delete(listener); }; };
-  api.listSessionTurnQueue = async (id) => rows.filter((row) => row.sessionId === id).map((row) => structuredClone(row));
+  api.listSessionTurnQueue = async (id) => [...rows, ordinaryAux].filter((row) => row.sessionId === id).map((row) => structuredClone(row));
   api.getSessionTurnQueueReceipt = async (id, requestId) => rows.find((row) => row.sessionId === id && row.requestId === requestId) ?? null;
   const paused = new Set<string>();
   const updates: Array<{ sessionId: string; userMessage: string }> = [];
@@ -66,8 +75,10 @@ async function mount() {
   };
   let sends = 0;
   api.enqueueSessionTurn = async () => { sends++; throw new Error("Edit must not enqueue a new turn"); };
-  api.steerSessionTurn = async () => { sends++; throw new Error("Edit must not steer a running turn"); };
-  api.steerAuxiliarySessionTurn = api.steerSessionTurn;
+  const unexpectedSteer = async () => { sends++; throw new Error("Edit must not steer a running turn"); };
+  api.steerSessionTurn = unexpectedSteer;
+  api.steerAuxiliarySessionTurn = unexpectedSteer;
+  api.sendQueuedSessionInput = unexpectedSteer;
   api.getLiveSessionRun = async (sessionId) => ({ sessionId, threadId: "thread", turnId: "running", inputAvailable: true, assistantText: "Current response", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
   api.listSessionFileRoots = async () => [];
   Object.defineProperty(dom.window, "withmate", { value: api });
@@ -87,7 +98,7 @@ async function mount() {
     field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   });
   const click = async (button: HTMLButtonElement) => { assert.ok(button); await act(async () => { button.click(); }); };
-  return { dom, rows, paused, updates, textarea, editButton, cancel, submit, fill, click,
+  return { dom, rows, ordinaryAux, paused, updates, textarea, editButton, cancel, submit, fill, click,
     get sends() { return sends; },
     async resolveUpdate(fail = false) { failUpdate = fail; await act(async () => { releaseUpdate!(); }); },
     async switchTarget(index: number) { await click(dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")[index]); },
@@ -97,10 +108,10 @@ async function mount() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxiliaryのEditは既存textareaで同じ予約を更新し、通常下書きを保持し、失敗時は編集入力と保留を残す。更新待機中の重複操作と通常送信・Steerへの誤配送を防ぐ"
+// claim = "通常予約と失敗Turnの再実行はMain/Auxiliaryの既存textareaから編集し、通常下書きを保持する。失敗時は編集入力と保留を残し、更新待機中の重複操作と通常送信・Steerへの誤配送を防ぐ。再実行の予約はCancelを提示しSteerは提示しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Queued Message Edit; docs/design/session-run-lifecycle.md: Queue Editing" }
-// fault = "通常下書きを編集本文で上書きする、編集を新規受付やSteerへ送る、失敗で本文を消す、または保存待ちの重複更新を送る"
-// observable = "実SessionWindowのEdit/Submit/Cancel Edit操作、textarea値、ボタンdisabled、更新API要求と呼出数、通常下書き復帰、失敗時の保留とエラー表示"
+// fault = "再実行の予約を編集・取消不能にするかSteerを提示する、通常下書きを編集本文で上書きする、編集を新規受付やSteerへ送る、失敗で本文を消す、または保存待ちの重複更新を送る"
+// observable = "対象予約のCancel/Steer表示、実SessionWindowのEdit/Submit/Cancel Edit操作、textarea値、ボタンdisabled、更新API要求と呼出数、通常下書き復帰、失敗時の保留とエラー表示"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp queue edit wiring across Main and Auxiliary"
 // lifecycle = "permanent"
@@ -114,6 +125,10 @@ test("Session Windowのキュー編集は通常下書きと送信経路を分離
       await view.switchTarget(index);
       await view.fill(`Normal draft ${index}`);
       assert.ok(view.editButton(row), `Missing ${row.id}: ${view.dom.window.document.body.textContent}`);
+      const actions = view.dom.window.document.querySelector(`[data-queue-receipt-id="${row.id}"]`)!;
+      assert.ok(actions.querySelector('button[aria-label^="Cancel queued turn"]'));
+      assert.equal(!!actions.querySelector('button[title="Send this message to the current turn"]'), index === 0);
+      if (index === 1) assert.ok(view.dom.window.document.querySelector(`[data-queue-receipt-id="${view.ordinaryAux.id}"] button[title="Send this message to the current turn"]`));
       await view.click(view.editButton(row));
       assert.equal(view.textarea().value, row.captured.request.userMessage);
       assert.equal(view.paused.has(row.sessionId), true);

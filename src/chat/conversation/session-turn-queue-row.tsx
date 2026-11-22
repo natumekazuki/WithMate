@@ -10,7 +10,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 
@@ -42,7 +42,7 @@ export function SessionTurnQueueStatus(props: {
 function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
-  const editableInput = !receipt.captured.coordination && !receipt.captured.retrySource;
+  const editableInput = !receipt.captured.coordination;
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -63,8 +63,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
-  const retryOrigin = receipt.captured.retrySource?.origin;
-  const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+  const retryLabel = retrySourceLabel(receipt.captured.retrySource?.origin);
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} title={retryLabel} aria-label={`${label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}${retryLabel ? ` · ${retryLabel}` : ""}`}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
@@ -78,7 +77,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
         <ButtonContent busy={busyKind === `move-${direction}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={direction === "up" ? "M12 20V4m-6 6 6-6 6 6" : "M12 4v16m-6-6 6 6 6-6"} /></svg></ButtonContent>
       </button>)}
     </span> : null}
-    {receipt.state === "queued" && editableInput && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
+    {receipt.state === "queued" && editableInput && !receipt.captured.retrySource && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
     {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busyKind === "release" || undefined} onClick={() => onRelease(receipt)}><ButtonContent busy={busyKind === "release"}>Release Later Turns</ButtonContent></button> : null}
@@ -90,8 +89,7 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
   const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
   const isSessionOrigin = read.origin?.kind === "session";
   const role = isSessionOrigin ? "session-origin" : "user";
-  const retryOrigin = props.receipt.captured.retrySource?.origin;
-  const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+  const retryLabel = retrySourceLabel(props.receipt.captured.retrySource?.origin);
   return <><article className={`message-row ${role}`} data-message-source="turn-queue" aria-label={retryLabel} title={retryLabel}>
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
     <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
