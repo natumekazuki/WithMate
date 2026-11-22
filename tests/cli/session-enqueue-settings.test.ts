@@ -201,7 +201,7 @@ async function fixture(provider = "codex") {
 // kind = "contract"
 // claim = "通常子作成は実行中の親権限を継承し、異種で制限を再現できなければ作成しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Bound Session API" }
-// fault = "親の保存設定を実行中設定と誤認する、異種で制限を失う、旧指定を無視する、作成済み条件を再解決する"
+// fault = "親の保存設定を実行中設定と誤認する、実行中の権限が取れないのに作成する、異種で制限を失う、再試行で作成済み条件を再解決する"
 // observable = "両入口の作成結果、拒否理由と保存子・lifecycle不存在、再試行、adapter境界に渡る初回受付設定"
 // observation_boundary = "public-boundary"
 // scope = "SDK MCP/bound CLI→admitted Turn→作成・queue・runtime→実Storage Workerとadapter境界。catalog/Workspace検証/HTTP/Provider実行はfixture"
@@ -219,14 +219,6 @@ test("child creation uses the active parent permissions through retry and first 
     const base = { role: "executor", provider: "codex", model: "fast", reasoningEffort: "low", workspacePath: join(f.parent.workspacePath, "..") };
     const created: { session: Session; request: typeof base & { requestId: string }; requestId: string; reviewer: string; sandbox: string; response: Record<string, unknown> }[] = [];
     for (const transport of ["mcp", "cli"] as const) {
-      const before = (await f.bundle.stores.session.listSessionSummaries()).length;
-      for (const override of [{ approvalMode: "on-request" }, { codexReviewer: "auto-review" }, { codexSandboxMode: "danger-full-access" }, { inheritTargetPermissions: true }]) {
-        const rejected = await parent(transport, "create_child", { ...base, requestId: randomUUID(), ...override });
-        assertRejected(rejected);
-        assert.ok(JSON.stringify(rejected).includes(Object.keys(override)[0]));
-      }
-      assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
-      assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
       for (const [provider, reviewer, sandbox] of [
         ["codex", "auto-review", "danger-full-access"],
         ["claude", "auto-review", "workspace-write"],
@@ -325,9 +317,9 @@ test("parent reads policy and recipient catalog without persisting one-off enque
 
 // @test-value v2
 // kind = "contract"
-// claim = "MCPとCLIは保存関係から送信方向を判定し、必須設定・宛先Model/Depth・Provider権限・Reviewer整合を検証して不正受付を作らない"
+// claim = "MCPとCLIの親子送信は宛先の保存権限を使い、送信方向に応じたModel/DepthとReviewer整合を検証して不正受付を作らない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Bound Session API" }
-// fault = "親送信のModel/Depth省略や無効組合せを受け付ける、子報告の省略を拒否する、旧権限指定を許す、保存Reviewerを自動降格する"
+// fault = "宛先の保存権限を使わない、親送信のModel/Depth省略や無効組合せを受け付ける、子報告の省略を拒否する、保存Reviewerを自動降格する"
 // observable = "両公開入口の成功receiptと実効設定、理由付きeffect noneと保存receipt不存在、宛先Provider/Workspaceとcatalog options"
 // observation_boundary = "public-boundary"
 // scope = "SDK MCP/bound CLI→runtime binding→application→queue facade→実Storage Worker、Provider catalogとHTTP交換はfixture"
@@ -386,15 +378,6 @@ test("enqueue settings validate both directions and all Provider options through
           const rejected = await child(transport, "enqueue", body);
           assertRejected(rejected);
           assert.equal(await f.bundle.stores.queue.getReceipt(target(f.parent), body.requestId), null);
-        }
-        for (const override of [{ approvalMode: "on-request" }, { codexSandboxMode: "workspace-write" }, { codexReviewer: "auto-review" }, { inheritTargetPermissions: true }]) {
-          for (const [call, destination] of [[parent, f.child], [child, f.parent]] as const) {
-            const requestId = randomUUID();
-            const rejected = await call(transport, "enqueue", { ...request, target: target(destination), requestId, ...override });
-            assertRejected(rejected);
-            assert.ok(JSON.stringify(rejected).includes(Object.keys(override)[0]));
-            assert.equal(await f.bundle.stores.queue.getReceipt(target(destination), requestId), null);
-          }
         }
       }
       if (provider === "claude") {

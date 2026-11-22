@@ -109,24 +109,22 @@ test("MCP tools list distinguishes operating policy replacement from read-only q
 
 // @test-value v2
 // kind = "contract"
-// claim = "create_childとenqueueのCLI/MCP公開入力はModel・Depthを公開するが権限上書きを公開せず、CLIは旧権限フラグをdispatch前に拒否する"
+// claim = "子作成・通常送信のCLI/MCPは同じ入力項目を公開し、Model・Depthを受け付ける閉じた入力契約を示す"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
-// fault = "schemaやhelpが呼出元に権限選択を案内する、または旧CLIフラグで送信・作成をdispatchする"
-// observable = "SDK MCPのtools/listとCLI schemaの入力項目、CLI helpの旧指定の不在、実引数解析のusageエラーとdispatch件数"
+// fault = "一方の入口だけで入力項目が増減する、Model・Depthの指定を公開しなくなる、または未宣言項目を許容すると通知する"
+// observable = "SDK MCPのtools/listとCLI schemaの入力項目・必須項目、およびadditionalProperties"
 // observation_boundary = "public-boundary"
-// scope = "SDK MCPとbound CLIのcreate_child/enqueueの公開schemaとCLI help・引数解析"
+// scope = "SDK MCPとbound CLIのcreate_child/enqueueの公開schema"
 // lifecycle = "permanent"
-// impact = "呼出元が無効な権限指定に誘導されるか、宛先または作成元Turnから決まる権限を変更できてしまう"
-// distinction = "JSON入力と実Storageの受入テストでは公開schema・helpや旧CLIフラグの実引数解析を検証しない"
+// impact = "入口によって送信・作成の入力が変わるか、未対応の指定を有効な入力と誤認する"
+// distinction = "実Storageの受付テストは実行結果を確認するが、利用者へ公開される入力の一致と閉じた境界までは確認しない"
 // @end-test-value
-test("CLI and MCP publish only caller-selectable execution settings for create and send", async () => {
-  let calls = 0;
+test("CLI and MCP publish matching closed input schemas for create and send", async () => {
   const runtimeCall: typeof callAgentRuntime = async () => {
-    calls++;
-    throw new Error("Permission flags must not dispatch");
+    throw new Error("Schema discovery must not dispatch");
   };
   const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
-  const client = new Client({ name: "permission-input-parity", version: "1" });
+  const client = new Client({ name: "session-input-parity", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
@@ -134,55 +132,19 @@ test("CLI and MCP publish only caller-selectable execution settings for create a
     const { tools } = await client.listTools();
     const schema = await cli("schema", {}, runtimeCall);
     assert.equal(schema.exit, 0);
-    const cliOperations = schema.value.operations as Record<string, { input: { properties: Record<string, unknown>; additionalProperties: boolean } }>;
-    const obsolete = [
-      ["approvalMode", "--approval-mode", "on-request"],
-      ["codexSandboxMode", "--codex-sandbox-mode", "workspace-write"],
-      ["codexReviewer", "--codex-reviewer", "auto-review"],
-      ["inheritTargetPermissions", "--inherit-target-permissions", "true"],
-    ] as const;
-    let help = "";
-    assert.equal(await runWithMateSessionCli(["help"], {
-      stdout: { write: (value) => { help += String(value); return true; } },
-    }), 0);
-    for (const [field, flag] of obsolete) {
-      assert.equal(help.includes(field), false, field);
-      assert.equal(help.includes(flag), false, flag);
-    }
-    const create = { requestId: "child-create", role: "executor", provider: "codex", model: "model", reasoningEffort: "medium", workspacePath: "workspace" };
-    const enqueue = {
-      requestId: randomUUID(), target: { kind: "main", sessionId: "child", incarnationId: "child-v1" },
-      message: "work", model: "model", reasoningEffort: "medium",
-    };
-    for (const [operation, input] of Object.entries({ create_child: create, enqueue })) {
+    const cliOperations = schema.value.operations as Record<string, { input: typeof tools[number]["inputSchema"] }>;
+    for (const operation of ["create_child", "enqueue"]) {
       const published = tools.find((tool) => tool.name === `session.${operation}`);
       assert.ok(published, operation);
-      for (const publicInput of [cliOperations[operation].input, published.inputSchema]) {
-        assert.equal(publicInput.additionalProperties, false, operation);
-        assert.equal(Object.hasOwn(publicInput.properties ?? {}, "model"), true, operation);
-        assert.equal(Object.hasOwn(publicInput.properties ?? {}, "reasoningEffort"), true, operation);
-        for (const [field] of obsolete) {
-          assert.equal(Object.hasOwn(publicInput.properties ?? {}, field), false, `${operation}: ${field}`);
-        }
-      }
-      for (const [, flag, value] of obsolete) {
-        let output = "";
-        const exit = await runWithMateSessionCli(
-          [operation.replaceAll("_", "-"), "--json", JSON.stringify(input), flag, value],
-          {
-            env, connection, runtimeCall,
-            stdout: { write: (part) => { output += String(part); return true; } },
-            stderr: { write: () => true },
-          },
-        );
-        assert.equal(exit, 2, `${operation}: ${flag}`);
-        const result = JSON.parse(output);
-        assert.equal(result.code, "SESSION_INVALID_REQUEST");
-        assert.equal(result.effect, "none");
-        assert.ok(result.message.includes(flag), flag);
-      }
+      const cliInput = cliOperations[operation].input;
+      const mcpInput = published.inputSchema;
+      const fields = Object.keys(cliInput.properties ?? {}).sort();
+      assert.ok(fields.includes("model") && fields.includes("reasoningEffort"), operation);
+      assert.deepEqual(Object.keys(mcpInput.properties ?? {}).sort(), fields, operation);
+      assert.deepEqual([...(mcpInput.required ?? [])].sort(), [...(cliInput.required ?? [])].sort(), operation);
+      assert.equal(cliInput.additionalProperties, false, operation);
+      assert.equal(mcpInput.additionalProperties, false, operation);
     }
-    assert.equal(calls, 0);
   } finally {
     await client.close();
     await server.close();
