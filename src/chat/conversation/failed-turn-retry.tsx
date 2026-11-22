@@ -6,11 +6,17 @@ import { createSessionTurnClientRequestId } from "../runtime/session-submit-coor
 import { useFailedTurnRetry } from "../runtime/failed-turn-retry-context.js";
 import { useTurnInputRead, type TurnInputReadContext } from "./turn-input-details.js";
 
-export function FailedTurnRetry({ message, context, turnId, dock = false, targetLabel, disabled = false }: {
+type Props = {
   message: Message; context: TurnInputReadContext; turnId?: string; dock?: boolean; targetLabel?: string; disabled?: boolean;
-}) {
+};
+
+export function FailedTurnRetry(props: Props) {
+  const read = useTurnInputRead({ message: props.message, context: props.context, turnId: props.turnId });
+  return <FailedTurnRetryWithRead {...props} read={read} />;
+}
+
+export function FailedTurnRetryWithRead({ message, context, turnId, dock = false, targetLabel, disabled = false, read }: Props & { read: ReturnType<typeof useTurnInputRead> }) {
   const retry = useFailedTurnRetry();
-  const read = useTurnInputRead({ message, context, turnId });
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState("");
@@ -20,7 +26,7 @@ export function FailedTurnRetry({ message, context, turnId, dock = false, target
     && !!execution.turnId && (!turnId || execution.turnId === turnId) && !!execution.receiptId && !!execution.origin;
   if (!retry) return null;
   if (!dock && execution?.turnId && retry.dockTurn?.sessionId === context.target.sessionId && retry.dockTurn.turnId === execution.turnId) return null;
-  if (read.readError) return <LoadError message={`Could not load the failed Turn for Resend: ${read.readError}`} onRetry={() => read.setRevision((value) => value + 1)} />;
+  if (read.readError) return dock ? <LoadError message={`Could not load the failed Turn for Resend: ${read.readError}`} onRetry={() => read.setRevision((value) => value + 1)} /> : null;
   if (!available || !execution?.receiptId || !execution.turnId) return dock && execution
     ? <LoadError message="Resend is unavailable: the failed Turn or its saved input could not be confirmed." /> : null;
   const submit = async () => {
@@ -29,16 +35,17 @@ export function FailedTurnRetry({ message, context, turnId, dock = false, target
     try {
       await retry.submit({ target: context.target, receiptId: execution.receiptId!, turnId: execution.turnId!, clientRequestId: createSessionTurnClientRequestId() });
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Could not resend this failed Turn.");
+      const reason = failure instanceof Error ? failure.message : "Could not resend this failed Turn.";
+      if (retry.onError) retry.onError(context.target.sessionId, reason, dock ? "previous request" : message.text.trim().slice(0, 80) || "failed response");
+      else setError(reason);
     } finally { pending.current = false; setBusy(false); }
   };
   const name = targetLabel ?? (context.target.kind === "main" ? "Main" : "Auxiliary");
   const label = dock ? `${name}: Resend Previous Request` : `${name}: Resend Failed Turn`;
   return <>
-    <button className="drawer-toggle compact secondary composer-icon-button failed-turn-resend" type="button" title={label} aria-label={label} disabled={disabled || busy || retry.blocked(context.target.sessionId)} onClick={() => void submit()}>
+    <button className={dock ? "drawer-toggle compact secondary composer-icon-button" : "message-collapse-toggle failed-turn-resend"} type="button" title={label} aria-label={label} disabled={disabled || busy || retry.blocked(context.target.sessionId)} onClick={() => void submit()}>
       <ComposerIcon name="resend" /><span className="visually-hidden">Resend</span>
     </button>
-    {execution.inputs.entry?.comparison === "changed" ? <span className="failed-turn-retry-feedback">Uses the instruction edited before this Turn started.</span> : null}
     {error ? <LoadError className="failed-turn-retry-feedback" message={`Resend: ${error}${error.includes("Check Receipt") ? "" : " Check the reason, then try Resend again."}`} /> : null}
   </>;
 }

@@ -576,7 +576,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
   - 回復操作は次のとおり
-    - `Resend`: interrupted／canceledの既存回復導線では選択会話の前回本文を送信する。失敗確定Turnは直近ならDock、過去なら失敗表示にある同じアイコンから保存済みの開始入力を再実行する。受付後に開始入力が編集された場合は操作のそばに短く示す。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
+    - `Resend`: interrupted／canceledの既存回復導線では選択会話の前回本文を送信する。失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を再実行する。受付後の開始入力の編集差と元送信者はDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
     - `Edit`: 前回本文を対象会話のdraftへ戻し、Promptを開いてtextareaへfocusする。自動送信はしない
   - 異なる非空draftで`Edit`を押した場合は、`Your current draft is preserved.`を示す確認dialogを開く。`Keep Current Draft`または`Escape`で保持し、`Replace With Previous Request`を明示選択した場合だけ置換する。確認中も背面のDock選択は維持する
   - 最新turnの取得失敗からの`Retry`、実行受付不明の確認、後続turnの`Release Later Turns`はそれぞれ別の操作として維持する

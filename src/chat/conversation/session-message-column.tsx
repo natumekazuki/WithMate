@@ -21,8 +21,8 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
-import { FailedTurnRetry } from "./failed-turn-retry.js";
-import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { FailedTurnRetryWithRead } from "./failed-turn-retry.js";
+import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputDetailsContent, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
@@ -1501,6 +1501,8 @@ export function SessionMessageColumn({
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
             const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
+            const canRetryFailedTurn = isAssistant && message.runFailure !== undefined && message.historyIndex !== undefined && !!inputReadContext;
+            const hasMessageActions = !!(messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark)) || canRetryFailedTurn;
 
             return (
               <div
@@ -1524,10 +1526,12 @@ export function SessionMessageColumn({
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
+                const retryOrigin = message.role === "user" ? read.observed?.retrySource?.origin : undefined;
+                const retryLabel = retryOrigin ? `Retried by you · Originally from ${retryOrigin.kind === "session" ? retryOrigin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
                 const messageSent = isAssistant ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
-                return <article
+                return <article aria-label={retryLabel} title={retryLabel}
                 className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
@@ -1562,7 +1566,6 @@ export function SessionMessageColumn({
                   style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
-                    {message.role === "user" && read.observed?.retrySource ? <p className="message-paragraph">Retried by you · Originally from {read.observed.retrySource.origin.kind === "session" ? read.observed.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}</p> : null}
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -1581,10 +1584,11 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div className={`message-text-wrapper${messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
-                      {messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
+                    <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
+                      {hasMessageActions ? (
                         <div className="message-collapse-control">
-                          {onToggleMessageCollapse ? (
+                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetryWithRead message={message} context={inputReadContext} read={read} /> : null}
+                          {messageCollapseTarget && onToggleMessageCollapse ? (
                             <button
                               className="message-collapse-toggle"
                               type="button"
@@ -1598,7 +1602,7 @@ export function SessionMessageColumn({
                               <span className="visually-hidden">{messageCollapseLabel}</span>
                             </button>
                           ) : null}
-                          {onToggleMessageBookmark ? (
+                          {messageCollapseTarget && onToggleMessageBookmark ? (
                             <button
                               className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
                               type="button"
@@ -1673,7 +1677,6 @@ export function SessionMessageColumn({
                     <TurnInputStatus message={message} />
                     {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
-                    {isAssistant && message.runFailure !== undefined && message.historyIndex !== undefined && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} /> : null}
                     {artifact || hasExecutionDetails ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (
@@ -1705,7 +1708,9 @@ export function SessionMessageColumn({
                             </section>
                           </div> : null}
 
-                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length} /> : null}
+                          {hasExecutionDetails ? canRetryFailedTurn
+                            ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} read={read} hasRunChecks={!!visibleRunChecks.length} />
+                            : <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length} /> : null}
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">
