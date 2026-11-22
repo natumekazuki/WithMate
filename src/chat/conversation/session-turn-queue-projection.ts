@@ -37,7 +37,8 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     const liveIndex = projection.sources.findIndex((source, index) => source.kind === "live-assistant"
       && (receipt.userMessageSeq === null || projection.messages[index].historyIndex === undefined || projection.messages[index].historyIndex! > receipt.userMessageSeq));
     const index = liveIndex < 0 ? projection.messages.length : liveIndex;
-    projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(receipt.dispatched ?? receipt.captured) });
+    const input = receipt.dispatched ?? receipt.captured;
+    projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(input), ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}) });
     projection.keys.splice(index, 0, key);
     projection.sources.splice(index, 0, { kind: "turn-queue", receipt });
     projection.groups.splice(index, 0, null);

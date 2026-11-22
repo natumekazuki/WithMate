@@ -1087,6 +1087,27 @@
 .sent-delivery-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sent-delivery-header > .session-message-address { flex: 1 1 auto; }
 .sent-delivery-header > .artifact-toggle-icon { flex: 0 0 24px; }
+
+.session-reply-quote {
+  margin: 0;
+  min-width: 0;
+  padding: 4px 10px;
+  border-inline-start: 2px solid currentColor;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.composer-reply {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
 .sent-delivery-position-unknown { color: var(--muted); font-size: 0.75rem; margin: 0; }
 .message-row.session-outbound > .message-avatar-stack { grid-column: 1; grid-row: 1 / span 2; }
 .message-row.session-outbound > .message-character-name,

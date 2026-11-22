@@ -22,6 +22,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
@@ -46,7 +47,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => { assertOwner("session read"); return deps.sessions.getSession(sessionId); },
-    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.sessions.appendRunningInput(session, text, turnId, queuedInput)),
+    appendRunningInput: (...args) => guarded("Session input append", () => deps.sessions.appendRunningInput(...args)),
     beginRunningInput: deps.sessions.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.sessions.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.sessions.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.sessions.settleRunningInput!(...args)) : undefined,
     getQueuedInputReceipt: deps.sessions.getQueuedInputReceipt
@@ -61,6 +62,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     clearCharacterAuthoringRuntimeState: (session) => guarded("authoring runtime clear", () => deps.sessions.clearCharacterAuthoringRuntimeState(session)),
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, message) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, message)),
+    assertSavedReplyTo: deps.context.assertSavedReplyTo,
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable
       ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments))
       : undefined,

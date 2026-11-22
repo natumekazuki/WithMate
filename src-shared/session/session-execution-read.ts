@@ -3,6 +3,7 @@ import { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 import { sessionHistoryOperationRequestSchemas } from "../session-history/session-history-contract.js";
 import { providerOutputSchema } from "./provider-output.js";
 import { conversationThreadsRequestSchema, conversationThreadsResultSchema } from "./conversation-threads.js";
+import { sessionReplySchema } from "./session-reply.js";
 
 const id = z.string().min(1).max(256);
 const page = { offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() };
@@ -55,7 +56,7 @@ const executionSettings = z.object({
 export const executionOperationResultSchemas = {
   list_sent_steers: z.object({ ...ok, items: z.array(z.object({ sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, messageSeq: z.number().int().nonnegative(), state: z.enum(["pending", "confirmed", "unknown", "not-sent"]), origin: steerOrigin, text: z.string() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_issued_coordinations: z.object({ ...ok, items: z.array(z.object({ id, sourceTurnId: id, sourceMessageSeq: z.number().nullable(), consultation: z.string() })), nextCursor: id.nullable() }),
-  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), sourceDisplayPosition: z.number().int().nonnegative().nullable().optional(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, text: z.string(), coordination: coordinationDisplay.optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
+  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), sourceDisplayPosition: z.number().int().nonnegative().nullable().optional(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, text: z.string(), replyTo: sessionReplySchema.optional(), coordination: coordinationDisplay.optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
   get_message: z.object({ ...ok, seq: z.number(), role: z.enum(["user", "assistant"]), turn: z.unknown(), ...textPiece }).passthrough(),
   list_operations: z.object({ ...ok, seq: z.number(), section: z.string(), artifactDetailSaved: z.boolean(), ...resultPage }).passthrough(),

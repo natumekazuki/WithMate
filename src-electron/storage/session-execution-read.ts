@@ -185,6 +185,7 @@ export class SessionExecutionReadStorage {
         return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn),
           sourceDisplayPosition: row.source_display_verified === 1 || (sourceTurn.phase === "running" && liveTurnIds.includes(String(sourceTurn.id))) ? row.source_display_position : null,
           target: recipient, state: row.state, origin, text: input.request.userMessage,
+          ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}),
           ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}) };
       }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
     }

@@ -16,6 +16,8 @@ import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-
 import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
 import { projectConversationBatch } from "../../src-electron/storage/conversation-projection-worker.js";
 import { conversationThreadsResultSchema } from "../../src-shared/session/conversation-threads.js";
+import type { SessionReply } from "../../src-shared/session/session-reply.js";
+import { initiatingReply } from "../../src-electron/session/initiating-reply.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -29,10 +31,70 @@ function session() { return buildNewSession({ id: "read-main", taskTitle: "Read"
 
 // @test-value v2
 // kind = "contract"
-// claim = "作成済みの直接の子だけが送受信前から枠を持つ。開始入力と正確に対応する応答はその子の枠に属し、別の子への指示はカード取得用の位置だけを共有する"
-// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠" }
+// claim = "開始受付、同じTurnへ追加した受付、直接Steerは、それぞれ確定された返信先を本文と別に保存し、再読込しても置き換わらない"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#明示返信" }
+// fault = "最新やTurn開始側の返信先で上書きする、独立した追加入力の参照を捨てる、元の本文を変える"
+// observable = "実SQLiteの受付・保存message pageの本文、正本seq、replyTo、受理済み追加入力"
+// observation_boundary = "public-boundary"
+// scope = "Mainの開始入力・追加queue・直接Steerと既存の一通読取"
+// lifecycle = "permanent"
+// impact = "履歴を開き直したとき別の発言を引用するか、選んだ発言に戻れない"
+// distinction = "provider builderやrendererは保存JSONの往復と三つの記録が混ざらないことを確認できない"
+// @end-test-value
+test("saved start, queued Steer and direct Steer retain their own reply references", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const seeded = sessions.insertSession({ ...session(), messages: [
+      { role: "user", text: "original user" }, { role: "assistant", text: "original final answer" },
+    ] });
+    const owner = { sessionId: seeded.id, incarnationId: getSessionIncarnationId(seeded) };
+    const target = { kind: "main" as const, ...owner };
+    const base = { sessionId: seeded.id, provider: seeded.provider, model: seeded.model, reasoningEffort: seeded.reasoningEffort,
+      approvalMode: seeded.approvalMode, sandboxMode: seeded.codexSandboxMode, threadId: "", errorMessage: "", createdAt: "start" };
+    const earlier = turns.createSessionTurn({ ...base, phase: "completed", userMessageSeq: 0, assistantMessageSeq: 1 });
+    const request = (userMessage: string, replyTo?: SessionReply) => queue.enqueue(owner, { provider: seeded.provider, workspacePath: seeded.workspacePath,
+      attachments: [], request: { userMessage, clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(seeded), ...(replyTo ? { replyTo } : {}) } });
+    const finalReply = { target, seq: 1, finalAnswerTurnId: String(earlier.id) };
+    const first = request("start reply", finalReply);
+    queue.claimNext(owner);
+    const started = sessions.appendRunningTurnStart({ ...owner, updatedAt: "running", expectedMessageCount: 2,
+      userMessage: { role: "user", text: "start reply", replyTo: finalReply },
+      queuedTurn: { queueId: first.id, turn: { ...base, phase: "running", userMessageSeq: 2 } } });
+    assert.ok(started.queuedTurn);
+    const turnId = started.queuedTurn.id;
+    const queueReply = { target, seq: 0 };
+    const pending = request("queued reply", queueReply);
+    const edited = queue.updateQueued(owner, pending.id, { userMessage: "edited queued reply", attachments: [] });
+    assert.deepEqual(edited.captured.request.replyTo, queueReply);
+    queue.claimForInput(owner, pending.id, "native");
+    sessions.appendSessionSteer({ ...owner, expectedMessageCount: 3, turnId, updatedAt: "additional", queuedInput: { queueId: pending.id, inputTurnId: "native" },
+      userMessage: { role: "user", text: "edited queued reply", replyTo: queueReply } });
+    const receiptReply = { target, receiptId: first.id };
+    sessions.beginSessionSteer({ ...owner, expectedMessageCount: 4, turnId, nativeTurnId: "native", updatedAt: "direct", attachments: [],
+      userMessage: { role: "user", text: "direct reply", replyTo: receiptReply } });
+    sessions.settleSessionSteer({ ...owner, turnId, messageSeq: 4, state: "confirmed", updatedAt: "confirmed", expectedMessageCount: 5 });
+    const ordinary = request("# Reply To\n\nseq: 9");
+    assert.equal(queue.getReceipt(owner, ordinary.requestId)?.accepted?.request.replyTo, undefined);
+    assert.deepEqual(queue.getReceipt(owner, first.requestId)?.accepted?.request.replyTo, finalReply);
+    assert.deepEqual(queue.getReceipt(owner, pending.requestId)?.dispatched?.request.replyTo, queueReply);
+    const history = sessions.getConversationPage(seeded.id)!;
+    assert.deepEqual(history.messages.map(({ text, historyIndex, replyTo }) => [historyIndex, text, replyTo]), [
+      [0, "original user", undefined], [1, "original final answer", undefined],
+      [2, "start reply", finalReply], [3, "edited queued reply", queueReply], [4, "direct reply", receiptReply],
+    ]);
+    const saved = executionOperationResultSchemas.get_message.parse(read.execute({ target, operation: "get_message", request: { target, seq: finalReply.seq } }));
+    assert.equal(saved.text, "original final answer");
+    assert.equal(String((saved.turn as { id: number }).id), finalReply.finalAnswerTurnId);
+    const accepted = executionOperationResultSchemas.get_execution_input.parse(read.execute({ target, operation: "get_execution_input", request: { ...receiptReply, stage: "original" } }));
+    assert.deepEqual([accepted.receiptId, accepted.text], [first.id, "start reply"]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "直接の子の枠は正確な来歴に従い、Agentの返信参照も現在Turnを開始した本来の送信元宛でだけ保存入力を指す"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠; docs/design/session-history.md#明示返信" }
 // fault = "送受信相手から枠を作る、本文や同じTurnだけで所属を推定する、子の会話を初期枠にも載せる"
-// observable = "実SQLiteが返す子Sessionの一覧・初期枠と各子の正本seq・別枠送信の位置、および元の履歴page"
+// observable = "実SQLiteの枠と正本seq、既存送信一覧と履歴page、同じ保存受付を使うAgent送信の返信先判定"
 // observation_boundary = "public-boundary"
 // scope = "初期枠・直接の子の枠と既存送信一覧・本文pageの接続。人工fixtureだけを使用"
 // lifecycle = "permanent"
@@ -67,6 +129,13 @@ test("Main conversation frames keep only created children and preserve unattribu
     queue.claimForInput(owner(main), fromB.id, "native-main-turn");
     sessions.appendSessionSteer({ ...owner(main), expectedMessageCount: 1, turnId: mainTurn.id, userMessage: { role: "user", text: "identical text" },
       updatedAt: "input", queuedInput: { queueId: fromB.id, inputTurnId: "native-main-turn" } });
+    const active = queue.listActive(owner(main));
+    assert.deepEqual(initiatingReply(target, select(a), turnId, active), { target, seq: 0 });
+    assert.equal(initiatingReply(target, select(b), turnId, active), undefined);
+    assert.equal(initiatingReply(target, { ...select(a), incarnationId: "old-incarnation" }, turnId, active), undefined);
+    assert.equal(initiatingReply(target, select(a), "9999", active), undefined);
+    const additional = queue.getReceipt(owner(main), fromB.requestId)!;
+    assert.equal(initiatingReply(target, select(b), turnId, [additional]), undefined);
     const projection = () => conversationThreadsResultSchema.parse(read.execute({ target, operation: "read_conversation_threads", request: { target } }));
     const live = projection();
     assert.deepEqual(live.children.map(({ target }) => target).sort((x, y) => x.sessionId.localeCompare(y.sessionId)), [select(a), select(b), select(c)]);

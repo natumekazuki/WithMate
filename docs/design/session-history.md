@@ -30,6 +30,12 @@ Session WindowのMain列は、初期枠と、保存された直接の親子関�
 
 本文は既存の会話pageで取得し、絞り込む場合は1 page分の正本seqを指定する。Find・Messages navigatorは表示枠に属する保存本文を全履歴から検索し、Bookmarkは正本seqの状態を変える。送信カードは従来の一括読取と状態の区別を共用する。
 
+## 明示返信
+
+GUIで保存発言または送信カードを一通選ぶと、送信先を変えずにComposerに元本文の引用を表示する。選択は解除でき、未指定時に最新発言を自動指定しない。Agentの通常送信は、現Turnを起動した保存入力の実送信元と宛先が一致する場合だけ、その起動入力を参照する。別Sessionへの追加指示や、起動入力に特定できない送信に返信参照は付けない。
+
+選んだ参照は送信時に確定し、キューの入力JSONと保存発言JSONへ任意の`replyTo`として保存する。予定入力の編集や同じTurnへの追加送信で参照を差し替えない。GUIの引用は既存の一通読取から表示し、元の発言が利用できないときは別の発言で補わない。履歴や宛先の変更、追加のID・テーブル・backfillは行わない。
+
 ## 本文・操作詳細のpaging
 
 通常Session APIは既存の保存履歴read engineを共用する。message／operationの一覧はoffsetとlimit、本文・詳細はoffsetとmaxChars（UTF-16 code unit）で取得する。応答のtotalとnextOffsetで続きを判断し、surrogate pairを途中で分割しない。未保存の操作詳細を空成功や成功実績へ補完しない。

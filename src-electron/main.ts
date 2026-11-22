@@ -23,6 +23,8 @@ import {
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
 import { captureSessionTurnQueueDisplay, type SessionTurnQueueReceipt, type SessionTurnQueueOrigin, type SessionSteerOrigin } from "../src-shared/session/session-turn-queue.js";
+import { savedFinalAnswerTurnId, type SessionReply } from "../src-shared/session/session-reply.js";
+import { initiatingReply } from "./session/initiating-reply.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
 import type { AgentRuntimeSourceRef } from "../src-shared/agent-runtime/agent-runtime-source.js";
@@ -866,7 +868,14 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       const origin = { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
         actorSnapshot: captureSessionTurnQueueDisplay(sender), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
       try {
-        return await facade.enqueueSessionMessage(input, origin, assertCurrent);
+        const owner = requireActivePersistentStoreOwnerForFactory("Session reply reference");
+        const source = actor.kind === "main" ? { kind: "main" as const, sessionId: actor.id, incarnationId: actor.incarnationId } : {
+          kind: "auxiliary" as const, sessionId: actor.id, incarnationId: actor.incarnationId, mainSessionId: actor.mainSessionId, mainIncarnationId: actor.mainIncarnationId,
+        };
+        const replyTo = initiatingReply(source, { kind: target.kind, sessionId: target.id, incarnationId: target.incarnationId }, turnId,
+          await owner.storageWorker!.stores.queue.listActive(source));
+        assertCurrent();
+        return await facade.enqueueSessionMessage(input, origin, assertCurrent, replyTo);
       } catch (error) {
         if (error instanceof SessionTurnQueuePreflightRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
         throw error;
@@ -2502,6 +2511,23 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
   return sessionTurnQueueService;
 }
 
+async function assertSavedReplyTo(reference: SessionReply): Promise<void> {
+  const owner = requireActivePersistentStoreOwnerForFactory("Session reply reference");
+  const execution = owner.storageWorker!.stores.execution;
+  const { target } = reference;
+  if ("receiptId" in reference) {
+    const result = await execution.execute({ target, operation: "get_execution_input", request: { target, receiptId: reference.receiptId, stage: "original", maxChars: 2 } });
+    if (!result.ok) throw new Error("The original reply target is no longer available.");
+  } else {
+    const result = await execution.execute({ target, operation: "get_message", request: { target, seq: reference.seq, maxChars: 2 } });
+    if (!result.ok || !("seq" in result) || result.seq !== reference.seq || !("role" in result) || !("turn" in result)
+      || (reference.finalAnswerTurnId && reference.finalAnswerTurnId !== savedFinalAnswerTurnId({ role: String(result.role), turn: result.turn }))) {
+      throw new Error("The saved reply target no longer matches.");
+    }
+  }
+  assertPersistentStoreOwnerIsActive(owner, "Session reply reference");
+}
+
 function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
   if (!mainSessionTurnQueueFacade) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue facade");
@@ -2522,6 +2548,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         }
       },
       getSession: getQueueRuntimeSession,
+      assertSavedReplyTo,
       getSessionForCoordination: (target) => target.kind === "main"
         ? getRuntimeSession(target.sessionId)
         : requireAuxiliarySessionService().getAuxiliaryRuntimeSession(target.sessionId),
@@ -2560,7 +2587,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       sessions: {
         getSession: (sessionId) => getRuntimeSession(sessionId),
-        appendRunningInput: (session, text, turnId, queuedInput) => requireMainSessionPersistenceFacade().appendRunningInput(session, text, turnId, queuedInput),
+        appendRunningInput: (...args) => requireMainSessionPersistenceFacade().appendRunningInput(...args),
         beginRunningInput: (...args) => requireMainSessionPersistenceFacade().beginRunningInput(...args),
         settleRunningInput: (...args) => requireMainSessionPersistenceFacade().settleRunningInput(...args),
         getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
@@ -2592,6 +2619,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        assertSavedReplyTo,
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
@@ -2700,8 +2728,8 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         },
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
-        appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
-        beginRunningInput: (session, text, turnId, nativeTurnId, attachments, origin, questionRequestId) => requireAuxiliarySessionService().beginRunningInput(session, text, turnId, nativeTurnId, attachments, origin, questionRequestId),
+        appendRunningInput: (...args) => requireAuxiliarySessionService().appendRunningInput(...args),
+        beginRunningInput: (...args) => requireAuxiliarySessionService().beginRunningInput(...args),
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
@@ -2714,6 +2742,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       },
       parent: { getSession: getRuntimeSession },
       resolution: {
+        assertSavedReplyTo,
         resolveComposerPreview,
         resolveProviderCatalog,
         assertCapturedComposerAttachmentsAvailable: async (session, attachments) => {

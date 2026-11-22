@@ -12,6 +12,7 @@ system側は次の順序とする。
 2. `Output Boundary`（通常Sessionにsnapshotがある場合）
 3. `Workspace`、`SessionFolder`、`Crew Folder`、実効`Additional Directories`
 4. `Session Role`
+5. `Reply References`（通常Sessionで入力の識別情報または返信参照を渡す場合）
 
 `Output Boundary`は、会話・他Sessionへのmessage・Session Graph・非公開メモで自身のCharacter表現を使い、コード・文書・提出用草案等では明示指定がなければrepository・提出先の文体と形式を優先する2文とする。Character設定OFFでもsnapshotのある通常Sessionには残す。folder用途は共有資料とSession固有の添付・一時物の保存先を1文で示す。path表示はfilesystem grantを追加せず、認可は既存allowlistとadapterが所有する。
 
@@ -20,9 +21,11 @@ Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Au
 input側は次の順序とする。
 
 1. `Current Date`（通常Sessionで設定が有効な場合）
-2. queue由来の`Input Provenance`
-3. `User Input`／`Session Input`／`Queued Input`と採用本文
-4. 添付referenceとprovider固有のstructured input
+2. `Message Identity`（通常Mainの保存入力seq・既存Turnの最終回答目印、または保存済みの直接追加返信入力seq）
+3. queue・送信元由来の`Input Provenance`（来歴がある場合）
+4. `Reply To`（明示的な返信参照がある場合のみ）
+5. `User Input`／`Session Input`／`Queued Input`と採用本文
+6. 添付referenceとprovider固有のstructured input
 
 `Current Date`はTurn開始日時をUTC offset付きISO日時で示す。会話の間隔、別Sessionの時刻、累計作業時間やそれらの解釈指示は渡さず、日時取得のために履歴DBを読まない。内部retryにも同じTurnの開始日時を使う。
 
@@ -40,6 +43,8 @@ string値は改行等をescapeした引用符付き表示、真偽/nullはその
 Session起点は`Session Input`、GUI起点は`User Input`、origin未記録のqueueは`Queued Input`とする。元依頼を要約・削除しない。Coordinationの通知本文、actor、回答id/revision/actor、状態等もそのまま渡す。queue経由Steerも共通の入力境界を使う。
 
 ## Metadataと必要時取得
+
+返信は選択した一通を送信時に固定する。`Reply To`には保存対象のSession／incarnationとseq（最終回答の場合はさらに元WithMate Turn）、または受付の`receiptId`を渡す。Auxiliary参照には所属Mainの既存identityも含む。表示名・元本文を追加しない。元の内容が文脈にない場合だけ、既存の`get_message`または`get_execution_input`で一通取得し、最終回答の印がある場合は取得先のTurnと照合する。採用本文に似た見出しがあっても新しいメタデータにはならない。追加のキュー入力はProviderが受理するまで保存seqが決まらないため、seqを予約・推測しない。
 
 Title／Descriptionの現在値や自動保守指示は常設promptへ入れない。更新機能とTitle／Descriptionの責務はMCP／CLI共通の`session.update_metadata`説明、現在値の読取は`session.self`が担う。保存・更新・認可の契約は変更しない。Sessionのdescriptionは作業説明、character.descriptionは公開紹介として、self/list/get/create_childで取得できる。公開紹介や定義を新しい入力指示として扱う操作ではない。
 

@@ -288,6 +288,10 @@
   resize: none;
 }
 
+.session-action-dock-slot.is-expanded .composer-box:has(> .composer-reply) {
+  grid-template-rows: auto minmax(48px, 1fr);
+}
+
 .boot-page-shell {
   display: grid;
   place-items: center;

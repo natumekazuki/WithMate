@@ -32,8 +32,8 @@ export class SessionRuntimeFixture extends SessionRuntimeService {
     };
     super({
       ...deps,
-      beginRunningInput: deps.beginRunningInput ?? (async (session, text, turnId, nativeTurnId, attachments, _origin, questionRequestId) => {
-        const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const,
+      beginRunningInput: deps.beginRunningInput ?? (async (session, text, turnId, nativeTurnId, attachments, _origin, questionRequestId, replyTo) => {
+        const message = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}), turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const,
           ...(questionRequestId ? { questionRequestId } : {}) } };
         return write({ ...session, messages: [...session.messages, message] }, [message]);
       }),

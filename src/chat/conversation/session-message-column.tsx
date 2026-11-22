@@ -24,6 +24,8 @@ import { SessionRunFailure } from "./session-run-failure.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
+import { ReplyQuote } from "./reply-quote.js";
+import type { SessionReply } from "../../../src-shared/session/session-reply.js";
 import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 import type { ConversationThread } from "../../../src-shared/session/conversation-threads.js";
 import type { SentInstruction } from "./use-sent-deliveries.js";
@@ -95,6 +97,7 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  onSelectReply?: (reference: SessionReply) => void;
   inputReadContext?: TurnInputReadContext;
   conversationChild?: ConversationThread;
   liveWithMateTurnId?: string;
@@ -466,6 +469,7 @@ export function SelectionTextActionSurface({
 }
 
 export function SessionMessageColumn({
+  onSelectReply,
   inputReadContext,
   conversationChild: thread,
   liveWithMateTurnId,
@@ -615,7 +619,7 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} {...sentMessageContext} />
+        positionUnknown={positionUnknown} onSelectReply={onSelectReply} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
@@ -1522,6 +1526,9 @@ export function SessionMessageColumn({
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
             const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
+            const replyTarget = onSelectReply && inputReadContext && message.historyIndex !== undefined
+              && messageKey !== pendingResponseMessageKey && !isAwaitingSavedResponse && message.text.trim()
+              ? { target: inputReadContext.target, seq: message.historyIndex } : undefined;
 
             return (
               <div
@@ -1601,10 +1608,13 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div className={`message-text-wrapper${messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
-                      {messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
+                    {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} /> : null}
+                    <div className={`message-text-wrapper${replyTarget || messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
+                      {replyTarget || messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
                         <div className="message-collapse-control">
-                          {onToggleMessageCollapse ? (
+                          {replyTarget ? <button className="message-bookmark-toggle" type="button" aria-label="Reply to message" title="Reply to message"
+                            onClick={() => onSelectReply?.(replyTarget)}>↩</button> : null}
+                          {messageCollapseTarget && onToggleMessageCollapse ? (
                             <button
                               className="message-collapse-toggle"
                               type="button"
@@ -1618,7 +1628,7 @@ export function SessionMessageColumn({
                               <span className="visually-hidden">{messageCollapseLabel}</span>
                             </button>
                           ) : null}
-                          {onToggleMessageBookmark ? (
+                          {messageCollapseTarget && onToggleMessageBookmark ? (
                             <button
                               className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
                               type="button"

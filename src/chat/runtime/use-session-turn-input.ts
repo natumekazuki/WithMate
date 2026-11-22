@@ -18,6 +18,8 @@ export function useSessionTurnInput(input: {
   const send = async (target: {
     owner: ComposerOwner;
     auxiliarySession: AuxiliarySession | null;
+    replyTo?: import("../../../src-shared/session/session-reply.js").SessionReply;
+    onAccepted?(): void;
     turnId: string | null;
     canSendInput: boolean;
     blockedReason: string;
@@ -56,6 +58,7 @@ export function useSessionTurnInput(input: {
         const request = {
           expectedTurnId: turnId,
           userMessage: captured.draft,
+          ...(target.replyTo ? { replyTo: target.replyTo } : {}),
           clientRequestId: createSessionTurnClientRequestId(),
           ...(submission ? { auxiliaryDraftIncarnation: submission.durable.incarnation, auxiliaryDraftDurableRevision: submission.durable.durableRevision } : {}),
         };
@@ -63,6 +66,7 @@ export function useSessionTurnInput(input: {
           ? await submission.consume(() => api.steerAuxiliarySessionTurn(owner.id, request))
           : await api.steerSessionTurn(owner.id, request);
         if (result.turnId !== turnId) throw new Error("Input acceptance could not be confirmed.");
+        target.onAccepted?.();
         if (!target.isCurrentOwner()) return;
         if (submission) submission.clear();
         else registry.clearIfRevision(owner, captured.revision);

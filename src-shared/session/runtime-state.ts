@@ -307,6 +307,7 @@ export type ComposerPreview = {
 };
 
 export type RunSessionTurnRequest = {
+  replyTo?: import("./session-reply.js").SessionReply;
   userMessage: string;
   executionOptions: SessionExecutionOptions;
   clientRequestId?: string;
@@ -317,6 +318,7 @@ export type RunSessionTurnRequest = {
 };
 
 export type SteerSessionTurnRequest = {
+  replyTo?: import("./session-reply.js").SessionReply;
   expectedTurnId: string;
   userMessage: string;
   clientRequestId?: string;

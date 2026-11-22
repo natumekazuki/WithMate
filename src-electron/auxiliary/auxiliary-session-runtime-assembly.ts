@@ -30,6 +30,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getSession(sessionId: string): Promise<Session | null>;
   };
   resolution: {
+    assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
     resolveProviderCatalog: SessionRuntimeServiceDeps["resolveProviderCatalog"];
@@ -90,7 +91,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
-    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId, queuedInput)),
+    appendRunningInput: (...args) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(...args)),
     beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
@@ -102,6 +103,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     onSessionRunReleased: deps.onSessionRunReleased,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
+    assertSavedReplyTo: deps.resolution.assertSavedReplyTo,
     resolveProviderSession: (session) => guarded("provider session path", async () => {
       const auxiliary = await deps.auxiliary.getSession(session.id);
       return deps.provider.resolveProviderSession(session, auxiliary?.parentSessionId ?? session.id);

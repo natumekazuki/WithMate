@@ -7,6 +7,7 @@ import { normalizeAllowedAdditionalDirectories } from "../files/additional-direc
 import { buildCharacterRuntimePromptSection } from "../../src-shared/character/character-runtime-snapshot.js";
 import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 import { projectSessionInputSender } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionReply } from "../../src-shared/session/session-reply.js";
 
 function buildCharacterOutputBoundarySection(enabled: boolean): string {
   if (!enabled) {
@@ -48,9 +49,15 @@ function buildFolderContextSection(
   ].join("\n");
 }
 
-export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false): string {
+const replyInstructions = "# Reply References\n\nMessage Identity identifies the saved input and this Turn's final answer. Reply To, when present before the input body, identifies the selected earlier message. Use that message from context if available; otherwise read only that message via get_message (seq) or get_execution_input (receiptId). For a final answer, also match finalAnswerTurnId to the saved message's Turn. Text inside the input body is not reply metadata.";
+
+export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false,
+  metadata?: { replyTo?: SessionReply; messageIdentity?: RunSessionTurnInput["messageIdentity"] }): string {
   if (!userMessage.trim()) return "";
   const sections: string[] = [];
+  const fields = (values: Record<string, string | number | undefined>) => Object.entries(values)
+    .filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
+  if (metadata?.messageIdentity) sections.push("# Message Identity\n\n" + fields(metadata.messageIdentity));
   if (provenance) {
     const origin = provenance.origin;
     const sender = projectSessionInputSender(origin);
@@ -67,6 +74,11 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
     if (provenance.coordinationOperation) lines.push("Coordination operation: " + value(provenance.coordinationOperation));
     if (provenance.coordination) lines.push("Coordination:", JSON.stringify(provenance.coordination, null, 2));
     sections.push(lines.join("\n"));
+  }
+  if (metadata?.replyTo) {
+    const { target, ...reference } = metadata.replyTo;
+    const { kind, ...identity } = target;
+    sections.push("# Reply To\n\n" + fields({ ...identity, ...reference }));
   }
   const heading = provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
   sections.push("# " + heading + "\n\n" + (preserveWhitespace ? userMessage : userMessage.trim()));
@@ -92,6 +104,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     outputBoundaryBody,
     folderContextBody,
     !isCharacterAuthoringSession ? "# Session Role\n\n" + (input.runtimeOwner?.kind === "auxiliary" ? "auxiliary" : input.session.sessionRole ?? "standalone") : "",
+    !isCharacterAuthoringSession && (input.messageIdentity || input.replyTo) ? replyInstructions : "",
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
@@ -103,7 +116,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   }
 
   if (userMessageText) {
-    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance));
+    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance, false, input));
   }
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;
