@@ -2,6 +2,8 @@ import { z } from "zod";
 import { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 import { sessionHistoryOperationRequestSchemas } from "../session-history/session-history-contract.js";
 import { providerOutputSchema } from "./provider-output.js";
+import { conversationThreadsRequestSchema, conversationThreadsResultSchema } from "./conversation-threads.js";
+import { sessionReplySchema } from "./session-reply.js";
 
 const id = z.string().min(1).max(256);
 const page = { offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() };
@@ -28,7 +30,9 @@ export const executionOperationRequestSchemas = {
 } as const;
 export type ExecutionReadOperation = keyof typeof executionOperationRequestSchemas;
 export type ExecutionReadRequest = z.infer<typeof executionOperationRequestSchemas[ExecutionReadOperation]>;
-export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionReadOperation; request: ExecutionReadRequest };
+export const executionWindowRequestSchemas = { ...executionOperationRequestSchemas, read_conversation_threads: conversationThreadsRequestSchema };
+export type ExecutionWindowReadOperation = keyof typeof executionWindowRequestSchemas;
+export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionWindowReadOperation; request: ExecutionReadRequest | z.infer<typeof conversationThreadsRequestSchema> };
 const nullableId = z.string().nullable();
 const summary = z.object({ entry: z.object({ receiptId: id, inputSeq: z.number().nullable(), kind: z.enum(["start", "additional"]), stage: z.enum(["fixed", "planned", "not-fixed"]), comparison: z.enum(["unchanged", "changed", "unknown"]), detail: z.object({ operation: z.literal("get_execution_input"), receiptId: id }) }).nullable(), startChanged: z.boolean().nullable(), additional: z.object({ confirmedCount: z.number().int().nonnegative(), references: z.array(z.object({ seq: z.number().int().nonnegative() })), referencesNextOffset: z.number().nullable(), unresolved: z.array(z.object({ seq: z.number().nullable(), receiptId: id.optional(), state: z.enum(["pending", "unknown"]) })), unresolvedCount: z.number(), unresolvedNextOffset: z.number().nullable(), notSent: z.array(z.object({ seq: z.number() })), notSentCount: z.number(), notSentNextOffset: z.number().nullable(), coverage: z.enum(["recorded", "unknown"]) }) });
 const displaySnapshot = z.object({ sessionTitle: z.string(), character: z.object({ id: z.string(), name: z.string(), iconPath: z.string(), description: z.string().optional() }) });
@@ -52,7 +56,7 @@ const executionSettings = z.object({
 export const executionOperationResultSchemas = {
   list_sent_steers: z.object({ ...ok, items: z.array(z.object({ sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, messageSeq: z.number().int().nonnegative(), state: z.enum(["pending", "confirmed", "unknown", "not-sent"]), origin: steerOrigin, text: z.string() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_issued_coordinations: z.object({ ...ok, items: z.array(z.object({ id, sourceTurnId: id, sourceMessageSeq: z.number().nullable(), consultation: z.string() })), nextCursor: id.nullable() }),
-  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), sourceDisplayPosition: z.number().int().nonnegative().nullable().optional(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, text: z.string(), coordination: coordinationDisplay.optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
+  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), sourceDisplayPosition: z.number().int().nonnegative().nullable().optional(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, text: z.string(), replyTo: sessionReplySchema.optional(), coordination: coordinationDisplay.optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
   get_message: z.object({ ...ok, seq: z.number(), role: z.enum(["user", "assistant"]), turn: z.unknown(), ...textPiece }).passthrough(),
   list_operations: z.object({ ...ok, seq: z.number(), section: z.string(), artifactDetailSaved: z.boolean(), ...resultPage }).passthrough(),
@@ -69,6 +73,7 @@ export const executionOperationResultSchemas = {
     description.extend({ ...ok, seq: z.number(), kind: z.literal("changed_file"), index: z.number(), rows: z.array(z.unknown()), offset: z.number(), nextOffset: z.number().nullable(), totalRows: z.number() }).passthrough(),
   ]),
 } as const;
+export const executionWindowResultSchemas = { ...executionOperationResultSchemas, read_conversation_threads: conversationThreadsResultSchema };
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
   list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
   list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",

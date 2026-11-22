@@ -58,6 +58,7 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
+  replyUnavailableReason?: string;
   queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
   isActive?: boolean;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
@@ -163,6 +164,7 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
+  replyUnavailableReason,
   queuedTurnEdit,
   isActive = true,
   composerController,
@@ -306,8 +308,11 @@ export function SessionComposerExpanded({
       : sendButtonTitle;
   const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
   const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
-    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable;
-  const sendDisabledReason = composerFrozen
+    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable
+    || !!replyUnavailableReason;
+  const sendDisabledReason = replyUnavailableReason
+    ? replyUnavailableReason
+    : composerFrozen
     ? "Input is frozen while the window is closing."
     : turnRecoveryAction === "check"
       ? "Checking turn acceptance."

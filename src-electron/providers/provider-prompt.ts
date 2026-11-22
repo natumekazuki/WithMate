@@ -7,6 +7,7 @@ import { normalizeAllowedAdditionalDirectories } from "../files/additional-direc
 import { buildCharacterRuntimePromptSection } from "../../src-shared/character/character-runtime-snapshot.js";
 import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 import { projectSessionInputSender } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionReply } from "../../src-shared/session/session-reply.js";
 
 function buildCharacterOutputBoundarySection(enabled: boolean): string {
   if (!enabled) {
@@ -48,9 +49,13 @@ function buildFolderContextSection(
   ].join("\n");
 }
 
-export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false): string {
+export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false,
+  metadata?: { replyTo?: SessionReply; messageIdentity?: RunSessionTurnInput["messageIdentity"] }): string {
   if (!userMessage.trim()) return "";
   const sections: string[] = [];
+  const fields = (values: Record<string, string | number | undefined>) => Object.entries(values)
+    .filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
+  if (metadata?.messageIdentity) sections.push("# Message Identity\n\n" + fields(metadata.messageIdentity));
   if (provenance) {
     const origin = provenance.origin;
     const sender = projectSessionInputSender(origin);
@@ -81,6 +86,11 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
     if (provenance.coordinationOperation) lines.push("Coordination operation: " + value(provenance.coordinationOperation));
     if (provenance.coordination) lines.push("Coordination:", JSON.stringify(provenance.coordination, null, 2));
     sections.push(lines.join("\n"));
+  }
+  if (metadata?.replyTo) {
+    const { target, ...reference } = metadata.replyTo;
+    const { kind, ...identity } = target;
+    sections.push("# Reply To\n\n" + fields({ ...identity, ...reference }));
   }
   const heading = provenance?.retrySource && provenance.originalChanged === false ? provenance.retrySource.origin.kind === "session" ? "Retried Session Input" : "Retried User Input"
     : provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
@@ -118,7 +128,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   }
 
   if (userMessageText) {
-    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance));
+    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance, false, input));
   }
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;

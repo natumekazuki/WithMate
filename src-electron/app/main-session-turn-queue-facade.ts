@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { sessionReplySchema, type SessionReply } from "../../src-shared/session/session-reply.js";
 import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, type ComposerPreview, type RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions, validateSessionExecutionOptions, type SessionExecutionOptions, type SessionMessageExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionOperationRequest } from "../../src-shared/session/session-management-contract.js";
@@ -18,6 +19,7 @@ export type MainSessionTurnQueueFacadeDeps = {
   getSessionForCoordination?(target: SessionTurnQueueOwner & { kind: "main" | "auxiliary" }): Promise<Session | null>;
   getAppSettings(): Promise<AppSettings>;
   validateWorkspace(session: Session): Promise<void>;
+  assertSavedReplyTo?(reference: SessionReply): Promise<void>;
   validateProvider(session: Session): Promise<{ provider: ModelCatalogProvider }>;
   preview(session: Session, userMessage: string): Promise<ComposerPreview>;
   readRetryExecution?(input: RetryFailedSessionTurnRequest): Promise<SessionExecutionReadResult<"get_execution">>;
@@ -40,7 +42,7 @@ export class MainSessionTurnQueueFacade {
     return this.withAcceptanceLock(sessionId, async () => this.projectSourceRelease(await this.accept(sessionId, input, origin, assertActorCurrent)));
   }
 
-  async enqueueSessionMessage(input: SessionOperationRequest<"enqueue">, origin: SessionTurnQueueOrigin, assertActorCurrent: () => void | Promise<void>) {
+  async enqueueSessionMessage(input: SessionOperationRequest<"enqueue">, origin: SessionTurnQueueOrigin, assertActorCurrent: () => void | Promise<void>, replyTo?: SessionReply) {
     const requested: SessionMessageExecutionOptions = {
       approvalMode: input.approvalMode,
       ...(input.model === undefined ? {} : { model: input.model }),
@@ -49,6 +51,7 @@ export class MainSessionTurnQueueFacade {
     };
     return this.withAcceptanceLock(input.target.sessionId, async () => this.projectSourceRelease(await this.accept(input.target.sessionId, {
       incarnationId: input.target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer",
+      ...(replyTo ? { replyTo } : {}),
     }, { ...origin, deliveryTiming: input.deliveryTiming ?? "immediate", requestedExecutionOptions: requested }, assertActorCurrent, requested)));
   }
 
@@ -110,8 +113,11 @@ export class MainSessionTurnQueueFacade {
           throw new Error("The original fixed input or its sender is unavailable or inconsistent.");
         }
         await this.deps.validateRetryAttachments(session, fixed.attachments);
+        const replyTo = fixed.request.replyTo;
+        if (replyTo) await this.deps.assertSavedReplyTo?.(replyTo);
         const request: SessionTurnQueueCapturedInput["request"] = {
           clientRequestId: requestId, userMessage: fixed.request.userMessage, submitSource: "retry",
+          ...(replyTo ? { replyTo } : {}),
           executionOptions: captureSessionExecutionOptions(input.executionOptions),
         };
         const prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), false);
@@ -176,8 +182,10 @@ export class MainSessionTurnQueueFacade {
       }
     }
     if (!executionOptions || typeof executionOptions !== "object") throw new Error("Turn execution options are required.");
+    const replyTo = origin && previous ? previous.accepted?.request.replyTo : input.replyTo;
     const request: RunSessionTurnRequest & { clientRequestId: string } = {
       userMessage: input.userMessage.trim(),
+      ...(replyTo === undefined ? {} : { replyTo: sessionReplySchema.parse(replyTo) }),
       clientRequestId: requestId,
       submitSource: source,
       executionOptions: captureSessionExecutionOptions(executionOptions),
@@ -196,6 +204,7 @@ export class MainSessionTurnQueueFacade {
     try {
       this.deps.assertAccepting();
       await assertActorCurrent?.();
+      if (request.replyTo) await this.deps.assertSavedReplyTo?.(request.replyTo);
       if (request.auxiliaryDraftIncarnation !== undefined && (typeof request.auxiliaryDraftIncarnation !== "string" || !request.auxiliaryDraftIncarnation.trim())) throw new Error("The Auxiliary draft identity is invalid.");
       if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
       if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");

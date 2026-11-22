@@ -11,6 +11,7 @@ import type { CharacterVisual } from "../../../src-shared/character/character-st
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
 import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
+import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
 
@@ -95,6 +96,7 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
     <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
       style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">
       {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
+      {props.receipt.captured.request.replyTo && props.inputReadContext ? <ReplyQuote ownerSessionId={props.inputReadContext.ownerSessionId} reference={props.receipt.captured.request.replyTo} /> : null}
       {read.coordination && props.inputReadContext ? <>
         <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target} />
         <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>

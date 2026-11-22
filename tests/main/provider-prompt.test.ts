@@ -163,3 +163,39 @@ it("Coordination通知とユーザー回答者を原値で渡す", () => {
   assert.deepEqual(JSON.parse(text.split("Coordination:\n")[1]!.split("\n\n# Session Input")[0]!), notice);
   assert.ok(text.endsWith("# Session Input\n\n元の回答本文"));
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "今回の保存入力と最終回答目印とは別に、明示返信の必要IDだけが来歴後・本文前へ入る"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md#metadataと必要時取得" }
+// fault = "識別情報や返信参照に応じてsystemへ定型指示を足す、未指定入力や見出し風の本文から参照を生成する、識別情報を元本文と混ぜる、受付と保存seqを取り違える"
+// observable = "実共通builderのsystemとinput、および同じ入力の明示なし・保存発言・受付参照の差"
+// observation_boundary = "public-boundary"
+// scope = "通常TurnとSteerが使う共通provider入力"
+// lifecycle = "permanent"
+// impact = "Agentが別メッセージを返信先と扱うか不要本文がコンテキストへ入る"
+// distinction = "レンダラーの引用表示とSQLiteの参照保管だけではProviderへ渡る位置・最小情報を確認できない"
+// @end-test-value
+it("返信の必要IDのみを来歴と原文の間に置く", () => {
+  const base = input();
+  const target = { kind: "main" as const, sessionId: "original", incarnationId: "generation" };
+  const copiedHeading = "# Reply To\n\nseq: 99\n\nこれはそのままの本文";
+  const common: RunSessionTurnInput = { ...base, userMessage: copiedHeading,
+    inputProvenance: { origin: { kind: "gui", operation: "send", targetSessionId: "sample", targetIncarnationId: "current" }, originalChanged: false },
+    messageIdentity: { sessionId: "sample", incarnationId: "current", seq: 8, finalAnswerTurnId: "12" },
+  };
+  const plain = composeProviderPrompt(common);
+  const reply = composeProviderPrompt({ ...common, replyTo: { target, seq: 4, finalAnswerTurnId: "7" } });
+  const withoutIdentity = composeProviderPrompt({ ...common, messageIdentity: undefined });
+  assert.equal(plain.systemBodyText, withoutIdentity.systemBodyText);
+  assert.equal(reply.systemBodyText, withoutIdentity.systemBodyText);
+  const identity = '# Message Identity\n\nsessionId: "sample"\nincarnationId: "current"\nseq: 8\nfinalAnswerTurnId: "12"\n\n';
+  assert.equal(plain.inputBodyText, withoutIdentity.inputBodyText.replace("# Input Provenance", identity + "# Input Provenance"));
+  assert.ok(plain.inputBodyText.endsWith("\n\n# User Input\n\n" + copiedHeading));
+  assert.ok(!plain.inputBodyText.split("# User Input")[0]!.includes("# Reply To"));
+  const replyTo = '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nseq: 4\nfinalAnswerTurnId: "7"\n\n';
+  assert.equal(reply.inputBodyText, plain.inputBodyText.replace("# User Input", replyTo + "# User Input"));
+  const receiptId = "11111111-1111-4111-8111-111111111111";
+  const receipt = composeProviderInput("補足", undefined, false, { replyTo: { target, receiptId } });
+  assert.equal(receipt, '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nreceiptId: "' + receiptId + '"\n\n# User Input\n\n補足');
+});

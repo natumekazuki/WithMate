@@ -1,4 +1,5 @@
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
+import { sessionReplySchema, type SessionReply } from "./session-reply.js";
 import { getDefaultApprovalModeForProvider } from "../settings/provider-runtime-options.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
@@ -59,6 +60,7 @@ export type TurnInputMetadata = {
 };
 
 export type Message = {
+  replyTo?: SessionReply;
   output?: ProviderOutput;
   turnInput?: TurnInputMetadata;
   runFailure?: string;
@@ -444,6 +446,7 @@ export function normalizeMessage(value: unknown): Message | null {
   return {
     role: candidate.role,
     text: typeof candidate.text === "string" ? candidate.text : "",
+    ...(candidate.replyTo === undefined ? {} : { replyTo: sessionReplySchema.parse(candidate.replyTo) }),
     ...(candidate.output ? { output: normalizeProviderOutput(candidate.output, typeof candidate.text === "string" ? candidate.text : "") } : {}),
     ...(candidate.turnInput ? { turnInput: structuredClone(candidate.turnInput) } : {}),
     ...(candidate.role === "assistant" && typeof candidate.runFailure === "string" ? { runFailure: candidate.runFailure } : {}),

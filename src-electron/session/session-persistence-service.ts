@@ -821,10 +821,10 @@ export class SessionPersistenceService {
     return { session: stored, ...(storedResult.queuedTurn ? { turn: storedResult.queuedTurn } : {}) };
   }
 
-  async appendRunningInput(nextSession: Session, text: string, turnId: number, queuedInput?: SessionSteerAppendInput["queuedInput"]): Promise<Session> {
+  async appendRunningInput(nextSession: Session, text: string, turnId: number, queuedInput?: SessionSteerAppendInput["queuedInput"], replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.appendStoredSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
-      const message = { role: "user" as const, text };
+      const message = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}) };
       const result = await this.deps.appendStoredSessionSteer({
         sessionId: nextSession.id,
         incarnationId: getSessionIncarnationId(nextSession),
@@ -838,10 +838,10 @@ export class SessionPersistenceService {
     });
   }
 
-  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin, questionRequestId?: string): Promise<Session> {
+  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin, questionRequestId?: string, replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.beginStoredSessionSteer) throw new Error("Durable Session input storage is unavailable.");
-      const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(origin ? { origin } : {}), ...(questionRequestId ? { questionRequestId } : {}) } };
+      const message = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}), turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(origin ? { origin } : {}), ...(questionRequestId ? { questionRequestId } : {}) } };
       const result = await this.deps.beginStoredSessionSteer({ sessionId: nextSession.id, incarnationId: getSessionIncarnationId(nextSession),
         expectedMessageCount: nextSession.messageCount ?? nextSession.messages.length, turnId, userMessage: message,
         nativeTurnId, attachments, updatedAt: nextSession.updatedAt });

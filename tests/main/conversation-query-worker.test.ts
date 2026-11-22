@@ -29,6 +29,52 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "枠のFindとMessages navigatorは表示外の元message seqも対象にし、継続pageとBookmark絞込みでも別の枠を混ぜない"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠" }
+// fault = "全件検索や表示中のsliceへ誤って戻る、継続pageの表示先が旧スレッドのままになる"
+// observable = "実Workerの検索件数、2 page目の正本message seq、投影が違うstampのinvalidated、Bookmark一覧"
+// observation_boundary = "public-boundary"
+// scope = "保存済み会話のFind/navigatorで同じ所属範囲と正本seqを維持する"
+// lifecycle = "permanent"
+// impact = "無関係な本文が見つかる、古い発言やブックマークへ到達できない"
+// distinction = "既存の全履歴検索のpagingやrenderer fixtureでは、同じWorkerに異なる所属範囲の継続を渡した際の境界を確認しない"
+// @end-test-value
+test("scoped Find and Messages pages retain canonical indexes outside the tail", async () => {
+  const f = await fixture();
+  try {
+    const { id } = f.session;
+    const store = f.bundle.stores.session;
+    const messageIndexes = Array.from({ length: 68 }, (_, index) => index * 2);
+    const request = { producerId: "peer-find", requestId: "peer-a", query: "needle", mode: "source" as const, messageIndexes };
+    const first = await store.searchConversation(id, request);
+    if (first.status !== "complete") throw new Error("No scoped Find results");
+    assert.equal(first.totalCount, 68);
+    assert.equal(first.items[0].messageIndex, 0);
+    const next = await store.searchConversation(id, { ...request, offset: 64, stamp: first.stamp });
+    if (next.status !== "complete") throw new Error("No scoped continuation");
+    assert.deepEqual(next.items.map(({ messageIndex }) => messageIndex), [128, 130, 132, 134]);
+    assert.equal((await store.searchConversation(id, { ...request, offset: 64, stamp: first.stamp, messageIndexes: [3] })).status, "invalidated");
+    const navRequest = { producerId: "peer-nav-all", requestId: "peer-a", filter: "all" as const, messageIndexes };
+    const navFirst = await store.listConversationNavigator(id, navRequest);
+    if (navFirst.status !== "complete") throw new Error("No scoped Messages results");
+    const navNext = await store.listConversationNavigator(id, { ...navRequest, offset: 64, stamp: navFirst.stamp });
+    if (navNext.status !== "complete") throw new Error("No scoped Messages continuation");
+    assert.deepEqual(navNext.items.map(({ messageIndex }) => messageIndex), [128, 130, 132, 134]);
+    assert.equal((await store.listConversationNavigator(id, { ...navRequest, offset: 64, stamp: navFirst.stamp, messageIndexes: [3] })).status, "invalidated");
+    const navigator = (scope: number[], requestId: string) => store.listConversationNavigator(id, {
+      producerId: "peer-nav", requestId, filter: "bookmarks", messageIndexes: scope,
+    });
+    const included = await navigator([4, 134], "included");
+    if (included.status !== "complete") throw new Error("No bookmark results");
+    assert.deepEqual(included.items.map(({ messageIndex }) => messageIndex), [4]);
+    const excluded = await navigator([3, 134], "excluded");
+    if (excluded.status !== "complete") throw new Error("No bookmark result");
+    assert.equal(excluded.totalCount, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "検索modeを切り替えたraw-source anchorは同じmessageとoffsetのglobal ordinalへ解決し、anchor省略の継続pageでも維持される"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: FindのPreview／Source切替" }
 // fault = "原文と描画の順序差を無視するかmessageを取り違えるかpage取得でanchorを失う"

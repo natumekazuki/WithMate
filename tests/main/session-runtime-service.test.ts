@@ -228,10 +228,10 @@ it("指定Turn停止はWithMate identityを固定し後続へ適用しない", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接SteerはProvider呼出前にpendingを保存し、未送信・外部結果不明・保存ACK喪失を区別して再送せず同じTurnの本文を保持する"
-// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別" }
+// claim = "直接SteerはProvider呼出前にpendingと固定された返信参照を保存し、未送信・外部結果不明・保存ACK喪失を区別して同じ本文と参照を保つ"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別; docs/design/session-history.md#明示返信" }
 // fault = "記録前にProviderへ送る、未送信を不明にする、不明送信を再送する、確定commitのACK喪失で入力を上書きする"
-// observable = "adapter呼出時のpending message、呼出件数、保存messageのTurn/native IDと配送状態、terminal後の本文列"
+// observable = "adapter呼出時のpendingと返信参照、Provider入力の返信ID、配送状態、呼出件数、terminal後の本文と参照"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeService直接Steerとfixture永続portの故障注入"
 // lifecycle = "permanent"
@@ -240,6 +240,7 @@ it("指定Turn停止はWithMate identityを固定し後続へ適用しない", a
 it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再送しない", async () => {
   for (const mode of ["unknown", "not-sent", "begin-lost", "confirm-lost"] as const) {
     let stored = createSession({ threadId: "thread" });
+    const reference = { target: { kind: "main" as const, sessionId: stored.id, incarnationId: getSessionIncarnationId(stored) }, seq: 0 };
     let finish!: () => void;
     const done = new Promise<void>((resolve) => { finish = resolve; });
     let calls = 0;
@@ -260,6 +261,8 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
         assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
         assert.equal(stored.messages.at(-1)?.turnInput?.turnId, "1");
         assert.equal(stored.messages.at(-1)?.turnInput?.nativeTurnId, input.expectedTurnId);
+        assert.deepEqual(stored.messages.at(-1)?.replyTo, reference);
+        assert.match(input.userMessage, /# Reply To\n\nsessionId: [^\n]+\nincarnationId: [^\n]+\nseq: 0\n\n# User Input\n\nadditional$/);
         if (mode === "unknown") throw new Error("Provider outcome unknown");
         return { turnId: input.expectedTurnId };
       },
@@ -278,12 +281,13 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
     const turn = runtime.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
     try {
       await waitForCondition(() => entered, "direct input active turn");
-      await assert.rejects(runtime.steerSessionTurn(stored.id, { expectedTurnId: "native-turn", userMessage: "additional" }));
+      await assert.rejects(runtime.steerSessionTurn(stored.id, { expectedTurnId: "native-turn", userMessage: "additional", replyTo: reference }));
       assert.equal(calls, mode === "unknown" || mode === "confirm-lost" ? 1 : 0);
       assert.equal(stored.messages.at(-1)?.turnInput?.state, mode === "unknown" ? "unknown" : mode === "confirm-lost" ? "confirmed" : "not-sent");
       finish();
       await turn;
       assert.deepEqual(stored.messages.map((message) => message.text), ["start", "additional", "partial retained"]);
+      assert.deepEqual(stored.messages[1]?.replyTo, reference);
     } finally { finish(); await turn; }
   }
 });
@@ -678,10 +682,10 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行のlive stateは保存済みturn ID・receiptの対応とprovider native IDを区別し、複数回の進捗でも維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ; src-shared/session/runtime-state.ts: LiveSessionRunState" }
-// fault = "保存済みturn IDやreceiptの対応をlive stateへ渡さないか、providerの進捗で上書きするか、native IDを保存IDへ置換する"
-// observable = "開始通知のturn IDと、Main/Auxiliaryの初期・進捗live stateにあるreceipt identity・sessionTurnId・turnId・本文"
+// claim = "queued実行は保存済みTurn・入力seqとprovider native IDを区別し、MainのProviderに正本の入力seqと最終回答目印を渡す。明示返信の参照は開始保存とProviderへ同じ値を渡す"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常sessionの入力; docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ" }
+// fault = "保存Turn/receiptの対応をlive stateで失う、Providerに渡す開始入力seqや最終回答目印を取り違える、または保存・実行の一方で返信参照を失う"
+// observable = "開始通知のTurn ID、Provider境界のmessageIdentity（Mainのみ）、Main/Auxiliaryのlive state、開始保存とProviderのreplyTo"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeServiceのqueued開始とprovider進捗合流"
 // lifecycle = "permanent"
@@ -691,10 +695,15 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する", async () => {
   for (const auxiliary of [false, true]) {
     const session = createSession({ incarnationId: "owner" });
+    const reference = auxiliary ? undefined : { target: { kind: "main" as const, sessionId: "referenced", incarnationId: "reference-v1" }, seq: 7, finalAnswerTurnId: "38" };
     let live: LiveSessionRunState | null = null;
     const states: LiveSessionRunState[] = [];
     const starts: string[] = [];
     const runtime = createProgressRuntime(session, async (input, progress) => {
+      assert.deepEqual(input.messageIdentity, auxiliary ? undefined : {
+        sessionId: session.id, incarnationId: "owner", seq: 0, finalAnswerTurnId: "41",
+      });
+      assert.deepEqual(input.replyTo, reference);
       for (const assistantText of ["partial", "partial updated"]) {
         await emitTestProgress(progress, { ...createLiveRunState({ sessionId: input.session.id, assistantText }),
           sessionTurnId: "provider-value", turnId: "native-turn", inputAvailable: true });
@@ -703,12 +712,16 @@ it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する"
     }, {
       isAuxiliarySession: () => auxiliary,
       assertCapturedComposerAttachmentsAvailable: async () => {},
-      persistQueuedTurnStart: (next, _count, _id, turn) => ({ session: next, turn: { ...turn, id: 41 } }),
+      persistQueuedTurnStart: (next, _count, _id, turn) => {
+        assert.deepEqual(next.messages.at(-1)?.replyTo, reference);
+        return { session: next, turn: { ...turn, id: 41 } };
+      },
       appendTerminalSession: (next) => next,
       setLiveSessionRun: (_id, state) => { live = state; if (state) states.push(state); },
       getLiveSessionRun: () => live,
     });
     const receipt = queuedReceipt(session);
+    if (reference) receipt.dispatched!.request.replyTo = reference;
     assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
     assert.deepEqual(starts, ["41"]);
     assert.equal(states[0]?.sessionTurnId, "41");
@@ -1600,10 +1613,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "queued steerは固定添付・実送信元をProviderへ渡し、準備中の重複を拒否し、append返信喪失でも元本文と正本件数をterminalへ維持する"
-  // oracle = { type = "contract", ref = "GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
-  // fault = "queued本文を再previewするか、commit済み追加入力の件数を失いterminal保存を失敗させる"
-  // observable = "provider attachmentsと実送信元/変更有無付き入力本文、重複reject、append queue contextと件数、terminalの未装飾本文"
+  // claim = "queued steerは固定添付・実送信元・確定した返信先をProviderへ渡し、重複を拒否し、append返信喪失でも元本文と参照をterminalへ維持する"
+  // oracle = { type = "contract", ref = "docs/design/session-history.md#明示返信; GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
+  // fault = "queued本文を再previewする、参照を予定値に差し替えるかcommit済み追加の本文・参照を終端で失う"
+  // observable = "Provider入力内の添付・来歴・返信先、重複拒否、appendへ届くqueue contextと返信先、terminalの未装飾本文・参照"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService.steerQueuedSessionTurn and terminal persistence"
   // lifecycle = "permanent"
@@ -1637,6 +1650,8 @@ describe("SessionRuntimeService", () => {
     };
     receipt.captured.origin = { kind: "session", actorKind: "main", actorSessionId: "actual-parent", actorIncarnationId: "parent-incarnation",
       actorTurnId: "15", operation: "send", targetSessionId: stored.id, targetIncarnationId: getSessionIncarnationId(stored) };
+    const replyTo = { target: { kind: "main" as const, sessionId: "fixed-reply", incarnationId: "fixed-generation" }, seq: 2, finalAnswerTurnId: "6" };
+    receipt.captured.request.replyTo = replyTo;
     receipt.accepted = structuredClone(receipt.captured);
     receipt.dispatched = structuredClone(receipt.captured);
     const service = createTestRuntime({
@@ -1644,10 +1659,11 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async (_, text) => { assert.equal(text, "start"); return { attachments: [], errors: [] }; },
       assertCapturedComposerAttachmentsAvailable: async (_, attachments) => { assert.deepEqual(attachments, receipt.captured.attachments); verifying = true; await preparing; },
       getQueuedInputReceipt: () => receipt,
-      appendRunningInput: (session, text, localTurnId, context) => {
+      appendRunningInput: (session, text, localTurnId, context, reference) => {
         assert.equal(localTurnId, 1);
         assert.deepEqual(context, { queueId: receipt.id, inputTurnId: "provider-turn" });
-        stored = { ...stored, messages: [...stored.messages, { role: "user", text }] };
+        assert.deepEqual(reference, replyTo);
+        stored = { ...stored, messages: [...stored.messages, { role: "user", text, replyTo: reference }] };
         receipt.state = "completed";
         throw new Error("append commit reply lost");
       },
@@ -1660,8 +1676,10 @@ describe("SessionRuntimeService", () => {
     });
     const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
     await waitForCondition(() => live?.inputAvailable === true, "active queued input turn");
+    receipt.captured.request.replyTo = { ...replyTo, seq: 98 };
     const steer = service.steerQueuedSessionTurn(receipt, "provider-turn");
     await waitForCondition(() => verifying, "captured verification held");
+    receipt.dispatched.request.replyTo = { ...replyTo, seq: 99 };
     await assert.rejects(service.steerQueuedSessionTurn(receipt, "provider-turn"), /already being sent/);
     finishPrepare();
     await steer;
@@ -1669,9 +1687,13 @@ describe("SessionRuntimeService", () => {
     assert.match(sent[0]!.userMessage, /# Session Input\n\nqueued @captured/);
     assert.match(sent[0]!.userMessage, /Session: "actual-parent"/);
     assert.match(sent[0]!.userMessage, /Changed since acceptance: false/);
+    assert.match(sent[0]!.userMessage, /# Reply To\n\nsessionId: "fixed-reply"\nincarnationId: "fixed-generation"\nseq: 2\nfinalAnswerTurnId: "6"\n\n# Session Input/);
+    assert.ok(!sent[0]!.userMessage.includes("# Message Identity"));
     assert.equal(sent.length, 1);
     finishTurn();
-    assert.deepEqual((await turn).messages.map((message) => message.text), ["start", "queued @captured", "done"]);
+    const completed = await turn;
+    assert.deepEqual(completed.messages.map((message) => message.text), ["start", "queued @captured", "done"]);
+    assert.deepEqual(completed.messages[1]?.replyTo, replyTo);
   });
 
   // @test-value v2
