@@ -82,6 +82,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   let pendingSubmission: SessionTurnSubmission | undefined;
   for (const submission of options?.submissions ?? []) {
     if (submission.sessionId !== owner.sessionId || submission.incarnationId !== owner.incarnationId
+      || (!submission.receipt && !submission.error)
       || owned.some((receipt) => receipt.requestId === submission.requestId)) continue;
     if (submission.queuedBehindRun || hasUnreleasedInterruption || activeReceipt || pendingSubmission) {
       localTail.push(submission);

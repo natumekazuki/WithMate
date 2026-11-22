@@ -291,7 +291,7 @@ test("conversation column は異なる保存IDとnative IDで初回のlive応答
 // @test-value v2
 // kind = "contract"
 // claim = "Main/Auxはqueueなし・receipt先着・回答先着のいずれでも保存済み質問回答を表示し、予約と同文でも回答を一度だけ表示する。履歴以前の遅いreceipt読込では合流待ちを解かず、最新照会後は回答・応答identityと予約順を保つ。後続予約がlive通知なしで完了しても、receipt/canonicalの到着順によらず待機DOMを保存済み応答へ継承する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/907; docs/design/desktop-ui.md: Question Forms / 送信直後の先行表示" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Question Forms / Session Windowの受付済みreceiptと保存user seqの表示" }
 // fault = "未実行予約で質問回答を隠し続ける、古い照会で通常予約を二重表示する、同文の回答を予約に誤結合する、または応答identity・予約順を変える"
 // observable = "実Column DOMのuser本文・順序・件数、応答node identity、Column messageKeys、submissionの残存request ID、queue操作API呼出"
 // observation_boundary = "component-behavior"
@@ -369,7 +369,7 @@ test("conversation column shows question answers independently of queued submiss
         await act(async () => staleRead());
         if (reserved.length) assert.equal(column().messages.some((message) => message.role === "user" && message.historyIndex === 1), false, "a pre-history read cannot resolve this handoff");
         await finishReads();
-        assert.deepEqual(users(), ["current prompt", "same answer", ...reserved.map((item) => item.captured.request.userMessage)], `${kind}/${arrival}: saved answer is not a queued prompt`);
+        assert.deepEqual(users(), ["current prompt", "same answer", ...(arrival === "receipt-first" ? reserved.map((item) => item.captured.request.userMessage) : [])], `${kind}/${arrival}: saved answer is not a queued prompt`);
         const answerKey = column().messageKeys?.[1];
         assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseNode);
         assert.equal(column().responsePresentationKey, responseKey);
@@ -916,15 +916,15 @@ test("paged column applies all-fold intent across unloaded pages", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの予約・先行本文は対象会話の画像APIでlocal画像を読み込み、同じ文脈で画像copy menuへ到達し、previewと予約取消操作を保持する"
+// claim = "MainとAuxiliaryの予約・送信失敗時の本文は対象会話の画像APIでlocal画像を読み込み、同じ文脈で画像copy menuへ到達し、previewと予約取消操作を保持する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling; docs/design/desktop-ui.md: 予約は通常のuser bubbleとして表示" }
-// fault = "予約・先行行へ画像resolverまたは操作文脈を渡さない、別会話のcontextで読む・copyする、または取得した画像をpreview可能な状態にしない"
+// fault = "予約・送信失敗行へ画像resolverまたは操作文脈を渡さない、別会話のcontextで読む・copyする、または取得した画像をpreview可能な状態にしない"
 // observable = "画像APIとnative menu requestのsessionId・target、表示画像のaltとblob内容、load後のpreview button、予約取消button"
 // observation_boundary = "component-behavior"
-// scope = "useConversationMessageColumnからSessionMessageColumnと予約・先行本文の画像読込・copy menuまでの接合"
+// scope = "useConversationMessageColumnからSessionMessageColumnと予約・送信失敗時の本文の画像読込・copy menuまでの接合"
 // lifecycle = "permanent"
 // impact = "実行中に送信した画像付き本文を待機中に確認・copyできなくなる"
-// distinction = "画像loader単体とqueue購読単体は会話列から予約・先行行へのresolverとmenu文脈の接続を通らず、型検査では任意propの渡し漏れを検知できない。小さい画像1枚を両ownerと両表示経路で確認する"
+// distinction = "画像loader単体とqueue購読単体は会話列から予約・送信失敗行へのresolverとmenu文脈の接続を通らず、型検査では任意propの渡し漏れを検知できない。小さい画像1枚を両ownerと両表示経路で確認する"
 // @end-test-value
 test("queued images load through their Main or Auxiliary conversation context", async () => {
   for (const { sessionId, source } of ["main", "aux"].flatMap((sessionId) =>
@@ -966,8 +966,11 @@ test("queued images load through their Main or Auxiliary conversation context", 
       reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     };
     const submissions = new SessionTurnSubmissions();
-    if (source === "turn-submission") submissions.start({ sessionId, incarnationId: "inc", requestId: "request",
-      userMessage: queued.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: true, error: "" });
+    if (source === "turn-submission") {
+      submissions.start({ sessionId, incarnationId: "inc", requestId: "request",
+        userMessage: queued.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: true, error: "" });
+      submissions.fail("request", "Workspace is no longer available.");
+    }
     const api: ConversationMessageColumnApi = { listSessionTurnQueue: async () => source === "turn-queue" ? [queued] : [] };
     function View() {
       const props = useConversationMessageColumn({ session: { id: sessionId, incarnationId: "inc", messages: [], runState: "running" },
@@ -1281,13 +1284,14 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       const render = () => act(async () => root.render(<View key={kind} />));
       await render();
       await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-1", userMessage: "prompt-1", historyMessageCount: 0, queuedBehindRun: false, error: "" }); });
-      const firstUserKey = column().messageKeys?.[0];
+      assert.equal(column().messages.length, 0, "the in-flight request is not displayed before a matching receipt");
       active = [{ ...receipt(1), state: firstReceiptState,
         turnId: firstReceiptState === "starting" ? null : "turn-1", userMessageSeq: firstReceiptState === "starting" ? null : 0 }]; live = run(1);
       await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
+      const firstUserKey = column().messageKeys?.[0];
       const firstResponseKey = column().messageKeys?.[1];
       const firstPresentationKey = column().responsePresentationKey;
-      assert.equal(column().messageKeys?.[0], firstUserKey);
+      assert.ok(firstUserKey);
       await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-2", userMessage: "prompt-2", historyMessageCount: 0, queuedBehindRun: true, error: "" }); });
       if (terminalFirst) {
         live = null;
@@ -2231,7 +2235,7 @@ test("conversation columns はlive eventとapprovalをsession IDごとに分離�
 // @test-value v2
 // kind = "contract"
 // claim = "完了receiptの照会と更新通知が応答より先に届く配送順でも、受付済み送信はcanonical応答に合流し待機表示を終了する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示とcompleted時の処理中表示終了" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Session Window / 保存済み応答への接続と待機表示の終了" }
 // fault = "照会自身の通知で取得結果が失効し続け、完了済み応答を表示できず待機表示が残る"
 // observable = "実Main facade/serviceからcolumnへの購読、responsePending、canonical本文、消費後のsubmission store"
 // observation_boundary = "consumer"
@@ -2325,9 +2329,9 @@ test("completed receipt reads converge even when queue notifications arrive befo
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着まで同じ応答DOMを保持する。Preview/Source本文は100ms集約し終端で最新rawへ接続する。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する。失敗とownerを分離する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/auxiliary-session.md: 送信受付の共通反映" }
-// fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答や未解放中断より先に表示する、保留中に応答枠を出す、取消/解放の対象を誤る、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
+// claim = "Main/AuxのSendは通常の受付待機中に仮行を追加せず、受付を確認してから開始・終端先着・追加入力userを含むcanonical到着まで同じ応答DOMを保持する。Preview/Source本文は100ms集約し終端で最新rawへ接続する。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復; docs/design/auxiliary-session.md#送信受付の共通反映" }
+// fault = "受付待機中にpromptや枠を出す、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答や未解放中断より先に表示する、保留中に応答枠を出す、取消/解放の対象を誤る、または失敗をspinnerのまま隠す"
 // observable = "実Column DOMのprompt件数・pending枠と応答のnode identity・制御clockごとの本文・alert・予約の表示順、Cancel/Release操作の宛先、ColumnのisRunning/responsePending、storeの所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
@@ -2335,7 +2339,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
 // impact = "送信直後とデータ到着順により会話が飛び、失敗した要求を待ち続けたり別会話に誤表示したりする。中断後に保留された後続を実行待機と誤認させない"
 // distinction = "operation通知testはColumnの実購読とreceipt/canonical結合、保留中のCancel/Releaseを通らない。小さいJSDOM遷移で正常・失敗・高速終端・中断保留の継続契約を確認する"
 // @end-test-value
-test("conversation column bridges optimistic sends to receipts and canonical responses", async (context) => {
+test("conversation column shows accepted sends and preserves the canonical response handoff", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
@@ -2398,12 +2402,10 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       };
       await render();
       await act(async () => { start(); });
-      assert.equal(promptCount(), 1);
-      assert.equal(pendingCount(), 1);
-      const responseRow = dom.window.document.querySelector(".pending-row");
-      assert.ok(responseRow?.closest(".session-message-virtual-row"));
+      assert.equal(promptCount(), 0);
+      assert.equal(pendingCount(), 0);
       assert.equal(column().isRunning, false);
-      assert.equal(column().responsePending, true);
+      assert.equal(column().responsePending, false);
       assert.equal(dom.window.document.querySelector("[role=alert]"), null);
       await act(async () => { store.fail("request", "Turn acceptance timed out. Check Receipt."); });
       assert.equal(promptCount(), 1);
@@ -2412,6 +2414,8 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       await act(async () => { store.accept(receipt); });
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 1);
+      const responseRow = dom.window.document.querySelector(".pending-row");
+      assert.ok(responseRow?.closest(".session-message-virtual-row"));
       assert.equal(dom.window.document.querySelector("[role=alert]"), null);
       holdQueue = false;
       active = [{ ...receipt, state: "starting" }];
@@ -2520,7 +2524,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       const local = { sessionId: kind, incarnationId: "inc", requestId: "local-held-request", userMessage: "third held prompt", historyMessageCount: 0, queuedBehindRun: false, error: "" };
       await act(async () => { store.start(local); });
       assert.deepEqual(column().messages, [], "an ACK-waiting local send respects the same interruption barrier");
-      assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt", "third held prompt"]);
+      assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt"]);
       assert.equal(pendingCount(), 0);
       const third = { ...held, id: "third", requestId: local.requestId, sequence: 6, queuePosition: 6,
         captured: { ...held.captured, request: { ...held.captured.request, clientRequestId: local.requestId, userMessage: local.userMessage } } };
@@ -2543,6 +2547,8 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       await act(async () => {
         store.start({ sessionId: "different", incarnationId: "inc", requestId: "other", userMessage: "wrong owner", historyMessageCount: 0, queuedBehindRun: false, error: "" });
         store.start({ sessionId: kind, incarnationId: "old", requestId: "old", userMessage: "old incarnation", historyMessageCount: 0, queuedBehindRun: false, error: "" });
+        store.fail("other", "Other conversation's acceptance is unknown.", true);
+        store.fail("old", "Old incarnation's acceptance is unknown.", true);
       });
       assert.doesNotMatch(dom.window.document.body.textContent!, /wrong owner|old incarnation/);
     }

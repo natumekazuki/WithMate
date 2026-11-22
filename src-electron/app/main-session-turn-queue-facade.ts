@@ -117,11 +117,15 @@ export class MainSessionTurnQueueFacade {
         const prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), false);
         const current = await this.readSession(sessionId);
         if (!isDeepStrictEqual(captureSessionExecutionOptions(current), request.executionOptions)) throw new Error("Execution settings changed while preparing the retry.");
+        const changedSinceAcceptance = !isDeepStrictEqual(
+          { text: original.request.userMessage, attachments: original.attachments },
+          { text: fixed.request.userMessage, attachments: fixed.attachments },
+        );
+        // An exact retry retains the instruction's source; a changed retry's fixed input is a GUI edit.
+        const fixedInputOrigin = changedSinceAcceptance ? origin : instructionOrigin;
         captured = { ...prepared, attachments: structuredClone(fixed.attachments),
           origin: { kind: "gui", operation: "send", targetSessionId: sessionId, targetIncarnationId: owner.incarnationId },
-          retrySource: { receiptId: source.id, turnId: input.turnId, origin: structuredClone(instructionOrigin),
-            changedSinceAcceptance: !isDeepStrictEqual({ text: original.request.userMessage, attachments: original.attachments },
-              { text: fixed.request.userMessage, attachments: fixed.attachments }) } };
+          retrySource: { receiptId: source.id, turnId: input.turnId, origin: structuredClone(fixedInputOrigin), changedSinceAcceptance } };
         await assertActorCurrent?.();
       } catch (error) {
         throw new SessionTurnQueuePreflightRejectedError(error instanceof Error ? error.message : "Failed Turn retry could not be prepared.", { cause: error });

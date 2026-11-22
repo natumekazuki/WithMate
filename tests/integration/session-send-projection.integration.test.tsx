@@ -72,11 +72,12 @@ async function setup() {
     const persistence = useAuxiliaryDraftPersistence({ api, composerRegistry: registry, touchRecency: auxiliary.touchRecency, isFrozen: () => registry.isFrozen });
     const [live, setLive] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
     const mainColumn = useConversationMessageColumn({
-      session: main.sessions[0] ?? null, baseProps, enabled: true, api,
+      session: main.sessions[0] ?? null, baseProps: { ...baseProps, onTurnReceiptsObserved: main.observeTurnReceipts }, enabled: true, api,
       liveRun: live.ownerSessionId === "benchmark-main" ? live.state : null,
     });
     const auxiliaryColumn = useConversationMessageColumn({
-      session: auxiliary.selectedSession ? { ...auxiliary.selectedSession, incarnationId: auxiliary.selectedSession.createdAt } : null, baseProps, enabled: true, api, messageSourceKind: "auxiliary",
+      session: auxiliary.selectedSession ? { ...auxiliary.selectedSession, incarnationId: auxiliary.selectedSession.createdAt } : null,
+      baseProps: { ...baseProps, onTurnReceiptsObserved: main.observeTurnReceipts }, enabled: true, api, messageSourceKind: "auxiliary",
       liveRun: live.ownerSessionId === auxiliary.selectedId ? live.state : null,
     });
     return { main, auxiliary, persistence, live, setLive, mainColumn, auxiliaryColumn };
@@ -208,10 +209,55 @@ test("MainとAuxiliaryのqueue受付は独立してcanonicalへ接続する", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの受付不明は会話切替後も元要求を保持し、元ownerの新draftを保護しながら同IDで受付とqueue投影を回復する"
-// oracle = { type = "contract", ref = "Issue #801: uncertain acceptance identity and auxiliary draft ownership" }
-// fault = "切替で不明受付を忘れる、新IDで再送する、別会話へ反映する、または後続draftを消す"
-// observable = "対象別uncertain状態、再試行request列、元owner draft、回復後column本文"
+// claim = "送信の受付に失敗応答とreceipt不在を観測しても、後続queue更新から元要求を確認できたら同じ受付に接続し、新しいdraftは保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復" }
+// fault = "遅い受付を照会不能のままにする、別receiptで不明を解除する、または受付認識時に新しいdraftを消す"
+// observable = "実runtimeの受付状態、Main conversationの本文、draftとenqueue呼出数"
+// observation_boundary = "consumer"
+// scope = "same-window late durable receipt reconciliation"
+// lifecycle = "permanent"
+// impact = "受付済みTurnをもう一度送るよう案内したり、無関係な受付で回復を閉じると実行や入力を見失う"
+// distinction = "自動照会が正常にreceiptを返すcaseと異なり、不明遷移後の実queue通知・readからだけ結果が届く"
+// @end-test-value
+test("late matching queue receipt ends recovery without replaying the input", async () => {
+  const view = await setup();
+  try {
+    const main = view.current.main.sessions[0];
+    const owner = { kind: "main" as const, id: main.id };
+    let submitted!: Parameters<WithMateWindowApi["enqueueSessionTurn"]>[1];
+    let sends = 0;
+    let visibleReceipts: SessionTurnQueueReceipt[] = [];
+    view.api.enqueueSessionTurn = async (_id, input) => { submitted = input; sends += 1; throw new Error("ack lost"); };
+    view.api.getSessionTurnQueueReceipt = async () => null;
+    view.api.listSessionTurnQueue = async () => visibleReceipts;
+    await act(async () => { await assert.rejects(view.sendMain("late prompt"), /acceptance could not be confirmed/); });
+    assert.equal(view.current.main.hasUncertainTurnFor(main.id), true);
+    const captured = { request: { ...submitted, clientRequestId: submitted.clientRequestId! }, attachments: [], provider: main.provider, workspacePath: main.workspacePath };
+    const matching: SessionTurnQueueReceipt = { sessionId: main.id, incarnationId: submitted.incarnationId, id: "late-queue", requestId: submitted.clientRequestId!, sequence: 1, queuePosition: 1,
+      state: "starting", captured, accepted: captured, turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: main.updatedAt, updatedAt: main.updatedAt };
+    await act(async () => {
+      view.registry.setDraft(owner, "new draft");
+      visibleReceipts = [{ ...matching, incarnationId: "old-incarnation" }];
+      view.emitQueue(main.id);
+    });
+    assert.equal(view.current.main.hasUncertainTurnFor(main.id), true);
+    await act(async () => {
+      visibleReceipts = [matching];
+      view.emitQueue(main.id);
+    });
+    assert.equal(view.current.main.hasUncertainTurnFor(main.id), false);
+    assert.equal(view.current.mainColumn?.messages.filter((message) => message.text === "late prompt").length, 1);
+    assert.equal(view.registry.get(owner).draft, "new draft");
+    assert.equal(sends, 1);
+  } finally { await view.unmount(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryの受付待機と不明は会話切替・再取得後も別状態で、元ownerの新draftを保護しながら同IDで受付とqueue投影を回復する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復" }
+// fault = "照会中に受付不明を表示する、切替で保留・不明を忘れる、新IDで再送する、別会話へ反映する、または後続draftを消す"
+// observable = "対象別の保留・不明状態、再試行request列、元owner draft、回復後column本文"
 // observation_boundary = "consumer"
 // scope = "auxiliary-durable-acceptance-races"
 // lifecycle = "permanent"
@@ -225,22 +271,37 @@ test("Auxiliaryは切替後も不明受付の元IDと新draftを保護して回�
     const otherId = view.current.auxiliary.summaries.find((item) => item.id !== initial.id)!.id;
     const run = deferred<SessionTurnQueueReceipt>();
     const started = deferred<void>();
+    const lookup = deferred<SessionTurnQueueReceipt | null>();
+    const lookupStarted = deferred<void>();
     const requests: Parameters<WithMateWindowApi["enqueueSessionTurn"]>[1][] = [];
     let receipt: SessionTurnQueueReceipt | null = null;
     view.api.listSessionTurnQueue = async (id) => id === initial.id && receipt ? [receipt] : [];
-    view.api.getSessionTurnQueueReceipt = async () => null;
+    view.api.getSessionTurnQueueReceipt = async (_id, requestId) => {
+      assert.equal(requestId, requests[0]?.clientRequestId);
+      lookupStarted.resolve();
+      return lookup.promise;
+    };
     view.api.enqueueSessionTurn = (_id, request) => { requests.push(request); started.resolve(); return run.promise; };
     let operation!: ReturnType<typeof view.sendAuxiliary>;
     await act(async () => { operation = view.sendAuxiliary("retry prompt"); await started.promise; });
     assert.deepEqual(structuredClone(view.current.auxiliaryColumn?.messages), structuredClone(initial.messages));
+    assert.equal(view.current.main.hasPendingSubmitFor(initial.id), true);
+    assert.equal(view.current.main.hasUncertainTurnFor(initial.id), false);
     await act(async () => { view.current.auxiliary.selectSession(otherId); });
+    const rejected = assert.rejects(operation, /acceptance could not be confirmed/);
+    await act(async () => { run.reject(new Error("disconnected")); await lookupStarted.promise; });
+    assert.equal(view.current.main.hasPendingSubmitFor(initial.id), true);
+    assert.equal(view.current.main.hasPendingSubmitFor(otherId), false);
+    assert.equal(view.current.main.hasUncertainTurnFor(initial.id), false);
     await act(async () => {
-      const rejected = assert.rejects(operation, /acceptance could not be confirmed/);
-      run.reject(new Error("disconnected")); await rejected;
+      lookup.resolve(null);
+      await rejected;
     });
+    assert.equal(view.current.main.hasPendingSubmitFor(initial.id), false);
     assert.equal(view.current.main.hasUncertainTurnFor(initial.id), true);
     assert.equal(view.current.main.hasUncertainTurnFor(otherId), false);
-    await act(async () => { view.current.auxiliary.selectSession(initial.id); });
+    await act(async () => { view.current.main.retryRead(); view.current.auxiliary.selectSession(initial.id); view.emit(null); });
+    assert.equal(view.current.main.hasUncertainTurnFor(initial.id), true);
     await act(async () => { await view.current.persistence.changeDraft(initial, "new draft", 9); });
     const original = requests[0];
     view.api.enqueueSessionTurn = async (_id, request) => {
@@ -302,9 +363,9 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、Auxiliaryの未確定受付では送信本文を先行表示し、不明・拒否では本文と理由を保持する。受付後のcanonical失敗は送信済みuser・partialを保持し、理由を応答側の共通エラー欄へ一度表示する"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映" }
-// fault = "Appが旧受付rejectで新入力を上書きする、先行表示した送信本文を不明・拒否で消すか理由を示さない、またはcanonical失敗更新を未受付と混同して入力と本文を巻き戻す"
+// claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、Auxiliaryの受付待機中に本文や回復UIを増やさない。不明・拒否では理由を示し、canonical失敗は送信済みuser・partialと理由を一度表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復; docs/design/auxiliary-session.md#送信受付の共通反映" }
+// fault = "Appが旧受付rejectで新入力を上書きする、受付待機中に送信済みの本文や受付不明を示す、不明・拒否で理由を示さない、またはcanonical失敗更新を未受付と混同する"
 // observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文数と内容、応答側のエラー理由と出現数、不明時の診断、reject後の会話側理由とmodal alertが発生しないこと"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp common durable admission and canonical Provider failure"
@@ -461,7 +522,9 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
         assert.deepEqual(requests, [{ id, text: prompt }]);
         if (outcome === "reject") {
           assert.equal(textarea().value, prompt, "unacknowledged input remains in the composer");
-          assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "unacknowledged submission is shown once before admission completes");
+          assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 0, "pending send does not add a conversation row");
+          assert.equal(dom.window.document.querySelector(".composer-turn-recovery"), null, "pending send is not uncertain");
+          assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-send-control .session-send-button")?.disabled, true);
           await input(newInput);
           const error = new Error(`${target} request rejected`);
           await act(async () => { result.reject(error); });

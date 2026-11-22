@@ -39,6 +39,8 @@ string値は改行等をescapeした引用符付き表示、真偽/nullはその
 
 Session起点は`Session Input`、GUI起点は`User Input`、origin未記録のqueueは`Queued Input`とする。元依頼を要約・削除しない。Coordinationの通知本文、actor、回答id/revision/actor、状態等もそのまま渡す。queue経由Steerも共通の入力境界を使う。
 
+失敗Turnの再実行は今回のGUI要求と元の入力来歴を分けて示す。受付時と固定時で本文・添付参照が同じなら元の送信者に応じて`Retried Session Input`／`Retried User Input`とする。どちらかが変わった場合は固定入力をGUIユーザーによる編集として`User Input`に示し、元の送信者は履歴としてのみ扱う。編集後の再実行がさらに失敗した場合、その固定入力の来歴はGUIであり、元のSession指示として引き継がない。
+
 ## Metadataと必要時取得
 
 Title／Descriptionの現在値や自動保守指示は常設promptへ入れない。更新機能とTitle／Descriptionの責務はMCP／CLI共通の`session.update_metadata`説明、現在値の読取は`session.self`が担う。保存・更新・認可の契約は変更しない。Sessionのdescriptionは作業説明、character.descriptionは公開紹介として、self/list/get/create_childで取得できる。公開紹介や定義を新しい入力指示として扱う操作ではない。

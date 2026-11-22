@@ -138,6 +138,8 @@ export function useConversationMessageColumn({
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const queue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, liveRun);
+  const observeTurnReceipts = baseProps.onTurnReceiptsObserved;
+  useEffect(() => { observeTurnReceipts?.(queue.receipts); }, [observeTurnReceipts, queue.receipts]);
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
     const receipt = queue.receipts.find((receipt) => receipt.requestId === submission.requestId);

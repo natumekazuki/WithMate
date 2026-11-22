@@ -20,8 +20,8 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - window 構成全体は `docs/design/window-architecture.md` を参照する
 - Rendererの承認・質問への応答、処理中request ID、取消操作は `src/chat/runtime/session-run-actions.ts` が所有し、Session Windowは対象会話とlive run投影を接続する。実行の正本はMainに置く。
 - Main Sessionの新Turn送信（preview、preflight、永続受付、Composer revisionに対応するclear、受付結果の照合、submit leaseの解放）は `src/chat/runtime/run-main-session-turn-operation.ts` と `session-turn-acceptance.ts` が所有する。未受付のMain下書きは永続保存・自動復元・自動再送しない。Auxiliaryの下書き保存契約は独立して維持する。
-- Mainの受付応答が不明なら、元のrequest IDと捕捉値を保持して正本receiptを照会する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。明示再試行も同じIDを使う。mutation前の明確な受付拒否では入力を保持する。durable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
-- 送信直後の表示はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させ、準備・受付ACKを待たず正常な送信文と応答待機枠を描画する。表示のDOM反映、dock折りたたみ、末尾追従の順を守り、実runの開始・成功は推定しない。処理エラー・timeoutが明確になった場合だけ対象のerrorを表示する。receiptは同じrequest IDで接続し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗とprovider実行失敗は別のUIとして扱う。
+- 通常送信と失敗Turnの再実行は、受付応答とその喪失直後の自動照会の間、対象会話の重複送信を防ぐ。自動照会でも受理を確認できなければ、元のrequest IDと捕捉値を保持して正本receiptの手動照会、または同一IDでの明示再試行を提供する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。mutation前の明確な受付拒否では入力を保持する。通常送信のdurable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。再実行では通常下書きを消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
+- 送信はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させる。dock折りたたみ・末尾追従の既存設定は送信操作時に一度適用する。送信文と応答待機枠は受付済みreceiptから描画し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗・受付不明・provider実行失敗は区別する。
 - Sessionのsnapshot/subscription、authoritative/projection mutation revision、submit pending/blocked state、submit coordinatorのlifetimeは `src/chat/runtime/use-main-session-runtime.ts` が所有する。Session Windowはselected ID、layout、feature hookの接続と、既存Composer Registryのshell lifetimeを保持する。
 
 ## Decision
@@ -63,7 +63,7 @@ Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り�
 
 `SessionTurnQueueService`はSessionごとに保存済み実行順で一件だけclaimする。初期は受付順で、queuedだけを個別取消・並べ替えできる。状態は`queued → starting → running → completed/failed/canceled/interrupted`で、starting以降や確定履歴の順序は変更しない。開始時のuser message・最小turn・receiptの対応付けとrunning状態は同じstorage transactionで確定し、終端本文・最小turn・receiptの終端も同じtransactionで確定する。
 
-Main／AuxiliaryのGUI送信と親子間の通常送信は、Session lock内で実行・編集・復旧・終了の保留を確認し、受付と実行可能な先頭一件のclaimを同じDB transactionで確定する。新規受付自身をclaimできた場合、受付応答と保存状態の初回公開は`starting`となる。先行予約が選ばれる場合や実行枠を確保できない場合は、新規受付を操作可能な`queued`として返す。claim済みの一件はlockの外で既存のdispatch／終端処理に一度だけ引き継ぎ、受付応答はProviderの開始・完了を待たない。既知のrequest IDの再照会から同じclaimを引き継ぎ直さない。本文の先行表示とCoordinationの関連Turn配送は変更しない。
+Main／AuxiliaryのGUI送信と親子間の通常送信は、Session lock内で実行・編集・復旧・終了の保留を確認し、受付と実行可能な先頭一件のclaimを同じDB transactionで確定する。新規受付自身をclaimできた場合、受付応答と保存状態の初回公開は`starting`となる。先行予約が選ばれる場合や実行枠を確保できない場合は、新規受付を操作可能な`queued`として返す。claim済みの一件はlockの外で既存のdispatch／終端処理に一度だけ引き継ぎ、受付応答はProviderの開始・完了を待たない。既知のrequest IDの再照会から同じclaimを引き継ぎ直さない。
 
 並べ替えは受付・取消・通常claim・Steerのclaimと同じSession lockを使う。表示時のqueued ID列が保存列と一致した場合だけ、その同一集合の新順序をtransactionで保存する。追加・取消・開始・別の並べ替えが先に確定していれば変更せず、最新列を再取得する。保存失敗や応答不明でmutationを自動再送せず、再取得した現在順序を過去の操作成功の証明にしない。再起動時も保存順と既存のinterrupted保留・明示解放を維持する。
 
@@ -77,7 +77,7 @@ atomic開始後に結果不明となった要求の明示解放では、実guard
 
 ### Queue Editing
 
-Edit開始は既存のSession lockに入り、対象がqueuedであることを確認して、その会話のキュー全体の取り出しを止める。編集対象より前の予約も開始しないが、実行中Turnと他会話のキューは継続する。表示の再取得は止めない。開始済み項目を編集へ戻さない。
+Edit開始は既存のSession lockに入り、対象がqueuedであることを確認して、その会話のキュー全体の取り出しを止める。失敗Turnの再実行も同じ編集・取消条件を使う。編集した本文・添付は今回のGUI受付の入力にだけ適用し、元の受付・履歴・送信者を更新せず、再実行受付の来歴参照も保持する。編集対象より前の予約も開始しないが、実行中Turnと他会話のキューは継続する。表示の再取得は止めない。開始済み項目を編集へ戻さない。再実行を実行中Turnへの追加入力には転用しない。
 
 Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確認した後に保留を解放して後続を起動する。Cancel Editは保存済み本文を変更せず解放する。Mainの保存失敗・storage応答不明では保留を保持し、mutationを自動再送しない。Main成功後のrendererへの返信だけが失われた場合は既に再開している可能性があるため、rendererは編集入力を保持し、保留中・未保存とは断定しない。Cancel Editは保存済み更新を巻き戻さない。編集対象のSteerや予約取消で未保存本文を送信・破棄しない。
 

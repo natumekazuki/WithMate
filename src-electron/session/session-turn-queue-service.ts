@@ -139,7 +139,6 @@ export class SessionTurnQueueService {
       const receipt = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
       if (!receipt || receipt.state !== "queued") throw new Error("Only a queued receipt can be edited.");
       if (receipt.captured.coordination) throw new Error("Coordination delivery cannot be edited as a queued message.");
-      if (receipt.captured.retrySource) throw new Error("A failed Turn retry cannot be edited as a queued message.");
       this.adoptOwner(owner);
       this.edits.set(owner.sessionId, { incarnationId: owner.incarnationId, id });
       return receipt;
