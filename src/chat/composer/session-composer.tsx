@@ -58,7 +58,7 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
-  replyDraft?: { text?: string; error?: string; clear(): void };
+  replyUnavailableReason?: string;
   queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
   isActive?: boolean;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
@@ -164,7 +164,7 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
-  replyDraft,
+  replyUnavailableReason,
   queuedTurnEdit,
   isActive = true,
   composerController,
@@ -309,9 +309,9 @@ export function SessionComposerExpanded({
   const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
   const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
     || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable
-    || !!replyDraft && replyDraft.text === undefined;
-  const sendDisabledReason = replyDraft && replyDraft.text === undefined
-    ? replyDraft.error || "Loading the reply target."
+    || !!replyUnavailableReason;
+  const sendDisabledReason = replyUnavailableReason
+    ? replyUnavailableReason
     : composerFrozen
     ? "Input is frozen while the window is closing."
     : turnRecoveryAction === "check"
@@ -631,10 +631,6 @@ export function SessionComposerExpanded({
 
       <div className="composer-input-row">
         <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
-          {replyDraft ? <div className="composer-reply" aria-label="Selected reply target" aria-busy={replyDraft.text === undefined && !replyDraft.error || undefined}>
-            <blockquote className="session-reply-quote">{replyDraft.error ? <span role="alert">{replyDraft.error}</span> : replyDraft.text ?? "Loading original message…"}</blockquote>
-            <button type="button" className="artifact-toggle artifact-toggle-icon" title="Clear reply target" aria-label="Clear reply target" onClick={replyDraft.clear}>×</button>
-          </div> : null}
           <textarea
             ref={composerTextareaRef}
             aria-label="Message"

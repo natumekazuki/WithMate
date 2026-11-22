@@ -97,7 +97,8 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
-  onSelectReply?: (reference: SessionReply) => void;
+  selectedReplyKey?: string;
+  onSelectReply?: (key: string, reference: SessionReply) => void;
   inputReadContext?: TurnInputReadContext;
   conversationChild?: ConversationThread;
   liveWithMateTurnId?: string;
@@ -469,6 +470,7 @@ export function SelectionTextActionSurface({
 }
 
 export function SessionMessageColumn({
+  selectedReplyKey,
   onSelectReply,
   inputReadContext,
   conversationChild: thread,
@@ -619,7 +621,7 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} onSelectReply={onSelectReply} {...sentMessageContext} />
+        positionUnknown={positionUnknown} selectedReplyKey={selectedReplyKey} onSelectReply={onSelectReply} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
@@ -1529,6 +1531,8 @@ export function SessionMessageColumn({
             const replyTarget = onSelectReply && inputReadContext && message.historyIndex !== undefined
               && messageKey !== pendingResponseMessageKey && !isAwaitingSavedResponse && message.text.trim()
               ? { target: inputReadContext.target, seq: message.historyIndex } : undefined;
+            const replyKey = replyTarget ? JSON.stringify(["message", conversationPeerKey(replyTarget.target), replyTarget.seq]) : undefined;
+            const replySelected = replyKey !== undefined && selectedReplyKey === replyKey;
 
             return (
               <div
@@ -1586,7 +1590,7 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
                 {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}
+                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}`}
                   style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
@@ -1612,8 +1616,9 @@ export function SessionMessageColumn({
                     <div className={`message-text-wrapper${replyTarget || messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
                       {replyTarget || messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
                         <div className="message-collapse-control">
-                          {replyTarget ? <button className="message-bookmark-toggle" type="button" aria-label="Reply to message" title="Reply to message"
-                            onClick={() => onSelectReply?.(replyTarget)}>↩</button> : null}
+                          {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
+                            aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
+                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>{replySelected ? "✓" : "↩"}</button> : null}
                           {messageCollapseTarget && onToggleMessageCollapse ? (
                             <button
                               className="message-collapse-toggle"

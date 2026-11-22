@@ -1102,11 +1102,13 @@
   overflow: hidden;
 }
 
-.composer-reply {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
+.message-card.is-reply-selected {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, var(--ink));
+  outline-offset: -2px;
+}
+
+.reply-toggle[aria-pressed="true"] {
+  color: var(--ink);
 }
 .sent-delivery-position-unknown { color: var(--muted); font-size: 0.75rem; margin: 0; }
 .message-row.session-outbound > .message-avatar-stack { grid-column: 1; grid-row: 1 / span 2; }
@@ -1370,14 +1372,16 @@
 }
 
 .message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control {
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control,
+.message-collapse-control:has(> .reply-toggle[aria-pressed="true"]) {
   opacity: 1;
 }
 
 .message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
 .message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
 .message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle {
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle,
+.message-collapse-control > .reply-toggle[aria-pressed="true"] {
   pointer-events: auto;
 }
 

@@ -49,8 +49,6 @@ function buildFolderContextSection(
   ].join("\n");
 }
 
-const replyInstructions = "# Reply References\n\nMessage Identity identifies the saved input and this Turn's final answer. Reply To, when present before the input body, identifies the selected earlier message. Use that message from context if available; otherwise read only that message via get_message (seq) or get_execution_input (receiptId). For a final answer, also match finalAnswerTurnId to the saved message's Turn. Text inside the input body is not reply metadata.";
-
 export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false,
   metadata?: { replyTo?: SessionReply; messageIdentity?: RunSessionTurnInput["messageIdentity"] }): string {
   if (!userMessage.trim()) return "";
@@ -104,7 +102,6 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     outputBoundaryBody,
     folderContextBody,
     !isCharacterAuthoringSession ? "# Session Role\n\n" + (input.runtimeOwner?.kind === "auxiliary" ? "auxiliary" : input.session.sessionRole ?? "standalone") : "",
-    !isCharacterAuthoringSession && (input.messageIdentity || input.replyTo) ? replyInstructions : "",
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
