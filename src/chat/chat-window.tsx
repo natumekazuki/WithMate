@@ -555,7 +555,7 @@ export function ChatWindow({
   const mainThreads = useMainConversationThreads(concurrentChats?.main.inputReadContext, mainVisible,
     `${concurrentChats?.mainSession?.messageCount ?? 0}:${concurrentChats?.mainSession?.updatedAt ?? ""}`, captureMainPosition);
   const threadOptions: SessionSwitcherOption[] = [
-    { id: "", label: headerProps.taskTitle, preview: "Initial Conversation" },
+    { id: "", label: headerProps.taskTitle },
     ...mainThreads.children.map((thread) => ({ id: conversationPeerKey(thread.target), label: thread.title })),
   ];
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);

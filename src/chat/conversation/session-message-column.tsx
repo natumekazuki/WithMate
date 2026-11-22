@@ -1829,8 +1829,6 @@ export function SessionMessageColumn({
             {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
-        ) : thread && !conversationPaging?.loading && !conversationPaging?.error ? (
-          <p className="session-message-empty">No messages yet.</p>
         ) : null}
         {selectionToolbar && selectionActionOverlay ? createPortal(
           <MessageResponseActions
