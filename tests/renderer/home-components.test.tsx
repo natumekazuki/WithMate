@@ -177,7 +177,7 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "承認審査は既定Offで、送信先と審査役の承認を開示し、Codexの明示的なModel・Depthの選択を既存Saveにつなぐ"
+  // claim = "承認審査は既定Offで、選択したProviderへの承認要求と履歴の共有を開示し、Codexの明示的なModel・Depthの選択を既存Saveにつなぐ"
   // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
   // fault = "保存前に自動審査を有効にする、機微な履歴の送付を表示しない、または不完全な設定で保存できる"
   // observable = "Provider初期値と説明の関連、各選択後のSaveボタンと保存payload"
@@ -218,8 +218,7 @@ describe("HomeSettingsContent", () => {
       };
       assert.equal(controls()[0].value, "");
       const description = document.getElementById(controls()[0].getAttribute("aria-describedby")!);
-      assert.match(description?.textContent ?? "", /selected provider receives.*saved conversation history/);
-      assert.match(description?.textContent ?? "", /built-in Auto Review/);
+      assert.match(description?.textContent ?? "", /selected provider receives approval requests and any chat history it reads, including from other sessions/);
       assert.ok(controls()[0].querySelector('option[value="claude"]:not(:disabled)'));
       await choose(0, "codex");
       assert.equal(save().disabled, true);

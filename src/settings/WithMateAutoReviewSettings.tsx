@@ -30,10 +30,10 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
     <summary>WithMate Auto Review</summary>
     <div className="settings-field">
       <p id={helpId} className="settings-help">
-        Reviews approval requests from Copilot and OpenCode. The reviewer uses its provider’s built-in Auto Review for its own tool use. The selected provider receives the pending operation and any saved conversation history it reads, including sensitive information from other sessions. Requests you still need to decide appear in the usual approval prompt.
+        The selected provider receives approval requests and any chat history it reads, including from other sessions.
       </p>
-      <label className="settings-provider-input">
-        <span>Review Provider</span>
+      <label className="settings-inline-input-row settings-review-select-row">
+        <span className="settings-provider-name">Review Provider</span>
         <select value={selection?.providerId ?? ""} aria-describedby={helpId} onChange={(event) => {
           const providerId = event.currentTarget.value;
           onChange(isWithMateReviewProvider(providerId) ? { providerId, model: "", reasoningEffort: "" } : null);
@@ -47,8 +47,8 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
         </select>
       </label>
       {selection ? <>
-        <label className="settings-provider-input">
-          <span>Review Model</span>
+        <label className="settings-inline-input-row settings-review-select-row">
+          <span className="settings-provider-name">Review Model</span>
           <select value={selection.model} disabled={!provider?.settings.enabled} onChange={(event) => {
             onChange({ ...selection, model: event.currentTarget.value, reasoningEffort: "" });
           }}>
@@ -57,8 +57,8 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
             {selection.model && !model ? <option value={selection.model} disabled>Saved model unavailable</option> : null}
           </select>
         </label>
-        {efforts.length ? <label className="settings-provider-input">
-          <span>Review Depth</span>
+        {efforts.length ? <label className="settings-inline-input-row settings-review-select-row">
+          <span className="settings-provider-name">Review Depth</span>
           <select value={selection.reasoningEffort} onChange={(event) => onChange({ ...selection, reasoningEffort: event.currentTarget.value })}>
             <option value="">Select a depth</option>
             {efforts.map((effort) => <option key={effort} value={effort}>{reasoningEffortOptions.find(({ id }) => id === effort)?.label ?? effort}</option>)}
