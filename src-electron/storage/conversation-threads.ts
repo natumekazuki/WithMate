@@ -1,6 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { ConversationThread, ConversationThreads } from "../../src-shared/session/conversation-threads.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
+import { mainSessionTargetSchema } from "../../src-shared/session/session-target.js";
+import { sessionReplySchema } from "../../src-shared/session/session-reply.js";
 import { MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS } from "../session/session-storage-v6.js";
 
 type MainTarget = Extract<SessionTarget, { kind: "main" }>;
@@ -9,7 +11,7 @@ type Origin = {
   actorKind?: string; actorSessionId?: string; actorIncarnationId?: string; actorTurnId?: string;
   targetSessionId?: string; targetIncarnationId?: string;
 };
-type Turn = { id: number; user_message_seq: number | null; assistant_message_seq: number | null };
+type Turn = { id: number; phase: string; user_message_seq: number | null; assistant_message_seq: number | null };
 type Inbound = { turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; created_at: string; origin: string };
 type Outbound = { session_id: string; incarnation_id: string; created_at: string; origin: string };
 
@@ -46,7 +48,7 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     const time = timestamp === undefined ? NaN : Date.parse(timestamp);
     if (Number.isFinite(time) && (frame.lastActivityAt === undefined || time > frame.lastActivityAt)) frame.lastActivityAt = time;
   };
-  const turns = new Map((db.prepare("SELECT id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE session_id = ? AND auxiliary_session_id IS NULL")
+  const turns = new Map((db.prepare("SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE session_id = ? AND auxiliary_session_id IS NULL")
     .all(source.sessionId) as Turn[]).map((turn) => [String(turn.id), turn]));
   const child = (id: string | undefined, incarnationId: string | undefined) => {
     const frame = id && children.get(id);
@@ -85,6 +87,63 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
         frame.messageIndexes.push(response);
         touch(frame, savedTimestamps.get(response));
       }
+    }
+  }
+
+  // Preview.3 did not record the viewed frame. Follow only a saved message in
+  // this exact transcript, from older to newer input so reply chains resolve once.
+  const membership = new Map<number, ConversationThread | null>();
+  for (const frame of children.values()) {
+    for (const seq of frame.messageIndexes) {
+      if (!membership.has(seq)) membership.set(seq, frame);
+      else if (membership.get(seq) !== frame) membership.set(seq, null);
+    }
+  }
+  const gui = db.prepare(`SELECT q.turn_id, q.user_message_seq, q.created_at,
+      q.accepted_json -> '$.request.mainConversationFrame' AS frame,
+      m.body -> '$.replyTo' AS reply
+    FROM session_turn_queue_v6 q
+    JOIN session_messages_v6 m ON m.session_id=q.session_id AND m.seq=q.user_message_seq AND m.role='user'
+    WHERE q.session_id=? AND q.incarnation_id=? AND q.auxiliary_session_id IS NULL AND q.input_turn_id IS NULL
+      AND json_extract(q.accepted_json, '$.origin.kind')='gui'
+      AND json_extract(q.accepted_json, '$.origin.operation')='send'
+      AND json_extract(q.accepted_json, '$.origin.targetSessionId')=q.session_id
+      AND json_extract(q.accepted_json, '$.origin.targetIncarnationId')=q.incarnation_id
+      AND json_extract(q.accepted_json, '$.request.submitSource')='composer'
+      AND json_extract(q.accepted_json, '$.retrySource') IS NULL
+    ORDER BY q.user_message_seq`).iterate(source.sessionId, source.incarnationId) as Iterable<{
+      turn_id: string | null; user_message_seq: number; created_at: string; frame: string | null; reply: string | null;
+    }>;
+  const readAssistant = db.prepare("SELECT 1 FROM session_messages_v6 WHERE session_id=? AND seq=? AND role='assistant'");
+  for (const row of gui) {
+    const turn = row.turn_id && turns.get(row.turn_id);
+    if (!turn || turn.user_message_seq !== row.user_message_seq || membership.has(row.user_message_seq)) continue;
+    let frame: ConversationThread | undefined;
+    if (row.frame !== null) {
+      const target = mainSessionTargetSchema.nullable().safeParse(JSON.parse(row.frame));
+      if (target.success && target.data) frame = child(target.data.sessionId, target.data.incarnationId);
+    } else if (row.reply !== null) {
+      const reply = sessionReplySchema.safeParse(JSON.parse(row.reply));
+      if (reply.success && "seq" in reply.data) {
+        const reference = reply.data;
+        const final = reference.finalAnswerTurnId ? turns.get(reference.finalAnswerTurnId) : undefined;
+        if (reference.target.kind === "main" && reference.target.sessionId === source.sessionId
+          && reference.target.incarnationId === source.incarnationId && reference.seq < row.user_message_seq
+          && (reference.finalAnswerTurnId === undefined
+            || final?.phase === "completed" && final.assistant_message_seq === reference.seq
+              && readAssistant.get(source.sessionId, reference.seq))) {
+          frame = membership.get(reference.seq) ?? undefined;
+        }
+      }
+    }
+    if (!frame) continue;
+    frame.inboundTurnIds.push(String(turn.id));
+    touch(frame, row.created_at);
+    for (const seq of [row.user_message_seq, saved(turn.assistant_message_seq)]) {
+      if (seq === null || membership.has(seq)) continue;
+      membership.set(seq, frame);
+      frame.messageIndexes.push(seq);
+      touch(frame, savedTimestamps.get(seq));
     }
   }
 

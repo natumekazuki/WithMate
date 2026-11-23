@@ -60,6 +60,7 @@ export async function runMainSessionTurnOperation(input: {
       sessionId, incarnationId: request.incarnationId, requestId: request.clientRequestId!,
       historyMessageCount: input.selectedSession.messageCount ?? input.selectedSession.messages.reduce((count, message, index) => Math.max(count, getMessageHistoryIndex(message, index) + 1), 0),
       userMessage: messageText, queuedBehindRun: input.selectedSessionRunState === "running", error: "",
+      mainConversationFrame: request.mainConversationFrame,
     });
     if (state.commitSubmission) state.commitSubmission(publish);
     else publish();

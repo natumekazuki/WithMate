@@ -28,6 +28,8 @@ export type RunSessionTurnInput = {
   userMessage: string;
   replyTo?: import("../../src-shared/session/session-reply.js").SessionReply;
   messageIdentity?: { sessionId: string; incarnationId: string; seq?: number; finalAnswerTurnId?: string };
+  /** Main display thread for this input. The exact history owner is its Message Identity. */
+  mainConversationFrame?: import("../../src-shared/session/session-target.js").MainSessionTarget | null;
   inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; retrySource?: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueCapturedInput["retrySource"]; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];

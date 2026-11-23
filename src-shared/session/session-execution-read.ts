@@ -2,7 +2,7 @@ import { z } from "zod";
 import { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 import { sessionHistoryOperationRequestSchemas } from "../session-history/session-history-contract.js";
 import { providerOutputSchema } from "./provider-output.js";
-import { conversationThreadsRequestSchema, conversationThreadsResultSchema } from "./conversation-threads.js";
+import { conversationThreadsRequestSchema, conversationThreadsResultSchema, mainConversationThreadSchema } from "./conversation-threads.js";
 import { sessionReplySchema } from "./session-reply.js";
 
 const id = z.string().min(1).max(256);
@@ -15,7 +15,8 @@ export const executionOperationRequestSchemas = {
   list_issued_coordinations: z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: id.optional(), limit: z.number().int().min(1).max(20).optional() }).strict(),
   list_sent_deliveries: sentRequest,
   list_sent_steers: sentRequest,
-  list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
+  list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema,
+    thread: mainConversationThreadSchema.optional().describe("Main owner only: null for its initial conversation, or the exact direct peer Main SessionTarget. Omit for the entire target history. Does not change the history owner.") }),
   get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
   list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
   get_operation_detail: sessionHistoryOperationRequestSchemas.get_operation_detail.extend({ target: sessionTargetSchema }),
@@ -78,7 +79,7 @@ export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, st
   list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
   list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
   list_sent_deliveries: "Read outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor. Each text contains the full original input. Stored Coordination notifications also include coordination.id, the full then-delivered human-readable coordination.text and saved consultation text in coordination.consultation when available. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
-  list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
+  list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. For a Main target, optionally filter by thread (null for initial, or the exact peer SessionTarget) without changing the history owner or message seqs. Offset and total apply to the filtered messages. Omit thread for the full target history. Uses saved-history paging, not background history authorization.",
   get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
   list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",
   get_operation_detail: "Read an exact saved message's artifact or elicitation detail with shared saved-history text/row paging. Unsaved details are explicit failures, not regenerated content.",

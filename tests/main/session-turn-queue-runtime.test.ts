@@ -15,7 +15,8 @@ import { buildNewSession, getSessionIncarnationId, type Session } from "../../sr
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
-import type { ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
+import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 
 function gate() {
   let resolve!: () => void;
@@ -25,10 +26,10 @@ function gate() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Workerの初回受付は実行枠を同時確保してACK・一覧ともstartingとなり、同時送信の後続だけが待機する。固定入力/threadを維持し、terminal返信喪失と開始保存後の不明実行から従来の契約で回復する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/electron-session-store.md#turn-queue" }
-// fault = "即時開始の受付を先にqueuedでcommitまたは通知する、同時送信も開始する、受付済み入力が変わる、または不明実行を自動再送する"
-// observable = "Worker commit直後と受付通知からの一覧、ACK、待機中の保存receipt、Provider入力/呼出順、実WorkerのTurn状態と解放後のthread・終端"
+// claim = "実Workerの初回受付は実行枠を同時確保してACK・一覧ともstartingとなり、同時送信の後続だけが待機する。固定入力・Provider thread・会話枠を維持し、terminal返信喪失と開始保存後の不明実行から従来の契約で回復する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/electron-session-store.md#turn-queue; docs/design/prompt-composition.md#metadataと必要時取得" }
+// fault = "即時開始の受付を先にqueuedでcommitまたは通知する、同時送信も開始する、受付後に入力や表示所属が変わる、または不明実行を自動再送する"
+// observable = "Worker commit直後と受付通知からの一覧、ACK、保存receipt、Provider入力に含む会話枠と呼出順、公開履歴seq、実WorkerのTurn状態と解放後のthread・終端"
 // observation_boundary = "public-boundary"
 // scope = "MainSessionRuntimeAssembly + QueueFacade/Service + SessionPersistenceService + V6StorageWorkerBundle"
 // lifecycle = "permanent"
@@ -46,11 +47,17 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
   try {
     await bundle.initialize();
     await writeFile(path.join(temporary, "input.txt"), "captured path fixture");
-    const saved = await bundle.stores.session.insertSession(buildNewSession({ id: "queue-runtime", taskTitle: "Queue", workspaceLabel: "workspace",
+    const saved = await bundle.stores.session.insertSession({ ...buildNewSession({ id: "queue-runtime", taskTitle: "Queue", workspaceLabel: "workspace",
       workspacePath: temporary, branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
-      model: "captured-native-model", reasoningEffort: "native-depth" }));
+      model: "captured-native-model", reasoningEffort: "native-depth" }), sessionRole: "overall-coordinator", rootSessionId: "queue-runtime" });
     const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
+    const target = { kind: "main" as const, ...owner };
+    const [a, b] = await Promise.all(["peer-a", "peer-b"].map(async (id) => {
+      const peer = await bundle.stores.session.insertSession({ ...saved, id, incarnationId: id + "-v1", sessionRole: "executor",
+        parentSessionId: saved.id, createdBySessionId: saved.id });
+      return { kind: "main" as const, sessionId: peer.id, incarnationId: getSessionIncarnationId(peer) };
+    }));
     const provider = { id: "codex", label: "Codex", defaultModelId: saved.model, defaultReasoningEffort: saved.reasoningEffort,
       models: [{ id: saved.model, label: "Model", reasoningEfforts: ["medium", "high"] as Array<"medium" | "high"> }] };
     const snapshot = { providers: [provider] };
@@ -73,6 +80,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     });
     const startedFirst = gate();
     const calls: Array<{ text: string; thread: string; model: string; depth: string; attachment: string }> = [];
+    const providerInputs: RunSessionTurnInput[] = [];
     const firstRequestId = randomUUID();
     const secondRequestId = randomUUID();
     const unknownRequestId = randomUUID();
@@ -82,7 +90,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     let dispatches = 0;
     let acceptanceWrites = 0;
     const adapter: ProviderCodingAdapter = {
-      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
+      composePrompt: composeProviderPrompt,
       getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
       runSessionTurn: async (input) => {
         const requestId = calls.length === 0 ? firstRequestId : calls.length === 1 ? secondRequestId : followerRequestId;
@@ -91,6 +99,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
         assert.equal(receipt?.state, "running");
         assert.equal(receipt?.turnId, String(turn?.id));
         assert.equal(receipt?.userMessageSeq, turn?.userMessageSeq);
+        providerInputs.push(input);
         calls.push({ text: input.userMessage, thread: input.session.threadId, model: input.executionOptions.model,
           depth: input.executionOptions.reasoningEffort, attachment: input.attachments[0]?.absolutePath ?? "" });
         if (calls.length === 1) { startedFirst.resolve(); await finishFirst.promise; }
@@ -152,9 +161,9 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
       preview: async (session, text) => { previews += 1; return resolveComposerPreview(session, text); }, store: bundle.stores.queue, service: queue });
     const options = captureSessionExecutionOptions(saved);
     const firstInput = { incarnationId: owner.incarnationId, clientRequestId: firstRequestId,
-      submitSource: "composer" as const, userMessage: "First @input.txt", executionOptions: options };
+      submitSource: "composer" as const, userMessage: "First @input.txt", executionOptions: options, mainConversationFrame: a };
     const secondInput = { incarnationId: owner.incarnationId, clientRequestId: secondRequestId, submitSource: "composer" as const,
-      userMessage: "Second @input.txt", executionOptions: { ...options, reasoningEffort: "medium" as const } };
+      userMessage: "Second @input.txt", executionOptions: { ...options, reasoningEffort: "medium" as const }, mainConversationFrame: b };
     const accepting = Promise.all([facade.enqueueSessionTurn(saved.id, firstInput), facade.enqueueSessionTurn(saved.id, secondInput)]);
     await Promise.race([firstCommit.promise, accepting]);
     const committed = (await facade.listSessionTurnQueue(saved.id)).map(({ requestId, state }) => [requestId, state]);
@@ -174,6 +183,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     await startedFirst.promise;
     secondInput.userMessage = "Edited after durable ACK";
     secondInput.executionOptions = { ...secondInput.executionOptions, model: "invalid-after-ACK" };
+    secondInput.mainConversationFrame = a;
     assert.equal(calls.length, 1);
     finishFirst.resolve();
     await queue.waitForPending();
@@ -189,6 +199,18 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     const stored = await bundle.stores.session.getSession(saved.id);
     assert.deepEqual(stored?.messages.map((message) => message.text), ["First @input.txt", "answer-1", "Second @input.txt", "answer-2"]);
     assert.equal(stored?.threadId, "thread-2");
+    for (const [index, thread] of [a, b].entries()) {
+      const prompt = composeProviderPrompt(providerInputs[index]);
+      const identity = `sessionId: "${saved.id}"\nincarnationId: "${owner.incarnationId}"\nseq: ${2 * index}\n`;
+      assert.ok(prompt.inputBodyText.includes(identity));
+      const frame = prompt.inputBodyText.match(/^# Conversation Thread\n\nthread: (.+)$/m);
+      assert.ok(frame);
+      assert.deepEqual(JSON.parse(frame[1]), thread);
+      assert.doesNotMatch(prompt.systemBodyText, /Conversation Thread/);
+      const result = await bundle.stores.execution.execute({ target, operation: "list_messages", request: { target, thread } });
+      assert.ok(result.ok);
+      assert.deepEqual((result.items as Array<{ seq: number }>).map(({ seq }) => seq), [2 * index, 2 * index + 1]);
+    }
 
     rejectStarted = true;
     const unknown = await facade.enqueueSessionTurn(saved.id, { incarnationId: owner.incarnationId, clientRequestId: unknownRequestId,

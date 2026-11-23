@@ -25,6 +25,7 @@ import {
 } from "../providers/provider-runtime.js";
 import { composeProviderInput } from "../providers/provider-prompt.js";
 import { sessionReplySchema, type SessionReply } from "../../src-shared/session/session-reply.js";
+import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
@@ -61,6 +62,7 @@ export type SessionRuntimeServiceDeps = {
   appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }, replyTo?: SessionReply): Awaitable<Session>;
   beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin, questionRequestId?: string, replyTo?: SessionReply): Awaitable<Session>;
   assertSavedReplyTo?(reference: SessionReply): Promise<void>;
+  readMainMessageThread?(target: MainSessionTarget, seq: number): Promise<MainSessionTarget | null | undefined>;
   settleRunningInput?(session: Session, messageSeq: number, turnId: number, state: Exclude<TurnInputDeliveryState, "pending">): Awaitable<Session>;
   checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
   appendTerminalSession(
@@ -1236,6 +1238,20 @@ export class SessionRuntimeService {
       const effectiveTurnSession = { ...await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession),
         allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
       const isAuxiliary = Boolean(await this.deps.isAuxiliarySession?.(sessionId));
+      const mainIdentity = !isAuxiliary && session.sessionKind === "default" && runningTurn.userMessageSeq != null
+        ? { sessionId, incarnationId: getSessionIncarnationId(turnSession), seq: runningTurn.userMessageSeq, finalAnswerTurnId: String(runningTurn.id) } : undefined;
+      let mainConversationFrame: MainSessionTarget | null | undefined;
+      if (mainIdentity) {
+        mainConversationFrame = queued?.input.request.mainConversationFrame;
+        if (mainConversationFrame === undefined) {
+          // An older GUI receipt can have a saved reply, and an agent's ordinary
+          // input keeps its existing origin-based display membership.
+          const needsSavedMembership = queued && (queued.input.origin?.kind === "session" || replyTo);
+          mainConversationFrame = needsSavedMembership && this.deps.readMainMessageThread
+            ? await this.deps.readMainMessageThread({ kind: "main", sessionId, incarnationId: mainIdentity.incarnationId }, mainIdentity.seq)
+            : null;
+        }
+      }
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         runtimeOwner: {
@@ -1249,9 +1265,7 @@ export class SessionRuntimeService {
         providerCatalog: provider,
         userMessage: nextMessage,
         ...(replyTo ? { replyTo } : {}),
-        ...(!isAuxiliary && session.sessionKind === "default" && runningTurn.userMessageSeq != null ? { messageIdentity: {
-          sessionId, incarnationId: getSessionIncarnationId(turnSession), seq: runningTurn.userMessageSeq, finalAnswerTurnId: String(runningTurn.id),
-        } } : {}),
+        ...(mainIdentity ? { messageIdentity: mainIdentity, mainConversationFrame } : {}),
         ...(queued ? { inputProvenance: queuedInputProvenance(queued.receipt, queued.input) } : {}),
         appSettings,
         attachments: composerPreview.attachments,

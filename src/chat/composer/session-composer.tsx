@@ -393,7 +393,7 @@ export function SessionComposerExpanded({
     }
   }, [isActive, canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
 
-  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey]);
+  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey, controllerOwner.frameKey]);
   useEffect(() => {
     if (!isActive && isAgentPickerOpen) onCloseAgentPicker();
   }, [isActive, isAgentPickerOpen, onCloseAgentPicker]);

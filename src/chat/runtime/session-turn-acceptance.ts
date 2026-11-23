@@ -131,6 +131,8 @@ export class SessionTurnAcceptance {
     const accepted = receipt.accepted.request;
     return !receipt.accepted.retrySource && accepted.userMessage === original.userMessage.trim()
       && accepted.submitSource === original.submitSource
+      && accepted.mainConversationFrame?.sessionId === original.mainConversationFrame?.sessionId
+      && accepted.mainConversationFrame?.incarnationId === original.mainConversationFrame?.incarnationId
       && accepted.auxiliaryDraftIncarnation === original.auxiliaryDraftIncarnation
       && accepted.auxiliaryDraftDurableRevision === original.auxiliaryDraftDurableRevision;
   }

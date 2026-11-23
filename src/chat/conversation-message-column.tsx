@@ -23,7 +23,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 import { observeSessionResultRead } from "./conversation/observe-session-result-read.js";
-import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
+import { conversationPeerKey, type ConversationThreads } from "../../src-shared/session/conversation-threads.js";
 import { ALL_MAIN_THREADS_ID, threadPageIndexes, type MainConversationFrame } from "./conversation/use-main-conversation-threads.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
@@ -74,6 +74,7 @@ export type UseConversationMessageColumnInput = {
   onColumnControls?: (controls: ConversationColumnControls) => void;
   composerRegistry?: ComposerControllerRegistry;
   frame?: MainConversationFrame;
+  mainThreads?: ConversationThreads;
   showAllThreads?: boolean;
 };
 
@@ -96,11 +97,12 @@ export type ConversationColumnControls = {
   captureReadingPosition?: () => void;
   frameId?: string;
   liveFrameId?: string;
+  runningFrameId?: string;
 };
 
 export function useConversationMessageColumn({
   session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
-  frame, showAllThreads = false,
+  frame, mainThreads, showAllThreads = false,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
@@ -109,12 +111,17 @@ export function useConversationMessageColumn({
   const peerKey = child ? conversationPeerKey(child.target) : undefined;
   const frameId = showAllThreads ? ALL_MAIN_THREADS_ID : peerKey;
   const cacheKey = frameId ? JSON.stringify([sessionId, session?.incarnationId, frameId]) : sessionId;
-  let cache = caches.get(cacheKey);
-  if (!cache || (cache.incarnationId !== undefined && cache.incarnationId !== (session?.incarnationId ?? ""))) {
-    cache = { incarnationId: session?.incarnationId ?? "", scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "", messageJumpRequest: null, messageJumpRequestId: 0 };
-    caches.set(cacheKey, cache);
-  }
-  const conversation = cache;
+  const getCache = (key: string) => {
+    let cache = caches.get(key);
+    if (!cache || (cache.incarnationId !== undefined && cache.incarnationId !== (session?.incarnationId ?? ""))) {
+      cache = { incarnationId: session?.incarnationId ?? "", scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "", messageJumpRequest: null, messageJumpRequestId: 0 };
+      caches.set(key, cache);
+    }
+    return cache;
+  };
+  const conversation = getCache(cacheKey);
+  // This observation belongs to the executing Session, not its selected view.
+  const liveState = getCache(sessionId);
   const liveRunEventRevision = useRef(0);
   const [liveReadRevision, setLiveReadRevision] = useState(0);
   const [, rerender] = useState(0);
@@ -158,25 +165,41 @@ export function useConversationMessageColumn({
   const submissionStore = baseProps.turnSubmissions ?? emptySubmissions.current;
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
-  const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
+  const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : liveState.liveRun;
   const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun);
   const observeTurnReceipts = baseProps.onTurnReceiptsObserved;
   useEffect(() => { observeTurnReceipts?.(allQueue.receipts); }, [observeTurnReceipts, allQueue.receipts]);
-  const receiptChild = useCallback((receipt: SessionTurnQueueReceipt) => {
-    const origin = (receipt.dispatched ?? receipt.accepted ?? receipt.captured).origin;
-    if (origin?.kind !== "session" || origin.actorKind !== "main"
-      || origin.targetSessionId !== sessionId || origin.targetIncarnationId !== queueIncarnationId) return undefined;
-    return frame?.children.find(({ target }) => target.sessionId === origin.actorSessionId && target.incarnationId === origin.actorIncarnationId);
-  }, [frame?.children, sessionId, queueIncarnationId]);
+  const children = mainThreads?.children ?? frame?.children;
+  const receiptFrame = useCallback((receipt: SessionTurnQueueReceipt) => {
+    const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
+    const { origin } = input;
+    if (origin?.targetSessionId !== sessionId || origin.targetIncarnationId !== queueIncarnationId) return undefined;
+    if (origin.kind === "gui" && receipt.inputTurnId == null && !input.retrySource && input.request.mainConversationFrame !== undefined) {
+      return input.request.mainConversationFrame;
+    }
+    if (origin.kind === "session" && origin.actorKind === "main") {
+      return children?.find(({ target }) => target.sessionId === origin.actorSessionId && target.incarnationId === origin.actorIncarnationId)?.target;
+    }
+    return undefined;
+  }, [children, sessionId, queueIncarnationId]);
+  const findChild = (target: ReturnType<typeof receiptFrame>) => target
+    ? children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(target)) : undefined;
   const currentTurnId = rawLiveRun?.sessionTurnId;
-  const entry = currentTurnId ? allQueue.receipts.find((receipt) => receipt.turnId === currentTurnId && receipt.inputTurnId == null) : undefined;
-  const liveChild = currentTurnId ? frame?.children.find(({ inboundTurnIds }) => inboundTurnIds.includes(currentTurnId))
-    ?? (entry && receiptChild(entry)) : undefined;
-  const liveBelongsHere = child === liveChild;
+  const liveReceipt = rawLiveRun?.queueReceipt;
+  const entry = currentTurnId ? allQueue.receipts.find((receipt) => receipt.inputTurnId == null
+    && (receipt.turnId === currentTurnId || receipt.id === liveReceipt?.id && receipt.incarnationId === liveReceipt.incarnationId)) : undefined;
+  const liveChild = currentTurnId ? children?.find(({ inboundTurnIds }) => inboundTurnIds.includes(currentTurnId))
+    ?? (entry && findChild(receiptFrame(entry))) : undefined;
+  const awaitingLiveFrame = !!children?.length && !!currentTurnId && !!liveReceipt && !entry && !liveChild
+    && !mainThreads?.initialMessageIndexes.includes(liveReceipt.userMessageSeq);
+  const liveBelongsHere = !frame || !awaitingLiveFrame && child === liveChild;
   const liveRun = liveBelongsHere ? rawLiveRun : null;
-  const threadReceipts = useMemo(() => allQueue.receipts.filter((receipt) =>
-    receipt.userMessageSeq !== null ? threadFullIndexes?.has(receipt.userMessageSeq) : receiptChild(receipt) === child),
-  [allQueue.receipts, threadFullIndexes, receiptChild, child]);
+  const threadReceipts = useMemo(() => allQueue.receipts.filter((receipt) => {
+    const target = receiptFrame(receipt);
+    const owner = target ? children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(target)) : undefined;
+    return receipt.userMessageSeq === null || receipt.inputTurnId == null && target !== undefined
+      ? owner === child : threadFullIndexes?.has(receipt.userMessageSeq);
+  }), [allQueue.receipts, threadFullIndexes, receiptFrame, children, child]);
   const queue = frame ? { ...allQueue, receipts: threadReceipts } : allQueue;
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
@@ -322,7 +345,6 @@ export function useConversationMessageColumn({
   });
   useEffect(() => {
     const releaseLiveText = () => {
-      conversation.liveRun = null;
       if (displayedBridge.current?.owner === pageOwner) displayedBridge.current = null;
       if (retainedBridges.current.owner === pageOwner) retainedBridges.current.projections = [];
     };
@@ -331,26 +353,27 @@ export function useConversationMessageColumn({
   }, [conversation, enabled, pageOwner]);
   useEffect(() => {
     if (liveRunOverride !== undefined) {
-      conversation.liveRun = enabled ? liveRunOverride : null;
+      liveState.liveRun = enabled ? liveRunOverride : null;
       refresh();
-      return;
+      return () => { liveState.liveRun = null; };
     }
     if (!session || !enabled || !api?.getLiveSessionRun || !api.subscribeLiveSessionRun) return;
-    return subscribeSessionLiveSelection({
+    const unsubscribe = subscribeSessionLiveSelection({
       api: api as Required<Pick<ConversationMessageColumnApi, "getLiveSessionRun" | "subscribeLiveSessionRun">>,
       sessionId, select: (state) => state,
       onChange: (state) => {
         liveRunEventRevision.current += 1;
-        conversation.liveRun = state;
-        conversation.liveReadError = "";
+        liveState.liveRun = state;
+        liveState.liveReadError = "";
         refresh();
       },
       onError: (error) => {
-        conversation.liveReadError = `Live updates could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
+        liveState.liveReadError = `Live updates could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
         refresh();
       },
     });
-  }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh, liveReadRevision]);
+    return () => { unsubscribe(); liveState.liveRun = null; };
+  }, [api, enabled, liveRunOverride, liveState, sessionId, refresh, liveReadRevision]);
 
   const previousResponse = responsePresentation.current;
   // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
@@ -489,9 +512,13 @@ export function useConversationMessageColumn({
     }).sort((left, right) => left.index - right.index);
     return { messages: rows.map((row) => row.message), sources: rows.map((row) => row.source), keys: rows.map((row) => row.key), groups: rows.map((row) => row.group) };
   }, [currentLiveProjection, retainedSignature, messages, sessionId, bridgeKey, bridge?.text, isBrowsing]);
+  const visibleSubmissions = useMemo(() => !frame ? submissions : submissions.filter(({ mainConversationFrame }) => {
+    const target = mainConversationFrame && children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(mainConversationFrame));
+    return (target || undefined) === child;
+  }), [submissions, frame, children, child]);
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
-  }, { submissions: isBrowsing || peerKey ? [] : submissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, peerKey, sessionId, queueIncarnationId, submissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
+  }, { submissions: isBrowsing ? [] : visibleSubmissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, visibleSubmissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
   const projection = queuedProjection.projection;
   const savedReplySourceIndexes = useMemo(() => projection.sources.map((source) =>
     source.kind === "session" || source.kind === "auxiliary" ? source.messageIndex : undefined), [projection.sources]);
@@ -836,6 +863,8 @@ export function useConversationMessageColumn({
   }, [conversation, refresh, sessionId, savedReplySourceIndexes, loadPage, pageOwner, threadPageSignature, following.pauseMessageListFollowing]);
   const replyOwnerKey = baseProps.inputReadContext && conversationPeerKey(baseProps.inputReadContext.target);
   const liveFrameId = showAllThreads ? ALL_MAIN_THREADS_ID : liveChild ? conversationPeerKey(liveChild.target) : undefined;
+  const runningFrameId = enabled && rawLiveRun?.sessionId === sessionId && rawLiveRun.runState === "running" && currentTurnId && !awaitingLiveFrame
+    ? liveChild ? conversationPeerKey(liveChild.target) : "" : undefined;
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -855,14 +884,15 @@ export function useConversationMessageColumn({
       captureReadingPosition: captureAnchor,
       frameId,
       liveFrameId,
+      runningFrameId,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, onJumpToReply, replyOwnerKey, sessionId, frameId, liveFrameId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, onJumpToReply, replyOwnerKey, sessionId, frameId, liveFrameId, runningFrameId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
     if (!mounted.current || activePageOwner.current !== pageOwner || !displayEnabled.current) return;
     if (liveRunEventRevision.current !== eventRevision) return;
-    conversation.liveRun = replaceLiveRunAfterResolvedRequest({ ownerSessionId: sessionId, state: conversation.liveRun }, {
+    liveState.liveRun = replaceLiveRunAfterResolvedRequest({ ownerSessionId: sessionId, state: liveState.liveRun }, {
       sessionId,
       requestId,
       requestKind,
@@ -939,14 +969,14 @@ export function useConversationMessageColumn({
   const moveAction = api?.reorderQueuedSessionTurns ? moveQueuedTurn : undefined;
   const queueReorderDisabled = !enabled || queueActionsFrozen || (session?.accessMode !== undefined && session.accessMode !== "active");
   const renderQueueTail = useMemo(() => !isBrowsing
-    && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || conversation.liveReadError || queue.error || queue.announcement || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => <>
+    && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || liveState.liveReadError || queue.error || queue.announcement || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => <>
     {queuedProjection.tail.map((receipt) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} inputReadContext={baseProps.inputReadContext} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} position={receipt.state === "queued" ? queuedTurnIds.indexOf(receipt.id) + 1 : undefined} queueSize={queuedTurnIds.length} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} onMove={moveAction} moveDisabled={queueReorderDisabled} />)}
     {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} character={columnCharacter} submission={submission} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     <span className="visually-hidden" role="status">{queue.announcement}</span>
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
-    {conversation.liveReadError ? <div className="pending-run-error-note" role="alert">{conversation.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
-  </> : undefined, [isBrowsing, api, columnCharacter, baseProps.inputReadContext, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.announcement, queue.reload, queuedTurnIds, moveAction, queueReorderDisabled, inputAction, conversation.liveReadError]);
+    {liveState.liveReadError ? <div className="pending-run-error-note" role="alert">{liveState.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
+  </> : undefined, [isBrowsing, api, columnCharacter, baseProps.inputReadContext, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.announcement, queue.reload, queuedTurnIds, moveAction, queueReorderDisabled, inputAction, liveState.liveReadError]);
   if (!session) return null;
   return {
     ...baseProps,

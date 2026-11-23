@@ -24,6 +24,7 @@ import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, Live
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
 import { captureSessionTurnQueueDisplay, type SessionTurnQueueReceipt, type SessionTurnQueueOrigin, type SessionSteerOrigin } from "../src-shared/session/session-turn-queue.js";
 import { savedFinalAnswerTurnId, type SessionReply } from "../src-shared/session/session-reply.js";
+import { conversationThreadsResultSchema, savedMessageConversationFrame } from "../src-shared/session/conversation-threads.js";
 import { initiatingReply } from "./session/initiating-reply.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
@@ -2699,6 +2700,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         assertSavedReplyTo,
+        readMainMessageThread: async (target, seq) => {
+          const result = await owner.storageWorker!.stores.execution.execute({
+            target, operation: "read_conversation_threads", request: { target },
+          });
+          return result.ok ? savedMessageConversationFrame(conversationThreadsResultSchema.parse(result), seq) : undefined;
+        },
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },

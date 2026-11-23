@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useSyncExternalStore, type SetStateAction } from "react";
 
 import type { ComposerPreview } from "../../src-shared/session/runtime-state.js";
+import type { SessionReply } from "../../src-shared/session/session-reply.js";
 import { createEmptyComposerPreview } from "./composer/composer-preview-config.js";
 
 export type ComposerOwnerKind = "main" | "auxiliary" | "queue-edit";
-export type ComposerOwner = Readonly<{ kind: ComposerOwnerKind; id: string }>;
+export type ComposerOwner = Readonly<{ kind: ComposerOwnerKind; id: string; frameKey?: string }>;
 export type ComposerSelection = Readonly<{ start: number; end: number }>;
 export type ComposerSaveState = "idle" | "saving" | "saved" | "error";
+export type ComposerDraftReply = Readonly<{ key: string; reference?: SessionReply; error?: string }>;
 
 export type ComposerControllerState = {
   owner: ComposerOwner;
   draft: string;
+  reply?: ComposerDraftReply;
   revision: number;
   selection: ComposerSelection;
   isImeComposing: boolean;
@@ -27,7 +30,7 @@ type Entry = ComposerControllerState & {
 };
 
 function ownerKey(owner: ComposerOwner): string {
-  return `${owner.kind}:${owner.id}`;
+  return JSON.stringify([owner.kind, owner.id, owner.frameKey]);
 }
 
 function clampSelection(selection: ComposerSelection, draft: string): ComposerSelection {
@@ -114,6 +117,7 @@ export class ComposerControllerRegistry {
     draft: string,
     selection?: ComposerSelection,
     allowWhileFrozen = false,
+    clearReply = false,
   ): number {
     const current = this.get(owner);
     if (this.frozen && !allowWhileFrozen) return current.revision;
@@ -122,12 +126,14 @@ export class ComposerControllerRegistry {
       current.draft === draft
       && current.selection.start === nextSelection.start
       && current.selection.end === nextSelection.end
+      && !(clearReply && current.reply)
     ) {
       return current.revision;
     }
     let revision = 0;
     this.update(owner, (entry) => {
       entry.draft = draft;
+      if (clearReply) entry.reply = undefined;
       entry.revision += 1;
       entry.selection = nextSelection;
       entry.preview = createEmptyComposerPreview();
@@ -153,7 +159,18 @@ export class ComposerControllerRegistry {
   clearIfRevision(owner: ComposerOwner, expectedRevision: number): number | null {
     if (this.get(owner).revision !== expectedRevision) return null;
     // Accepted sends still consume their captured revision during shutdown.
-    return this.setDraftInternal(owner, "", { start: 0, end: 0 }, true);
+    return this.setDraftInternal(owner, "", { start: 0, end: 0 }, true, true);
+  }
+
+  /** An explicit reply edit is part of the draft version, just like an inline attachment reference. */
+  setReply(owner: ComposerOwner, reply: ComposerDraftReply | undefined): void {
+    if (this.frozen || this.get(owner).reply === reply) return;
+    this.update(owner, (entry) => { entry.reply = reply; entry.revision += 1; });
+  }
+
+  resolveReply(owner: ComposerOwner, pending: ComposerDraftReply, resolved: ComposerDraftReply): void {
+    if (this.get(owner).reply !== pending) return;
+    this.update(owner, (entry) => { entry.reply = resolved; });
   }
 
   restoreIfRevision(

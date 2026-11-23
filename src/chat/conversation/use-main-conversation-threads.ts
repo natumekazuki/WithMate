@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { conversationPeerKey, type ConversationThread, type ConversationThreads } from "../../../src-shared/session/conversation-threads.js";
+import type { MainSessionTarget } from "../../../src-shared/session/session-target.js";
 import type { TurnInputReadContext } from "./turn-input-details.js";
 
 export type MainConversationFrame = {
   child?: ConversationThread;
   children: ConversationThread[];
   messageIndexes: number[];
+};
+
+export type MainConversationView = {
+  main: MainSessionTarget;
+  id: string;
+  child: MainSessionTarget | null;
+  projection?: ConversationThreads;
 };
 
 export function threadPageIndexes(frame: MainConversationFrame): number[] {
