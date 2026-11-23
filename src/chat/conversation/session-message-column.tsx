@@ -130,6 +130,7 @@ export type SessionMessageColumnProps = {
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
+  savedReplySourceIndexes?: readonly (number | undefined)[];
   conversationPaging?: {
     loading: boolean; error: string;
     onRetry: () => void;
@@ -502,6 +503,7 @@ export function SessionMessageColumn({
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
+  savedReplySourceIndexes,
   conversationPaging,
   searchConversation,
   cancelConversationQuery,
@@ -599,14 +601,14 @@ export function SessionMessageColumn({
     : rawMessages.map((message, index) => index === streamingIndex ? { ...message, text: presentedText } : message), [rawMessages, streamingIndex, presentedText]);
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const [conversationFindError, setConversationFindError] = useState("");
-  const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
+  const [messageJumpHighlight, setMessageJumpHighlight] = useState<MessageJumpRequest | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const scrolledSourceMatchRef = useRef<string | null>(null);
   const findSelectionSnapshot = useRef<{ owner: string; query: string; mode: MessageViewMode; anchor?: FindSourceAnchor } | null>(null);
   const [appliedModeAnchor, setAppliedModeAnchor] = useState<FindSourceAnchor>();
-  const handledMessageJumpRequestIdRef = useRef<number | null>(null);
-  const requestedMessageJumpIdRef = useRef<number | null>(null);
+  const handledMessageJumpRef = useRef<MessageJumpRequest | null>(null);
+  const requestedMessageJumpRef = useRef<MessageJumpRequest | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
   const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
   const messageCollapseTargetByKey = useMemo(
@@ -623,7 +625,9 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} {...sentMessageContext} />
+        positionUnknown={positionUnknown} replyJumpHighlighted={!!messageJumpHighlight?.reply?.receiptId && messageJumpHighlight.reply.isCurrent()
+          && "receiptId" in item && messageJumpHighlight.reply.receiptId === item.receiptId
+          && messageJumpHighlight.reply.seq === item.sourceMessageSeq} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
@@ -738,13 +742,38 @@ export function SessionMessageColumn({
   }, [virtualMessages, onMessageListLayout]);
   useEffect(() => {
     if (!artifactDetailsEnabled) {
-      requestedMessageJumpIdRef.current = null;
+      requestedMessageJumpRef.current = null;
       return;
     }
     if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
       return;
     }
-    if (handledMessageJumpRequestIdRef.current === messageJumpRequest.requestId) {
+    if (handledMessageJumpRef.current === messageJumpRequest) {
+      return;
+    }
+    const reply = messageJumpRequest.reply;
+    if (reply) {
+      if (!reply.isCurrent()) return;
+      const messageIndex = savedReplySourceIndexes?.indexOf(reply.seq) ?? -1;
+      if (messageIndex < 0) return;
+      const list = messageListRef.current;
+      if (!list) return;
+      const row = list.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      const target = reply.receiptId
+        ? [...(row?.querySelectorAll<HTMLElement>("[data-reply-source-receipt-id]") ?? [])]
+          .find((card) => card.dataset.replySourceReceiptId === reply.receiptId)
+        : row?.querySelector<HTMLElement>(":scope > .message-row > .message-card");
+      if (!target) {
+        if (!row && requestedMessageJumpRef.current !== messageJumpRequest) {
+          requestedMessageJumpRef.current = messageJumpRequest;
+          messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+        }
+        return;
+      }
+      handledMessageJumpRef.current = messageJumpRequest;
+      messageVirtualizer.scrollToOffset(list.scrollTop + target.getBoundingClientRect().top - list.getBoundingClientRect().top);
+      list.focus({ preventScroll: true });
+      setMessageJumpHighlight(messageJumpRequest);
       return;
     }
     const messageIndex = messageKeys?.indexOf(messageJumpRequest.key) ?? -1;
@@ -756,35 +785,35 @@ export function SessionMessageColumn({
       const element = messageListRef.current;
       const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
       if (element && row) {
-        handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+        handledMessageJumpRef.current = messageJumpRequest;
         // Replace the index target so a later reconciliation cannot undo the viewport offset.
         messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
         return;
       }
     }
-    if (requestedMessageJumpIdRef.current === messageJumpRequest.requestId) return;
-    requestedMessageJumpIdRef.current = messageJumpRequest.requestId;
+    if (requestedMessageJumpRef.current === messageJumpRequest) return;
+    requestedMessageJumpRef.current = messageJumpRequest;
     messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
     if (messageJumpRequest.offset === undefined) {
-      handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
-      setMessageJumpHighlightKey(messageJumpRequest.key);
+      handledMessageJumpRef.current = messageJumpRequest;
+      setMessageJumpHighlight(messageJumpRequest);
     }
-  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages]);
+  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages, savedReplySourceIndexes, sent]);
 
   useEffect(() => {
-    if (!messageJumpHighlightKey || typeof window === "undefined") {
+    if (!messageJumpHighlight || typeof window === "undefined") {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      setMessageJumpHighlightKey((current) => current === messageJumpHighlightKey ? null : current);
+      setMessageJumpHighlight((current) => current === messageJumpHighlight ? null : current);
     }, 1200);
     return () => window.clearTimeout(timeoutId);
-  }, [messageJumpHighlightKey]);
+  }, [messageJumpHighlight]);
 
   useEffect(() => {
-    setMessageJumpHighlightKey(null);
-    handledMessageJumpRequestIdRef.current = null;
-    requestedMessageJumpIdRef.current = null;
+    setMessageJumpHighlight(null);
+    handledMessageJumpRef.current = null;
+    requestedMessageJumpRef.current = null;
   }, [sessionId]);
   const hasPendingMessageText =
     pendingMessageTextVisible &&
@@ -1545,7 +1574,7 @@ export function SessionMessageColumn({
                 className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
-                  messageJumpHighlightKey === messageKey ? " message-jump-highlight" : ""
+                  messageJumpHighlight?.key === messageKey ? " message-jump-highlight" : ""
                 }`}
                 data-index={absoluteIndex}
               >
@@ -1595,7 +1624,7 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
                 {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}`}
+                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.receiptId && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
                   style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
@@ -1617,7 +1646,7 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} /> : null}
+                    {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} navigable /> : null}
                     <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
                       {hasMessageActions ? (
                         <div className="message-collapse-control">

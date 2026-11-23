@@ -90,6 +90,8 @@ export type ConversationColumnControls = {
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
   messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
+  onJumpToReply: (seq: number, receiptId: string | undefined, isCurrent: () => boolean) => void;
+  replyOwnerKey?: string;
   captureReadingPosition?: () => void;
   frameId?: string;
   liveFrameId?: string;
@@ -218,7 +220,8 @@ export function useConversationMessageColumn({
   const refresh = useCallback(() => {
     if (mounted.current && displayedId.current === sessionId) rerender((revision) => revision + 1);
   }, [sessionId]);
-  const loadPage = useCallback(async (startIndex?: number, direction?: ConversationPageDirection): Promise<number | undefined> => {
+  const loadPage = useCallback(async (startIndex?: number, direction?: ConversationPageDirection,
+    exact?: { seq: number; isCurrent: () => boolean }): Promise<number | undefined> => {
     if (!api?.getConversationPage) return;
     requestedPageStart.current = startIndex;
     requestedPageDirection.current = direction;
@@ -240,9 +243,10 @@ export function useConversationMessageColumn({
       const page = await api.getConversationPage(sessionId, request);
       if (!mounted.current || activePageOwner.current !== owner || revision !== pageRevision.current) return;
       if (!page || page.sessionId !== sessionId || (session?.incarnationId && page.incarnationId !== session.incarnationId)) throw new Error("Conversation Is No Longer Available");
+      if (exact && (!exact.isCurrent() || !page.messages.some((message) => message.historyIndex === exact.seq))) return;
       if (request?.messageIndexes?.some((index) =>
         !page.messages.some((message) => message.historyIndex === index))) throw new Error("Some saved messages are no longer available.");
-      if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex, direction);
+      if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex, direction, exact);
       const anchor = direction ? capturePageAnchor.current() : conversation.anchor;
       let nextPage = page;
       if (direction) {
@@ -485,6 +489,8 @@ export function useConversationMessageColumn({
     sessionId, incarnationId: queueIncarnationId,
   }, { submissions: isBrowsing || peerKey ? [] : submissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, peerKey, sessionId, queueIncarnationId, submissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
   const projection = queuedProjection.projection;
+  const savedReplySourceIndexes = useMemo(() => projection.sources.map((source) =>
+    source.kind === "session" || source.kind === "auxiliary" ? source.messageIndex : undefined), [projection.sources]);
   const searchTailMessages = useMemo(() => {
     const missingBridges = [...retainedBridges.current.projections, ...(bridge ? [bridge] : [])]
       .filter((candidate) => !hasPersistedLiveAssistantMessage(tailMessages, [], candidate, sessionId));
@@ -807,6 +813,24 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
   }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, threadPageSignature, followLatest, following.pauseMessageListFollowing]);
+  const onJumpToReply = useCallback(async (seq: number, receiptId: string | undefined, isCurrent: () => boolean) => {
+    if (!displayEnabled.current || !isCurrent() || (threadIndexes && !threadIndexes.includes(seq))) return;
+    // A live bridge or queued row may temporarily occupy the same index; only a saved row can be a source.
+    if (!savedReplySourceIndexes.includes(seq)) {
+      const revision = await loadPage(pageAround(seq), undefined, { seq, isCurrent });
+      if (revision === undefined || revision !== pageRevision.current || activePageOwner.current !== pageOwner || !isCurrent()) return;
+    } else {
+      ++pageRevision.current;
+      requestedPageStart.current = conversation.pageStart;
+      requestedPageDirection.current = undefined;
+      setPageLoading(false);
+      setPageError("");
+    }
+    following.pauseMessageListFollowing();
+    conversation.messageJumpRequest = { sessionId, key: "", requestId: ++conversation.messageJumpRequestId, reply: { seq, receiptId, isCurrent } };
+    refresh();
+  }, [conversation, refresh, sessionId, savedReplySourceIndexes, loadPage, pageOwner, threadPageSignature, following.pauseMessageListFollowing]);
+  const replyOwnerKey = baseProps.inputReadContext && conversationPeerKey(baseProps.inputReadContext.target);
   const liveFrameId = liveChild ? conversationPeerKey(liveChild.target) : undefined;
   useEffect(() => {
     onColumnControls?.({
@@ -822,11 +846,13 @@ export function useConversationMessageColumn({
       messageNavigatorEntries,
       messageNavigatorPage,
       onJumpToMessage,
+      onJumpToReply,
+      replyOwnerKey,
       captureReadingPosition: captureAnchor,
       frameId: peerKey,
       liveFrameId,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId, peerKey, liveFrameId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, onJumpToReply, replyOwnerKey, sessionId, peerKey, liveFrameId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -948,6 +974,7 @@ export function useConversationMessageColumn({
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
+    savedReplySourceIndexes,
     isRunning: !isBrowsing && hasActiveRun,
     responsePending: !isBrowsing && (isResponseBindingPending || !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error)),
     submissionError: queuedProjection.pendingSubmission?.error ?? "",

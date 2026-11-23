@@ -38,6 +38,8 @@ GUIでは保存発言の返信ボタンで一通を選ぶ。Session間の送信�
 
 ## 本文・操作詳細のpaging
 
+送信後の引用は一行に収め、幅を超えた部分だけ表示上省略する。正確な保存seqと世代がこのWindowに表示できると確認したときは、既存の会話枠・履歴pagingを使ってその発言へ移動し、短く強調する。旧送信receiptは、保存された送信元Turnと同じreceiptを親側の投影で確認できる場合だけ、親側の該当カードに移動する。宛先側の発言、Turn中の別カード、近い位置に置き換えない。未確定・権限外・別Windowにしかない参照は引用を非リンクで表示する。移動は下書き・送信先・履歴を変えない。
+
 通常Session APIは既存の保存履歴read engineを共用する。message／operationの一覧はoffsetとlimit、本文・詳細はoffsetとmaxChars（UTF-16 code unit）で取得する。応答のtotalとnextOffsetで続きを判断し、surrogate pairを途中で分割しない。未保存の操作詳細を空成功や成功実績へ補完しない。
 
 ## 返す内容と返さない内容

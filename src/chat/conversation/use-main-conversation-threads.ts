@@ -65,6 +65,6 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
     beforeSwitch();
     setSelected({ owner, id });
   };
-  return { canRead, ready: !canRead || !!projection, children, frame, selectedId, select, retry: reload,
+  return { canRead, ready: !canRead || !!projection, projection: available?.error ? undefined : projection, children, frame, selectedId, select, retry: reload,
     loading: available?.loading ?? canRead, error: available?.error ?? "" };
 }

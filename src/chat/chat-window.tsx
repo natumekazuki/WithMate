@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -32,6 +33,9 @@ import type { SessionSelectOption, SessionSkillItem } from "./composer/session-c
 import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { SessionSwitcher, type SessionSwitcherOption } from "./session-switcher.js";
 import { useMainConversationThreads } from "./conversation/use-main-conversation-threads.js";
+import { getWithMateApi } from "../app/renderer-withmate-api.js";
+import { ReplyQuoteNavigationContext, type ResolvedReply } from "./conversation/reply-quote.js";
+import { locateReply, replyLocationIsProjected, type ReplyLocation } from "./conversation/reply-location.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
 import {
   ConversationMessageColumn,
@@ -569,6 +573,47 @@ export function ChatWindow({
     auxiliaryColumnControlsRef.current = controls;
     setColumnControlsRevision((revision) => revision + 1);
   }, []);
+  const mainReplyTarget = mainVisible ? concurrentChats?.main.inputReadContext?.target : undefined;
+  const auxiliaryReplyTarget = isConversationVisible && (isSideSplit ? concurrentChats?.target === "auxiliary" : (concurrentChats?.widthRatio ?? 0) > 0)
+    && !concurrentChats?.loading && !concurrentChats?.error ? concurrentChats?.auxiliary?.inputReadContext?.target : undefined;
+  const mainReplyKey = mainReplyTarget && conversationPeerKey(mainReplyTarget);
+  const auxiliaryReplyKey = auxiliaryReplyTarget && conversationPeerKey(auxiliaryReplyTarget);
+  const replyScope = useMemo(() => ({ main: mainReplyTarget, auxiliary: auxiliaryReplyTarget, threads: mainThreads.projection }),
+    [mainReplyKey, auxiliaryReplyKey, mainThreads.projection]);
+  const replyScopeRef = useRef(replyScope);
+  replyScopeRef.current = replyScope;
+  const windowOwner = concurrentChats?.main.inputReadContext?.ownerSessionId;
+  const locateQuote = useCallback((quote: ResolvedReply) => {
+    const api = getWithMateApi();
+    return api?.readSessionExecution && windowOwner ? locateReply(api, windowOwner, replyScope, quote) : Promise.resolve(null);
+  }, [windowOwner, replyScope]);
+  const replyJump = useRef<{ location: ReplyLocation; started: boolean } | null>(null);
+  const [replyJumpRevision, requestReplyJump] = useState(0);
+  const selectedReplyFrame = useRef(mainThreads.selectedId);
+  selectedReplyFrame.current = mainThreads.selectedId;
+  const openQuote = (location: ReplyLocation) => {
+    if (!replyLocationIsProjected(replyScope, location)) return;
+    replyJump.current = { location, started: false };
+    if (location.column === "main" && location.frameId !== mainThreads.selectedId) mainThreads.select(location.frameId);
+    requestReplyJump((revision) => revision + 1);
+  };
+  const selectConversation = (id: string) => {
+    if (id !== mainThreads.selectedId) replyJump.current = null;
+    mainThreads.select(id);
+  };
+  useEffect(() => {
+    const request = replyJump.current;
+    if (!request) return;
+    const { location } = request;
+    const isCurrent = () => replyJump.current === request && replyLocationIsProjected(replyScopeRef.current, location)
+      && (location.column !== "main" || selectedReplyFrame.current === location.frameId);
+    if (!isCurrent()) { replyJump.current = null; return; }
+    if (request.started) return;
+    const controls = location.column === "main" ? mainColumnControlsRef.current : auxiliaryColumnControlsRef.current;
+    if (!controls || controls.replyOwnerKey !== location.ownerKey || (controls.frameId ?? "") !== location.frameId) return;
+    request.started = true;
+    controls.onJumpToReply(location.seq, location.receiptId, isCurrent);
+  }, [replyJumpRevision, replyScope, mainThreads.selectedId, mainColumnControlsRef.current, auxiliaryColumnControlsRef.current]);
   const errorSurfaceId = useId();
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
@@ -727,7 +772,7 @@ export function ChatWindow({
       if (!mainThreads.ready || (targetColumnControls.frameId ?? "") !== mainThreads.selectedId) return;
       const liveFrame = targetColumnControls.liveFrameId ?? "";
       if (liveFrame !== mainThreads.selectedId) {
-        mainThreads.select(liveFrame);
+        selectConversation(liveFrame);
         return;
       }
     }
@@ -764,6 +809,7 @@ export function ChatWindow({
     : null;
 
   return (
+    <ReplyQuoteNavigationContext.Provider value={{ locate: locateQuote, open: openQuote }}>
     <SessionChatScreen
       {...screenProps}
       rightPane={renderRightPane ? (
@@ -828,10 +874,10 @@ export function ChatWindow({
         <div ref={mainColumnElementRef} id="session-main-chat-pane" className={`concurrent-chat-column-content${mainThreads.canRead ? " has-main-thread-header" : ""}`}>
           {mainThreads.canRead ? <div className="main-thread-header">
             <SessionSwitcher ariaLabel="Main conversation" className="concurrent-chat-session-switcher"
-              options={threadOptions} selectedId={mainThreads.selectedId} searchable onSelect={mainThreads.select}
+              options={threadOptions} selectedId={mainThreads.selectedId} searchable onSelect={selectConversation}
               onMove={(direction) => {
                 const index = threadOptions.findIndex(({ id }) => id === mainThreads.selectedId);
-                mainThreads.select(threadOptions[(index + direction + threadOptions.length) % threadOptions.length].id);
+                selectConversation(threadOptions[(index + direction + threadOptions.length) % threadOptions.length].id);
               }} />
             {mainVisible && mainThreads.loading && !mainThreads.ready ? <LoadingIndicator inline label="Loading conversations" /> : null}
             {mainThreads.error ? <div className="main-thread-feedback"><span role="alert">{mainThreads.error}</span>
@@ -1035,6 +1081,7 @@ export function ChatWindow({
         </div>
       )}
     />
+    </ReplyQuoteNavigationContext.Provider>
   );
 }
 

@@ -1094,12 +1094,36 @@
   padding: 4px 10px;
   border-inline-start: 2px solid currentColor;
   color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.session-reply-link {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.session-reply-link:focus-visible {
+  outline: 2px solid currentColor;
+}
+
+.message-card.is-reply-jump-target {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, var(--ink));
+  outline-offset: -2px;
 }
 
 .message-card.is-reply-selected {

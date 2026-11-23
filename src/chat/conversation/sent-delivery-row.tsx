@@ -15,8 +15,8 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, ...messageContext }: {
-  item: SentInstruction; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean;
+export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, replyJumpHighlighted = false, ...messageContext }: {
+  item: SentInstruction; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean; replyJumpHighlighted?: boolean;
 } & SentMessageContext) {
   const receipt = "receiptId" in item ? item : null;
   const steer = "messageSeq" in item ? item : null;
@@ -55,12 +55,13 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
   const coordination = receipt?.coordination;
   const distinctContent = coordination && (coordination.consultation === undefined || coordination.text !== coordination.consultation);
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
-  const card = <div className="message-card assistant session-outbound"><div className="message-card-content">
+  const card = <div className={`message-card assistant session-outbound${replyJumpHighlighted ? " is-reply-jump-target" : ""}`}
+    data-reply-source-receipt-id={receipt?.receiptId}><div className="message-card-content">
       <div className="sent-delivery-header">
         <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
         {inline ? detailsButton : null}
       </div>
-      {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} /> : null}
+      {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} navigable /> : null}
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
       {coordination
         ? <CoordinationNotice id={coordination.id} consultation={coordination.consultation ?? coordination.text} target={item.target} />
