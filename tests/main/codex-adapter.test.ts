@@ -883,7 +883,7 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
       ["chosen-codex", "on-request", "auto_review", "high"]);
     assert.equal(start.ephemeral, true);
     assert.equal(start.allowProviderModelFallback, false);
-    assert.match(start.developerInstructions, /Do not execute, retry, or delegate.*Session history/s);
+    assert.match(start.developerInstructions, /do not execute it.*Skip routine development steps.*Session Graph.*WithMate history/s);
     assert.match(JSON.stringify(start.config.mcp_servers), /withmate-session-http.*127\.0\.0\.1\/session/);
     assert.doesNotMatch(JSON.stringify(start), /session-secret/);
     assert.deepEqual(await reviewer.review("first operation"), results[0]);
