@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { locateReply } from "../../src/chat/conversation/reply-location.js";
+import { locateReply, locateSentInstruction } from "../../src/chat/conversation/reply-location.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
@@ -17,12 +17,12 @@ import { executionWindowResultSchemas } from "../../src-shared/session/session-e
 
 // @test-value v2
 // kind = "contract"
-// claim = "旧送信receipt引用は受信先のseqでも同じTurnの別receiptでもなく、親の正確な送信カードだけを移動先にする"
-// oracle = { type = "contract", ref = "docs/design/session-history.md#本文操作詳細のpaging" }
-// fault = "宛先の保存seqで移動する、最初に見つけた同文別receiptを採用する、親世代が異なるか投影外でもリンクを出す"
-// observable = "実SQLiteの複数ページの送信履歴から確定した会話枠・親側の保存seq・receipt ID、世代違い／投影外のリンク可否"
+// claim = "旧送信receipt引用と@宛先は、受信先の発言や同文の別送信ではなく、親側の正確な送信カードだけを指す"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#本文操作詳細のpaging; docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "宛先の保存seqで移動する、同文の別receiptやSteerを採用する、世代が異なるか投影外でもリンクを出す"
+// observable = "実SQLiteの送信履歴から確定した会話枠・親側seq・receipt／Steerのカードキー、世代違い／投影外のリンク可否"
 // observation_boundary = "public-boundary"
-// scope = "引用ナビゲーションの保存元解決と既存DB読取の接続"
+// scope = "引用と宛先メンションの送信位置解決、実SQLiteの読取との接続。DOMは対象外"
 // lifecycle = "permanent"
 // impact = "同じ指示が複数ある履歴で利用者が別の指示へ誘導される"
 // distinction = "SQLiteの取得単体と画面表示の検査だけでは投影先・送信元・receiptの三つの照合を検出できない"
@@ -54,6 +54,10 @@ test("legacy reply receipts locate only the exact outgoing card in its parent's 
     for (let i = 0; i < 19; ++i) enqueue(main.incarnationId);
     const exact = enqueue(main.incarnationId);
     const obsolete = enqueue("old-parent");
+    sessions.updateSession({ ...childSession, messages: [...childSession.messages, ...[1, 2].map((index) => ({
+      role: "user" as const, text: "same text", turnInput: { turnId: String(index), nativeTurnId: "native", state: "confirmed" as const, attachments: [],
+        origin: { ...origin, operation: "steer" as const } },
+    }))] });
     const scope = { main, threads: conversationThreadsResultSchema.parse(read.execute({
       target: main, operation: "read_conversation_threads", request: { target: main },
     })) };
@@ -67,10 +71,32 @@ test("legacy reply receipts locate only the exact outgoing card in its parent's 
       return locateReply(api, parent.id, where, { reference, origin: source.origin, text: source.text });
     };
     const destination = { column: "main", ownerKey: conversationPeerKey(main), frameId: conversationPeerKey(child), seq: 1 };
-    assert.deepEqual(await resolveReceipt(first.id), { ...destination, receiptId: first.id });
-    assert.deepEqual(await resolveReceipt(exact.id), { ...destination, receiptId: exact.id });
+    assert.deepEqual(await resolveReceipt(first.id), { ...destination, sentKey: first.id });
+    assert.deepEqual(await resolveReceipt(exact.id), { ...destination, sentKey: exact.id });
     assert.equal(await resolveReceipt(obsolete.id), null);
     assert.equal(await resolveReceipt(exact.id, { ...scope, threads: { ...scope.threads, children: [] } }), null);
+
+    const originalPage = await readSessionExecution(parent.id, "list_sent_deliveries", { target: main, messageSeqs: [1], limit: 20 });
+    assert.ok(originalPage.ok && originalPage.nextCursor !== null);
+    const deliveryPage = await readSessionExecution(parent.id, "list_sent_deliveries", { target: main, messageSeqs: [1], limit: 20, cursor: originalPage.nextCursor });
+    assert.ok(deliveryPage.ok);
+    const deliveries = [...originalPage.items, ...deliveryPage.items];
+    const delivery = deliveries.find((item) => item.receiptId === exact.id)!;
+    for (const { id } of [first, exact]) {
+      assert.deepEqual(locateSentInstruction(scope, main, deliveries.find((item) => item.receiptId === id)!), { ...destination, sentKey: id });
+    }
+    const steers = await readSessionExecution(parent.id, "list_sent_steers", { target: main, messageSeqs: [1] });
+    assert.ok(steers.ok);
+    assert.deepEqual(steers.items.map(({ messageSeq }) => messageSeq).sort((a, b) => a - b), [1, 2]);
+    for (const item of steers.items) {
+      assert.deepEqual(locateSentInstruction(scope, main, item), { ...destination, sentKey: `steer:${destination.frameId}:${item.messageSeq}` });
+    }
+    assert.equal(locateSentInstruction(scope, main, { ...delivery, sourceMessageSeq: null }), null);
+    const outOfFrame = { ...scope, threads: { ...scope.threads, children: [] } };
+    assert.equal(locateSentInstruction(outOfFrame, main, delivery), null);
+    const oldChild = { ...child, incarnationId: "replaced-child" };
+    assert.equal(locateSentInstruction(scope, main, { ...delivery, target: oldChild, origin: { ...origin, targetIncarnationId: oldChild.incarnationId } }), null);
+    assert.equal(locateSentInstruction(scope, main, { ...delivery, origin: { ...origin, actorIncarnationId: "old-parent" } }), null);
   } finally {
     read.close(); queue.close(); turns.close(); sessions.close();
     await rm(dir, { recursive: true, force: true });

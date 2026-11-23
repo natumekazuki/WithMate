@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { conversationPeerKey, type ConversationThread, type ConversationThreads } from "../../../src-shared/session/conversation-threads.js";
 import type { TurnInputReadContext } from "./turn-input-details.js";
@@ -15,6 +15,8 @@ export function threadPageIndexes(frame: MainConversationFrame): number[] {
 }
 
 const EMPTY_CHILDREN: ConversationThread[] = [];
+// Peer IDs are serialized Session targets, not reserved view IDs.
+export const ALL_MAIN_THREADS_ID = "all-main-threads";
 
 export function useMainConversationThreads(context: TurnInputReadContext | undefined, enabled: boolean, historyRevision: string, beforeSwitch: () => void) {
   const target = context?.target;
@@ -24,12 +26,15 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
   const [state, setState] = useState<{ owner: string; projection?: ConversationThreads; error: string; loading: boolean }>();
   const [selected, setSelected] = useState<{ owner: string; id: string }>();
   const [revision, setRevision] = useState(0);
+  const childSessions = useRef<readonly ConversationThread[]>(EMPTY_CHILDREN);
   const reload = () => setRevision((value) => value + 1);
   useEffect(() => {
     if (!enabled || !canRead) return;
     const changed = (id: string) => { if (id === target?.sessionId) reload(); };
     const sent = api?.onSessionSentDeliveriesChanged?.(changed);
-    const turns = api?.onSessionTurnUpdated?.(changed);
+    const turns = api?.onSessionTurnUpdated?.((id) => {
+      if (id === target?.sessionId || childSessions.current.some(({ target: child }) => child.sessionId === id)) reload();
+    });
     const queue = api?.onSessionTurnQueueChanged?.(changed);
     // A new child may be the only ID in the invalidation and need not have sent anything.
     const sessions = api?.subscribeSessionInvalidation?.(reload);
@@ -54,17 +59,23 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
 
   const available = state?.owner === owner ? state : undefined;
   const projection = available?.projection;
-  const children = projection?.children ?? EMPTY_CHILDREN;
-  const child = selected?.owner === owner ? children.find((entry) => conversationPeerKey(entry.target) === selected.id) : undefined;
-  const selectedId = child ? conversationPeerKey(child.target) : "";
-  const frame = useMemo(() => projection?.children.length ? {
+  childSessions.current = projection?.children ?? EMPTY_CHILDREN;
+  const children = useMemo(() => projection?.children.slice().sort((left, right) =>
+    Number(right.hasUnreadResult === true) - Number(left.hasUnreadResult === true)
+    || (right.lastActivityAt ?? Number.MIN_SAFE_INTEGER) - (left.lastActivityAt ?? Number.MIN_SAFE_INTEGER)
+  ) ?? EMPTY_CHILDREN, [projection]);
+  const requestedId = selected?.owner === owner ? selected.id : "";
+  const showAllThreads = requestedId === ALL_MAIN_THREADS_ID;
+  const child = children.find((entry) => conversationPeerKey(entry.target) === requestedId);
+  const selectedId = showAllThreads ? ALL_MAIN_THREADS_ID : child ? conversationPeerKey(child.target) : "";
+  const frame = useMemo(() => !showAllThreads && projection?.children.length ? {
     child, children: projection.children, messageIndexes: child?.messageIndexes ?? projection.initialMessageIndexes,
-  } : undefined, [child, projection]);
+  } : undefined, [child, projection, showAllThreads]);
   const select = (id: string) => {
-    if (id === selectedId || id && !children.some((entry) => conversationPeerKey(entry.target) === id)) return;
+    if (id === selectedId || id && id !== ALL_MAIN_THREADS_ID && !children.some((entry) => conversationPeerKey(entry.target) === id)) return;
     beforeSwitch();
     setSelected({ owner, id });
   };
-  return { canRead, ready: !canRead || !!projection, projection: available?.error ? undefined : projection, children, frame, selectedId, select, retry: reload,
+  return { canRead, ready: !canRead || !!projection, projection: available?.error ? undefined : projection, children, frame, selectedId, showAllThreads, select, retry: reload,
     loading: available?.loading ?? canRead, error: available?.error ?? "" };
 }

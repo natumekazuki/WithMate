@@ -233,6 +233,15 @@ const V6_HOME_CHARACTER_NAME_EXPRESSION = `CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EX
   THEN ${v6SnapshotJsonValue("$.name")}
   ELSE ${v6RuntimeJsonValue("$.characterName")}
 END`;
+// Shared by Main Session summaries and conversation switcher candidates (sessions_v6 alias: s).
+export const MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS = `
+  ${V6_HOME_CHARACTER_NAME_EXPRESSION} AS character_name,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
+    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
+  END AS character_icon_path,
+  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state
+`;
 const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
   s.id,
   s.title AS task_title,
@@ -248,11 +257,7 @@ const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
   COALESCE(${v6RuntimeJsonValue("$.accessMode")}, 'active') AS access_mode,
   COALESCE(${v6RuntimeJsonValue("$.sourceSchemaVersion")}, ${CURRENT_SESSION_SCHEMA_VERSION}) AS source_schema_version,
   ${V6_HOME_CHARACTER_ID_EXPRESSION} AS character_id,
-  ${V6_HOME_CHARACTER_NAME_EXPRESSION} AS character_name,
-  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
-    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
-    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
-  END AS character_icon_path,
+  ${MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS},
   CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
     THEN ${v6SnapshotJsonValue("$.theme.main")}
     ELSE ${v6RuntimeJsonValue("$.characterThemeColors.main")}
@@ -261,7 +266,6 @@ const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
     THEN ${v6SnapshotJsonValue("$.theme.sub")}
     ELSE ${v6RuntimeJsonValue("$.characterThemeColors.sub")}
   END AS character_theme_sub,
-  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state,
   s.is_pinned,
   s.last_active_at
 `;

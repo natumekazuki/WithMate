@@ -42,7 +42,7 @@ export type MessageJumpRequest = Readonly<{
   key: string;
   requestId: number;
   offset?: number;
-  reply?: { seq: number; receiptId?: string; isCurrent: () => boolean };
+  reply?: { seq: number; sentKey?: string; isCurrent: () => boolean };
 }>;
 
 function messageSourceIdentity(source: MessageListSource): string {

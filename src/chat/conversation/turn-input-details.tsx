@@ -136,7 +136,10 @@ export function AdditionalInputStatus({ state }: { state: NonNullable<Message["t
   </>;
 }
 
-export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin | SessionSteerOrigin; target?: SessionTarget; onError: (message: string) => void }) {
+export function SessionOriginRoute({ origin, target, onError, onOpenRecipientThread }: {
+  origin: SessionTurnQueueOrigin | SessionSteerOrigin; target?: SessionTarget;
+  onError: (message: string) => void; onOpenRecipientThread?: () => void;
+}) {
   const outbound = target !== undefined;
   const snapshot = outbound ? origin.targetSnapshot : origin.actorSnapshot;
   const recipient = origin.targetSnapshot?.character.name ?? "Unknown Recipient";
@@ -145,7 +148,10 @@ export function SessionOriginRoute({ origin, target, onError }: { origin: Sessio
     ? origin.actorMainSessionId && origin.actorSessionId ? [origin.actorMainSessionId, origin.actorSessionId] as const : null
     : origin.actorSessionId ? [origin.actorSessionId] as const : null;
   return <div className="session-message-address">
-    <span className="session-message-mention" title={`Recipient: ${recipient}`}>@{recipient}</span>
+    {outbound && onOpenRecipientThread
+      ? <button type="button" className="session-message-mention" title={`Go to this instruction in: ${sessionTitle}`}
+          aria-label={`@${recipient}: Go to this instruction in ${sessionTitle}`} onClick={onOpenRecipientThread}>@{recipient}</button>
+      : <span className="session-message-mention" title={`Recipient: ${recipient}`}>@{recipient}</span>}
     <button type="button" className="related-session-route" disabled={!route || !getWithMateApi()?.openSession}
     title={sessionTitle} aria-label={`${outbound ? "Open Recipient" : "Open Sender"}: ${sessionTitle}`}
     onClick={() => { if (route) void getWithMateApi()!.openSession(route[0], route[1]).catch((failure) => onError(failure instanceof Error ? failure.message : "Could not open sender Session.")); }}>

@@ -3,10 +3,13 @@ import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { savedFinalAnswerTurnId, type SessionReply } from "../../../src-shared/session/session-reply.js";
 import type { SessionTurnQueueOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { ReplyLocation } from "./reply-location.js";
+import type { SessionTarget } from "../../../src-shared/session/session-target.js";
+import type { SentInstruction } from "./use-sent-deliveries.js";
 
 export type ResolvedReply = { reference: SessionReply; text: string; origin?: SessionTurnQueueOrigin | null };
 export type ReplyQuoteNavigation = {
   locate: (quote: ResolvedReply) => Promise<ReplyLocation | null>;
+  locateSent: (source: SessionTarget, item: SentInstruction) => ReplyLocation | null;
   open: (location: ReplyLocation) => void;
 };
 export const ReplyQuoteNavigationContext = createContext<ReplyQuoteNavigation | null>(null);

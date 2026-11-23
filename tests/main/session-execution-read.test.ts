@@ -8,7 +8,7 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 import { SessionTurnStorageV6 } from "../../src-electron/session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
 import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId, projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { projectProviderOutput } from "../../src-shared/session/provider-output.js";
 import { executionOperationResultSchemas, type ExecutionReadOperation } from "../../src-shared/session/session-execution-read.js";
@@ -25,6 +25,11 @@ import type { IpcMainInvokeEvent } from "electron";
 import { conversationThreadsResultSchema } from "../../src-shared/session/conversation-threads.js";
 import type { SessionReply } from "../../src-shared/session/session-reply.js";
 import { initiatingReply } from "../../src-electron/session/initiating-reply.js";
+import { registerSessionExecutionHandlers } from "../../src-electron/ipc/session-execution.js";
+import type { IpcHandleRegistrar } from "../../src-electron/ipc/contracts.js";
+import { WITHMATE_READ_SESSION_EXECUTION_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { SessionResultReadService } from "../../src-electron/session/session-result-read-service.js";
+import { readSessionMonitorPage } from "../../src-electron/session/session-monitor-query.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void | Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -35,6 +40,73 @@ async function fixture(action: (context: { sessions: SessionStorageV6; turns: Se
   finally { auxiliary.close(); read.close(); queue.close(); turns.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); }
 }
 function session() { return buildNewSession({ id: "read-main", taskTitle: "Read", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main相手候補の未読はMonitorと同じ終了結果の既読に追従し、会話の更新時刻には該当する保存済み送受信・応答だけを使う"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "スレッドの表示やメタデータ更新から未読／新しさを推定する、片側の既読がもう一方に届かない、または所有外の投影を読む"
+// observable = "所有Windowの実行read IPCとMonitor queryが返す未読、実SQLiteの候補別最終時刻、所有Session外の投影要求の拒否"
+// observation_boundary = "public-boundary"
+// scope = "実ストレージ、Monitor、未読サービス、実行read IPC。Electron Windowと運用データはfixture"
+// lifecycle = "permanent"
+// impact = "最新の相手とのやり取りが埋もれる、MonitorとMainが矛盾する、または別ユーザーの結果状態を露出する"
+// distinction = "既読サービス単体やMonitor単体では、認可済み会話枠との接続と保存活動の帰属を検証しない"
+// @end-test-value
+test("Main thread projection and Monitor share terminal unread state while recency comes from saved thread activity", async () => {
+  await fixture(async ({ sessions, turns, queue, read }) => {
+    const main = sessions.insertSession({ ...session(), sessionRole: "overall-coordinator", rootSessionId: "read-main",
+      messages: [{ role: "user", text: "source" }, { role: "assistant", text: "source answer" }] });
+    const makeChild = (id: string) => sessions.insertSession({ ...session(), id, sessionRole: "executor", parentSessionId: main.id,
+      createdBySessionId: main.id, rootSessionId: main.id, updatedAt: "2099-01-07T00:00:00Z" });
+    const [a, b, c] = ["A", "B", "C"].map(makeChild);
+    const target = (s: typeof main) => ({ kind: "main" as const, sessionId: s.id, incarnationId: getSessionIncarnationId(s) });
+    const owner = target(main);
+    const turn = (seq: number) => turns.createSessionTurn({
+      sessionId: main.id, provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
+      phase: "completed", userMessageSeq: seq, assistantMessageSeq: seq + 1, threadId: "", errorMessage: "", createdAt: "2099-01-01T00:00:00Z",
+    });
+    const send = (actor: typeof main, recipient: typeof main, actorTurnId?: string) => queue.enqueue(target(recipient), {
+      request: { userMessage: "fixture input", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(recipient) },
+      provider: recipient.provider, workspacePath: recipient.workspacePath, attachments: [],
+      origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: actor.id, actorIncarnationId: target(actor).incarnationId,
+        actorTurnId, targetSessionId: recipient.id, targetIncarnationId: target(recipient).incarnationId },
+    });
+    const outgoing = send(main, a, String(turn(0).id));
+    const incoming = send(b, main);
+    queue.claimNext(owner);
+    queue.markStarted(owner, incoming.id, { turnId: String(turn(2).id), userMessageSeq: 2 });
+    queue.settle(owner, incoming.id, "completed");
+    const savedAt = "2099-01-02T00:00:00Z";
+    const incomingSaved = sessions.updateSession({ ...main, updatedAt: "2099-01-01T00:00:00Z", messages: [...main.messages,
+      { role: "user", text: "child B report" }] });
+    sessions.updateSession({ ...incomingSaved, updatedAt: savedAt, messages: [...incomingSaved.messages,
+      { role: "assistant", text: "parent response" }] });
+    const service = new SessionResultReadService(() => {});
+    const hasUnreadResult = (id: string) => service.getUnreadResult(id) !== null;
+    const monitor = () => readSessionMonitorPage({ hasUnreadResult, listMonitorSessionIds: () => [a.id, b.id, c.id],
+      readSummaries: async () => [a, b, c].map(projectHomeSessionSummary), readAuxiliarySummaries: async () => [], getLiveSessionRun: () => null });
+    const handlers = new Map<string, Parameters<IpcHandleRegistrar["handle"]>[1]>();
+    const window = {} as NonNullable<ReturnType<Parameters<typeof registerSessionExecutionHandlers>[1]["resolveEventWindow"]>>;
+    const mainFrame = {};
+    const event = { senderFrame: mainFrame, sender: { mainFrame, isDestroyed: () => false } } as unknown as IpcMainInvokeEvent;
+    registerSessionExecutionHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, {
+      resolveEventWindow: () => window, resolveSessionWindow: (id) => id === main.id ? window : null,
+      hasUnreadResult, readExecution: async (input) => read.execute(input),
+    });
+    const invoke = (target: typeof owner) => handlers.get(WITHMATE_READ_SESSION_EXECUTION_CHANNEL)!(event, main.id, "read_conversation_threads", { target });
+    const snapshot = async () => conversationThreadsResultSchema.parse(await invoke(owner)).children;
+    await assert.rejects(Promise.resolve().then(() => invoke(target(a))), /owning Session/);
+    service.recordResult({ sessionId: a.id, turnId: 2, phase: "completed", assistantMessageSeq: 1, threadId: "", errorMessage: "", completedAt: savedAt });
+    const updated = await snapshot();
+    assert.deepEqual(updated.map(({ target, lastActivityAt, hasUnreadResult }) => [target.sessionId, lastActivityAt, hasUnreadResult]),
+      [[a.id, Date.parse(outgoing.createdAt), true], [b.id, Date.parse(savedAt), false], [c.id, undefined, false]]);
+    assert.equal((await monitor()).entries.find(({ id }) => id === a.id)?.hasUnreadResult, true);
+    assert.equal(service.markRead(a.id, 2), true, "both projections left the result unread");
+    assert.equal((await monitor()).entries.find(({ id }) => id === a.id)?.hasUnreadResult, false);
+    assert.deepEqual(await snapshot(), updated.map((child) => ({ ...child, hasUnreadResult: false })));
+  });
+});
 
 // @test-value v2
 // kind = "contract"
@@ -182,6 +254,40 @@ test("failed Turn retry provenance survives queue storage and execution reads", 
 
 // @test-value v2
 // kind = "contract"
+// claim = "Mainの子候補は子自身のキャラ・実行状態を使い、実行終了で表示状態のみが変わる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "全候補に親のキャラを使う、画像なしの子に別の画像を流用する、終了後も実行中を返す"
+// observable = "実SQLiteから実行履歴read契約で返る子IDごとのキャラ名・画像・実行状態"
+// observation_boundary = "public-boundary"
+// scope = "作成済みの子の読取projection。CSSと描画は対象外"
+// lifecycle = "permanent"
+// impact = "送信先確認に必要な人物表示が誤り、終了後も実行中に見える"
+// distinction = "履歴の帰属や単独Session summaryだけでは、枠ごとの表示用情報が正しく返るか分からない"
+// @end-test-value
+test("Main child candidates keep their own avatar and reflect run completion", async () => {
+  await fixture(({ sessions, read }) => {
+    const parent = sessions.insertSession({ ...session(), characterId: "parent-agent", character: "Parent",
+      characterIconPath: "C:/fixture/parent.png", sessionRole: "overall-coordinator" });
+    const child = { ...session(), sessionRole: "executor" as const, rootSessionId: parent.id,
+      parentSessionId: parent.id, createdBySessionId: parent.id, updatedAt: "2026-11-23T00:00:00.000Z" };
+    const running = sessions.insertSession({ ...child, id: "child-B", taskTitle: "Child B", characterId: "child-b-agent",
+      character: "Reviewer", characterIconPath: "C:/fixture/reviewer.png", runState: "running" });
+    sessions.insertSession({ ...child, id: "child-A", taskTitle: "Child A", characterId: "child-a-agent",
+      character: "Writer", characterIconPath: "" });
+    const target = { kind: "main" as const, sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) };
+    const candidates = () => new Map(conversationThreadsResultSchema.parse(read.execute({
+      target, operation: "read_conversation_threads", request: { target },
+    })).children.map(({ target: childTarget, character, isProcessing }) => [childTarget.sessionId, { character, isProcessing }]));
+    const writer = { character: { name: "Writer", iconPath: "" }, isProcessing: false };
+    const reviewer = { character: { name: "Reviewer", iconPath: "C:/fixture/reviewer.png" }, isProcessing: false };
+    assert.deepEqual(candidates(), new Map([["child-A", writer], ["child-B", { ...reviewer, isProcessing: true }]]));
+    sessions.updateSession({ ...running, runState: "idle", updatedAt: "2026-11-23T00:01:00.000Z" });
+    assert.deepEqual(candidates(), new Map([["child-A", writer], ["child-B", reviewer]]));
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "直接の子の枠は正確な来歴に従い、Agentの返信参照も現在Turnを開始した本来の送信元宛でだけ保存入力を指す"
 // oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠; docs/design/session-history.md#明示返信" }
 // fault = "送受信相手から枠を作る、本文や同じTurnだけで所属を推定する、子の会話を初期枠にも載せる"
@@ -263,7 +369,8 @@ test("Main conversation frames keep only created children and preserve unattribu
     assert.deepEqual(saved.get("A")?.messageIndexes, [0, 2]);
     assert.deepEqual(saved.get("B")?.messageIndexes, [1, 5, 6]);
     assert.deepEqual(saved.get("B")?.sentMessageIndexes, [2, 3]);
-    assert.deepEqual(saved.get("C"), { target: select(c), title: "Child C", messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [] });
+    const { character: _character, isProcessing: _isProcessing, ...untouched } = saved.get("C")!;
+    assert.deepEqual(untouched, { target: select(c), title: "Child C", messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [] });
     const exact = executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target, operation: "list_sent_deliveries", request: { target, messageSeqs: [2] } }));
     assert.deepEqual(exact.items.map(({ receiptId, sourceMessageSeq }) => [receiptId, sourceMessageSeq]), [[toA.id, 2], [toB.id, 2], [toParent.id, 2]]);
     const direct = executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [3] } }));
