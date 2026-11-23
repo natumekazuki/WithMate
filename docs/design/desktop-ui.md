@@ -7,7 +7,7 @@ Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Aux
 
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。
 
-実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。splitter幅と選択中Auxiliaryは親Sessionごとのlocal preferenceとして復元し、幅はresize interactionの完了時だけ保存する。
+実行中のAuxiliaryは[共通会話切替](#main-conversation-switcher)でiconの外周に弧を表示し、行高とpreviewの幅は変えない。splitter幅と選択中Auxiliaryは親Sessionごとのlocal preferenceとして復元し、幅はresize interactionの完了時だけ保存する。
 
 折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
@@ -600,7 +600,7 @@ Main列の上部にAuxiliaryと共通の会話切替を置く。自Sessionタイ
 
 相手別の候補だけを、対応するSessionの終了結果が未読のものから並べる。未読はMonitorと同じ共有状態と既読条件に従う。各群はその枠に属する保存済みの送受信・応答の最終時刻が新しい順とし、同値は作成順とID順を保つ。実行中かどうかは並びに使わない。候補の順序が変わっても選択中の枠はIDで維持し、一覧を開くこと自体では既読にしない。
 
-Main／Auxiliaryの会話切替一覧は実際の会話ペイン内に収め、検索欄を残して候補一覧だけをスクロールする。候補・選択中の表示は対象Sessionのキャラicon（なければ既存fallback）の右に、実行中に限りprocessing indicatorを重ねずに置き、そのあとにタイトルを置く。
+Main／Auxiliaryの会話切替一覧は実際の会話ペイン内に収め、検索欄を残して候補一覧だけをスクロールする。候補と選択中の表示では、実行中だけキャラicon（なければ既存fallback）の外周に弧を描く。回転するのは弧だけで、動きを減らす設定では静止表示にする。Mainの相手タイトルとAuxiliaryのタイトル相当のプレビューは、Monitorと同じ未読結果がある間だけ同じ青で示す。実行・未読の両方を選択背景とは独立して示し、読み上げでも区別できる。固定枠は未読を集約せず、Auxiliaryの並びも未読で変えない。
 
 送信カードの左上の `@宛先` は、正確なカードを同じWindowの相手枠に表示できるときだけ操作できる。押すとその枠の同じカードに移動して短く強調する。宛先Sessionとincarnation、受付IDまたは直接Steerの保存入力seqで照合し、同文の別送信や、先頭・最新の記録では代用しない。投影先・正本を確定できない宛名は文字表示のままとする。右上の `To セッション名` は対象Sessionを開き、本文の選択・リンク・詳細表示、送信先と下書きは変えない。
 

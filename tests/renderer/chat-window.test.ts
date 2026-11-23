@@ -2827,10 +2827,10 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通switcherは中央triggerから検索一覧を開き、処理中候補を一覧optionのindicatorで示し、検索中の矢印・IME入力を壊さず、検索0件では本文を追加せず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "処理中候補のindicatorがDOMから欠落する、検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、検索0件で説明文を追加する、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
-// observable = "候補一覧、処理中候補のindicator、検索0件時にempty文言を描画しないこと、空label候補のaccessible name、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
+// claim = "共通switcherは実行と未読を選択と独立して示し、検索中の矢印・IME入力、検索0件、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher; docs/design/auxiliary-session.md: UI flow" }
+// fault = "実行リングや未読を未表示にする、未読をタイトル以外や選択状態と混同する、非視覚的な状態が欠ける、または検索・選択・取消・focus復帰を壊す"
+// observable = "リングの所属と状態説明、タイトルの未読マーカーとoptionのaria-selected、検索0件時のDOM、空labelのaccessible name、選択callback、popoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-switcher"
 // lifecycle = "permanent"
@@ -2865,8 +2865,8 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
       root.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",
         options: [
-          { id: "a", label: "Alpha", preview: "first", isProcessing: true, icon: React.createElement("span", null, "A") },
-          { id: "b", label: "Beta", preview: "second", icon: React.createElement("span", null, "B") },
+          { id: "a", label: "Alpha", preview: "first", isProcessing: true, hasUnreadResult: true, icon: React.createElement("span", null, "A") },
+          { id: "b", label: "Beta", preview: "second", hasUnreadResult: true, icon: React.createElement("span", null, "B") },
         ],
         selectedId: "a",
         searchable: true,
@@ -2881,8 +2881,16 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     assert.ok(search);
     assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 2);
     const initialOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-    assert.ok(initialOptions[0]?.querySelector(".session-switcher-processing-indicator"));
-    assert.equal(initialOptions[1]?.querySelector(".session-switcher-processing-indicator"), null);
+    assert.ok(trigger.querySelector(".session-switcher-icon > .session-switcher-processing-ring"));
+    assert.equal(trigger.getAttribute("aria-description"), "Processing; Unread Result");
+    assert.deepEqual([...trigger.querySelectorAll(".has-unread-result")].map((item) => item.textContent), ["Alpha"]);
+    assert.ok(initialOptions[0]?.querySelector(".session-switcher-icon > .session-switcher-processing-ring"));
+    assert.equal(initialOptions[1]?.querySelector(".session-switcher-processing-ring"), null);
+    for (const [index, label] of ["Alpha", "Beta"].entries()) {
+      assert.equal(initialOptions[index].getAttribute("aria-description"), index === 0 ? "Processing; Unread Result" : "Unread Result");
+      assert.equal(initialOptions[index].getAttribute("aria-selected"), String(index === 0));
+      assert.deepEqual([...initialOptions[index].querySelectorAll(".has-unread-result")].map((item) => item.textContent), [label]);
+    }
     assert.equal(initialOptions[0]?.getAttribute("title"), "Processing");
     assert.equal(initialOptions[1]?.getAttribute("title"), null);
     await act(async () => {
@@ -2894,7 +2902,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const filteredOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
     assert.equal(filteredOptions.length, 1);
     assert.equal(filteredOptions[0]?.querySelector(".session-switcher-option-label")?.textContent, "Beta");
-    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-indicator"), null);
+    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-ring"), null);
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(search, "missing");
@@ -2933,7 +2941,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",
-        options: [{ id: "unnamed", label: "" }],
+        options: [{ id: "unnamed", label: "", isProcessing: true, hasUnreadResult: true, icon: React.createElement("span", null, "?") }],
         selectedId: "unnamed",
         onMove() {},
         onSelect() {},
@@ -2942,13 +2950,14 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const unnamedTrigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
     assert.ok(unnamedTrigger);
     assert.equal(unnamedTrigger.getAttribute("aria-label"), "Auxiliary conversation");
+    assert.equal(unnamedTrigger.getAttribute("aria-description"), "Processing; Unread Result");
     await act(async () => unnamedTrigger.click());
     const unnamedOption = dom.window.document.querySelector<HTMLButtonElement>('[role="option"]');
     assert.ok(unnamedOption);
     assert.equal(unnamedOption.getAttribute("aria-label"), "Auxiliary conversation");
+    assert.equal(unnamedOption.getAttribute("aria-description"), "Processing; Unread Result");
 
-    await act(async () => unnamedTrigger.click());
-    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    assert.ok(dom.window.document.querySelector('[role="listbox"]'));
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",

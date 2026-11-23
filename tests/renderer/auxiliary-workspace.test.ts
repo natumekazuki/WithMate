@@ -128,6 +128,60 @@ function deferred<T>() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Auxiliaryの切替候補は共有終了結果の最新の既読状態を反映し、選択・並び・送信対象から独立する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "未選択Auxiliaryの結果通知を無視する、遅い旧取得で既読を巻き戻す、または未読の変化で切替順や送信対象を変更する"
+// observable = "実workspaceが切替へ渡す候補順・未読属性と選択ID・送信対象"
+// observation_boundary = "consumer"
+// scope = "Auxiliary workspaceから共通切替への、既存結果readとturn通知の接続。結果と通知はfixture"
+// lifecycle = "permanent"
+// impact = "開いていないAuxiliaryの確認要否がMonitorと食い違う、または閲覧位置や入力先を失う"
+// distinction = "既読サービス単体や共通切替のDOMテストは未選択Auxiliaryの通知、非同期逆順と一覧の独立性を検証しない"
+// @end-test-value
+test("Auxiliary switcher follows shared unread updates without changing order or target", async () => {
+  const a = session("a", "2026-01-01", { preview: "First" });
+  const b = session("b", "2026-01-02", { preview: "Second" });
+  const unreadResult = { turnId: 4, assistantMessageSeq: 1 };
+  const stale = deferred<typeof unreadResult>();
+  const reads: string[] = [];
+  let nextA: Promise<typeof unreadResult | null> = Promise.resolve(unreadResult);
+  let onTurn: ((id: string) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: async (id) => id === a.id ? a : id === b.id ? b : null,
+    getUnreadSessionResult: (id) => { reads.push(id); return id === a.id ? nextA : Promise.resolve(null); },
+    onSessionTurnUpdated: (listener) => { onTurn = listener; return () => { onTurn = undefined; }; },
+  });
+  const messageColumn = createStaticTextConversationMessageColumnProps({
+    sessionId: "parent-1", characterId: "fixture", characterName: "Fixture",
+    messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+  });
+  const surface = () => view.current.buildConcurrentChats({
+    mainSession: null, auxiliarySession: view.current.selectedSession, messageColumn,
+  });
+  const options = () => surface().auxiliaryItems.map(({ id, hasUnreadResult }) => [id, hasUnreadResult]);
+  try {
+    await view.render();
+    await act(async () => view.current.setTarget("auxiliary"));
+    assert.deepEqual(options(), [["b", false], ["a", true]]);
+    assert.ok(onTurn);
+    nextA = stale.promise;
+    await act(async () => onTurn?.(a.id));
+    nextA = Promise.resolve(null);
+    await act(async () => { onTurn?.("elsewhere"); onTurn?.(a.id); });
+    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    await act(async () => stale.resolve(unreadResult));
+    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    assert.equal(surface().selectedAuxiliaryId, b.id);
+    assert.equal(surface().target, "auxiliary");
+    assert.deepEqual(reads, ["a", "b", "a", "a"]);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "実行状態が変わらないAuxiliary追加入力も親の保存通知で表示され、本文deltaや対象外・metadata通知では詳細再読込みを増やさない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
 // fault = "保存通知を購読せず同じrunの受理済入力を表示しない、またはlive本文deltaだけで詳細を再取得する"

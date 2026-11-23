@@ -803,7 +803,7 @@
 .home-page .has-unread-result .home-monitor-auxiliary-preview,
 .home-page .home-monitor-disclosure.has-unread-result > .composer-icon,
 .home-page .home-monitor-disclosure.has-unread-result .home-monitor-status-icon-count {
-  color: #93bcff;
+  color: var(--session-unread-result-ink);
   font-weight: 500;
 }
 

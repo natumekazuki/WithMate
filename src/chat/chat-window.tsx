@@ -570,6 +570,7 @@ export function ChatWindow({
       label: thread.title,
       icon: <CharacterAvatar key={thread.character?.iconPath} character={thread.character ?? { name: "", iconPath: "" }} size="tiny" />,
       isProcessing: thread.isProcessing,
+      hasUnreadResult: thread.hasUnreadResult,
     })),
   ];
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
