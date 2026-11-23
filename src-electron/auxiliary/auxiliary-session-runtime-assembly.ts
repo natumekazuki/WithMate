@@ -1,6 +1,6 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { LiveApprovalDecision, LiveApprovalRequest, LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
@@ -59,7 +59,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     broadcastLiveSessionRun(sessionId: string): void;
   };
   interaction: {
-    waitForApprovalDecision(sessionId: string, request: LiveApprovalRequest, signal: AbortSignal): Promise<LiveApprovalDecision> | LiveApprovalDecision;
+    waitForApprovalDecision: SessionRuntimeServiceDeps["waitForApprovalDecision"];
+    startWithMateApprovalReview?: SessionRuntimeServiceDeps["startWithMateApprovalReview"];
     waitForElicitationResponse(sessionId: string, request: LiveElicitationRequest, signal: AbortSignal): Promise<LiveElicitationResponse> | LiveElicitationResponse;
     cancelApprovals(sessionId: string): void;
     cancelElicitations(sessionId: string): void;
@@ -132,6 +133,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,
+    startWithMateApprovalReview: deps.interaction.startWithMateApprovalReview,
     waitForElicitationResponse: deps.interaction.waitForElicitationResponse,
     setProviderQuotaTelemetry: (telemetry) => { assertOwner("provider quota projection"); deps.live.setProviderQuotaTelemetry(telemetry); },
     setSessionContextTelemetry: (telemetry) => { assertOwner("session context projection"); deps.live.setSessionContextTelemetry(telemetry); },

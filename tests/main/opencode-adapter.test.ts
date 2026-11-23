@@ -338,10 +338,10 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 
 // @test-value v2
 // kind = "security"
-// claim = "OpenCodeの子承認とformはroot権限内で共通UIへ往復し承認はonceかrejectだけへ変換する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-// fault = "承認を永続alwaysへ変換するか子requestの型付き回答を失う"
-// observable = "承認callbackの要求とnative replyのdecision、form answer"
+// claim = "OpenCodeの子承認は共通UIへ往復し審査入力にnativeの対象を保持し、承認はonceかrejectだけへ変換する"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界; docs/design/provider-adapter.md: OpenCodeAdapter" }
+// fault = "実要求の対象を失う、承認を永続alwaysへ変換する、または子requestの型付き回答を失う"
+// observable = "承認callbackの要求と審査入力、native replyのdecision、form answer"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode child interaction routing"
 // lifecycle = "permanent"
@@ -350,15 +350,21 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 // distinction = "共通UIのtestはOpenCode native reply変換と子帰属を通らない"
 // @end-test-value
 it("OpenCode routes child permissions and typed forms without permanent grants", async () => {
-  for (const mode of ["on-request", "never"] as const) {
+  for (const [mode, decision, reply] of [["on-request", "approve", "once"], ["on-request", "deny", "reject"], ["never", "deny", "once"]] as const) {
     const turn = input(); turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
     let approvals = 0;
-    turn.onApprovalRequest = (request) => { approvals++; assert.equal(request.provider, "opencode"); return "deny"; };
+    turn.onApprovalRequest = (request, _signal, review) => {
+      approvals++;
+      assert.equal(request.provider, "opencode");
+      assert.deepEqual(review?.operation, { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+      assert.equal(review?.isCurrent?.(), true);
+      return decision;
+    };
     turn.onElicitationRequest = (request) => { assert.equal(request.fields[0].name, "answer"); return { action: "accept", content: { answer: "yes" } }; };
     const run = fixture(turn, { interactions: true });
     await run.adapter.runSessionTurn(turn);
     assert.equal(approvals, mode === "never" ? 0 : 1);
-    assert.ok(run.calls.includes(mode === "never" ? "permission:once" : "permission:reject"));
+    assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:")), [`permission:${reply}`]);
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
   }
 });

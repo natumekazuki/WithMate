@@ -26,7 +26,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
-  interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
+  interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "startWithMateApprovalReview" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
   notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased" | "onSentInputChanged">;
   timing: {
     currentTimestampLabel?: () => string;
@@ -83,6 +83,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,
+    startWithMateApprovalReview: deps.interaction.startWithMateApprovalReview,
     waitForElicitationResponse: deps.interaction.waitForElicitationResponse,
     setProviderQuotaTelemetry: (telemetry) => { assertOwner("provider quota projection"); deps.live.setProviderQuotaTelemetry(telemetry); },
     setSessionContextTelemetry: (telemetry) => { assertOwner("session context projection"); deps.live.setSessionContextTelemetry(telemetry); },

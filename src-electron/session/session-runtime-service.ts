@@ -33,6 +33,8 @@ import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.j
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
 import { questionAnswerHistory } from "./question-answer-history.js";
+import { supportsWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
+import type { PendingApprovalReview, StartWithMateApprovalReview, WithMateApprovalReviewTurn } from "./withmate-approval-review.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -87,7 +89,9 @@ export type SessionRuntimeServiceDeps = {
     sessionId: string,
     request: LiveApprovalRequest,
     signal: AbortSignal,
+    review?: PendingApprovalReview,
   ): Promise<LiveApprovalDecision> | LiveApprovalDecision;
+  startWithMateApprovalReview?: StartWithMateApprovalReview;
   waitForElicitationResponse(
     sessionId: string,
     request: LiveElicitationRequest,
@@ -1156,6 +1160,8 @@ export class SessionRuntimeService {
       throw error;
     }
     let terminalSettled = false;
+    let approvalReview: WithMateApprovalReviewTurn | undefined;
+    let providerAgentRuntimeTurnHandle: unknown;
     let terminalPersistenceStarted = false;
     let runtimePersistenceFailed = false;
     let liveProgressGeneration = 0;
@@ -1253,14 +1259,23 @@ export class SessionRuntimeService {
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
-        onApprovalRequest: (approvalRequest, requestSignal) => {
+        onApprovalRequest: (approvalRequest, requestSignal, nativeReview) => {
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return "deny";
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
-          const decision = this.deps.waitForApprovalDecision(sessionId, {
+          const request = {
             ...approvalRequest,
             textPosition: this.deps.getLiveSessionRun(sessionId)?.assistantText.length ?? 0,
-          }, signal);
-          return decision;
+          };
+          let review: PendingApprovalReview | undefined;
+          if (!signal.aborted && executionOptions.approvalMode === "on-request" && appSettings.withMateAutoReview
+            && approvalRequest.provider === effectiveTurnSession.provider && supportsWithMateAutoReview(effectiveTurnSession.provider)
+            && approvalRequest.decisionMode === "direct-decision" && nativeReview) {
+            approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection: appSettings.withMateAutoReview,
+              turnId: String(runningTurn.id), workspacePath: effectiveTurnSession.workspacePath,
+              binding: agentRuntimeBinding, signal: runAbortController.signal });
+            review = approvalReview?.pending(request, nativeReview);
+          }
+          return this.deps.waitForApprovalDecision(sessionId, request, signal, review);
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return { action: "cancel" };
@@ -1313,6 +1328,7 @@ export class SessionRuntimeService {
         (promise) => this.trackTerminatingSessionRun(sessionId, promise),
         );
       } finally {
+        approvalReview?.close();
         this.finishingSessionTurns.add(sessionId);
         const live = this.deps.getLiveSessionRun(sessionId);
         if (live?.inputAvailable) {
@@ -1327,7 +1343,6 @@ export class SessionRuntimeService {
       }
     };
 
-    let providerAgentRuntimeTurnHandle: unknown;
     try {
       const providerAgentRuntimeTurn = await Promise.resolve(
         this.deps.beginProviderAgentRuntimeTurn?.({
@@ -1548,6 +1563,7 @@ export class SessionRuntimeService {
       );
       return storedFailedSession;
     } finally {
+      approvalReview?.close();
       this.appendSessionInput.delete(sessionId);
       this.directSessionInput.delete(sessionId);
       if (providerAgentRuntimeTurnHandle !== undefined) {

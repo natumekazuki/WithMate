@@ -73,6 +73,8 @@
 
 ## Model Management
 
+`WithMate Auto Review` はCoding Agent Providerの実行設定とは別に、共通の審査Provider・Model・対応Depthを保存する。`Off` が既定。選択項目はラベルと幅を抑えた入力欄を同じ行に置く。対象、共有範囲、実行時の扱いは[WithMate Auto Review](withmate-auto-review.md)を参照する。
+
 `Coding Agent Providers`の各providerに`Models`入口を置き、同じSettings Windowの本文を共通の管理画面へ切り替える。検索とModel単位のcheckboxは4 provider共通とし、OpenCodeだけnativeサービスごとのcheckboxと配下のModel一覧を持つ。サービスOFFは個別設定を上書きせず、サービスONで元の個別設定へ戻る。
 
 OpenCodeの接続先は、名前とModel件数を示す開閉buttonで配下一覧を折りたたむ。初期状態は閉とし、有効化checkboxは別の操作として配置する。開閉だけでは有効設定、draftのdirty状態、保存値を変更しない。検索中は一致する接続先を展開し、手動で閉じることもできる。検索語を変えると一致結果を再展開し、検索を解除すると通常時の開閉状態へ戻す。開閉状態は画面内だけで保持し、永続化しない。

@@ -13,6 +13,7 @@ import {
   type KeyboardShortcutSettings,
 } from "./keyboard-shortcut-state.js";
 import { normalizeModelAvailability, type ModelAvailabilitySettings } from "./model-availability.js";
+import { normalizeWithMateAutoReview, type WithMateAutoReviewSettings } from "./withmate-auto-review.js";
 
 export type AppSettings = {
   launchAtLoginEnabled: boolean;
@@ -28,6 +29,7 @@ export type AppSettings = {
   keyboardShortcuts: KeyboardShortcutSettings;
   glossaryProactiveCreateLimit: number | null;
   modelAvailability: ModelAvailabilitySettings;
+  withMateAutoReview: WithMateAutoReviewSettings | null;
   codingProviderSettings: Record<string, ProviderAppSettings>;
 };
 
@@ -76,6 +78,7 @@ export function createDefaultAppSettings(): AppSettings {
     keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     glossaryProactiveCreateLimit: DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
     modelAvailability: {},
+    withMateAutoReview: null,
     codingProviderSettings: {
       [DEFAULT_PROVIDER_ID]: {
         enabled: true,
@@ -187,6 +190,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       candidate.glossaryProactiveCreateLimit,
     ),
     modelAvailability: normalizeModelAvailability(candidate.modelAvailability),
+    withMateAutoReview: normalizeWithMateAutoReview(candidate.withMateAutoReview),
     codingProviderSettings,
   };
 }

@@ -96,6 +96,7 @@ describe("HomeSettingsContent", () => {
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
       onChangeModelAvailability={noOp}
+      onChangeWithMateAutoReview={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -173,6 +174,60 @@ describe("HomeSettingsContent", () => {
       dom.window.close();
     }
   }
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認審査は既定Offで、Codexの明示的なProvider・Model・Depthの選択が揃うまで保存できない"
+  // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+  // fault = "初期状態で審査が選択済みになる、不完全な設定で保存できる、または明示した選択がSaveに渡らない"
+  // observable = "Provider初期値、各選択後のSaveボタン、Save callbackが捕捉した設定"
+  // observation_boundary = "component-behavior"
+  // scope = "SettingsのWithMate Auto Review設定と既存Save"
+  // lifecycle = "permanent"
+  // distinction = "永続化testでは選択途中のSave抑止と明示した選択の受け渡しを扱えない"
+  // @end-test-value
+  it("keeps approval review off until a complete selection is saved", async () => {
+    await withSettingsDom(async (container, root) => {
+      const initial = createDefaultAppSettings();
+      initial.codingProviderSettings.codex = { enabled: true, apiKey: "", skillRootPath: "" };
+      initial.codingProviderSettings.claude = { enabled: true, apiKey: "", skillRootPath: "" };
+      const catalog: ModelCatalogSnapshot = { providers: [{ id: "codex", label: "Codex", defaultModelId: "other", defaultReasoningEffort: "low",
+        models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", reasoningEfforts: ["low", "high"] }] },
+        { id: "claude", label: "Claude", defaultModelId: "sonnet", defaultReasoningEffort: "",
+          models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: [] }] }] };
+      let saved: typeof initial.withMateAutoReview | undefined;
+      function View() {
+        const [draft, setDraft] = useState(initial);
+        return React.cloneElement(buildSettingsContent(), { settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(catalog, draft), settingsDirty: draft !== initial,
+          onChangeWithMateAutoReview: (withMateAutoReview: typeof initial.withMateAutoReview) => setDraft((current) => ({ ...current, withMateAutoReview })),
+          onSaveSettings: () => { saved = draft.withMateAutoReview; },
+        });
+      }
+      await act(async () => root.render(<View />));
+      const area = [...container.querySelectorAll("details")].find((element) => element.querySelector("summary")?.textContent === "WithMate Auto Review")!;
+      const controls = () => area.querySelectorAll("select");
+      const save = () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!;
+      const choose = async (index: number, value: string) => {
+        const control = controls()[index];
+        await act(async () => {
+          control.value = value;
+          control.dispatchEvent(new window.Event("change", { bubbles: true }));
+        });
+      };
+      assert.equal(controls()[0].value, "");
+      assert.ok(controls()[0].querySelector('option[value="claude"]:not(:disabled)'));
+      await choose(0, "codex");
+      assert.equal(save().disabled, true);
+      await choose(1, "gpt-6-luna");
+      assert.equal(save().disabled, true);
+      await choose(2, "high");
+      assert.equal(save().disabled, false);
+      assert.equal(saved, undefined);
+      await act(async () => save().click());
+      assert.deepEqual(saved, { providerId: "codex", model: "gpt-6-luna", reasoningEffort: "high" });
+    });
+  });
 
   // @test-value v2
   // kind = "contract"

@@ -1,4 +1,5 @@
 import type { LiveApprovalDecision, LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { PendingApprovalReview } from "./withmate-approval-review.js";
 
 type PendingApprovalRequest = {
   request: LiveApprovalRequest;
@@ -6,6 +7,7 @@ type PendingApprovalRequest = {
   signals: Set<AbortSignal>;
   handleAbort: () => void;
   notificationController: AbortController;
+  reviewInvalidated: boolean;
   finish: (decision: LiveApprovalDecision) => void;
 };
 
@@ -47,6 +49,7 @@ export class SessionApprovalService {
     sessionId: string,
     request: LiveApprovalRequest,
     signal: AbortSignal,
+    review?: PendingApprovalReview,
   ): Promise<LiveApprovalDecision> {
     const queue = this.pendingRequests.get(sessionId) ?? [];
     const existing = queue.find((pending) => pending.request.requestId === request.requestId);
@@ -72,6 +75,7 @@ export class SessionApprovalService {
       signals: new Set([signal]),
       handleAbort: () => this.settle(sessionId, pending, "deny"),
       notificationController: new AbortController(),
+      reviewInvalidated: false,
       finish: (value) => {
         for (const trackedSignal of pending.signals) trackedSignal.removeEventListener("abort", pending.handleAbort);
         pending.signals.clear();
@@ -82,7 +86,19 @@ export class SessionApprovalService {
     queue.push(pending);
     this.pendingRequests.set(sessionId, queue);
     signal.addEventListener("abort", pending.handleAbort, { once: true });
-    if (queue.length === 1) this.publishHead(sessionId, queue);
+    if (queue.length === 1) {
+      this.publishHead(sessionId, queue);
+      // A second request invalidates this result even if that request is later canceled.
+      const reviewSignal = AbortSignal.any([pending.notificationController.signal, signal]);
+      if (review) void Promise.resolve().then(() => review.decide(reviewSignal)).then((value) => {
+        if (value !== null && !pending.reviewInvalidated && !reviewSignal.aborted
+          && this.pendingRequests.get(sessionId)?.[0] === pending && review.isCurrent()) {
+          this.settle(sessionId, pending, value);
+        }
+      }).catch(() => undefined);
+    } else {
+      queue[0].reviewInvalidated = true;
+    }
     return decision;
   }
 

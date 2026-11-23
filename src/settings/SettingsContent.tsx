@@ -3,6 +3,7 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import { ProviderModelSettings } from "./provider-model-settings.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { isWithMateReviewDraftIncomplete, WithMateAutoReviewSettings } from "./WithMateAutoReviewSettings.js";
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
@@ -52,6 +53,7 @@ export type HomeSettingsContentProps = {
   providerSettingRows: HomeProviderSettingRow[];
   modelDiscovery?: ModelCatalogSnapshot["discovery"];
   onChangeModelAvailability: (availability: ModelAvailabilitySettings) => void;
+  onChangeWithMateAutoReview: (selection: AppSettings["withMateAutoReview"]) => void;
   settingsDraftLoaded: boolean;
   appSettingsLoadStatus: "loading" | "loaded" | "error";
   appSettingsLoadError: string;
@@ -136,6 +138,7 @@ export function HomeSettingsContent({
   providerSettingRows,
   modelDiscovery,
   onChangeModelAvailability,
+  onChangeWithMateAutoReview,
   settingsDraftLoaded,
   appSettingsLoadStatus,
   appSettingsLoadError,
@@ -187,6 +190,7 @@ export function HomeSettingsContent({
     }
   }, [modelProviderId]);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
+  const autoReviewIncomplete = isWithMateReviewDraftIncomplete(settingsDraft.withMateAutoReview, providerSettingRows);
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
     if ([...busyActionsRef.current].some((pending) => settingsActionsConflict(action, pending))) {
       return;
@@ -362,6 +366,9 @@ export function HomeSettingsContent({
               />
             </div>
           </details>
+
+          <WithMateAutoReviewSettings selection={settingsDraft.withMateAutoReview} rows={providerSettingRows}
+            availability={settingsDraft.modelAvailability} onChange={onChangeWithMateAutoReview} />
 
           <details className="settings-section-card" open>
             <summary>Coding Agent Providers</summary>
@@ -650,7 +657,7 @@ export function HomeSettingsContent({
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || autoReviewIncomplete || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >

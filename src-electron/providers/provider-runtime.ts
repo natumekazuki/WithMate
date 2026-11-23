@@ -63,6 +63,8 @@ export type RunSessionTurnProgressHandler = (
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
   signal?: AbortSignal,
+  /** Complete redacted native operation and any native freshness check; never a display preview. */
+  review?: { operation: unknown; isCurrent?: () => boolean },
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 
 export type RunSessionTurnElicitationRequestHandler = (

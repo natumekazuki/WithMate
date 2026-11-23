@@ -106,6 +106,7 @@ export function getProviderAgentRuntimeBindingCapability(
 
 export function buildProviderAgentRuntimeBindingEnv(
   projection: ProviderAgentRuntimeBindingProjection | null | undefined,
+  consumerProviderId = projection?.providerId,
 ): Record<string, string> {
   const runtimeOwner = projection?.runtimeOwner;
   const runtimeApplicationInstanceId = runtimeOwner?.applicationInstanceId?.trim();
@@ -114,7 +115,7 @@ export function buildProviderAgentRuntimeBindingEnv(
       ? {
         [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: projection.bindingReference,
         [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1",
-        ...(projection.providerId === "codex" && projection.managedMcp
+        ...(consumerProviderId === "codex" && projection.managedMcp
           ? { [WITHMATE_MANAGED_MCP_TOKEN_ENV]: projection.managedMcp.token }
           : {}),
         ...(projection.turnCapability
