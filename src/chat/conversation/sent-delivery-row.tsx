@@ -8,8 +8,6 @@ import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, AdditionalIn
 import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
 import { CoordinationNotice } from "./coordination-notice.js";
 import { ReplyQuote } from "./reply-quote.js";
-import type { SessionReply } from "../../../src-shared/session/session-reply.js";
-import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
 type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
@@ -17,9 +15,8 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, selectedReplyKey, onSelectReply, ...messageContext }: {
+export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, ...messageContext }: {
   item: SentInstruction; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean;
-  selectedReplyKey?: string; onSelectReply?: (key: string, reference: SessionReply) => void;
 } & SentMessageContext) {
   const receipt = "receiptId" in item ? item : null;
   const steer = "messageSeq" in item ? item : null;
@@ -58,15 +55,10 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
   const coordination = receipt?.coordination;
   const distinctContent = coordination && (coordination.consultation === undefined || coordination.text !== coordination.consultation);
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
-  const replyKey = JSON.stringify(["sent", conversationPeerKey(context.target), sentInstructionKey(item)]);
-  const replySelected = !!onSelectReply && selectedReplyKey === replyKey;
-  const card = <div className={`message-card assistant session-outbound${replySelected ? " is-reply-selected" : ""}`}><div className="message-card-content">
+  const card = <div className="message-card assistant session-outbound"><div className="message-card-content">
       <div className="sent-delivery-header">
         <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
         {inline ? detailsButton : null}
-        {onSelectReply ? <button type="button" className="message-bookmark-toggle reply-toggle"
-          title={replySelected ? "Clear reply target" : "Reply to sent message"} aria-label="Reply to sent message" aria-pressed={replySelected}
-          onClick={() => onSelectReply(replyKey, receipt ? { target: item.target, receiptId: receipt.receiptId } : { target: item.target, seq: steer!.messageSeq })}>↩</button> : null}
       </div>
       {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} /> : null}
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}

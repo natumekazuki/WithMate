@@ -623,7 +623,7 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} selectedReplyKey={selectedReplyKey} onSelectReply={onSelectReply} {...sentMessageContext} />
+        positionUnknown={positionUnknown} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
