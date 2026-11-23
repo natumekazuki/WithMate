@@ -12,9 +12,11 @@ import {
 } from "../../src/chat/conversation-message-column.js";
 import type { SessionMessageColumnProps } from "../../src/chat/conversation/session-message-column.js";
 import { SessionMessageColumn } from "../../src/chat/conversation/session-message-column.js";
+import { ALL_MAIN_THREADS_ID, useMainConversationThreads } from "../../src/chat/conversation/use-main-conversation-threads.js";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
+import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
-import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
+import { CONVERSATION_PAGE_SIZE, type ConversationPage, type ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -1730,6 +1732,99 @@ test("multiple sent cards retain recipients and order within live and saved resp
       await act(async () => root.unmount()); intersection.restore(); dom.window.close();
       for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
     }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mainの「すべて」は同じSessionの連続ページを相手で絞らず読み、個別の枠を往復しても別々の閲覧範囲を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "「すべて」で絞込や別Sessionを使う、個別枠への切替で閲覧中pageを失う、または復帰の取得待ちに末尾を表示する"
+// observable = "初期・全体・相手枠の表示seq、過去pageの未絞込request、復帰の取得待ちと取得後の表示seq"
+// observation_boundary = "component-behavior"
+// scope = "Mainの選択hookから会話列への接合。保存readのみfixture"
+// lifecycle = "permanent"
+// impact = "複数相手と未分類の流れを通して読めない、または個別を確認するたびに閲覧位置を失う"
+// distinction = "既存ページング単体のテストは、初期・全体・相手別を同じMainで切り替えるときの絞込と閲覧範囲の分離を検証しない"
+// @end-test-value
+test("Main All shows contiguous own history and resumes its older page after a peer switch", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const main = { kind: "main" as const, sessionId: "main", incarnationId: "main-inc" };
+  const child = (id: string, messageIndexes: number[]) => ({
+    target: { kind: "main" as const, sessionId: id, incarnationId: id + "-inc" }, title: id,
+    messageIndexes, inboundTurnIds: [], sentMessageIndexes: [],
+  });
+  const [a, b] = [child("A", [0, 1, 68, 69]), child("B", [2, 3, 70, 71])];
+  const saved = Array.from({ length: 130 }, (_, historyIndex) => ({
+    role: historyIndex % 2 === 0 ? "user" as const : "assistant" as const, text: `saved ${historyIndex}`, historyIndex,
+  }));
+  const initial = saved.map(({ historyIndex }) => historyIndex).filter((seq) => !a.messageIndexes.includes(seq) && !b.messageIndexes.includes(seq));
+  const tail = saved.slice(-CONVERSATION_PAGE_SIZE);
+  const requests: { id: string; request?: ConversationPageRequest }[] = [];
+  let suspendRestore = false;
+  let releaseRestore: (() => void) | undefined;
+  const api: ConversationMessageColumnApi = {
+    async getConversationPage(id, request) {
+      requests.push({ id, request });
+      const startIndex = request?.startIndex ?? saved.length - tail.length;
+      const messages = request?.messageIndexes?.map((seq) => saved[seq]) ?? saved.slice(startIndex, startIndex + tail.length);
+      if (suspendRestore) await new Promise<void>((resolve) => { releaseRestore = resolve; });
+      return { sessionId: id, incarnationId: main.incarnationId, totalCount: saved.length, startIndex, messages };
+    },
+  };
+  Object.defineProperty(dom.window, "withmate", { value: { ...api, readSessionExecution: async () =>
+    ({ ok: true, initialMessageIndexes: initial, children: [a, b] }) } });
+  const context = { ownerSessionId: main.sessionId, target: main };
+  let threads: ReturnType<typeof useMainConversationThreads>;
+  let column: ReturnType<typeof useConversationMessageColumn>;
+  let controls: ConversationColumnControls;
+  function Probe() {
+    threads = useMainConversationThreads(context, true, "", () => controls?.captureReadingPosition?.());
+    column = useConversationMessageColumn({
+      session: { id: main.sessionId, incarnationId: main.incarnationId, messageCount: saved.length, messages: tail },
+      baseProps: createBaseProps(main.sessionId), api, enabled: true, liveRun: null,
+      frame: threads.frame, showAllThreads: threads.showAllThreads, onColumnControls: (next) => { controls = next; },
+    });
+    return <div ref={column?.messageListRef} />;
+  }
+  const indexes = () => column?.messages.map((message) => message.historyIndex);
+  const select = (id: string) => act(async () => threads.select(id));
+  try {
+    await act(async () => root.render(<Probe />));
+    assert.equal(threads!.selectedId, "");
+    assert.deepEqual(indexes(), initial.slice(-tail.length));
+    await select(ALL_MAIN_THREADS_ID);
+    assert.deepEqual(indexes(), tail.map(({ historyIndex }) => historyIndex));
+    await act(async () => controls.onJumpToMessage("session-main-10"));
+    const past = requests.at(-1);
+    const start = past?.request?.startIndex;
+    assert.equal(past?.id, "main");
+    assert.equal(past?.request?.messageIndexes, undefined);
+    assert.ok(start !== undefined && start <= 10);
+    const olderPage = saved.slice(start, start + tail.length).map(({ historyIndex }) => historyIndex);
+    assert.ok(olderPage.includes(10));
+    assert.deepEqual(indexes(), olderPage);
+    await select(conversationPeerKey(b.target));
+    assert.deepEqual(indexes(), b.messageIndexes);
+    suspendRestore = true;
+    await select(ALL_MAIN_THREADS_ID);
+    assert.ok(releaseRestore, "All requested its older page after switching back");
+    assert.deepEqual(indexes(), [], "the tail must not become a reading anchor while restoring an older page");
+    suspendRestore = false;
+    await act(async () => releaseRestore?.());
+    assert.deepEqual(indexes(), olderPage);
+    await select("");
+    assert.deepEqual(indexes(), initial.slice(-tail.length));
+    assert.deepEqual([...new Set(requests.map(({ id }) => id))], ["main"]);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });
 

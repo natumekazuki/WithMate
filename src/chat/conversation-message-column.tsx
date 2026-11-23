@@ -24,7 +24,7 @@ import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 import { observeSessionResultRead } from "./conversation/observe-session-result-read.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
-import { threadPageIndexes, type MainConversationFrame } from "./conversation/use-main-conversation-threads.js";
+import { ALL_MAIN_THREADS_ID, threadPageIndexes, type MainConversationFrame } from "./conversation/use-main-conversation-threads.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 const CONVERSATION_WINDOW_SIZE = CONVERSATION_PAGE_SIZE * 3;
@@ -74,6 +74,7 @@ export type UseConversationMessageColumnInput = {
   onColumnControls?: (controls: ConversationColumnControls) => void;
   composerRegistry?: ComposerControllerRegistry;
   frame?: MainConversationFrame;
+  showAllThreads?: boolean;
 };
 
 export type ConversationColumnControls = {
@@ -99,14 +100,15 @@ export type ConversationColumnControls = {
 
 export function useConversationMessageColumn({
   session, baseProps, messageSourceKind = "session", enabled, navigatorActive = false, api, liveRun: liveRunOverride, stateCache, onColumnControls, composerRegistry = composerControllerRegistry,
-  frame,
+  frame, showAllThreads = false,
 }: UseConversationMessageColumnInput): SessionMessageColumnProps | null {
   const localCache = useRef(new Map<string, ConversationColumnCache>());
   const caches = stateCache ?? localCache.current;
   const sessionId = session?.id ?? baseProps.sessionId;
   const child = frame?.child;
   const peerKey = child ? conversationPeerKey(child.target) : undefined;
-  const cacheKey = peerKey ? JSON.stringify([sessionId, session?.incarnationId, peerKey]) : sessionId;
+  const frameId = showAllThreads ? ALL_MAIN_THREADS_ID : peerKey;
+  const cacheKey = frameId ? JSON.stringify([sessionId, session?.incarnationId, frameId]) : sessionId;
   let cache = caches.get(cacheKey);
   if (!cache || (cache.incarnationId !== undefined && cache.incarnationId !== (session?.incarnationId ?? ""))) {
     cache = { incarnationId: session?.incarnationId ?? "", scrollState: null, collapsedMessageKeys: new Set(), liveRun: null, bridge: null, approvalRequestId: null, elicitationRequestId: null, error: "", messageJumpRequest: null, messageJumpRequestId: 0 };
@@ -137,7 +139,7 @@ export function useConversationMessageColumn({
   const capturePageAnchor = useRef<() => ConversationColumnCache["anchor"]>(() => undefined);
   const loadAtBoundary = useRef<() => void>(() => {});
   const bookmarkRevision = useRef(0);
-  const pageOwner = peerKey ? cacheKey : `${sessionId}:${session?.incarnationId ?? ""}`;
+  const pageOwner = frameId ? cacheKey : `${sessionId}:${session?.incarnationId ?? ""}`;
   const activePageOwner = useRef(pageOwner);
   activePageOwner.current = pageOwner;
   const displayEnabled = useRef(enabled);
@@ -209,8 +211,10 @@ export function useConversationMessageColumn({
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = useMemo(() => {
     if (pageIndexes) return currentPage?.messages.filter((message, index) => pageIndexes.has(getMessageHistoryIndex(message, index))) ?? EMPTY_MESSAGES;
-    return isBrowsing && currentPage ? currentPage.messages : tailMessages;
-  }, [pageIndexes, currentPage, isBrowsing, tailMessages]);
+    // While restoring the All view's old page, its tail is not a valid reading anchor.
+    if (isBrowsing) return currentPage?.messages ?? (showAllThreads ? EMPTY_MESSAGES : tailMessages);
+    return tailMessages;
+  }, [pageIndexes, currentPage, isBrowsing, showAllThreads, tailMessages]);
   const displayedHistory = useRef(messages);
   displayedHistory.current = messages;
   useEffect(() => {
@@ -831,7 +835,7 @@ export function useConversationMessageColumn({
     refresh();
   }, [conversation, refresh, sessionId, savedReplySourceIndexes, loadPage, pageOwner, threadPageSignature, following.pauseMessageListFollowing]);
   const replyOwnerKey = baseProps.inputReadContext && conversationPeerKey(baseProps.inputReadContext.target);
-  const liveFrameId = liveChild ? conversationPeerKey(liveChild.target) : undefined;
+  const liveFrameId = showAllThreads ? ALL_MAIN_THREADS_ID : liveChild ? conversationPeerKey(liveChild.target) : undefined;
   useEffect(() => {
     onColumnControls?.({
       sessionId,
@@ -849,10 +853,10 @@ export function useConversationMessageColumn({
       onJumpToReply,
       replyOwnerKey,
       captureReadingPosition: captureAnchor,
-      frameId: peerKey,
+      frameId,
       liveFrameId,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, onJumpToReply, replyOwnerKey, sessionId, peerKey, liveFrameId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, captureAnchor, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, onJumpToReply, replyOwnerKey, sessionId, frameId, liveFrameId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);
@@ -1002,7 +1006,7 @@ export function useConversationMessageColumn({
     onMessageListLayout: scheduleAnchorCapture,
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
-      loading: pageLoading || !!frame && !currentPage && !pageError, error: pageError,
+      loading: pageLoading || (!!frame || showAllThreads && isBrowsing) && !currentPage && !pageError, error: pageError,
       onRetry: () => {
         if (inFlightPage.current === pageRevision.current) return;
         setNavigatorRevision((revision) => revision + 1);

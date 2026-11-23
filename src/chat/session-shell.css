@@ -790,6 +790,10 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* The unfiltered Main view has no avatar, but switching to it must not resize the pane header. */
+.main-thread-header .session-switcher-current { min-height: 50px; }
+.main-thread-header .session-switcher-option { min-height: 48px; }
+
 .session-switcher-current-group {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

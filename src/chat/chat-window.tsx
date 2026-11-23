@@ -33,7 +33,7 @@ import { SessionComposerExpanded, type SessionComposerExpandedProps } from "./co
 import type { SessionSelectOption, SessionSkillItem } from "./composer/session-composer.js";
 import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
 import { SessionSwitcher, type SessionSwitcherOption } from "./session-switcher.js";
-import { useMainConversationThreads } from "./conversation/use-main-conversation-threads.js";
+import { ALL_MAIN_THREADS_ID, useMainConversationThreads } from "./conversation/use-main-conversation-threads.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { ReplyQuoteNavigationContext, type ResolvedReply } from "./conversation/reply-quote.js";
 import { locateReply, locateSentInstruction, replyLocationIsProjected, type ReplyLocation } from "./conversation/reply-location.js";
@@ -564,6 +564,7 @@ export function ChatWindow({
   const threadOptions: SessionSwitcherOption[] = [
     { id: "", label: headerProps.taskTitle, icon: <CharacterAvatar key={mainCharacter.iconPath} character={mainCharacter} size="tiny" />,
       isProcessing: mainSession?.runState === "running" },
+    { id: ALL_MAIN_THREADS_ID, label: "すべて" },
     ...mainThreads.children.map((thread) => ({
       id: conversationPeerKey(thread.target),
       label: thread.title,
@@ -911,6 +912,7 @@ export function ChatWindow({
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
               frame={mainThreads.frame}
+              showAllThreads={mainThreads.showAllThreads}
               onColumnControls={handleMainColumnControls}
               navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "main"}
             />
@@ -920,7 +922,8 @@ export function ChatWindow({
               messageViewMode={renderedMessageViewMode}
             />
           )}
-          {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent && !mainThreads.selectedId ? (
+          {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent
+            && (!mainThreads.selectedId || mainThreads.showAllThreads) ? (
             <div className="concurrent-chat-target-overlay" aria-hidden="true" />
           ) : null}
         </div>
