@@ -540,6 +540,7 @@ let sessionTurnService: SessionTurnService | null = null;
 const sessionResultReadService = new SessionResultReadService((sessionId) => {
   requireWindowBroadcastService().broadcastSessionTurnUpdated(sessionId);
 });
+const hasUnreadResult = (sessionId: string) => sessionResultReadService.getUnreadResult(sessionId) !== null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
@@ -1391,6 +1392,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               registerSessionExecutionHandlers(ipc, {
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                hasUnreadResult,
                 readExecution: async (input) => {
                   const owner = requireActivePersistentStoreOwnerForFactory("GUI execution read");
                   if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Saved Session execution storage is unavailable.");
@@ -1629,7 +1631,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   readSummaries: async (sessionIds) => (await requireMainQueryService().listSessionSummaryPage({ scope: "open", sessionIds })).entries,
                   readAuxiliarySummaries: (sessionIds) => requireAuxiliarySessionService().listAuxiliarySessionSummaries(sessionIds),
                   getLiveSessionRun,
-                  hasUnreadResult: (sessionId) => sessionResultReadService.getUnreadResult(sessionId) !== null,
+                  hasUnreadResult,
                 }, request),
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),

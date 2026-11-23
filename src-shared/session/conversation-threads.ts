@@ -11,6 +11,8 @@ export const conversationThreadsResultSchema = z.object({
     title: z.string(),
     character: z.object({ name: z.string(), iconPath: z.string() }).optional(),
     isProcessing: z.boolean().optional(),
+    lastActivityAt: z.number().int().optional(),
+    hasUnreadResult: z.boolean().optional(),
     messageIndexes: z.array(sequence),
     inboundTurnIds: z.array(z.string()),
     sentMessageIndexes: z.array(sequence),

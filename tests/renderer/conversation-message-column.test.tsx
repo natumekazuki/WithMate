@@ -1828,6 +1828,65 @@ test("Main All shows contiguous own history and resumes its older page after a p
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Mainの相手選択は未読→既読・群内の更新順で候補だけが動き、同値や実行状態の変更で順位や選択を不必要に変えない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "子Sessionの既読結果の通知を無視する、実行中を優先する、同値を不安定に並べる、または順位が変わった行に選択を移す"
+// observable = "子Sessionの既存turn通知後の候補順と選択中ID"
+// observation_boundary = "component-behavior"
+// scope = "Mainの選択hook。IPC応答と既存turn通知はfixture"
+// lifecycle = "permanent"
+// impact = "Monitorと異なる優先順位のままになる、または閲覧中の相手を見失う"
+// distinction = "比較関数やストレージ単体では子Sessionの更新通知と相手IDの選択保持を検証できない"
+// @end-test-value
+test("Main peers reorder on child unread notifications without moving the selected identity", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>");
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const context = { ownerSessionId: "main", target: { kind: "main" as const, sessionId: "main", incarnationId: "main-inc" } };
+  const child = (id: string, lastActivityAt: number, hasUnreadResult: boolean, isProcessing = false) => ({
+    target: { kind: "main" as const, sessionId: id, incarnationId: id + "-inc" }, title: id,
+    lastActivityAt, hasUnreadResult, isProcessing, messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [],
+  });
+  // The persisted input order can differ from ID order when creation times differ.
+  let items = [child("A", 100, true), child("B", 220, false, true), child("D", 300, true), child("C", 300, true), child("E", 500, false)];
+  let onTurnUpdated: ((id: string) => void) | undefined;
+  Object.defineProperty(dom.window, "withmate", { value: {
+    getConversationPage: async () => null,
+    readSessionExecution: async () => ({ ok: true, initialMessageIndexes: [], children: items }),
+    onSessionTurnUpdated: (listener: typeof onTurnUpdated) => { onTurnUpdated = listener; return () => { onTurnUpdated = undefined; }; },
+  } });
+  let model: ReturnType<typeof useMainConversationThreads>;
+  function Probe() {
+    model = useMainConversationThreads(context, true, "", () => {});
+    return null;
+  }
+  const order = () => model.children.map(({ title }) => title);
+  const id = conversationPeerKey(items[3].target);
+  try {
+    await act(async () => root.render(<Probe />));
+    assert.deepEqual(order(), ["D", "C", "A", "E", "B"]);
+    await act(async () => model.select(id));
+    assert.equal(model!.selectedId, id);
+    items = items.map((item) => item.title === "C" ? { ...item, hasUnreadResult: false } : item);
+    assert.ok(onTurnUpdated);
+    await act(async () => onTurnUpdated?.("C"));
+    assert.deepEqual(order(), ["D", "A", "E", "C", "B"]);
+    assert.equal(model!.selectedId, id);
+    items = items.map((item) => ({ ...item, isProcessing: !item.isProcessing }));
+    await act(async () => onTurnUpdated?.("B"));
+    assert.deepEqual(order(), ["D", "A", "E", "C", "B"]);
+    assert.equal(model!.selectedId, id);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

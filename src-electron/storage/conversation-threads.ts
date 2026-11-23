@@ -10,8 +10,8 @@ type Origin = {
   targetSessionId?: string; targetIncarnationId?: string;
 };
 type Turn = { id: number; user_message_seq: number | null; assistant_message_seq: number | null };
-type Inbound = { turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; origin: string };
-type Outbound = { session_id: string; incarnation_id: string; origin: string };
+type Inbound = { turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; created_at: string; origin: string };
+type Outbound = { session_id: string; incarnation_id: string; created_at: string; origin: string };
 
 /** Project the saved Main history; creating or selecting a frame does not create a transcript. */
 export function readConversationThreads(db: DatabaseSync, source: MainTarget): ConversationThreads {
@@ -34,27 +34,34 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     isProcessing: row.run_state === "running",
     messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [],
   }]));
-  const savedMessages = (db.prepare("SELECT seq FROM session_messages_v6 WHERE session_id = ? ORDER BY seq")
-    .all(source.sessionId) as { seq: number }[]).map(({ seq }) => seq);
+  const savedRows = db.prepare("SELECT seq, created_at FROM session_messages_v6 WHERE session_id = ? ORDER BY seq")
+    .all(source.sessionId) as { seq: number; created_at: string }[];
+  const savedMessages = savedRows.map(({ seq }) => seq);
   if (!children.size) return { initialMessageIndexes: savedMessages, children: [] };
 
-  const savedSequences = new Set(savedMessages);
-  const saved = (seq: number | null) => seq !== null && savedSequences.has(seq) ? seq : null;
+  const savedTimestamps = new Map(savedRows.map(({ seq, created_at }) => [seq, created_at]));
+  const saved = (seq: number | null) => seq !== null && savedTimestamps.has(seq) ? seq : null;
+  // Only records belonging to this frame contribute; Session metadata and run state do not.
+  const touch = (frame: ConversationThread, timestamp: string | undefined) => {
+    const time = timestamp === undefined ? NaN : Date.parse(timestamp);
+    if (Number.isFinite(time) && (frame.lastActivityAt === undefined || time > frame.lastActivityAt)) frame.lastActivityAt = time;
+  };
   const turns = new Map((db.prepare("SELECT id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE session_id = ? AND auxiliary_session_id IS NULL")
     .all(source.sessionId) as Turn[]).map((turn) => [String(turn.id), turn]));
   const child = (id: string | undefined, incarnationId: string | undefined) => {
     const frame = id && children.get(id);
     return frame && frame.target.incarnationId === incarnationId ? frame : undefined;
   };
-  const addSent = (frame: ConversationThread, turnId: string | undefined) => {
+  const addSent = (frame: ConversationThread, turnId: string | undefined, timestamp: string) => {
     const turn = turnId && turns.get(turnId);
     if (!turn) return;
     const index = saved(turn.assistant_message_seq) ?? saved(turn.user_message_seq);
     if (index !== null) frame.sentMessageIndexes.push(index);
+    touch(frame, timestamp);
   };
   const receivedHere = (origin: Origin) => origin.targetSessionId === source.sessionId && origin.targetIncarnationId === source.incarnationId;
 
-  const inbound = db.prepare(`SELECT turn_id, input_turn_id, user_message_seq,
+  const inbound = db.prepare(`SELECT turn_id, input_turn_id, user_message_seq, created_at,
       json_extract(COALESCE(dispatched_json, accepted_json), '$.origin') AS origin
     FROM session_turn_queue_v6 WHERE session_id=? AND auxiliary_session_id IS NULL AND incarnation_id=? AND origin IS NOT NULL`)
     .iterate(source.sessionId, source.incarnationId) as Iterable<Inbound>;
@@ -64,17 +71,24 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     const frame = child(origin.actorSessionId, origin.actorIncarnationId);
     if (!frame) continue;
     const seq = saved(row.user_message_seq);
-    if (seq !== null) frame.messageIndexes.push(seq);
+    touch(frame, row.created_at);
+    if (seq !== null) {
+      frame.messageIndexes.push(seq);
+      touch(frame, savedTimestamps.get(seq));
+    }
     // A queued additional input belongs to its own sender, not the Turn's ordinary response.
     const turn = row.turn_id && row.input_turn_id === null ? turns.get(row.turn_id) : undefined;
     if (turn && turn.user_message_seq === row.user_message_seq && (seq !== null || row.user_message_seq === null)) {
       frame.inboundTurnIds.push(String(turn.id));
       const response = saved(turn.assistant_message_seq);
-      if (response !== null) frame.messageIndexes.push(response);
+      if (response !== null) {
+        frame.messageIndexes.push(response);
+        touch(frame, savedTimestamps.get(response));
+      }
     }
   }
 
-  const outbound = db.prepare(`SELECT session_id, incarnation_id, json_extract(accepted_json, '$.origin') AS origin
+  const outbound = db.prepare(`SELECT session_id, incarnation_id, created_at, json_extract(accepted_json, '$.origin') AS origin
     FROM session_turn_queue_v6
     WHERE auxiliary_session_id IS NULL AND json_extract(accepted_json, '$.origin.kind')='session'
       AND json_extract(accepted_json, '$.origin.actorKind')='main'
@@ -85,23 +99,23 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     const origin: Origin = JSON.parse(row.origin);
     if (origin.operation !== "send" || origin.targetSessionId !== row.session_id || origin.targetIncarnationId !== row.incarnation_id) continue;
     const frame = child(row.session_id, row.incarnation_id);
-    if (frame) addSent(frame, origin.actorTurnId);
+    if (frame) addSent(frame, origin.actorTurnId, row.created_at);
   }
 
   // A direct Steer is saved at the child, not as a source receipt or as the child's reply.
-  const steer = db.prepare(`SELECT session_id, json_extract(body, '$.turnInput.origin') AS origin
+  const steer = db.prepare(`SELECT session_id, created_at, json_extract(body, '$.turnInput.origin') AS origin
     FROM session_messages_v6 WHERE role='user' AND json_extract(body, '$.turnInput.queueId') IS NULL
       AND json_extract(body, '$.turnInput.origin.kind')='session'
       AND json_extract(body, '$.turnInput.origin.operation')='steer'
       AND json_extract(body, '$.turnInput.origin.actorKind')='main'
       AND json_extract(body, '$.turnInput.origin.actorSessionId')=?
       AND json_extract(body, '$.turnInput.origin.actorIncarnationId')=?`)
-    .iterate(source.sessionId, source.incarnationId) as Iterable<{ session_id: string; origin: string }>;
+    .iterate(source.sessionId, source.incarnationId) as Iterable<{ session_id: string; created_at: string; origin: string }>;
   for (const row of steer) {
     const origin: Origin = JSON.parse(row.origin);
     if (origin.targetSessionId !== row.session_id) continue;
     const frame = child(row.session_id, origin.targetIncarnationId);
-    if (frame) addSent(frame, origin.actorTurnId);
+    if (frame) addSent(frame, origin.actorTurnId, row.created_at);
   }
 
   const assigned = new Set([...children.values()].flatMap((frame) => frame.messageIndexes));
