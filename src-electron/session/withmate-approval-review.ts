@@ -1,7 +1,8 @@
 import type { LiveApprovalDecision, LiveApprovalRequest } from "../../src-shared/session/runtime-state.js";
 import type { WithMateAutoReviewSettings } from "../../src-shared/settings/withmate-auto-review.js";
-import type { ManagedReviewHistory } from "../platform/agent-runtime/managed-http-mcp-host.js";
-import { approvalReviewDecisionSchema, type ApprovalReviewerConversation, type OpenApprovalReviewer } from "../providers/approval-reviewer.js";
+import type { SessionTarget } from "../../src-shared/session/session-management-contract.js";
+import { approvalReviewDecisionSchema, type ApprovalReviewerConversation } from "../providers/approval-reviewer.js";
+import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../providers/provider-agent-runtime-binding.js";
 
 export type PendingApprovalReview = {
@@ -34,7 +35,7 @@ export type StartWithMateApprovalReview = (input: {
   selection: WithMateAutoReviewSettings;
   turnId: string;
   workspacePath: string;
-  runtimeHandle: unknown;
+  binding?: ProviderAgentRuntimeBindingProjection | null;
   signal: AbortSignal;
 }) => WithMateApprovalReviewTurn | undefined;
 
@@ -42,19 +43,17 @@ export type StartWithMateApprovalReview = (input: {
 export class WithMateApprovalReviewTurn {
   readonly #lifetime = new AbortController();
   #conversation?: ApprovalReviewerConversation;
-  #history?: ManagedReviewHistory;
   #busy = false;
   readonly #closeOnAbort = () => this.close();
 
   constructor(private readonly options: {
-    selection: WithMateAutoReviewSettings;
+    source: SessionTarget;
     signal: AbortSignal;
     turnId: string;
     workspacePath: string;
     inputs: ApprovalReviewInputFence;
     policyCurrent(): boolean;
-    acquireHistory(): ManagedReviewHistory;
-    open: OpenApprovalReviewer;
+    open(signal: AbortSignal): Promise<ApprovalReviewerConversation>;
     timeoutMs?: number;
   }) {
     if (options.signal.aborted) this.close();
@@ -64,7 +63,7 @@ export class WithMateApprovalReviewTurn {
   pending(request: LiveApprovalRequest, nativeReview: { operation: unknown; isCurrent?: () => boolean }): PendingApprovalReview {
     const inputsCurrent = this.options.inputs.capture();
     const isCurrent = () => inputsCurrent() && this.options.policyCurrent()
-      && !this.#lifetime.signal.aborted && (nativeReview.isCurrent?.() ?? true) && (this.#history?.isCurrent() ?? true);
+      && !this.#lifetime.signal.aborted && (nativeReview.isCurrent?.() ?? true);
     return {
       isCurrent,
       decide: async (signal) => {
@@ -96,19 +95,17 @@ export class WithMateApprovalReviewTurn {
     if (this.#lifetime.signal.aborted) return;
     this.options.signal.removeEventListener("abort", this.#closeOnAbort);
     this.#lifetime.abort();
-    this.#history?.close();
     try { this.#conversation?.close(); }
-    catch { /* History is revoked even if the adapter's cleanup fails. */ }
+    catch { /* Keep source approval independent of reviewer cleanup. */ }
   }
 
   async #review(request: LiveApprovalRequest, operation: unknown, signal: AbortSignal, isCurrent: () => boolean): Promise<LiveApprovalDecision | null> {
-    const history = this.#history ??= this.options.acquireHistory();
-    const prompt = JSON.stringify({ source: history.source, turnId: this.options.turnId,
+    const prompt = JSON.stringify({ source: this.options.source, turnId: this.options.turnId,
       workspacePath: this.options.workspacePath, pendingOperation: { ...request, operation } });
     // Never review a truncated operation. The original manual approval remains available.
     if (Buffer.byteLength(prompt) > 128 * 1024 || prompt.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)) return null;
     if (!this.#conversation) {
-      const conversation = await this.options.open({ selection: this.options.selection, history, signal: this.#lifetime.signal });
+      const conversation = await this.options.open(this.#lifetime.signal);
       if (signal.aborted || this.#lifetime.signal.aborted) {
         conversation.close();
         return null;
@@ -116,9 +113,8 @@ export class WithMateApprovalReviewTurn {
       this.#conversation = conversation;
     }
     if (!isCurrent()) return null;
-    const previousReads = history.readCount();
     const response = approvalReviewDecisionSchema.safeParse(await this.#conversation.review(prompt));
-    if (!response.success || !isCurrent() || history.readCount() <= previousReads) return null;
+    if (!response.success || !isCurrent()) return null;
     return response.data.decision === "allow_once" ? "approve" : response.data.decision === "deny" ? "deny" : null;
   }
 }

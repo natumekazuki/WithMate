@@ -32,7 +32,7 @@ describe("AppSettingsStorage", () => {
       storage = new AppSettingsStorage(dbPath);
       const initial = storage.getSettings();
       assert.equal(initial.withMateAutoReview, null);
-      const selection = { providerId: "claude", model: "chosen", reasoningEffort: "high" } as const;
+      const selection = { providerId: "codex", model: "chosen", reasoningEffort: "high" } as const;
       storage.updateSettings({ ...initial, withMateAutoReview: selection });
       storage.close();
       storage = new AppSettingsStorage(dbPath);

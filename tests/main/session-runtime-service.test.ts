@@ -184,10 +184,10 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
 
 // @test-value v2
 // kind = "contract"
-// claim = "Session実行は選択済みのCopilot/OpenCodeの実承認だけをWithMate審査に送り、未設定とネイティブ審査は従来の判断を使う"
+// claim = "Session実行は選択済みのCopilot/OpenCodeの実承認だけを通常bindingでWithMate審査に送り、本人確認・未設定・ネイティブ審査は従来の判断を使う"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
 // fault = "対象Providerの実要求を接続しないか、未設定やネイティブ審査に独自審査を重ねる"
-// observable = "Provider callbackに返った個別決定、審査会話の開閉、正確な元Turnと実引数"
+// observable = "Provider callbackに返った個別決定、通常binding、審査会話の開閉、資格を含まない元Turnと実引数"
 // observation_boundary = "consumer"
 // scope = "SessionRuntimeServiceから審査Turnと既存承認キューを経由するProvider callbackの戻り値"
 // lifecycle = "permanent"
@@ -195,39 +195,39 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
 // distinction = "アダプター単体と審査単体では実効設定によるSession runtimeの振り分けを観測しない"
 // @end-test-value
 it("routes only configured Copilot and OpenCode approval requests through WithMate review", async () => {
-  const selection = { providerId: "claude", model: "reviewer", reasoningEffort: "high" } as const;
-  for (const [provider, enabled, expectedReview] of [["copilot", true, true], ["opencode", true, true],
-    ["copilot", false, false], ["codex", true, false], ["claude", true, false]] as const) {
+  const selection = { providerId: "codex", model: "reviewer", reasoningEffort: "high" } as const;
+  for (const [provider, enabled, hasEvidence, expectedReview] of [["copilot", true, true, true], ["opencode", true, true, true],
+    ["copilot", true, false, false], ["copilot", false, true, false], ["codex", true, true, false], ["claude", true, true, false]] as const) {
     const session = createSession({ provider, approvalMode: "on-request" });
     const catalog = createProviderCatalog(provider);
     const decisions: Array<LiveApprovalDecision | undefined> = [];
     let opened = 0;
-    let revoked = 0;
-    let reads = 0;
+    let closed = 0;
+    const binding = { bindingId: "source", bindingReference: "source-reference", providerId: provider,
+      executionGeneration: "source-generation", transport: "env", expiresAt: null, turnCapability: "source-turn",
+      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "", sessionGraphUrl: "", token: "source-token" } } as const;
     let live = createLiveRunState({ sessionId: session.id });
     const approvals = new SessionApprovalService({ updateLiveSessionRun: (_id, update) => live = update(live) });
     const runtime = createProgressRuntime(session, async (input) => {
       const request: LiveApprovalRequest = { requestId: "request", provider, kind: "shell", title: "Operation", summary: "Echo", decisionMode: "direct-decision" };
-      decisions.push(await input.onApprovalRequest?.(request, undefined, { operation: { command: "echo test", cwd: session.workspacePath } }));
+      decisions.push(await input.onApprovalRequest?.(request, undefined, hasEvidence ? { operation: { command: "echo test", cwd: session.workspacePath } } : undefined));
       return createPartialResult({ assistantText: "done" });
     }, {
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } }, withMateAutoReview: enabled ? selection : null }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
-      beginProviderAgentRuntimeTurn: ({ binding }) => ({ handle: "source-handle", binding }),
+      beginProviderAgentRuntimeTurn: () => ({ handle: "source-handle", binding }),
       startWithMateApprovalReview: (args) => {
-        assert.equal(args.runtimeHandle, "source-handle");
+        assert.equal(args.binding, binding);
         assert.deepEqual(args.selection, selection);
         return new WithMateApprovalReviewTurn({ ...args, policyCurrent: () => true, inputs: new ApprovalReviewInputFence(),
-          acquireHistory: () => ({ source: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
-            url: "http://127.0.0.1/history", token: "scoped-secret", isCurrent: () => revoked === 0,
-            readCount: () => reads, close: () => { revoked++; } }),
+          source: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
           open: async () => {
             opened++;
-            return { close() {}, review: async (prompt) => {
+            return { close() { closed++; }, review: async (prompt) => {
               const evidence = JSON.parse(prompt);
               assert.equal(evidence.turnId, "1");
               assert.equal(evidence.pendingOperation.operation.command, "echo test");
-              reads++;
+              assert.doesNotMatch(prompt, /source-token|source-reference|source-turn/);
               return { decision: "allow_once", reason: "Explicitly authorized." };
             } };
           } });
@@ -241,7 +241,7 @@ it("routes only configured Copilot and OpenCode approval requests through WithMa
     const result = await runtime.runSessionTurn(session.id, { userMessage: "Run the specified echo", executionOptions: captureSessionExecutionOptions(session) });
     assert.equal(result.runState, "idle");
     assert.deepEqual(decisions, [expectedReview ? "approve" : "deny"]);
-    assert.deepEqual([opened, revoked], expectedReview ? [1, 1] : [0, 0]);
+    assert.deepEqual([opened, closed], expectedReview ? [1, 1] : [0, 0]);
   }
 });
 

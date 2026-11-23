@@ -816,6 +816,97 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codex審査は指定ModelとDepth、組み込み指示、通常Session接続、ネイティブAuto Reviewを使い、同じthreadの入力ごとに構造化結果を返す"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界" }
+// fault = "Auto Review以外で起動するか、設定の代替・別thread・古い最終結果・途中出力を採用するか、審査役の手動要求を元の操作の許可にする"
+// observable = "App Serverへのthreadとturnの要求、Managed MCP接続設定、２件の結果、非auto起動・モデル代替・手動要求時の失敗"
+// observation_boundary = "public-boundary"
+// scope = "Codex審査アダプターの通常App Serverとのプロトコル境界、App Serverはfixture"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "共通審査のキューtestと通常Codex turnのtestは、構造化審査のApp Server往復と審査役の操作との区別を検出しない"
+// @end-test-value
+it("runs each Codex approval review on the same native Auto Review thread", async () => {
+  const results = [{ decision: "allow_once", reason: "Authorized." }, { decision: "deny", reason: "Scope changed." }];
+  let turns = 0;
+  let interactionAnswered = false;
+  class ReviewTransport extends FakeTransport {
+    constructor(private readonly reviewer = "auto_review") { super(); }
+    override async request<T>(method: string, params?: unknown): Promise<T> {
+      await super.request(method, params);
+      if (method === "config/read") return { config: { mcp_servers: { "withmate-session": { command: "legacy" } } } } as T;
+      if (method === "thread/start") return { thread: { id: "thread-1" }, model: "chosen-codex",
+        reasoningEffort: "high", approvalPolicy: "on-request", approvalsReviewer: this.reviewer } as T;
+      if (method === "turn/start") {
+        const turnId = `review-${turns++}`;
+        if (turns <= 2) {
+          this.push(notification("item/completed", { turnId: "previous", item: { type: "agentMessage", phase: "final_answer", text: "{}" } }));
+          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "commentary", text: "I might allow." } }));
+          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "final_answer", text: JSON.stringify(results[turns - 1]) } }));
+          this.push(notification("turn/completed", { turn: { id: turnId, status: "completed" } }));
+        } else if (turns === 3) {
+          this.push(notification("model/rerouted", { turnId, toModel: "replacement-model" }));
+          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "final_answer", text: JSON.stringify(results[0]) } }));
+          this.push(notification("turn/completed", { turn: { id: turnId, status: "completed" } }));
+        } else {
+          this.push({ kind: "serverRequest", id: 4, method: "item/commandExecution/requestApproval",
+            params: { threadId: "thread-1", turnId }, async respond() { interactionAnswered = true; }, async reject() { interactionAnswered = true; } });
+        }
+        return { turn: { id: turnId } } as T;
+      }
+      return {} as T;
+    }
+  }
+  const transport = new ReviewTransport();
+  const controller = new AbortController();
+  const adapter = new CodexAdapter(undefined, { createTransport: ({ env, arguments: args }) => {
+    assert.equal(env?.WITHMATE_MANAGED_MCP_TOKEN, "session-secret");
+    assert.doesNotMatch(JSON.stringify(args), /session-secret/);
+    return transport;
+  } });
+  const input = {
+    selection: { providerId: "codex", model: "chosen-codex", reasoningEffort: "high" },
+    workspacePath: process.cwd(), appSettings: createDefaultAppSettings(), signal: controller.signal,
+    binding: { bindingId: "id", bindingReference: "ref", transport: "env", providerId: "copilot", executionGeneration: "gen", expiresAt: null,
+      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "http://127.0.0.1/glossary", sessionGraphUrl: "http://127.0.0.1/graph", token: "session-secret" } },
+  } as const;
+  const inactiveNativeReview = new ReviewTransport("user");
+  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => inactiveNativeReview }).openApprovalReviewer(input), /native Auto Review conversation/);
+  assert.equal(inactiveNativeReview.closed, true);
+  const reviewer = await adapter.openApprovalReviewer(input);
+  try {
+    const starts = transport.calls.filter(({ method }) => method === "thread/start");
+    assert.equal(starts.length, 1);
+    const start = starts[0].params as { model: string; approvalPolicy: string; approvalsReviewer: string; ephemeral: boolean;
+      allowProviderModelFallback: boolean; developerInstructions: string; config: { model_reasoning_effort: string; mcp_servers: unknown } };
+    assert.deepEqual([start.model, start.approvalPolicy, start.approvalsReviewer, start.config.model_reasoning_effort],
+      ["chosen-codex", "on-request", "auto_review", "high"]);
+    assert.equal(start.ephemeral, true);
+    assert.equal(start.allowProviderModelFallback, false);
+    assert.match(start.developerInstructions, /Do not execute, retry, or delegate.*Session history/s);
+    assert.match(JSON.stringify(start.config.mcp_servers), /withmate-session-http.*127\.0\.0\.1\/session/);
+    assert.doesNotMatch(JSON.stringify(start), /session-secret/);
+    assert.deepEqual(await reviewer.review("first operation"), results[0]);
+    assert.deepEqual(await reviewer.review("second operation"), results[1]);
+    await assert.rejects(reviewer.review("operation routed to another model"), /model changed/);
+    await assert.rejects(reviewer.review("operation requiring reviewer interaction"), /requires user interaction/);
+    assert.equal(interactionAnswered, false);
+    const requests = transport.calls.filter(({ method }) => method === "turn/start");
+    assert.deepEqual(requests.map(({ params }) => {
+      const { threadId, approvalsReviewer, approvalPolicy, model, effort, outputSchema, input } = params as {
+        threadId: string; approvalsReviewer: string; approvalPolicy: string; model: string; effort: string;
+        outputSchema: { required: string[] }; input: Array<{ text: string }> };
+      return [threadId, approvalPolicy, approvalsReviewer, model, effort, outputSchema.required, input[0].text];
+    }), ["first operation", "second operation", "operation routed to another model", "operation requiring reviewer interaction"].map((operation) =>
+      ["thread-1", "on-request", "auto_review", "chosen-codex", "high", ["decision", "reason"], operation]));
+  } finally {
+    controller.abort();
+    assert.equal(transport.closed, true);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "未対応通知はprogress callbackの有無やterminal成否にかかわらず受信ごとに既存loggerへ出し、取得済み本文とnative terminal結果を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#codex-projection-owner; docs/design/app-log-base.md#provider-diagnostic-log-policy" }
 // fault = "progressなしや失敗時に診断を失う、通知をまとめて消す、scope外・Main処理済み通知も記録する、または診断でterminalを変える"

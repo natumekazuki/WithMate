@@ -177,7 +177,7 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "承認審査は既定Offで、送信先の開示と、対応するModel・Depthの明示選択を既存Saveにつなぐ"
+  // claim = "承認審査は既定Offで、送信先と審査役の承認を開示し、Codexの明示的なModel・Depthの選択を既存Saveにつなぐ"
   // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
   // fault = "保存前に自動審査を有効にする、機微な履歴の送付を表示しない、または不完全な設定で保存できる"
   // observable = "Provider初期値と説明の関連、各選択後のSaveボタンと保存payload"
@@ -190,9 +190,12 @@ describe("HomeSettingsContent", () => {
   it("keeps approval review off until a complete disclosed selection is saved", async () => {
     await withSettingsDom(async (container, root) => {
       const initial = createDefaultAppSettings();
+      initial.codingProviderSettings.codex = { enabled: true, apiKey: "", skillRootPath: "" };
       initial.codingProviderSettings.claude = { enabled: true, apiKey: "", skillRootPath: "" };
-      const catalog = { providers: [...modelCatalog.providers, { id: "claude", label: "Claude", defaultModelId: "reviewer", defaultReasoningEffort: "",
-        models: [{ id: "reviewer", label: "Review Model", reasoningEfforts: ["low", "high"] }] }] };
+      const catalog: ModelCatalogSnapshot = { providers: [{ id: "codex", label: "Codex", defaultModelId: "other", defaultReasoningEffort: "low",
+        models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", reasoningEfforts: ["low", "high"] }] },
+        { id: "claude", label: "Claude", defaultModelId: "sonnet", defaultReasoningEffort: "",
+          models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: [] }] }] };
       let saved: typeof initial.withMateAutoReview | undefined;
       function View() {
         const [draft, setDraft] = useState(initial);
@@ -216,15 +219,17 @@ describe("HomeSettingsContent", () => {
       assert.equal(controls()[0].value, "");
       const description = document.getElementById(controls()[0].getAttribute("aria-describedby")!);
       assert.match(description?.textContent ?? "", /selected provider receives.*saved conversation history/);
-      await choose(0, "claude");
+      assert.match(description?.textContent ?? "", /built-in Auto Review/);
+      assert.ok(controls()[0].querySelector('option[value="claude"]:not(:disabled)'));
+      await choose(0, "codex");
       assert.equal(save().disabled, true);
-      await choose(1, "reviewer");
+      await choose(1, "gpt-6-luna");
       assert.equal(save().disabled, true);
       await choose(2, "high");
       assert.equal(save().disabled, false);
       assert.equal(saved, undefined);
       await act(async () => save().click());
-      assert.deepEqual(saved, { providerId: "claude", model: "reviewer", reasoningEffort: "high" });
+      assert.deepEqual(saved, { providerId: "codex", model: "gpt-6-luna", reasoningEffort: "high" });
     });
   });
 

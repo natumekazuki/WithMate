@@ -123,7 +123,6 @@ import { SettingsCatalogService } from "./settings/settings-catalog-service.js";
 import { SessionObservabilityService } from "./session/session-observability-service.js";
 import { SessionApprovalService } from "./session/session-approval-service.js";
 import { ApprovalReviewInputFence, WithMateApprovalReviewTurn, type PendingApprovalReview, type StartWithMateApprovalReview } from "./session/withmate-approval-review.js";
-import { openClaudeApprovalReviewer } from "./providers/claude/claude-approval-reviewer.js";
 import type { OpenApprovalReviewer } from "./providers/approval-reviewer.js";
 import type { WithMateReviewProviderId } from "../src-shared/settings/withmate-auto-review.js";
 import { SessionElicitationService } from "./session/session-elicitation-service.js";
@@ -226,7 +225,7 @@ import {
   projectGlossaryCheckoutAuthority,
 } from "./glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
-import { ProviderAgentRuntimeTurnCoordinator, type ProviderAgentRuntimeTurnHandle } from "./providers/provider-agent-runtime-turn-coordinator.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossary-operation-schema.js";
@@ -952,24 +951,49 @@ function endManagedProviderTurn(handle: unknown): void {
   glossaryRuntimeService.endProviderTurn(turn);
 }
 
-const approvalReviewAdapters = { claude: openClaudeApprovalReviewer } satisfies Record<WithMateReviewProviderId, OpenApprovalReviewer>;
+const approvalReviewAdapters = {
+  claude: (input) => claudeAdapter.openApprovalReviewer(input),
+  codex: (input) => codexAdapter.openApprovalReviewer(input),
+} satisfies Record<WithMateReviewProviderId, OpenApprovalReviewer>;
 
-const startWithMateApprovalReview: StartWithMateApprovalReview = ({ selection, runtimeHandle, ...source }) => {
-  const host = agentRuntimeApi?.managedMcp;
-  if (!host || !runtimeHandle) return undefined;
+const startWithMateApprovalReview: StartWithMateApprovalReview = ({ selection, binding, ...turn }) => {
+  if (!binding?.managedMcp?.sessionUrl || !binding.turnCapability) return undefined;
+  const resolved = agentRuntimeBindingRegistry.resolveIdentity(binding.bindingReference);
+  const source = resolved.ok ? resolved.binding.actorSource : undefined;
+  if (!source) return undefined;
+  const admit = () => providerAgentRuntimeTurns.admit({
+    actorSessionId: source.sessionId, providerId: binding.providerId, turnCapability: binding.turnCapability,
+  });
+  const active = admit();
+  if (!active.ok) return undefined;
   const settingsRevision = approvalReviewSettingsRevision;
-  return new WithMateApprovalReviewTurn({ ...source, selection, inputs: approvalReviewInputs,
-    policyCurrent: () => approvalReviewSettingsRevision === settingsRevision,
-    acquireHistory: () => host.issueReviewHistory(runtimeHandle as ProviderAgentRuntimeTurnHandle),
-    open: async (input) => {
+  const policyCurrent = () => {
+    const current = admit();
+    return approvalReviewSettingsRevision === settingsRevision && current.ok && current.handle === active.handle
+      && agentRuntimeBindingRegistry.resolveIdentity(binding.bindingReference).ok;
+  };
+  return new WithMateApprovalReviewTurn({ ...turn, inputs: approvalReviewInputs,
+    source: source.kind === "main" ? source : {
+      kind: "auxiliary", sessionId: source.sessionId, incarnationId: source.incarnationId,
+      mainSessionId: source.parent.sessionId, mainIncarnationId: source.parent.incarnationId,
+    },
+    policyCurrent,
+    open: async (signal) => {
       const settings = await requireAppSettingsStorage().getSettings();
       const current = settings.withMateAutoReview;
-      if (approvalReviewSettingsRevision !== settingsRevision || !getProviderAppSettings(settings, selection.providerId).enabled
+      if (!policyCurrent() || !getProviderAppSettings(settings, selection.providerId).enabled
         || current?.providerId !== selection.providerId || current.model !== selection.model || current.reasoningEffort !== selection.reasoningEffort) {
         throw new Error("Approval reviewer settings are not current.");
       }
       assertModelEnabled(settings.modelAvailability, selection.providerId, selection.model);
-      return approvalReviewAdapters[selection.providerId](input);
+      const { provider } = await resolveProviderCatalog(selection.providerId, turn.workspacePath);
+      const model = provider.models.find(({ id }) => id === selection.model);
+      if (provider.id !== selection.providerId || !model || (model.reasoningEfforts.length
+        ? !selection.reasoningEffort || !model.reasoningEfforts.includes(selection.reasoningEffort)
+        : selection.reasoningEffort !== "")) throw new Error("Review model or depth is unavailable.");
+      signal.throwIfAborted();
+      if (!policyCurrent()) throw new Error("Approval reviewer settings are not current.");
+      return approvalReviewAdapters[selection.providerId]({ selection, binding, workspacePath: turn.workspacePath, appSettings: settings, signal });
     },
   });
 };

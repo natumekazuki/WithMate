@@ -10,9 +10,7 @@ import { WITHMATE_MANAGED_MCP_TOKEN_HEADER } from "../../providers/managed-http-
 import { buildProviderAgentRuntimeBindingEnv } from "../../providers/provider-agent-runtime-binding.js";
 import { createWithMateGlossaryMcpServer } from "../mcp/withmate-glossary-mcp.js";
 import { createWithMateSessionGraphMcpServer } from "../mcp/withmate-session-graph-mcp.js";
-import { createWithMateSessionMcpServer, REVIEW_HISTORY_OPERATIONS } from "../mcp/withmate-session-mcp.js";
-import { SESSION_RUNTIME_OPERATION_PATHS } from "../../../src-shared/session/session-management-contract.js";
-import type { SessionTarget } from "../../../src-shared/session/session-target.js";
+import { createWithMateSessionMcpServer } from "../mcp/withmate-session-mcp.js";
 import { callAgentRuntime, type AgentRuntimeConnection } from "./runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "./runtime-exchange.js";
 
@@ -31,20 +29,7 @@ type TurnConnection = {
   activeRequests: number;
   initializing: Set<string>;
   removeAbortListener?: () => void;
-  history?: { readCount: number };
 };
-
-const HISTORY_PATH = "/mcp/review-history";
-const historyRuntimePaths = new Set<string>(REVIEW_HISTORY_OPERATIONS.map((operation) => SESSION_RUNTIME_OPERATION_PATHS[operation]));
-
-export type ManagedReviewHistory = Readonly<{
-  source: SessionTarget;
-  url: string;
-  token: string;
-  isCurrent(): boolean;
-  readCount(): number;
-  close(): void;
-}>;
 
 export type ManagedHttpMcpHostOptions = {
   connection: AgentRuntimeConnection;
@@ -127,7 +112,7 @@ export class ManagedHttpMcpHost {
     NonNullable<ProviderAgentRuntimeBindingProjection["managedMcp"]> {
     if (!this.#address || this.#stopping) throw new Error("Managed MCP runtime is unavailable.");
     signal?.throwIfAborted();
-    const existing = [...this.#connections.values()].find((context) => context.handle === handle && !context.history);
+    const existing = [...this.#connections.values()].find((context) => context.handle === handle);
     const candidate: TurnConnection = {
       token: randomBytes(32).toString("base64url"),
       binding: Object.freeze({ ...binding,
@@ -150,27 +135,6 @@ export class ManagedHttpMcpHost {
     return { glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`, sessionUrl: `${baseUrl}/mcp/session`, token: context.token };
   }
 
-  /** Issue a separate token; only the host retains the source's normal runtime binding. */
-  issueReviewHistory(handle: ProviderAgentRuntimeTurnHandle): ManagedReviewHistory {
-    const normal = [...this.#connections.values()].find((context) => context.handle === handle && !context.history);
-    if (!this.#address || !normal || !this.#isCurrent(normal)) throw new Error("Review history requires an active source turn.");
-    const resolved = this.#options.bindingRegistry.resolveIdentity(normal.binding.bindingReference);
-    const source = resolved.ok ? resolved.binding.actorSource : undefined;
-    if (!source) throw new Error("Review history requires a saved source identity.");
-    const { sessionId, incarnationId } = source;
-    const target: SessionTarget = source.kind === "main" ? { kind: "main", sessionId, incarnationId } : {
-      kind: "auxiliary", sessionId, incarnationId,
-      mainSessionId: source.parent.sessionId, mainIncarnationId: source.parent.incarnationId,
-    };
-    const history = { readCount: 0 };
-    const context: TurnConnection = { token: randomBytes(32).toString("base64url"), binding: normal.binding,
-      handle, abort: new AbortController(), endpoints: new Map(), activeRequests: 0, initializing: new Set(), history };
-    this.#connections.set(context.token, context);
-    return { source: target, url: `http://127.0.0.1:${this.#address.port}${HISTORY_PATH}`, token: context.token,
-      isCurrent: () => this.#isCurrent(context), readCount: () => history.readCount,
-      close: () => this.#closeContext(context) };
-  }
-
   release(handle: ProviderAgentRuntimeTurnHandle): void {
     this.closeConnection(handle);
     this.#options.turns.end(handle);
@@ -179,16 +143,15 @@ export class ManagedHttpMcpHost {
   /** Native completion closes tool access without ending application-save admission. */
   closeConnection(handle: ProviderAgentRuntimeTurnHandle): void {
     for (const context of this.#connections.values()) {
-      if (context.handle === handle) this.#closeContext(context);
+      if (context.handle !== handle) continue;
+      this.#connections.delete(context.token);
+      context.removeAbortListener?.();
+      context.abort.abort();
+      for (const endpoint of context.endpoints.values()) {
+        void endpoint.server.close().catch(() => undefined);
+      }
+      context.endpoints.clear();
     }
-  }
-
-  #closeContext(context: TurnConnection): void {
-    this.#connections.delete(context.token);
-    context.removeAbortListener?.();
-    context.abort.abort();
-    for (const endpoint of context.endpoints.values()) void endpoint.server.close().catch(() => undefined);
-    context.endpoints.clear();
   }
 
   async stop(): Promise<void> {
@@ -228,16 +191,13 @@ export class ManagedHttpMcpHost {
       env: buildProviderAgentRuntimeBindingEnv(context.binding),
       connection: this.#options.connection,
       runtimeCall: (connection: AgentRuntimeConnection, operation: Parameters<typeof callAgentRuntime>[1],
-        options: Parameters<typeof callAgentRuntime>[2]) => {
-        if (context.history && (operation.method !== "POST" || !historyRuntimePaths.has(operation.path))) {
-          throw new Error("Only history reads are available to the reviewer.");
-        }
-        return callAgentRuntime(connection, operation, { ...options, signal: AbortSignal.any([options.signal, context.abort.signal]) });
-      },
+        options: Parameters<typeof callAgentRuntime>[2]) => callAgentRuntime(connection, operation, {
+          ...options, signal: AbortSignal.any([options.signal, context.abort.signal]),
+        }),
     };
     const server = pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
       : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps)
-      : createWithMateSessionMcpServer(deps, context.history ? { onRead: () => { if (context.history) context.history.readCount++; } } : undefined);
+      : createWithMateSessionMcpServer(deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
       enableJsonResponse: true,
@@ -251,7 +211,7 @@ export class ManagedHttpMcpHost {
 
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const pathname = request.url;
-    if (pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph" && pathname !== "/mcp/session" && pathname !== HISTORY_PATH) {
+    if (pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph" && pathname !== "/mcp/session") {
       reply(response, 404, "Unknown MCP endpoint."); return;
     }
     if (request.socket.remoteAddress !== "127.0.0.1"
@@ -264,9 +224,6 @@ export class ManagedHttpMcpHost {
     if (!context || !this.#isCurrent(context)) {
       if (context) this.release(context.handle);
       reply(response, 401, "MCP turn credential is inactive."); return;
-    }
-    if (Boolean(context.history) !== (pathname === HISTORY_PATH)) {
-      reply(response, 403, "MCP credential is not valid for this endpoint."); return;
     }
     if (request.method !== "POST" && request.method !== "DELETE") {
       reply(response, 405, "MCP supports POST and DELETE."); return;

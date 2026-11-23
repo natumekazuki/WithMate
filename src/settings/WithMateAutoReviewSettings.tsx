@@ -30,7 +30,7 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
     <summary>WithMate Auto Review</summary>
     <div className="settings-field">
       <p id={helpId} className="settings-help">
-        Reviews approval requests from Copilot and OpenCode. The selected provider receives the pending operation and any saved conversation history it reads, including from other sessions. That history may contain sensitive information. Requests you still need to decide appear in the usual approval prompt.
+        Reviews approval requests from Copilot and OpenCode. The reviewer uses its provider’s built-in Auto Review for its own tool use. The selected provider receives the pending operation and any saved conversation history it reads, including sensitive information from other sessions. Requests you still need to decide appear in the usual approval prompt.
       </p>
       <label className="settings-provider-input">
         <span>Review Provider</span>

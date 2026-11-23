@@ -1272,7 +1272,7 @@ export class SessionRuntimeService {
             && approvalRequest.decisionMode === "direct-decision" && nativeReview) {
             approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection: appSettings.withMateAutoReview,
               turnId: String(runningTurn.id), workspacePath: effectiveTurnSession.workspacePath,
-              runtimeHandle: providerAgentRuntimeTurnHandle, signal: runAbortController.signal });
+              binding: agentRuntimeBinding, signal: runAbortController.signal });
             review = approvalReview?.pending(request, nativeReview);
           }
           return this.deps.waitForApprovalDecision(sessionId, request, signal, review);

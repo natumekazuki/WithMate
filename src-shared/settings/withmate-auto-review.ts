@@ -1,6 +1,6 @@
 import type { ModelReasoningEffort } from "./model-catalog.js";
 
-export const WITHMATE_REVIEW_PROVIDER_IDS = ["claude"] as const;
+export const WITHMATE_REVIEW_PROVIDER_IDS = ["codex", "claude"] as const;
 export type WithMateReviewProviderId = (typeof WITHMATE_REVIEW_PROVIDER_IDS)[number];
 
 export type WithMateAutoReviewSettings = {

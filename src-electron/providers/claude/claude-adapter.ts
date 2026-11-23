@@ -9,6 +9,8 @@ import type { MessageOperation, ProviderUsage, LiveBackgroundTask, LiveElicitati
 import type { MessageArtifact } from "../../../src-shared/session/session-state.js";
 import { resolveModelSelection } from "../../../src-shared/settings/model-catalog.js";
 import { mapApprovalModeToClaudePermissionMode } from "../../../src-shared/settings/provider-runtime-options.js";
+import type { OpenApprovalReviewer } from "../approval-reviewer.js";
+import { createClaudeApprovalReviewer } from "./claude-approval-reviewer.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
 import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
@@ -218,6 +220,12 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
+  }
+
+  openApprovalReviewer(input: Parameters<OpenApprovalReviewer>[0]) {
+    return createClaudeApprovalReviewer({
+      query: this.runQuery, spawn: this.spawnProcess, resolveBinary: resolveClaudeBinaryPath,
+    })(input);
   }
 
   async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
