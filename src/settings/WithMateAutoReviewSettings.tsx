@@ -22,7 +22,6 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
   const efforts = model?.reasoningEfforts ?? [];
   const unavailable = selection && (!provider?.settings.enabled || (selection.model && !model)
     || (selection.reasoningEffort && !efforts.includes(selection.reasoningEffort)));
-  const incomplete = isWithMateReviewDraftIncomplete(selection, rows);
 
   return <details className="settings-section-card" open>
     <summary>WithMate Auto Review</summary>
@@ -62,8 +61,7 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
         </label> : null}
       </> : null}
       {unavailable ? <p className="settings-help" role="status">This selection is unavailable. Requests remain manual. Choose an enabled reviewer or turn Auto Review off.</p>
-        : incomplete ? <p className="settings-help" role="status">Choose a model and, if offered, a depth before saving.</p>
-          : !providers.some((row) => row.settings.enabled) ? <p className="settings-help">Enable a supported Coding Agent Provider to set up a reviewer.</p> : null}
+        : !providers.some((row) => row.settings.enabled) ? <p className="settings-help">Enable a supported Coding Agent Provider to set up a reviewer.</p> : null}
     </div>
   </details>;
 }
