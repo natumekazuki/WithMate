@@ -1,4 +1,3 @@
-import { useId } from "react";
 import { getModelDisabledReason, type ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import { reasoningEffortOptions } from "../../src-shared/settings/model-catalog.js";
 import { isWithMateReviewProvider, type WithMateAutoReviewSettings as ReviewSelection } from "../../src-shared/settings/withmate-auto-review.js";
@@ -16,7 +15,6 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
   availability: ModelAvailabilitySettings;
   onChange: (selection: ReviewSelection | null) => void;
 }) {
-  const helpId = useId();
   const providers = rows.filter(({ provider }) => isWithMateReviewProvider(provider.id));
   const provider = providers.find((row) => row.provider.id === selection?.providerId);
   const models = provider?.provider.models.filter(({ id }) => !getModelDisabledReason(availability, provider.provider.id, id)) ?? [];
@@ -29,12 +27,9 @@ export function WithMateAutoReviewSettings({ selection, rows, availability, onCh
   return <details className="settings-section-card" open>
     <summary>WithMate Auto Review</summary>
     <div className="settings-field">
-      <p id={helpId} className="settings-help">
-        The selected provider receives approval requests and any chat history it reads, including from other sessions.
-      </p>
       <label className="settings-inline-input-row settings-review-select-row">
         <span className="settings-provider-name">Review Provider</span>
-        <select value={selection?.providerId ?? ""} aria-describedby={helpId} onChange={(event) => {
+        <select value={selection?.providerId ?? ""} onChange={(event) => {
           const providerId = event.currentTarget.value;
           onChange(isWithMateReviewProvider(providerId) ? { providerId, model: "", reasoningEffort: "" } : null);
         }}>
