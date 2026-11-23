@@ -561,6 +561,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  container-type: size;
 }
 
 .session-concurrent-chat-columns:not(.is-single-chat) .session-concurrent-chat-main.is-zero-width,
@@ -584,10 +585,6 @@
   position: relative;
   z-index: 4;
   min-width: 0;
-}
-
-.main-thread-header .session-switcher-popover {
-  background: rgb(from var(--surface-deep) r g b / 1);
 }
 
 .main-thread-feedback {
@@ -727,7 +724,6 @@
   position: relative;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  container-type: size;
 }
 
 .session-switcher {
@@ -742,6 +738,11 @@
 .concurrent-chat-session-switcher {
   gap: 20px;
   padding: 10px 16px;
+}
+
+.concurrent-chat-session-switcher:has(.session-switcher-popover) {
+  /* Keep the open menu above the inactive conversation's dimming layer. */
+  z-index: 21;
 }
 
 .session-switcher-button {
@@ -859,12 +860,9 @@
 .session-switcher-option-preview { grid-column: 1 / -1; max-width: 100%; font-size: 0.76rem; opacity: 0.74; }
 .session-switcher-option-preview { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .session-switcher-icon { display: inline-flex; align-items: center; justify-content: center; }
-.session-switcher-option-icon-processing { position: relative; overflow: visible; }
+.session-switcher-visuals { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .session-switcher-processing-indicator {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  z-index: 1;
+  flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border: 2px solid color-mix(in srgb, var(--ink) 24%, transparent);
@@ -932,6 +930,7 @@
 .concurrent-chat-session-switcher .session-switcher-popover {
   max-height: max(0px, calc(100cqh - 100% - 14px));
   grid-template-rows: auto minmax(0, 1fr);
+  background: rgb(from var(--surface-deep) r g b / 1);
 }
 
 .concurrent-chat-session-switcher .session-switcher-options {

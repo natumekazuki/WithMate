@@ -20,6 +20,7 @@ import { useMessageViewTransition } from "./use-message-view-transition.js";
 import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 import { ComposerIcon } from "./composer/composer-icon.js";
 import { SessionRecoveryActions, SessionRecoveryAnnouncement, type SessionRecoveryActionsProps } from "./runtime/session-recovery-actions.js";
 import { ConversationAttentionAnnouncement, ConversationAttentionButton, type ConversationAttention } from "./conversation-attention.js";
@@ -558,9 +559,17 @@ export function ChatWindow({
   const captureMainPosition = useCallback(() => mainColumnControlsRef.current?.captureReadingPosition?.(), []);
   const mainThreads = useMainConversationThreads(concurrentChats?.main.inputReadContext, mainVisible,
     `${concurrentChats?.mainSession?.messageCount ?? 0}:${concurrentChats?.mainSession?.updatedAt ?? ""}`, captureMainPosition);
+  const mainSession = concurrentChats?.mainSession;
+  const mainCharacter = { name: mainSession?.character ?? "", iconPath: mainSession?.characterIconPath ?? "" };
   const threadOptions: SessionSwitcherOption[] = [
-    { id: "", label: headerProps.taskTitle },
-    ...mainThreads.children.map((thread) => ({ id: conversationPeerKey(thread.target), label: thread.title })),
+    { id: "", label: headerProps.taskTitle, icon: <CharacterAvatar key={mainCharacter.iconPath} character={mainCharacter} size="tiny" />,
+      isProcessing: mainSession?.runState === "running" },
+    ...mainThreads.children.map((thread) => ({
+      id: conversationPeerKey(thread.target),
+      label: thread.title,
+      icon: <CharacterAvatar key={thread.character?.iconPath} character={thread.character ?? { name: "", iconPath: "" }} size="tiny" />,
+      isProcessing: thread.isProcessing,
+    })),
   ];
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
   const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);

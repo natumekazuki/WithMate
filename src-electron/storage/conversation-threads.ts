@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { ConversationThread, ConversationThreads } from "../../src-shared/session/conversation-threads.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
+import { MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS } from "../session/session-storage-v6.js";
 
 type MainTarget = Extract<SessionTarget, { kind: "main" }>;
 type Origin = {
@@ -14,15 +15,24 @@ type Outbound = { session_id: string; incarnation_id: string; origin: string };
 
 /** Project the saved Main history; creating or selecting a frame does not create a transcript. */
 export function readConversationThreads(db: DatabaseSync, source: MainTarget): ConversationThreads {
-  const childRows = db.prepare(`SELECT child.id, child.incarnation_id, child.title
-    FROM sessions_v6 child JOIN sessions_v6 parent ON parent.id = child.parent_session_id
-    WHERE parent.id = ? AND child.created_by_session_id = parent.id
-      AND child.root_session_id = COALESCE(NULLIF(TRIM(parent.root_session_id), ''), parent.id)
-      AND child.session_kind = 'default' AND child.session_role IN ('task-coordinator', 'executor')
-    ORDER BY child.created_at, child.id`).all(source.sessionId) as { id: string; incarnation_id: string; title: string }[];
+  const childRows = db.prepare(`SELECT s.id, s.incarnation_id, s.title, ${MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS}
+    FROM sessions_v6 s JOIN sessions_v6 parent ON parent.id = s.parent_session_id
+    WHERE parent.id = ? AND s.created_by_session_id = parent.id
+      AND s.root_session_id = COALESCE(NULLIF(TRIM(parent.root_session_id), ''), parent.id)
+      AND s.session_kind = 'default' AND s.session_role IN ('task-coordinator', 'executor')
+    ORDER BY s.created_at, s.id`).all(source.sessionId) as {
+      id: string; incarnation_id: string; title: string;
+      character_name: unknown; character_icon_path: unknown; run_state: unknown;
+    }[];
   const children = new Map(childRows.map((row): [string, ConversationThread] => [row.id, {
     target: { kind: "main", sessionId: row.id, incarnationId: row.incarnation_id.trim() || `legacy:${row.id}` },
-    title: row.title, messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [],
+    title: row.title,
+    character: {
+      name: typeof row.character_name === "string" ? row.character_name : "",
+      iconPath: typeof row.character_icon_path === "string" ? row.character_icon_path : "",
+    },
+    isProcessing: row.run_state === "running",
+    messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [],
   }]));
   const savedMessages = (db.prepare("SELECT seq FROM session_messages_v6 WHERE session_id = ? ORDER BY seq")
     .all(source.sessionId) as { seq: number }[]).map(({ seq }) => seq);

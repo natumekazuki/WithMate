@@ -33,6 +33,16 @@ function focusOption(list: HTMLElement | null, index: number) {
   list?.querySelectorAll<HTMLButtonElement>('[role="option"]')[index]?.focus();
 }
 
+function SwitcherVisuals({ icon, isProcessing }: Pick<SessionSwitcherOption, "icon" | "isProcessing">) {
+  if (!icon && !isProcessing) return null;
+  return (
+    <span className="session-switcher-visuals" aria-hidden="true">
+      {icon ? <span className="session-switcher-icon">{icon}</span> : null}
+      {isProcessing ? <span className="session-switcher-processing-indicator" /> : null}
+    </span>
+  );
+}
+
 /** Compact arrow/trigger switcher shared by context panes and Auxiliary panes. */
 export function SessionSwitcher({
   ariaLabel,
@@ -136,6 +146,7 @@ export function SessionSwitcher({
       aria-expanded={canOpen && isOpen}
       aria-controls={canOpen ? listId : undefined}
       aria-label={currentLabelText || currentPreviewText ? undefined : currentAccessibleLabel}
+      aria-description={selectedOption?.isProcessing ? "Processing" : undefined}
       onClick={() => {
         if (canOpen) {
           setIsOpen((current) => !current);
@@ -151,7 +162,7 @@ export function SessionSwitcher({
         }
       }}
     >
-      {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
+      <SwitcherVisuals icon={selectedOption?.icon} isProcessing={selectedOption?.isProcessing} />
       <span className="session-switcher-label">{currentLabel}</span>
       {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
     </button>
@@ -215,15 +226,7 @@ export function SessionSwitcher({
                   close();
                 }}
               >
-                {option.icon ? (
-                  <span
-                    className={`session-switcher-icon${option.isProcessing ? " session-switcher-option-icon-processing" : ""}`}
-                    aria-hidden="true"
-                  >
-                    {option.icon}
-                    {option.isProcessing ? <span className="session-switcher-processing-indicator" /> : null}
-                  </span>
-                ) : null}
+                <SwitcherVisuals icon={option.icon} isProcessing={option.isProcessing} />
                 <span className="session-switcher-option-copy">
                   <span className="session-switcher-option-label">{option.label}</span>
                   {option.preview ? <span className="session-switcher-option-preview">{option.preview}</span> : null}

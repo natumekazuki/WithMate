@@ -9,6 +9,8 @@ export const conversationThreadsResultSchema = z.object({
   children: z.array(z.object({
     target: sessionTargetSchema,
     title: z.string(),
+    character: z.object({ name: z.string(), iconPath: z.string() }).optional(),
+    isProcessing: z.boolean().optional(),
     messageIndexes: z.array(sequence),
     inboundTurnIds: z.array(z.string()),
     sentMessageIndexes: z.array(sequence),

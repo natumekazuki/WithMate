@@ -596,6 +596,8 @@ Main／Auxiliaryの未開始の予約は、失敗Turnの再実行も通常予約
 
 Main列の上部にAuxiliaryと共通の会話切替を置く。自Sessionタイトルの初期枠と、作成済みの直接の子Sessionごとの枠を選べる。子の枠にはその子に帰属が確定したやり取りを表示し、初期枠には初期の内容や帰属不明の記録を残す。各枠の閲覧位置は同じWindow内で独立して復帰する。閲覧切替で右のAuxiliary、Composerの送信対象・下書き、実行対象は変わらない。
 
+Main／Auxiliaryの会話切替一覧は実際の会話ペイン内に収め、検索欄を残して候補一覧だけをスクロールする。候補・選択中の表示は対象Sessionのキャラicon（なければ既存fallback）の右に、実行中に限りprocessing indicatorを重ねずに置き、そのあとにタイトルを置く。
+
 送信カードのSession名リンクは対象Sessionを開く。本文の選択・リンク・詳細表示は従来どおり操作できる。
 
 ### Turn Input Details

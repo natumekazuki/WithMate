@@ -182,6 +182,40 @@ test("failed Turn retry provenance survives queue storage and execution reads", 
 
 // @test-value v2
 // kind = "contract"
+// claim = "Mainの子候補は子自身のキャラ・実行状態を使い、実行終了で表示状態のみが変わる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "全候補に親のキャラを使う、画像なしの子に別の画像を流用する、終了後も実行中を返す"
+// observable = "実SQLiteから実行履歴read契約で返る子IDごとのキャラ名・画像・実行状態"
+// observation_boundary = "public-boundary"
+// scope = "作成済みの子の読取projection。CSSと描画は対象外"
+// lifecycle = "permanent"
+// impact = "送信先確認に必要な人物表示が誤り、終了後も実行中に見える"
+// distinction = "履歴の帰属や単独Session summaryだけでは、枠ごとの表示用情報が正しく返るか分からない"
+// @end-test-value
+test("Main child candidates keep their own avatar and reflect run completion", async () => {
+  await fixture(({ sessions, read }) => {
+    const parent = sessions.insertSession({ ...session(), characterId: "parent-agent", character: "Parent",
+      characterIconPath: "C:/fixture/parent.png", sessionRole: "overall-coordinator" });
+    const child = { ...session(), sessionRole: "executor" as const, rootSessionId: parent.id,
+      parentSessionId: parent.id, createdBySessionId: parent.id, updatedAt: "2026-11-23T00:00:00.000Z" };
+    const running = sessions.insertSession({ ...child, id: "child-B", taskTitle: "Child B", characterId: "child-b-agent",
+      character: "Reviewer", characterIconPath: "C:/fixture/reviewer.png", runState: "running" });
+    sessions.insertSession({ ...child, id: "child-A", taskTitle: "Child A", characterId: "child-a-agent",
+      character: "Writer", characterIconPath: "" });
+    const target = { kind: "main" as const, sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) };
+    const candidates = () => new Map(conversationThreadsResultSchema.parse(read.execute({
+      target, operation: "read_conversation_threads", request: { target },
+    })).children.map(({ target: childTarget, character, isProcessing }) => [childTarget.sessionId, { character, isProcessing }]));
+    const writer = { character: { name: "Writer", iconPath: "" }, isProcessing: false };
+    const reviewer = { character: { name: "Reviewer", iconPath: "C:/fixture/reviewer.png" }, isProcessing: false };
+    assert.deepEqual(candidates(), new Map([["child-A", writer], ["child-B", { ...reviewer, isProcessing: true }]]));
+    sessions.updateSession({ ...running, runState: "idle", updatedAt: "2026-11-23T00:01:00.000Z" });
+    assert.deepEqual(candidates(), new Map([["child-A", writer], ["child-B", reviewer]]));
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "直接の子の枠は正確な来歴に従い、Agentの返信参照も現在Turnを開始した本来の送信元宛でだけ保存入力を指す"
 // oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠; docs/design/session-history.md#明示返信" }
 // fault = "送受信相手から枠を作る、本文や同じTurnだけで所属を推定する、子の会話を初期枠にも載せる"
@@ -263,7 +297,8 @@ test("Main conversation frames keep only created children and preserve unattribu
     assert.deepEqual(saved.get("A")?.messageIndexes, [0, 2]);
     assert.deepEqual(saved.get("B")?.messageIndexes, [1, 5, 6]);
     assert.deepEqual(saved.get("B")?.sentMessageIndexes, [2, 3]);
-    assert.deepEqual(saved.get("C"), { target: select(c), title: "Child C", messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [] });
+    const { character: _character, isProcessing: _isProcessing, ...untouched } = saved.get("C")!;
+    assert.deepEqual(untouched, { target: select(c), title: "Child C", messageIndexes: [], inboundTurnIds: [], sentMessageIndexes: [] });
     const exact = executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target, operation: "list_sent_deliveries", request: { target, messageSeqs: [2] } }));
     assert.deepEqual(exact.items.map(({ receiptId, sourceMessageSeq }) => [receiptId, sourceMessageSeq]), [[toA.id, 2], [toB.id, 2], [toParent.id, 2]]);
     const direct = executionOperationResultSchemas.list_sent_steers.parse(read.execute({ target, operation: "list_sent_steers", request: { target, messageSeqs: [3] } }));
