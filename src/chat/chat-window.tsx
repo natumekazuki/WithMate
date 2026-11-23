@@ -132,6 +132,7 @@ export type ConcurrentChatWindowProps = {
   widthRatio: number;
   scrollToLatestOnSend?: boolean;
   captureMessageListSendRef?: RefObject<((sessionId: string) => (() => void)) | null>;
+  onMainConversationView?: (view: import("./conversation/use-main-conversation-threads.js").MainConversationView) => void;
   onSelectAuxiliary: (id: string) => void;
   onAddAuxiliary?: () => void;
   isAddAuxiliaryDisabled?: boolean;
@@ -559,17 +560,28 @@ export function ChatWindow({
   const captureMainPosition = useCallback(() => mainColumnControlsRef.current?.captureReadingPosition?.(), []);
   const mainThreads = useMainConversationThreads(concurrentChats?.main.inputReadContext, mainVisible,
     `${concurrentChats?.mainSession?.messageCount ?? 0}:${concurrentChats?.mainSession?.updatedAt ?? ""}`, captureMainPosition);
+  const mainViewTarget = concurrentChats?.main.inputReadContext?.target;
+  const mainViewChild = mainThreads.frame?.child?.target;
+  const onMainConversationView = concurrentChats?.onMainConversationView;
+  useLayoutEffect(() => {
+    if (mainViewTarget?.kind !== "main") return;
+    onMainConversationView?.({ main: mainViewTarget, id: mainThreads.selectedId,
+      child: mainViewChild?.kind === "main" ? mainViewChild : null, projection: mainThreads.projection });
+  }, [onMainConversationView, mainViewTarget, mainViewChild, mainThreads.selectedId, mainThreads.projection]);
   const mainSession = concurrentChats?.mainSession;
+  const mainControls = mainColumnControlsRef.current;
+  const runningFrameId = mainVisible && mainControls?.replyOwnerKey === (mainViewTarget && conversationPeerKey(mainViewTarget))
+    ? mainControls?.runningFrameId : undefined;
   const mainCharacter = { name: mainSession?.character ?? "", iconPath: mainSession?.characterIconPath ?? "" };
   const threadOptions: SessionSwitcherOption[] = [
     { id: ALL_MAIN_THREADS_ID, label: "ALL" },
     { id: "", label: headerProps.taskTitle, icon: <CharacterAvatar key={mainCharacter.iconPath} character={mainCharacter} size="tiny" />,
-      isProcessing: mainSession?.runState === "running" },
+      isProcessing: runningFrameId === "" },
     ...mainThreads.children.map((thread) => ({
       id: conversationPeerKey(thread.target),
       label: thread.title,
       icon: <CharacterAvatar key={thread.character?.iconPath} character={thread.character ?? { name: "", iconPath: "" }} size="tiny" />,
-      isProcessing: thread.isProcessing,
+      isProcessing: runningFrameId === conversationPeerKey(thread.target),
       hasUnreadResult: thread.hasUnreadResult,
     })),
   ];
@@ -913,6 +925,7 @@ export function ChatWindow({
               liveRun={concurrentChats.mainLiveRun}
               stateCache={conversationStateCacheRef.current}
               frame={mainThreads.frame}
+              mainThreads={mainThreads.projection}
               showAllThreads={mainThreads.showAllThreads}
               onColumnControls={handleMainColumnControls}
               navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "main"}

@@ -36,6 +36,7 @@ Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join("
 Connection: --api-url <loopback-url> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
+list-messages optionally takes thread with a Main history target: null for its initial frame or the exact peer Main SessionTarget. Omit thread for the entire target history. Filtering preserves the owner's message seqs.
 Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
 Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.

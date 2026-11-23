@@ -5922,11 +5922,12 @@ var characterPublicProfileSchema = object({
 var SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // src-shared/session/session-target.ts
 var id$2 = string().trim().min(1).max(256);
-var sessionTargetSchema = discriminatedUnion("kind", [object({
+var mainSessionTargetSchema = object({
 	kind: literal("main"),
 	sessionId: id$2,
 	incarnationId: id$2
-}).strict(), object({
+}).strict();
+var sessionTargetSchema = discriminatedUnion("kind", [mainSessionTargetSchema, object({
 	kind: literal("auxiliary"),
 	sessionId: id$2,
 	incarnationId: id$2,
@@ -6019,6 +6020,8 @@ var providerOutputSchema = object({
 });
 // src-shared/session/conversation-threads.ts
 var sequence = number().int().nonnegative();
+/** null selects the initial frame; a Main target selects that exact direct peer. ALL is not a thread. */
+var mainConversationThreadSchema = mainSessionTargetSchema.nullable();
 object({ target: sessionTargetSchema }).strict();
 object({
 	ok: literal(true),
@@ -6026,6 +6029,13 @@ object({
 	children: array(object({
 		target: sessionTargetSchema,
 		title: string(),
+		character: object({
+			name: string(),
+			iconPath: string()
+		}).optional(),
+		isProcessing: boolean().optional(),
+		lastActivityAt: number().int().optional(),
+		hasUnreadResult: boolean().optional(),
 		messageIndexes: array(sequence),
 		inboundTurnIds: array(string()),
 		sentMessageIndexes: array(sequence)
@@ -6081,7 +6091,10 @@ var executionOperationRequestSchemas = {
 	}).strict(),
 	list_sent_deliveries: sentRequest,
 	list_sent_steers: sentRequest,
-	list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
+	list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({
+		target: sessionTargetSchema,
+		thread: mainConversationThreadSchema.optional().describe("Main owner only: null for its initial conversation, or the exact direct peer Main SessionTarget. Omit for the entire target history. Does not change the history owner.")
+	}),
 	get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
 	list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
 	get_operation_detail: sessionHistoryOperationRequestSchemas.get_operation_detail.extend({ target: sessionTargetSchema }),
@@ -6464,7 +6477,7 @@ var EXECUTION_OPERATION_DESCRIPTIONS = {
 	list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
 	list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
 	list_sent_deliveries: "Read outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor. Each text contains the full original input. Stored Coordination notifications also include coordination.id, the full then-delivered human-readable coordination.text and saved consultation text in coordination.consultation when available. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
-	list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
+	list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. For a Main target, optionally filter by thread (null for initial, or the exact peer SessionTarget) without changing the history owner or message seqs. Offset and total apply to the filtered messages. Omit thread for the full target history. Uses saved-history paging, not background history authorization.",
 	get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
 	list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",
 	get_operation_detail: "Read an exact saved message's artifact or elicitation detail with shared saved-history text/row paging. Unsaved details are explicit failures, not regenerated content.",
@@ -9006,6 +9019,7 @@ Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join("
 Connection: --api-url <loopback-url> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
+list-messages optionally takes thread with a Main history target: null for its initial frame or the exact peer Main SessionTarget. Omit thread for the entire target history. Filtering preserves the owner's message seqs.
 Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
 Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.

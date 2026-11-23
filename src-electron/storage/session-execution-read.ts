@@ -15,6 +15,7 @@ import { readSessionHistory } from "./session-history-read.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
+import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
 
 type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
 type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };
@@ -104,12 +105,22 @@ export class SessionExecutionReadStorage {
     if (operation === "list_messages" || operation === "get_message" || operation === "list_operations" || operation === "get_operation_detail") {
       const last = this.db.prepare(`SELECT MAX(seq) AS seq FROM ${table} WHERE ${owner} = ?`).get(target.sessionId) as { seq: number | null };
       const { target: _target, ...historyRequest } = request;
+      const thread = operation === "list_messages"
+        ? (request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_messages>).thread : undefined;
+      let messageIndexes: number[] | undefined;
+      if (thread !== undefined) {
+        if (target.kind !== "main") return failure("EXECUTION_TARGET_MISMATCH", "A conversation thread requires a Main history target.");
+        const projection = readConversationThreads(this.db, target);
+        messageIndexes = thread === null ? projection.initialMessageIndexes
+          : projection.children.find((frame) => conversationPeerKey(frame.target) === conversationPeerKey(thread))?.messageIndexes;
+        if (!messageIndexes) return failure("EXECUTION_THREAD_UNAVAILABLE", "The peer does not identify an available thread of this Main Session.");
+      }
       if (last.seq === null) {
         if (operation !== "list_messages") return failure("HISTORY_NOT_SAVED", "The Session has no saved messages.");
         if ((historyRequest as { offset?: number }).offset) return failure("HISTORY_INVALID_REQUEST", "Offset is beyond the empty conversation.");
         return { ok: true, window: { fromSeq: 0, toSeq: -1 }, total: 0, offset: 0, nextOffset: null, items: [] };
       }
-      return readSessionHistory(this.db, { scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq }, operation, request: historyRequest as SessionHistoryRequest });
+      return readSessionHistory(this.db, { scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq }, operation, request: historyRequest as SessionHistoryRequest }, messageIndexes);
     }
     const queueWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
     const queueParams = [target.sessionId, target.incarnationId];

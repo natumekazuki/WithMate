@@ -308,6 +308,8 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   replyTo?: import("./session-reply.js").SessionReply;
+  /** Resolved Main GUI display membership only; null is the initial frame. Omitted for other operations. */
+  mainConversationFrame?: import("./session-target.js").MainSessionTarget | null;
   userMessage: string;
   executionOptions: SessionExecutionOptions;
   clientRequestId?: string;

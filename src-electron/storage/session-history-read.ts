@@ -128,14 +128,15 @@ function pageOf<T>(all: readonly T[], offset: number, limit: number): { offset: 
   return { offset, nextOffset: end < all.length ? end : null, total: all.length, items: all.slice(offset, end) };
 }
 
-export function readSessionHistory(db: DatabaseSync, input: SessionHistoryReadInput): SessionHistoryResult {
+/** The execution reader may supply ordered canonical seqs from the same Main thread projection/snapshot. */
+export function readSessionHistory(db: DatabaseSync, input: SessionHistoryReadInput, messageIndexes?: readonly number[]): SessionHistoryResult {
   assertRuntimeTurnAdmission();
-  const result = readCurrentHistory(db, input);
+  const result = readCurrentHistory(db, input, messageIndexes);
   assertRuntimeTurnAdmission();
   return result;
 }
 
-function readCurrentHistory(db: DatabaseSync, input: SessionHistoryReadInput): SessionHistoryResult {
+function readCurrentHistory(db: DatabaseSync, input: SessionHistoryReadInput, messageIndexes?: readonly number[]): SessionHistoryResult {
   const { source, fromMessageSeq, throughMessageSeq } = input.scope;
   const window = { fromSeq: fromMessageSeq, toSeq: throughMessageSeq };
   const layout: Layout = source.kind === "main"
@@ -146,7 +147,7 @@ function readCurrentHistory(db: DatabaseSync, input: SessionHistoryReadInput): S
   if (last.seq === null || last.seq < window.toSeq) {
     return failure("HISTORY_RANGE_UNAVAILABLE", "The saved conversation is shorter than the permitted history range.");
   }
-  if (input.operation === "list_messages") return listMessages(db, layout, source.sessionId, window, input.request as SessionHistoryRequest<"list_messages">);
+  if (input.operation === "list_messages") return listMessages(db, layout, source.sessionId, window, input.request as SessionHistoryRequest<"list_messages">, messageIndexes);
   const request = input.request as { seq: number };
   if (request.seq < window.fromSeq || request.seq > window.toSeq) {
     return failure("HISTORY_OUT_OF_RANGE", "The requested message is outside the permitted history range.");
@@ -163,16 +164,22 @@ function readCurrentHistory(db: DatabaseSync, input: SessionHistoryReadInput): S
     : getOperationDetail(request.seq, artifact, input.request as SessionHistoryRequest<"get_operation_detail">);
 }
 
-function listMessages(db: DatabaseSync, layout: Layout, sessionId: string, window: Window, request: SessionHistoryRequest<"list_messages">): SessionHistoryResult {
+function listMessages(db: DatabaseSync, layout: Layout, sessionId: string, window: Window, request: SessionHistoryRequest<"list_messages">, messageIndexes?: readonly number[]): SessionHistoryResult {
   const offset = request.offset ?? 0;
   const limit = request.limit ?? SESSION_HISTORY_DEFAULT_LIST_LIMIT;
-  const total = (db.prepare(`SELECT COUNT(*) AS count FROM ${layout.table} WHERE ${layout.owner} = ? AND seq BETWEEN ? AND ?`)
+  const indexes = messageIndexes?.filter((seq) => seq >= window.fromSeq && seq <= window.toSeq);
+  const total = indexes?.length ?? (db.prepare(`SELECT COUNT(*) AS count FROM ${layout.table} WHERE ${layout.owner} = ? AND seq BETWEEN ? AND ?`)
     .get(sessionId, window.fromSeq, window.toSeq) as { count: number }).count;
   if (offset > total) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the permitted history range.");
-  const rows = db.prepare(`SELECT seq, role, body FROM ${layout.table} WHERE ${layout.owner} = ? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT ? OFFSET ?`)
-    .all(sessionId, window.fromSeq, window.toSeq, limit, offset) as MessageRow[];
-  const turns = readTurns(db, layout, sessionId, window.fromSeq, window.toSeq);
-  const speaker = readMessageSpeakers(db, layout, sessionId, rows[0]?.seq ?? window.fromSeq, rows.at(-1)?.seq ?? window.fromSeq);
+  const rows = (indexes
+    ? db.prepare(`SELECT seq, role, body FROM ${layout.table} WHERE ${layout.owner} = ? AND seq IN (SELECT value FROM json_each(?)) ORDER BY seq`)
+      .all(sessionId, JSON.stringify(indexes.slice(offset, offset + limit)))
+    : db.prepare(`SELECT seq, role, body FROM ${layout.table} WHERE ${layout.owner} = ? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT ? OFFSET ?`)
+      .all(sessionId, window.fromSeq, window.toSeq, limit, offset)) as MessageRow[];
+  const from = rows[0]?.seq ?? window.fromSeq;
+  const to = rows.at(-1)?.seq ?? from;
+  const turns = readTurns(db, layout, sessionId, from, to);
+  const speaker = readMessageSpeakers(db, layout, sessionId, from, to);
   const items = rows.map((row) => {
     const message = decodeMessage(row, sessionId);
     const preview = sliceText(message.text, 0, SESSION_HISTORY_PREVIEW_CHARS);

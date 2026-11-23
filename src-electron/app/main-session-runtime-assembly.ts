@@ -23,6 +23,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
     assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
+    readMainMessageThread?: SessionRuntimeServiceDeps["readMainMessageThread"];
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
@@ -63,6 +64,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, message) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, message)),
     assertSavedReplyTo: deps.context.assertSavedReplyTo,
+    readMainMessageThread: deps.context.readMainMessageThread,
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable
       ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments))
       : undefined,

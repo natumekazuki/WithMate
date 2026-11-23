@@ -1,10 +1,12 @@
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { MainSessionTarget } from "../../../src-shared/session/session-target.js";
 
 export type SessionTurnSubmission = {
   sessionId: string;
   incarnationId: string;
   requestId: string;
   userMessage: string;
+  mainConversationFrame?: MainSessionTarget | null;
   historyMessageCount: number;
   queuedBehindRun: boolean;
   error: string;

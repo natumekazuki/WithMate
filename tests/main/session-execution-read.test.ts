@@ -383,6 +383,88 @@ test("Main conversation frames keep only created children and preserve unattribu
 
 // @test-value v2
 // kind = "contract"
+// claim = "Mainの通常GUI送信と同Turn応答は表示とlist_messagesで同じ所属を共有し、旧形式では確実な保存返信だけが相手枠に入る"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠" }
+// fault = "GUIの通常応答を別枠に置く、旧返信の世代や最終回答Turnを照合しない、または帰属変更のために正本を複製する"
+// observable = "実SQLiteの初期・各相手の正本seq、同じseqの絞込一覧とページング、対象不一致の拒否、正本page"
+// observation_boundary = "public-boundary"
+// scope = "Mainの通常GUI受付・子起点受付を混在させた合成DBの会話投影"
+// lifecycle = "permanent"
+// impact = "古い返信を文脈から切り離すか、別相手の会話へ誤って混ぜる"
+// distinction = "描画と型の検査ではpreview.3の保存JSONとTurnの照合、枠間での本文重複の有無を確認できない"
+// @end-test-value
+test("Main GUI history projects fixed affinity and follows only exact preview.3 replies", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const main = sessions.insertSession({ ...session(), sessionRole: "overall-coordinator", rootSessionId: "read-main" });
+    const [a, b] = ["a", "b"].map((id) => sessions.insertSession({ ...session(), id, sessionRole: "executor",
+      rootSessionId: main.id, parentSessionId: main.id, createdBySessionId: main.id }));
+    const targetOf = (s: typeof main) => ({ kind: "main" as const, sessionId: s.id, incarnationId: getSessionIncarnationId(s) });
+    const target = targetOf(main);
+    const base = { sessionId: main.id, provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort,
+      approvalMode: main.approvalMode, threadId: "", errorMessage: "", createdAt: "now", phase: "completed" as const };
+    const messages: typeof main.messages = [];
+    const addTurn = (text: string, options: { from?: typeof main; replyTo?: SessionReply;
+      frame?: ReturnType<typeof targetOf> | null; retry?: boolean } = {}) => {
+      const seq = messages.length;
+      const { from, replyTo, frame, retry } = options;
+      const origin = { kind: from ? "session" as const : "gui" as const, operation: "send" as const,
+        targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
+        ...(from ? { actorKind: "main" as const, actorSessionId: from.id, actorIncarnationId: getSessionIncarnationId(from) } : {}) };
+      const item = queue.enqueue(target, { origin, attachments: [], provider: main.provider, workspacePath: main.workspacePath,
+        request: { userMessage: text, clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(main),
+          submitSource: retry ? "retry" : "composer", replyTo, mainConversationFrame: frame } });
+      const turn = turns.createSessionTurn({ ...base, userMessageSeq: seq, assistantMessageSeq: seq + 1 });
+      assert.equal(queue.claimNext(target)?.id, item.id);
+      queue.markStarted(target, item.id, { turnId: String(turn.id), userMessageSeq: seq });
+      queue.settle(target, item.id, "completed");
+      messages.push({ role: "user", text, replyTo }, { role: "assistant", text: "Response: " + text });
+      return String(turn.id);
+    };
+    const inbound = addTurn("Child report", { from: a });
+    addTurn("Preview.3 reply", { replyTo: { target, seq: 1, finalAnswerTurnId: inbound } });
+    const otherAnswer = addTurn("Preview.3 reply chain", { replyTo: { target, seq: 3 } });
+    addTurn("Wrong final answer", { replyTo: { target, seq: 1, finalAnswerTurnId: otherAnswer } });
+    addTurn("Old incarnation", { replyTo: { target: { ...target, incarnationId: "old" }, seq: 1 } });
+    addTurn("Preview.3 without reply");
+    addTurn("Send in peer B", { frame: targetOf(b) });
+    const cross = addTurn("Send from ALL in reply to A", { frame: targetOf(a), replyTo: { target, seq: 1 } });
+    addTurn("Send from ALL without reply", { frame: null });
+    addTurn("Retry is not a new GUI affinity", { retry: true, replyTo: { target, seq: 1 } });
+    sessions.updateSession({ ...main, messages });
+    const snapshot = () => sessions.getConversationPage(main.id)!.messages.map(({ historyIndex, text, replyTo }) => ({ historyIndex, text, replyTo }));
+    const before = snapshot();
+    const projection = conversationThreadsResultSchema.parse(read.execute({ target, operation: "read_conversation_threads", request: { target } }));
+    assert.deepEqual(projection.initialMessageIndexes, [6, 7, 8, 9, 10, 11, 16, 17, 18, 19]);
+    const child = (id: string) => projection.children.find(({ target }) => target.sessionId === id)!;
+    assert.deepEqual(child(a.id).messageIndexes, [0, 1, 2, 3, 4, 5, 14, 15]);
+    assert.ok(child(a.id).inboundTurnIds.includes(cross));
+    assert.deepEqual(child(b.id).messageIndexes, [12, 13]);
+    const list = (params: { thread?: ReturnType<typeof targetOf> | null; limit?: number; offset?: number } = {}) =>
+      read.execute({ target, operation: "list_messages", request: { target, ...params } });
+    const seqs = (result: ReturnType<typeof list>) => {
+      assert.ok(result.ok);
+      return (result.items as { seq: number }[]).map(({ seq }) => seq);
+    };
+    const page = list({ thread: targetOf(a), limit: 2, offset: 5 });
+    assert.ok(page.ok);
+    assert.deepEqual(page.window, { fromSeq: 0, toSeq: 19 });
+    assert.deepEqual([page.total, page.offset, page.nextOffset, seqs(page)], [8, 5, 7, [5, 14]]);
+    assert.deepEqual(seqs(list({ thread: targetOf(a), offset: 7 })), [15]);
+    assert.deepEqual(seqs(list({ thread: targetOf(b) })), child(b.id).messageIndexes);
+    assert.deepEqual(seqs(list({ thread: null })), projection.initialMessageIndexes);
+    assert.deepEqual(seqs(list()), messages.map((_, seq) => seq));
+    assert.match(JSON.stringify(list({ thread: { ...targetOf(a), incarnationId: "old" } })), /EXECUTION_THREAD_UNAVAILABLE/);
+    assert.match(JSON.stringify(list({ thread: target })), /EXECUTION_THREAD_UNAVAILABLE/);
+    const single = read.execute({ target, operation: "get_message", request: { target, seq: 14 } });
+    assert.ok(single.ok);
+    assert.equal(single.text, "Send from ALL in reply to A");
+    assert.deepEqual(snapshot(), before);
+    assert.deepEqual(before.map(({ historyIndex }) => historyIndex), messages.map((_, seq) => seq));
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "直接Steerの送信元読取は正確なactor/incarnation/Turnと宛先に結び、4状態と本文全文を複数page・live/保存後で維持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/966; docs/design/database-schema.md: 親からの直接Steer・送信側の読取" }
 // fault = "queue専用一覧で直接入力を落とす、他世代・別actorの本文を混ぜる、pendingをconfirmed扱いする、cursorで同じTurnの複数入力を欠落させる"

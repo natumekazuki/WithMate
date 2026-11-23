@@ -17,6 +17,7 @@ import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-p
 import { useSessionWorkspaceAvailability } from "../../src/chat/runtime/session-window-workspace-hooks.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
+import { savedReplyConversationFrame } from "../../src-shared/session/conversation-threads.js";
 
 const owner = { kind: "main" as const, id: "session" };
 const request = {
@@ -35,6 +36,76 @@ function session(): Session {
     characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#000000", sub: "#000000" }, characterRuntimeSnapshot: null,
     runState: "running", allowedAdditionalDirectories: [], threadId: "thread", messages: [{ role: "user", text: "before", isBookmarked: true }], messageCount: 1, stream: [] };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "相手枠への明示返信も送信元の同じ版だけを消し、別枠・同枠追編集・受付失敗の下書きを保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher; docs/design/session-history.md#main列の初期枠子session枠" }
+// fault = "表示所属を下書き所有元として消す、後着ACKが本文・添付参照・返信の追編集を消す、拒否時に下書きを消す"
+// observable = "受理入口が受け取ったMainの対象・参照と、遅延した結果の前後に各枠で読み直す下書き"
+// observation_boundary = "consumer"
+// scope = "Mainの通常送信、保存先と異なる下書き所有元、編集中の合成受付"
+// lifecycle = "permanent"
+// impact = "別の話題の入力や返信先を知らずに失い、意図しない会話に続きを送る"
+// distinction = "既存の受付回復・Aux永続下書きテストは、同一Main内の複数枠と返信だけの版変更を検証しない"
+// @end-test-value
+test("Main acceptance consumes only the originating frame and draft revision", async () => {
+  const main = { kind: "main" as const, sessionId: owner.id, incarnationId: request.incarnationId };
+  const peer = { kind: "main" as const, sessionId: "peer", incarnationId: "peer-inc" };
+  const all = { ...owner, frameKey: "all" };
+  const peerDraft = { ...owner, frameKey: "peer" };
+  const registry = new ComposerControllerRegistry();
+  const replyTo = { target: main, seq: 2 };
+  const quote = { key: "two", reference: replyTo };
+  const threads = { initialMessageIndexes: [0], children: [
+    { target: peer, title: "Peer", messageIndexes: [2], sentMessageIndexes: [0], inboundTurnIds: [] },
+  ] };
+  const thread = savedReplyConversationFrame(main, threads, replyTo);
+  assert.deepEqual(thread, peer);
+  assert.equal(savedReplyConversationFrame(main, threads, { target: main, seq: 0 }), null);
+  registry.setDraft(owner, "Initial draft");
+  registry.setDraft(peerDraft, "Peer draft @peer.txt");
+  assert.equal(registry.get(all).draft, "");
+  const input = { ...request, userMessage: "Follow-up @example.txt", replyTo, mainConversationFrame: thread };
+  for (const scenario of ["accepted", "reply-edited", "attachment-edited", "rejected"] as const) {
+    registry.setDraft(all, input.userMessage);
+    registry.setReply(all, quote);
+    const acceptance = new SessionTurnAcceptance();
+    let acknowledge!: (response: Awaited<ReturnType<WithMateWindowApi["enqueueSessionTurn"]>>) => void;
+    const op = runMainSessionTurnOperation({
+      api: {
+        previewComposerInput: async (id, text) => {
+          assert.deepEqual([id, text], [main.sessionId, input.userMessage]);
+          return { attachments: [], errors: [] };
+        },
+        enqueueSessionTurn: async (id, payload) => {
+          assert.equal(id, main.sessionId);
+          assert.deepEqual(payload, input);
+          return new Promise((resolve) => { acknowledge = resolve; });
+        },
+        getSessionTurnQueueReceipt: async () => null,
+      },
+      sessionId: main.sessionId, selectedSession: session(), request: input, composerRegistry: registry, composerOwner: all,
+      submitCoordinator: new SessionSubmitCoordinator(), acceptance, queueTurn: true, clearDraft: true, collapseActionDock: false,
+      selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
+      state: { setComposerPreview() {}, onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(typeof acknowledge, "function");
+    assert.equal(registry.get(peerDraft).draft, "Peer draft @peer.txt");
+    assert.equal(registry.get(all).reply, quote);
+    const edited = { key: "zero", reference: { target: main, seq: 0 } };
+    if (scenario === "reply-edited") registry.setReply(all, edited); // Only the reply changed; the text is identical.
+    if (scenario === "attachment-edited") registry.setDraft(all, "Follow-up @new.txt");
+    acknowledge(scenario === "rejected" ? { state: "rejected", reason: "Queue rejected" }
+      : receipt({ accepted: { ...receipt().captured, request: input } }));
+    if (scenario === "rejected") await assert.rejects(op, /Queue rejected/); else assert.ok(await op);
+    assert.equal(registry.get(all).draft, scenario === "accepted" ? "" : scenario === "attachment-edited" ? "Follow-up @new.txt" : input.userMessage);
+    assert.equal(registry.get(all).reply, scenario === "accepted" ? undefined : scenario === "reply-edited" ? edited : quote);
+    assert.equal(registry.get(peerDraft).draft, "Peer draft @peer.txt");
+    assert.equal(registry.get(owner).draft, "Initial draft");
+  }
+});
 
 // @test-value v2
 // kind = "contract"

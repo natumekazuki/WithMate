@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { sessionReplySchema, type SessionReply } from "../../src-shared/session/session-reply.js";
+import { mainSessionTargetSchema } from "../../src-shared/session/session-target.js";
 import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, type ComposerPreview, type RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions, validateSessionExecutionOptions, type SessionExecutionOptions, type SessionMessageExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionOperationRequest } from "../../src-shared/session/session-management-contract.js";
@@ -183,6 +184,8 @@ export class MainSessionTurnQueueFacade {
     const request: RunSessionTurnRequest & { clientRequestId: string } = {
       userMessage: input.userMessage.trim(),
       ...(replyTo === undefined ? {} : { replyTo: sessionReplySchema.parse(replyTo) }),
+      ...(!origin && session.sessionKind === "default" && source === "composer" && input.mainConversationFrame !== undefined
+        ? { mainConversationFrame: mainSessionTargetSchema.nullable().parse(input.mainConversationFrame) } : {}),
       clientRequestId: requestId,
       submitSource: source,
       executionOptions: captureSessionExecutionOptions(executionOptions),
@@ -202,6 +205,15 @@ export class MainSessionTurnQueueFacade {
       this.deps.assertAccepting();
       await assertActorCurrent?.();
       if (request.replyTo) await this.deps.assertSavedReplyTo?.(request.replyTo);
+      if (request.mainConversationFrame) {
+        const peer = await this.deps.getSession(request.mainConversationFrame.sessionId);
+        if (!peer || peer.sessionKind !== "default" || getSessionIncarnationId(peer) !== request.mainConversationFrame.incarnationId
+          || peer.parentSessionId !== owner.sessionId || peer.createdBySessionId !== owner.sessionId
+          || peer.rootSessionId !== (session.rootSessionId?.trim() || owner.sessionId)
+          || peer.sessionRole !== "executor" && peer.sessionRole !== "task-coordinator") {
+          throw new Error("The Main conversation thread is no longer available.");
+        }
+      }
       if (request.auxiliaryDraftIncarnation !== undefined && (typeof request.auxiliaryDraftIncarnation !== "string" || !request.auxiliaryDraftIncarnation.trim())) throw new Error("The Auxiliary draft identity is invalid.");
       if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
       if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");

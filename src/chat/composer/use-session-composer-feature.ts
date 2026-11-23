@@ -684,12 +684,13 @@ export function useSessionComposerFeature(input: {
   useLayoutEffect(() => {
     const selection = composerState.selection;
     composerTextareaRef.current?.setSelectionRange(selection.start, selection.end);
+    if (input.composerOwner.kind === "main") mainComposerCaretRef.current = selection.start;
     setIsAgentPickerOpen(false);
     setIsSkillPickerOpen(false);
     setIsAdditionalDirectoryListOpen(false);
     input.setForceComposerBlockedFeedback(false);
     composerState.setImeComposing(false);
-  }, [input.activeRunSessionId, input.composerOwner.kind]);
+  }, [input.activeRunSessionId, input.composerOwner.kind, input.composerOwner.frameKey]);
 
   useLayoutEffect(() => {
     applyComposerDraftClearCommand({

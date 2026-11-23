@@ -21,10 +21,11 @@ input側は次の順序とする。
 
 1. `Current Date`（通常Sessionで設定が有効な場合）
 2. `Message Identity`（通常Mainの保存入力seq・既存Turnの最終回答目印、または保存済みの直接追加返信入力seq）
-3. queue・送信元由来の`Input Provenance`（来歴がある場合）
-4. `Reply To`（明示的な返信参照がある場合のみ）
-5. `User Input`／`Session Input`／`Queued Input`と採用本文
-6. 添付referenceとprovider固有のstructured input
+3. `Conversation Thread`（Mainで新しい通常Turnを開始する入力の表示所属）
+4. queue・送信元由来の`Input Provenance`（来歴がある場合）
+5. `Reply To`（明示的な返信参照がある場合のみ）
+6. `User Input`／`Session Input`／`Queued Input`と採用本文
+7. 添付referenceとprovider固有のstructured input
 
 `Current Date`はTurn開始日時をUTC offset付きISO日時で示す。会話の間隔、別Sessionの時刻、累計作業時間やそれらの解釈指示は渡さず、日時取得のために履歴DBを読まない。内部retryにも同じTurnの開始日時を使う。
 
@@ -44,6 +45,8 @@ Session起点は`Session Input`、GUI起点は`User Input`、origin未記録のq
 失敗Turnの再実行は今回のGUI要求と元の入力来歴を分けて示す。受付時と固定時で本文・添付参照が同じなら元の送信者に応じて`Retried Session Input`／`Retried User Input`とする。どちらかが変わった場合は固定入力をGUIユーザーによる編集として`User Input`に示し、元の送信者は履歴としてのみ扱う。編集後の再実行がさらに失敗した場合、その固定入力の来歴はGUIであり、元のSession指示として引き継がない。
 
 ## Metadataと必要時取得
+
+`Conversation Thread`の`thread`には、`Message Identity`のMainを履歴所有元とし、初期なら`null`、相手枠ならその正確なMain SessionTargetをJSONで渡す。GUI通常送信と通常Turnを開始する予約は、[表示と同じ確定所属](session-history.md#main列の初期枠子session枠)を使用する。現行選択、表示名、固定system設定は使わない。必要時に`session.list_messages`へ同じ`target`と`thread`を渡すと、その枠の保存本文を読める。Auxiliary、および実行中Turnへの直接または予約からのSteerには付けず、Steerで開始時の所属を決め直さない。
 
 返信は選択した一通を送信時に固定する。`Reply To`には保存対象のSession／incarnationとseq（最終回答の場合はさらに元WithMate Turn）、または受付の`receiptId`を渡す。Auxiliary参照には所属Mainの既存identityも含む。表示名・元本文を追加せず、system側にも返信の定型説明を追加しない。元の内容が文脈にない場合だけ、既存の`get_message`または`get_execution_input`で一通取得し、最終回答の印がある場合は取得先のTurnと照合する。採用本文に似た見出しがあっても新しいメタデータにはならない。追加のキュー入力はProviderが受理するまで保存seqが決まらないため、seqを予約・推測しない。
 

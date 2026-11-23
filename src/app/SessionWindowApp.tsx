@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { SessionGraphPreview, defaultSessionGraphViewState, type SessionGraphPreviewMemory } from "../session-graph/SessionGraphPreview.js";
@@ -65,6 +66,8 @@ import { resolveConversationAttentionEntries, type ConversationAttention } from 
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { readReplyQuote } from "../chat/conversation/reply-quote.js";
 import type { SessionReply } from "../../src-shared/session/session-reply.js";
+import { conversationPeerKey, savedReplyConversationFrame } from "../../src-shared/session/conversation-threads.js";
+import type { MainConversationView } from "../chat/conversation/use-main-conversation-threads.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
 import { usePastedFileReplacement } from "../chat/use-pasted-file-replacement.js";
 import { useResourceDiscovery } from "../chat/use-resource-discovery.js";
@@ -517,16 +520,39 @@ export default function AgentSessionWindowApp() {
     onError: (message) => window.alert(message),
   });
   const isActiveCancelRequested = pendingCancelSessionIds.has(activeRunSessionId ?? "");
+  const mainViewRef = useRef<MainConversationView>(null);
+  const [mainViewSelection, setMainViewSelection] = useState<{ ownerKey: string; id: string }>();
+  const onMainConversationView = useCallback((view: MainConversationView) => {
+    const previous = mainViewRef.current;
+    mainViewRef.current = view;
+    const ownerKey = conversationPeerKey(view.main);
+    if (previous?.id !== view.id || conversationPeerKey(previous.main) !== ownerKey) {
+      setMainViewSelection({ ownerKey, id: view.id });
+    }
+  }, []);
+  const mainIncarnation = selectedSession ? getSessionIncarnationId(selectedSession) : "";
+  const mainFrameId = selectedSession && mainViewSelection?.ownerKey === conversationPeerKey({
+    kind: "main", sessionId: selectedSession.id, incarnationId: mainIncarnation,
+  }) ? mainViewSelection.id : "";
+  const composerFrameKey = auxiliaryWorkspace.target === "main" && mainFrameId
+    ? JSON.stringify([mainIncarnation, mainFrameId]) : undefined;
   const normalComposerOwner = useMemo<ComposerOwner>(
     () => ({
       kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
       id: activeRunSessionId ?? "__none__",
+      frameKey: composerFrameKey,
     }),
-    [activeRunSessionId, auxiliaryWorkspace.target],
+    [activeRunSessionId, auxiliaryWorkspace.target, composerFrameKey],
   );
   const activeQueuedTurnEdit = queueEditor.edits[activeRunSessionId ?? ""];
   const composerOwner = useMemo<ComposerOwner>(() => activeQueuedTurnEdit
     ? queuedTurnEditOwner(normalComposerOwner.id) : normalComposerOwner, [normalComposerOwner, !!activeQueuedTurnEdit]);
+  const currentComposerOwner = useRef(composerOwner);
+  currentComposerOwner.current = composerOwner;
+  const subscribeMainReply = useCallback((listener: () => void) => composerRegistry.subscribe(normalComposerOwner, listener), [composerRegistry, normalComposerOwner]);
+  const readMainReply = useCallback(() => normalComposerOwner.kind === "main"
+    ? composerRegistry.get(normalComposerOwner).reply : undefined, [composerRegistry, normalComposerOwner]);
+  const mainReply = useSyncExternalStore(subscribeMainReply, readMainReply, readMainReply);
   const composerDraft = activeQueuedTurnEdit?.receipt.captured.request.userMessage
     ?? (auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : "");
   const isAuxiliaryTargetUnavailable = auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession;
@@ -1082,15 +1108,30 @@ export default function AgentSessionWindowApp() {
     activeAuxiliarySession?.createdAt ?? selectedSession?.incarnationId]);
   const [replyDraft, setReplyDraft] = useState<{ owner: string; key: string; revision: number; reference?: SessionReply; error?: string } | null>(null);
   const replyRevision = useRef(0);
-  const selectedReply = replyDraft?.owner === replyOwner && !activeQueuedTurnEdit ? replyDraft : null;
+  const auxiliaryReply = replyDraft?.owner === replyOwner ? replyDraft : null;
+  const selectedReply = activeQueuedTurnEdit ? null : normalComposerOwner.kind === "main" ? mainReply : auxiliaryReply;
   const clearReply = (revision: number | undefined) => {
     if (revision === undefined) return;
     setReplyDraft((current) => current?.revision === revision ? null : current);
   };
   const selectReply = (key: string, reference: SessionReply) => {
     if (!loadedSession || loadedSession.sessionKind !== "default" || isSelectedSessionReadOnly || composerRegistry.isFrozen || activeQueuedTurnEdit || isAuxiliaryTargetUnavailable) return;
-    if (selectedReply?.key === key) {
-      clearReply(selectedReply.revision);
+    if (normalComposerOwner.kind === "main") {
+      if (composerRegistry.get(normalComposerOwner).reply?.key === key) {
+        composerRegistry.setReply(normalComposerOwner, undefined);
+        return;
+      }
+      const pending = { key };
+      composerRegistry.setReply(normalComposerOwner, pending);
+      void readReplyQuote(loadedSession.id, reference).then((reply) => {
+        composerRegistry.resolveReply(normalComposerOwner, pending, { key, reference: reply.reference });
+      }, (error: unknown) => {
+        composerRegistry.resolveReply(normalComposerOwner, pending, { key, error: resolveSessionRunErrorMessage(error, "Could not read the reply target.") });
+      });
+      return;
+    }
+    if (auxiliaryReply?.key === key) {
+      clearReply(auxiliaryReply.revision);
       return;
     }
     const revision = ++replyRevision.current;
@@ -1110,21 +1151,31 @@ export default function AgentSessionWindowApp() {
       return;
     }
     const sessionId = sendSession.id;
-    const selectionContext = dockContextRef.current;
+    const incarnationId = getSessionIncarnationId(sendSession);
     const collapseSentActionDock = captureSendDockCollapse();
     const followAcceptedSend = options?.submitSource === "retry" ? undefined : captureMessageListSendRef.current?.(sessionId);
-    const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId;
+    const isCurrentSubmission = () => {
+      const current = getCurrentMainSession();
+      return composerOwnerRef.current === sessionId && current?.id === sessionId && getSessionIncarnationId(current) === incarnationId;
+    };
     const clientRequestId = createSessionTurnClientRequestId();
-    const reply = options?.submitSource === "retry" ? null : selectedReply;
+    const reply = options?.submitSource === "retry" ? null : composerRegistry.get(composerOwner).reply;
     if (reply && !reply.reference) return;
+    const main = { kind: "main" as const, sessionId, incarnationId };
+    const view = mainViewRef.current;
+    const currentView = view && conversationPeerKey(view.main) === conversationPeerKey(main) ? view : null;
+    const replyFrame = savedReplyConversationFrame(main, currentView?.projection, reply?.reference);
     const request: RunSessionTurnRequest = {
       userMessage: messageText,
       ...(reply?.reference ? { replyTo: reply.reference } : {}),
+      ...(options?.submitSource === "retry" ? {} : {
+        mainConversationFrame: replyFrame !== undefined ? replyFrame : currentView?.child ?? null,
+      }),
       clientRequestId,
       submitSource: options?.submitSource ?? "composer",
       executionOptions: captureSessionExecutionOptions(sendSession),
     };
-    const receipt = await runMainSessionTurnFromRuntime({
+    await runMainSessionTurnFromRuntime({
       sessionId,
       selectedSession: sendSession,
       request,
@@ -1138,10 +1189,9 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       collapseActionDock: collapseSentActionDock,
-      onSubmitted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
+      onSubmitted: () => { if (isCurrentSubmission() && currentComposerOwner.current === composerOwner) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     });
-    if (receipt) clearReply(reply?.revision);
   };
 
   const handleSend = async () => {
@@ -1212,7 +1262,7 @@ export default function AgentSessionWindowApp() {
       owner: composerOwner,
       auxiliarySession: activeAuxiliarySession,
       replyTo: selectedReply?.reference,
-      onAccepted: () => clearReply(selectedReply?.revision),
+      onAccepted: activeAuxiliarySession ? () => clearReply(auxiliaryReply?.revision) : undefined,
       turnId: inputTurnId ?? null,
       canSendInput,
       blockedReason: composerBlockedReason,
@@ -1597,7 +1647,7 @@ export default function AgentSessionWindowApp() {
     const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
       && auxiliaryBinding.getSession()?.createdAt === selected.createdAt;
     const releaseDetail = auxiliaryBinding.retainDetail();
-    const reply = options?.submitSource === "retry" ? null : selectedReply;
+    const reply = options?.submitSource === "retry" ? null : auxiliaryReply;
     if (reply && !reply.reference) { releaseDetail(); return Promise.resolve(); }
     return auxiliaryDraftPersistence.trackSend(runMainSessionTurnFromRuntime({
       sessionId: selected.id,
@@ -1667,12 +1717,12 @@ export default function AgentSessionWindowApp() {
 
   const insertReferencePaths = (selectedPaths: string[]) => {
     if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
-    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
+    const textarea = currentComposerOwner.current === composerOwner ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
+      fallbackCaret: composerRegistry.get(composerOwner).selection.start,
       selectedPaths,
       textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
@@ -1703,12 +1753,12 @@ export default function AgentSessionWindowApp() {
 
   const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
     if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
-    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
+    const textarea = currentComposerOwner.current === composerOwner ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
     applyComposerReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: composerCaret,
+      fallbackCaret: composerRegistry.get(composerOwner).selection.start,
       references,
       textarea,
       applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
@@ -2457,6 +2507,7 @@ export default function AgentSessionWindowApp() {
     scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
   });
   concurrentChats.mainContentReady = loadedSession !== null;
+  concurrentChats.onMainConversationView = onMainConversationView;
   concurrentChats.captureMessageListSendRef = captureMessageListSendRef;
   concurrentChats.mainReadFeedback = mainSessionRuntime.readError
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />

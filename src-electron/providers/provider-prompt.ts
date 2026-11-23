@@ -7,7 +7,6 @@ import { normalizeAllowedAdditionalDirectories } from "../files/additional-direc
 import { buildCharacterRuntimePromptSection } from "../../src-shared/character/character-runtime-snapshot.js";
 import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 import { projectSessionInputSender } from "../../src-shared/session/session-turn-queue.js";
-import type { SessionReply } from "../../src-shared/session/session-reply.js";
 
 function buildCharacterOutputBoundarySection(enabled: boolean): string {
   if (!enabled) {
@@ -50,12 +49,15 @@ function buildFolderContextSection(
 }
 
 export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false,
-  metadata?: { replyTo?: SessionReply; messageIdentity?: RunSessionTurnInput["messageIdentity"] }): string {
+  metadata?: Pick<RunSessionTurnInput, "replyTo" | "messageIdentity" | "mainConversationFrame">): string {
   if (!userMessage.trim()) return "";
   const sections: string[] = [];
   const fields = (values: Record<string, string | number | undefined>) => Object.entries(values)
     .filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
   if (metadata?.messageIdentity) sections.push("# Message Identity\n\n" + fields(metadata.messageIdentity));
+  if (metadata?.messageIdentity && metadata.mainConversationFrame !== undefined) {
+    sections.push("# Conversation Thread\n\nthread: " + JSON.stringify(metadata.mainConversationFrame));
+  }
   if (provenance) {
     const origin = provenance.origin;
     const sender = projectSessionInputSender(origin);

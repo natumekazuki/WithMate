@@ -26,6 +26,8 @@ import {
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   getShortcutDispatcher,
@@ -46,6 +48,130 @@ function createChatDom(...args: ConstructorParameters<typeof JSDOM>) {
   });
   return dom;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main一覧は自分の実行中Turnの確定所属だけにリングを出し、別枠閲覧・子だけの実行・予約・完了では移動や残留をしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "子のrunStateまたは閲覧先でリングを出す、ALLにも出す、受付や完了を処理中と数える"
+// observable = "実ChatWindowの候補行の処理中リングと状態名、閲覧選択、Main入力・応答の可視本文"
+// observation_boundary = "component-behavior"
+// scope = "Main自身のlive Turnとキュー受付を人工IPCへ与えたSession Window"
+// lifecycle = "permanent"
+// impact = "利用者が応答中の会話を誤認して別スレッドの続きを送る"
+// distinction = "共有Switcherの外観や並び順の単体確認ではMain実行・受理・表示所属の接合を検知できない"
+// @end-test-value
+test("Main switcher rings only the executing Main frame independently of selection and child state", async () => {
+  const dom = createChatDom("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const matchMedia = dom.window.matchMedia;
+  dom.window.matchMedia = (query) => Object.assign(matchMedia(query), { matches: query.includes("prefers-reduced-motion") });
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node,
+    navigator: dom.window.navigator, ResizeObserver: TestResizeObserver, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window) };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLElement.prototype.scrollIntoView = noop;
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    attachEvent: { configurable: true, value: noop }, detachEvent: { configurable: true, value: noop },
+    offsetHeight: { get(this: HTMLElement) { return this.classList.contains("session-message-virtual-row") ? 72 : 720; } },
+    offsetWidth: { get: () => 850 }, clientHeight: { get: () => 720 },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const props = createChatWindowProps({ messages: [] });
+  const main = { kind: "main" as const, sessionId: "main", incarnationId: "main-inc" };
+  const a = { kind: "main" as const, sessionId: "a", incarnationId: "a-inc" };
+  const b = { kind: "main" as const, sessionId: "b", incarnationId: "b-inc" };
+  const thread = (target: typeof a, title: string, isProcessing = false) => ({ target, title, isProcessing,
+    inboundTurnIds: [], sentMessageIndexes: [], messageIndexes: [] });
+  const projection = { ok: true, initialMessageIndexes: [], children: [thread(a, "Peer Alpha"), thread(b, "Peer Beta", true)] };
+  const request = { clientRequestId: "draft-a", userMessage: "Affinity input", mainConversationFrame: a,
+    executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "read-only",
+      codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } } as const;
+  const captured = { request, provider: "codex", workspacePath: "fixture", attachments: [],
+    origin: { kind: "gui" as const, operation: "send" as const, targetSessionId: main.sessionId, targetIncarnationId: main.incarnationId } };
+  const item: SessionTurnQueueReceipt = { sessionId: main.sessionId, incarnationId: main.incarnationId, id: "receipt-a",
+    requestId: request.clientRequestId, state: "queued", sequence: 1, queuePosition: 1, captured, accepted: captured,
+    turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "", updatedAt: "" };
+  let receipts: SessionTurnQueueReceipt[] = [];
+  let terminal: SessionTurnQueueReceipt | null = null;
+  let changed: ((id: string) => void) | undefined;
+  let live: LiveSessionRunState | null = null;
+  const api = {
+    readSessionExecution: async (_owner: string, operation: string) =>
+      operation === "read_conversation_threads" ? projection : { ok: true, items: [], nextCursor: null },
+    getConversationPage: async () => ({ sessionId: main.sessionId, incarnationId: main.incarnationId, startIndex: 0, totalCount: 0, messages: [] }),
+    listSessionTurnQueue: async () => receipts,
+    getSessionTurnQueueReceipt: async (_id: string, requestId: string) => terminal?.requestId === requestId ? terminal : null,
+    onSessionTurnQueueChanged: (listener: (id: string) => void) => { changed = listener; return () => { changed = undefined; }; },
+  };
+  Object.defineProperty(dom.window, "withmate", { value: api });
+  const render = () => React.createElement(ChatWindow, { ...props, concurrentChats: {
+    main: { ...props.messageColumnProps, sessionId: main.sessionId, inputReadContext: { ownerSessionId: main.sessionId, target: main } },
+    mainSession: { id: main.sessionId, incarnationId: main.incarnationId, runState: "running", messages: [] },
+    mainLiveRun: live, auxiliary: null, target: "main", widthRatio: 0, auxiliaryItems: [], selectedAuxiliaryId: null,
+    onSelectAuxiliary: noop, onTargetChange: noop, onWidthRatioChange: noop, api,
+  } });
+  const switcher = () => dom.window.document.querySelector<HTMLButtonElement>(".main-thread-header .session-switcher-current")!;
+  const readOptions = () => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".main-thread-header [role=option]"));
+  const label = (node: HTMLButtonElement) => node.querySelector(".session-switcher-option-label")?.textContent?.trim();
+  const optionsWithRing = () => readOptions().filter((node) => node.querySelector(".session-switcher-processing-ring")).map(label);
+  const select = async (title: string) => {
+    if (readOptions().length === 0) await act(async () => switcher().click());
+    const option = readOptions().find((node) => label(node) === title);
+    assert.ok(option);
+    await act(async () => option.click());
+  };
+  const active: LiveSessionRunState = { sessionId: main.sessionId, sessionTurnId: "10", runState: "running", threadId: "provider",
+    assistantText: "Delayed response for Alpha", steps: [], backgroundTasks: [], usage: null, errorMessage: "",
+    approvalRequest: null, elicitationRequest: null, queueReceipt: { id: item.id, incarnationId: item.incarnationId, userMessageSeq: 0 } };
+  const waitForPresentedResponse = async () => {
+    for (let attempts = 0; attempts < 12; attempts += 1) {
+      if (dom.window.document.body.textContent?.includes(active.assistantText)) return;
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
+    }
+    assert.match(dom.window.document.body.textContent ?? "", /Delayed response for Alpha/);
+  };
+  try {
+    await act(async () => root.render(render()));
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), [], "Beta alone is running");
+    receipts = [item];
+    await act(async () => changed?.(main.sessionId));
+    assert.deepEqual(optionsWithRing(), [], "a queued prompt is not an executing Turn");
+    await select("Peer Beta");
+    receipts = [{ ...item, state: "running", turnId: "10", userMessageSeq: 0 }];
+    live = active;
+    await act(async () => { changed?.(main.sessionId); root.render(render()); });
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Affinity input|Delayed response for Alpha/);
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), ["Peer Alpha"]);
+    assert.equal(readOptions().find((node) => node.textContent?.includes("Peer Alpha"))?.title, "Processing");
+    assert.equal(readOptions().find((node) => node.textContent?.includes("Peer Beta"))?.getAttribute("aria-selected"), "true");
+    await select("Peer Alpha");
+    assert.match(dom.window.document.body.textContent ?? "", /Affinity input/);
+    await waitForPresentedResponse();
+    await select("ALL");
+    await waitForPresentedResponse();
+    assert.equal((dom.window.document.body.textContent?.match(/Delayed response for Alpha/g) ?? []).length, 1);
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), ["Peer Alpha"]);
+    live = { ...active, runState: "idle", assistantText: "" };
+    terminal = { ...receipts[0], state: "completed" };
+    receipts = [];
+    await act(async () => { changed?.(main.sessionId); root.render(render()); });
+    assert.deepEqual(optionsWithRing(), [], "completed Main must lose its ring even before its summary refreshes");
+    live = { ...active, sessionTurnId: "11", queueReceipt: undefined, assistantText: "Initial response" };
+    await act(async () => root.render(render()));
+    assert.deepEqual(optionsWithRing(), [props.headerProps.taskTitle]);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

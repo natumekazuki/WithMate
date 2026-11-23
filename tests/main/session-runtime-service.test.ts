@@ -292,10 +292,10 @@ it("指定Turn停止はWithMate identityを固定し後続へ適用しない", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接SteerはProvider呼出前にpendingと固定された返信参照を保存し、未送信・外部結果不明・保存ACK喪失を区別して同じ本文と参照を保つ"
-// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別; docs/design/session-history.md#明示返信" }
-// fault = "記録前にProviderへ送る、未送信を不明にする、不明送信を再送する、確定commitのACK喪失で入力を上書きする"
-// observable = "adapter呼出時のpendingと返信参照、Provider入力の返信ID、配送状態、呼出件数、terminal後の本文と参照"
+// claim = "直接SteerはProvider呼出前にpendingと固定された返信参照を保存し、通常Turnの会話枠を再提示せず、未送信・結果不明・保存ACK喪失を区別する"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別; docs/design/prompt-composition.md#metadataと必要時取得" }
+// fault = "記録前にProviderへ送る、Steerに通常開始用の所属を足す、未送信を不明にする、または不明送信を再送する"
+// observable = "adapter呼出時のpendingと返信参照、Provider入力の返信IDと所属欄、配送状態、呼出件数、terminal後の本文と参照"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeService直接Steerとfixture永続portの故障注入"
 // lifecycle = "permanent"
@@ -327,6 +327,7 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
         assert.equal(stored.messages.at(-1)?.turnInput?.nativeTurnId, input.expectedTurnId);
         assert.deepEqual(stored.messages.at(-1)?.replyTo, reference);
         assert.match(input.userMessage, /# Reply To\n\nsessionId: [^\n]+\nincarnationId: [^\n]+\nseq: 0\n\n# User Input\n\nadditional$/);
+        assert.doesNotMatch(input.userMessage, /# Conversation Thread/);
         if (mode === "unknown") throw new Error("Provider outcome unknown");
         return { turnId: input.expectedTurnId };
       },
@@ -1677,10 +1678,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "queued steerは固定添付・実送信元・確定した返信先をProviderへ渡し、重複を拒否し、append返信喪失でも元本文と参照をterminalへ維持する"
-  // oracle = { type = "contract", ref = "docs/design/session-history.md#明示返信; GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
-  // fault = "queued本文を再previewする、参照を予定値に差し替えるかcommit済み追加の本文・参照を終端で失う"
-  // observable = "Provider入力内の添付・来歴・返信先、重複拒否、appendへ届くqueue contextと返信先、terminalの未装飾本文・参照"
+  // claim = "queued steerは固定添付・実送信元・返信先を渡すが予約の会話枠を渡さず、append返信喪失でも本文と参照を維持する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#metadataと必要時取得; GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
+  // fault = "queued本文を再previewする、通常開始用の予約所属をSteerで出す、参照を予定値に差し替えるかcommit済み追加を終端で失う"
+  // observable = "Provider入力内の添付・来歴・返信先・所属欄、重複拒否、appendへ届くqueue contextと返信先、terminalの未装飾本文・参照"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService.steerQueuedSessionTurn and terminal persistence"
   // lifecycle = "permanent"
@@ -1716,6 +1717,7 @@ describe("SessionRuntimeService", () => {
       actorTurnId: "15", operation: "send", targetSessionId: stored.id, targetIncarnationId: getSessionIncarnationId(stored) };
     const replyTo = { target: { kind: "main" as const, sessionId: "fixed-reply", incarnationId: "fixed-generation" }, seq: 2, finalAnswerTurnId: "6" };
     receipt.captured.request.replyTo = replyTo;
+    receipt.captured.request.mainConversationFrame = { kind: "main", sessionId: "reserved-peer", incarnationId: "peer-v1" };
     receipt.accepted = structuredClone(receipt.captured);
     receipt.dispatched = structuredClone(receipt.captured);
     const service = createTestRuntime({
@@ -1753,6 +1755,7 @@ describe("SessionRuntimeService", () => {
     assert.match(sent[0]!.userMessage, /Changed since acceptance: false/);
     assert.match(sent[0]!.userMessage, /# Reply To\n\nsessionId: "fixed-reply"\nincarnationId: "fixed-generation"\nseq: 2\nfinalAnswerTurnId: "6"\n\n# Session Input/);
     assert.ok(!sent[0]!.userMessage.includes("# Message Identity"));
+    assert.doesNotMatch(sent[0]!.userMessage, /# Conversation Thread|reserved-peer/);
     assert.equal(sent.length, 1);
     finishTurn();
     const completed = await turn;
