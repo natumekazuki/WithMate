@@ -879,6 +879,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "readSessionImageChunk",
     "readSessionPdfChunk",
     "reportRendererLog",
+    "retryFailedSessionTurn",
     "releaseTerminal",
     "resizeTerminal",
     "resetAppDatabase",
