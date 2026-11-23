@@ -71,6 +71,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
   listConversationNavigator?: ConversationQueryStore["listConversationNavigator"];
   cancelConversationQuery?: ConversationQueryStore["cancelConversationQuery"];
   listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listHomeCrewMembersPage?: AwaitableStorageMethods<SessionStorageV6, "listHomeCrewMembersPage">["listHomeCrewMembersPage"];
   getSessionSummary?(sessionId: string): Awaitable<import("../../src-shared/session/session-state.js").SessionSummary | null>;
   getSessionMetadata?: AwaitableStorageMethods<SessionStorageV6, "getSessionMetadata">["getSessionMetadata"];
   getSessionMessageIdentity?: AwaitableStorageMethods<SessionStorageV6, "getSessionMessageIdentity">["getSessionMessageIdentity"];

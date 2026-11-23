@@ -157,6 +157,10 @@ import {
   type SessionMonitorContextMenuResult,
 } from "../../src-shared/window/withmate-window-types.js";
 export type MaybeWindow = BrowserWindow | null | undefined;
+export type MainIpcHomeCrewDeps = {
+  listHomeCrewPage(request: { cursor: string | null; limit: number }): Awaitable<import("../../src-shared/window/home-crew-types.js").HomeCrewPageResult>;
+  showHomeCrewContextMenu(window: BrowserWindow, request: import("../../src-shared/window/home-crew-types.js").HomeCrewContextMenuRequest): Awaitable<SessionMonitorContextMenuResult>;
+};
 export type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
 export type LogIpcErrorInput = {
   channel: string;
@@ -213,6 +217,7 @@ export type MainIpcFilePreviewWindowDeps = {
 
 export type MainIpcWindowDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
+  MainIpcHomeCrewDeps &
   MainIpcSessionWindowDeps &
   MainIpcSessionMonitorWindowDeps &
   MainIpcWorkspaceValidationDeps &

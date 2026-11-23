@@ -68,6 +68,8 @@ import {
   parseSessionSummaryPageRequest,
 } from "./session-summary-query.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src-shared/window/withmate-window-types.js";
+import type { HomeCrewMember } from "../../src-shared/window/home-crew-types.js";
+import type { OpenCrewWindowIdentity } from "./home-crew-query.js";
 import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
@@ -519,6 +521,36 @@ export class SessionStorageV6 {
         ? encodeSessionSummaryCursor(parsed.scope, lastRow.last_active_at, lastRow.id, parsed.searchText)
         : null,
     };
+  }
+
+  listHomeCrewMembersPage(openWindows: readonly OpenCrewWindowIdentity[], afterId: string | null, limit: number): Omit<HomeCrewMember, "isWindowOpen">[] {
+    if (openWindows.length === 0) return [];
+    const rows = this.db.prepare(`
+      SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}, s.incarnation_id, s.root_session_id, s.parent_session_id, s.created_at
+      FROM sessions_v6 AS s
+      WHERE s.id > ? AND ${readySessionClause("s.id")}
+        AND s.root_session_id IN (
+          SELECT opened.root_session_id FROM json_each(?) AS ids
+          JOIN sessions_v6 AS opened ON opened.id = json_extract(ids.value, '$.sessionId')
+            AND opened.incarnation_id = json_extract(ids.value, '$.incarnationId')
+          JOIN sessions_v6 AS root ON root.id = opened.root_session_id AND root.parent_session_id IS NULL
+          WHERE ${readySessionClause("opened.id")} AND ${readySessionClause("root.id")}
+        )
+      ORDER BY s.id ASC
+      LIMIT ?
+    `).all(afterId ?? "", JSON.stringify(openWindows), limit + 1) as (HomeSessionSummaryV6Row &
+      Pick<SessionV6Row, "incarnation_id" | "root_session_id" | "parent_session_id"> & { created_at: string })[];
+    return rows.map((row) => {
+      const summary = this.rowToHomeSessionSummary(row);
+      if (!summary) throw new Error("Home Crew Session summary could not be read.");
+      return {
+        ...summary,
+        incarnationId: row.incarnation_id,
+        rootSessionId: row.root_session_id,
+        parentSessionId: row.parent_session_id,
+        createdAt: row.created_at,
+      };
+    });
   }
 
   listSessionCharacterUsage(): SessionCharacterUsage[] {

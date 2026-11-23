@@ -22,13 +22,16 @@ export class AuxiliaryLiveRunParents {
     return entry?.owner === this.options.getStorageOwner() ? entry.parentSessionId : undefined;
   }
 
-  public hasPendingRunForParent(parentSessionId: string): boolean {
+  public *pendingRunIdsForParent(parentSessionId: string): IterableIterator<string> {
     const owner = this.options.getStorageOwner();
     for (const [sessionId, entry] of this.parents) {
       if (entry.owner === owner && entry.parentSessionId === parentSessionId
-        && this.options.isRunPending(sessionId)) return true;
+        && this.options.isRunPending(sessionId)) yield sessionId;
     }
-    return false;
+  }
+
+  public hasPendingRunForParent(parentSessionId: string): boolean {
+    return !this.pendingRunIdsForParent(parentSessionId).next().done;
   }
 
   public remember(session: Pick<AuxiliarySession, "id" | "parentSessionId">, owner: object): void {

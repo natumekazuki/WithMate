@@ -2756,7 +2756,7 @@ describe("HomeRightPane", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "HomeのMonitor tabはSession Monitor context menuの失敗feedbackを利用者向けlive statusへ表示する"
-  // oracle = { type = "contract", ref = "HomeRightPane Session Monitor feedback" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window の Monitor（親行context menuの失敗表示）" }
   // fault = "HomeAppから渡されたcontext menu失敗messageがright paneで欠落するか、支援技術へ通知されない"
   // observable = "Monitor tab内のfeedback文字列、role=status、aria-live=polite"
   // observation_boundary = "component-behavior"
@@ -2776,10 +2776,10 @@ describe("HomeRightPane", () => {
       "Could not copy session ID.",
     );
 
-    const monitorPanel = html.match(/<section class="home-monitor-panel" role="tabpanel" aria-label="Session monitor">[\s\S]*?<\/section>/);
+    const monitorPanel = JSDOM.fragment(html).querySelector('[role="tabpanel"][aria-label="Session monitor"]');
     assert.ok(monitorPanel);
-    assert.match(monitorPanel[0], /Could not copy session ID\./);
-    assert.match(monitorPanel[0], /role="status" aria-live="polite"/);
+    const status = monitorPanel.querySelector('[role="status"][aria-live="polite"]');
+    assert.match(status?.textContent ?? "", /Could not copy session ID\./);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

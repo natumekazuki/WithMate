@@ -735,6 +735,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "listHomeCrewPage",
+    "showHomeCrewContextMenu",
     "changeSessionAdditionalDirectory",
     "getCoordinationIdentity",
     "executeCoordination",

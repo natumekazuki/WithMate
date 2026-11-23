@@ -5,6 +5,10 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
 
+export const homeRightPaneLabels = { monitor: "Monitor", crew: "Crew", characters: "Characters", previews: "Previews" } as const;
+export type HomeRightPaneView = keyof typeof homeRightPaneLabels;
+const homeRightPaneViews = Object.keys(homeRightPaneLabels) as HomeRightPaneView[];
+
 export type HomeHeaderProps = {
   searchInputText: string;
   onChangeSearchText: (value: string) => void;
@@ -12,8 +16,8 @@ export type HomeHeaderProps = {
   onSearchCompositionEnd?: (value: string) => void;
   onOpenLaunchDialog: () => void;
   canCreateSession: boolean;
-  rightPaneView: "monitor" | "characters" | "previews";
-  onChangeRightPaneView: (view: "monitor" | "characters" | "previews") => void;
+  rightPaneView: HomeRightPaneView;
+  onChangeRightPaneView: (view: HomeRightPaneView) => void;
   monitorWindowIcon: ReactNode;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
@@ -91,33 +95,30 @@ export function HomeHeader({
         </button>
       </div>
       <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
-        <button
-          className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}
-          type="button"
-          role="tab"
-          aria-selected={rightPaneView === "monitor"}
-          onClick={() => onChangeRightPaneView("monitor")}
-        >
-          Monitor
-        </button>
-        <button
-          className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
-          type="button"
-          role="tab"
-          aria-selected={rightPaneView === "characters"}
-          onClick={() => onChangeRightPaneView("characters")}
-        >
-          Characters
-        </button>
-        <button
-          className={`home-pane-toggle-button ${rightPaneView === "previews" ? "active" : ""}`.trim()}
-          type="button"
-          role="tab"
-          aria-selected={rightPaneView === "previews"}
-          onClick={() => onChangeRightPaneView("previews")}
-        >
-          Previews
-        </button>
+        {homeRightPaneViews.map((view, index) => (
+          <button
+            key={view}
+            className={`home-pane-toggle-button${rightPaneView === view ? " active" : ""}`}
+            type="button"
+            role="tab"
+            aria-controls={rightPaneView === view ? `home-panel-${view}` : undefined}
+            aria-selected={rightPaneView === view}
+            tabIndex={rightPaneView === view ? 0 : -1}
+            onClick={() => onChangeRightPaneView(view)}
+            onKeyDown={(event) => {
+              const count = homeRightPaneViews.length;
+              const next = event.key === "ArrowLeft" ? (index - 1 + count) % count
+                : event.key === "ArrowRight" ? (index + 1) % count
+                : event.key === "Home" ? 0 : event.key === "End" ? count - 1 : null;
+              if (next === null) return;
+              event.preventDefault();
+              onChangeRightPaneView(homeRightPaneViews[next]!);
+              event.currentTarget.parentElement?.querySelectorAll("button")[next]?.focus();
+            }}
+          >
+            {homeRightPaneLabels[view]}
+          </button>
+        ))}
       </div>
       <div className="home-settings-actions">
         <button

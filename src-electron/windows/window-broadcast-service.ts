@@ -44,9 +44,14 @@ type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
 };
 
 export class WindowBroadcastService<TWindow extends WindowLike> {
+  private homeCrewRevision = 0;
+
   public constructor(private readonly options: WindowBroadcastServiceOptions<TWindow>) {}
 
+  public getHomeCrewRevision(): number { return this.homeCrewRevision; }
+
   public broadcastSessionInvalidation(payload: SessionSummaryInvalidation): void {
+    this.homeCrewRevision++;
     this.broadcastTo(
       [...this.options.getHomeWindows(), ...this.options.getSessionWindows()],
       WITHMATE_SESSIONS_INVALIDATED_EVENT,
@@ -67,6 +72,7 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   public broadcastOpenSessionWindowIds(sessionIds: string[]): void {
+    this.homeCrewRevision++;
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     const payload: OpenSessionWindowIdsChangedPayload = uniqueSessionIds.length > OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX
       ? { scope: "all" }

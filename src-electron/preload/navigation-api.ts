@@ -13,6 +13,12 @@ export function createWindowApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowNavigationApi {
   return {
+    listHomeCrewPage(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_HOME_CREW_PAGE_CHANNEL, request ?? null);
+    },
+    showHomeCrewContextMenu(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_SHOW_HOME_CREW_CONTEXT_MENU_CHANNEL, request);
+    },
     showSessionFilePreviewContextMenu(request) {
       return ipcRenderer.invoke(channels.WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL, request);
     },

@@ -1,4 +1,4 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySessionNavigationPayload } from "../../src-shared/window/withmate-window-types.js";
 import type { ChatEntryMode } from "./window-entry-loader.js";
 import {
@@ -65,6 +65,8 @@ type SessionWindowPresentation<TWindow> = {
 
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
+  private readonly windowIncarnations = new WeakMap<TWindow, string>();
+  private readonly homeCrewCloseAttempts = new Map<TWindow, { validate(): boolean; committed: boolean }>();
   private readonly retainedMonitorSessionIds = new Set<string>();
   private readonly retainMonitorOnClose = new Map<TWindow, boolean>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
@@ -168,6 +170,18 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return window;
   }
 
+  getWindowIncarnation(window: TWindow): string | undefined {
+    return this.windowIncarnations.get(window);
+  }
+
+  listOpenSessionWindowIdentities(): { sessionId: string; incarnationId: string }[] {
+    return this.listOpenSessionWindowIds().flatMap((sessionId) => {
+      const window = this.getWindow(sessionId);
+      const incarnationId = window && this.getWindowIncarnation(window);
+      return incarnationId ? [{ sessionId, incarnationId }] : [];
+    });
+  }
+
   listWindows(): TWindow[] {
     return Array.from(this.sessionWindows.values()).filter((window) => !window.isDestroyed());
   }
@@ -238,6 +252,8 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     presentation: SessionWindowPresentation<TWindow>,
   ): Promise<TWindow> {
     const window = this.deps.createWindow(sessionId);
+    const session = this.deps.getSession(sessionId);
+    if (session) this.windowIncarnations.set(window, getSessionIncarnationId(session));
     presentation.window = window;
     this.sessionWindows.set(sessionId, window);
     this.broadcast();
@@ -396,6 +412,22 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return result;
   }
 
+  /** Only a Home Crew descendant operation can supply a synchronous scope and impact check. */
+  async closeHomeCrewDescendantWindow(sessionId: string, window: TWindow, validateBatch: () => boolean): Promise<"closed" | "already-closed" | "blocked"> {
+    if (this.getWindow(sessionId) !== window || this.draftFlushGateActive
+      || this.pendingCloseConfirmations.has(window) || this.pendingCloseRequests.has(window)
+      || this.pendingDraftFlushWindows.has(window)) return window.isDestroyed() ? "already-closed" : "blocked";
+    const attempt = { validate: validateBatch, committed: false };
+    this.homeCrewCloseAttempts.set(window, attempt);
+    try {
+      const closed = await this.requestCloseSessionWindow(sessionId);
+      if (!window.isDestroyed()) return "blocked";
+      return closed && attempt.committed ? "closed" : "already-closed";
+    } finally {
+      this.homeCrewCloseAttempts.delete(window);
+    }
+  }
+
   closeAllSessionWindows(): void {
     // DB reset explicitly discards sessions; ordinary close first attempts draft persistence.
     this.retainedMonitorSessionIds.clear();
@@ -447,11 +479,17 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     const hasRunningSession = this.deps.isRunInFlight(sessionId);
+    const crewClose = this.homeCrewCloseAttempts.get(window);
+    if (crewClose && !crewClose.validate()) {
+      event.preventDefault();
+      this.resolveCloseRequest(window, false);
+      return;
+    }
     // Capture before confirmation/flush: terminal completion must not turn a
     // running close into a stopped close that ends monitoring.
     this.retainMonitorOnClose.set(window, hasRunningSession);
     const hasTerminalsRequiringConfirmation = (this.deps.getTerminalCloseConfirmationCount?.(window) ?? 0) > 0;
-    if (hasRunningSession || hasTerminalsRequiringConfirmation) {
+    if (!crewClose && (hasRunningSession || hasTerminalsRequiringConfirmation)) {
       event.preventDefault();
       const confirmation = new AbortController();
       this.pendingCloseConfirmations.set(window, confirmation);
@@ -460,6 +498,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     if (!this.deps.sendDraftFlushRequest || !this.deps.getWindowSender) {
+      if (crewClose) crewClose.committed = true;
       return;
     }
     event.preventDefault();
@@ -496,6 +535,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private startCloseDraftFlush(sessionId: string, window: TWindow): void {
+    const crewClose = this.homeCrewCloseAttempts.get(window);
     this.pendingDraftFlushWindows.add(window);
     const closeFlush = this.flushDrafts(window, sessionId, "close");
     void closeFlush.then((flushed) => {
@@ -517,6 +557,13 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
         return;
       }
       try {
+        if (crewClose && !crewClose.validate()) {
+          this.retainMonitorOnClose.delete(window);
+          this.releaseDraftFlush(window, false);
+          this.resolveCloseRequest(window, false);
+          return;
+        }
+        if (crewClose) crewClose.committed = true;
         if (!flushed || this.rendererState(window) !== "responsive") {
           // Only the input surface is discarded. Main owns provider execution and persistence.
           window.destroy();

@@ -118,20 +118,20 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 - 黒基調の管理ハブとして表示する
 - `Settings` は別 window で開く前提のため、Home は session / Character catalog 管理ハブを優先する
-- 左の`RecentSessions`と右の`Monitor`／`Characters`／`Previews`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
+- 左の`RecentSessions`と右の`Monitor`／`Crew`／`Characters`／`Previews`を、Session WindowのMain／Auxiliaryと共通のスプリッターで分割する。初期は左右1:1で、比率は表示中のHome内だけで保持する
   - ドラッグまたは左右矢印キーで幅を変え、端へ寄せると片側を全幅表示する。クリックは右側を閉じ、どちらかが閉じているときはクリックで1:1へ戻す。閉じた状態からのドラッグ・矢印キーでは再展開しない
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとし、両側を表示できる幅があるときはWindow縮小後も比率を補正して最小幅を維持する。縮小だけで閉じたpaneを開かない
-  - Monitor／Characters／Previews切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のpaneへ合わせる
-  - header左側には共通検索と＋iconの`New Session`を置く。検索は1つの語でRecentSessions、Home内Monitor、Charactersを絞り込み、対象切替は設けない。検索語はMonitor／Characters切替とpane開閉で保持し、`Clear Search`で全一覧の絞り込みを解除して検索inputへfocusを戻す。独立Monitor Windowへは共有しない
-  - 入力文字は即座に表示し、最後の入力から300ms後に共通の検索語を3一覧へ適用する。IME変換中は適用せず、確定値から待機する。空入力・`Clear Search`は待機中の検索を取り消して即座に解除する。Recent／Pinnedの取得中は前回の結果を保持し、scopeごとの取得成功時に置換する
-  - Session検索は`taskTitle / workspacePath / workspaceLabel / kind label / Mainの保存済みCharacter表示名`のいずれかへの部分一致とする。Charactersはcatalogの名前のみを対象とする。前後の空白とASCIIの大文字小文字を無視し、AuxiliaryのCharacter名、会話本文、Character説明文は検索しない。通常SessionのCharacter名はcatalogの改名へ追従しない
+  - Monitor／Crew／Characters／Previews切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のpaneへ合わせる
+  - header左側には共通検索と＋iconの`New Session`を置く。検索は1つの語でRecentSessions、Home内Monitor、Crew、Charactersを絞り込み、対象切替は設けない。検索語はtab切替とpane開閉で保持し、`Clear Search`で全一覧の絞り込みを解除して検索inputへfocusを戻す。独立Monitor Windowへは共有しない
+  - 入力文字は即座に表示し、最後の入力から300ms後に共通の検索語を各一覧へ適用する。IME変換中は適用せず、確定値から待機する。空入力・`Clear Search`は待機中の検索を取り消して即座に解除する。Recent／Pinnedの取得中は前回の結果を保持し、scopeごとの取得成功時に置換する
+  - RecentSessionsとMonitorのSession検索は`taskTitle / workspacePath / workspaceLabel / kind label / Mainの保存済みCharacter表示名`のいずれかへの部分一致とする。CrewはMainのtitleと保存済みCharacter表示名、Charactersはcatalogの名前を対象とする。前後の空白とASCIIの大文字小文字を無視し、AuxiliaryのCharacter名、会話本文、Character説明文は検索しない。通常SessionのCharacter名はcatalogの改名へ追従しない
   - 検索inputのplaceholderは表示せず、accessible nameは`Search Sessions And Characters`とする。`New Session`は表示中のpaneにかかわらず同じdialogを開き、初期データの準備状態によるdisabled条件は維持する。狭幅ではheaderの操作群を折り返し、検索・作成・共通操作へ到達可能にする
 - 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
 - `RecentSessions` / `Characters` 見出しは dark background 上で十分読める色を明示する
 - `Monitor & Resume` / `Manage Cast` の補助ラベルは置かない
 - Mate ProfileのAvatar編集では、`Select Image`と`Clear`の実行した操作だけをbusy表示にし、処理中は両操作を無効化する。Mate保存中も両操作を無効化するが、Avatar更新中とは表示を区別する。Mate未作成・Profile利用不可ではAvatar編集を提供しない。画像選択のキャンセルと更新失敗では元のAvatarを保持して操作可能状態へ戻し、成功時は取得したProfileを反映する。Avatarがないときは`Clear`を表示しない。
 - `Monitor`
-  - Home共通headerのsegmented toggleで `Characters`／`Previews` と排他的に切り替える
+  - Home共通headerのsegmented toggleで他のtabと排他的に切り替える
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
@@ -163,6 +163,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 監視対象の親・Auxiliary summaryの取得状態はMonitor領域のstatus feedbackで示し、失敗時は`Retry`で再取得できる。取得済みのcardは再取得中・失敗時も保持し、未知のAuxiliary集約や正常な0件へ置き換えない
   - 監視対象がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
   - `MonitorWindow` button から独立した monitor window を開ける
+- `Crew`
+  - Main Session Windowが一つでも開いているCrewを、保存済みの最上位Main単位で載せる。root自身が閉じていても表示し、Windowを閉じた後のMonitor保持やPreview／Graph Windowだけでは載せない。初期はrootのみを表示し、Mainの展開で閉じた中間親・葉も含む直下の保存済みMainを出す。rootは作成日時の新しい順、兄弟は古い順、同日時はID順。開閉や実行状態では並べ替えない
+  - 検索は一致するMainとその祖先の経路を表示し、一致したMain以下の枝も閲覧できる。検索中の展開操作は手動展開と分け、解除時に元の展開へ戻す。検索は子孫の集計やCloseの対象を変えない
+  - Monitorと同じカード・状態マーク・未読表示を使い、状態文字は常設しない。Mainの展開側では本人とAuxiliaryを除く子孫Mainを集計し、Running／Canceling／Waiting For Stopは一つのスピナーと合算件数で示す。正確な状態別内訳はツールチップとaccessible nameに残し、Main本人とAuxiliaryは従来のマーク・状態別集計を使う
+  - Main titleは既存Windowの前面化、閉じていれば再開を行う。開閉状態はtooltipとaccessible nameに示す。Auxiliaryの一覧はMain子階層と独立して開閉し、個別行で所属Mainの同じWindow内にある該当Auxiliaryを選択する。狭幅ではidentityと展開欄を分け、二つの展開操作が重ならないようにする
+  - Main行の右クリック／Shift+F10／Context Menuキーで、単体の`Close`、`Copy Session ID`、`Copy Session Title`に加えて、開いている子孫Main Windowだけを対象とする`Close Descendant Windows`を使える。本人・兄弟・閉じたWindow・Auxiliaryは一括Closeの対象外。確認が必要なら最初のClose前に一度だけ、対象名・該当する継続Window数と停止端末全数・取消／総数付きCloseを示す。対象と影響の判定はMainが所有し、途中で一部だけ閉じた場合は結果を区別して表示する
+  - tab表示、focus、Window開閉、live状態・Turn更新、Session無効化で再取得する。全pageが揃った現在の取得結果だけを反映し、再取得中や失敗時は前回の結果を維持する。取得失敗は正常な0件と区別し、`Retry`を提供する
 - `RecentSessions`
   - 作成は共通headerの`New Session`から行う。保存済みWindowの復元操作は`Restore Sessions`とする
   - resume picker
@@ -181,7 +188,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - left accent bar = mate `sub`
     - text color = themeのcontrast helperで決めたdark / light palette
 - `Previews`
-  - Home共通headerのsegmented toggleで`Monitor`／`Characters`と排他的に切り替える。既存MonitorのAuxiliary欄は変更しない
+  - Home共通headerのsegmented toggleで他のtabと排他的に切り替える。既存MonitorのAuxiliary欄は変更しない
   - 開いているSession Windowをpreviewの有無にかかわらずすべて一覧化し、Main／Auxiliary由来のFile Preview Windowを親Sessionへ集約する。Session Windowを閉じても残っているpreviewを含め、Recent Sessionsの検索・取得範囲や実行状態では絞り込まない
   - 親行は現在開いているFile Preview Window数の降順に並べる。同数ではMainから受け取る基準順（開いているSessionのWindow map順、その後ろにSession Windowが閉じた残存previewの親）を維持し、previewの開閉で件数と順序を更新する
   - Monitorと共通の親行にCharacter avatarとSession titleを置き、titleのclickでそのSession Windowを開く。右側のPreview icon・件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない

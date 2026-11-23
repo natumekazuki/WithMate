@@ -136,6 +136,9 @@ import { SessionFileObjectCopyService } from "./files/session-file-object-copy-s
 import { SessionFileTreeContextMenuService } from "./files/session-file-tree-context-menu-service.js";
 import { SessionMonitorContextMenuService } from "./session/session-monitor-context-menu-service.js";
 import { readSessionMonitorPage } from "./session/session-monitor-query.js";
+import { readHomeCrewPage } from "./session/home-crew-query.js";
+import { HomeCrewContextMenuService } from "./session/home-crew-context-menu-service.js";
+import { readHomeCrewCloseRunIdentities } from "./session/home-crew-close-runs.js";
 import { SessionFilePreviewContextMenuService } from "./files/session-file-preview-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./windows/markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./files/windows-file-drop-clipboard-writer.js";
@@ -344,6 +347,25 @@ const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
   writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
+function createHomeCrewContextMenuService() {
+  return new HomeCrewContextMenuService({
+    bridge: requireSessionWindowBridge(),
+    getStoreOwner: () => databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()
+      ? null : mainStoreContext.activePersistentStoreOwner,
+    listSessions: () => mainStoreContext.sessions,
+    readSavedSession: async (owner, sessionId) => {
+      if (!owner.sessionStorage.getSessionSummary) throw new Error("Session summary reads are unavailable.");
+      return owner.sessionStorage.getSessionSummary(sessionId);
+    },
+    getCloseEffects: (sessionId, window) => ({
+      runs: getHomeCrewCloseRunIdentities(sessionId),
+      terminals: terminalService?.getWindowCloseImpacts(window) ?? [],
+    }),
+    confirm: async (home, options) => (await dialog.showMessageBox(home, options)).response === 1,
+    writeText: (value) => clipboard.writeText(value),
+    buildMenu: (template) => Menu.buildFromTemplate(template),
+  });
+}
 const sessionFilePreviewContextMenuService = new SessionFilePreviewContextMenuService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
@@ -1233,7 +1255,7 @@ async function runSessionTurnAdmission<T>(sessionId: string, auxiliary: boolean,
   });
 }
 
-const auxiliaryRunParents = new Map<string, string>();
+const auxiliaryRunParents = new Map<string, { parentSessionId: string }>();
 const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
   getStorageOwner: () => mainStoreContext.activePersistentStoreOwner,
   isRunPending: (sessionId) => auxiliaryRunParents.has(sessionId)
@@ -1243,7 +1265,7 @@ const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
     const status = projectLiveSessionRunStatus(state);
     if (status?.runState === "running" || status?.cancellationState || status?.approvalPending) {
       requireSessionWindowBridge().retainSessionForMonitor(auxiliaryLiveRunParents.get(sessionId)
-        ?? auxiliaryRunParents.get(sessionId) ?? sessionId);
+        ?? auxiliaryRunParents.get(sessionId)?.parentSessionId ?? sessionId);
     }
     requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state);
   },
@@ -1291,8 +1313,17 @@ function isSessionRunInFlight(sessionId: string, scope: "self" | "with-auxiliary
       auxiliarySessionRuntimeService?.isRunInFlight(sessionId) || auxiliaryRunParents.has(sessionId)) {
     return true;
   }
-  return scope === "with-auxiliary" && ([...auxiliaryRunParents.values()].includes(sessionId)
+  return scope === "with-auxiliary" && ([...auxiliaryRunParents.values()].some((run) => run.parentSessionId === sessionId)
     || auxiliaryLiveRunParents.hasPendingRunForParent(sessionId));
+}
+
+function getHomeCrewCloseRunIdentities(sessionId: string): object[] {
+  const runs = readHomeCrewCloseRunIdentities(sessionId, {
+    mainRuntime: sessionRuntimeService, auxiliaryRuntime: auxiliarySessionRuntimeService,
+    directAuxiliaryRuns: auxiliaryRunParents, liveAuxiliaryParents: auxiliaryLiveRunParents,
+  });
+  if (!runs.length && isSessionRunInFlight(sessionId)) throw new Error("Session Window run identity is unavailable.");
+  return runs;
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
@@ -1302,7 +1333,7 @@ function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly s
   }
 
   for (const parentSessionId of parentSessionIds) {
-    const hasRunningAuxiliary = [...auxiliaryRunParents.values()].includes(parentSessionId);
+    const hasRunningAuxiliary = [...auxiliaryRunParents.values()].some((run) => run.parentSessionId === parentSessionId);
     if (hasRunningAuxiliary) {
       runningParentSessionIds.add(parentSessionId);
     }
@@ -1500,6 +1531,24 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveHomeWindow: () => requireAuxWindowService().getHomeWindow(),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
                 openSessionWindow,
+                listHomeCrewPage: (request) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Home Crew");
+                  return readHomeCrewPage({
+                    getGeneration: () => {
+                      assertPersistentStoreOwnerIsActive(owner, "Home Crew");
+                      return `${owner.storageWorker?.client.generationId ?? "legacy"}:${requireWindowBroadcastService().getHomeCrewRevision()}`;
+                    },
+                    listOpenSessionWindows: () => requireSessionWindowBridge().listOpenSessionWindowIdentities(),
+                    readMembers: async (openWindows, afterId, limit) => {
+                      if (!owner.sessionStorage.listHomeCrewMembersPage) throw new Error("Home Crew reads are unavailable.");
+                      return owner.sessionStorage.listHomeCrewMembersPage(openWindows, afterId, limit);
+                    },
+                    readAuxiliarySummaries: (ids) => requireAuxiliarySessionService().listAuxiliarySessionSummaries(ids),
+                    getLiveSessionRun,
+                    hasUnreadResult,
+                  }, request);
+                },
+                showHomeCrewContextMenu: (home, request) => createHomeCrewContextMenuService().show(home, request),
                 showSessionMonitorContextMenu: (event, request) =>
                   sessionMonitorContextMenuService.showContextMenu(
                     BrowserWindow.fromWebContents(event.sender) ?? null,
@@ -1784,7 +1833,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   if (auxiliaryRunParents.has(auxiliarySessionId)) {
                     throw new Error("The Auxiliary Session is already running.");
                   }
-                  auxiliaryRunParents.set(auxiliarySessionId, initial.parentSessionId);
+                  auxiliaryRunParents.set(auxiliarySessionId, { parentSessionId: initial.parentSessionId });
                   auxiliaryLiveRunParents.remember(initial, owner);
                   try {
                     if (request.submitSource === "composer") {

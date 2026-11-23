@@ -15,7 +15,7 @@ import type {
 // @test-value v2
 // kind = "contract"
 // claim = "createMainIpcRegistrationDepsはSession Monitorのcontext menu、終了flush ACK、Auxiliary ID付きwindow delegateをwindow groupからregistration depsへ保持する"
-// oracle = { type = "contract", ref = "createMainIpcRegistrationDeps window delegate mapping" }
+// oracle = { type = "contract", ref = "src-electron/ipc/window.ts#registerWindowHandlers のMonitor menuとopenSession、src-electron/ipc/register-main-ipc.ts#registerMainIpcHandlers のdraft flush ACK" }
 // fault = "window groupに追加したdelegateが内部factoryからregistration depsへ欠落するか、Auxiliary IDを親Window delegateへ渡さない"
 // observable = "生成されたregistration depsのflush ACK、context menu delegateへ渡るevent/request引数、およびwindow delegateの呼び出し引数"
 // observation_boundary = "component-behavior"
@@ -39,6 +39,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
 
   const deps = createMainIpcRegistrationDeps({
     window: {
+      async listHomeCrewPage() { return { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false }; },
+      async showHomeCrewContextMenu() { return { status: "dismissed" }; },
       async showSessionFilePreviewContextMenu() { return "dismissed"; },
       async listSessionFilePreviewWindows() { return []; },
       focusSessionFilePreviewWindow() {},

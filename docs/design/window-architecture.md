@@ -35,6 +35,16 @@ Home関連の追加・修正では、`HomeApp`への責務集中を抑えるた�
 
 分離は変更対象と、その責務を成立させるために必要な既存の結線に限定する。軽微な修正ごとの分割を必須にせず、行数だけによる細分化、汎用基盤や無関係な全面整理を増やさない。
 
+## Home CrewのデータとWindow操作
+
+Crewの掲載条件は、配下に実際のMain Session Windowが一つ以上あること。Recent Sessions、実行後にMonitorが保持するID、Auxiliary、PreviewやGraph Windowは起点にしない。MainはWindow registryの開いているIDと、SQLite storage Workerの保存済みroot／parent・incarnationを照合する。掲載されたCrewは閉じたroot・中間親・葉を含む。ページは軽量summaryと対応するAuxiliary summaryに限定し、会話本文を読まない。Window一覧・Session要約の無効化またはstorage世代変更で古いcursorを拒否する。Rendererは同じ取得世代の全ページが揃ってから一覧を差し替える。
+
+一覧とネイティブメニューのIPCはHomeのmain frameに限定する。メニューを選ぶときも、閉じたメンバーを含め現在のSession incarnationを照合する。`Copy Session Title`はその時点の保存タイトル全文を使う。単体の`Close`は既存の個別確認・draft flushを通る。
+
+`Close Descendant Windows`は、メニュー選択時に本人・兄弟・Auxiliaryを除外し、開いている子孫MainのWindow実体とincarnation、実行・端末の個体と影響を固定する。実行中（Auxiliaryのみでも一Window）または既存の端末保護条件に該当すれば、何も閉じる前に一度だけ確認する。確認には対象名、該当時だけ実行が継続するWindow数と停止する端末の全数、`Cancel`と総数付きの`Close`ボタンを表示する。保護該当数・推測・助言は表示せず、取消は0件。実行も保護端末もなければ確認を省略する。
+
+最初のClose前、各Closeの直前、draft flushを待った場合は実際にWindowを閉じる直前にも、Mainが選択と対象・影響を同期的に再照合する。Windowの追加・再作成、同数の実行や端末の差替え、新たな保護該当では対象を広げず、残りを閉じない。すでに閉じたものは閉じ直さず、途中失敗時は閉じた数と残った数、未試行数を区別する。一括確認の範囲内だけ個別確認を重ねず、通常のdraft flush・応答不能時の扱い・端末解放を維持する。会話runは停止しない。
+
 ## Sessionの起動と継続
 
 HomeのNew Sessionでtitle、起点Role（Standalone／Overall Coordinator）、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。同じ作成試行の再試行は同じclientRequestIdと作成入力を使う。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。

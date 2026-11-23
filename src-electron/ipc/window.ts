@@ -44,6 +44,7 @@ import {
 
 import type {
   IpcHandleRegistrar,
+  MainIpcHomeCrewDeps,
   MainIpcAuxiliaryLookupDeps,
   MainIpcEventWindowDeps,
   MainIpcHomeWindowDeps,
@@ -58,6 +59,7 @@ import {
   assertHomeWindowSender,
   assertSessionMonitorContextMenuSender,
 } from "./shared.js";
+import { registerHomeCrewHandlers } from "./home-crew.js";
 
 export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
@@ -67,7 +69,7 @@ export type MainIpcWindowAssemblyContext = MainIpcEventWindowDeps &
   MainIpcAuxiliaryLookupDeps;
 
 /** Main-process window service ports owned by the window feature. */
-export type MainIpcWindowServiceDeps = {
+export type MainIpcWindowServiceDeps = MainIpcHomeCrewDeps & {
   showSessionFilePreviewContextMenu: MainIpcWindowDeps["showSessionFilePreviewContextMenu"];
   listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
   focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];
@@ -137,6 +139,7 @@ export function registerWindowHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcWindowDeps,
 ): void {
+  registerHomeCrewHandlers(ipcMain, deps);
   ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_PREVIEW_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
     assertHomeWindowSender(event, deps);
     return deps.showSessionFilePreviewContextMenu(event, parseSessionFilePreviewContextMenuRequest(input));

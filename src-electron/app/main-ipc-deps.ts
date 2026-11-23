@@ -148,6 +148,8 @@ import type { SessionWindowRestoreResult } from "../../src-shared/window/session
 type MaybeWindow = BrowserWindow | null | undefined;
 
 export type MainIpcWindowDepsArgs = {
+  listHomeCrewPage: MainIpcWindowDeps["listHomeCrewPage"];
+  showHomeCrewContextMenu: MainIpcWindowDeps["showHomeCrewContextMenu"];
   showSessionFilePreviewContextMenu: MainIpcWindowDeps["showSessionFilePreviewContextMenu"];
   listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
   focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];

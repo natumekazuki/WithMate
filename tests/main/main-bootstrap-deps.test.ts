@@ -50,6 +50,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     ipcRegistration: {
       window: {
+        async listHomeCrewPage() { return { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false }; },
+        async showHomeCrewContextMenu() { return { status: "dismissed" }; },
         async showSessionFilePreviewContextMenu() { return "dismissed"; },
         async listSessionFilePreviewWindows() { return []; },
         focusSessionFilePreviewWindow() {},

@@ -48,6 +48,7 @@ const STORE_METHODS = {
     "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
+    "listHomeCrewMembersPage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
     "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",

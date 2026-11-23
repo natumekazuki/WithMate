@@ -31,7 +31,7 @@ export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): 
   if (summary.runState === "error") return { kind: "error", label: "Error" };
   return { kind: "neutral", label: "Idle" };
 }
-function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+export function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
   const isActive = (session: AuxiliarySessionSummary) => ["running", "approval"].includes(getHomeAuxiliarySessionState(session).kind);
   return [...sessions].sort((left, right) => Number(isActive(right)) - Number(isActive(left)) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }

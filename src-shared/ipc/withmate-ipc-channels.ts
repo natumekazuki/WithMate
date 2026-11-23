@@ -208,3 +208,5 @@ export const WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL = "withmate:upda
 export const WITHMATE_OPEN_SESSION_GRAPH_WINDOW_REFERENCE_CHANNEL = "withmate:open-session-graph-window-reference";
 export const WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:scan-session-folder-cleanup";
 export const WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:run-session-folder-cleanup";
+export const WITHMATE_LIST_HOME_CREW_PAGE_CHANNEL = "withmate:list-home-crew-page";
+export const WITHMATE_SHOW_HOME_CREW_CONTEXT_MENU_CHANNEL = "withmate:show-home-crew-context-menu";

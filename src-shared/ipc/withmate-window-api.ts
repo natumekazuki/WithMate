@@ -133,10 +133,16 @@ import type {
   SessionGlossaryProjection,
 } from "../glossary/glossary-contract.js";
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
+import type { HomeCrewContextMenuRequest, HomeCrewPageResult } from "../window/home-crew-types.js";
+import type { OpenSessionWindowIdsPageRequest } from "../window/withmate-window-types.js";
 import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
 import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
 
 export type WithMateWindowNavigationApi = {
+  /** Home main frame only. Restart at the first page if a continuation is refused; do not publish partial pages. */
+  listHomeCrewPage(request?: OpenSessionWindowIdsPageRequest | null): Promise<HomeCrewPageResult>;
+  /** Home main frame only. Main resolves targets and confirmation from this exact member identity. */
+  showHomeCrewContextMenu(request: HomeCrewContextMenuRequest): Promise<SessionMonitorContextMenuResult>;
   showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
   listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
   focusSessionFilePreviewWindow(token: string): Promise<void>;

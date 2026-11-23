@@ -532,6 +532,15 @@ export class SessionRuntimeService {
       || this.finishingSessionTurns.has(sessionId);
   }
 
+  getCloseRunIdentity(sessionId: string): object | null {
+    if (!this.isRunInFlight(sessionId)) return null;
+    const identity = this.sessionRunControllers.get(sessionId)
+      ?? this.terminatingSessionRuns.get(sessionId)
+      ?? this.pendingSessionInputs.get(sessionId);
+    if (!identity) throw new Error("Session run identity is unavailable.");
+    return identity;
+  }
+
   private cancellationState(sessionId: string): LiveSessionRunState["cancellationState"] {
     if (this.terminatingSessionRuns.has(sessionId)) {
       return "terminating";

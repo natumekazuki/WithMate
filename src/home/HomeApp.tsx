@@ -94,7 +94,7 @@ import type {
 import { useHomeSessionMonitor } from "./use-home-session-monitor.js";
 import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
-type HomeRightPaneView = "monitor" | "characters" | "previews";
+import { homeRightPaneLabels, type HomeRightPaneView } from "./HomeHeader.js";
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -934,7 +934,7 @@ export default function HomeApp() {
       isMonitorWindowMode={isMonitorWindowMode}
       monitorContent={monitorContent}
       header={header}
-      rightPaneLabel={rightPaneView === "monitor" ? "Monitor" : rightPaneView === "previews" ? "Previews" : "Characters"}
+      rightPaneLabel={homeRightPaneLabels[rightPaneView]}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}
