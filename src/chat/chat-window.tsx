@@ -562,9 +562,9 @@ export function ChatWindow({
   const mainSession = concurrentChats?.mainSession;
   const mainCharacter = { name: mainSession?.character ?? "", iconPath: mainSession?.characterIconPath ?? "" };
   const threadOptions: SessionSwitcherOption[] = [
+    { id: ALL_MAIN_THREADS_ID, label: "ALL" },
     { id: "", label: headerProps.taskTitle, icon: <CharacterAvatar key={mainCharacter.iconPath} character={mainCharacter} size="tiny" />,
       isProcessing: mainSession?.runState === "running" },
-    { id: ALL_MAIN_THREADS_ID, label: "すべて" },
     ...mainThreads.children.map((thread) => ({
       id: conversationPeerKey(thread.target),
       label: thread.title,

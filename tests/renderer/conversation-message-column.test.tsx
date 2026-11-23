@@ -1737,9 +1737,9 @@ test("multiple sent cards retain recipients and order within live and saved resp
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの「すべて」は同じSessionの連続ページを相手で絞らず読み、個別の枠を往復しても別々の閲覧範囲を維持する"
+// claim = "MainのALLは同じSessionの連続ページを相手で絞らず読み、個別の枠を往復しても別々の閲覧範囲を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
-// fault = "「すべて」で絞込や別Sessionを使う、個別枠への切替で閲覧中pageを失う、または復帰の取得待ちに末尾を表示する"
+// fault = "ALLで絞込や別Sessionを使う、個別枠への切替で閲覧中pageを失う、または復帰の取得待ちに末尾を表示する"
 // observable = "初期・全体・相手枠の表示seq、過去pageの未絞込request、復帰の取得待ちと取得後の表示seq"
 // observation_boundary = "component-behavior"
 // scope = "Mainの選択hookから会話列への接合。保存readのみfixture"
