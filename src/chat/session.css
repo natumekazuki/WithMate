@@ -1163,6 +1163,8 @@
 }
 .session-message-address { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 24px; min-width: 0; }
 .session-message-mention { min-width: 0; max-width: 45%; overflow: hidden; color: var(--orange); font-size: 0.82rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+button.session-message-mention { padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+button.session-message-mention:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }
 .related-session-route { display: inline-flex; align-items: baseline; justify-self: start; gap: 8px; min-width: 0; max-width: 55%; padding: 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.72rem; text-align: left; cursor: pointer; }
 .related-session-route:hover .related-session-title { text-decoration: underline; text-underline-offset: 3px; }
 .related-session-route:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }

@@ -625,8 +625,8 @@ export function SessionMessageColumn({
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   const renderSent = (item: SentInstruction, inline = false, positionUnknown = false) => inputReadContext
     ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        positionUnknown={positionUnknown} replyJumpHighlighted={!!messageJumpHighlight?.reply?.receiptId && messageJumpHighlight.reply.isCurrent()
-          && "receiptId" in item && messageJumpHighlight.reply.receiptId === item.receiptId
+        positionUnknown={positionUnknown} replyJumpHighlighted={!!messageJumpHighlight?.reply?.sentKey && messageJumpHighlight.reply.isCurrent()
+          && messageJumpHighlight.reply.sentKey === sentInstructionKey(item)
           && messageJumpHighlight.reply.seq === item.sourceMessageSeq} {...sentMessageContext} />
     : null;
   useShortcutCommandHandler(
@@ -759,9 +759,9 @@ export function SessionMessageColumn({
       const list = messageListRef.current;
       if (!list) return;
       const row = list.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
-      const target = reply.receiptId
-        ? [...(row?.querySelectorAll<HTMLElement>("[data-reply-source-receipt-id]") ?? [])]
-          .find((card) => card.dataset.replySourceReceiptId === reply.receiptId)
+      const target = reply.sentKey
+        ? [...(row?.querySelectorAll<HTMLElement>("[data-sent-instruction-key]") ?? [])]
+          .find((card) => card.dataset.sentInstructionKey === reply.sentKey)
         : row?.querySelector<HTMLElement>(":scope > .message-row > .message-card");
       if (!target) {
         if (!row && requestedMessageJumpRef.current !== messageJumpRequest) {
@@ -1624,7 +1624,7 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
                 {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.receiptId && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
+                <div className={`message-card ${displayedRole}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.sentKey && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
                   style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
                     {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}

@@ -2,13 +2,14 @@ import { conversationPeerKey, type ConversationThreads } from "../../../src-shar
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { ResolvedReply } from "./reply-quote.js";
+import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
 
 export type ReplyLocation = {
   column: "main" | "auxiliary";
   ownerKey: string;
   frameId: string;
   seq: number;
-  receiptId?: string;
+  sentKey?: string;
 };
 
 export type ReplyLocationScope = {
@@ -23,9 +24,25 @@ export function replyLocationIsProjected(scope: ReplyLocationScope, location: Re
   const owner = scope[location.column];
   if (!owner || conversationPeerKey(owner) !== location.ownerKey) return false;
   if (location.column === "auxiliary") return true;
-  if (!location.frameId) return scope.threads?.initialMessageIndexes.includes(location.seq) ?? false;
+  if (!location.frameId) return !location.sentKey && (scope.threads?.initialMessageIndexes.includes(location.seq) ?? false);
   const frame = scope.threads?.children.find((child) => conversationPeerKey(child.target) === location.frameId);
-  return (location.receiptId ? frame?.sentMessageIndexes : frame?.messageIndexes)?.includes(location.seq) ?? false;
+  return (location.sentKey ? frame?.sentMessageIndexes : frame?.messageIndexes)?.includes(location.seq) ?? false;
+}
+
+/** A rendered item already comes from the authorized, batched source read. */
+export function locateSentInstruction(scope: ReplyLocationScope, source: SessionTarget, item: SentInstruction): ReplyLocation | null {
+  const { main } = scope;
+  const { origin, target, sourceMessageSeq: seq } = item;
+  if (!main || main.kind !== "main" || source.kind !== "main" || target.kind !== "main"
+    || conversationPeerKey(source) !== conversationPeerKey(main) || seq === null
+    || origin.kind !== "session" || origin.operation !== ("receiptId" in item ? "send" : "steer")
+    || origin.actorKind !== "main" || origin.actorSessionId !== main.sessionId || origin.actorIncarnationId !== main.incarnationId
+    || origin.actorTurnId !== item.sourceTurnId
+    || origin.targetSessionId !== target.sessionId || origin.targetIncarnationId !== target.incarnationId) return null;
+  const location: ReplyLocation = {
+    column: "main", ownerKey: conversationPeerKey(main), frameId: conversationPeerKey(target), seq, sentKey: sentInstructionKey(item),
+  };
+  return replyLocationIsProjected(scope, location) ? location : null;
 }
 
 /** Only saved targets represented in this Window can become navigation actions. */
@@ -70,7 +87,7 @@ export async function locateReply(api: ReadApi, ownerId: string, scope: ReplyLoc
     if (!result.ok) return null;
     if (result.items.some((item) => item.receiptId === reference.receiptId && conversationPeerKey(item.target) === targetKey
       && item.sourceTurnId === origin.actorTurnId && item.sourceMessageSeq === seq)) {
-      return { column: "main", ownerKey: mainKey, frameId: targetKey, seq, receiptId: reference.receiptId };
+      return { column: "main", ownerKey: mainKey, frameId: targetKey, seq, sentKey: reference.receiptId };
     }
     if (result.nextCursor === null || (cursor !== undefined && result.nextCursor <= cursor)) return null;
     cursor = result.nextCursor;

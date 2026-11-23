@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../../src-shared/session/session-state.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import type { TurnInputReadContext } from "./turn-input-details.js";
@@ -9,7 +10,7 @@ export type SentDelivery = SentPage["items"][number];
 type SteerPage = Extract<SessionExecutionReadResult<"list_sent_steers">, { ok: true }>;
 export type SentSteer = SteerPage["items"][number];
 export type SentInstruction = SentDelivery | SentSteer;
-export const sentInstructionKey = (item: SentInstruction) => "receiptId" in item ? item.receiptId : `steer:${JSON.stringify([item.target, item.messageSeq])}`;
+export const sentInstructionKey = (item: SentInstruction) => "receiptId" in item ? item.receiptId : `steer:${conversationPeerKey(item.target)}:${item.messageSeq}`;
 
 /** Each evidence source has its own stable keyset; neither is a second ledger. */
 export function useSentDeliveries(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | null | undefined, enabled: boolean) {

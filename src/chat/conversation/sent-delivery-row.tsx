@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react";
+import { useContext, useEffect, useState, type ComponentProps } from "react";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
@@ -7,7 +7,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, AdditionalInputStatus, type TurnInputReadContext } from "./turn-input-details.js";
 import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
 import { CoordinationNotice } from "./coordination-notice.js";
-import { ReplyQuote } from "./reply-quote.js";
+import { ReplyQuote, ReplyQuoteNavigationContext } from "./reply-quote.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
 type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
@@ -20,6 +20,8 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
 } & SentMessageContext) {
   const receipt = "receiptId" in item ? item : null;
   const steer = "messageSeq" in item ? item : null;
+  const navigation = useContext(ReplyQuoteNavigationContext);
+  const location = navigation?.locateSent(context.target, item);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [execution, setExecution] = useState<Execution | null>(null);
@@ -56,9 +58,10 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
   const distinctContent = coordination && (coordination.consultation === undefined || coordination.text !== coordination.consultation);
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
   const card = <div className={`message-card assistant session-outbound${replyJumpHighlighted ? " is-reply-jump-target" : ""}`}
-    data-reply-source-receipt-id={receipt?.receiptId}><div className="message-card-content">
+    data-sent-instruction-key={sentInstructionKey(item)}><div className="message-card-content">
       <div className="sent-delivery-header">
-        <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
+        <SessionOriginRoute origin={item.origin} target={item.target} onError={setError}
+          onOpenRecipientThread={location && navigation ? () => navigation.open(location) : undefined} />
         {inline ? detailsButton : null}
       </div>
       {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} navigable /> : null}

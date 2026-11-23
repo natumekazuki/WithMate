@@ -90,7 +90,7 @@ export type ConversationColumnControls = {
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
   messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
-  onJumpToReply: (seq: number, receiptId: string | undefined, isCurrent: () => boolean) => void;
+  onJumpToReply: (seq: number, sentKey: string | undefined, isCurrent: () => boolean) => void;
   replyOwnerKey?: string;
   captureReadingPosition?: () => void;
   frameId?: string;
@@ -813,7 +813,7 @@ export function useConversationMessageColumn({
     conversation.messageJumpRequest = { sessionId, key, requestId: conversation.messageJumpRequestId };
     refresh();
   }, [conversation, refresh, sessionId, projection.keys, loadPage, pageOwner, isBrowsing, tailNavigatorTargets, totalCount, threadPageSignature, followLatest, following.pauseMessageListFollowing]);
-  const onJumpToReply = useCallback(async (seq: number, receiptId: string | undefined, isCurrent: () => boolean) => {
+  const onJumpToReply = useCallback(async (seq: number, sentKey: string | undefined, isCurrent: () => boolean) => {
     if (!displayEnabled.current || !isCurrent() || (threadIndexes && !threadIndexes.includes(seq))) return;
     // A live bridge or queued row may temporarily occupy the same index; only a saved row can be a source.
     if (!savedReplySourceIndexes.includes(seq)) {
@@ -827,7 +827,7 @@ export function useConversationMessageColumn({
       setPageError("");
     }
     following.pauseMessageListFollowing();
-    conversation.messageJumpRequest = { sessionId, key: "", requestId: ++conversation.messageJumpRequestId, reply: { seq, receiptId, isCurrent } };
+    conversation.messageJumpRequest = { sessionId, key: "", requestId: ++conversation.messageJumpRequestId, reply: { seq, sentKey, isCurrent } };
     refresh();
   }, [conversation, refresh, sessionId, savedReplySourceIndexes, loadPage, pageOwner, threadPageSignature, following.pauseMessageListFollowing]);
   const replyOwnerKey = baseProps.inputReadContext && conversationPeerKey(baseProps.inputReadContext.target);

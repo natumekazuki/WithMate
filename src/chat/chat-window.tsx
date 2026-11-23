@@ -36,7 +36,7 @@ import { SessionSwitcher, type SessionSwitcherOption } from "./session-switcher.
 import { useMainConversationThreads } from "./conversation/use-main-conversation-threads.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { ReplyQuoteNavigationContext, type ResolvedReply } from "./conversation/reply-quote.js";
-import { locateReply, replyLocationIsProjected, type ReplyLocation } from "./conversation/reply-location.js";
+import { locateReply, locateSentInstruction, replyLocationIsProjected, type ReplyLocation } from "./conversation/reply-location.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
 import {
   ConversationMessageColumn,
@@ -621,7 +621,7 @@ export function ChatWindow({
     const controls = location.column === "main" ? mainColumnControlsRef.current : auxiliaryColumnControlsRef.current;
     if (!controls || controls.replyOwnerKey !== location.ownerKey || (controls.frameId ?? "") !== location.frameId) return;
     request.started = true;
-    controls.onJumpToReply(location.seq, location.receiptId, isCurrent);
+    controls.onJumpToReply(location.seq, location.sentKey, isCurrent);
   }, [replyJumpRevision, replyScope, mainThreads.selectedId, mainColumnControlsRef.current, auxiliaryColumnControlsRef.current]);
   const errorSurfaceId = useId();
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -818,7 +818,7 @@ export function ChatWindow({
     : null;
 
   return (
-    <ReplyQuoteNavigationContext.Provider value={{ locate: locateQuote, open: openQuote }}>
+    <ReplyQuoteNavigationContext.Provider value={{ locate: locateQuote, locateSent: (source, item) => locateSentInstruction(replyScope, source, item), open: openQuote }}>
     <SessionChatScreen
       {...screenProps}
       rightPane={renderRightPane ? (
