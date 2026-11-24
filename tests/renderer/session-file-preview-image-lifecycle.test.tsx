@@ -794,10 +794,10 @@ test("rich preview検索は最初のqueryと同件数のquery変更でも一致�
 
 // @test-value v2
 // kind = "contract"
-// claim = "File Previewはheaderを維持したままinspection/content読込中のbusy状態とprogressを本文へ表示する"
-// oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
-// fault = "loading中にheaderを消す、aria-busy/statusを欠落させる、またはprogress上限を誤る"
-// observable = "previewのaria-busy、title、status text、共通spinner、progress max"
+// claim = "File Previewはheaderを維持し、通常ファイルのinspectとcontent読込の両段階を可視説明なしのindicatorと対象付きbusyで示す"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込空失敗" }
+// fault = "読込中にheaderを消し、通常の読込量を本文として出し、または状態の対象名やaria-busyを欠落させる"
+// observable = "previewのaria-busy・title、本文のstatus名・aria-busy・共通spinner・textContent、取得後の本文"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.loading"
 // lifecycle = "permanent"
@@ -866,15 +866,15 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
     assert.ok(preview.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
 
     await act(async () => inspectGate.resolve(descriptor));
-    await waitFor(() => preview.querySelector("progress") !== null);
-    const progress = preview.querySelector<HTMLProgressElement>("progress");
-    assert.ok(progress);
+    await waitFor(() => preview.querySelector("[role='status'][aria-label='Loading file content']") !== null);
+    const status = preview.querySelector("[role='status'][aria-label='Loading file content']");
+    assert.ok(status);
     assert.equal(preview.getAttribute("aria-busy"), "true");
     assert.ok(preview.querySelector(".session-file-preview-header"));
     assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
-    assert.equal(progress.max, bytes.byteLength);
-    assert.equal(progress.value, 0);
-    assert.equal(preview.querySelector("[role='status']")?.getAttribute("aria-label"), "Loading file content");
+    assert.equal(status.getAttribute("aria-busy"), "true");
+    assert.ok(status.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
+    assert.equal(preview.querySelector(".session-file-preview-loading")?.textContent, "");
 
     await act(async () => readGate.resolve());
     await waitFor(() => preview.querySelector(".session-file-text-scroll") !== null);

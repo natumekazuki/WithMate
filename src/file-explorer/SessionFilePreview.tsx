@@ -1358,10 +1358,14 @@ export function SessionFilePreview({
         </div>
       ) : null}
       {loadState.status === "loading" ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
-          <progress max={loadState.descriptor.byteLength || 1} value={loadState.loadedBytes} />
-          <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
-        </div>
+        loadState.descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES ? (
+          <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
+            <progress aria-label="Loading file content" max={loadState.descriptor.byteLength} value={loadState.loadedBytes} />
+            <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
+          </div>
+        ) : (
+          <div className="session-file-preview-loading"><LoadingIndicator label="Loading file content" /></div>
+        )
       ) : null}
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">

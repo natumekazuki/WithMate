@@ -74,8 +74,8 @@ async function mount(api: Partial<WithMateWindowApi>, run: (fixture: {
 // kind = "contract"
 // claim = "Codex visualize PDFだけが可視化後に共有readerへ渡り、追記でも保持され、本文検索と明示Copy・Quote・PDF基準linkが成立する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "全PDF linkを自動読込する、本文更新で再転送する、補助UIが検索へ混入する、引用やlinkが別文脈へ渡る"
-// observable = "inspect/chunk request・iframe同一性・load転送回数・検索index・callbackとlink request・Source原文"
+// fault = "全PDF linkを自動読込する、未取得や初回待機をReload中と扱う、本文更新で再転送する、補助UIが検索へ混入する、引用やlinkが別文脈へ渡る"
+// observable = "可視化前と初回inspect中のstatus・busy、inspect/chunk request・iframe同一性・load転送回数・検索index・callbackとlink request・Source原文"
 // observation_boundary = "consumer"
 // scope = "MessageRichTextのvisualize PDFと共有reader接続"
 // lifecycle = "permanent"
@@ -85,7 +85,13 @@ async function mount(api: Partial<WithMateWindowApi>, run: (fixture: {
 test("visualize PDFs reuse the inline reader without disrupting chat actions or search", async () => {
   const inspected: unknown[] = [], read: unknown[] = [], opened: unknown[] = [], copied: string[] = [], quoted: string[] = [];
   const file = descriptor();
-  await mount({ inspectSessionPdf: async (request) => { inspected.push(request); return file; },
+  let finishInitialInspection!: () => void;
+  const initialInspection = new Promise<void>((resolve) => { finishInitialInspection = resolve; });
+  await mount({ inspectSessionPdf: async (request) => {
+      inspected.push(request);
+      if (inspected.length === 1) await initialInspection;
+      return file;
+    },
     readSessionPdfChunk: async (request) => { read.push(request); return chunk(file); },
     openSessionFilePreviewWindow: async (request) => { opened.push(request); return { status: "opened", targetType: "external-url", target: "https://example.test" }; },
   }, async ({ render, reveal, document, emit, click }) => {
@@ -93,8 +99,19 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     const text = `Before ${marker()} after`;
     await render(text, props);
     assert.deepEqual(inspected, []);
+    const content = document.querySelector("[aria-label='Embedded PDF']");
+    assert.ok(content);
+    assert.equal(content.textContent, "");
+    assert.equal(content.getAttribute("aria-busy"), "false");
+    assert.equal(content.querySelector("[role='status']"), null);
     await reveal();
     assert.deepEqual(inspected, [{ sessionId: "session", target }]);
+    assert.equal(content.getAttribute("aria-busy"), "true");
+    assert.ok(content.querySelector("[role='status'][aria-label='Loading PDF']"));
+    const reload = document.querySelector<HTMLButtonElement>("button[aria-label='Reload PDF Preview']");
+    assert.ok(reload?.disabled);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    await act(async () => finishInitialInspection());
     assert.equal(read.length, 1);
     const frame = document.querySelector("iframe")!;
     assert.ok(frame);
@@ -150,10 +167,10 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
 
 // @test-value v2
 // kind = "contract"
-// claim = "50MiB以上は明示確認前にbytesを取得せず、読込revision不一致は失敗表示しReloadで回復する"
+// claim = "50MiB以上は明示確認前にbytesを取得せず、確認後は通常のReload待機と区別し、読込revision不一致は失敗表示してReloadで回復する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "大容量を無確認で読み込む、revision不一致を成功表示する、失敗後に再読込できない"
-// observable = "読込回数・Load Anyway・error文言・Reload後のiframe"
+// fault = "大容量を無確認で読み込む、確認後に別操作のReloadを再びbusyにする、revision不一致を成功表示する、失敗後に再読込できない"
+// observable = "読込回数・Load Anyway・明示読込中の本文statusとReloadのaria-busy・error文言・Reload後のiframe"
 // observation_boundary = "component-behavior"
 // scope = "inline PDF大容量確認とerror/retry"
 // lifecycle = "permanent"
@@ -162,12 +179,26 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
 // @end-test-value
 test("inline PDFs require large-file consent and recover from a stale read", async () => {
   let file = descriptor(target, SESSION_FILE_LARGE_WARNING_BYTES), reads = 0;
+  let finishFirstRead!: () => void;
+  const firstRead = new Promise<void>((resolve) => { finishFirstRead = resolve; });
   await mount({ inspectSessionPdf: async () => file,
-    readSessionPdfChunk: async () => { reads++; return reads === 1 ? { ...chunk(file, 0, 5), revision: "changed" } : chunk(file); },
+    readSessionPdfChunk: async () => {
+      reads++;
+      if (reads !== 1) return chunk(file);
+      await firstRead;
+      return { ...chunk(file, 0, 5), revision: "changed" };
+    },
   }, async ({ render, reveal, document, click }) => {
     await render(marker()); await reveal();
     assert.equal(reads, 0); assert.match(document.body.textContent!, /50.0 MiB/);
+    await click("Reload");
+    assert.equal(reads, 0);
     await click("Load Anyway");
+    assert.ok(document.querySelector("[role='status'][aria-label^='Loading PDF:']"));
+    const reload = document.querySelector<HTMLButtonElement>("button[aria-label='Reload PDF Preview']");
+    assert.ok(reload?.disabled);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    await act(async () => finishFirstRead());
     assert.equal(reads, 1); assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /changed/);
     file = descriptor();
     await click("Reload");

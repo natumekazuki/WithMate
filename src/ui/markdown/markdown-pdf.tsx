@@ -106,13 +106,13 @@ export function MarkdownPdfPreview({ path, href, title, children, sourceAttribut
   return <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="PDF" sourceAttributes={sourceAttributes}
     headerActions={<span ref={setActionsContainer} className="message-file-preview-auxiliary session-pdf-selection-actions"
       role="group" aria-label="Selected PDF Text" />}
-    shellRef={shellRef} loading={loading} onReload={() => {
+    shellRef={shellRef} loading={loading} reloading={loading && reload > 0 && permittedRevision === null} onReload={() => {
       setPermittedRevision(null); setReload((value) => value + 1);
     }}>
       {state.status === "ready" ? <PdfFilePreview key={`${reload}:${state.descriptor.revision}`} bytes={state.bytes}
         name={state.descriptor.name} actionsContainer={actionsContainer} onCopyText={copyText} onQuoteText={onQuoteText} onOpenLink={openLink} /> :
-        <span className="message-file-preview-placeholder" role={state.status === "error" ? "alert" : "status"}>
-          {state.status === "waiting" ? "PDF preview loads when visible." :
+        <span className="message-file-preview-placeholder" role={state.status === "error" ? "alert" : undefined}>
+          {state.status === "waiting" ? null :
             state.status === "large-warning" ? <>
               <span>This PDF is {formatFileByteLength(state.descriptor.byteLength)}. Loading it may use significant memory.</span>
               <button type="button" onClick={() => setPermittedRevision(state.descriptor.revision)}>Load Anyway</button>
