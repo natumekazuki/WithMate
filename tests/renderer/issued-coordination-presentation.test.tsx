@@ -7,6 +7,7 @@ import { SessionMessageColumn, type SessionMessageColumnProps } from "../../src/
 import { useIssuedCoordinations, type IssuedCoordination } from "../../src/chat/conversation/use-issued-coordinations.js";
 import { buildMessageCollapseTargets } from "../../src/chat/conversation/session-message-collapse.js";
 import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
+import type { CoordinationInvalidation } from "../../src-shared/coordination/coordination-window-contract.js";
 
 const target = { kind: "main" as const, sessionId: "source", incarnationId: "source-inc" };
 const context = { ownerSessionId: "source", target };
@@ -49,9 +50,9 @@ test("issued chat notices align with their source response and preserve exact re
   const opened: unknown[] = [];
   let completeIssuedRead!: () => void;
   const initialIssuedRead = new Promise<void>((resolve) => { completeIssuedRead = resolve; });
-  const coordinationChanged = new Set<() => void>();
+  const coordinationChanged = new Set<(summary: CoordinationInvalidation) => void>();
   const sentChanged = new Set<(sessionId: string) => void>();
-  const h = domHarness({ subscribeCoordinationChanged: (listener: () => void) => { coordinationChanged.add(listener); return () => { coordinationChanged.delete(listener); }; },
+  const h = domHarness({ subscribeCoordinationChanged: (listener: (summary: CoordinationInvalidation) => void) => { coordinationChanged.add(listener); return () => { coordinationChanged.delete(listener); }; },
     onSessionSentDeliveriesChanged: (listener: (sessionId: string) => void) => { sentChanged.add(listener); return () => { sentChanged.delete(listener); }; },
     openCoordination: async (request: unknown) => { if (fail) throw new Error("Could not open saved Coordination."); opened.push(request); },
     readSessionExecution: async (_owner: string, operation: string) => {
@@ -91,7 +92,7 @@ test("issued chat notices align with their source response and preserve exact re
     const recipient = { kind: "main" as const, sessionId: "recipient", incarnationId: "recipient-inc" };
     sent = [{ receiptId: "sent-receipt", sourceTurnId: "42", sourceMessageSeq: 1, sequence: 1, target: recipient, state: "queued", text: "Which approach?", coordination: { id: "issued", text: "Which approach?", consultation: "Which approach?" }, origin: { kind: "session", operation: "send", targetSessionId: recipient.sessionId, targetIncarnationId: recipient.incarnationId } }];
     await act(async () => {
-      coordinationChanged.forEach((listener) => listener());
+      coordinationChanged.forEach((listener) => listener({ id: "issued", crewRootSessionId: "source", initiator: target }));
       sentChanged.forEach((listener) => listener(target.sessionId));
     });
     assert.equal(h.document.querySelectorAll(".session-outbound .coordination-notice-link").length, 1);
@@ -104,35 +105,79 @@ test("issued chat notices align with their source response and preserve exact re
 
 // @test-value v2
 // kind = "contract"
-// claim = "起票の追加閲覧後も更新通知で閲覧範囲を再取得し、削除を反映し、旧owner応答を新会話へ適用しない"
+// claim = "同一起票者の通知だけを直列に集約し、閲覧範囲、取得失敗時の内容と再試行、消去、旧owner応答の排除を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 起票と消去済み; docs/design/ui-design-guidelines.md#読込空失敗" }
-// fault = "更新で先頭20件へ戻る、古いrecordをcacheから復元する、または旧ownerの遅延応答を適用する"
-// observable = "hook consumerのID列・error、owner/cursor付きread呼出と遅延応答後の表示"
+// fault = "別起票者で再取得する、取得中の通知ごとに要求を増やすか最後の変更を捨てる、失敗で内容を消す、または旧ownerの遅延応答を適用する"
+// observable = "owner/cursor付きread回数、hook consumerのID/本文・error、非表示時の購読数と遅延応答後の表示"
 // observation_boundary = "consumer"
 // scope = "useIssuedCoordinationsのページング・通知refresh・owner lifetime。read APIはfixture"
 // lifecycle = "permanent"
 // impact = "閲覧中の相談が消えるか、削除済みや別会話の相談を誤認する"
 // distinction = "DB pagingと型検査ではrendererの閲覧範囲と応答寿命を検証できない"
 // @end-test-value
-test("issued notices refresh the viewed prefix and reject obsolete owner responses", async () => {
-  let records: IssuedCoordination[] = Array.from({ length: 45 }, (_, index) => ({ id: String(index).padStart(3, "0"), sourceTurnId: "42", sourceMessageSeq: 1, consultation: `Question ${index}` }));
-  let notify = () => {};
+test("issued notices coalesce matching changes across pagination and recover without obsolete responses", async (t) => {
+  let records: IssuedCoordination[] = Array.from({ length: 45 }, (_, index) => ({ id: String(index).padStart(3, "0"), sourceTurnId: "42", sourceMessageSeq: 1, consultation: `Question ${index} ${"q".repeat(31980)}` }));
+  const listeners = new Set<(summary: CoordinationInvalidation) => void>();
+  const notify = (initiator: CoordinationInvalidation["initiator"] = target, crewRootSessionId = "source") => act(async () => {
+    listeners.forEach((listener) => listener({ id: "002", crewRootSessionId, initiator }));
+  });
+  const calls: { owner: string; cursor?: string }[] = [];
+  let hold = false, fail = false;
+  let completeRead!: () => void;
   let resolveOld!: (result: unknown) => void;
   let state!: ReturnType<typeof useIssuedCoordinations>;
-  const h = domHarness({ subscribeCoordinationChanged: (listener: () => void) => { notify = listener; return () => {}; },
-    readSessionExecution: async (_owner: string, _operation: string, request: { target: { sessionId: string }; cursor?: string }) => {
+  const h = domHarness({ subscribeCoordinationChanged: (listener: (summary: CoordinationInvalidation) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    readSessionExecution: async (owner: string, _operation: string, request: { target: { sessionId: string }; cursor?: string }) => {
+      calls.push({ owner, cursor: request.cursor });
       if (request.target.sessionId === "old") return new Promise((resolve) => { resolveOld = resolve; });
       const items = records.filter((record) => record.id > (request.cursor ?? "")).slice(0, 20);
-      return { ok: true, items, nextCursor: records.some((record) => record.id > items.at(-1)!.id) ? items.at(-1)!.id : null };
+      const nextCursor = records.some((record) => record.id > items.at(-1)!.id) ? items.at(-1)!.id : null;
+      if (hold) { hold = false; await new Promise<void>((resolve) => { completeRead = resolve; }); }
+      if (fail) throw new Error("Read failed");
+      return { ok: true, items, nextCursor };
     } });
-  function Probe({ owner }: { owner: string }) { state = useIssuedCoordinations({ ownerSessionId: owner, target: { ...target, sessionId: owner } }, [{ role: "assistant", text: "", historyIndex: 1 }], undefined, true); return null; }
+  function Probe({ owner, enabled = true }: { owner: string; enabled?: boolean }) { state = useIssuedCoordinations({ ownerSessionId: owner, target: { ...target, sessionId: owner } }, [{ role: "assistant", text: "", historyIndex: 1 }], undefined, enabled); return null; }
   try {
+    hold = true;
     await act(async () => h.root.render(<Probe owner="source" />));
+    for (let index = 0; index < 10; index++) await notify({ ...target, sessionId: "other" }, "other-crew");
+    await notify({ ...target, incarnationId: "replaced" });
+    await notify({ ...target, kind: "auxiliary" });
+    assert.equal(calls.length, 1);
+    await act(async () => completeRead());
+    assert.equal(calls.length, 1, "unrelated notifications must not queue a catch-up read");
+    hold = true;
+    await notify();
+    for (let index = 0; index < 10; index++) await notify();
+    assert.equal(calls.length, 2);
+    records = [{ ...records[0], consultation: "Changed while reading" }, ...records.slice(1)];
+    await act(async () => completeRead());
+    assert.equal(calls.length, 3);
+    assert.equal(state.items[0]?.consultation, "Changed while reading");
+    t.diagnostic("initial read + unrelated notifications = 1 read; one related refresh + 10 related notifications while pending = 2 further reads");
+    hold = true;
     await act(async () => state.loadMore());
-    assert.equal(state.items.length, 40);
-    records = records.filter((record) => record.id !== "002");
-    await act(async () => notify());
+    records = [...records.filter((record) => record.id !== "002"), { ...records[0], id: "000a", consultation: "New consultation" }].sort((a, b) => a.id < b.id ? -1 : 1);
+    await notify();
+    assert.equal(calls.length, 4);
+    await act(async () => completeRead());
+    assert.deepEqual(calls.slice(3).map(({ cursor }) => cursor), ["019", undefined, "019"]);
     assert.deepEqual(state.items.map((record) => record.id), records.slice(0, 40).map((record) => record.id));
+    const previous = state.items;
+    records = records.slice(1);
+    fail = true;
+    await notify();
+    assert.equal(state.error, "Read failed");
+    assert.deepEqual(state.items, previous);
+    fail = false;
+    await act(async () => state.retry());
+    assert.equal(state.error, "");
+    assert.deepEqual(state.items, records.slice(0, 40));
+    await act(async () => h.root.render(<Probe owner="source" enabled={false} />));
+    assert.equal(listeners.size, 0);
+    const hiddenCount = calls.length;
+    await notify();
+    assert.equal(calls.length, hiddenCount);
     await act(async () => h.root.render(<Probe owner="old" />));
     await act(async () => h.root.render(<Probe owner="source" />));
     await act(async () => resolveOld({ ok: true, items: [{ id: "old", sourceTurnId: "42", sourceMessageSeq: 1, consultation: "Old owner" }], nextCursor: null }));
