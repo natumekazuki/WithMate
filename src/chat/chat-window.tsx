@@ -394,7 +394,8 @@ export function ChatSkillPickerPanel({
   }
 
   const filteredItems = filterChatSkillItems(items, searchQuery);
-  const hasItems = !isLoading && !errorMessage && filteredItems.length > 0;
+  const hasItems = filteredItems.length > 0;
+  const showInitialLoading = isLoading && items.length === 0;
   return (
     <div className="chat-skill-picker-layer">
       <div
@@ -444,16 +445,14 @@ export function ChatSkillPickerPanel({
         </div>
         <div
           className="chat-skill-picker-content"
-          role={hasItems ? "listbox" : "status"}
+          role={hasItems ? "listbox" : errorMessage ? "status" : undefined}
           aria-label={hasItems ? "Skill options" : undefined}
           aria-orientation={hasItems ? "vertical" : undefined}
           aria-busy={isLoading || undefined}
         >
-          {isLoading ? (
+          {showInitialLoading ? (
             <LoadingIndicator className="chat-skill-picker-state" label="Loading skills" />
-          ) : errorMessage ? (
-            <p className="chat-skill-picker-state error">{errorMessage}</p>
-          ) : filteredItems.length > 0 ? (
+          ) : hasItems ? (
             filteredItems.map((item, index) => (
               <button
                 key={item.key}
@@ -471,8 +470,10 @@ export function ChatSkillPickerPanel({
                 <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
               </button>
             ))
-          ) : null}
+          ) : errorMessage ? <p className="chat-skill-picker-state error">{errorMessage}</p> : null}
         </div>
+        {isLoading && !showInitialLoading ? <span className="visually-hidden" role="status">Loading skills</span> : null}
+        {hasItems && errorMessage ? <p className="chat-skill-picker-state error chat-skill-picker-refresh-error" role="status">{errorMessage}</p> : null}
       </div>
     </div>
   );

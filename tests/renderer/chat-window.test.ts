@@ -866,9 +866,9 @@ test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象
 
 // @test-value v2
 // kind = "contract"
-// claim = "Skill panelは矢印で候補を移動しEnterで選択、Escapeで取消し、閉じると起点へfocusを戻す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Skill picker" }
-// fault = "候補のkeyboard操作または終了後のfocus復帰が機能しない"
+// claim = "Skill panelは同じ候補の再取得でfocusを保持し、矢印で候補を移動しEnterで選択、Escapeで取消し、閉じると起点へfocusを戻す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Skill picker; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "候補のkeyboard操作または終了後のfocus復帰が機能しないか、同じ候補の再取得で候補が消えてfocusを失う"
 // observable = "候補callback、開閉状態、検索入力値とactiveElement"
 // observation_boundary = "component-behavior"
 // scope = "ChatWindow Skill picker keyboard interaction"
@@ -931,7 +931,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     },
   ];
 
-  function SkillPickerHarness() {
+  function SkillPickerHarness({ loading = false, errorMessage }: { loading?: boolean; errorMessage?: string }) {
     const [isOpen, setIsOpen] = React.useState(false);
     const props = createChatWindowProps();
     props.composerProps = {
@@ -942,7 +942,8 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     };
     props.skillPickerProps = {
       isOpen,
-      isLoading: false,
+      isLoading: loading,
+      errorMessage,
       items,
       onSelectSkill: (skillId) => {
         selected.push(skillId);
@@ -959,7 +960,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(SkillPickerHarness));
+      root.render(React.createElement(SkillPickerHarness, {}));
     });
     const skillButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "Skill");
@@ -976,6 +977,11 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     await act(async () => {
       searchInput.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
+    assert.equal(dom.window.document.activeElement, options[0]);
+
+    await act(async () => root?.render(React.createElement(SkillPickerHarness, { loading: true })));
+    assert.equal(dom.window.document.activeElement, options[0]);
+    await act(async () => root?.render(React.createElement(SkillPickerHarness, { errorMessage: "Skill refresh failed" })));
     assert.equal(dom.window.document.activeElement, options[0]);
 
     await act(async () => {
