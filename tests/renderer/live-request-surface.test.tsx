@@ -316,27 +316,30 @@ test("LiveRequestSurface はmixed pasteを対象質問の文字列回答に保�
 
 // @test-value v2
 // kind = "contract"
-// claim = "自由回答のmultiline化後も文字数制約を検証し、format付きfieldは既存native inputから同じ構造化回答を送信する"
+// claim = "Codex MCP formは文字数・email・URI・date-timeに合わない値を送信せず、同じformに入力を残して訂正後の構造化回答を送信する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: native response constraints and strict MCP schemas" }
-// fault = "textarea化でminLength/maxLength検証を迂回するか、format付き入力を自由回答へ置換してpayloadを変える"
-// observable = "短すぎる/長すぎる回答のvalidationと送信件数、format input type、受理された回答payload"
+// fault = "入力欄の書式や文字数に合わない値をProviderへ送信するか、訂正に必要な入力を消す"
+// observable = "不正値のvalidation、送信件数と入力保持、訂正後の回答payload"
 // observation_boundary = "component-behavior"
 // scope = "question-answer-schema-preservation"
 // lifecycle = "permanent"
 // impact = "providerが要求したschemaに違反する回答や変形した形式付き回答を送信する"
 // distinction = "schema型検査ではmultiline editorの入力からSubmitへのvalidation接続を検証できない"
 // @end-test-value
-test("LiveRequestSurface はmultiline回答でも文字数制約とformat fieldを維持する", async () => {
+test("Codex MCP form keeps invalid answers in the same form until corrected", async () => {
   const mounted = await mountElicitation({ requestId: "strict", provider: "codex", mode: "form", message: "Enter values", fields: [
     { type: "text", name: "answer", title: "Answer", required: true, minLength: 3, maxLength: 5 },
     { type: "text", name: "url", title: "URL", required: true, format: "uri" },
+    { type: "text", name: "email", title: "Email", required: true, format: "email" },
+    { type: "text", name: "when", title: "When", required: true, format: "date-time" },
   ] });
   try {
     const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
     const url = mounted.container.querySelector<HTMLInputElement>('input[aria-label="URL"]')!;
+    const email = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Email"]')!;
+    const when = mounted.container.querySelector<HTMLInputElement>('input[aria-label="When"]')!;
     assert.ok(answer && url);
     assert.equal(url.type, "url");
-    await enterText(mounted.dom, url, "https://example.test/reference");
     for (const [value, error] of [["a", "at least 3"], ["abc\ndef", "at most 5"]]) {
       await enterText(mounted.dom, answer, value);
       await submit(mounted.container);
@@ -344,8 +347,27 @@ test("LiveRequestSurface はmultiline回答でも文字数制約とformat field�
       assert.ok(mounted.container.textContent?.includes(error));
     }
     await enterText(mounted.dom, answer, "a\nb");
+    await enterText(mounted.dom, url, "https://example.test/reference");
+    await enterText(mounted.dom, email, "a@example.test");
+    await enterText(mounted.dom, when, "2026-11-01T00:00:00+09:00");
+    for (const [input, bad, error] of [
+      [url, "relative/path", "valid URI"],
+      [email, "a@example", "valid email address"],
+      [when, "2026-11-01T00:00:00", "with a time zone"],
+    ] as const) {
+      const good = input.value;
+      await enterText(mounted.dom, input, bad);
+      await submit(mounted.container);
+      assert.deepEqual(mounted.responses, []);
+      assert.ok(mounted.container.textContent?.includes(error));
+      assert.equal(input.value, bad);
+      assert.equal(answer.value, "a\nb");
+      await enterText(mounted.dom, input, good);
+    }
     await submit(mounted.container);
-    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "a\nb", url: "https://example.test/reference" } }]);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: {
+      answer: "a\nb", url: "https://example.test/reference", email: "a@example.test", when: "2026-11-01T00:00:00+09:00",
+    } }]);
   } finally { await mounted.cleanup(); }
 });
 

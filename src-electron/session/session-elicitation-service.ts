@@ -1,4 +1,5 @@
 import type { ElicitationRecord, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import { isValidCodexElicitationContent } from "../../src-shared/session/codex-elicitation-validation.js";
 
 type PendingElicitationRequest = {
   request: LiveElicitationRequest;
@@ -49,6 +50,10 @@ export class SessionElicitationService {
     if (pending.sending) throw new Error("The answer is already being sent.");
     if (response.action !== "accept" && response.action !== "decline" && response.action !== "cancel") {
       throw new Error("Invalid input response.");
+    }
+    if (response.action === "accept" && pending.request.provider === "codex" && pending.request.kind !== "question"
+      && pending.request.mode === "form" && !isValidCodexElicitationContent(pending.request.fields, response.content)) {
+      throw new Error("Some answers do not match the form. Correct the answers and submit the same form again.");
     }
     if (pending.request.delivery === "user-message" && response.action === "accept") {
       const { turnId } = pending.request;

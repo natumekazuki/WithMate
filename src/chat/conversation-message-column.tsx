@@ -929,11 +929,19 @@ export function useConversationMessageColumn({
       refresh();
     }
   };
+  const hasActiveElicitation = (requestId: string) => {
+    const run = liveState.liveRun;
+    return (run?.elicitationRequests ?? (run?.elicitationRequest ? [run.elicitationRequest] : []))
+      .some((request) => request.requestId === requestId);
+  };
+  const answeringRequestId = liveState.elicitationRequestId;
+  const activeAnsweringRequestId = answeringRequestId && hasActiveElicitation(answeringRequestId) ? answeringRequestId : null;
   const onResolveLiveElicitation: SessionMessageColumnProps["onResolveLiveElicitation"] = async (request, response) => {
     if (!api?.resolveLiveElicitation) return baseProps.onResolveLiveElicitation(request, response);
-    if (conversation.elicitationRequestId === request.requestId) return;
-    conversation.elicitationRequestId = request.requestId;
-    conversation.elicitationAction = response.action;
+    const pending = liveState.elicitationRequestId;
+    if (!hasActiveElicitation(request.requestId) || pending && hasActiveElicitation(pending)) return;
+    liveState.elicitationRequestId = request.requestId;
+    liveState.elicitationAction = response.action;
     conversation.error = "";
     refresh();
     const eventRevision = liveRunEventRevision.current;
@@ -941,10 +949,12 @@ export function useConversationMessageColumn({
       await api.resolveLiveElicitation(sessionId, request.requestId, response);
       await reloadLiveRun(request.requestId, "elicitation", eventRevision);
     } catch (error) {
-      conversation.error = error instanceof Error ? error.message : String(error);
+      if (hasActiveElicitation(request.requestId)) conversation.error = error instanceof Error ? error.message : String(error);
     } finally {
-      conversation.elicitationRequestId = null;
-      conversation.elicitationAction = null;
+      if (liveState.elicitationRequestId === request.requestId) {
+        liveState.elicitationRequestId = null;
+        liveState.elicitationAction = null;
+      }
       refresh();
     }
   };
@@ -1037,8 +1047,8 @@ export function useConversationMessageColumn({
     elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState && !isCancelRequested : baseProps.elicitationInputAvailable,
     approvalActionRequestId: conversation.approvalRequestId,
     approvalActionDecision: conversation.approvalDecision,
-    elicitationActionRequestId: conversation.elicitationRequestId,
-    elicitationAction: conversation.elicitationAction,
+    elicitationActionRequestId: activeAnsweringRequestId,
+    elicitationAction: activeAnsweringRequestId ? liveState.elicitationAction : null,
     liveRunErrorMessage: conversation.error || (api ? liveRun?.errorMessage ?? "" : baseProps.liveRunErrorMessage),
     pendingMessageGroupId: null,
     messageListRef: following.messageListRef,

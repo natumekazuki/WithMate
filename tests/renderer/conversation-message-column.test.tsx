@@ -17,7 +17,7 @@ import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-qu
 import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
 import { QueuedTurnEditContext } from "../../src/chat/conversation/use-queued-turn-edit.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { CONVERSATION_PAGE_SIZE, type ConversationPage, type ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
@@ -2971,10 +2971,10 @@ test("conversation column shows accepted sends and preserves the canonical respo
 
 // @test-value v2
 // kind = "invariant"
-// claim = "MainとAuxiliaryの承認・入力応答後、遅い再取得は後着の要求を消さず、競合のない再取得は解決済み要求を消す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態" }
-// fault = "応答後の古いlive snapshotが購読で届いた次の要求を上書きする、または通常の再取得で解決済み要求が残る"
-// observable = "各会話列のliveApprovalRequest・liveElicitationRequest・isRunning"
+// claim = "質問応答は次Turn予約を変更しない。遅い再取得は次の要求を消さず、古い質問応答が終了しても次の質問の送信中表示を解除しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; docs/design/desktop-ui.md#approval-requests" }
+// fault = "質問回答を予約操作へ送る、古いlive snapshotで後着要求を上書きする、古い応答で次の質問のbusyを解除する、または正しく解決した要求を残す"
+// observable = "各会話列の承認・入力要求、質問APIの宛先と回答、質問の送信中ID、予約IDと予約操作の呼出、実行中状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-message-column"
 // lifecycle = "permanent"
@@ -2999,6 +2999,15 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
   const listeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
   const fetchResolvers = new Map<string, (state: LiveSessionRunState | null) => void>();
   const fetchCounts = new Map<string, number>();
+  const answers: Array<[string, string, LiveElicitationResponse]> = [];
+  const nextQueued: SessionTurnQueueReceipt = {
+    sessionId: "aux", incarnationId: "aux-incarnation", id: "next-queued", requestId: "queued-request", sequence: 1, queuePosition: 1,
+    state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+    captured: { request: { clientRequestId: "queued-request", userMessage: "Reserved for the next Turn", executionOptions: {
+      model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+    } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+  };
+  const queueActions: string[] = [];
   const createRun = (sessionId: string, requestKind: "approval" | "elicitation" | null, requestId = ""): LiveSessionRunState => ({
     sessionId,
     threadId: `${sessionId}-thread`,
@@ -3019,7 +3028,13 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       return new Promise((resolve) => { fetchResolvers.set(sessionId, resolve); });
     },
     resolveLiveApproval: async () => {},
-    resolveLiveElicitation: async () => {},
+    resolveLiveElicitation: async (sessionId, requestId, response) => { answers.push([sessionId, requestId, response]); },
+    listSessionTurnQueue: async (id) => id === "aux" ? [nextQueued] : [],
+    onSessionTurnQueueChanged: () => () => {},
+    sendQueuedSessionInput: async () => { queueActions.push("steer"); return nextQueued; },
+    cancelQueuedSessionTurn: async () => { queueActions.push("cancel"); return nextQueued; },
+    releaseInterruptedSessionTurn: async () => { queueActions.push("release"); return nextQueued; },
+    reorderQueuedSessionTurns: async () => { queueActions.push("reorder"); throw new Error("Unexpected queue reorder"); },
   };
   let main: SessionMessageColumnProps | null = null;
   let auxiliary: SessionMessageColumnProps | null = null;
@@ -3031,7 +3046,7 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(function Probe() {
         main = useConversationMessageColumn({ session: { id: "main", runState: "running" }, baseProps: createBaseProps("main"), enabled: true, api });
-        auxiliary = useConversationMessageColumn({ session: { id: "aux", runState: "running" }, baseProps: createBaseProps("aux"), enabled: true, api });
+        auxiliary = useConversationMessageColumn({ session: { id: "aux", incarnationId: "aux-incarnation", runState: "running" }, baseProps: createBaseProps("aux"), enabled: true, api });
         return null;
       }));
     });
@@ -3043,29 +3058,43 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       const column = () => scenario.sessionId === "main" ? main : auxiliary;
       const first = createRun(scenario.sessionId, scenario.kind, "r1");
       const second = createRun(scenario.sessionId, scenario.kind, "r2");
+      const firstAnswer = { action: "accept", content: { answer: "First answer" } } as const;
+      const secondAnswer = { action: "accept", content: { answer: "Second answer" } } as const;
       await act(async () => emit(scenario.sessionId, first));
       await act(async () => {
         scenario.kind === "approval"
           ? column()?.onResolveLiveApproval(first.approvalRequest!, "approve")
-          : column()?.onResolveLiveElicitation(first.elicitationRequest!, { action: "accept" });
+          : column()?.onResolveLiveElicitation(first.elicitationRequest!, firstAnswer);
         await Promise.resolve();
       });
       assert.ok(fetchResolvers.has(scenario.sessionId));
+      const resolveStale = fetchResolvers.get(scenario.sessionId)!;
       await act(async () => emit(scenario.sessionId, second));
+      if (scenario.kind === "elicitation") {
+        assert.equal(column()?.elicitationActionRequestId, null, "an ended question must not block the next");
+        await act(async () => {
+          column()?.onResolveLiveElicitation(second.elicitationRequest!, secondAnswer);
+          await Promise.resolve();
+        });
+        assert.equal(column()?.elicitationActionRequestId, "r2");
+      }
       await act(async () => {
-        fetchResolvers.get(scenario.sessionId)?.(scenario.stale);
+        resolveStale(scenario.stale);
         await Promise.resolve();
       });
       const currentRequest = scenario.kind === "approval" ? column()?.liveApprovalRequest : column()?.liveElicitationRequest;
       assert.equal(currentRequest?.requestId, "r2", `${scenario.sessionId} must retain the later request`);
       assert.equal(column()?.isRunning, true);
 
-      await act(async () => {
-        scenario.kind === "approval"
-          ? column()?.onResolveLiveApproval(second.approvalRequest!, "approve")
-          : column()?.onResolveLiveElicitation(second.elicitationRequest!, { action: "accept" });
-        await Promise.resolve();
-      });
+      if (scenario.kind === "approval") {
+        await act(async () => {
+          column()?.onResolveLiveApproval(second.approvalRequest!, "approve");
+          await Promise.resolve();
+        });
+      } else {
+        assert.equal(column()?.elicitationActionRequestId, "r2", "the old completion must not release the new answer");
+        assert.deepEqual(answers, [["aux", "r1", firstAnswer], ["aux", "r2", secondAnswer]]);
+      }
       await act(async () => {
         fetchResolvers.get(scenario.sessionId)?.(createRun(scenario.sessionId, null));
         await Promise.resolve();
@@ -3073,6 +3102,10 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       assert.equal(column()?.liveApprovalRequest, null);
       assert.equal(column()?.liveElicitationRequest, null);
       assert.equal(column()?.isRunning, true);
+      if (scenario.kind === "elicitation") {
+        assert.deepEqual(column()?.queuedTurnIds, [nextQueued.id]);
+        assert.deepEqual(queueActions, []);
+      }
     }
   } finally {
     await act(async () => root?.unmount());
