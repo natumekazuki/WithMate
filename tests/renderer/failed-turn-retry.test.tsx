@@ -38,7 +38,7 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     inputs: { entry: { receiptId: "source", inputSeq: 4, kind: "start", stage: "fixed", comparison: retried ? "unchanged" : "changed", detail: { operation: "get_execution_input", receiptId: "source" } }, startChanged: !retried,
       additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null });
   const display = (id = "42") => executionWindowResultSchemas.read_turn_input_display.parse({
-    ok: true, origin, receiptId: "source", receiptState: turnState, turnId: id, turnState, isFixedStart: true, senderTheme: null,
+    ok: true, origin, receiptId: "source", receiptState: turnState, turnId: id, turnState, isFixedStart: true, senderTheme: null, retryInputUnchanged: null,
   });
   const reads: unknown[] = [];
   let dockReadFails = false;

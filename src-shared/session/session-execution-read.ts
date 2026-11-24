@@ -86,6 +86,7 @@ export const executionWindowResultSchemas = {
     ...ok,
     origin: z.union([origin, steerOrigin]).nullable(),
     retrySource: description.shape.retrySource,
+    retryInputUnchanged: z.boolean().nullable(),
     senderTheme: z.object({ main: z.string(), sub: z.string() }).nullable(),
     coordination: coordinationDisplay.optional(),
     receiptId: nullableId,
