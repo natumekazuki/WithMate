@@ -401,7 +401,8 @@
 
 .message-image-loading {
   position: absolute;
-  inset: 10px;
+  inset: 10px auto 10px 0;
+  width: min(360px, 100%);
   z-index: 1;
   display: grid;
   place-items: center;
