@@ -1,3 +1,6 @@
+import type { CancelSessionRunRequest } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnQueueOwner } from "../../src-shared/session/session-turn-queue.js";
+
 export type AuxiliaryAwareSendOrCancelInput = {
   shouldSendAuxiliary: boolean;
   isAuxiliarySessionRunning: boolean;
@@ -15,11 +18,7 @@ export type AuxiliaryAwareSendOrCancelAction =
   | "cancel-selected"
   | "send-selected";
 
-export type RunningSessionCancelTarget = {
-  id: string;
-  runState: string | null | undefined;
-  isRunning?: boolean;
-} | null | undefined;
+export type SessionStopTarget = { request: CancelSessionRunRequest; receiptId?: string };
 
 export function resolveSelectedSessionRunState<TRunState extends string>({
   runState,
@@ -46,52 +45,19 @@ export function resolveSelectedSessionIsRunning({
   return runState === "running" || isTurnRunning;
 }
 
-export function buildRunningSessionCancelTarget({
-  sessionId,
-  runState,
-  isRunning,
-}: {
-  sessionId: string | null | undefined;
-  runState: string | null | undefined;
-  isRunning: boolean;
-}): RunningSessionCancelTarget {
-  return sessionId
-    ? { id: sessionId, runState, isRunning }
-    : null;
-}
-
-export function buildAuxiliarySessionCancelTarget({
-  session,
-}: {
-  session: { id: string; runState: string | null | undefined } | null | undefined;
-}): RunningSessionCancelTarget {
-  return buildRunningSessionCancelTarget({
-    sessionId: session?.id,
-    runState: session?.runState,
-    isRunning: session?.runState === "running",
-  });
-}
-
-export function resolveRunningSessionCancelTargetId(
-  target: RunningSessionCancelTarget,
-): string | null {
-  return target && (target.isRunning || target.runState === "running") ? target.id : null;
-}
-
-export async function runRunningSessionCancelOperation({
-  target,
-  cancelRun,
-}: {
-  target: RunningSessionCancelTarget;
-  cancelRun: ((sessionId: string) => void | Promise<void>) | null | undefined;
-}): Promise<boolean> {
-  const sessionId = resolveRunningSessionCancelTargetId(target);
-  if (!sessionId || !cancelRun) {
-    return false;
+export function buildSessionStopTarget(
+  owner: SessionTurnQueueOwner | null,
+  live: { turnId?: string; receiptId?: string; incarnationId?: string },
+  claim?: SessionTurnQueueOwner & { receiptId: string },
+): SessionStopTarget | null {
+  if (!owner) return null;
+  if (live.turnId && (!live.incarnationId || live.incarnationId === owner.incarnationId)) {
+    return { request: { ...owner, execution: { kind: "turn", id: live.turnId } }, receiptId: live.receiptId };
   }
-
-  await cancelRun(sessionId);
-  return true;
+  if (claim?.sessionId === owner.sessionId && claim.incarnationId === owner.incarnationId) {
+    return { request: { ...owner, execution: { kind: "receipt", id: claim.receiptId } }, receiptId: claim.receiptId };
+  }
+  return null;
 }
 
 export function resolveAuxiliaryAwareSendOrCancelAction({

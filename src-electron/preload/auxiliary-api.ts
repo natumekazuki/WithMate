@@ -105,10 +105,10 @@ export function createAuxiliaryApi(
     steerAuxiliarySessionTurn(auxiliarySessionId, request) {
       return ipcRenderer.invoke(channels.WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL, auxiliarySessionId, request);
     },
-    cancelAuxiliarySessionRun(auxiliarySessionId) {
+    cancelAuxiliarySessionRun(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
-        auxiliarySessionId,
+        request,
       );
     },
   };

@@ -45,8 +45,7 @@ import { isSameModelCatalogWorkspace, startModelCatalogSubscription } from "../s
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import {
-  buildAuxiliarySessionCancelTarget,
-  buildRunningSessionCancelTarget,
+  buildSessionStopTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
 } from "../chat/send-or-cancel.js";
@@ -492,7 +491,12 @@ export default function AgentSessionWindowApp() {
     hasSelectedSessionLiveRun,
     selectedSessionCancellationState,
     cancellationState: activeCancellationState,
-    runTurnId,
+    stopTurnId,
+    stopReceiptId,
+    stopIncarnationId,
+    mainStopTurnId,
+    mainStopReceiptId,
+    mainStopIncarnationId,
     hasLiveRun,
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
@@ -506,6 +510,26 @@ export default function AgentSessionWindowApp() {
     inputTurnId,
     setLiveRunState,
   } = useSessionRunControls(withmateApi, selectedSession, activeRunSessionId);
+  const [stopClaims, setStopClaims] = useState<Partial<Record<"main" | "auxiliary", { sessionId: string; incarnationId: string; receiptId: string }>>>({});
+  const observeTurnReceipts = useCallback((receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string; kind: "main" | "auxiliary" }) => {
+    mainSessionRuntime.observeTurnReceipts(receipts);
+    const receipt = receipts.find((item) => item.sessionId === owner.sessionId && item.incarnationId === owner.incarnationId
+      && !item.inputTurnId && (item.state === "starting" || item.state === "running"));
+    setStopClaims((current) => {
+      const previous = current[owner.kind];
+      if (!receipt ? !previous : previous?.receiptId === receipt.id && previous.incarnationId === owner.incarnationId && previous.sessionId === owner.sessionId) return current;
+      return { ...current, [owner.kind]: receipt ? { sessionId: owner.sessionId, incarnationId: owner.incarnationId, receiptId: receipt.id } : undefined };
+    });
+  }, [mainSessionRuntime.observeTurnReceipts]);
+  const stopMainIncarnation = selectedSession ? getSessionIncarnationId(selectedSession) : "";
+  const stopAuxiliaryId = activeAuxiliarySession?.id;
+  const stopAuxiliaryIncarnation = activeAuxiliarySession?.createdAt;
+  const mainStopTarget = useMemo(() => buildSessionStopTarget(selectedSessionId ? { sessionId: selectedSessionId, incarnationId: stopMainIncarnation } : null,
+    { turnId: mainStopTurnId, receiptId: mainStopReceiptId, incarnationId: mainStopIncarnationId }, stopClaims.main),
+  [selectedSessionId, stopMainIncarnation, mainStopTurnId, mainStopReceiptId, mainStopIncarnationId, stopClaims.main]);
+  const auxiliaryStopTarget = useMemo(() => buildSessionStopTarget(stopAuxiliaryId && stopAuxiliaryIncarnation ? { sessionId: stopAuxiliaryId, incarnationId: stopAuxiliaryIncarnation } : null,
+    { turnId: stopTurnId, receiptId: stopReceiptId, incarnationId: stopIncarnationId }, stopClaims.auxiliary),
+  [stopAuxiliaryId, stopAuxiliaryIncarnation, stopTurnId, stopReceiptId, stopIncarnationId, stopClaims.auxiliary]);
   const {
     approvalActionRequestId,
     elicitationActionRequestId,
@@ -516,6 +540,7 @@ export default function AgentSessionWindowApp() {
   } = useSessionRunActions({
     api: withmateApi,
     activeRunSessionId,
+    stopTargets: [mainStopTarget, auxiliaryStopTarget],
     setLiveRunState,
     onError: (message) => window.alert(message),
   });
@@ -1279,12 +1304,8 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    if (selectedSessionCancellationState || pendingCancelSessionIds.has(selectedSession?.id ?? "")) return;
-    await cancelRun(buildRunningSessionCancelTarget({
-      sessionId: selectedSession?.id,
-      runState: selectedSessionRunState,
-      isRunning: isSelectedSessionRunning,
-    }), "main", runTurnId);
+    if (selectedSessionCancellationState) return;
+    await cancelRun(mainStopTarget, "main");
   };
 
   const handleComposerSubmitShortcut = () => {
@@ -1574,7 +1595,7 @@ export default function AgentSessionWindowApp() {
 
   const handleCancelAuxiliaryRun = async () => {
     if (activeCancellationState) return;
-    await cancelRun(buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }), "auxiliary", runTurnId);
+    await cancelRun(auxiliaryStopTarget, "auxiliary");
   };
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
@@ -2186,15 +2207,15 @@ export default function AgentSessionWindowApp() {
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {
-      isRunning: renderedIsRunning,
+      isRunning: renderedIsRunning || !!(activeAuxiliarySession ? auxiliaryStopTarget : mainStopTarget),
       canSendInput: !activeQueuedTurnEdit && canSendInput,
       queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : hasPendingSubmitFor(renderedSession.id),
       hasUncertainTurn: hasUncertainTurnFor(renderedSession.id),
       inputError: activeQueuedTurnEdit?.error || steeringError
         || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
-      selectedRunState: selectedSessionRunState,
-      auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
+      selectedRunState: mainStopTarget ? "running" : selectedSessionRunState,
+      auxiliaryRunState: auxiliaryStopTarget ? "running" : activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly || (!activeAuxiliarySession && !loadedSession)
@@ -2488,7 +2509,7 @@ export default function AgentSessionWindowApp() {
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
     api: withmateApi ?? undefined,
     messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions,
-      onTurnReceiptsObserved: mainSessionRuntime.observeTurnReceipts, selectedReplyKey: selectedReply?.key,
+      onTurnReceiptsObserved: observeTurnReceipts, selectedReplyKey: selectedReply?.key,
       onSelectReply: withmateApi?.readSessionExecution && selectedSession.sessionKind === "default" && !activeQueuedTurnEdit && !isSelectedSessionReadOnly ? selectReply : undefined },
     onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),

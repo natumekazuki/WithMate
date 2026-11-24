@@ -192,6 +192,12 @@ export type ElicitationRecord = {
   status: "pending" | "answered" | "declined" | "canceled" | "expired";
 };
 
+export type CancelSessionRunRequest = {
+  sessionId: string;
+  incarnationId: string;
+  execution: { kind: "turn" | "receipt"; id: string };
+};
+
 export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;

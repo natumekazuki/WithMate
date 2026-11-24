@@ -105,7 +105,7 @@ export type SessionMessageColumnProps = {
   liveWithMateTurnId?: string;
   sentReadLiveTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
-  onTurnReceiptsObserved?: (receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[]) => void;
+  onTurnReceiptsObserved?: (receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string; kind: "main" | "auxiliary" }) => void;
   responsePending?: boolean;
   submissionError?: string;
   submissionUncertain?: boolean;

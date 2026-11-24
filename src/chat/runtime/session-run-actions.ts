@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import type {
+  CancelSessionRunRequest,
   LiveApprovalRequest,
   LiveElicitationRequest,
   LiveElicitationResponse,
@@ -9,18 +10,22 @@ import {
   replaceLiveRunAfterResolvedRequest,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
-import {
-  runRunningSessionCancelOperation,
-  resolveRunningSessionCancelTargetId,
-  type RunningSessionCancelTarget,
-} from "../send-or-cancel.js";
 import { subscribeSessionLiveEvents } from "./session-window-live-ingress.js";
+import type { SessionStopTarget } from "../send-or-cancel.js";
 
 type LiveRunStateUpdater = (update: SetStateAction<OwnedLiveSessionRunState>) => void;
+type PendingStop = CancelSessionRunRequest & { handedOff: boolean };
+
+function isSameStopTarget(pending: CancelSessionRunRequest, target: SessionStopTarget): boolean {
+  return pending.sessionId === target.request.sessionId && pending.incarnationId === target.request.incarnationId
+    && (pending.execution.kind === target.request.execution.kind && pending.execution.id === target.request.execution.id
+      || pending.execution.kind === "receipt" && pending.execution.id === target.receiptId);
+}
 
 export function useSessionRunActions(options: {
   api: WithMateWindowApi | null;
   activeRunSessionId: string | null;
+  stopTargets: readonly [SessionStopTarget | null, (SessionStopTarget | null)?];
   setLiveRunState: LiveRunStateUpdater;
   onError: (message: string) => void;
 }): {
@@ -29,21 +34,28 @@ export function useSessionRunActions(options: {
   resolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => Promise<void>;
   resolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => Promise<void>;
   pendingCancelSessionIds: ReadonlySet<string>;
-  cancelRun: (target: RunningSessionCancelTarget, kind?: "main" | "auxiliary", turnId?: string) => Promise<void>;
+  cancelRun: (target: SessionStopTarget | null, kind: "main" | "auxiliary") => Promise<void>;
 } {
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
-  const pendingCancels = useRef(new Map<string, { turnId?: string; handedOff: boolean }>());
-  const [pendingCancelSessionIds, setPendingCancelSessionIds] = useState<ReadonlySet<string>>(new Set());
+  const pendingCancels = useRef(new Map<string, PendingStop>());
+  const [pendingRevision, refreshPending] = useState(0);
+  const [mainStopTarget, auxiliaryStopTarget] = options.stopTargets;
+  const pendingCancelSessionIds = useMemo(() => new Set([mainStopTarget, auxiliaryStopTarget].flatMap((target) => {
+    if (!target) return [];
+    const pending = pendingCancels.current.get(target.request.sessionId);
+    return pending && !pending.handedOff && isSameStopTarget(pending, target) ? [pending.sessionId] : [];
+  })), [mainStopTarget, auxiliaryStopTarget, pendingRevision]);
   useEffect(() => {
     if (!options.api) return;
     return subscribeSessionLiveEvents(options.api, (id, state) => {
       const pending = pendingCancels.current.get(id);
-      if (pending && state && pending.turnId === undefined) pending.turnId = state.turnId;
-      if (pending && (!state || state.cancellationState || state.turnId !== pending.turnId)) {
-        if (!state || !state.cancellationState && state.turnId !== pending.turnId) pendingCancels.current.delete(id);
-        else pending.handedOff = true;
-        setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
+      if (!pending) return;
+      const matches = pending.execution.kind === "turn" ? state?.sessionTurnId === pending.execution.id
+        : state?.queueReceipt?.id === pending.execution.id && state.queueReceipt.incarnationId === pending.incarnationId;
+      if (matches && state?.cancellationState) {
+        pending.handedOff = true;
+        refreshPending((revision) => revision + 1);
       }
     });
   }, [options.api]);
@@ -100,25 +112,23 @@ export function useSessionRunActions(options: {
     }
   }, [elicitationActionRequestId, options.activeRunSessionId, options.api, options.onError, options.setLiveRunState]);
 
-  const cancelRun = useCallback(async (target: RunningSessionCancelTarget, kind: "main" | "auxiliary" = "main", turnId?: string) => {
-    const id = resolveRunningSessionCancelTargetId(target);
-    if (!id || !options.api || pendingCancels.current.has(id)) return;
-    const pending = { turnId, handedOff: false };
+  const cancelRun = useCallback(async (target: SessionStopTarget | null, kind: "main" | "auxiliary") => {
+    if (!target || !options.api) return;
+    const { request } = target;
+    const id = request.sessionId;
+    const previous = pendingCancels.current.get(id);
+    if (previous && isSameStopTarget(previous, target)) return;
+    const pending = { ...request, handedOff: false };
     pendingCancels.current.set(id, pending);
-    setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
+    refreshPending((revision) => revision + 1);
     try {
-      await runRunningSessionCancelOperation({
-        target,
-        cancelRun: (sessionId) => kind === "auxiliary"
-          ? options.api!.cancelAuxiliarySessionRun(sessionId)
-          : options.api!.cancelSessionRun(sessionId),
-      });
+      await (kind === "auxiliary" ? options.api.cancelAuxiliarySessionRun(request) : options.api.cancelSessionRun(request));
     } catch (error) {
       options.onError(error instanceof Error ? error.message : "Could not cancel the run.");
     } finally {
       if (pendingCancels.current.get(id) === pending) {
         pendingCancels.current.delete(id);
-        setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
+        refreshPending((revision) => revision + 1);
       }
     }
   }, [options.api, options.onError]);

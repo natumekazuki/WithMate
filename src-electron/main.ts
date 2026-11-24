@@ -107,7 +107,7 @@ import {
 } from "./files/open-path.js";
 import { launchTerminalAtPath } from "./files/open-terminal.js";
 import { SessionStorage } from "./session/session-storage.js";
-import { SessionRuntimeService } from "./session/session-runtime-service.js";
+import { SessionRuntimeService, stopWindowSessionRun } from "./session/session-runtime-service.js";
 import { createMainSessionRuntime } from "./app/main-session-runtime-assembly.js";
 import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "./app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "./session/session-turn-queue-service.js";
@@ -1884,10 +1884,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastSessions([session.parentSessionId]);
                   return accepted;
                 })),
-                cancelAuxiliarySessionRun: (auxiliarySessionId) => {
-                  approvalReviewInputs.invalidate();
-                  requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId);
-                },
+                cancelAuxiliarySessionRun: (request, assertAuthorized) => stopWindowSessionRun(
+                  request, requireAuxiliarySessionRuntimeService(), requireMainSessionTurnQueueService(),
+                  assertAuthorized, () => approvalReviewInputs.invalidate(),
+                ),
               },
               sessionRuntime: {
                 queue: {
@@ -1945,10 +1945,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastSessions([sessionId]);
                   return result;
                 }),
-                cancelSessionRun: (sessionId) => {
-                  approvalReviewInputs.invalidate();
-                  requireMainSessionCommandFacade().cancelSessionRun(sessionId);
-                },
+                cancelSessionRun: (request, assertAuthorized) => stopWindowSessionRun(
+                  request, requireSessionRuntimeService(), requireMainSessionTurnQueueService(),
+                  assertAuthorized, () => approvalReviewInputs.invalidate(),
+                ),
               },
               mate: {
                 getMateState: () => requireMateStorage().getMateState(),
@@ -2586,11 +2586,11 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
           || Boolean(session && settingsCatalogService && !settingsCatalogService.isProviderAvailableForTurn(session.provider))
           || isSessionRunInFlight(sessionId, "self");
       },
-      dispatch: async (receipt, onStarted) => {
+      dispatch: async (receipt, onStarted, control) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         const { runtime, auxiliary } = await resolveQueueSessionRuntime(receipt.sessionId);
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted);
+        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted, control);
         const result = await (auxiliary ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, run) : run());
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;

@@ -14,7 +14,9 @@ import { toProviderTextPreview } from "./provider-payload-limits.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import { captureSessionTurnQueueDisplay, type SessionSteerOrigin, type SessionSteerResult, type SessionTurnQueueOwner, type SessionTurnQueueReceipt, type SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
-import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
+import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchControl, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
+import type { CancelSessionRunRequest } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnQueueService } from "./session-turn-queue-service.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
@@ -495,6 +497,22 @@ type ParentSessionInput = {
   messageSeq: number | null;
 };
 
+export async function stopWindowSessionRun(
+  request: CancelSessionRunRequest,
+  runtime: Pick<SessionRuntimeService, "stopSessionTurn">,
+  queue: Pick<SessionTurnQueueService, "stopClaim">,
+  assertAuthorized: () => void,
+  onApply: () => void,
+): Promise<void> {
+  const { sessionId, incarnationId, execution } = request;
+  if (execution.kind === "receipt") {
+    assertAuthorized();
+    await queue.stopClaim({ sessionId, incarnationId }, execution.id, onApply);
+  } else {
+    await runtime.stopSessionTurn(sessionId, incarnationId, execution.id, assertAuthorized, onApply);
+  }
+}
+
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly startingSessionRuns = new Set<string>();
@@ -618,7 +636,10 @@ export class SessionRuntimeService {
   }
 
   cancelRun(sessionId: string): void {
-    const controller = this.sessionRunControllers.get(sessionId);
+    this.requestRunCancel(sessionId, this.sessionRunControllers.get(sessionId));
+  }
+
+  private requestRunCancel(sessionId: string, controller: AbortController | undefined): void {
     if (this.pendingSessionRunCancels.has(sessionId)) {
       return;
     }
@@ -643,14 +664,23 @@ export class SessionRuntimeService {
     this.deps.broadcastLiveSessionRun(sessionId);
   }
 
-  async stopSessionTurn(sessionId: string, incarnationId: string, expectedTurnId: string, assertAuthorized?: () => void | Promise<void>): Promise<{ outcome: "applied" | "not-applied"; turnId: string }> {
+  private stopRunController(sessionId: string, controller: AbortController, onApply?: () => void): boolean {
+    if (this.sessionRunControllers.get(sessionId) !== controller || this.finishingSessionTurns.has(sessionId)) return false;
+    if (!controller.signal.aborted) {
+      onApply?.();
+      this.requestRunCancel(sessionId, controller);
+    }
+    return true;
+  }
+
+  async stopSessionTurn(sessionId: string, incarnationId: string, expectedTurnId: string, assertAuthorized?: () => void | Promise<void>, onApply?: () => void): Promise<{ outcome: "applied" | "not-applied"; turnId: string }> {
+    const controller = this.sessionRunControllers.get(sessionId);
     const session = await this.deps.getSession(sessionId);
     await assertAuthorized?.();
     const live = this.deps.getLiveSessionRun(sessionId);
     if (!expectedTurnId?.trim() || !incarnationId?.trim() || !session || getSessionIncarnationId(session) !== incarnationId
       || live?.sessionTurnId !== expectedTurnId || !this.inFlightSessionRuns.has(sessionId)
-      || this.finishingSessionTurns.has(sessionId)) return { outcome: "not-applied", turnId: expectedTurnId };
-    this.cancelRun(sessionId);
+      || !controller || !this.stopRunController(sessionId, controller, onApply)) return { outcome: "not-applied", turnId: expectedTurnId };
     return { outcome: "applied", turnId: expectedTurnId };
   }
 
@@ -831,11 +861,15 @@ export class SessionRuntimeService {
     return this.trackRun(this.executeSessionTurn(sessionId, request));
   }
 
-  async runQueuedSessionTurn(receipt: SessionTurnQueueReceipt, onStarted: QueuedTurnContext["onStarted"]): Promise<SessionTurnQueueDispatchResult> {
+  async runQueuedSessionTurn(receipt: SessionTurnQueueReceipt, onStarted: QueuedTurnContext["onStarted"], control?: SessionTurnQueueDispatchControl): Promise<SessionTurnQueueDispatchResult> {
     if (!receipt.dispatched) throw new Error("The queued turn does not have a fixed dispatch snapshot.");
     const queued: QueuedTurnContext = { receipt, input: receipt.dispatched, onStarted };
+    const controller = new AbortController();
+    if (control && !control.bindCancel((onApply) => this.stopRunController(receipt.sessionId, controller, onApply))) {
+      return { state: "canceled", reason: "Session setup was canceled" };
+    }
     try {
-      await this.trackRun(this.executeSessionTurn(receipt.sessionId, queued.input.request, queued));
+      await this.trackRun(this.executeSessionTurn(receipt.sessionId, queued.input.request, queued, controller));
     } catch (error) {
       if (queued.outcome) return queued.outcome;
       if (error instanceof QueuedTurnPreStartCanceledError && !this.isRunInFlight(receipt.sessionId)) {
@@ -860,9 +894,8 @@ export class SessionRuntimeService {
     return run;
   }
 
-  private async executeSessionTurn(sessionId: string, request: RunSessionTurnRequest, queued?: QueuedTurnContext): Promise<Session> {
+  private async executeSessionTurn(sessionId: string, request: RunSessionTurnRequest, queued?: QueuedTurnContext, runAbortController = new AbortController()): Promise<Session> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
-    const runAbortController = new AbortController();
     if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
       logSessionRunStuckInvestigation("runtime.admission.rejected", {
         sessionId,
@@ -1123,7 +1156,9 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messageCount ?? runningSession.messages.length,
       });
-      throwIfRunCanceled(runAbortController.signal);
+      // A confirmed queued start owns a saved Turn and must save its terminal
+      // cancellation, even if Stop arrived while the start write was in flight.
+      if (!queued) throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
         ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
@@ -1229,6 +1264,7 @@ export class SessionRuntimeService {
       this.deps.broadcastLiveSessionRun(sessionId);
     });
     const runProviderTurn = async (turnSession: Session) => {
+      throwIfRunCanceled(runAbortController.signal);
       const progressGeneration = ++liveProgressGeneration;
       const elicitationResponses: Promise<LiveElicitationResponse>[] = [];
       const pendingQuestionAnswers = new Map<string, { request: LiveElicitationRequest; response: LiveElicitationResponse }>();
@@ -1261,6 +1297,8 @@ export class SessionRuntimeService {
             : null;
         }
       }
+      const sessionFolderPath = await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id);
+      throwIfRunCanceled(runAbortController.signal);
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         runtimeOwner: {
@@ -1269,7 +1307,7 @@ export class SessionRuntimeService {
           incarnationId: getSessionIncarnationId(turnSession),
         },
         executionOptions,
-        sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
+        sessionFolderPath,
         crewFolderPath: capturedCrewFolderPath,
         providerCatalog: provider,
         userMessage: nextMessage,

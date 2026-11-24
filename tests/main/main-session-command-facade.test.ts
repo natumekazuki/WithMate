@@ -196,15 +196,15 @@ test("MainSessionCommandFacade は削除結果に含まれるAuxiliary通知も�
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainSessionCommandFacadeはcreate、update、pin、delete、cancelを対応serviceへ委譲し、delete成功時だけnotificationとSessionFolder cleanupを実行する"
+// claim = "MainSessionCommandFacadeはcreate、update、pin、deleteを対応serviceへ委譲し、delete成功後にnotificationとSessionFolder cleanupを実行する"
 // oracle = { type = "contract", ref = "src-electron/app/main-session-command-facade.ts" }
-// fault = "操作を誤ったserviceへ送る、delete失敗後にcleanupを実行する、またはcancelをruntime serviceへ渡さない"
+// fault = "操作を誤ったserviceへ送る、またはdelete成功後のcleanupを省く"
 // observable = "各service mockへ記録された呼出し順と引数"
 // observation_boundary = "public-boundary"
 // scope = "main-session-command-facade-command-routing"
 // lifecycle = "permanent"
 // @end-test-value
-test("MainSessionCommandFacade は create/update/delete/cancel を各 service に委譲する", async () => {
+test("MainSessionCommandFacade は create/update/pin/delete を各 service に委譲する", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -243,9 +243,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
       }) as never,
     getSessionRuntimeService: () =>
       ({
-        cancelRun(sessionId: string) {
-          calls.push(`cancel:${sessionId}`);
-        },
         isRunInFlight() {
           return false;
         },
@@ -281,7 +278,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
   facade.updateSession({ id: "s-1" } as never);
   await facade.setSessionPinned({ sessionId: " s-1 ", isPinned: true });
   await facade.deleteSession("s-1");
-  facade.cancelSessionRun("s-1");
 
   assert.deepEqual(calls, [
     "create:launch-test",
@@ -290,7 +286,6 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     "delete:s-1",
     "dismiss-notification:s-1",
     "cleanup-files:s-1",
-    "cancel:s-1",
   ]);
 });
 

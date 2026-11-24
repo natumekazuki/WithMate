@@ -168,7 +168,11 @@ export function useConversationMessageColumn({
   const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : liveState.liveRun;
   const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun);
   const observeTurnReceipts = baseProps.onTurnReceiptsObserved;
-  useEffect(() => { observeTurnReceipts?.(allQueue.receipts); }, [observeTurnReceipts, allQueue.receipts]);
+  useEffect(() => {
+    if (enabled && queueIncarnationId) observeTurnReceipts?.(allQueue.receipts, {
+      sessionId, incarnationId: queueIncarnationId, kind: messageSourceKind === "auxiliary" ? "auxiliary" : "main",
+    });
+  }, [observeTurnReceipts, allQueue.receipts, enabled, sessionId, queueIncarnationId, messageSourceKind]);
   const children = mainThreads?.children ?? frame?.children;
   const receiptFrame = useCallback((receipt: SessionTurnQueueReceipt) => {
     const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;

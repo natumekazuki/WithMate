@@ -6,20 +6,22 @@ import { runInNewContext } from "node:vm";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
-import type { Session } from "../../src-shared/session/session-state.js";
+import type { CancelSessionRunRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの取消click直後はlive受付前からCancelをbusyにし、受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻っても維持する。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの取消click直後からのbusyとlive状態への引継ぎ; https://github.com/natumekazuki/WithMate/issues/773" }
-// fault = "live取消状態を切替で消去する、取消中の次Turn受付を拒否する、現在Turnへsteerや直接runを送る、または旧取消ACKで後続run表示を巻き戻す"
-// observable = "実SessionWindowAppのexpanded/compact CancelのCanceling tooltipとdisabled/busy、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示"
+// claim = "Mainの取消は保存Turn、Turn未作成のAuxiliaryの取消は表示中の開始receiptを指定する。Mainの取消click直後はlive受付前からCancelをbusyにし、受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻っても維持する。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-run-cancel; https://github.com/natumekazuki/WithMate/issues/975 — 項目4と受入条件" }
+// fault = "Provider Turn IDや別会話を対象にする、Turn IDの確定を待って開始中のAuxiliaryを取消せない、live取消状態を切替で消去する、取消中の次Turn受付を拒否する、現在Turnへsteerや直接runを送る、または旧取消ACKで後続run表示を巻き戻す"
+// observable = "実SessionWindowAppのexpanded/compact CancelのCanceling tooltipとdisabled/busy、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示、Main/Auxの取消request payload"
 // observation_boundary = "component-behavior"
-// scope = "Main cancellation live projection and composer actions"
+// scope = "Main cancellation live projection and Auxiliary starting cancellation in the real Session Window"
 // lifecycle = "permanent"
 // impact = "取消後のSend拒否や次Turnの状態破損で同じSessionの会話を継続できなくなる"
-// distinction = "Mainのguard単体や型検査ではlive購読の更新抑制・保存snapshotとの優先順位・二つのdockとshortcutの実配線を検査できない。合成IPCとdeferredで待機順序を固定する"
+// distinction = "Mainのguardやhook単体では実Sessionの保存snapshot・live・開始receiptと二つのdockの配線を検査できない。合成IPCとdeferredで待機順序を固定する"
 // @end-test-value
 test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run表示へ反映しない", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -56,11 +58,13 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
   const sessionListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
   let live: LiveSessionRunState | null = {
-    sessionId: session.id, threadId: session.threadId, turnId: "current-turn", inputAvailable: true, assistantText: "partial response",
+    sessionId: session.id, threadId: session.threadId, turnId: "current-native-turn", sessionTurnId: "current-saved-turn", inputAvailable: true, assistantText: "partial response",
     steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
   };
   api.getSession = async () => session;
   api.getLiveSessionRun = async () => live;
+  let startingAuxiliaryReceipt: SessionTurnQueueReceipt | null = null;
+  api.listSessionTurnQueue = async (id) => startingAuxiliaryReceipt?.sessionId === id ? [startingAuxiliaryReceipt] : [];
   api.subscribeLiveSessionRun = (listener) => { liveListeners.add(listener); return () => { liveListeners.delete(listener); }; };
   api.subscribeSessionInvalidation = (listener) => { sessionListeners.add(listener); return () => { sessionListeners.delete(listener); }; };
   api.listSessionFileRoots = async () => [];
@@ -73,7 +77,10 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
   let finishCancel!: () => void;
   const cancelAck = new Promise<void>((resolve) => { finishCancel = resolve; });
   let cancelCalls = 0;
-  api.cancelSessionRun = async () => {
+  const auxiliaryStops: CancelSessionRunRequest[] = [];
+  api.cancelAuxiliarySessionRun = async (request) => { auxiliaryStops.push(request); };
+  api.cancelSessionRun = async (request) => {
+    assert.deepEqual(request, { sessionId: session.id, incarnationId: getSessionIncarnationId(session), execution: { kind: "turn", id: "current-saved-turn" } });
     cancelCalls += 1;
     await cancelAck;
   };
@@ -157,7 +164,7 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     assert.equal(cancelingButtons().length, 0);
     await act(async () => {
       session = { ...session, runState: "running", status: "running" };
-      live = { sessionId: session.id, threadId: session.threadId, turnId: "next-turn", inputAvailable: true, assistantText: "next response",
+      live = { sessionId: session.id, threadId: session.threadId, turnId: "next-turn", sessionTurnId: "next-saved-turn", inputAvailable: true, assistantText: "next response",
         steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
       broadcastLive();
       sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
@@ -167,6 +174,31 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     assert.equal(cancelingButtons().length, 0);
     assert.equal(sendCalls, 0);
     assert.deepEqual(alerts, []);
+    const auxiliary = await api.getAuxiliarySession("benchmark-aux-1");
+    assert.ok(auxiliary);
+    const requestId = "7d7ee350-a11c-43c5-a774-6fa7f2814d7f";
+    startingAuxiliaryReceipt = {
+      id: "aux-starting", requestId, sessionId: auxiliary.id, incarnationId: auxiliary.createdAt,
+      sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      captured: { provider: auxiliary.provider, workspacePath: session.workspacePath, attachments: [],
+        request: { clientRequestId: requestId, userMessage: "Preparing the Auxiliary run", executionOptions: captureSessionExecutionOptions(session) } },
+      createdAt: auxiliary.createdAt, updatedAt: auxiliary.updatedAt,
+    };
+    await act(async () => {
+      live = null;
+      session = { ...session, runState: "idle", status: "idle" };
+      broadcastLive();
+      sessionListeners.forEach((listener) => listener({ scope: "ids", sessionIds: [session.id] }));
+    });
+    await act(async () => { buttons("Auxiliary")[0]!.click(); });
+    const openAuxiliary = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Open Auxiliary"]');
+    assert.ok(openAuxiliary);
+    await act(async () => { openAuxiliary.click(); });
+    const cancelStarting = buttons("Cancel").find((button) => !button.disabled);
+    assert.ok(cancelStarting, "an accepted starting receipt can be canceled before its Turn exists");
+    await act(async () => { cancelStarting.click(); });
+    assert.deepEqual(auxiliaryStops, [{ sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, execution: { kind: "receipt", id: "aux-starting" } }]);
+    assert.equal(cancelCalls, 1, "Auxiliary Cancel never routes to Main");
   } finally {
     finishCancel();
     await act(async () => { root.unmount(); });
