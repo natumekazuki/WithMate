@@ -13,9 +13,11 @@ export type ApprovalReviewDecision = z.infer<typeof approvalReviewDecisionSchema
 export type ApprovalReviewerConversation = {
   /** Only the adapter's structured result channel may satisfy this contract. */
   review(prompt: string): Promise<unknown>;
-  close(): void;
+  /** Idempotent. Completion confirms that the owned reviewer has stopped. */
+  close(): void | Promise<void>;
 };
 
+/** Aborting the conversation signal starts cleanup, including during open. Reject only after it is safe to open a replacement. */
 export type OpenApprovalReviewer = (input: {
   selection: WithMateAutoReviewSettings;
   workspacePath: string;

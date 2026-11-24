@@ -36,7 +36,9 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
       yield message;
     }
   }
-  const stream = runtime.query({ prompt: prompts(), options: {
+  let stream: ReturnType<ClaudeReviewRuntime["query"]> | undefined;
+  let childExited: Promise<void> | undefined;
+  const start = () => runtime.query({ prompt: prompts(), options: {
     cwd: workspacePath, pathToClaudeCodeExecutable: runtime.resolveBinary(),
     env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(binding)),
     model: selection.model,
@@ -51,29 +53,38 @@ export const createClaudeApprovalReviewer = (runtime: ClaudeReviewRuntime): Open
     abortController: controller,
     // Do not copy SDK logs, transcripts, or MCP credentials into provider diagnostics.
     spawnClaudeCodeProcess: (options) => {
+      controller.signal.throwIfAborted();
       const child = runtime.spawn(options.command, options.args, { cwd: options.cwd, env: options.env,
         signal: options.signal, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       child.stderr?.on("error", () => undefined);
       child.stderr?.resume();
+      childExited = new Promise<void>((resolve) => {
+        child.once("close", resolve);
+        // AbortError may precede exit. Only a failed spawn has no child to await.
+        child.once("error", () => { if (child.pid === undefined) resolve(); });
+      });
       return child;
     },
   } });
   const close = () => {
-    if (controller.signal.aborted) return;
-    signal.removeEventListener("abort", close);
-    input.resolve(null);
-    controller.abort();
-    try { stream.close(); }
-    catch { /* The source Turn owns its normal binding lifetime. */ }
+    if (!controller.signal.aborted) {
+      signal.removeEventListener("abort", close);
+      input.resolve(null);
+      controller.abort();
+      try { stream?.close(); }
+      catch { /* The owned child's close event is the stop confirmation. */ }
+    }
+    return childExited;
   };
   signal.addEventListener("abort", close, { once: true });
   try {
+    stream = start();
     const model = (await stream.supportedModels()).find((entry) => entry.value === selection.model);
     controller.signal.throwIfAborted();
     const efforts = model?.supportsEffort ? model.supportedEffortLevels ?? [] : [];
     if (!model || (efforts.length ? !efforts.some((effort) => effort === selection.reasoningEffort)
       : selection.reasoningEffort !== "")) throw new Error("Review model or depth is unavailable.");
-  } catch (error) { close(); throw error; }
+  } catch (error) { await close(); throw error; }
 
   let nativeModel: string | undefined;
   return {

@@ -39,11 +39,12 @@ export type StartWithMateApprovalReview = (input: {
   signal: AbortSignal;
 }) => WithMateApprovalReviewTurn | undefined;
 
-/** One lazy reviewer conversation per source turn; decisions are never cached. */
+/** Reuse a lazy reviewer conversation within the source turn until it is interrupted. */
 export class WithMateApprovalReviewTurn {
   readonly #lifetime = new AbortController();
-  #conversation?: ApprovalReviewerConversation;
-  #busy = false;
+  #conversation?: { controller: AbortController; ready: Promise<ApprovalReviewerConversation> };
+  #closing?: Promise<void>;
+  #active?: AbortSignal;
   readonly #closeOnAbort = () => this.close();
 
   constructor(private readonly options: {
@@ -53,6 +54,7 @@ export class WithMateApprovalReviewTurn {
     workspacePath: string;
     inputs: ApprovalReviewInputFence;
     policyCurrent(): boolean;
+    /** Uses the reviewer conversation's signal, not the source turn's signal. */
     open(signal: AbortSignal): Promise<ApprovalReviewerConversation>;
     timeoutMs?: number;
   }) {
@@ -67,25 +69,37 @@ export class WithMateApprovalReviewTurn {
     return {
       isCurrent,
       decide: async (signal) => {
-        if (!isCurrent() || signal.aborted || this.#busy) return null;
-        this.#busy = true;
-        const timing = new AbortController();
-        const stop = AbortSignal.any([this.#lifetime.signal, timing.signal]);
-        const timer = setTimeout(() => timing.abort(), this.options.timeoutMs ?? 60_000);
+        if (!isCurrent() || signal.aborted || this.#active) return null;
+        const deadline = new AbortController();
+        const stop = AbortSignal.any([this.#lifetime.signal, signal, deadline.signal]);
+        this.#active = stop;
+        const timer = setTimeout(() => {
+          if (this.#active !== stop) return;
+          // A request can time out waiting for a stop without disabling future reviews.
+          if (this.#closing) deadline.abort();
+          else this.close();
+        }, this.options.timeoutMs ?? 60_000);
         let onStop!: () => void;
-        const stopped = new Promise<null>((resolve) => { onStop = () => resolve(null); });
+        const stopped = new Promise<null>((resolve) => {
+          onStop = () => {
+            if (this.#active === stop) {
+              this.#retireConversation();
+              this.#active = undefined;
+            }
+            resolve(null);
+          };
+        });
         stop.addEventListener("abort", onStop, { once: true });
         try {
-          const outcome = await Promise.race([this.#review(request, nativeReview.operation, stop, () => isCurrent() && !signal.aborted), stopped]);
-          if (stop.aborted) this.close();
-          return isCurrent() && !signal.aborted ? outcome : null;
+          const outcome = await Promise.race([this.#review(request, nativeReview.operation, stop, isCurrent), stopped]);
+          return !stop.aborted && isCurrent() ? outcome : null;
         } catch {
-          this.close();
+          if (this.#active === stop) this.close();
           return null;
         } finally {
           clearTimeout(timer);
           stop.removeEventListener("abort", onStop);
-          this.#busy = false;
+          if (this.#active === stop) this.#active = undefined;
         }
       },
     };
@@ -95,8 +109,17 @@ export class WithMateApprovalReviewTurn {
     if (this.#lifetime.signal.aborted) return;
     this.options.signal.removeEventListener("abort", this.#closeOnAbort);
     this.#lifetime.abort();
-    try { this.#conversation?.close(); }
-    catch { /* Keep source approval independent of reviewer cleanup. */ }
+    this.#retireConversation();
+  }
+
+  #retireConversation(): void {
+    const conversation = this.#conversation;
+    if (!conversation) return;
+    this.#conversation = undefined;
+    // A replacement may start only after this conversation (including an in-progress open) is stopped.
+    this.#closing = conversation.ready.then((reviewer) => reviewer.close(), () => undefined);
+    void this.#closing.catch(() => undefined);
+    conversation.controller.abort();
   }
 
   async #review(request: LiveApprovalRequest, operation: unknown, signal: AbortSignal, isCurrent: () => boolean): Promise<LiveApprovalDecision | null> {
@@ -104,17 +127,17 @@ export class WithMateApprovalReviewTurn {
       workspacePath: this.options.workspacePath, pendingOperation: { ...request, operation } });
     // Never review a truncated operation. The original manual approval remains available.
     if (Buffer.byteLength(prompt) > 128 * 1024 || prompt.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)) return null;
+    if (this.#closing) await this.#closing;
+    if (signal.aborted || !isCurrent()) return null;
+    this.#closing = undefined;
     if (!this.#conversation) {
-      const conversation = await this.options.open(this.#lifetime.signal);
-      if (signal.aborted || this.#lifetime.signal.aborted) {
-        conversation.close();
-        return null;
-      }
-      this.#conversation = conversation;
+      const controller = new AbortController();
+      this.#conversation = { controller, ready: Promise.resolve().then(() => this.options.open(controller.signal)) };
     }
-    if (!isCurrent()) return null;
-    const response = approvalReviewDecisionSchema.safeParse(await this.#conversation.review(prompt));
-    if (!response.success || !isCurrent()) return null;
+    const conversation = await this.#conversation.ready;
+    if (signal.aborted || !isCurrent()) return null;
+    const response = approvalReviewDecisionSchema.safeParse(await conversation.review(prompt));
+    if (!response.success || signal.aborted || !isCurrent()) return null;
     return response.data.decision === "allow_once" ? "approve" : response.data.decision === "deny" ? "deny" : null;
   }
 }
