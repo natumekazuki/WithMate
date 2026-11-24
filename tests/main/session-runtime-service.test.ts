@@ -364,6 +364,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     appendRunningInput: deps.appendRunningInput ?? ((session: Session) => deps.upsertSession(session)),
     checkpointRuntimeMetadata: deps.checkpointRuntimeMetadata ?? ((session: Session) => deps.upsertSession(session)),
     appendTerminalSession: deps.appendTerminalSession ?? ((session: Session) => deps.upsertSession(session)),
+    beginSourceDisplayTurn: deps.beginSourceDisplayTurn,
   };
   const owner = { assertActive() {}, isActive: () => true };
   const admission = { runSessionAdmissionExclusive: async <T>(_id: string, operation: () => T | Promise<T>): Promise<T> => operation() };
@@ -1391,6 +1392,48 @@ describe("SessionRuntimeService", () => {
       assert.equal(terminalCalls, 1);
       assert.equal(notifications, 0);
       assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Main/Auxの実行は終端保存中に当該Turnの送信位置検証用scopeを保持し、保存成否に関わらずreleaseする"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/974#受入条件検証" }
+  // fault = "scopeの解放を保存成功側へ置くか、Main/Auxの片方でscopeを接続しない"
+  // observable = "終端保存時のscopeのSession・incarnation・Turn、run終了後のscope解放回数"
+  // observation_boundary = "component-behavior"
+  // scope = "Main and Auxiliary runtime assembly / source-display scope lifetime"
+  // lifecycle = "permanent"
+  // impact = "照合前の本文破棄、または終了済みTurnの本文の長期残留を防ぐ"
+  // distinction = "既存の終端保存失敗testは送信位置用scopeやMain/Auxのassemblyを通らない"
+  // @end-test-value
+  it("Main/Auxの送信位置用scopeを終端保存の成否に関わらず解放する", async () => {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+      for (const fail of [false, true]) {
+        const lost = new Error("Terminal persistence response lost");
+        let active: readonly [string, string, string] | undefined;
+        let persistedOwner: readonly [string, string, string] | undefined;
+        let released = 0;
+        const service = createProgressRuntime(session, async () => createPartialResult({ assistantText: "final text" }), {
+          beginSourceDisplayTurn(source, turnId) {
+            active = [source.id, getSessionIncarnationId(source), turnId];
+            return () => { active = undefined; released++; };
+          },
+          async appendTerminalSession(next) {
+            await Promise.resolve();
+            persistedOwner = active;
+            if (fail) throw lost;
+            return next;
+          },
+        }, (deps) => assembleBackgroundEventRuntime(kind, deps, createSession({ id: `${kind}-parent` })));
+        const run = service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS });
+        if (fail) await assert.rejects(run, (error) => error === lost);
+        else await run;
+        assert.deepEqual(persistedOwner, [session.id, getSessionIncarnationId(session), "1"]);
+        assert.equal(active, undefined);
+        assert.equal(released, 1);
+      }
+    }
   });
 
   // @test-value v2
