@@ -15,8 +15,8 @@ type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
   | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context, inline = false, positionUnknown = false, replyJumpHighlighted = false, ...messageContext }: {
-  item: SentInstruction; context: TurnInputReadContext; inline?: boolean; positionUnknown?: boolean; replyJumpHighlighted?: boolean;
+export function SentDeliveryRow({ item, context, inline = false, replyJumpHighlighted = false, ...messageContext }: {
+  item: SentInstruction; context: TurnInputReadContext; inline?: boolean; replyJumpHighlighted?: boolean;
 } & SentMessageContext) {
   const receipt = "receiptId" in item ? item : null;
   const steer = "messageSeq" in item ? item : null;
@@ -65,7 +65,6 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
         {inline ? detailsButton : null}
       </div>
       {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} navigable /> : null}
-      {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
       {coordination
         ? <CoordinationNotice id={coordination.id} consultation={coordination.consultation ?? coordination.text} target={item.target} />
         : <MessageRichText {...messageContext} text={item.text} />}

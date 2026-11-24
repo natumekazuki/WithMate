@@ -4,7 +4,7 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import { ComposerControllerRegistry, type ComposerOwner } from "../composer-controller.js";
 
 type EditPhase = "beginning" | "editing" | "saving" | "canceling" | "unavailable";
-export type QueuedTurnEdit = { receipt: SessionTurnQueueReceipt; phase: EditPhase; error: string };
+export type QueuedTurnEdit = { receipt: SessionTurnQueueReceipt; phase: EditPhase; error: string; mainFrameId?: string };
 export const queuedTurnEditOwner = (sessionId: string): ComposerOwner => ({ kind: "queue-edit", id: sessionId });
 export const isQueuedTurnEditBusy = (edit: QueuedTurnEdit) => edit.phase === "beginning" || edit.phase === "saving" || edit.phase === "canceling";
 
@@ -25,19 +25,19 @@ export function useQueuedTurnEdit(api: WithMateWindowApi | null, registry: Compo
     current.current = next;
     setEdits(next);
   }, []);
-  const begin = useCallback(async (receipt: SessionTurnQueueReceipt) => {
+  const begin = useCallback(async (receipt: SessionTurnQueueReceipt, mainFrameId?: string) => {
     if (!api || registry.isFrozen || current.current[receipt.sessionId]) return;
     const owner = queuedTurnEditOwner(receipt.sessionId);
     registry.replaceDraft(owner, receipt.captured.request.userMessage, { start: receipt.captured.request.userMessage.length, end: receipt.captured.request.userMessage.length });
-    const pending: QueuedTurnEdit = { receipt, phase: "beginning", error: "" };
+    const pending: QueuedTurnEdit = { receipt, phase: "beginning", error: "", mainFrameId };
     put(receipt.sessionId, pending);
     try {
       const accepted = await api.beginQueuedSessionTurnEdit(receipt.sessionId, { incarnationId: receipt.incarnationId, id: receipt.id });
       if (current.current[receipt.sessionId] !== pending) return;
       registry.replaceDraft(owner, accepted.captured.request.userMessage, { start: accepted.captured.request.userMessage.length, end: accepted.captured.request.userMessage.length });
-      put(receipt.sessionId, { receipt: accepted, phase: "editing", error: "" });
+      put(receipt.sessionId, { ...pending, receipt: accepted, phase: "editing" });
     } catch (error) {
-      if (current.current[receipt.sessionId] === pending) put(receipt.sessionId, { receipt, phase: "unavailable", error: `Editing could not be started. Cancel Edit to return to your draft. ${error instanceof Error ? error.message : String(error)}` });
+      if (current.current[receipt.sessionId] === pending) put(receipt.sessionId, { ...pending, phase: "unavailable", error: `Editing could not be started. Cancel Edit to return to your draft. ${error instanceof Error ? error.message : String(error)}` });
     }
   }, [api, registry, put]);
   const finish = useCallback(async (sessionId: string, submit: boolean) => {

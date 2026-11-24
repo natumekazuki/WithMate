@@ -11,6 +11,20 @@ export type SessionTurnQueueDispatchResult = {
   reason?: string;
 };
 
+type ApplyStop = () => void;
+type CancelDispatchedRun = (onApply?: ApplyStop) => boolean;
+export type SessionTurnQueueDispatchControl = {
+  /** Bind the exact runtime run, or return false if its claim was already canceled. */
+  bindCancel(cancel: CancelDispatchedRun): boolean;
+};
+type NormalTurnClaim = {
+  receipt: SessionTurnQueueReceipt;
+  canceled: boolean;
+  cancel?: CancelDispatchedRun;
+  released: Promise<void>;
+  release(): void;
+};
+
 export type SessionTurnQueueServiceDeps = {
   store: SessionTurnQueueStore;
   isRunInFlight(sessionId: string): boolean | Promise<boolean>;
@@ -20,6 +34,7 @@ export type SessionTurnQueueServiceDeps = {
   dispatch(
     receipt: SessionTurnQueueReceipt,
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
+    control: SessionTurnQueueDispatchControl,
   ): Promise<SessionTurnQueueDispatchResult>;
   onChanged?(owner: SessionTurnQueueOwner, origin?: SessionTurnQueueOrigin): void;
 };
@@ -30,7 +45,7 @@ export class QueuedInputRuntimeRecoveryError extends Error {}
 export class SessionTurnQueueService {
   private readonly owners = new Map<string, SessionTurnQueueOwner>();
   private readonly locks = new Map<string, Promise<void>>();
-  private readonly dispatching = new Set<string>();
+  private readonly dispatching = new Map<string, NormalTurnClaim>();
   private readonly pending = new Set<Promise<unknown>>();
   private readonly blocked = new Set<string>();
   private readonly lastClaim = new Map<string, SessionTurnQueueReceipt>();
@@ -127,6 +142,17 @@ export class SessionTurnQueueService {
       }
       return receipt;
     }));
+  }
+
+  async stopClaim(owner: SessionTurnQueueOwner, receiptId: string, onApply?: ApplyStop): Promise<void> {
+    const claim = this.dispatching.get(owner.sessionId);
+    if (!claim || !this.isCurrentOwner(owner) || claim.receipt.incarnationId !== owner.incarnationId || claim.receipt.id !== receiptId) return;
+    if (claim.cancel) {
+      claim.cancel(onApply);
+      return;
+    }
+    claim.canceled = true;
+    await claim.released;
   }
 
   beginQueuedEdit(owner: SessionTurnQueueOwner, id: string, validateOwner: () => Promise<void>): Promise<SessionTurnQueueReceipt> {
@@ -377,33 +403,44 @@ export class SessionTurnQueueService {
   }
 
   private reserveDispatch(receipt: SessionTurnQueueReceipt): void {
-    this.dispatching.add(receipt.sessionId);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    this.dispatching.set(receipt.sessionId, { receipt, canceled: false, released, release });
     this.lastClaim.set(receipt.sessionId, receipt);
   }
 
   private dispatchClaim(receipt: SessionTurnQueueReceipt): void {
     const { sessionId } = receipt;
+    const claim = this.dispatching.get(sessionId)!;
     // Reservation is recorded under the lock; dispatch only runs after it.
     // A confirmed claim stays tracked through settlement even during shutdown.
-    void this.track(this.executeClaim(receipt).catch(() => {
+    void this.track(this.executeClaim(claim).catch(() => {
       if (this.isCurrentOwner(receipt)) this.blocked.add(sessionId);
     }).finally(() => {
       this.dispatching.delete(sessionId);
+      claim.release();
       // The next attempt still checks the actual runtime/cleanup guards.
       this.wake(sessionId);
     }));
   }
 
-  private async executeClaim(receipt: SessionTurnQueueReceipt): Promise<void> {
+  private async executeClaim(claim: NormalTurnClaim): Promise<void> {
+    const { receipt } = claim;
     const { sessionId } = receipt;
     if (!this.isCurrentOwner(receipt)) return;
     let result: SessionTurnQueueDispatchResult;
     try {
-      result = await this.deps.dispatch(receipt, async (input) => {
+      result = claim.canceled ? { state: "canceled", reason: "Session setup was canceled" } : await this.deps.dispatch(receipt, async (input) => {
         if (!this.isCurrentOwner(receipt)) throw new Error("The queue owner changed before turn start.");
         await this.deps.store.markStarted(receipt, receipt.id, input);
         if (!this.isCurrentOwner(receipt)) throw new Error("The queue owner changed during turn start.");
         this.notify(receipt);
+      }, {
+        bindCancel(cancel) {
+          if (claim.canceled) return false;
+          claim.cancel = cancel;
+          return true;
+        },
       });
     } catch (error) {
       if (!this.isCurrentOwner(receipt)) return;

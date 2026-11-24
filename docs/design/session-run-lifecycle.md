@@ -191,7 +191,8 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 
 ### Session Run Cancel
 
-- `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
+- `Session Window` の `Cancel` は、押した時点の対象会話・incarnationと、表示していた WithMate Turn ID または開始claimのreceipt IDを指定する。Main／Auxiliaryの所有Windowを確認し、停止直前まで同じ実行を照合する。終了・交代済みの対象は、後続の実行・質問・承認・承認レビューに作用しない
+- 開始claimの取消は、runtimeへ渡る前ならそのclaimを開始せず、引き渡し後なら同じreceiptの `AbortController` だけを止める。開始保存が確定した場合はそのTurnの取消を保存し、保存結果が不明な場合は取消確定として扱わない
 - キャンセル後の session は `runState = idle` に戻る
 - admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、turn 呼出しは収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、重複 Cancel と現在Turnへの追加入力を無効化する。Sendによる次Turnの永続予約は受け付けるが、実guard解放まで開始しない

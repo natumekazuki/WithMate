@@ -459,10 +459,6 @@ export class MainSessionCommandFacade {
     return result;
   }
 
-  cancelSessionRun(sessionId: string): void {
-    this.deps.getSessionRuntimeService().cancelRun(sessionId);
-  }
-
   async steerSessionTurn(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult> {
     const session = this.deps.getSession(sessionId);
     if (!session) throw new Error("The Session could not be found.");

@@ -10,6 +10,7 @@ import type {
 } from "../../src-shared/window/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type {
+  CancelSessionRunRequest,
   LiveApprovalDecision,
   LiveElicitationResponse,
   LiveSessionRunState,
@@ -372,7 +373,7 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
       auxiliarySessionId: string,
       request: RunSessionTurnRequest,
     ): Awaitable<AuxiliarySession>;
-    cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
+    cancelAuxiliarySessionRun?(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
     steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   };
 
@@ -416,7 +417,7 @@ export type MainIpcAuxiliaryDepsRequired = {
     auxiliarySessionId: string,
     request: RunSessionTurnRequest,
   ) => Awaitable<AuxiliarySession>;
-  cancelAuxiliarySessionRun: (auxiliarySessionId: string) => Awaitable<void>;
+  cancelAuxiliarySessionRun: (request: CancelSessionRunRequest, assertAuthorized: () => void) => Awaitable<void>;
 };
 
 export type ConversationQueryOwner = {
@@ -591,7 +592,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       sessionId: string,
       request: RunSessionTurnRequest,
     ): Promise<Session>;
-    cancelSessionRun(sessionId: string): void;
+    cancelSessionRun(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
     queue?: Pick<import("../../src-shared/ipc/withmate-window-api.js").WithMateWindowSessionApi,
       "enqueueSessionTurn" | "getSessionTurnQueueReceipt" | "listSessionTurnQueue" | "reorderQueuedSessionTurns" |
       "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" |

@@ -12,6 +12,7 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
 import { QueuedInputPreDispatchError, SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
 import { sessionSummaryToSession } from "../../src-electron/session/session-summary-adapter.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import type { ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
@@ -21,10 +22,11 @@ import type { CoordinationActor, CoordinationIdentity, CoordinationResult } from
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 
 const gui = { kind: "user" as const };
 function savedRecord(result: CoordinationResult) { assert.ok("record" in result); return result.record; }
-const mainIdentity = (session: Session): CoordinationIdentity => ({ kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
+const mainIdentity = (session: Session) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
 function latch() {
   let release!: () => void;
   const wait = new Promise<void>((resolve) => { release = resolve; });
@@ -35,9 +37,9 @@ async function openFixture() {
   const filename = join(directory, "withmate-v6.db");
   const sessions = new SessionStorageV6(filename), queue = new SessionTurnQueueStorageV6(filename), coordination = new CoordinationStorageV7(filename);
   const db = new DatabaseSync(filename);
-  const newSession = (id: string) => sessions.insertSession(buildNewSession({ id, taskTitle: id, workspaceLabel: "test", workspacePath: directory,
+  const newSession = (id: string, relationship?: Pick<Session, "sessionRole" | "rootSessionId" | "parentSessionId" | "createdBySessionId">) => sessions.insertSession({ ...buildNewSession({ id, taskTitle: id, workspaceLabel: "test", workspacePath: directory,
     branch: "test", model: "fixture-model", reasoningEffort: "medium", approvalMode: "on-request", characterId: "unknown", character: "Unknown",
-    characterIconPath: "", characterThemeColors: { main: "#456789", sub: "#789abc" } }));
+    characterIconPath: "", characterThemeColors: { main: "#456789", sub: "#789abc" } }), ...relationship });
   const input = (session: Session, clientRequestId: string = randomUUID(), body = "Start task"): SessionTurnQueueCapturedInput => ({
     request: { clientRequestId, userMessage: body, executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath,
   });
@@ -192,28 +194,34 @@ test("Main and Auxiliary acquire an answer only with committed input", async () 
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存後の自動Steerは実Codex Turnへ来歴と原文を一回だけ渡し、通常queued原文と空白拒否を保ち、ACK喪失/結果不明を正本へ収束する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#coordinationの関連turn配送; docs/design/electron-session-store.md: Turn Queue" }
-// fault = "Provider呼出前に保存しない、queued原文をtrimして保存失敗する、またはACK不明で自動再送する"
-// observable = "adapter呼出回数/原文/native ID、保存messageとreceipt/取得状態、retry後とterminal後の入力"
+// claim = "GUI回答は起票枠を受付・同Turnの追加入力／終端後の通常配送・Provider文脈・再読込まで維持し、自動Steerの原文と配送結果も正本と一致する"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠; docs/design/session-run-lifecycle.md#coordinationの関連turn配送" }
+// fault = "回答を初期枠や別Turnの会話文脈に移す、旧回答の所属を復元しない、原文をtrimする、またはACK不明で自動再送する"
+// observable = "待機receiptの枠、adapterの会話文脈/原文/native ID/回数、再読込した相手枠と初期/全体のseq、受領/終端状態"
 // observation_boundary = "public-boundary"
 // scope = "実Coordination application・queue service・runtime・SQLite保存とProvider mockの結合"
 // lifecycle = "permanent"
 // impact = "受理済み判断の遅延・喪失と二重実行を防ぐ"
 // distinction = "fake dispatch単体では実runtimeのnative/WithMate照合とProvider受理後の保存/ACK喪失を結合できない"
 // @end-test-value
-test("Automatic Coordination input preserves accepted text through live runtime", async () => {
+test("GUI Coordination replies retain original thread and accepted text through live runtime", async () => {
   for (const outcome of ["confirmed", "append-ack-lost", "unknown"] as const) {
     const f = await openFixture(), entered = latch(), finish = latch();
     let execution: Promise<unknown> | undefined, service: SessionTurnQueueService | undefined;
     try {
-      const session = f.newSession("runtime"), owner = mainIdentity(session);
+      const session = f.newSession("runtime", { sessionRole: "overall-coordinator", rootSessionId: "runtime" }), owner = mainIdentity(session);
+      const peer = mainIdentity(f.newSession("peer", { sessionRole: "executor", rootSessionId: session.id,
+        parentSessionId: session.id, createdBySessionId: session.id }));
       const metadata = (id: string) => { const value = f.sessions.getSessionMetadata(id); return value ? { ...sessionSummaryToSession(value.summary), messageCount: value.messageCount } : null; };
       let live: LiveSessionRunState | null = null, consultationId = "";
       const sent: string[] = [];
+      const started: string[] = [];
+      const promptFrame = (text: string) => JSON.parse(text.match(/^thread: (.+)$/m)?.[1] ?? "null");
+      let allowNormal = false;
       const adapter: ProviderCodingAdapter = { composePrompt: composeProviderPrompt, getProviderQuotaTelemetry: async () => null,
         invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
         runSessionTurn: async (input, progress) => {
+          started.push(composeProviderPrompt(input).inputBodyText);
           await progress?.({ sessionId: input.session.id, threadId: "thread", turnId: "native-runtime", inputAvailable: true, assistantText: "", reasoningText: "",
             steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null },
           { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
@@ -252,23 +260,32 @@ test("Automatic Coordination input preserves accepted text through live runtime"
         setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {}, invalidateProviderSessionThread() {}, broadcastLiveSessionRun() {} });
       service = new SessionTurnQueueService({ store: f.port, isRunInFlight: () => runtime.isRunInFlight(session.id),
         getCoordinationInputTurnId: (receipt) => runtime.getCoordinationInputTurnId(receipt), sendInput: (receipt, native) => runtime.steerQueuedSessionTurn(receipt, native),
-        dispatch: async () => { throw new Error("Expected same-Turn input"); } });
+        dispatch: (receipt, onStarted) => {
+          assert.ok(allowNormal, "Expected same-Turn input while the origin is running");
+          return runtime.runQueuedSessionTurn(receipt, onStarted);
+        } });
       const store = { deliveryTarget: async (input: Parameters<typeof f.coordination.deliveryTarget>[0]) => f.coordination.deliveryTarget(input),
         execute: async (input: Parameters<typeof f.coordination.execute>[0]) => f.coordination.execute(input) };
       const app = new CoordinationApplicationService({ getStore: () => store, prepareDelivery: async (_, id) => f.input(session, id), onAccepted: (receipt) => service!.acceptCommittedReceipt(receipt) });
-      const first = f.queue.enqueue(owner, f.input(session));
+      const firstInput = f.input(session);
+      firstInput.request = { ...firstInput.request, submitSource: "composer", mainConversationFrame: peer };
+      firstInput.origin = { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId };
+      const first = f.queue.enqueue(owner, firstInput);
       execution = runtime.runQueuedSessionTurn(f.queue.claimNext(owner)!, async (value) => { f.queue.markStarted(owner, first.id, value); });
       await entered.wait;
       consultationId = savedRecord(await app.executeAgent({ ...owner, turnId: live!.sessionTurnId! },
         { operation: "create", operationId: randomUUID(), kind: "blocker", body: "Question", choices: [], respondent: gui, deliver: false })).id;
+      const later = outcome === "confirmed" ? f.ask({ ...owner, turnId: live!.sessionTurnId! }) : null;
       const body = "  Proceed @literal\n";
       const request = { operation: "answer" as const, operationId: randomUUID(), id: consultationId, body, selectedChoices: [], expectedAnswerRevision: 0, send: true };
       const response = await app.executeUser(request, () => true);
       assert.ok("receipt" in response && response.receipt);
+      assert.deepEqual(response.receipt.captured.request.mainConversationFrame, peer);
       await service.waitForPending();
       assert.equal(sent.length, 1);
       assert.equal(sent[0]!.split("# User Input\n\n")[1], body);
       assert.match(sent[0]!, /Coordination operation: "answer"/);
+      assert.deepEqual(promptFrame(sent[0]!), peer);
       const delivered = f.queue.getReceiptById(owner, response.receipt.id)!;
       assert.equal(delivered.turnId, live!.sessionTurnId);
       assert.equal(delivered.state, outcome === "unknown" ? "interrupted" : "completed");
@@ -289,6 +306,40 @@ test("Automatic Coordination input preserves accepted text through live runtime"
       }
       finish.release(); await execution;
       assert.deepEqual(f.sessions.getSession(session.id)?.messages.map((message) => message.text), outcome === "unknown" ? ["Start task", "Completed"] : ["Start task", body, ordinary, "Completed"]);
+      if (later) {
+        allowNormal = true;
+        const unrelated = f.input(session, randomUUID(), "Intervening initial-frame Turn");
+        unrelated.request = { ...unrelated.request, submitSource: "composer", mainConversationFrame: null };
+        unrelated.origin = firstInput.origin;
+        await service.enqueue(owner, unrelated);
+        await service.waitForPending();
+        assert.equal(promptFrame(started[1]!), null);
+        const reply = f.answer(later.id, owner, session).receipt;
+        assert.deepEqual(reply.captured.request.mainConversationFrame, peer);
+        // A preview.4 receipt had the same immutable Coordination link but no frame.
+        f.db.prepare(`UPDATE session_turn_queue_v6 SET captured_json=json_remove(captured_json,'$.request.mainConversationFrame'),
+          accepted_json=json_remove(accepted_json,'$.request.mainConversationFrame') WHERE id=?`).run(reply.id);
+        const parked = f.queue.listActive(owner).find(({ id }) => id === reply.id);
+        assert.deepEqual(parked?.captured.request.mainConversationFrame, peer);
+        assert.equal(f.queue.getReceiptById(owner, reply.id)?.accepted?.request.mainConversationFrame, undefined);
+        service.acceptCommittedReceipt(reply);
+        await service.waitForPending();
+        const after = f.queue.getReceiptById(owner, reply.id);
+        assert.equal(after?.state, "completed");
+        assert.deepEqual(promptFrame(started[2]!), peer);
+        assert.ok(after.turnId);
+        assert.notEqual(after.turnId, delivered.turnId);
+
+        const read = new SessionExecutionReadStorage(f.filename);
+        try {
+          const list = (thread?: typeof peer | null) => (executionOperationResultSchemas.list_messages.parse(read.execute({
+            target: owner, operation: "list_messages", request: { target: owner, thread },
+          })).items as { seq: number }[]).map(({ seq }) => seq);
+          assert.deepEqual(list(peer), [0, 1, 3, 6, 7]);
+          assert.deepEqual(list(null), [2, 4, 5]);
+          assert.deepEqual(list(), [0, 1, 2, 3, 4, 5, 6, 7]);
+        } finally { read.close(); }
+      }
     } finally { finish.release(); await execution; await service?.close(); await f.dispose(); }
   }
 });

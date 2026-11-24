@@ -1,4 +1,4 @@
-import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
+import type { CancelSessionRunRequest, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { SessionTurnRecord } from "../session/session-turn-state.js";
 import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../session/session-folder-cleanup.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
@@ -273,7 +273,7 @@ export type WithMateWindowSessionApi = {
   reorderQueuedSessionTurns(sessionId: string, request: import("../session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReorderResult>;
   releaseInterruptedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
-  cancelSessionRun(sessionId: string): Promise<void>;
+  cancelSessionRun(request: CancelSessionRunRequest): Promise<void>;
   getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
   getUnreadSessionResult(sessionId: string): Promise<import("../session/session-turn-state.js").UnreadSessionResult | null>;
   markSessionResultRead(sessionId: string, turnId: number): Promise<boolean>;
@@ -300,7 +300,7 @@ export type WithMateWindowAuxiliaryApi = {
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
   steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
-  cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
+  cancelAuxiliarySessionRun(request: CancelSessionRunRequest): Promise<void>;
 };
 
 export type WithMateWindowObservabilityApi = {

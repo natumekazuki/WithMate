@@ -27,13 +27,10 @@ import {
 } from "../../src/chat/auxiliary-runtime-option-routing.js";
 import {
   buildAuxiliaryAwareSendOrCancelHandler,
-  buildAuxiliarySessionCancelTarget,
-  buildRunningSessionCancelTarget,
+  buildSessionStopTarget,
   resolveAuxiliaryAwareSendOrCancelAction,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
-  resolveRunningSessionCancelTargetId,
-  runRunningSessionCancelOperation,
 } from "../../src/chat/send-or-cancel.js";
 import { ChatWindow, type ChatWindowProps } from "../../src/chat/chat-window.js";
 import { buildLiveSessionWindowShellProps } from "../../src/chat/live-session-window-props.js";
@@ -145,122 +142,29 @@ test("resolveAuxiliaryAwareSendOrCancelAction は auxiliary も running selected
   );
 });
 
-test("resolveRunningSessionCancelTargetId は running session の id だけ返す", () => {
-  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: "running" }), "session-1");
-  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: "idle" }), null);
-  assert.equal(resolveRunningSessionCancelTargetId({ id: "session-1", runState: undefined }), null);
-  assert.equal(resolveRunningSessionCancelTargetId(null), null);
-});
-
-test("resolveRunningSessionCancelTargetId は UI 側 running 判定を優先できる", () => {
-  assert.equal(
-    resolveRunningSessionCancelTargetId({ id: "session-1", runState: "idle", isRunning: true }),
-    "session-1",
-  );
-});
-
-test("buildRunningSessionCancelTarget は runState running の cancel 対象を作る", () => {
-  const target = buildRunningSessionCancelTarget({
-    sessionId: "session-1",
-    runState: "running",
-    isRunning: false,
+// @test-value v2
+// kind = "contract"
+// claim = "表示中のowner世代と一致する保存Turnまたは正確な開始receiptだけをGUI Cancelの対象にする"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975 — 項目4" }
+// fault = "別世代のlive／receiptを採用するか、Turn IDがない場合にSessionだけでStopを組み立てる"
+// observable = "表示済みownerと実行から作成したStop対象値または対象なし"
+// observation_boundary = "implementation"
+// scope = "Main/Aux共通の表示済み実行からStop対象を選ぶprojection"
+// lifecycle = "permanent"
+// distinction = "IPC側の拒否に加え、rendererが読取中・切替中に対象を推定しない契約を検証する"
+// @end-test-value
+test("GUI Cancel uses the saved Turn or claim only from the selected incarnation", () => {
+  const owner = { sessionId: "session", incarnationId: "generation" };
+  const claim = { ...owner, receiptId: "starting" };
+  const stale = { incarnationId: "old", turnId: "old-turn" };
+  assert.equal(buildSessionStopTarget(owner, stale, { ...claim, incarnationId: "old" }), null);
+  assert.equal(buildSessionStopTarget(owner, {}), null);
+  assert.deepEqual(buildSessionStopTarget(owner, stale, claim), {
+    request: { ...owner, execution: { kind: "receipt", id: "starting" } }, receiptId: "starting",
   });
-
-  assert.equal(resolveRunningSessionCancelTargetId(target), "session-1");
-});
-
-test("buildRunningSessionCancelTarget は session 未選択なら cancel 対象を作らない", () => {
-  assert.equal(
-    buildRunningSessionCancelTarget({
-      sessionId: null,
-      runState: "running",
-      isRunning: true,
-    }),
-    null,
-  );
-});
-
-test("buildAuxiliarySessionCancelTarget は active Auxiliary session から cancel 対象を作る", () => {
-  const target = buildAuxiliarySessionCancelTarget({
-    session: { id: "auxiliary-session-1", runState: "running" },
+  assert.deepEqual(buildSessionStopTarget(owner, { ...owner, turnId: "turn", receiptId: "starting" }, claim), {
+    request: { ...owner, execution: { kind: "turn", id: "turn" } }, receiptId: "starting",
   });
-
-  assert.equal(resolveRunningSessionCancelTargetId(target), "auxiliary-session-1");
-});
-
-test("buildAuxiliarySessionCancelTarget は idle や未選択の Auxiliary session では cancel 対象を作らない", () => {
-  assert.equal(
-    resolveRunningSessionCancelTargetId(
-      buildAuxiliarySessionCancelTarget({
-        session: { id: "auxiliary-session-1", runState: "idle" },
-      }),
-    ),
-    null,
-  );
-  assert.equal(buildAuxiliarySessionCancelTarget({ session: null }), null);
-});
-
-test("runRunningSessionCancelOperation は running target の cancel callback を呼ぶ", async () => {
-  const calls: string[] = [];
-  const didCancel = await runRunningSessionCancelOperation({
-    target: buildRunningSessionCancelTarget({
-      sessionId: "session-1",
-      runState: "idle",
-      isRunning: true,
-    }),
-    cancelRun: (sessionId) => {
-      calls.push(sessionId);
-    },
-  });
-
-  assert.equal(didCancel, true);
-  assert.deepEqual(calls, ["session-1"]);
-});
-
-test("runRunningSessionCancelOperation は runState running の target も cancel する", async () => {
-  const calls: string[] = [];
-  const didCancel = await runRunningSessionCancelOperation({
-    target: {
-      id: "auxiliary-session-1",
-      runState: "running",
-    },
-    cancelRun: (sessionId) => {
-      calls.push(sessionId);
-    },
-  });
-
-  assert.equal(didCancel, true);
-  assert.deepEqual(calls, ["auxiliary-session-1"]);
-});
-
-test("runRunningSessionCancelOperation は target や cancel callback がなければ no-op", async () => {
-  const calls: string[] = [];
-
-  assert.equal(
-    await runRunningSessionCancelOperation({
-      target: buildRunningSessionCancelTarget({
-        sessionId: "session-1",
-        runState: "idle",
-        isRunning: false,
-      }),
-      cancelRun: (sessionId) => {
-        calls.push(sessionId);
-      },
-    }),
-    false,
-  );
-  assert.equal(
-    await runRunningSessionCancelOperation({
-      target: buildRunningSessionCancelTarget({
-        sessionId: "session-1",
-        runState: "running",
-        isRunning: true,
-      }),
-      cancelRun: null,
-    }),
-    false,
-  );
-  assert.deepEqual(calls, []);
 });
 
 test("resolveSelectedSessionRunState は session runState を live run より優先する", () => {

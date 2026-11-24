@@ -67,6 +67,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 非同期質問の`Submit`は`【質問】`、質問原文、`【回答】`、回答をそれぞれ改行で区切って現在turnへ通常追加入力として送る。複数質問は質問・回答の組を空行で連結する。UI事情の説明は加えない。追加入力の記録は維持し、対応する質問内に回答を表示できる場合は回答だけのuser messageを重複表示しない。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの構造化応答とする。
 - 同じturnの複数質問は個別formとし、他の質問の受信、通常チャット割り込み、履歴スクロールで未送信回答を消さない。過去pageへ移動した間は質問を別の位置へ移さず、元のpageへ戻った時にdraftを復元する。
 - 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
+- Codex MCP formは送信値を書き換えずに同じ書式・制約を送信前と受付時に検証する。不正な値では元のrequestを終了せず、同じformで訂正できる。終了したrequestへの遅延応答は新しいrequestの操作状態を解消せず、質問への回答は次turnの予約を消費・変更しない。
 - 添付の選択・保存中は対象入力と`Submit`を無効化する。単一選択では同じfieldの通常・自由回答radioも無効化し、添付完了による回答選択の上書きを防ぐ。他fieldと`Close`は維持し、成功・失敗後に対象fieldの再選択を許可する。添付失敗時は入力を保持してerrorを表示し、要求の終了・切替後に完了した選択・保存結果を別のSession・質問・fieldへ挿入しない。
 - 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。通常質問で送信した選択肢を強調し、自由回答を質問に続けて表示する。色だけに依存せず選択を識別できるようにする。通常チャットで回答したかどうかは判定しない。
 - 通常質問の操作は`Close / Submit`とし、×と通常送信と共通の紙飛行機iconを使う。操作名はtooltipとaccessible nameへ残し、busy中もbuttonの寸法を維持する。Closeは質問だけを終了する。Codex nativeでは空の`answers`、Copilotでは空の`answer`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`の可視labelを維持する。
@@ -499,8 +500,11 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - 応答内のdot bubbleは受付済みのTurnの応答待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断する
+- 次に実行できる予約は、閲覧枠を絞る前のSession全体の実行状態とキュー順で判定する。別枠に実行や先行予約があれば、後続予約には応答待機を表示しない
+- 送信カードの挿入位置が未確定なら、送信元Turnの応答末尾に置く。宛先枠の参照カードは、その枠の待機入力や別Turnの応答に付けない
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
 - 実run終了後も確定応答の取得待ちなら同じ応答面と取得済み本文を保つ。予約を受付順と逆に実行しても、応答境界は保存済みuserの履歴位置と実際の投影順から求め、未保存部分は保存済み実行順に従う。受付番号を応答境界に使わず、後続の本文・質問・承認を旧応答へ接続しない。確定本文への接続または明示失敗で待機表示を終え、success固定の完了表現にはしない
+- 全体tailに保存本文が現れても、表示している相手枠へその本文が届くまでは表示済み応答を保つ。本文が届いたら同じ行に引き渡し、Replyは行の表示keyではなく届いた正本seqを参照する
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
 - screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない
@@ -598,6 +602,8 @@ Main／Auxiliaryの未開始の予約は、失敗Turnの再実行も通常予約
 編集中だけ既存Sendの紙飛行機をチェックiconへ替え、tooltipとaccessible nameを`Submit`にする。その左に×のicon buttonを置き、`Cancel Edit`とする。追加の状態label、bubbleの強調枠、専用pane、復帰用buttonは設けない。上段の実行中TurnのCancelは別操作として維持する。予約時の実行設定は変更せず既存controlで参照し、本文・添付を更新する。
 
 通常送信shortcutも編集中は更新を行い、直接Steer shortcutは予約編集に使わない。折りたたみ、Terminal、Main／Auxiliaryの切替では編集入力と保留を保持し、既存のPrompt・展開・対象切替から戻る。保存成功またはCancel Editで通常下書きとSendへ戻し、送信設定による自動折りたたみは行わない。保存待機中は入力と編集操作を固定し、失敗では入力を保持して理由と再操作手段を示す。
+
+MainではEditを開始した閲覧枠（ALLを含む）でだけ編集入力とSubmit／Cancel Editを表示する。別枠ではその枠の通常下書きに戻り、そこでのSendは既存の待機順に新しい予約を追加し、元の編集や保留を解除しない。起点の相手枠が取得済み一覧から消えた場合に限り、ALLから編集を再開できる。未取得・読込中・取得エラーを枠の消失とは扱わない。
 
 ### Main Conversation Switcher
 

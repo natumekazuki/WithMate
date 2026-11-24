@@ -10,7 +10,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, projectRetryInputAuthor, retryReceiptInputUnchanged, type TurnInputReadContext } from "./turn-input-details.js";
 import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
@@ -88,14 +88,17 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
 export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext; inputReadContext?: TurnInputReadContext }) {
   const message = { role: "user" as const, text: props.receipt.captured.request.userMessage };
   const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
-  const isSessionOrigin = read.origin?.kind === "session";
+  const retry = (props.receipt.dispatched ?? props.receipt.captured).retrySource;
+  const { origin, retryLabel } = projectRetryInputAuthor(read.origin, retry, !!retry && retryReceiptInputUnchanged(props.receipt));
+  const isSessionOrigin = origin?.kind === "session";
+  const theme = isSessionOrigin && origin === read.origin ? read.senderTheme : null;
   const role = isSessionOrigin ? "session-origin" : "user";
-  const retryLabel = retrySourceLabel(props.receipt.captured.retrySource?.origin);
   return <><article className={`message-row ${role}`} data-message-source="turn-queue" aria-label={retryLabel} title={retryLabel}>
-    {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-    <div className={`message-card ${role}${isSessionOrigin && read.senderTheme ? " has-sender-theme" : ""}`}
-      style={isSessionOrigin && read.senderTheme ? { "--sender-main": read.senderTheme.main } as CSSProperties : undefined}><div className="message-card-content">
-      {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
+    {isSessionOrigin ? <TurnInputOriginAvatar read={read} origin={origin} /> : null}
+    <div className={`message-card ${role}${theme ? " has-sender-theme" : ""}`}
+      style={theme ? { "--sender-main": theme.main } as CSSProperties : undefined}><div className="message-card-content">
+      {retryLabel ? <div className="message-character-name">{retryLabel}</div> : null}
+      {isSessionOrigin ? <SessionOriginRoute origin={origin} onError={read.setReadError} /> : null}
       {props.receipt.captured.request.replyTo && props.inputReadContext ? <ReplyQuote ownerSessionId={props.inputReadContext.ownerSessionId} reference={props.receipt.captured.request.replyTo} /> : null}
       {read.coordination && props.inputReadContext ? <>
         <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target} />

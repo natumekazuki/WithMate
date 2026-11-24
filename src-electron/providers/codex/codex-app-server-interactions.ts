@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { regexes } from "zod";
+import { isValidCodexElicitationContent } from "../../../src-shared/session/codex-elicitation-validation.js";
 import type { LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse } from "../../../src-shared/session/runtime-state.js";
 import type { RunSessionTurnInput } from "../provider-runtime.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
@@ -15,7 +15,6 @@ export type CodexInteractionRequest = {
 
 type InteractionInput = Pick<RunSessionTurnInput, "onApprovalRequest" | "onElicitationRequest" | "onElicitationDelivered" | "signal">;
 type PendingRequest = { request: CodexInteractionRequest; controller: AbortController; responded: boolean };
-const mcpDateTimePattern = regexes.datetime({ offset: true });
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -64,35 +63,6 @@ function abortRace<T>(value: Promise<T> | T, signal: AbortSignal): Promise<T> {
     signal.addEventListener("abort", abort, { once: true });
     Promise.resolve(value).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
-}
-
-function validField(field: LiveElicitationField, value: unknown): boolean {
-  if (value === undefined) return !field.required;
-  switch (field.type) {
-    case "text": {
-      if (typeof value !== "string" || (field.required && !value.trim())) return false;
-      const length = [...value].length;
-      if ((field.minLength !== undefined && length < field.minLength) || (field.maxLength !== undefined && length > field.maxLength)) return false;
-      if (field.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return false;
-      if (field.format === "uri") { try { new URL(value); } catch { return false; } }
-      if (field.format === "date" && !regexes.date.test(value)) return false;
-      if (field.format === "date-time" && !mcpDateTimePattern.test(value.toUpperCase())) return false;
-      return true;
-    }
-    case "select": return typeof value === "string" && Boolean(value.trim()) && (field.allowFreeText === true || field.options.some((option) => option.value === value));
-    case "multi-select": return strings(value) && new Set(value).size === value.length && (!field.required || value.length > 0)
-      && (field.minItems === undefined || value.length >= field.minItems) && (field.maxItems === undefined || value.length <= field.maxItems)
-      && value.every((item) => Boolean(item.trim()) && (field.allowFreeText === true || field.options.some((option) => option.value === item)));
-    case "boolean": return typeof value === "boolean";
-    case "number": return typeof value === "number" && Number.isFinite(value) && (field.numberKind !== "integer" || Number.isInteger(value))
-      && (field.minimum === undefined || value >= field.minimum) && (field.maximum === undefined || value <= field.maximum);
-  }
-}
-
-function validContent(fields: LiveElicitationField[], response: LiveElicitationResponse): boolean {
-  const content = response.content ?? {};
-  return record(content) && Object.keys(content).every((name) => fields.some((field) => field.name === name))
-    && fields.every((field) => validField(field, Object.hasOwn(content, field.name) ? content[field.name] : undefined));
 }
 
 function questions(params: Record<string, unknown>, requestId: string): LiveElicitationRequest | null {
@@ -294,7 +264,7 @@ export class CodexTurnInteractions {
         await reply({ answers: {} });
         return;
       }
-      if (!validContent(projected.fields, response)) throw new Error("Invalid question answer");
+      if (!isValidCodexElicitationContent(projected.fields, response.content)) throw new Error("Invalid question answer");
       const answers: Record<string, { answers: string[] }> = Object.create(null);
       for (const question of params.questions as Record<string, unknown>[]) {
         const value = response.content?.[text(question.id)];
@@ -304,7 +274,7 @@ export class CodexTurnInteractions {
       await reply({ answers });
       this.input.onElicitationDelivered?.(requestId);
     } else {
-      if (response.action === "accept" && !validContent(projected.fields, response)) throw new Error("Invalid MCP form content");
+      if (response.action === "accept" && !isValidCodexElicitationContent(projected.fields, response.content)) throw new Error("Invalid MCP form content");
       await reply({ action: response.action, content: response.action === "accept" && projected.mode === "form" ? response.content ?? {} : null });
     }
   }

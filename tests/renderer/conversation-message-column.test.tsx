@@ -14,8 +14,10 @@ import type { SessionMessageColumnProps } from "../../src/chat/conversation/sess
 import { SessionMessageColumn } from "../../src/chat/conversation/session-message-column.js";
 import { ALL_MAIN_THREADS_ID, useMainConversationThreads } from "../../src/chat/conversation/use-main-conversation-threads.js";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
+import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
+import { QueuedTurnEditContext } from "../../src/chat/conversation/use-queued-turn-edit.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { CONVERSATION_PAGE_SIZE, type ConversationPage, type ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
@@ -28,6 +30,257 @@ import { installIntersectionObserver } from "../support/intersection-observer.js
 import { SessionTurnSubmissions } from "../../src/chat/runtime/session-turn-submissions.js";
 import { subscribeSessionRunControls } from "../../src/chat/runtime/session-window-live-ingress.js";
 import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared/window/html-preview.js";
+
+function peerColumnFixture() {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node, MutationObserver: dom.window.MutationObserver, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: { get: () => 600 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 600 }, clientWidth: { get: () => 800 },
+  });
+  const intersection = installIntersectionObserver();
+  const document = dom.window.document;
+  const root = createRoot(document.getElementById("root")!);
+  const main = { kind: "main" as const, sessionId: "main", incarnationId: "main-inc" };
+  const peers = ["A", "B", "C"].map((name) => ({ target: { kind: "main" as const, sessionId: name, incarnationId: name + "-inc" },
+    title: name, messageIndexes: [] as number[], sentMessageIndexes: [] as number[], inboundTurnIds: [] as string[] }));
+  const submissions = new SessionTurnSubmissions();
+  const replies: unknown[] = [];
+  const state = { live: null as LiveSessionRunState | null, saved: [] as SessionMessageColumnProps["messages"], receipts: [] as SessionTurnQueueReceipt[],
+    sent: [] as SentDelivery[], holdSeq: undefined as number | undefined };
+  const onQueue = new Set<(id: string) => void>();
+  const onTurn = new Set<(id: string) => void>();
+  const heldPages: (() => void)[] = [];
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: async () => state.receipts.filter((receipt) => receipt.state !== "completed"),
+    getSessionTurnQueueReceipt: async (_id, requestId) => state.receipts.find((receipt) => receipt.requestId === requestId) ?? null,
+    onSessionTurnQueueChanged: (listener) => { onQueue.add(listener); return () => { onQueue.delete(listener); }; },
+    async getConversationPage(id, request) {
+      const messageIndexes = request?.messageIndexes;
+      const messages = messageIndexes ? state.saved.filter((message) => messageIndexes.includes(message.historyIndex!)) : state.saved;
+      const page = { sessionId: id, incarnationId: main.incarnationId, totalCount: state.saved.length, startIndex: messages[0]?.historyIndex ?? 0, messages };
+      if (state.holdSeq !== undefined && messageIndexes?.includes(state.holdSeq)) {
+        await new Promise<void>((resolve) => heldPages.push(resolve));
+      }
+      return page;
+    },
+  };
+  Object.defineProperty(dom.window, "withmate", { value: {
+    ...api,
+    onSessionTurnUpdated: (listener: (id: string) => void) => { onTurn.add(listener); return () => { onTurn.delete(listener); }; },
+    readSessionExecution: async (_owner: string, operation: string, input: { messageSeqs?: number[]; liveTurnIds?: string[] }) => {
+      if (operation === "read_conversation_threads") return { ok: true, initialMessageIndexes: [], children: peers.map((peer) => ({ ...peer })) };
+      const items = operation === "list_sent_deliveries" ? state.sent.filter((item) => input.liveTurnIds?.includes(item.sourceTurnId)
+        || item.sourceMessageSeq !== null && input.messageSeqs?.includes(item.sourceMessageSeq)) : [];
+      return { ok: true, items, nextCursor: null };
+    },
+  } });
+  const readContext = { ownerSessionId: main.sessionId, target: main };
+  const editor = { edits: {}, begin() {} };
+  let threads: ReturnType<typeof useMainConversationThreads>;
+  let column: ReturnType<typeof useConversationMessageColumn>;
+  function View() {
+    threads = useMainConversationThreads(readContext, true, "", () => {});
+    column = useConversationMessageColumn({
+      session: { id: main.sessionId, incarnationId: main.incarnationId, provider: "codex", messageCount: state.saved.length, messages: state.saved },
+      baseProps: { ...createBaseProps(main.sessionId), turnSubmissions: submissions, inputReadContext: readContext, onSelectReply: (_key, reply) => replies.push(reply) },
+      api, enabled: true, liveRun: state.live, frame: threads.frame, mainThreads: threads.projection, showAllThreads: threads.showAllThreads,
+    });
+    return column ? <QueuedTurnEditContext.Provider value={editor}><SessionMessageColumn {...column} /></QueuedTurnEditContext.Provider> : null;
+  }
+  function receipt(peer: typeof peers[number], sequence: number): SessionTurnQueueReceipt {
+    const requestId = "request-" + peer.title;
+    return { sessionId: main.sessionId, incarnationId: main.incarnationId, id: "receipt-" + peer.title, requestId, sequence, queuePosition: sequence,
+      state: "queued", turnId: null, userMessageSeq: null, releasedAt: null, reason: null, createdAt: "now", updatedAt: "now",
+      captured: { origin: { kind: "gui", operation: "send", targetSessionId: main.sessionId, targetIncarnationId: main.incarnationId },
+        request: { clientRequestId: requestId, userMessage: "Prompt " + peer.title, mainConversationFrame: peer.target,
+          executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write",
+            codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } },
+        attachments: [], provider: "codex", workspacePath: "workspace" } };
+  }
+  function live(r: SessionTurnQueueReceipt, text: string): LiveSessionRunState {
+    assert.ok(r.turnId && r.userMessageSeq !== null);
+    return { sessionId: main.sessionId, threadId: "provider-thread", sessionTurnId: r.turnId, turnId: "provider-" + r.turnId, runState: "running",
+      queueReceipt: { id: r.id, incarnationId: r.incarnationId, userMessageSeq: r.userMessageSeq },
+      assistantText: text, steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+  }
+  return {
+    main, peers, replies, state, document, receipt, live, submissions, heldPages,
+    column: () => { assert.ok(column); return column; },
+    render: () => act(async () => root.render(<View />)),
+    select: (peer?: typeof peers[number]) => act(async () => threads.select(peer ? conversationPeerKey(peer.target) : ALL_MAIN_THREADS_ID)),
+    queueChanged: () => [...onQueue].forEach((listener) => listener(main.sessionId)),
+    indexChanged: () => [...onTurn].forEach((listener) => listener(main.sessionId)),
+    close: async () => {
+      await act(async () => root.unmount()); intersection.restore(); dom.window.close();
+      for (const [key, descriptor] of previous) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mainの実行中・次実行の表示をSession全体の実行と予約順で一つに絞り、枠切替や次Turn開始で送信カードを別の応答に付け替えない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/976; docs/design/session-history.md#main列の初期枠子session枠" }
+// fault = "A実行中にB/Cの予約に応答を出す、アイドル時にCをBより先に表示する、Aの送信をBに表示する、Cで重複する、またはA/ALLでカードを本文と別にする"
+// observable = "A/B/CとALLの会話DOMでの予約編集・取消・待機表示・応答本文・カード配置と件数、B実開始後の応答"
+// observation_boundary = "component-behavior"
+// scope = "Mainの会話選択→Column投影→カードと予約の実DOM。履歴・キュー・liveの到着はfixture"
+// lifecycle = "permanent"
+// impact = "別の指示が実行されたように見え、他の相手への送信を自分の依頼の結果と取り違える"
+// distinction = "キュー単体と既存のカード配置testでは、同一Session内の別枠の実行・待機・宛先カードを横断する同時条件を通らない"
+// @end-test-value
+test("peer reservations keep Session queue order and outgoing cards keep their response and recipient", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = peerColumnFixture();
+  const [a, b, c] = f.peers;
+  const ra = { ...f.receipt(a, 1), state: "running" as const, turnId: "turn-A", userMessageSeq: 0 };
+  const rb = f.receipt(b, 2);
+  const rc = f.receipt(c, 3);
+  const cards = () => [...f.document.querySelectorAll(".session-outbound-inline, article.session-outbound")];
+  const answer = () => f.document.querySelector(".message-row.assistant:not(.session-outbound)");
+  const dots = () => f.document.querySelector(".typing-dots");
+  const waiting = (id: string) => f.document.querySelector(`[data-queue-receipt-id="receipt-${id}"] button[aria-label^="Cancel queued turn"]`);
+  f.state.receipts = [ra, rb, rc];
+  f.state.live = f.live(ra, "BEFORE\n\nAFTER");
+  f.state.sent = [{ receiptId: "outgoing", sourceTurnId: ra.turnId, sourceMessageSeq: null, sourceDisplayPosition: 6,
+    sequence: 1, target: c.target, state: "queued", text: "HANDOFF TO C",
+    origin: { kind: "session", actorKind: "main", actorSessionId: f.main.sessionId, actorIncarnationId: f.main.incarnationId,
+      actorTurnId: ra.turnId, operation: "send", targetSessionId: c.target.sessionId, targetIncarnationId: c.target.incarnationId,
+      targetSnapshot: { sessionTitle: "Peer C", character: { id: "C", name: "Mate C", iconPath: "" } } } }];
+  try {
+    await f.render();
+    await f.select(b);
+    assert.ok(waiting("B"));
+    assert.ok(f.document.querySelector('[data-queue-receipt-id="receipt-B"] button[title="Edit queued message"]'));
+    assert.ok(!answer(), "B must not contain an assistant row while A runs");
+    assert.ok(!dots(), "B must not show typing dots while A runs");
+    assert.equal(cards().length, 0);
+    await f.select(c);
+    assert.ok(waiting("C"));
+    assert.ok(!answer(), "C's recipient card must not create an assistant row");
+    assert.equal(cards().length, 1);
+    assert.match(cards()[0].textContent ?? "", /HANDOFF TO C/);
+    assert.ok(!cards()[0].closest('[data-message-source="turn-queue"]'), "C's card is independent of the queued input");
+    for (const peer of [a, undefined]) {
+      await f.select(peer);
+      await act(async () => t.mock.timers.tick(100));
+      assert.equal(cards().length, 1);
+      assert.ok(answer()?.contains(cards()[0]));
+      assert.match(answer()?.textContent ?? "", /BEFORE[\s\S]*HANDOFF TO C[\s\S]*AFTER/);
+    }
+
+    f.state.live = null;
+    f.state.saved = [{ role: "user", text: "Prompt A", historyIndex: 0 }, { role: "assistant", text: "BEFORE\n\nAFTER", historyIndex: 1 }];
+    f.state.receipts = [{ ...ra, state: "completed" }, rb, rc];
+    f.state.sent = f.state.sent.map((item) => ({ ...item, sourceMessageSeq: 1 }));
+    a.messageIndexes = [0, 1];
+    a.inboundTurnIds = [ra.turnId];
+    c.sentMessageIndexes = [1];
+    await act(async () => { f.queueChanged(); f.indexChanged(); });
+    await f.select(c);
+    assert.ok(waiting("C"));
+    assert.ok(!dots(), "an idle window does not promote C ahead of B");
+    assert.equal(cards().length, 1, "the recipient keeps the same single card after the source is saved");
+    await f.select(a);
+    assert.ok(answer()?.contains(cards()[0]));
+    assert.match(answer()?.textContent ?? "", /BEFORE[\s\S]*HANDOFF TO C[\s\S]*AFTER/);
+    await f.select(b);
+    assert.ok(dots(), "the eligible Session head keeps the accepted response surface");
+    const startedB = { ...rb, state: "running" as const, turnId: "turn-B", userMessageSeq: 2 };
+    f.state.live = f.live(startedB, "B has started");
+    f.state.receipts = [{ ...ra, state: "completed" }, startedB, rc];
+    await act(async () => f.queueChanged());
+    await f.render();
+    await act(async () => t.mock.timers.tick(100));
+    assert.ok(!waiting("B"), "B no longer offers reservation actions after start");
+    assert.equal(f.document.querySelectorAll(".message-row.assistant:not(.session-outbound)").length, 1);
+    assert.match(answer()?.textContent ?? "", /B has started/);
+    assert.doesNotMatch(answer()?.textContent ?? "", /BEFORE|AFTER/);
+    assert.equal(cards().length, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常Sendの同じpeer応答は、全体tail・peer index・scoped pageが別々に到着しても表示済み本文と応答行を維持し、確定seqが表示枠へ届いたら同じ行からすぐ返信できる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975; docs/design/session-history.md#明示返信" }
+// fault = "全体tailだけでlive本文を廃棄する、scoped pageで応答を再作成または二重化する、仮seqにReplyを許す、または保存行のReplyを次のSendまで出さない"
+// observable = "peer→ALL→peer後の各到着段階におけるassistant行の件数・本文・DOM identity・Replyの可否と選択された正本seq"
+// observation_boundary = "component-behavior"
+// scope = "Mainの通常Send受付以降から保存行への引渡し。実会話選択とColumnを使い、親snapshotとIPC応答・通知をfixtureで制御する"
+// lifecycle = "permanent"
+// impact = "読めていた回答が消えたり、同じ回答へその場で返信できなくなったりする"
+// distinction = "ALLや単一列のhandoff testでは、保存tailとは別のpeer indexとscoped pageが遅れる境界を通らない"
+// @end-test-value
+test("peer response survives delayed index and page and can be replied to on the same saved row", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = peerColumnFixture();
+  const [a] = f.peers;
+  const accepted = f.receipt(a, 1);
+  const started = { ...accepted, state: "running" as const, turnId: "turn-A", userMessageSeq: 0 };
+  const reply = (row: Element) => row.querySelector<HTMLButtonElement>('button[aria-label="Reply to message"]');
+  const answer = (text: string) => {
+    const rows = f.document.querySelectorAll(".message-row.assistant");
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].textContent ?? "", new RegExp(text));
+    return rows[0];
+  };
+  try {
+    await f.render();
+    await f.select(a);
+    await act(async () => {
+      f.submissions.start({ sessionId: f.main.sessionId, incarnationId: f.main.incarnationId, requestId: accepted.requestId,
+        userMessage: accepted.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: false, mainConversationFrame: a.target, error: "" });
+      f.submissions.accept(accepted);
+    });
+    assert.ok(f.document.querySelector(".typing-dots"));
+    f.state.receipts = [started];
+    f.state.live = f.live(started, "Streamed answer");
+    await act(async () => f.queueChanged());
+    await f.render();
+    await act(async () => t.mock.timers.tick(100));
+    answer("Streamed answer");
+    await f.select();
+    await act(async () => t.mock.timers.tick(100));
+    answer("Streamed answer");
+    await f.select(a);
+    await act(async () => t.mock.timers.tick(100));
+    const row = answer("Streamed answer");
+    assert.ok(!reply(row), "a live row is not a Reply target");
+
+    f.state.live = null;
+    f.state.receipts = [{ ...started, state: "completed" }];
+    f.state.saved = [{ role: "user", text: "Prompt A", historyIndex: 0 }, { role: "assistant", text: "Saved answer", historyIndex: 1 }];
+    await act(async () => f.queueChanged());
+    await f.render();
+    assert.ok(answer("Streamed answer") === row, "canonical tail alone is not the selected scope");
+    assert.ok(!reply(row));
+
+    f.state.holdSeq = 1;
+    a.messageIndexes = [0, 1];
+    a.inboundTurnIds = [started.turnId];
+    await act(async () => f.indexChanged());
+    assert.equal(f.heldPages.length, 1, "the new peer index arrived but its body request has not resolved");
+    assert.ok(answer("Streamed answer") === row, "the index alone cannot replace the response row");
+    assert.ok(!reply(row));
+    await act(async () => f.heldPages.splice(0).forEach((release) => release()));
+    assert.ok(answer("Saved answer") === row, "the saved body replaces the live body in the same row");
+    const button = reply(row);
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.deepEqual(f.replies, [{ target: f.main, seq: 1 }]);
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -2718,10 +2971,10 @@ test("conversation column shows accepted sends and preserves the canonical respo
 
 // @test-value v2
 // kind = "invariant"
-// claim = "MainとAuxiliaryの承認・入力応答後、遅い再取得は後着の要求を消さず、競合のない再取得は解決済み要求を消す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 表示言語・操作・状態" }
-// fault = "応答後の古いlive snapshotが購読で届いた次の要求を上書きする、または通常の再取得で解決済み要求が残る"
-// observable = "各会話列のliveApprovalRequest・liveElicitationRequest・isRunning"
+// claim = "質問応答は次Turn予約を変更しない。遅い再取得は次の要求を消さず、古い質問応答が終了しても次の質問の送信中表示を解除しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; docs/design/desktop-ui.md#approval-requests" }
+// fault = "質問回答を予約操作へ送る、古いlive snapshotで後着要求を上書きする、古い応答で次の質問のbusyを解除する、または正しく解決した要求を残す"
+// observable = "各会話列の承認・入力要求、質問APIの宛先と回答、質問の送信中ID、予約IDと予約操作の呼出、実行中状態"
 // observation_boundary = "component-behavior"
 // scope = "conversation-message-column"
 // lifecycle = "permanent"
@@ -2746,6 +2999,15 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
   const listeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
   const fetchResolvers = new Map<string, (state: LiveSessionRunState | null) => void>();
   const fetchCounts = new Map<string, number>();
+  const answers: Array<[string, string, LiveElicitationResponse]> = [];
+  const nextQueued: SessionTurnQueueReceipt = {
+    sessionId: "aux", incarnationId: "aux-incarnation", id: "next-queued", requestId: "queued-request", sequence: 1, queuePosition: 1,
+    state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+    captured: { request: { clientRequestId: "queued-request", userMessage: "Reserved for the next Turn", executionOptions: {
+      model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+    } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+  };
+  const queueActions: string[] = [];
   const createRun = (sessionId: string, requestKind: "approval" | "elicitation" | null, requestId = ""): LiveSessionRunState => ({
     sessionId,
     threadId: `${sessionId}-thread`,
@@ -2766,7 +3028,13 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       return new Promise((resolve) => { fetchResolvers.set(sessionId, resolve); });
     },
     resolveLiveApproval: async () => {},
-    resolveLiveElicitation: async () => {},
+    resolveLiveElicitation: async (sessionId, requestId, response) => { answers.push([sessionId, requestId, response]); },
+    listSessionTurnQueue: async (id) => id === "aux" ? [nextQueued] : [],
+    onSessionTurnQueueChanged: () => () => {},
+    sendQueuedSessionInput: async () => { queueActions.push("steer"); return nextQueued; },
+    cancelQueuedSessionTurn: async () => { queueActions.push("cancel"); return nextQueued; },
+    releaseInterruptedSessionTurn: async () => { queueActions.push("release"); return nextQueued; },
+    reorderQueuedSessionTurns: async () => { queueActions.push("reorder"); throw new Error("Unexpected queue reorder"); },
   };
   let main: SessionMessageColumnProps | null = null;
   let auxiliary: SessionMessageColumnProps | null = null;
@@ -2778,7 +3046,7 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(function Probe() {
         main = useConversationMessageColumn({ session: { id: "main", runState: "running" }, baseProps: createBaseProps("main"), enabled: true, api });
-        auxiliary = useConversationMessageColumn({ session: { id: "aux", runState: "running" }, baseProps: createBaseProps("aux"), enabled: true, api });
+        auxiliary = useConversationMessageColumn({ session: { id: "aux", incarnationId: "aux-incarnation", runState: "running" }, baseProps: createBaseProps("aux"), enabled: true, api });
         return null;
       }));
     });
@@ -2790,29 +3058,43 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       const column = () => scenario.sessionId === "main" ? main : auxiliary;
       const first = createRun(scenario.sessionId, scenario.kind, "r1");
       const second = createRun(scenario.sessionId, scenario.kind, "r2");
+      const firstAnswer = { action: "accept", content: { answer: "First answer" } } as const;
+      const secondAnswer = { action: "accept", content: { answer: "Second answer" } } as const;
       await act(async () => emit(scenario.sessionId, first));
       await act(async () => {
         scenario.kind === "approval"
           ? column()?.onResolveLiveApproval(first.approvalRequest!, "approve")
-          : column()?.onResolveLiveElicitation(first.elicitationRequest!, { action: "accept" });
+          : column()?.onResolveLiveElicitation(first.elicitationRequest!, firstAnswer);
         await Promise.resolve();
       });
       assert.ok(fetchResolvers.has(scenario.sessionId));
+      const resolveStale = fetchResolvers.get(scenario.sessionId)!;
       await act(async () => emit(scenario.sessionId, second));
+      if (scenario.kind === "elicitation") {
+        assert.equal(column()?.elicitationActionRequestId, null, "an ended question must not block the next");
+        await act(async () => {
+          column()?.onResolveLiveElicitation(second.elicitationRequest!, secondAnswer);
+          await Promise.resolve();
+        });
+        assert.equal(column()?.elicitationActionRequestId, "r2");
+      }
       await act(async () => {
-        fetchResolvers.get(scenario.sessionId)?.(scenario.stale);
+        resolveStale(scenario.stale);
         await Promise.resolve();
       });
       const currentRequest = scenario.kind === "approval" ? column()?.liveApprovalRequest : column()?.liveElicitationRequest;
       assert.equal(currentRequest?.requestId, "r2", `${scenario.sessionId} must retain the later request`);
       assert.equal(column()?.isRunning, true);
 
-      await act(async () => {
-        scenario.kind === "approval"
-          ? column()?.onResolveLiveApproval(second.approvalRequest!, "approve")
-          : column()?.onResolveLiveElicitation(second.elicitationRequest!, { action: "accept" });
-        await Promise.resolve();
-      });
+      if (scenario.kind === "approval") {
+        await act(async () => {
+          column()?.onResolveLiveApproval(second.approvalRequest!, "approve");
+          await Promise.resolve();
+        });
+      } else {
+        assert.equal(column()?.elicitationActionRequestId, "r2", "the old completion must not release the new answer");
+        assert.deepEqual(answers, [["aux", "r1", firstAnswer], ["aux", "r2", secondAnswer]]);
+      }
       await act(async () => {
         fetchResolvers.get(scenario.sessionId)?.(createRun(scenario.sessionId, null));
         await Promise.resolve();
@@ -2820,6 +3102,10 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
       assert.equal(column()?.liveApprovalRequest, null);
       assert.equal(column()?.liveElicitationRequest, null);
       assert.equal(column()?.isRunning, true);
+      if (scenario.kind === "elicitation") {
+        assert.deepEqual(column()?.queuedTurnIds, [nextQueued.id]);
+        assert.deepEqual(queueActions, []);
+      }
     }
   } finally {
     await act(async () => root?.unmount());

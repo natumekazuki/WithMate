@@ -4,19 +4,35 @@ import type { MessageListProjection } from "../auxiliary/auxiliary-session-messa
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 
-export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean; responseKeys?: ReadonlyMap<string, string> }) {
-  const owned = receipts.filter((receipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId)
+export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: {
+  submissions: readonly SessionTurnSubmission[];
+  hasActiveRun: boolean;
+  sessionQueue?: { receipts: readonly SessionTurnQueueReceipt[]; hasActiveRun: boolean };
+  bindingRequestId?: string;
+  responseKeys?: ReadonlyMap<string, string>;
+}) {
+  const isOwned = (receipt: SessionTurnQueueReceipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId;
+  const owned = receipts.filter(isOwned)
     .sort((left, right) => left.queuePosition - right.queuePosition);
   const metadata = new Map<string, SessionTurnQueueReceipt>();
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];
-  const hasUnreleasedInterruption = owned.some((receipt) => receipt.state === "interrupted" && receipt.releasedAt === null);
+  const sessionQueue = options?.sessionQueue?.receipts.filter(isOwned) ?? owned;
+  const sessionBusy = (options?.sessionQueue?.hasActiveRun ?? options?.hasActiveRun) || sessionQueue.some((receipt) =>
+    receipt.state === "starting" || receipt.state === "running" || receipt.state === "interrupted" && receipt.releasedAt === null);
+  // Select the next dispatchable receipt before restricting the presentation to a frame.
+  const queueHead = options && !sessionBusy ? sessionQueue.reduce<SessionTurnQueueReceipt | undefined>((head, receipt) =>
+    receipt.state === "queued" && getQueuedSourceWaitState(receipt) === null
+      && (!head || receipt.queuePosition < head.queuePosition || receipt.queuePosition === head.queuePosition && receipt.sequence < head.sequence)
+      ? receipt : head, undefined) : undefined;
   const activeReceipt = options ? owned.find((receipt) => !receipt.inputTurnId && (receipt.state === "starting" || receipt.state === "running"))
+    // Retain the existing local request surface while its live start and receipt are joined.
+    ?? owned.find((receipt) => receipt.state === "queued" && receipt.requestId === options.bindingRequestId)
     ?? (!options.hasActiveRun ? owned.find((receipt) => !receipt.inputTurnId && receipt.state === "completed" && receipt.userMessageSeq !== null
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
         && !history.sources.some((source, index) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId)
           && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
-      ?? (!hasUnreleasedInterruption ? owned.find((receipt) => receipt.state === "queued" && getQueuedSourceWaitState(receipt) === null) : undefined) : undefined) : undefined;
+      : undefined) ?? owned.find((receipt) => receipt.id === queueHead?.id) : undefined;
   for (const receipt of owned) {
     const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
     const savedIndex = receipt.userMessageSeq === null ? -1 : projection.sources.findIndex((source) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId) && source.messageIndex === receipt.userMessageSeq);
@@ -85,7 +101,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     if (submission.sessionId !== owner.sessionId || submission.incarnationId !== owner.incarnationId
       || (!submission.receipt && !submission.error)
       || owned.some((receipt) => receipt.requestId === submission.requestId)) continue;
-    if (submission.queuedBehindRun || hasUnreleasedInterruption || activeReceipt || pendingSubmission) {
+    if (submission.queuedBehindRun || sessionBusy || queueHead || activeReceipt || pendingSubmission) {
       localTail.push(submission);
       continue;
     }

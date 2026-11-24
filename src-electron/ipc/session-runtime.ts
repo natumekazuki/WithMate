@@ -67,6 +67,7 @@ import {
   assertSessionDeleteSender,
   assertSettingsWindowSender,
   assertUsableWorkspaceDirectory,
+  readCancelSessionRunRequest,
 } from "./shared.js";
 
 export type MainIpcSessionRuntimeServiceDeps = Omit<
@@ -337,8 +338,11 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-    (_event, sessionId: string) => {
-      deps.cancelSessionRun(sessionId);
+    (event, value: unknown) => {
+      const request = readCancelSessionRunRequest(value);
+      const assertAuthorized = () => assertOwningSessionWindowSender(event, request.sessionId, deps);
+      assertAuthorized();
+      return deps.cancelSessionRun(request, assertAuthorized);
     },
   );
   ipcMain.handle(WITHMATE_STEER_SESSION_TURN_CHANNEL, (event, sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {
