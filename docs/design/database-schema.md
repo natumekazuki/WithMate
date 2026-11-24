@@ -80,6 +80,8 @@ Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親ま�
 
 結果は任意offsetから最大64件と総件数を返し、全本文・全matchの配列を転送・保持しない。Navigatorはuser／assistantだけを対象とし、Bookmarkを投影前に絞り、previewは最大160 Unicode codepointとする。
 
+Navigatorに子スレッド等の所属範囲が指定された場合は、正本seqの短いbatchで対象本文だけを読む。発言元はbatch内のuser seqについて、Main／Auxiliaryのownerとincarnationを照合する。紐づき済みreceiptの部分indexを既存V6 DBにも起動時に追加し、本文・receipt・schema versionは変更しない。同じseqに複数receiptがある場合は受付sequenceが最後のreceiptを使い、採用入力を受付時入力より優先する。receiptがなければ本文内の直接Steerのoriginを使う。
+
 継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
 
 Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。

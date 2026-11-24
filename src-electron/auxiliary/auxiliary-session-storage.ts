@@ -515,8 +515,8 @@ export class AuxiliarySessionStorage {
     return this.withDb((db) => readConversationQuerySnapshot(db, "auxiliary_session_messages", sessionId));
   }
 
-  readConversationQueryBatch(sessionId: string, afterSeq: number, includeSpeakers = true) {
-    return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq, includeSpeakers));
+  readConversationQueryBatch(sessionId: string, afterSeq: number, includeSpeakers = true, messageIndexes?: readonly number[]) {
+    return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq, includeSpeakers, messageIndexes));
   }
 
   readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
