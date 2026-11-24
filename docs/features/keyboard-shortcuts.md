@@ -30,7 +30,7 @@ shortcut commandは、chat、file preview、入力欄、dialogなどのscopeを�
 
 入力要素がfocusされている場合、文字編集と競合するcommandは実行しません。中央surfaceが切り替わった場合、非表示surfaceのhandlerを候補に含めません。
 
-MainとAuxiliaryの末尾移動はそれぞれ独立して登録でき、Composer入力中も使えます。送信対象やfocusを切り替えず、指定した表示中の列だけ末尾へ移動して最新messageへの追従を再開します。未取得・折りたたみ中の列、Auxiliaryの読込中・取得失敗、中央Preview表示中は実行しません。
+MainとAuxiliaryの末尾移動はそれぞれ独立して登録でき、Composer入力中も使えます。送信対象やfocusを切り替えず、指定した表示中の列だけ末尾へ移動して最新messageへの追従を再開します。取得済みのAuxiliary本文が表示されていれば、同じ会話の再取得中・失敗後も使えます。未取得・折りたたみ中の列、中央Preview表示中は実行しません。
 
 端末本文ではPrompt／Terminal切替だけをアプリshortcutとして扱い、会話送信・検索・cancelなどは横取りしません。切替はcomposer内でも利用でき、IME変換中とkey repeatでは発火しません。
 

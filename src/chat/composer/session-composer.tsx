@@ -277,7 +277,7 @@ export function SessionComposerExpanded({
         runState: isRunning ? "running" : "idle",
         canSendInput: !canQueueTurn && canSendInput && !isCanceling,
         canQueueTurn,
-        busyReason: turnRecoveryBusyReason || (queueTurnBusy ? "Message submission is in progress." : composerSendability.busyReason),
+        busyReason: turnRecoveryBusyReason || composerSendability.busyReason || (queueTurnBusy ? "Message submission is in progress." : ""),
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
@@ -295,7 +295,8 @@ export function SessionComposerExpanded({
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
-  const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
+  const showBusySendState = !turnRecoveryAction && queueTurnBusy;
+  const recoveryControlsBusy = queueTurnBusy || displayedComposerSendability.isBusy || !!turnRecoveryAction;
   const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
     || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable
     || !!replyUnavailableReason;
@@ -313,9 +314,9 @@ export function SessionComposerExpanded({
             ? "Cannot send while a run is active."
             : queueTurnBusy
               ? displayedComposerSendability.busyReason || "Message submission is in progress."
-              : composerBlocked || isComposerDisabled
-                ? displayedComposerSendability.primaryFeedback || "Message cannot be sent in this conversation."
-                : displayedSendButtonTitle || displayedComposerSendability.busyReason || "Message cannot be sent.";
+              : displayedComposerSendability.primaryFeedback || displayedComposerSendability.busyReason
+                || (composerBlocked || isComposerDisabled ? "Message cannot be sent in this conversation."
+                  : displayedSendButtonTitle || "Message cannot be sent.");
   const sendTitle = appendShortcutLabel(
     sendDisabled ? sendDisabledReason : queuedTurnEdit ? "Submit" : displayedSendButtonTitle || "Send",
     SHORTCUT_COMMAND_IDS.composerSubmit,
@@ -621,10 +622,10 @@ export function SessionComposerExpanded({
               <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
                 <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} isActive={isActive} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
               </span>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy || !!turnRecoveryAction} aria-busy={turnRecoveryAction === "check" || undefined}>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={recoveryControlsBusy} aria-busy={turnRecoveryAction === "check" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
               </button>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={queueTurnBusy || !!turnRecoveryAction || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={recoveryControlsBusy || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "retry"}>Retry Original Turn</ButtonContent>
               </button>
             </div>

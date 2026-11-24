@@ -642,6 +642,7 @@ test("ChatWindow は submit pending を非表示の busy status として通知�
   props.composerProps = {
     ...props.composerProps,
     isComposerDisabled: true,
+    queueTurnBusy: true,
     composerSendability: {
       isBusy: true,
       busyReason: "Message submission is in progress.",
@@ -2142,10 +2143,10 @@ test("ChatWindow はAuxiliaryを幅0で完全に閉じsplitterの再展開導線
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの読み込みエラー中もsummary switcherを保持し、Main targetから別Auxiliaryを選択できる"
-// oracle = { type = "contract", ref = "issue-710-auxiliary-switcher-error" }
-// fault = "Auxiliary detail errorがswitcherを消してしまい、Main表示中に別のAuxiliaryへ切り替えられない"
-// observable = "switcher trigger、error region、Main/Auxiliary target button、別Auxiliary選択callbackのrender済みDOM"
+// claim = "Auxiliaryの読込エラー中もsummary switcherが使え、取得済み本文は同じ会話の再取得中・失敗後も保持される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#scope; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "Auxiliaryの読込エラーでswitcherを失うか、取得済み本文を待機表示・エラーと差し替えて閲覧位置を失う"
+// observable = "switcherと別Auxiliary選択、対象ボタン、各状態のerror region、取得済み本文DOMの同一性"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -2175,11 +2176,9 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
   let root: Root | null = null;
   const selected: string[] = [];
   try {
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(ChatWindow, {
-        ...props,
-        concurrentChats: {
+    const renderAuxiliary = (state: Partial<NonNullable<ChatWindowProps["concurrentChats"]>>) => root?.render(React.createElement(ChatWindow, {
+      ...props,
+      concurrentChats: {
           main: props.messageColumnProps,
           auxiliary: null,
           selectedAuxiliaryId: "aux-a",
@@ -2193,8 +2192,12 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
           onSelectAuxiliary: (id) => selected.push(id),
           onTargetChange() {},
           onWidthRatioChange() {},
-        },
-      }));
+          ...state,
+      },
+    }));
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      renderAuxiliary({});
     });
 
     assert.ok(dom.window.document.querySelector("[aria-label='Auxiliary conversation']"));
@@ -2212,6 +2215,19 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
     assert.ok(optionB);
     await act(async () => optionB.click());
     assert.deepEqual(selected, ["aux-b"]);
+
+    const auxiliary = { ...props.messageColumnProps, sessionId: "aux-b", messages: [{ role: "assistant" as const, text: "Saved Auxiliary message" }] };
+    const loaded = { auxiliary, auxiliarySession: { id: "aux-b", messages: auxiliary.messages }, selectedAuxiliaryId: "aux-b" };
+    const body = () => dom.window.document.querySelector('#session-auxiliary-chat-pane [role="region"][aria-label="Conversation messages"]');
+    await act(async () => renderAuxiliary({ ...loaded, error: null }));
+    const retained = body();
+    assert.ok(retained);
+    assert.equal(retained.getAttribute("data-message-count"), "1");
+    await act(async () => renderAuxiliary({ ...loaded, loading: true, error: null }));
+    assert.equal(body(), retained);
+    await act(async () => renderAuxiliary({ ...loaded, error: "Auxiliary refresh failed" }));
+    assert.equal(body(), retained);
+    assert.match(dom.window.document.querySelector('#session-auxiliary-chat-pane [role="alert"]')?.textContent ?? "", /Auxiliary refresh failed/);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -2227,8 +2243,8 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない。送信は列ごとのcaptureから受付完了通知まで移動を待つ"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope" }
+// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保つ。取得済みAuxiliaryの再取得中・失敗後は使え、非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない。送信は列ごとのcaptureから受付完了通知まで移動を待つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope; docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "末尾移動先を送信対象で決める、非表示列に配送する、またはfocus・送信対象・送信時追従を変更する"
 // observable = "両列のscrollTop、button clickとkeydownの結果、activeElement、target変更callback、composer送信callback"
 // observation_boundary = "component-behavior"
@@ -2494,13 +2510,16 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
     mainContentReady = true;
     auxiliaryLoading = true;
     await act(async () => root?.render(renderChatWindow()));
-    assert.equal(await press("n"), false);
+    assert.equal(await press("n"), true);
     auxiliaryLoading = false;
     auxiliaryError = "Read failed";
     await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), true);
+    hasAuxiliary = false;
+    await act(async () => root?.render(renderChatWindow()));
     assert.equal(await press("n"), false);
     auxiliaryError = null;
-    hasAuxiliary = false;
+    auxiliaryLoading = true;
     await act(async () => root?.render(renderChatWindow()));
     assert.equal(await press("n"), false);
     const currentMainList = dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-main .session-message-list")!;
