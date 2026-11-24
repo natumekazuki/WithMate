@@ -50,6 +50,7 @@ export type ConversationColumnCache = {
   collapseExceptions?: Map<number, boolean>;
   liveRun: LiveSessionRunState | null;
   bridge: Omit<LiveAssistantProjection, "text"> | null;
+  liveBridgeBody?: { text: string; turnId?: string };
   approvalRequestId: string | null;
   approvalDecision?: "approve" | "deny" | null;
   elicitationRequestId: string | null;
@@ -128,7 +129,6 @@ export function useConversationMessageColumn({
   const displayedId = useRef(sessionId);
   displayedId.current = sessionId;
   const mounted = useRef(true);
-  const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection; turnId?: string } | null>(null);
   const retainedBridges = useRef<{ owner: string; projections: LiveAssistantProjection[] }>({ owner: "", projections: [] });
   const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }>; responses: Map<string, string> }>({ owner: "", keys: new Map(), responses: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
@@ -344,13 +344,14 @@ export function useConversationMessageColumn({
     cancel: api?.cancelConversationQuery,
   });
   useEffect(() => {
-    const releaseLiveText = () => {
-      if (displayedBridge.current?.owner === pageOwner) displayedBridge.current = null;
+    if (!enabled) {
+      delete conversation.liveBridgeBody;
       if (retainedBridges.current.owner === pageOwner) retainedBridges.current.projections = [];
+    }
+    return () => {
+      if (!frame || !mounted.current || displayedId.current !== sessionId) delete conversation.liveBridgeBody;
     };
-    if (!enabled) releaseLiveText();
-    return releaseLiveText;
-  }, [conversation, enabled, pageOwner]);
+  }, [conversation, enabled, pageOwner, !!frame, sessionId]);
   useEffect(() => {
     if (liveRunOverride !== undefined) {
       liveState.liveRun = enabled ? liveRunOverride : null;
@@ -379,13 +380,15 @@ export function useConversationMessageColumn({
   // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
   const isResponseBindingPending = !!api?.listSessionTurnQueue && !!(liveRun?.sessionTurnId || liveRun?.turnId)
     && previousResponse?.owner === pageOwner && !!previousResponse.requestId
-    && !(displayedBridge.current?.owner === pageOwner && displayedBridge.current.projection.text)
+    && !conversation.liveBridgeBody
     && queue.receipts.some((receipt) => !receipt.inputTurnId && (receipt.state === "starting"
       || receipt.requestId === previousResponse.requestId && (receipt.state === "queued" || receipt.state === "running")))
     && !queue.receipts.some((receipt) => !!liveRun?.sessionTurnId && receipt.turnId === liveRun.sessionTurnId && !receipt.inputTurnId);
   useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.sessionTurnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
-  const hasActiveRun = liveBelongsHere && (isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun));
+  const sessionHasActiveRun = isCancelRequested || !!rawLiveRun?.cancellationState || (rawLiveRun?.runState !== undefined
+    ? rawLiveRun.runState === "running" : session?.runState === "running" || !!rawLiveRun);
+  const hasActiveRun = liveBelongsHere && sessionHasActiveRun;
   const assistantText = isResponseBindingPending ? "" : api || frame ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
@@ -401,7 +404,7 @@ export function useConversationMessageColumn({
         owner: pageOwner, turnId: liveRun.turnId,
         messageIndex: Math.max(
           tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1,
-          displayedBridge.current?.owner === pageOwner ? displayedBridge.current.projection.messageIndex + 2 : 0,
+          conversation.bridge && conversation.liveBridgeBody && conversation.liveBridgeBody.turnId !== liveRun.turnId ? conversation.bridge.messageIndex + 2 : 0,
         ),
       };
     }
@@ -422,37 +425,34 @@ export function useConversationMessageColumn({
     text: assistantText,
   } : null;
   if (retainedBridges.current.owner !== pageOwner) retainedBridges.current = { owner: pageOwner, projections: [] };
-  if (!liveBelongsHere && rawLiveRun?.turnId && displayedBridge.current?.owner === pageOwner
-    && displayedBridge.current.turnId === rawLiveRun.turnId) {
-    displayedBridge.current = null;
+  if (!liveBelongsHere && rawLiveRun?.turnId && conversation.liveBridgeBody?.turnId === rawLiveRun.turnId) {
     conversation.bridge = null;
+    delete conversation.liveBridgeBody;
   }
-  if (currentBridge && displayedBridge.current?.owner === pageOwner && displayedBridge.current.turnId !== liveRun?.turnId
-    && displayedBridge.current.projection.messageIndex !== currentBridge.messageIndex) {
-    const previous = displayedBridge.current.projection;
-    if (!retainedBridges.current.projections.some((candidate) => candidate.messageIndex === previous.messageIndex)) retainedBridges.current.projections.push(previous);
+  const previousBridge = conversation.bridge;
+  const previousBody = conversation.liveBridgeBody;
+  if (currentBridge && previousBridge && previousBody && previousBody.turnId !== liveRun?.turnId
+    && previousBridge.messageIndex !== currentBridge.messageIndex) {
+    if (!retainedBridges.current.projections.some((candidate) => candidate.messageIndex === previousBridge.messageIndex)) {
+      retainedBridges.current.projections.push({ ...previousBridge, text: previousBody.text });
+    }
   }
+  const displayWindowStart = frame ? threadIndexes?.[0] ?? 0 : tailMessages.length ? getMessageHistoryIndex(tailMessages[0], 0) : 0;
   retainedBridges.current.projections = retainedBridges.current.projections.filter((candidate) => enabled
-    && !hasPersistedLiveAssistantMessage(tailMessages, [], candidate, sessionId)
-    && candidate.messageIndex >= (tailMessages.length ? getMessageHistoryIndex(tailMessages[0], 0) : 0));
-  if (!currentBridge && displayedBridge.current?.owner === pageOwner
-    && hasPersistedLiveAssistantMessage(tailMessages, [], displayedBridge.current.projection, sessionId)) displayedBridge.current = null;
+    && !hasPersistedLiveAssistantMessage(messages, [], candidate, sessionId) && candidate.messageIndex >= displayWindowStart);
   if (currentBridge && enabled) {
-    displayedBridge.current = { owner: pageOwner, projection: currentBridge, turnId: liveRun?.turnId };
-    conversation.bridge = { sessionId: currentBridge.sessionId, threadId: currentBridge.threadId, messageIndex: currentBridge.messageIndex };
+    const { text, ...position } = currentBridge;
+    conversation.bridge = position;
+    conversation.liveBridgeBody = { text, turnId: liveRun?.turnId };
   }
-  const cachedMessage = conversation.bridge ? messages.find((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) === conversation.bridge!.messageIndex) : undefined;
-  const cachedBridge = displayedBridge.current?.owner === pageOwner ? displayedBridge.current.projection
-    : conversation.bridge && cachedMessage ? { ...conversation.bridge, text: cachedMessage.text } : null;
+  const remembered = conversation.bridge;
+  const cachedMessage = remembered ? messages.find((message, index) => message.role === "assistant" && getMessageHistoryIndex(message, index) === remembered.messageIndex) : undefined;
+  // The global tail can confirm persistence before a peer's selected page can replace this row.
+  const cachedText = cachedMessage?.text ?? (enabled && remembered && remembered.messageIndex >= displayWindowStart ? conversation.liveBridgeBody?.text : undefined);
+  const cachedBridge = remembered && cachedText ? { ...remembered, text: cachedText } : null;
+  if (!currentBridge && remembered && (cachedMessage || remembered.messageIndex < displayWindowStart)) delete conversation.liveBridgeBody;
   const hasSavedBridge = hasPersistedLiveAssistantMessage(messages, [], cachedBridge, sessionId);
-  const hasSubmissionBridge = cachedBridge && queue.receipts.some((receipt) => receipt.userMessageSeq !== null
-    && receipt.userMessageSeq < cachedBridge.messageIndex && submissions.some((submission) => submission.requestId === receipt.requestId));
-  const hasDisplayedBridge = enabled && displayedBridge.current?.owner === pageOwner && cachedBridge
-    && cachedBridge.messageIndex >= (tailMessages.length ? getMessageHistoryIndex(tailMessages[0], 0) : 0);
-  const bridge = currentBridge ?? (
-    cachedBridge && (hasSavedBridge || hasDisplayedBridge || hasSubmissionBridge || isHistoryHandoffPending && cachedBridge.messageIndex > unboundBoundary || session?.runState === "running")
-      ? cachedBridge : null
-  );
+  const bridge = currentBridge ?? cachedBridge;
   const bridgeKey = bridge
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
     : null;
@@ -516,9 +516,16 @@ export function useConversationMessageColumn({
     const target = mainConversationFrame && children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(mainConversationFrame));
     return (target || undefined) === child;
   }), [submissions, frame, children, child]);
+  const bindingRequestId = isResponseBindingPending ? previousResponse?.requestId : undefined;
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
-  }, { submissions: isBrowsing ? [] : visibleSubmissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, visibleSubmissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
+  }, {
+    submissions: isBrowsing ? [] : visibleSubmissions,
+    hasActiveRun: hasActiveRun && !isResponseBindingPending,
+    sessionQueue: { receipts: allQueue.receipts, hasActiveRun: sessionHasActiveRun },
+    bindingRequestId,
+    responseKeys,
+  }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, visibleSubmissions, hasActiveRun, isResponseBindingPending, allQueue.receipts, sessionHasActiveRun, bindingRequestId, responseKeySignature]);
   const projection = queuedProjection.projection;
   const savedReplySourceIndexes = useMemo(() => projection.sources.map((source) =>
     source.kind === "session" || source.kind === "auxiliary" ? source.messageIndex : undefined), [projection.sources]);
@@ -986,7 +993,8 @@ export function useConversationMessageColumn({
     provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,
-    liveWithMateTurnId: responseSessionTurnId ?? (child && !isBrowsing ? rawLiveRun?.sessionTurnId : undefined),
+    liveWithMateTurnId: responseSessionTurnId,
+    sentReadLiveTurnId: child && !isBrowsing ? rawLiveRun?.sessionTurnId : undefined,
     conversationChild: child,
     messages: projection.messages,
     messageKeys: projection.keys,

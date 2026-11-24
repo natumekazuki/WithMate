@@ -499,8 +499,11 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
 - 応答内のdot bubbleは受付済みのTurnの応答待機を示し、`assistantText`の出力開始後もrun中は維持する。保存上の`running`やCancel可否は実run状態から判断する
+- 次に実行できる予約は、閲覧枠を絞る前のSession全体の実行状態とキュー順で判定する。別枠に実行や先行予約があれば、後続予約には応答待機を表示しない
+- 送信カードの挿入位置が未確定なら、送信元Turnの応答末尾に置く。宛先枠の参照カードは、その枠の待機入力や別Turnの応答に付けない
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、Auxiliary一覧のprocessing indicator、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
 - 実run終了後も確定応答の取得待ちなら同じ応答面と取得済み本文を保つ。予約を受付順と逆に実行しても、応答境界は保存済みuserの履歴位置と実際の投影順から求め、未保存部分は保存済み実行順に従う。受付番号を応答境界に使わず、後続の本文・質問・承認を旧応答へ接続しない。確定本文への接続または明示失敗で待機表示を終え、success固定の完了表現にはしない
+- 全体tailに保存本文が現れても、表示している相手枠へその本文が届くまでは表示済み応答を保つ。本文が届いたら同じ行に引き渡し、Replyは行の表示keyではなく届いた正本seqを参照する
 - `assistantText`未着でもright paneの `Latest Command` があればraw commandを表示し、command未到着の正常局面では本文copyを表示せず、末尾のdot bubbleとaccessible statusで待機を示す
 - screen readerには会話本文全体でなく末尾行の状態変化を通知する。Action Dockから重複して通知しない
 - retry draft conflictとcomposer feedbackはvisible textを正本にして常時live通知しない
