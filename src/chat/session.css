@@ -1087,6 +1087,7 @@
 .sent-delivery-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sent-delivery-header > .session-message-address { flex: 1 1 auto; }
 .sent-delivery-header > .artifact-toggle-icon { flex: 0 0 24px; }
+.sent-instruction-body { display: grid; min-width: 0; gap: 10px; }
 
 .session-reply-quote {
   margin: 0;

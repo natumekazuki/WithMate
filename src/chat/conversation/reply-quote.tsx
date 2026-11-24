@@ -4,12 +4,12 @@ import { savedFinalAnswerTurnId, type SessionReply } from "../../../src-shared/s
 import type { SessionTurnQueueOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { ReplyLocation } from "./reply-location.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
-import type { SentInstruction } from "./use-sent-deliveries.js";
+import type { SentInstructionCard } from "../../../src-shared/session/session-execution-read.js";
 
 export type ResolvedReply = { reference: SessionReply; text: string; origin?: SessionTurnQueueOrigin | null };
 export type ReplyQuoteNavigation = {
   locate: (quote: ResolvedReply) => Promise<ReplyLocation | null>;
-  locateSent: (source: SessionTarget, item: SentInstruction) => ReplyLocation | null;
+  locateSent: (source: SessionTarget, item: SentInstructionCard) => ReplyLocation | null;
   open: (location: ReplyLocation) => void;
 };
 export const ReplyQuoteNavigationContext = createContext<ReplyQuoteNavigation | null>(null);

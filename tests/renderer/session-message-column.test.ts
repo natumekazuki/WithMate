@@ -825,7 +825,7 @@ test("応答Detailsに実行設定と配送状態を集約する", async () => {
   const requests: Array<{ operation: string; request: Record<string, unknown> }> = [];
   Object.defineProperty(mounted.dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: Record<string, unknown>) => {
     requests.push({ operation, request });
-    if (operation === "list_sent_deliveries" || operation === "list_sent_steers") return { ok: true, items: [], nextCursor: null };
+    if (operation === "list_sent_instruction_cards") return { ok: true, items: [], cursors: { receipts: null, steers: null } };
     assert.equal(operation, "get_execution");
     return { ok: true, receiptId: "start", turnId: "42", userMessageSeq: 8, assistantMessageSeq: 9, receiptState: "completed", turnState: "completed" };
   } } });

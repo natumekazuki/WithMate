@@ -9,6 +9,7 @@ import { SentDeliveryRow } from "../../src/chat/conversation/sent-delivery-row.j
 import { SessionOriginRoute } from "../../src/chat/conversation/turn-input-details.js";
 import type { SentDelivery, SentSteer } from "../../src/chat/conversation/use-sent-deliveries.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import { sentInstructionFixtureItem } from "./sent-instruction-reader-fixture.js";
 
 const origin = { kind: "session" as const, actorKind: "auxiliary" as const, actorSessionId: "sender-aux", actorMainSessionId: "sender-main", actorIncarnationId: "sender-inc", actorTurnId: "42", operation: "send" as const, targetSessionId: "target", targetIncarnationId: "target-inc",
   actorSnapshot: { sessionTitle: "Saved Sender Title", character: { id: "sender", name: "Saved Sender", iconPath: "" } },
@@ -44,7 +45,7 @@ test("direct Steer cards show the recorded input state and read the exact messag
     origin: { ...origin, actorKind: "main", actorSessionId: "sender-main", operation: "steer" } };
   try {
     for (const [state, reason] of [["pending", null], ["unknown", "Delivery or saving could not be confirmed. This input is not a confirmed addition."], ["not-sent", "This input was not delivered to the Turn. It has not been sent as a new Turn."], ["confirmed", null]] as const) {
-      await act(async () => root.render(<SentDeliveryRow item={{ ...steer, state }} context={context} />));
+      await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...steer, state })} context={context} />));
       const row = dom.window.document.querySelector("article")!;
       assert.ok(row.textContent?.includes(item.text));
       assert.equal(row.querySelector(".session-message-mention")?.textContent, "@Saved Target");
@@ -159,7 +160,9 @@ test("sent messages show full content while refreshing exact delivery state", as
   const root = createRoot(dom.window.document.getElementById("root")!);
   const click = async (label: string) => { const button = [...dom.window.document.querySelectorAll("button")].find((element) => element.textContent?.includes(label) || element.getAttribute("aria-label") === label)!; assert.ok(button); await act(async () => button.click()); };
   try {
-    await act(async () => root.render(<SentDeliveryRow item={item} context={context} />));
+    const card = sentInstructionFixtureItem(item);
+    assert.ok("receiptId" in card);
+    await act(async () => root.render(<SentDeliveryRow item={card} context={context} />));
     assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, item.text);
     assert.match(dom.window.document.body.textContent!, /Saved Target.*Saved Target Title/);
     assert.equal(dom.window.document.querySelector(".session-message-mention")?.textContent, "@Saved Target");
@@ -170,7 +173,7 @@ test("sent messages show full content while refreshing exact delivery state", as
     assert.equal(state("Turn State"), "Running");
     assert.deepEqual(statusRequests[0], { target: item.target, receiptId: item.receiptId });
     receiptState = "completed";
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, state: "completed" }} context={context} />));
+    await act(async () => root.render(<SentDeliveryRow item={{ ...card, state: "completed" }} context={context} />));
     assert.equal(state("Receipt State"), "Completed");
     turnState = "completed";
     await act(async () => turnUpdated?.("target"));
@@ -217,7 +220,7 @@ test("Coordination notifications identify exact consultations and preserve separ
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     const consultation = `${"Which approach should we use? ".repeat(20)}\n\nFinal **condition**: preserve [the source](https://example.com/source).`;
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } }} context={context} />));
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } })} context={context} />));
     const button = dom.window.document.querySelector(".coordination-notice-link") as HTMLButtonElement;
     assert.ok(button);
     assert.match(button.textContent!, /Final condition: preserve the source/);
@@ -229,10 +232,10 @@ test("Coordination notifications identify exact consultations and preserve separ
     assert.match(dom.window.document.querySelector('[aria-label="Sent Content"] .rich-text')?.textContent ?? "", /Final condition/);
     assert.equal(dom.window.document.querySelector('[aria-label="Sent Content"]')?.closest('[aria-label="Delivery Details"]'), null);
     await act(async () => (dom.window.document.querySelector('[aria-label="Hide Delivery Details"]') as HTMLButtonElement).click());
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation, text: consultation } }} context={context} />));
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, coordination: { id: "consultation", consultation, text: consultation } })} context={context} />));
     await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
     assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 0);
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, coordination: { id: "consultation", consultation: "Which approach?", text: "The saved reply." } }} context={context} />));
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, coordination: { id: "consultation", consultation: "Which approach?", text: "The saved reply." } })} context={context} />));
     const reply = dom.window.document.querySelector('[aria-label="Sent Content"]')!;
     assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
     assert.equal(reply.querySelector(".rich-text")?.textContent, "The saved reply.");

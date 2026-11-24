@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { coordinationDeliveryText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
-import type { ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
+import type { ExecutionReadInput, SentInstructionBodyRequest, SentInstructionCardRequest } from "../../src-shared/session/session-execution-read.js";
 import { executionOperationRequestSchemas, executionWindowRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
@@ -16,6 +16,7 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
+import { listSentInstructionCards, readSentInstructionBodies } from "./sent-instruction-card-read.js";
 
 type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
 type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };
@@ -235,18 +236,22 @@ export class SessionExecutionReadStorage {
     const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
     const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
-    if (operation === "list_sent_deliveries" || operation === "list_sent_steers" || operation === "list_issued_coordinations") {
-      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
+    if (operation === "list_sent_deliveries" || operation === "list_sent_steers" || operation === "list_issued_coordinations"
+      || operation === "list_sent_instruction_cards" || operation === "read_sent_instruction_bodies") {
+      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>
+        | SentInstructionCardRequest | SentInstructionBodyRequest;
       const messageSeqs = [...new Set(options.messageSeqs)];
       const liveTurnIds = options.liveTurnIds ?? [];
-      if (!messageSeqs.length && !liveTurnIds.length) return { ok: true, items: [], nextCursor: null };
       const marks = (values: unknown[]) => values.map(() => "?").join(",");
       const clauses = [...(messageSeqs.length ? [`user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`] : []), ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : [])];
-      const sourceTurns = this.db.prepare(`SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
+      const sourceTurns = !clauses.length ? [] : this.db.prepare(`SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
         .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">[];
+      if (operation === "list_sent_instruction_cards") return listSentInstructionCards(this.db, target, options as SentInstructionCardRequest, sourceTurns);
+      if (operation === "read_sent_instruction_bodies") return readSentInstructionBodies(this.db, target, options as SentInstructionBodyRequest, sourceTurns);
       if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
+      const pageOptions = options as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
       const turnIds = sourceTurns.map((turn) => String(turn.id));
-      const limit = options.limit ?? 20;
+      const limit = pageOptions.limit ?? 20;
       const messageForTurn = (turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">) =>
         turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
           : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
@@ -264,7 +269,7 @@ export class SessionExecutionReadStorage {
             AND json_extract(m.body, '$.turnInput.origin.targetSessionId')=m.session_id
             AND json_extract(m.body, '$.turnInput.origin.targetIncarnationId')=recipient.incarnation_id
             AND json_extract(m.body, '$.turnInput.queueId') IS NULL AND m.role='user' AND m.id>?
-          ORDER BY m.id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: number; seq: number; body: string; session_id: string; incarnation_id: string }>;
+          ORDER BY m.id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: number; seq: number; body: string; session_id: string; incarnation_id: string }>;
         return { ok: true, items: rows.slice(0, limit).map((row) => {
           const message = normalizeMessage({ ...JSON.parse(row.body), role: "user" });
           if (!message?.turnInput?.origin) throw new Error("Invalid saved outgoing Steer input.");
@@ -279,7 +284,7 @@ export class SessionExecutionReadStorage {
           json_extract(payload_json,'$.body') AS consultation FROM coordination_records_v7
           WHERE initiator_kind=? AND initiator_session_id=? AND initiator_incarnation_id=?
             AND json_extract(payload_json,'$.initiatorTurnId') IN (${marks(turnIds)}) AND id>?
-          ORDER BY id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? "", limit + 1) as Array<{ id: string; source_turn_id: string; consultation: string }>;
+          ORDER BY id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? "", limit + 1) as Array<{ id: string; source_turn_id: string; consultation: string }>;
         return { ok: true, items: records.slice(0, limit).map((record) => ({
           id: record.id, sourceTurnId: record.source_turn_id, consultation: record.consultation,
           sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === record.source_turn_id)!),
@@ -295,7 +300,7 @@ export class SessionExecutionReadStorage {
           AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
           AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
           AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
-        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string; source_display_position: number | null; source_display_verified: number }>;
+        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string; source_display_position: number | null; source_display_verified: number }>;
       return { ok: true, items: rows.slice(0, limit).map((row) => {
         const input = captured(row.input_json)!;
         const origin = input.origin!;

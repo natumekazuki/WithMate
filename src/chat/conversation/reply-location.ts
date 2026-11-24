@@ -2,7 +2,8 @@ import { conversationPeerKey, type ConversationThreads } from "../../../src-shar
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { ResolvedReply } from "./reply-quote.js";
-import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
+import type { SentInstructionCard } from "../../../src-shared/session/session-execution-read.js";
+import { sentInstructionKey } from "./use-sent-deliveries.js";
 
 export type ReplyLocation = {
   column: "main" | "auxiliary";
@@ -30,7 +31,7 @@ export function replyLocationIsProjected(scope: ReplyLocationScope, location: Re
 }
 
 /** A rendered item already comes from the authorized, batched source read. */
-export function locateSentInstruction(scope: ReplyLocationScope, source: SessionTarget, item: SentInstruction): ReplyLocation | null {
+export function locateSentInstruction(scope: ReplyLocationScope, source: SessionTarget, item: SentInstructionCard): ReplyLocation | null {
   const { main } = scope;
   const { origin, target, sourceMessageSeq: seq } = item;
   if (!main || main.kind !== "main" || source.kind !== "main" || target.kind !== "main"

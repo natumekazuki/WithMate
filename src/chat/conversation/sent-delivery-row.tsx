@@ -6,6 +6,7 @@ import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, AdditionalInputStatus, type TurnInputReadContext } from "./turn-input-details.js";
 import { sentInstructionKey, type SentInstruction } from "./use-sent-deliveries.js";
+import { SentInstructionBodyBoundary } from "./sent-instruction-body.js";
 import { CoordinationNotice } from "./coordination-notice.js";
 import { ReplyQuote, ReplyQuoteNavigationContext } from "./reply-quote.js";
 
@@ -55,7 +56,8 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
   }, [open, identity, item.state, statusRevision]);
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
   const coordination = receipt?.coordination;
-  const distinctContent = coordination && (coordination.consultation === undefined || coordination.text !== coordination.consultation);
+  const renderBody = (render: ComponentProps<typeof SentInstructionBodyBoundary>["render"]) =>
+    <SentInstructionBodyBoundary key={identity} source={item.bodyRead} requested={replyJumpHighlighted} render={render} />;
   const detailsButton = <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={open ? "Hide Delivery Details" : "Show Delivery Details"} title="Delivery Details" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "−" : "i"}</button>;
   const card = <div className={`message-card assistant session-outbound${replyJumpHighlighted ? " is-reply-jump-target" : ""}`}
     data-sent-instruction-key={sentInstructionKey(item)}><div className="message-card-content">
@@ -67,9 +69,12 @@ export function SentDeliveryRow({ item, context, inline = false, positionUnknown
       {receipt?.replyTo ? <ReplyQuote ownerSessionId={context.ownerSessionId} reference={receipt.replyTo} navigable /> : null}
       {positionUnknown ? <p className="sent-delivery-position-unknown">Position not confirmed</p> : null}
       {coordination
-        ? <CoordinationNotice id={coordination.id} consultation={coordination.consultation ?? coordination.text} target={item.target} />
-        : <MessageRichText {...messageContext} text={item.text} />}
-      {coordination && distinctContent ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={coordination.text} /></section> : null}
+        ? renderBody(({ text, consultation }) => <>
+          <CoordinationNotice id={coordination.id} consultation={consultation ?? text} target={item.target} />
+          {consultation === undefined || consultation !== text
+            ? <section aria-label="Sent Content"><MessageRichText {...messageContext} text={text} /></section> : null}
+        </>)
+        : renderBody(({ text }) => <MessageRichText {...messageContext} text={text} />)}
       {steer ? <AdditionalInputStatus state={steer.state} /> : null}
       {error ? <p role="alert">{error}</p> : null}
       {open ? <section className="artifact-block turn-input-details turn-input-panel" aria-label="Delivery Details">

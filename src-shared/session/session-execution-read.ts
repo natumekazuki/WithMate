@@ -6,9 +6,11 @@ import { conversationThreadsRequestSchema, conversationThreadsResultSchema, main
 import { sessionReplySchema } from "./session-reply.js";
 
 const id = z.string().min(1).max(256);
+const turnId = z.string().regex(/^[1-9]\d*$/);
 const page = { offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() };
 const reference = { target: sessionTargetSchema, receiptId: id.optional(), turnId: z.string().regex(/^[1-9]\d*$/).optional(), messageSeq: z.number().int().nonnegative().optional() };
-const sentRequest = z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(20).optional() }).strict();
+const sentScope = { target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(turnId).max(1).optional() };
+const sentRequest = z.object({ ...sentScope, cursor: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(20).optional() }).strict();
 const exactReference = <T extends z.ZodRawShape>(extra: T) => z.object({ ...reference, ...extra }).strict()
   .refine((value) => { const ref = value as { receiptId?: string; turnId?: string; messageSeq?: number }; return [ref.receiptId, ref.turnId, ref.messageSeq].filter((value) => value !== undefined).length === 1; }, "Specify exactly one receiptId, WithMate turnId or saved messageSeq.");
 export const executionOperationRequestSchemas = {
@@ -31,14 +33,31 @@ export const executionOperationRequestSchemas = {
 } as const;
 export type ExecutionReadOperation = keyof typeof executionOperationRequestSchemas;
 export type ExecutionReadRequest = z.infer<typeof executionOperationRequestSchemas[ExecutionReadOperation]>;
+export const SENT_INSTRUCTION_CARD_PAGE_SIZE = 100;
+export const SENT_INSTRUCTION_BODY_BATCH_SIZE = 20;
+const sentCardCursor = z.object({ sourceTurnId: turnId, sequence: z.number().int().nonnegative() }).strict();
+const sentCardCursors = z.object({ receipts: sentCardCursor.nullable(), steers: sentCardCursor.nullable() }).strict();
+const sentBodyReference = sentCardCursor.extend({ recipient: sessionTargetSchema });
+const sentBodyKey = z.union([
+  sentBodyReference.extend({ receiptId: id }),
+  sentBodyReference.extend({ messageSeq: z.number().int().nonnegative() }),
+]);
+export type SentInstructionBodyKey = z.infer<typeof sentBodyKey>;
+const sentWindowRequestSchemas = {
+  list_sent_instruction_cards: z.object({ ...sentScope, cursors: sentCardCursors.optional() }).strict(),
+  read_sent_instruction_bodies: z.object({ ...sentScope, cards: z.array(sentBodyKey).min(1).max(SENT_INSTRUCTION_BODY_BATCH_SIZE) }).strict(),
+};
+export type SentInstructionCardRequest = z.infer<typeof sentWindowRequestSchemas.list_sent_instruction_cards>;
+export type SentInstructionBodyRequest = z.infer<typeof sentWindowRequestSchemas.read_sent_instruction_bodies>;
 export const executionWindowRequestSchemas = {
   ...executionOperationRequestSchemas,
+  ...sentWindowRequestSchemas,
   read_conversation_threads: conversationThreadsRequestSchema,
   /** GUI-only display of one exact saved input, without reading execution details. */
   read_turn_input_display: executionOperationRequestSchemas.get_execution,
 };
 export type ExecutionWindowReadOperation = keyof typeof executionWindowRequestSchemas;
-export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionWindowReadOperation; request: ExecutionReadRequest | z.infer<typeof conversationThreadsRequestSchema> };
+export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionWindowReadOperation; request: z.infer<typeof executionWindowRequestSchemas[ExecutionWindowReadOperation]> };
 const nullableId = z.string().nullable();
 const summary = z.object({ entry: z.object({ receiptId: id, inputSeq: z.number().nullable(), kind: z.enum(["start", "additional"]), stage: z.enum(["fixed", "planned", "not-fixed"]), comparison: z.enum(["unchanged", "changed", "unknown"]), detail: z.object({ operation: z.literal("get_execution_input"), receiptId: id }) }).nullable(), startChanged: z.boolean().nullable(), additional: z.object({ confirmedCount: z.number().int().nonnegative(), references: z.array(z.object({ seq: z.number().int().nonnegative() })), referencesNextOffset: z.number().nullable(), unresolved: z.array(z.object({ seq: z.number().nullable(), receiptId: id.optional(), state: z.enum(["pending", "unknown"]) })), unresolvedCount: z.number(), unresolvedNextOffset: z.number().nullable(), notSent: z.array(z.object({ seq: z.number() })), notSentCount: z.number(), notSentNextOffset: z.number().nullable(), coverage: z.enum(["recorded", "unknown"]) }) });
 const displaySnapshot = z.object({ sessionTitle: z.string(), character: z.object({ id: z.string(), name: z.string(), iconPath: z.string(), description: z.string().optional() }) });
@@ -79,6 +98,17 @@ export const executionOperationResultSchemas = {
     description.extend({ ...ok, seq: z.number(), kind: z.literal("changed_file"), index: z.number(), rows: z.array(z.unknown()), offset: z.number(), nextOffset: z.number().nullable(), totalRows: z.number() }).passthrough(),
   ]),
 } as const;
+const sentInstructionCard = z.union([
+  executionOperationResultSchemas.list_sent_deliveries.shape.items.element.omit({ text: true, coordination: true })
+    .extend({ coordination: coordinationDisplay.pick({ id: true }).optional() }),
+  executionOperationResultSchemas.list_sent_steers.shape.items.element.omit({ text: true }),
+]);
+const sentInstructionBody = z.object({
+  sequence: sentCardCursor.shape.sequence, kind: z.enum(["receipt", "steer"]),
+  text: z.string(), consultation: z.string().optional(),
+});
+export type SentInstructionCard = z.infer<typeof sentInstructionCard>;
+export type SentInstructionBody = z.infer<typeof sentInstructionBody>;
 export const executionWindowResultSchemas = {
   ...executionOperationResultSchemas,
   read_conversation_threads: conversationThreadsResultSchema,
@@ -95,6 +125,8 @@ export const executionWindowResultSchemas = {
     turnState: nullableId,
     isFixedStart: z.boolean(),
   }),
+  list_sent_instruction_cards: z.object({ ...ok, items: z.array(sentInstructionCard).max(2 * SENT_INSTRUCTION_CARD_PAGE_SIZE), cursors: sentCardCursors }),
+  read_sent_instruction_bodies: z.object({ ...ok, items: z.array(sentInstructionBody).max(SENT_INSTRUCTION_BODY_BATCH_SIZE) }),
 };
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
   list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",

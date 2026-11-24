@@ -7,6 +7,7 @@ import { SessionMessageColumn, type SessionMessageColumnProps } from "../../src/
 import { useIssuedCoordinations, type IssuedCoordination } from "../../src/chat/conversation/use-issued-coordinations.js";
 import { buildMessageCollapseTargets } from "../../src/chat/conversation/session-message-collapse.js";
 import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
+import { sentInstructionReaderFixture } from "./sent-instruction-reader-fixture.js";
 
 const target = { kind: "main" as const, sessionId: "source", incarnationId: "source-inc" };
 const context = { ownerSessionId: "source", target };
@@ -33,7 +34,7 @@ function props(): SessionMessageColumnProps {
 
 // @test-value v2
 // kind = "contract"
-// claim = "チャットは起票元応答に相談入口をまとめ、receiptで重複させず、当時の別送受信本文を読み、正確な詳細導線・collapseを保持する"
+// claim = "チャットは起票元応答に相談入口をまとめ、receipt本文が未取得でも重複させず、当時の別送受信本文を読み、正確な詳細導線・collapseを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談入口・当時本文・起票表示; docs/design/ui-design-guidelines.md#読込空失敗" }
 // fault = "未取得を正常0件に見せる、別rowへ起票を置く、receipt取得で重複させる、受信本文を閉じた詳細へ隠す/現在回答で置換する、またはcollapse後も本文を表示する"
 // observable = "実chat columnの読込status、起票rowとリンク数、初期表示の当時本文、openCoordination引数、失敗表示とcollapse preview"
@@ -49,18 +50,23 @@ test("issued chat notices align with their source response and preserve exact re
   const opened: unknown[] = [];
   let completeIssuedRead!: () => void;
   const initialIssuedRead = new Promise<void>((resolve) => { completeIssuedRead = resolve; });
+  let completeSentRead!: () => void;
+  const sentBodyRead = new Promise<void>((resolve) => { completeSentRead = resolve; });
   const coordinationChanged = new Set<() => void>();
   const sentChanged = new Set<(sessionId: string) => void>();
   const h = domHarness({ subscribeCoordinationChanged: (listener: () => void) => { coordinationChanged.add(listener); return () => { coordinationChanged.delete(listener); }; },
     onSessionSentDeliveriesChanged: (listener: (sessionId: string) => void) => { sentChanged.add(listener); return () => { sentChanged.delete(listener); }; },
     openCoordination: async (request: unknown) => { if (fail) throw new Error("Could not open saved Coordination."); opened.push(request); },
-    readSessionExecution: async (_owner: string, operation: string) => {
+    readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
       if (operation === "list_issued_coordinations") {
         await initialIssuedRead;
         return { ok: true, items: [{ id: "issued", sourceTurnId: "42", sourceMessageSeq: live ? null : 1, consultation: "Which approach?" }], nextCursor: null };
       }
-      if (operation === "list_sent_deliveries") return { ok: true, items: sent, nextCursor: null };
-      if (operation === "list_sent_steers") return { ok: true, items: [], nextCursor: null };
+      const sentRead = sentInstructionReaderFixture(sent, operation, request);
+      if (sentRead) {
+        if (operation === "read_sent_instruction_bodies") await sentBodyRead;
+        return sentRead;
+      }
       return { ok: true, coordination: { id: "received", consultation: "Original question", text: "Then-delivered answer" }, origin: null, receiptId: "received-receipt" };
     } });
   try {
@@ -89,13 +95,16 @@ test("issued chat notices align with their source response and preserve exact re
     assert.equal(h.document.querySelector(".message-collapsed-preview")?.textContent, "Source response");
     await act(async () => h.root.render(<SessionMessageColumn {...column} />));
     const recipient = { kind: "main" as const, sessionId: "recipient", incarnationId: "recipient-inc" };
-    sent = [{ receiptId: "sent-receipt", sourceTurnId: "42", sourceMessageSeq: 1, sequence: 1, target: recipient, state: "queued", text: "Which approach?", coordination: { id: "issued", text: "Which approach?", consultation: "Which approach?" }, origin: { kind: "session", operation: "send", targetSessionId: recipient.sessionId, targetIncarnationId: recipient.incarnationId } }];
+    sent = [{ receiptId: "sent-receipt", sourceTurnId: "42", sourceMessageSeq: 1, sequence: 1, target: recipient, state: "queued", text: "Then-sent instruction", coordination: { id: "issued", text: "Then-sent instruction", consultation: "Which approach?" }, origin: { kind: "session", operation: "send", targetSessionId: recipient.sessionId, targetIncarnationId: recipient.incarnationId } }];
     await act(async () => {
       coordinationChanged.forEach((listener) => listener());
       sentChanged.forEach((listener) => listener(target.sessionId));
     });
-    assert.equal(h.document.querySelectorAll(".session-outbound .coordination-notice-link").length, 1);
+    assert.ok(h.document.querySelector('[data-sent-instruction-key="sent-receipt"]'));
     assert.equal(h.document.querySelector(".issued-coordination-notice"), null);
+    await act(async () => completeSentRead());
+    assert.equal(h.document.querySelectorAll(".session-outbound .coordination-notice-link").length, 1);
+    assert.equal(h.document.querySelector('.session-outbound [aria-label="Sent Content"] .rich-text')?.textContent, "Then-sent instruction");
     sent = []; live = true;
     await act(async () => h.root.render(<SessionMessageColumn {...column} messages={[{ role: "assistant", text: "Live response" }]} liveWithMateTurnId="42" isRunning />));
     assert.equal(h.document.querySelectorAll('.issued-coordination-notice[data-source-turn-id="42"]').length, 1);
