@@ -323,7 +323,13 @@ export function HomeMonitorContent({
           <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-coordination">
             <div className="home-monitor-section-head">
               <h3 id="home-monitor-coordination">Coordination</h3>
-              <span className="home-monitor-count" aria-label={`${sectionCounts[1]} Main session groups`}>{sectionCounts[1]}</span>
+              <span
+                className="home-monitor-count"
+                aria-hidden={!coordination.hasSnapshot || undefined}
+                aria-label={coordination.hasSnapshot ? `${sectionCounts[1]} Main session groups` : undefined}
+              >
+                {coordination.hasSnapshot ? sectionCounts[1] : null}
+              </span>
             </div>
             <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
               {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
