@@ -1484,7 +1484,7 @@
   color: var(--ink);
 }
 
-.session-file-pin-toggle:disabled { cursor: wait; opacity: 0.6; }
+.session-file-pin-toggle[aria-disabled="true"] { cursor: wait; opacity: 0.6; }
 .session-file-pin-toggle:focus-visible,
 .session-file-pin-filter:focus-visible,
 .session-file-tree-row:focus-visible,
