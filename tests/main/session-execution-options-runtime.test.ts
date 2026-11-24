@@ -149,7 +149,7 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
 // fault = "未確認でReviewerを変更する、古い確認を受理する、または確認済み変更を保存できない"
 // observable = "persistence assemblyの更新拒否・ACK、checkpointと現在選択のApproval／Reviewer"
 // observation_boundary = "component-behavior"
-// scope = "Claude current execution selection and persistence"
+// scope = "Claude legacy update and explicit shared Approval choice through current selection and persistence"
 // lifecycle = "permanent"
 // impact = "選択を受理したように見せた後で次turnが実行不能になる"
 // distinction = "送信時validationとSQLite単体testは保存済みneverのReviewer保持との合成を通らない"
@@ -191,6 +191,54 @@ it("ClaudeのReviewer保持後も組合せを検証して選択とcheckpointを�
   });
   assert.equal(checkpoints.at(-1)?.approvalMode, "plan");
   assert.equal(checkpoints.at(-1)?.codexReviewer, "user");
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), captured);
+  await assert.rejects(persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "on-request", codexReviewer: "auto-review",
+  }, undefined, "user"), /Approval choice does not match/);
+  assert.deepEqual(await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "on-request", codexReviewer: "user",
+  }, undefined, "user"), { status: "accepted", checkpointSaved: true });
+  assert.deepEqual(checkpoints.at(-1), { ...captured, approvalMode: "on-request", codexReviewer: "user" });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot/OpenCodeの旧Reviewerは明示選択なしには変わらず、UserとAuto Reviewを明示した場合だけ次Turn用設定へ確定する"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲; docs/design/provider-adapter.md#approval-modes" }
+// fault = "旧設定を暗黙に明示Userへ変える、明示選択を保存しない、無関係なApprovalへの変更で保存したReviewerを上書きする"
+// observable = "SessionPersistenceServiceの次Turn用現在選択とcheckpointに届く保存設定"
+// observation_boundary = "component-behavior"
+// scope = "Mainの明示Approval更新と既存設定の非明示更新"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "旧Sessionの共通Settings適用が変わるか明示したReviewerが効かない"
+// distinction = "SQLiteの再読込や実行ゲートだけではSession所有の更新時に明示マークが付く条件を検出できない"
+// @end-test-value
+it("only an explicit shared choice updates the stored Copilot and OpenCode reviewer preference", async () => {
+  for (const provider of ["copilot", "opencode"]) {
+    const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
+    const { service: runtime, stored } = makeService(observe);
+    const session: Session = { ...stored, provider, approvalMode: "on-request", codexReviewer: "user" };
+    const { persistence, checkpoints, getCached } = makePersistence(runtime, session, new Map(), { ...providerCatalog, id: provider });
+    const legacy = captureSessionExecutionOptions(session);
+    const update = (options: SessionExecutionOptions, choice?: "user" | "auto-review" | "safety-focused") =>
+      persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), options, undefined, choice);
+    const assertSaved = (options: SessionExecutionOptions) => {
+      assert.deepEqual(checkpoints.at(-1), options);
+      assert.deepEqual(captureSessionExecutionOptions(getCached()), options);
+    };
+    await update({ ...legacy, codexReviewer: "auto-review", withMateReviewerExplicit: true });
+    assertSaved(legacy);
+    const user = { ...legacy, withMateReviewerExplicit: true } as const;
+    await update(user, "user");
+    assertSaved(user);
+    const automatic = { ...user, codexReviewer: "auto-review" } as const;
+    await update(automatic, "auto-review");
+    assertSaved(automatic);
+    const safety = { ...automatic, approvalMode: "safety-focused" } as const;
+    await update({ ...safety, codexReviewer: "user" }, "safety-focused");
+    assertSaved(safety);
+  }
 });
 
 // @test-value v2

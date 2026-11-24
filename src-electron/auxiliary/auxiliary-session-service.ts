@@ -5,7 +5,7 @@ import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-revi
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate, resolveWithMateReviewerExplicitUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
 import { supportsWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
@@ -450,9 +450,8 @@ export class AuxiliarySessionService {
     if (!snapshot || !provider || provider.id !== session.provider) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
-    const options = { ...validateSessionExecutionOptions(request.executionOptions, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, request.executionOptions, request.confirmedReviewerChange),
-      withMateReviewerExplicit: resolveWithMateReviewerExplicitUpdate(fresh, request.executionOptions) };
+    const { withMateReviewerExplicit: _explicit, ...requested } = validateSessionExecutionOptions(request.executionOptions, provider);
+    const options = { ...requested, ...resolveExecutionOptionsReviewerUpdate(fresh, requested, request.confirmedReviewerChange, request.approvalChoice) };
     if (options.codexReviewer !== request.executionOptions.codexReviewer) validateSessionExecutionOptions(options, provider);
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };

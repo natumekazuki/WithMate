@@ -865,14 +865,14 @@ test("composer featureは共通Approvalの選択を対象会話へ配送する",
     const auxiliary = createComposerBridge(log, "auxiliary", false, { provider: "copilot", auxiliarySession });
     auxiliary.session = { ...auxiliary.session, id: auxiliarySession.id, incarnationId: auxiliarySession.createdAt, codexReviewer: "auto-review" };
     const auxiliaryCalls: unknown[] = [];
-    auxiliary.operations.runtimeOptions.auxiliary.update = async (recipe) => {
+    auxiliary.operations.runtimeOptions.auxiliary.update = async (recipe, confirmation, choice) => {
       const next = recipe(auxiliarySession);
-      auxiliaryCalls.push([next.approvalMode, next.codexReviewer, next.withMateReviewerExplicit]);
+      auxiliaryCalls.push([next.approvalMode, next.codexReviewer, next.withMateReviewerExplicit, confirmation, choice]);
     };
     const auxiliarySurface = feature.buildSurface(auxiliary).composer;
     auxiliarySurface.onChangeApprovalMode("user");
     await act(async () => await Promise.resolve());
-    assert.deepEqual(auxiliaryCalls, [["on-request", "user", true]]);
+    assert.deepEqual(auxiliaryCalls, [["on-request", "user", true, undefined, "user"]]);
     assert.equal(mainCalls.length, 1);
   });
 });

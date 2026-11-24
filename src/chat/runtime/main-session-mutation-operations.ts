@@ -41,7 +41,7 @@ export async function runMainRuntimeOptionOperation(input: {
   isReadOnly: boolean;
   providerCatalog: ModelCatalogProvider | null;
   option: MainRuntimeOption;
-  persist: (session: Session, confirmedReviewerChange?: ConfirmedReviewerChange) => Promise<Session>;
+  persist: (session: Session, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice) => Promise<Session>;
   createTimestampLabel: () => string;
 }): Promise<Session | null> {
   const {
@@ -57,7 +57,7 @@ export async function runMainRuntimeOptionOperation(input: {
   if (option.kind === "approval-choice") {
     const patch = resolveSessionApprovalChoice(session.provider, option.value);
     if (!patch || Object.entries(patch).every(([key, value]) => session[key as keyof Session] === value)) return null;
-    return persist({ ...session, ...patch, updatedAt: createTimestampLabel() });
+    return persist({ ...session, ...patch, updatedAt: createTimestampLabel() }, undefined, option.value);
   }
 
   if (option.kind === "custom-agent") {

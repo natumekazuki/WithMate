@@ -1938,7 +1938,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 changeSessionAdditionalDirectory: async (request) => { await requireSessionPersistenceService().changeAdditionalDirectory(request); },
                 setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
-                setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions, request.confirmedReviewerChange),
+                setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions, request.confirmedReviewerChange, request.approvalChoice),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: async (sessionId) => {
                   await requireMainSessionCommandFacade().deleteSession(sessionId);

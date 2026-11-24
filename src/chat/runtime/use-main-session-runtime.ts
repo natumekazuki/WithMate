@@ -11,6 +11,7 @@ import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
+import type { SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import type { ReadStatus } from "../../ui/loading-indicator.js";
@@ -113,7 +114,7 @@ export function useMainSessionRuntime({
     [applySessions],
   );
 
-  const selectExecutionOptions = useCallback((session: Session, confirmedReviewerChange?: ConfirmedReviewerChange) => {
+  const selectExecutionOptions = useCallback((session: Session, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice) => {
     const options = captureSessionExecutionOptions(session);
     const incarnationId = getSessionIncarnationId(session);
     const revision = ++selectionRequestRevisionRef.current;
@@ -122,7 +123,7 @@ export function useMainSessionRuntime({
     applySessions((current) => current.map((candidate) => candidate.id === session.id ? { ...candidate, ...options } : candidate));
     if (api) {
       void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId, executionOptions: options,
-        ...(confirmedReviewerChange ? { confirmedReviewerChange } : {}) })
+        ...(confirmedReviewerChange ? { confirmedReviewerChange } : {}), ...(approvalChoice ? { approvalChoice } : {}) })
         .then((result) => {
           if (result.status === "accepted" && !result.checkpointSaved) {
             void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id } });

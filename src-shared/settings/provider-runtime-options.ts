@@ -3,6 +3,7 @@ import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-
 import { codexReviewerOptions, resolveCodexReviewerUpdate, type CodexReviewer } from "./codex-reviewer.js";
 import type { ConfirmedReviewerChange } from "../session/session-mutation-contract.js";
 import { supportsWithMateAutoReview } from "./withmate-auto-review.js";
+import { resolveSessionApprovalChoice, type SessionApprovalChoice } from "./session-approval-choice.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
@@ -55,7 +56,7 @@ export function getApprovalReviewerOptionsForProvider(
   providerId: string | null | undefined,
   approvalMode: ApprovalMode,
 ): RuntimeSelectOption<CodexReviewer>[] {
-  if (providerId !== "codex" && providerId !== "claude" && !supportsWithMateAutoReview(providerId)) return [];
+  if (providerId !== "codex" && providerId !== "claude") return [];
   return codexReviewerOptions.map((option) => ({
     ...option,
     ...(providerId === "claude" && approvalMode !== "on-request" && approvalMode !== "never" && approvalMode !== "safety-focused" && option.value === "auto-review"
@@ -97,8 +98,10 @@ export function resolveChildSessionPermissions(
     throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}.`);
   }
 
-  const sourceHasReviewer = getApprovalReviewerOptionsForProvider(sourceProviderId, approvalMode).length > 0;
-  const targetHasReviewer = getApprovalReviewerOptionsForProvider(targetProviderId, approvalMode).length > 0;
+  const sourceHasReviewer = supportsWithMateAutoReview(sourceProviderId)
+    || getApprovalReviewerOptionsForProvider(sourceProviderId, approvalMode).length > 0;
+  const targetHasReviewer = supportsWithMateAutoReview(targetProviderId)
+    || getApprovalReviewerOptionsForProvider(targetProviderId, approvalMode).length > 0;
   const inheritReviewer = sourceHasReviewer && targetHasReviewer
     && (!supportsWithMateAutoReview(sourceProviderId) || withMateReviewerExplicit === true);
   return {
@@ -110,26 +113,31 @@ export function resolveChildSessionPermissions(
   };
 }
 
-/** An inactive reviewer cannot be edited while its Approval does not use it. */
-export function resolveWithMateReviewerExplicitUpdate(
-  current: { provider: string; approvalMode: ApprovalMode; withMateReviewerExplicit?: true },
-  requested: { approvalMode: ApprovalMode; withMateReviewerExplicit?: true },
-): true | undefined {
-  if (!supportsWithMateAutoReview(current.provider)) return undefined;
-  return current.withMateReviewerExplicit || (requested.approvalMode === "on-request" ? requested.withMateReviewerExplicit : undefined);
-}
-
 export function resolveExecutionOptionsReviewerUpdate(
-  current: { provider: string; approvalMode: ApprovalMode; codexReviewer: CodexReviewer },
-  requested: { approvalMode: ApprovalMode; codexReviewer: CodexReviewer },
+  current: { provider: string; approvalMode: ApprovalMode; codexReviewer: CodexReviewer; withMateReviewerExplicit?: true },
+  requested: { approvalMode: ApprovalMode; codexReviewer: CodexReviewer; withMateReviewerExplicit?: true },
   confirmedChange?: ConfirmedReviewerChange,
-): CodexReviewer {
-  if (confirmedChange === undefined) {
-    if (requested.approvalMode === "on-request") return requested.codexReviewer;
-    if (supportsWithMateAutoReview(current.provider)) {
-      return current.codexReviewer;
+  approvalChoice?: SessionApprovalChoice,
+): { codexReviewer: CodexReviewer; withMateReviewerExplicit?: true } {
+  if (approvalChoice !== undefined) {
+    const patch = resolveSessionApprovalChoice(current.provider, approvalChoice);
+    if (confirmedChange || !patch || patch.approvalMode !== requested.approvalMode
+      || (patch.codexReviewer !== undefined && patch.codexReviewer !== requested.codexReviewer)) {
+      throw new Error("The Approval choice does not match the requested settings.");
     }
-    return resolveCodexReviewerUpdate(current, requested.codexReviewer);
+    return {
+      codexReviewer: patch.codexReviewer ?? current.codexReviewer,
+      ...(patch.withMateReviewerExplicit || current.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
+    };
+  }
+  if (confirmedChange === undefined) {
+    if (supportsWithMateAutoReview(current.provider)) {
+      return {
+        codexReviewer: current.codexReviewer,
+        ...(current.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
+      };
+    }
+    return { codexReviewer: resolveCodexReviewerUpdate(current, requested.codexReviewer) };
   }
   if (current.provider !== "claude"
     || current.approvalMode !== confirmedChange?.previousApprovalMode
@@ -140,7 +148,7 @@ export function resolveExecutionOptionsReviewerUpdate(
       .some((option) => option.value === "auto-review" && option.disabled)) {
     throw new Error("The confirmed Approval and Reviewer change is no longer valid.");
   }
-  return "user";
+  return { codexReviewer: "user" };
 }
 
 export function getSandboxOptionsForProvider(

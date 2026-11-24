@@ -84,7 +84,7 @@ async function fixture(t: TestContext) {
 // claim = "更新起動は廃止専用データだけを退避せず破棄し、通常履歴・Character・Graph・Coordination・Projectを保持して再起動できる"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md: Memory/Affect廃止と共有保存データの継続" }
 // fault = "起動更新が専用table/設定/暗号添付を残す、再作成する、または共有データを削除する"
-// observable = "実装配列から独立した15table+旧queueの残存一覧、本番bootstrap後と再実行後のSQLite行・設定・所有fileと共有fileの存否/内容"
+// observable = "廃止tableの不在、本番bootstrap後と再実行後の共有列の値と追加Reviewer列の既定値、設定とfileの存否/内容"
 // observation_boundary = "public-boundary"
 // scope = "preview.6相当のsynthetic DBとuserDataから起動するstorage更新"
 // lifecycle = "permanent"
@@ -116,7 +116,12 @@ test("released data retirement preserves shared storage across repeated bootstra
       assert.deepEqual(EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)), [], "retired private tables must not survive");
       assert.deepEqual(db.prepare("SELECT setting_key FROM app_settings ORDER BY setting_key").all().map((row) => row.setting_key),
         ["companion_removal_completed_at", "session_graph_agent_origin_contract_initialized_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
-      for (const [table, rows] of Object.entries(f.shared)) assert.deepEqual(db.prepare(`SELECT * FROM ${table}`).all(), rows, table);
+      for (const [table, rows] of Object.entries(f.shared)) {
+        const actual = db.prepare(`SELECT * FROM ${table}`).all();
+        assert.deepEqual(actual, table === "auxiliary_sessions"
+          ? rows.map((row) => Object.assign(Object.create(null), row, { withmate_reviewer_explicit: 0 }))
+          : rows, table);
+      }
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     } finally { db.close(); }
     for (const file of [object, staging, keyring]) assert.equal(existsSync(file), false);

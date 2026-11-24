@@ -132,7 +132,7 @@ export type SessionComposerFeatureBridge = {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
       auxiliary: {
         session: AuxiliarySession | null;
-        update: (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: ConfirmedReviewerChange) => Promise<void>;
+        update: (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice) => Promise<void>;
         timestamp: () => string;
       };
     };
@@ -394,7 +394,7 @@ export function useSessionComposerFeature(input: {
         void auxiliaryRuntime.update((current) => {
           const patch = resolveSessionApprovalChoice(current.provider, value);
           return patch ? applyAuxiliarySessionRuntimeOptionsPatch(current, patch, auxiliaryRuntime.timestamp()) : current;
-        });
+        }, undefined, value);
       } else {
         void bridge.operations.runtimeOptions.runMain({ kind: "approval-choice", value });
       }

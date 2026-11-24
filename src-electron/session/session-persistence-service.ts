@@ -29,7 +29,8 @@ import { WorkspaceDirectoryValidationService } from "../files/workspace-director
 import { addAllowedAdditionalDirectory, removeAllowedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
 import type { ChangeSessionAdditionalDirectoryRequest } from "../../src-shared/session/session-mutation-contract.js";
 import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
-import { resolveExecutionOptionsReviewerUpdate, resolveWithMateReviewerExplicitUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import type { SessionApprovalChoice } from "../../src-shared/settings/session-approval-choice.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
@@ -452,7 +453,7 @@ export class SessionPersistenceService {
     });
   }
 
-  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions, confirmedReviewerChange?: ConfirmedReviewerChange): Promise<SetExecutionOptionsResult> {
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice): Promise<SetExecutionOptionsResult> {
     const revision = (this.selectionRequestRevisions.get(sessionId) ?? 0) + 1;
     this.selectionRequestRevisions.set(sessionId, revision);
     const catalog = await this.deps.getModelCatalogSnapshot();
@@ -465,9 +466,8 @@ export class SessionPersistenceService {
     const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
-    const validated = { ...validateSessionExecutionOptions(options, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, options, confirmedReviewerChange),
-      withMateReviewerExplicit: resolveWithMateReviewerExplicitUpdate(fresh, options) };
+    const { withMateReviewerExplicit: _explicit, ...requested } = validateSessionExecutionOptions(options, provider);
+    const validated = { ...requested, ...resolveExecutionOptionsReviewerUpdate(fresh, requested, confirmedReviewerChange, approvalChoice) };
     if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider);
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
