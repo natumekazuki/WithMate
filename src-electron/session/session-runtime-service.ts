@@ -70,6 +70,8 @@ export type SessionRuntimeServiceDeps = {
     terminalCommit: SessionTurnTerminalCommit,
     options?: { confirmedFinalAssistantText?: string | null },
   ): Awaitable<Session>;
+  /** Opens the in-memory source-display scope. Its synchronous disposer releases only this Turn, without writing storage. */
+  beginSourceDisplayTurn?(session: Session, turnId: string): () => void;
   clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -1173,6 +1175,7 @@ export class SessionRuntimeService {
     let terminalSettled = false;
     let approvalReview: WithMateApprovalReviewTurn | undefined;
     let providerAgentRuntimeTurnHandle: unknown;
+    let releaseSourceDisplays: (() => void) | undefined;
     let terminalPersistenceStarted = false;
     let runtimePersistenceFailed = false;
     let liveProgressGeneration = 0;
@@ -1367,6 +1370,7 @@ export class SessionRuntimeService {
     };
 
     try {
+      releaseSourceDisplays = this.deps.beginSourceDisplayTurn?.(runningSession, String(runningTurn.id));
       const providerAgentRuntimeTurn = await Promise.resolve(
         this.deps.beginProviderAgentRuntimeTurn?.({
           session: activeRunningSession,
@@ -1586,6 +1590,7 @@ export class SessionRuntimeService {
       );
       return storedFailedSession;
     } finally {
+      releaseSourceDisplays?.();
       approvalReview?.close();
       this.appendSessionInput.delete(sessionId);
       this.directSessionInput.delete(sessionId);

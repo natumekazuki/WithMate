@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync,
 import path from "node:path";
 
 import type { AppLogEntry, AppLogError, AppLogInput } from "../../src-shared/window/app-log-types.js";
+import { APP_LOG_MAX_SERIALIZED_DATA_LENGTH, APP_LOG_MAX_STRING_LENGTH } from "./app-log-limits.js";
 
 export type AppLogServiceRuntimeInfo = {
   appVersion: string;
@@ -25,8 +26,6 @@ export type AppLogServiceOptions = {
 const DEFAULT_LOG_FILE_NAME = "withmate.jsonl";
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 5;
-const MAX_STRING_LENGTH = 4000;
-const MAX_SERIALIZED_DATA_LENGTH = 12_000;
 
 export class AppLogService {
   private readonly fileName: string;
@@ -174,13 +173,13 @@ function sanitizeData(value: unknown): unknown {
   }
 
   const text = safeStringify(value);
-  if (text.length <= MAX_SERIALIZED_DATA_LENGTH) {
+  if (text.length <= APP_LOG_MAX_SERIALIZED_DATA_LENGTH) {
     return JSON.parse(text);
   }
 
   return {
     truncated: true,
-    preview: text.slice(0, MAX_SERIALIZED_DATA_LENGTH),
+    preview: text.slice(0, APP_LOG_MAX_SERIALIZED_DATA_LENGTH),
   };
 }
 
@@ -211,5 +210,5 @@ function stringifyForMessage(value: unknown): string {
 }
 
 function truncateString(value: string): string {
-  return value.length > MAX_STRING_LENGTH ? `${value.slice(0, MAX_STRING_LENGTH)}...` : value;
+  return value.length > APP_LOG_MAX_STRING_LENGTH ? `${value.slice(0, APP_LOG_MAX_STRING_LENGTH)}...` : value;
 }

@@ -120,7 +120,7 @@ entry失敗は`entryFailureCategories`、計算自体の中断は`scanFailureCat
 
 provider 実行ログは、通常運用では turn 単位の summary を残す。例外として、Codexのscope内で専用分岐のない正常なnotificationは、UI投影要否の調査用に受信ごとに記録する。
 
-`codex.run.unhandled-notification`はinfoでsession/thread/turn ID、method、paramsを記録する。Workerの既存redactorでAPI key・既知binding情報を除去し、既存raw item上限（128 Ki文字、個々の文字列は64 Ki文字）で制限する。app logではさらに文字列4,000文字、serialized data 12,000文字へ切り詰め、既存rotationで保持する。methodとparamsが大きい場合は部分情報となる。任意の秘密・会話・tool結果・path等を含みうるため、共有前に内容を確認する。対象と除外は[Codex projection owner](provider-adapter.md#codex-projection-owner)を参照する。
+`codex.run.unhandled-notification`はinfoでsession/thread/turn ID、method、paramsを受信ごとに記録する。Workerの既存redactorでAPI key・既知binding情報を除去してから、文字列4,000文字、serialized data 12,000文字に収まる診断データを作る。IDとmethodはparamsと分けて保持し、長い場合は256文字の抜粋に省略記号を付ける。paramsが大きい場合は切詰め情報付きの抜粋を残す。Mainは既存のapp loggerとrotationを使う。任意の秘密・会話・tool結果・path等を含みうるため、共有前に内容を確認する。対象と除外は[Codex projection owner](provider-adapter.md#codex-projection-owner)を参照する。
 
 Codex の通常ログに残す summary:
 

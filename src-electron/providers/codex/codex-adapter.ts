@@ -781,18 +781,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
     signal.throwIfAborted();
     this.assertCleanupComplete(workspacePath);
     const { transport, apiKey } = this.createTransport("codex", appSettings, workspacePath, binding);
-    let closed = false;
+    let closing: Promise<void> | undefined;
     let threadId: string | null = null;
     const close = () => {
-      if (closed) return;
-      closed = true;
-      signal.removeEventListener("abort", close);
-      void transport.close().catch(() => {
+      signal.removeEventListener("abort", onAbort);
+      return closing ??= transport.close().catch(async () => {
         this.pendingCleanups.set(transport, { workspace: workspaceKey(workspacePath), threadId });
-        void transport.whenClosed().then(() => this.pendingCleanups.delete(transport));
+        await transport.whenClosed();
+        this.pendingCleanups.delete(transport);
       });
     };
-    signal.addEventListener("abort", close, { once: true });
+    const onAbort = () => { void close(); };
+    signal.addEventListener("abort", onAbort, { once: true });
     const approvalsReviewer = mapCodexReviewerToApprovalsReviewer("auto-review");
     const approvalPolicy = "on-request";
     const { model, reasoningEffort } = selection;
@@ -852,7 +852,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
           }
         }
       } };
-    } catch (error) { close(); throw error; }
+    } catch (error) {
+      await close();
+      throw error;
+    }
   }
   async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
     const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
@@ -1130,7 +1133,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
             if (result.unhandledNotification) this.writeLog({
               level: "info", kind: "codex.run.unhandled-notification",
               message: "Codex notification has no dedicated projection handler",
-              data: result.unhandledNotification.data,
+              data: result.unhandledNotification,
             });
             if (!sessionInput || !args.onProgress) continue;
             if (result.errorMessage !== undefined) publishControl({ errorMessage: result.errorMessage });
