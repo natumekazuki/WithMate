@@ -110,10 +110,10 @@ test("Main thread projection and Monitor share terminal unread state while recen
 
 // @test-value v2
 // kind = "contract"
-// claim = "後続Turnのある保存履歴から選んだ失敗開始receiptは認可IPCを通り、元来歴付きGUIの新しい受付になる"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/database-schema.md: retrySource" }
-// fault = "最新Turnを代用する、履歴や元受付を変更する、Session送信者を新actorにする"
-// observable = "実SQLiteで読んだ選択Turn、新受付の本文と送信来歴、履歴本文と元受付"
+// claim = "後続Turnのある保存履歴から選んだ失敗開始receiptはGUIの新しい受付になり、受付と保存済み再実行が元の相手枠を維持する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "最新Turnの枠を代用する、履歴や元受付を変更する、Session送信者を新actorにする"
+// observable = "実SQLiteで読んだ選択Turn、受付とdispatchの会話枠、GUI actorと元来歴、元受付と相手/初期/ALLの履歴"
 // observation_boundary = "public-boundary"
 // scope = "IPC、MainSessionTurnQueueFacade、queue service、SQLite実行履歴"
 // lifecycle = "permanent"
@@ -122,14 +122,18 @@ test("Main thread projection and Monitor share terminal unread state while recen
 // @end-test-value
 test("IPC retries the selected older failed Turn from real saved execution state", async () => {
   await fixture(async ({ sessions, turns, queue, read }) => {
-    const saved = sessions.insertSession({ ...session(), model: "current-model", reasoningEffort: "medium", messages: [
+    const saved = sessions.insertSession({ ...session(), sessionRole: "overall-coordinator", rootSessionId: "read-main",
+      model: "current-model", reasoningEffort: "medium", messages: [
       { role: "user", text: "fixed instruction" }, { role: "assistant", text: "failed response", runFailure: "failed" },
       { role: "user", text: "later instruction" }, { role: "assistant", text: "later response" },
     ] });
     const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
     const target = { kind: "main" as const, ...owner };
+    const agent = sessions.insertSession({ ...session(), id: "sender", taskTitle: "Sender", sessionRole: "executor", rootSessionId: saved.id,
+      parentSessionId: saved.id, createdBySessionId: saved.id });
+    const peer = { kind: "main" as const, sessionId: agent.id, incarnationId: getSessionIncarnationId(agent) };
     const sourceOrigin = { kind: "session" as const, operation: "send" as const, targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId,
-      actorKind: "main" as const, actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "91", actorSnapshot: { sessionTitle: "Sender", character: { id: "sender-character", name: "Sender", iconPath: "" } } };
+      actorKind: "main" as const, actorSessionId: peer.sessionId, actorIncarnationId: peer.incarnationId, actorTurnId: "91", actorSnapshot: { sessionTitle: "Sender", character: { id: "sender-character", name: "Sender", iconPath: "" } } };
     const original = queue.enqueue(owner, { request: { userMessage: "fixed instruction", clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) }, provider: saved.provider, workspacePath: saved.workspacePath, attachments: [], origin: sourceOrigin });
     const turnBase = { sessionId: saved.id, provider: saved.provider, model: saved.model, reasoningEffort: saved.reasoningEffort, approvalMode: saved.approvalMode, threadId: "", errorMessage: "", createdAt: "now" };
     const failed = turns.createSessionTurn({ ...turnBase, phase: "running", userMessageSeq: 0 });
@@ -151,16 +155,54 @@ test("IPC retries the selected older failed Turn from real saved execution state
       getAuxiliarySessionStatus: async () => null } as unknown as MainIpcSessionRuntimeDeps;
     registerSessionRuntimeHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, deps);
     try {
-      const result = await handlers.get("withmate:retry-failed-session-turn")!({ sender, senderFrame: frame } as unknown as IpcMainInvokeEvent, saved.id,
-        { target, receiptId: original.id, turnId: String(failed.id), clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) });
+      const request = { target, receiptId: original.id, turnId: String(failed.id), clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) };
+      const retry = (input = request) => handlers.get("withmate:retry-failed-session-turn")!({ sender, senderFrame: frame } as unknown as IpcMainInvokeEvent, saved.id, input);
+      const result = await retry();
+      assert.equal((await retry()).id, result.id);
       assert.equal(result.captured.request.userMessage, "fixed instruction");
       assert.equal(result.captured.origin.kind, "gui");
+      assert.deepEqual(result.captured.request.mainConversationFrame, peer);
+      assert.deepEqual(queue.listActive(owner).find(({ id }) => id === result.id)?.captured.request.mainConversationFrame, peer);
       assert.deepEqual(result.captured.retrySource.origin, sourceOrigin);
       assert.equal(result.captured.retrySource.turnId, String(failed.id));
       assert.deepEqual(sessions.getSession(saved.id)?.messages.map((message) => message.text), ["fixed instruction", "failed response", "later instruction", "later response"]);
       assert.equal(queue.getReceiptById(owner, original.id)?.state, "failed");
       const reread = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, receiptId: result.id } }));
       assert.equal(reread.retrySource?.receiptId, original.id);
+      const run = (id: string, seq: number, text: string) => {
+        const claimed = queue.claimNext(owner);
+        assert.equal(claimed?.id, id);
+        assert.ok(claimed?.dispatched);
+        assert.deepEqual(claimed.dispatched.request.mainConversationFrame, peer);
+        assert.equal(claimed.dispatched.request.userMessage, text);
+        const running = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: seq, updatedAt: "retry-start",
+          userMessage: { role: "user", text: claimed.dispatched.request.userMessage }, queuedTurn: { queueId: id,
+            turn: { ...turnBase, sandboxMode: request.executionOptions.codexSandboxMode, phase: "running", userMessageSeq: seq } } });
+        assert.ok(running.queuedTurn);
+        sessions.appendSessionTerminal({ ...owner, expectedMessageCount: seq + 1, assistantMessage: { role: "assistant", text: "retried response" },
+          metadata: { status: "saved", runState: "idle", threadId: "", updatedAt: "retry-finished" },
+          terminalCommit: { turnId: running.queuedTurn.id, sessionId: saved.id, phase: "completed", assistantMessageSeq: seq + 1,
+            threadId: "", errorMessage: "", completedAt: "retry-finished" } });
+        assert.equal(queue.getReceiptById(owner, id)?.state, "completed");
+      };
+      run(result.id, 4, "fixed instruction");
+      const edited = await retry({ ...request, clientRequestId: randomUUID() });
+      queue.updateQueued(owner, edited.id, { userMessage: "edited by user", attachments: [] });
+      run(edited.id, 6, "edited by user");
+      const list = (thread?: typeof target | null) => (executionOperationResultSchemas.list_messages.parse(read.execute({
+        target, operation: "list_messages", request: { target, thread },
+      })).items as { seq: number }[]).map(({ seq }) => seq);
+      assert.deepEqual(list(peer), [0, 1, 4, 5, 6, 7]);
+      assert.deepEqual(list(null), [2, 3]);
+      assert.deepEqual(list(), [0, 1, 2, 3, 4, 5, 6, 7]);
+      assert.deepEqual(sessions.getSession(saved.id)?.messages.slice(0, 4).map((message) => message.text),
+        ["fixed instruction", "failed response", "later instruction", "later response"]);
+      assert.deepEqual(queue.getReceiptById(owner, original.id)?.accepted, original.accepted);
+      const editedExecution = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution",
+        request: { target, receiptId: edited.id } }));
+      assert.equal(editedExecution.origin?.kind, "gui");
+      assert.equal(editedExecution.retrySource?.origin.actorSessionId, peer.sessionId);
+      assert.equal(editedExecution.inputs.entry?.comparison, "changed");
     } finally { await service.close(); }
   });
 });

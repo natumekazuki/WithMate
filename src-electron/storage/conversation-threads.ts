@@ -18,23 +18,29 @@ type Outbound = { session_id: string; incarnation_id: string; created_at: string
 
 type CoordinationOrigin = Pick<CoordinationRecord, "initiator" | "initiatorTurnId" | "originReceiptId">;
 
-function readCoordinationStartSeq(db: DatabaseSync, source: MainTarget, record: CoordinationOrigin | undefined): number | undefined {
-  if (record?.initiator.kind !== "main" || record.initiator.sessionId !== source.sessionId
-    || record.initiator.incarnationId !== source.incarnationId || !record.originReceiptId) return undefined;
+function readMainStartFrame(db: DatabaseSync, source: MainTarget, receiptId: string, turnId: string, retry: boolean,
+  readThreads: () => ConversationThreads = () => readConversationThreads(db, source)): MainTarget | null {
   const start = db.prepare(`SELECT q.user_message_seq AS seq FROM session_turn_queue_v6 q
     JOIN session_turns_v6 t ON t.id=CAST(q.turn_id AS INTEGER) AND q.turn_id=CAST(t.id AS TEXT)
       AND t.session_id=q.session_id AND t.auxiliary_session_id IS NULL AND t.user_message_seq=q.user_message_seq
     WHERE q.id=? AND q.session_id=? AND q.incarnation_id=? AND q.auxiliary_session_id IS NULL
-      AND q.turn_id=? AND q.input_turn_id IS NULL`)
-    .get(record.originReceiptId, source.sessionId, source.incarnationId, record.initiatorTurnId) as { seq: number } | undefined;
-  return start?.seq;
+      AND q.turn_id=? AND q.input_turn_id IS NULL${retry ? " AND q.state='failed' AND t.phase='failed'" : ""}`)
+    .get(receiptId, source.sessionId, source.incarnationId, turnId) as { seq: number } | undefined;
+  return start ? savedMessageConversationFrame(readThreads(), start.seq) ?? null : null;
 }
 
 /** Seed the waiting receipt from the same saved affiliation as its immutable start. */
 export function readMainCoordinationFrame(db: DatabaseSync, source: MainTarget, record: CoordinationOrigin | undefined,
-  readThreads: () => ConversationThreads = () => readConversationThreads(db, source)): MainTarget | null {
-  const seq = readCoordinationStartSeq(db, source, record);
-  return seq === undefined ? null : savedMessageConversationFrame(readThreads(), seq) ?? null;
+  readThreads?: () => ConversationThreads): MainTarget | null {
+  if (record?.initiator.kind !== "main" || record.initiator.sessionId !== source.sessionId
+    || record.initiator.incarnationId !== source.incarnationId || !record.originReceiptId) return null;
+  return readMainStartFrame(db, source, record.originReceiptId, record.initiatorTurnId, false, readThreads);
+}
+
+export function readMainRetryFrame(db: DatabaseSync, source: MainTarget, retry: { receiptId: string; turnId: string; origin: Origin },
+  readThreads?: () => ConversationThreads): MainTarget | null {
+  if (retry.origin.targetSessionId !== source.sessionId || retry.origin.targetIncarnationId !== source.incarnationId) return null;
+  return readMainStartFrame(db, source, retry.receiptId, retry.turnId, true, readThreads);
 }
 
 export function readConversationCoordinationOrigin(db: DatabaseSync, id: string): CoordinationOrigin | undefined {
@@ -129,8 +135,8 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
   const gui = db.prepare(`SELECT q.turn_id, q.input_turn_id IS NOT NULL AS additional, q.user_message_seq AS user_message_seq, q.created_at,
       q.accepted_json -> '$.request.mainConversationFrame' AS frame,
       m.body -> '$.replyTo' AS reply,
-      json_extract(q.accepted_json, '$.coordination.id') AS coordination_id,
-      origin_turn.user_message_seq AS coordination_start_seq
+      (json_extract(q.accepted_json, '$.coordination.id') IS NOT NULL OR json_extract(q.accepted_json, '$.retrySource') IS NOT NULL) AS inherited,
+      origin_turn.user_message_seq AS origin_start_seq
     FROM session_turn_queue_v6 q
     JOIN session_messages_v6 m ON m.session_id=q.session_id AND m.seq=q.user_message_seq AND m.role='user'
     LEFT JOIN coordination_records_v7 c ON c.id=json_extract(q.accepted_json, '$.coordination.id')
@@ -138,30 +144,33 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
       AND json_extract(q.accepted_json, '$.coordination.targetKind')='main'
       AND json_extract(q.accepted_json, '$.coordination.actor.kind')='user'
       AND c.initiator_kind='main' AND c.initiator_session_id=q.session_id AND c.initiator_incarnation_id=q.incarnation_id
-    LEFT JOIN session_turn_queue_v6 origin_receipt ON origin_receipt.id=json_extract(c.payload_json, '$.originReceiptId')
+    LEFT JOIN session_turn_queue_v6 origin_receipt
+      ON origin_receipt.id=COALESCE(json_extract(c.payload_json, '$.originReceiptId'), json_extract(q.accepted_json, '$.retrySource.receiptId'))
       AND origin_receipt.session_id=q.session_id AND origin_receipt.incarnation_id=q.incarnation_id
       AND origin_receipt.auxiliary_session_id IS NULL AND origin_receipt.input_turn_id IS NULL
-      AND origin_receipt.turn_id=json_extract(c.payload_json, '$.initiatorTurnId')
+      AND origin_receipt.turn_id=COALESCE(json_extract(c.payload_json, '$.initiatorTurnId'), json_extract(q.accepted_json, '$.retrySource.turnId'))
       AND (q.input_turn_id IS NULL OR origin_receipt.turn_id=q.turn_id)
     LEFT JOIN session_turns_v6 origin_turn ON origin_turn.id=CAST(origin_receipt.turn_id AS INTEGER)
       AND origin_receipt.turn_id=CAST(origin_turn.id AS TEXT) AND origin_turn.session_id=q.session_id
       AND origin_turn.auxiliary_session_id IS NULL AND origin_turn.user_message_seq=origin_receipt.user_message_seq
+      AND (c.id IS NOT NULL OR (q.input_turn_id IS NULL AND origin_receipt.state='failed' AND origin_turn.phase='failed'
+        AND json_extract(q.accepted_json, '$.retrySource.origin.targetSessionId')=q.session_id
+        AND json_extract(q.accepted_json, '$.retrySource.origin.targetIncarnationId')=q.incarnation_id))
     WHERE q.session_id=? AND q.incarnation_id=? AND q.auxiliary_session_id IS NULL
       AND json_extract(q.accepted_json, '$.origin.kind')='gui'
       AND json_extract(q.accepted_json, '$.origin.operation')='send'
       AND json_extract(q.accepted_json, '$.origin.targetSessionId')=q.session_id
       AND json_extract(q.accepted_json, '$.origin.targetIncarnationId')=q.incarnation_id
-      AND json_extract(q.accepted_json, '$.retrySource') IS NULL
       AND (q.input_turn_id IS NOT NULL OR json_extract(q.accepted_json, '$.request.submitSource')='composer'
-        OR json_extract(q.accepted_json, '$.coordination.operation')='answer')
+        OR json_extract(q.accepted_json, '$.coordination.operation')='answer' OR json_extract(q.accepted_json, '$.retrySource') IS NOT NULL)
     UNION ALL
-    SELECT json_extract(body, '$.turnInput.turnId'), 1, seq, created_at, NULL, NULL, NULL, NULL
+    SELECT json_extract(body, '$.turnInput.turnId'), 1, seq, created_at, NULL, NULL, 0, NULL
     FROM session_messages_v6 WHERE session_id=? AND role='user'
       AND json_extract(body, '$.turnInput.turnId') IS NOT NULL AND json_extract(body, '$.turnInput.queueId') IS NULL
       AND json_extract(body, '$.turnInput.origin') IS NULL AND json_extract(body, '$.turnInput.questionRequestId') IS NULL
     ORDER BY user_message_seq`).iterate(source.sessionId, source.incarnationId, source.sessionId) as Iterable<{
       turn_id: string | null; additional: number; user_message_seq: number; created_at: string;
-      frame: string | null; reply: string | null; coordination_id: string | null; coordination_start_seq: number | null;
+      frame: string | null; reply: string | null; inherited: number; origin_start_seq: number | null;
     }>;
   const readAssistant = db.prepare("SELECT 1 FROM session_messages_v6 WHERE session_id=? AND seq=? AND role='assistant'");
   for (const row of gui) {
@@ -169,9 +178,9 @@ export function readConversationThreads(db: DatabaseSync, source: MainTarget): C
     if (!turn || turn.user_message_seq === null || membership.has(row.user_message_seq)
       || (row.additional ? turn.user_message_seq >= row.user_message_seq : turn.user_message_seq !== row.user_message_seq)) continue;
     let frame: ConversationThread | undefined;
-    if (row.coordination_id !== null) {
-      if (row.coordination_start_seq !== null && row.coordination_start_seq < row.user_message_seq) {
-        frame = membership.get(row.coordination_start_seq) ?? undefined;
+    if (row.inherited) {
+      if (row.origin_start_seq !== null && row.origin_start_seq < row.user_message_seq) {
+        frame = membership.get(row.origin_start_seq) ?? undefined;
       }
     } else if (row.additional) {
       frame = membership.get(turn.user_message_seq) ?? undefined;

@@ -178,7 +178,7 @@ export function useConversationMessageColumn({
     const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
     const { origin } = input;
     if (origin?.targetSessionId !== sessionId || origin.targetIncarnationId !== queueIncarnationId) return undefined;
-    if (origin.kind === "gui" && input.coordination?.operation === "answer" && input.coordination.targetKind === "main") {
+    if (origin.kind === "gui" && (input.retrySource || input.coordination?.operation === "answer" && input.coordination.targetKind === "main")) {
       return input.request.mainConversationFrame !== undefined ? input.request.mainConversationFrame : receipt.captured.request.mainConversationFrame;
     }
     if (origin.kind === "gui" && receipt.inputTurnId == null && !input.retrySource && input.request.mainConversationFrame !== undefined) {

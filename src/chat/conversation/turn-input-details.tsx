@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { coordinationDeliveryText, readCoordinationNotification } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
@@ -26,6 +26,23 @@ export function inputDetailStateLabel(value: string | null | undefined, fallback
 
 export function retrySourceLabel(origin: SessionTurnQueueOrigin | undefined) {
   return origin ? `Retry requested by you · Previous input from ${origin.kind === "session" ? origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
+}
+
+/** A card can display the previous author without changing the recorded actor. */
+export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
+  source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean) {
+  const previous = origin?.kind === "gui" && source && source.origin.targetSessionId === origin.targetSessionId
+    && source.origin.targetIncarnationId === origin.targetIncarnationId ? source : null;
+  return {
+    origin: previous?.changedSinceAcceptance === false && unchanged ? previous.origin : origin,
+    retryLabel: retrySourceLabel(previous?.origin),
+  };
+}
+
+export function retryReceiptInputUnchanged(receipt: SessionTurnQueueReceipt) {
+  const comparison = (input: SessionTurnQueueCapturedInput) => JSON.stringify([input.request.userMessage,
+    input.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]);
+  return !!receipt.accepted && comparison(receipt.accepted) === comparison(receipt.dispatched ?? receipt.captured);
 }
 
 function ExecutionSettings({ settings }: { settings: NonNullable<Execution["executionSettings"]> }) {
@@ -114,8 +131,8 @@ export function TurnInputReadBoundary({ children, ...props }: TurnInputProps & {
   return children(useTurnInputRead({ ...props, active: props.message.role === "user" || (props.message.role === "assistant" && props.message.runFailure !== undefined) }));
 }
 
-export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTurnInputRead> }) {
-  const origin = read.origin;
+export function TurnInputOriginAvatar({ read, origin = read.origin }: { read: ReturnType<typeof useTurnInputRead>;
+  origin?: ReturnType<typeof useTurnInputRead>["origin"] }) {
   if (origin?.kind !== "session") return null;
   const character = origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
   return <><div className="message-avatar-stack">
