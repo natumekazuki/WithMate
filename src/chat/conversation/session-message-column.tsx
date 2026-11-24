@@ -732,12 +732,23 @@ export function SessionMessageColumn({
     useFlushSync: false,
     useAnimationFrameWithResizeObserver: false,
   });
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
-    shouldAdjustSessionMessageScrollPosition({
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+    const shouldAdjust = shouldAdjustSessionMessageScrollPosition({
       itemEnd: item.end,
       scrollOffset: instance.scrollOffset ?? 0,
-    })
-  );
+    });
+    if (!shouldAdjust) return false;
+    const jump = handledMessageJumpRef.current;
+    if (jump === messageJumpRequest && jump?.reply?.sentKey && jump.reply.isCurrent()
+      && savedReplySourceIndexes?.[item.index] === jump.reply.seq) {
+      // On a frame switch, resize can see the previous offset before the jump's
+      // scroll event. A row that still contains the viewport must not shift it.
+      const list = messageListRef.current;
+      const row = list?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${item.index}"]`);
+      if (list && row && row.getBoundingClientRect().bottom > list.getBoundingClientRect().top) return false;
+    }
+    return true;
+  };
   const virtualMessages = messageVirtualizer.getVirtualItems();
   useLayoutEffect(() => {
     onMessageListLayout?.();
