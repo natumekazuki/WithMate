@@ -5,7 +5,8 @@ import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-revi
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate, resolveWithMateReviewerExplicitUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { supportsWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -450,7 +451,8 @@ export class AuxiliarySessionService {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
     const options = { ...validateSessionExecutionOptions(request.executionOptions, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, request.executionOptions, request.confirmedReviewerChange) };
+      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, request.executionOptions, request.confirmedReviewerChange),
+      withMateReviewerExplicit: resolveWithMateReviewerExplicitUpdate(fresh, request.executionOptions) };
     if (options.codexReviewer !== request.executionOptions.codexReviewer) validateSessionExecutionOptions(options, provider);
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
@@ -854,6 +856,8 @@ export class AuxiliarySessionService {
       codexSandboxMode: launchSelection.codexSandboxMode,
       codexSpeed: parent.codexSpeed,
       codexReviewer: parent.codexReviewer,
+      withMateReviewerExplicit: supportsWithMateAutoReview(launchSelection.provider)
+        && (parent.withMateReviewerExplicit || parent.provider === "codex" || parent.provider === "claude") ? true : undefined,
       customAgentName: launchSelection.customAgentName,
       threadId: "",
       composerDraft: "",
@@ -1321,6 +1325,7 @@ export class AuxiliarySessionService {
       codexSandboxMode: runtimeSession.codexSandboxMode,
       codexSpeed: runtimeSession.codexSpeed,
       codexReviewer: runtimeSession.codexReviewer,
+      withMateReviewerExplicit: runtimeSession.withMateReviewerExplicit,
       customAgentName: runtimeSession.customAgentName,
       threadId: runtimeSession.threadId,
       composerDraft: "",
@@ -1449,6 +1454,7 @@ export class AuxiliarySessionService {
       codexSandboxMode: auxiliary.codexSandboxMode,
       codexSpeed: auxiliary.codexSpeed,
       codexReviewer: auxiliary.codexReviewer,
+      withMateReviewerExplicit: auxiliary.withMateReviewerExplicit,
       model: auxiliary.model,
       reasoningEffort: auxiliary.reasoningEffort,
       customAgentName: auxiliary.customAgentName,

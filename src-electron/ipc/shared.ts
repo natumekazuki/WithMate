@@ -776,6 +776,7 @@ export function assertAuxiliaryCreateModeForOwner(
     Object.hasOwn(input, "codexSandboxMode") ||
     Object.hasOwn(input, "codexSpeed") ||
     Object.hasOwn(input, "codexReviewer") ||
+    Object.hasOwn(input, "withMateReviewerExplicit") ||
     Object.hasOwn(input, "customAgentName")
   ) {
     throw new Error(

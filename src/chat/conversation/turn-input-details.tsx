@@ -53,6 +53,7 @@ function ExecutionSettings({ settings }: { settings: NonNullable<Execution["exec
     ["provider", providerLabel], ["approval", approvalModeLabel(settings.approvalMode)],
   ];
   if (supportsReviewerAndSpeed) rows.push(["reviewer", settings.codexReviewer], ["speed", settings.codexSpeed]);
+  else if (settings.withMateReviewerExplicit) rows.push(["reviewer", settings.codexReviewer === "auto-review" ? "Auto Review" : "User"]);
   rows.push(["model", settings.model], ["reasoning", settings.reasoningEffort ? reasoningEffortLabel(settings.reasoningEffort) : settings.source === "input" ? "Provider Default" : null]);
   if (settings.provider === "codex") rows.push(["sandbox", codexSandboxModeOptions.find((option) => option.id === settings.codexSandboxMode)?.label ?? settings.codexSandboxMode]);
   if (settings.customAgentName) rows.push(["agent", settings.customAgentName]);

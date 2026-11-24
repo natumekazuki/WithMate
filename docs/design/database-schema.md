@@ -110,6 +110,8 @@ Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Aux
 
 起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
 
+Copilot／OpenCodeの明示Reviewerは、Mainでは `sessions_v6.runtime_policy_json.withMateReviewerExplicit`、Auxiliaryでは `auxiliary_sessions.withmate_reviewer_explicit` に保持する。旧データのマークなし／0は未指定であり、保存済みReviewerを明示したものと解釈しない。受付時に捕捉した値は後から書き換えない。
+
 ## Additional Directory
 
 Additional Directoryは`sessions_v6.allowed_additional_directories_json`にだけ保存する。Auxiliaryの保存データとAPIのmetadataにはDirectoryを持たせず、Files認可・表示・次turnの実行contextは親Mainの現在の一覧から解決する。親Mainと配下の全Auxiliaryが共有し、別のMain配下とは共有しない。

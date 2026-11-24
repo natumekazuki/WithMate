@@ -2,6 +2,7 @@ import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
+import { supportsWithMateAutoReview } from "../../../src-shared/settings/withmate-auto-review.js";
 import {
   applyAuxiliarySessionApprovalModeChange,
   applyAuxiliarySessionRuntimeOptionsPatch,
@@ -37,7 +38,8 @@ export class AuxiliaryExecutionOptionsOwner {
     if (input.confirmedReviewerChange && (current.provider !== "claude"
       || current.codexReviewer !== "auto-review"
       || current.approvalMode !== input.confirmedReviewerChange.previousApprovalMode)) return;
-    if (!input.confirmedReviewerChange && current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
+    if (!input.confirmedReviewerChange && current.approvalMode === "never" && next.approvalMode !== "on-request"
+      && next.codexReviewer !== current.codexReviewer) return;
     const key = `${current.id}:${current.createdAt}`;
     const revision = (this.revisions.get(key) ?? 0) + 1;
     this.revisions.set(key, revision);
@@ -113,9 +115,14 @@ export async function runAuxiliaryCodexReviewerChangeOperation(input: {
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
-  await input.updateActiveAuxiliarySession((current) => (
-    applyAuxiliarySessionCodexReviewerChange(current, input.codexReviewer, input.createTimestampLabel())
-  ));
+  await input.updateActiveAuxiliarySession((current) => {
+    if (supportsWithMateAutoReview(current.provider)) {
+      if (current.approvalMode !== "on-request") return current;
+      return applyAuxiliarySessionRuntimeOptionsPatch(current,
+        { codexReviewer: input.codexReviewer, withMateReviewerExplicit: true }, input.createTimestampLabel());
+    }
+    return applyAuxiliarySessionCodexReviewerChange(current, input.codexReviewer, input.createTimestampLabel());
+  });
 }
 
 export async function runAuxiliaryModelChangeOperation(input: {

@@ -338,9 +338,9 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 
 // @test-value v2
 // kind = "security"
-// claim = "OpenCodeの子承認は共通UIへ往復し審査入力にnativeの対象を保持し、承認はonceかrejectだけへ変換する"
+// claim = "OpenCodeの子承認では対象を共通承認に渡し、Safety Focusedの実要求は共通承認を起動せずrejectする"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界; docs/design/provider-adapter.md: OpenCodeAdapter" }
-// fault = "実要求の対象を失う、承認を永続alwaysへ変換する、または子requestの型付き回答を失う"
+// fault = "実要求の対象を失う、承認を永続alwaysへ変換する、Safety Focusedで実要求を承認するかTurnを開始できない"
 // observable = "承認callbackの要求と審査入力、native replyのdecision、form answer"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode child interaction routing"
@@ -350,7 +350,7 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 // distinction = "共通UIのtestはOpenCode native reply変換と子帰属を通らない"
 // @end-test-value
 it("OpenCode routes child permissions and typed forms without permanent grants", async () => {
-  for (const [mode, decision, reply] of [["on-request", "approve", "once"], ["on-request", "deny", "reject"], ["never", "deny", "once"]] as const) {
+  for (const [mode, decision, reply] of [["on-request", "approve", "once"], ["on-request", "deny", "reject"], ["never", "deny", "once"], ["safety-focused", "approve", "reject"]] as const) {
     const turn = input(); turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
     let approvals = 0;
     turn.onApprovalRequest = (request, _signal, review) => {
@@ -363,7 +363,7 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
     turn.onElicitationRequest = (request) => { assert.equal(request.fields[0].name, "answer"); return { action: "accept", content: { answer: "yes" } }; };
     const run = fixture(turn, { interactions: true });
     await run.adapter.runSessionTurn(turn);
-    assert.equal(approvals, mode === "never" ? 0 : 1);
+    assert.equal(approvals, mode === "on-request" ? 1 : 0);
     assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:")), [`permission:${reply}`]);
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
   }

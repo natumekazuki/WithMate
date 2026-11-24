@@ -29,7 +29,7 @@ import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
-import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApprovalChoice } from "../../src-shared/settings/session-approval-choice.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +38,7 @@ import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 // claim = "runtime設定は現在の選択値を正式名の文字で表し、供給された候補と変更通知を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示" }
 // fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、または変更が別設定へ通知される"
-// observable = "実composerのModel pickerと5selectのaccessible name、現在値表示とtitle、変更callbackの保存値"
+// observable = "実composerのModel pickerと4 selectのaccessible name、現在値表示とtitle、変更callbackの保存値"
 // observation_boundary = "component-behavior"
 // scope = "Session composer runtime settings"
 // lifecycle = "permanent"
@@ -61,8 +61,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       setSelection((current) => ({ ...current, [key]: value }));
     };
     return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      approvalOptions: [option("untrusted", "Safety Focused"), option("on-request", "Provider Controlled")],
-      reviewerOptions: [option("user", "User"), option("auto-review", "Auto Review")],
+      approvalOptions: getSessionApprovalChoices(),
       sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
       reasoningOptions: [option("low", "Low"), option("high", "High")],
       modelOptions: [
@@ -72,7 +71,6 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
       ...selection,
       onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
-      onChangeCodexReviewer: (value) => change("selectedCodexReviewer", value),
       onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
       onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
       onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
@@ -84,15 +82,14 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
     await act(async () => root.render(React.createElement(Fixture)));
     const document = dom.window.document;
     assert.deepEqual([...document.querySelectorAll('.composer-settings select, .composer-settings button[aria-haspopup="listbox"]')].map((select) => select.getAttribute("aria-label")),
-      ["Approval", "Reviewer", "Sandbox", "Model", "Reasoning depth", "Speed"]);
+      ["Approval", "Sandbox", "Model", "Reasoning depth", "Speed"]);
     const model = document.querySelector<HTMLButtonElement>('button[aria-label="Model"]')!;
     assert.equal(model.querySelector("span")?.textContent, "GPT-5.4");
     assert.equal(model.title, "Model: GPT-5.4");
     const depth = document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning depth"]')!;
     assert.deepEqual([...depth.options].map((item) => item.value), ["low", "high"]);
     for (const [label, value, title, key] of [
-      ["Approval", "on-request", "Provider Controlled", "selectedApprovalMode"],
-      ["Reviewer", "auto-review", "Auto Review", "selectedCodexReviewer"],
+      ["Approval", "auto-review", "Auto Review", "selectedApprovalMode"],
       ["Sandbox", "read-only", "Read Only", "selectedCodexSandboxMode"],
       ["Reasoning depth", "low", "Low", "selectedReasoningEffort"],
       ["Speed", "fast", "Fast", "selectedCodexSpeed"],
@@ -116,7 +113,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
     assert.equal(changes.at(-1), "selectedModel:vendor/model-b");
     assert.equal(model.querySelector("span")?.textContent, "Model B");
     assert.equal(model.title, "Model: Model B");
-    assert.equal(changes.length, 6);
+    assert.equal(changes.length, 5);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -143,8 +140,7 @@ test("ComposerのDepthは省略valueとDefault表示を一致させ非対応モ�
     providerId: "codex",
     providerCatalog: { id: "codex", label: "Codex", defaultModelId: model.id, defaultReasoningEffort: "", models: [model] },
     models: [model], selectedModel: model.id,
-    selectedApprovalMode: "never" as const, selectedCodexSandboxMode: "workspace-write" as const,
-    selectedCodexSpeed: "standard" as const, selectedCodexReviewer: "user" as const,
+    selectedCodexSandboxMode: "workspace-write" as const, selectedCodexSpeed: "standard" as const,
   };
   const props = createComposerTestProps({ selectedReasoningEffort: "" });
   const options = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: props.selectedReasoningEffort, reasoningEfforts: model.reasoningEfforts });
@@ -212,8 +208,6 @@ function createComposerTestProps(
     isComposerBlockedFeedbackActive: false,
     approvalOptions: [{ value: "untrusted", label: "untrusted" }],
     selectedApprovalMode: "untrusted",
-    reviewerOptions: [],
-    selectedCodexReviewer: "user",
     sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
     selectedCodexSandboxMode: "workspace-write",
     speedOptions: [],
@@ -247,7 +241,6 @@ function createComposerTestProps(
     onDraftCompositionEnd() {},
     onSendOrCancel() {},
     onChangeApprovalMode() {},
-    onChangeCodexReviewer() {},
     onChangeCodexSandboxMode() {},
     onChangeCodexSpeed() {},
     onChangeModel() {},
@@ -258,181 +251,59 @@ function createComposerTestProps(
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存済みClaude非対応approvalは不正な選択値として表示され、明示選択でon-requestへ復旧できる"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
-// fault = "不正値をon-request表示に隠すか対応するoptionを選んでも変更callbackが動かない"
-// observable = "実composer selectの選択値・表示・aria-invalidと選択後callback値"
+// claim = "4 ProviderでApprovalは同じフラットな候補を表示し、旧設定を選択扱いせず明示User/Auto Reviewへ切り替えられる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Approvalの選択; docs/design/withmate-auto-review.md#設定と適用範囲" }
+// fault = "Providerごとに名称やReviewer階層が違う、未指定や旧制限を勝手に置き換える、User/Auto Reviewの明示選択を捕捉しない"
+// observable = "実selectの選択可能値と表示・変更イベントで更新された次Turn設定"
 // observation_boundary = "component-behavior"
-// scope = "claude-approval-recovery"
+// scope = "Session composerの共通Approval候補と旧設定からの変更"
 // lifecycle = "permanent"
-// impact = "ユーザーが権限設定を誤認し送信不能な状態から復旧できない"
-// distinction = "options helperや型検査ではnative selectの表示とchange通知を確認できず短いDOM操作で維持する"
+// impact = "次Turnが手動と自動のどちらか利用者が判断・変更できなくなる"
+// distinction = "helpers単体ではnative selectのプレースホルダーと変更通知を確認できない"
 // @end-test-value
-test("Claudeの不正Approvalを明示表示し有効値への操作で復旧する", async () => {
+test("Approval is flat across providers and keeps legacy settings until a choice is made", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  let root: Root | null = null;
-  const changes: ApprovalMode[] = [];
-  function Fixture() {
-    const [approvalMode, setApprovalMode] = useState<ApprovalMode>("untrusted");
-    const options = buildRuntimeSelectionOptions({
-      providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
-      reasoningEfforts: [], selectedApprovalMode: approvalMode,
-      selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
-    });
-    return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      selectedApprovalMode: approvalMode, approvalOptions: options.approvalChoiceOptions,
-      onChangeApprovalMode(value) { changes.push(value); setApprovalMode(value); },
-    }));
-  }
-  try {
-    root = createRoot(dom.window.document.getElementById("root")!);
-    await act(async () => root?.render(React.createElement(Fixture)));
-    const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
-    assert.equal(select.value, "untrusted");
-    assert.equal(select.selectedOptions[0]?.textContent, "Unsupported (untrusted)");
-    assert.equal(select.selectedOptions[0]?.disabled, true);
-    assert.equal(select.getAttribute("aria-invalid"), "true");
-    assert.equal(select.title, "Approval: Unsupported (untrusted)");
-    assert.deepEqual(changes, []);
-    await act(async () => {
-      select.value = "on-request";
-      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    });
-    assert.deepEqual(changes, ["on-request"]);
-    assert.equal(select.value, "on-request");
-    assert.equal(select.selectedOptions[0]?.textContent, "Provider Controlled");
-    assert.equal(select.getAttribute("aria-invalid"), null);
-    assert.equal(select.title, "Approval: Provider Controlled");
-    assert.deepEqual([...select.options].map((option) => option.value), ["never", "on-request", "accept-edits", "dont-ask", "plan"]);
-  } finally {
-    await act(async () => root?.unmount());
-    dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Claude composerはApprovalを先に選べ、不適合なReviewerの変更は確認後のみ両方へ反映し、Auto Run中はReviewerを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval; docs/design/provider-adapter.md#approval-modes" }
-// fault = "Approvalを選べない、確認前や取消時に設定が変わる、またはAuto Run往復でReviewerを失う"
-// observable = "実selectの候補と値、確認dialogの取消・承認・owner切替後のcallbackと両設定、Auto Run往復後の状態"
-// observation_boundary = "component-behavior"
-// scope = "shared composer Claude approval and reviewer"
-// lifecycle = "permanent"
-// impact = "承認方針を誤認して送信不能になり、復旧操作でも設定が失われる"
-// distinction = "候補生成とvalidationのtestは実controlのdisabledと修正callback、再描画を通らない"
-// @end-test-value
-test("ClaudeのApprovalはReviewer切替を確認し、取消とAuto Runで選択を保持する", async () => {
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
-  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const changes: Array<[ApprovalMode, ApprovalMode | undefined]> = [];
-  const registry = new ComposerControllerRegistry();
-  let changeOwner: (owner: string) => void = () => {};
-  let changeIdentity: (identity: string) => void = () => {};
-  function Fixture() {
-    const [approval, setApproval] = useState<ApprovalMode>("plan");
-    const [reviewer, setReviewer] = useState<"user" | "auto-review">("auto-review");
-    const [owner, setOwner] = useState("first");
-    const [identity, setIdentity] = useState("incarnation-1");
-    changeOwner = setOwner;
-    changeIdentity = setIdentity;
-    const options = buildRuntimeSelectionOptions({
-      providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
-      reasoningEfforts: [], selectedApprovalMode: approval, selectedCodexSandboxMode: "workspace-write",
-      selectedCodexSpeed: "standard", selectedCodexReviewer: reviewer,
-    });
+  const changes: string[] = [];
+  function Fixture({ provider }: { provider: string }) {
+    const [settings, setSettings] = useState({
+      provider, approvalMode: provider === "claude" ? "plan" as const : "on-request" as const,
+      codexReviewer: "user" as const,
+    } as Parameters<typeof getSessionApprovalDisplay>[0]);
+    const selected = getSessionApprovalDisplay(settings);
+    const options = getSessionApprovalChoices();
     return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      providerId: "claude", runtimeSelectionIdentity: identity, selectedApprovalMode: approval, approvalOptions: options.approvalChoiceOptions,
-      composerController: { owner: { kind: "main", id: owner }, registry },
-      selectedCodexReviewer: reviewer, reviewerOptions: options.reviewerSelectOptions,
-      onChangeApprovalMode: (value, confirmation) => {
-        changes.push([value, confirmation?.previousApprovalMode]);
-        setApproval(value);
-        if (confirmation) setReviewer("user");
+      providerId: provider, selectedApprovalMode: selected.value,
+      approvalOptions: selected.value ? options : [{ value: "", label: selected.label, disabled: true, }, ...options],
+      onChangeApprovalMode: (value) => {
+        changes.push(value);
+        const patch = resolveSessionApprovalChoice(provider, value);
+        assert.ok(patch);
+        setSettings({ ...settings, ...patch });
       },
-      onChangeCodexReviewer: setReviewer,
     }));
   }
   try {
-    await act(async () => root.render(React.createElement(Fixture)));
-    const approval = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
-    const reviewer = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Reviewer"]')!;
-    const select = async (control: HTMLSelectElement, value: string) => {
-      await act(async () => { control.value = value; control.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
-    };
-    assert.equal(reviewer.getAttribute("aria-invalid"), "true");
-    assert.equal(reviewer.disabled, false);
-    await select(reviewer, "user");
-    assert.equal(reviewer.getAttribute("aria-invalid"), null);
-    assert.equal(approval.getAttribute("aria-invalid"), null);
-    assert.equal(reviewer.disabled, true);
-    await select(approval, "on-request");
-    assert.equal(reviewer.disabled, false);
-    await select(reviewer, "auto-review");
-    assert.deepEqual([...approval.options].filter((option) => option.disabled).map((option) => option.value), []);
-    for (const value of ["accept-edits", "dont-ask", "plan"]) {
+    for (const provider of ["codex", "claude", "copilot", "opencode"]) {
       const count = changes.length;
-      await select(approval, value);
-      const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-      assert.equal(dialog.open, true);
-      assert.equal(approval.value, "on-request");
-      assert.equal(reviewer.value, "auto-review");
+      await act(async () => root.render(React.createElement(Fixture, { key: provider, provider })));
+      const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
+      assert.deepEqual([...select.options].filter((option) => !option.disabled).map((option) => [option.value, option.textContent]),
+        [["auto-run", "Auto Run"], ["auto-review", "Auto Review"], ["user", "User"], ["safety-focused", "Safety Focused"]]);
+      assert.equal(select.selectedOptions[0]?.textContent,
+        provider === "codex" ? "User" : provider === "claude" ? "Plan" : "Settings Default");
+      assert.equal(select.selectedOptions[0]?.disabled, provider !== "codex");
       assert.equal(changes.length, count);
-      assert.match(dialog.textContent ?? "", /requires Reviewer to be User/);
-      await act(async () => dialog.querySelector<HTMLButtonElement>("button")!.click());
-      assert.equal(dialog.open, false);
-      assert.equal(approval.value, "on-request");
-      assert.equal(reviewer.value, "auto-review");
-      assert.equal(changes.length, count);
+      for (const value of ["auto-review", "user"]) {
+        await act(async () => { select.value = value; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+        assert.equal(select.value, value);
+      }
+      assert.deepEqual(changes.slice(count), ["auto-review", "user"]);
     }
-    await select(approval, "accept-edits");
-    const confirm = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-    await act(async () => confirm.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
-    assert.deepEqual(changes.at(-1), ["accept-edits", "on-request"]);
-    assert.equal(approval.value, "accept-edits");
-    assert.equal(reviewer.value, "user");
-    await select(approval, "on-request");
-    await select(reviewer, "auto-review");
-    await select(approval, "never");
-    assert.equal(reviewer.disabled, true);
-    assert.equal(reviewer.value, "auto-review");
-    await select(approval, "on-request");
-    assert.equal(reviewer.disabled, false);
-    assert.equal(reviewer.value, "auto-review");
-    await select(approval, "never");
-    await select(approval, "plan");
-    const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-    assert.equal(dialog.open, true);
-    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
-    assert.deepEqual(changes.at(-1), ["plan", "never"]);
-    assert.equal(approval.value, "plan");
-    assert.equal(reviewer.value, "user");
-    assert.equal(reviewer.disabled, true);
-    await select(approval, "on-request");
-    await select(reviewer, "auto-review");
-    await select(approval, "accept-edits");
-    assert.equal(dialog.open, true);
-    const count = changes.length;
-    await act(async () => changeOwner("second"));
-    assert.equal(dialog.open, false);
-    assert.equal(changes.length, count);
-    await select(approval, "accept-edits");
-    assert.equal(dialog.open, true);
-    await act(async () => changeIdentity("incarnation-2"));
-    assert.equal(dialog.open, false);
-    assert.equal(changes.length, count);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -4804,8 +4675,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
-      reviewerOptions: [],
-      selectedCodexReviewer: "user",
       speedOptions: [],
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
@@ -4833,7 +4702,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
-      onChangeCodexReviewer() {},
       onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
@@ -4974,8 +4842,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
-      reviewerOptions: [],
-      selectedCodexReviewer: "user",
       speedOptions: [],
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
@@ -5003,7 +4869,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
-      onChangeCodexReviewer() {},
       onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},

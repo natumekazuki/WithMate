@@ -611,6 +611,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         PreToolUse: [{ hooks: [async (hookInput) => {
           if (hookInput.hook_event_name !== "PreToolUse") return {};
           if (controller.signal.aborted) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Canceled" } };
+          if (input.executionOptions.approvalMode === "safety-focused" && hookInput.tool_name !== "AskUserQuestion") return {};
           const readOnly = new Set(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
           if (readOnly.has(hookInput.tool_name)) return {};
           if (permissionMode === "dontAsk") return {};

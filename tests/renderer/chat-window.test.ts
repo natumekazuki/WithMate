@@ -175,10 +175,10 @@ test("Main switcher rings only the executing Main frame independently of selecti
 
 // @test-value v2
 // kind = "contract"
-// claim = "queue対応Composerは実行中も次依頼の作成操作と全設定選択を使え、read-only/close凍結/Reviewer制約では変更を拒否する"
+// claim = "queue対応Composerは実行中も次依頼の作成操作と設定選択を使え、read-only/close凍結なら変更を拒否する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの次依頼編集と実行設定" }
-// fault = "runningだけで入力作成を抑止する、または凍結・read-only・Approval neverでも設定やtoolbar操作を許す"
-// observable = "実Composerのbutton/select disabled、toolbar callback、選択callback、Reviewerの変更可否"
+// fault = "runningだけで入力作成を抑止する、または凍結・read-onlyでも設定やtoolbar操作を許す"
+// observable = "実Composerのbutton/select disabled、toolbar callback、Approvalの選択callback"
 // observation_boundary = "component-behavior"
 // scope = "queue Composer preparation controls"
 // lifecycle = "permanent"
@@ -201,9 +201,8 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
     composerController: { owner: { kind: "main", id: "main" }, registry, initialDraft: "next request" },
     canSelectCustomAgent: true, showAttachmentControls: true, showCustomAgentPicker: true,
     showSkillPicker: true, showPromptTemplateButton: true, showAdditionalDirectoryControls: true,
-    showExecutionModeControls: true, selectedApprovalMode: "untrusted",
-    approvalOptions: [{ value: "untrusted", label: "Safety Focused" }, { value: "never", label: "Auto Run" }],
-    reviewerOptions: [{ value: "user", label: "User" }, { value: "auto-review", label: "Auto Review" }],
+    showExecutionModeControls: true, selectedApprovalMode: "safety-focused",
+    approvalOptions: [{ value: "safety-focused", label: "Safety Focused" }, { value: "auto-run", label: "Auto Run" }],
     sandboxOptions: [{ value: "workspace-write", label: "Workspace Write" }],
     speedOptions: [{ value: "standard", label: "Standard" }],
     onOpenPromptTemplates: () => events.push("template"), onToggleSkillPicker: () => events.push("skill"),
@@ -217,7 +216,7 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
   )].filter((element) => element.getAttribute("aria-label") !== "Additional Directories: 0" && !element.closest(".session-action-dock-cancel-slot"));
   try {
     await act(async () => root.render(React.createElement(ChatWindow, props)));
-    assert.ok(controls().length >= 11);
+    assert.ok(controls().length >= 10);
     assert.ok(controls().every((element) => !element.disabled));
     for (const label of ["Template", "Skill", "Agent", "Add Directory"]) {
       const button = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === label)!;
@@ -225,12 +224,8 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
     }
     assert.deepEqual(events, ["template", "skill", "agent", "directory"]);
     const approval = dom.window.document.querySelector<HTMLSelectElement>('[aria-label="Approval"]')!;
-    await act(async () => { approval.value = "never"; approval.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
-    assert.equal(events.at(-1), "never");
-    props.composerProps.selectedApprovalMode = "never";
-    await act(async () => root.render(React.createElement(ChatWindow, props)));
-    assert.equal(dom.window.document.querySelector<HTMLSelectElement>('[aria-label="Reviewer"]')!.disabled, true);
-    props.composerProps.selectedApprovalMode = "untrusted";
+    await act(async () => { approval.value = "auto-run"; approval.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    assert.equal(events.at(-1), "auto-run");
     props.composerProps.composerBlocked = true;
     await act(async () => root.render(React.createElement(ChatWindow, props)));
     assert.ok(controls().every((element) => element.disabled));

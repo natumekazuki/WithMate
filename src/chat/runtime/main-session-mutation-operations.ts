@@ -10,6 +10,8 @@ import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
+import { supportsWithMateAutoReview } from "../../../src-shared/settings/withmate-auto-review.js";
+import { resolveSessionApprovalChoice, type SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 import type {
   ModelCatalogProvider,
   ModelCatalogItem,
@@ -27,6 +29,7 @@ import {
 export type MainRuntimeOption =
   | { kind: "custom-agent"; value: string }
   | { kind: "approval-mode"; value: ApprovalMode; confirmedReviewerChange?: ConfirmedReviewerChange }
+  | { kind: "approval-choice"; value: SessionApprovalChoice }
   | { kind: "codex-sandbox-mode"; value: CodexSandboxMode }
   | { kind: "codex-speed"; value: CodexSpeed }
   | { kind: "codex-reviewer"; value: CodexReviewer }
@@ -50,6 +53,12 @@ export async function runMainRuntimeOptionOperation(input: {
     createTimestampLabel,
   } = input;
   if (!session || isReadOnly) return null;
+
+  if (option.kind === "approval-choice") {
+    const patch = resolveSessionApprovalChoice(session.provider, option.value);
+    if (!patch || Object.entries(patch).every(([key, value]) => session[key as keyof Session] === value)) return null;
+    return persist({ ...session, ...patch, updatedAt: createTimestampLabel() });
+  }
 
   if (option.kind === "custom-agent") {
     if (
@@ -97,6 +106,11 @@ export async function runMainRuntimeOptionOperation(input: {
     return next ? persist(next) : null;
   }
   if (option.kind === "codex-reviewer") {
+    if (supportsWithMateAutoReview(session.provider)) {
+      if (session.approvalMode !== "on-request"
+        || (session.withMateReviewerExplicit && session.codexReviewer === option.value)) return null;
+      return persist({ ...session, codexReviewer: option.value, withMateReviewerExplicit: true, updatedAt: createTimestampLabel() });
+    }
     if (
       (session.provider !== "codex" && session.provider !== "claude") ||
       session.approvalMode === "never"

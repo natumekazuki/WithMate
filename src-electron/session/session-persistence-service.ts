@@ -29,7 +29,7 @@ import { WorkspaceDirectoryValidationService } from "../files/workspace-director
 import { addAllowedAdditionalDirectory, removeAllowedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
 import type { ChangeSessionAdditionalDirectoryRequest } from "../../src-shared/session/session-mutation-contract.js";
 import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
-import { resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { resolveExecutionOptionsReviewerUpdate, resolveWithMateReviewerExplicitUpdate } from "../../src-shared/settings/provider-runtime-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
@@ -232,7 +232,8 @@ export class SessionPersistenceService {
     assertModelEnabled(settings.modelAvailability, provider.id, model.id);
     if (provider.id === "codex" && input.codexSandboxMode === undefined) throw new Error("The resolved Codex sandbox mode is unavailable.");
     validateSessionExecutionOptions({ model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode,
-      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER, customAgentName: "" }, provider);
+      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
+      withMateReviewerExplicit: input.withMateReviewerExplicit, customAgentName: "" }, provider);
     validateSessionMetadataPatch({ title: input.title ?? "New task", description: input.description ?? "" });
   }
 
@@ -465,7 +466,8 @@ export class SessionPersistenceService {
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
     const validated = { ...validateSessionExecutionOptions(options, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, options, confirmedReviewerChange) };
+      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, options, confirmedReviewerChange),
+      withMateReviewerExplicit: resolveWithMateReviewerExplicitUpdate(fresh, options) };
     if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider);
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId

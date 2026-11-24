@@ -49,7 +49,7 @@ test("開いているModel候補に再有効化と無効化を適用しSDK候補
     const catalog = { id: "opencode", label: "OpenCode", defaultModelId: "openai/current", defaultReasoningEffort: "", models };
     const options = buildRuntimeSelectionOptions({ providerId: catalog.id, providerCatalog: catalog, models,
       selectedModel: "openai/current", selectedReasoningEffort: "saved-depth", reasoningEfforts: ["high"],
-      selectedApprovalMode: "on-request", selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user" });
+      selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard" });
     assert.deepEqual(options.reasoningSelectOptions.map((option) => option.value), ["saved-depth", "", "high"]);
     root.render(<ModelPicker providerId="opencode" modelAvailability={availability}
       options={options.modelSelectOptions} value="openai/current" fallbackLabel={options.selectedModelFallbackLabel}

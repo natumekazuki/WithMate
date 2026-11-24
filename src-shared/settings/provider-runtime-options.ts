@@ -2,6 +2,7 @@ import { CODEX_APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE, approvalModeOptions,
 import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { codexReviewerOptions, resolveCodexReviewerUpdate, type CodexReviewer } from "./codex-reviewer.js";
 import type { ConfirmedReviewerChange } from "../session/session-mutation-contract.js";
+import { supportsWithMateAutoReview } from "./withmate-auto-review.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
@@ -18,6 +19,7 @@ const CLAUDE_PERMISSION_MODES = {
 } as const;
 
 export function mapApprovalModeToClaudePermissionMode(approvalMode: ApprovalMode, reviewer: CodexReviewer) {
+  if (approvalMode === "safety-focused") return "default";
   if (approvalMode === "untrusted") {
     throw new Error("The selected approval mode is not supported by Claude.");
   }
@@ -39,13 +41,13 @@ export function getApprovalOptionsForProvider(
 ): RuntimeSelectOption<ApprovalMode>[] {
   if (providerId === "opencode") {
     return approvalModeOptions
-      .filter((option) => option.id === "on-request" || option.id === "never")
+      .filter((option) => option.id === "on-request" || option.id === "never" || option.id === "safety-focused")
       .map((option) => ({ value: option.id, label: option.label }));
   }
   return approvalModeOptions
-    .filter((option) => providerId === "claude"
+    .filter((option) => option.id === "safety-focused" || (providerId === "claude"
       ? Object.hasOwn(CLAUDE_PERMISSION_MODES, option.id)
-      : CODEX_APPROVAL_MODE_VALUES.includes(option.id as CodexApprovalPolicy))
+      : CODEX_APPROVAL_MODE_VALUES.includes(option.id as CodexApprovalPolicy)))
     .map((option) => ({ value: option.id, label: option.label }));
 }
 
@@ -53,10 +55,10 @@ export function getApprovalReviewerOptionsForProvider(
   providerId: string | null | undefined,
   approvalMode: ApprovalMode,
 ): RuntimeSelectOption<CodexReviewer>[] {
-  if (providerId !== "codex" && providerId !== "claude") return [];
+  if (providerId !== "codex" && providerId !== "claude" && !supportsWithMateAutoReview(providerId)) return [];
   return codexReviewerOptions.map((option) => ({
     ...option,
-    ...(providerId === "claude" && approvalMode !== "on-request" && approvalMode !== "never" && option.value === "auto-review"
+    ...(providerId === "claude" && approvalMode !== "on-request" && approvalMode !== "never" && approvalMode !== "safety-focused" && option.value === "auto-review"
       ? { disabled: true } : {}),
   }));
 }
@@ -65,6 +67,7 @@ type ChildSessionPermissions = {
   approvalMode: ApprovalMode;
   codexReviewer: CodexReviewer;
   codexSandboxMode?: CodexSandboxMode;
+  withMateReviewerExplicit?: true;
 };
 
 const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "opencode"]);
@@ -75,12 +78,12 @@ const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "openc
  */
 export function resolveChildSessionPermissions(
   sourceProviderId: string,
-  source: Readonly<Required<ChildSessionPermissions>>,
+  source: Readonly<ChildSessionPermissions & { codexSandboxMode: CodexSandboxMode }>,
   targetProviderId: string,
 ): ChildSessionPermissions {
-  const { approvalMode, codexSandboxMode, codexReviewer } = source;
+  const { approvalMode, codexSandboxMode, codexReviewer, withMateReviewerExplicit } = source;
   if (sourceProviderId === targetProviderId) {
-    return { approvalMode, codexSandboxMode, codexReviewer };
+    return { approvalMode, codexSandboxMode, codexReviewer, ...(withMateReviewerExplicit ? { withMateReviewerExplicit } : {}) };
   }
 
   if (!CHILD_PERMISSION_PROVIDERS.has(sourceProviderId) || !CHILD_PERMISSION_PROVIDERS.has(targetProviderId)) {
@@ -96,12 +99,24 @@ export function resolveChildSessionPermissions(
 
   const sourceHasReviewer = getApprovalReviewerOptionsForProvider(sourceProviderId, approvalMode).length > 0;
   const targetHasReviewer = getApprovalReviewerOptionsForProvider(targetProviderId, approvalMode).length > 0;
+  const inheritReviewer = sourceHasReviewer && targetHasReviewer
+    && (!supportsWithMateAutoReview(sourceProviderId) || withMateReviewerExplicit === true);
   return {
     approvalMode,
-    codexReviewer: sourceHasReviewer && targetHasReviewer ? codexReviewer : "user",
+    codexReviewer: inheritReviewer ? codexReviewer : "user",
+    ...(inheritReviewer && supportsWithMateAutoReview(targetProviderId) ? { withMateReviewerExplicit: true } : {}),
     // Keep writes and network access outside the initial sandbox so they can require approval.
     ...(targetProviderId === "codex" ? { codexSandboxMode: "read-only" } : {}),
   };
+}
+
+/** An inactive reviewer cannot be edited while its Approval does not use it. */
+export function resolveWithMateReviewerExplicitUpdate(
+  current: { provider: string; approvalMode: ApprovalMode; withMateReviewerExplicit?: true },
+  requested: { approvalMode: ApprovalMode; withMateReviewerExplicit?: true },
+): true | undefined {
+  if (!supportsWithMateAutoReview(current.provider)) return undefined;
+  return current.withMateReviewerExplicit || (requested.approvalMode === "on-request" ? requested.withMateReviewerExplicit : undefined);
 }
 
 export function resolveExecutionOptionsReviewerUpdate(
@@ -110,6 +125,10 @@ export function resolveExecutionOptionsReviewerUpdate(
   confirmedChange?: ConfirmedReviewerChange,
 ): CodexReviewer {
   if (confirmedChange === undefined) {
+    if (requested.approvalMode === "on-request") return requested.codexReviewer;
+    if (supportsWithMateAutoReview(current.provider)) {
+      return current.codexReviewer;
+    }
     return resolveCodexReviewerUpdate(current, requested.codexReviewer);
   }
   if (current.provider !== "claude"

@@ -77,6 +77,7 @@ const executionSettings = z.object({
   source: z.enum(["input", "turn"]), provider: z.string(), model: z.string(),
   approvalMode: z.string(), reasoningEffort: z.string(), codexSandboxMode: z.string(),
   codexReviewer: z.string().nullable(), codexSpeed: z.string().nullable(), customAgentName: z.string().nullable(),
+  withMateReviewerExplicit: z.literal(true).optional(),
 });
 export const executionOperationResultSchemas = {
   list_sent_steers: z.object({ ...ok, items: z.array(z.object({ sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, messageSeq: z.number().int().nonnegative(), state: z.enum(["pending", "confirmed", "unknown", "not-sent"]), origin: steerOrigin, text: z.string() })), nextCursor: z.number().int().nonnegative().nullable() }),

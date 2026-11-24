@@ -28,6 +28,7 @@ export type SessionLaunchSelection = {
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
+  withMateReviewerExplicit?: true;
   customAgentName: string;
 };
 
@@ -90,6 +91,7 @@ export class SessionLaunchSelectionService {
       codexSandboxMode: latestSession?.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
       codexSpeed: latestSession?.codexSpeed ?? DEFAULT_CODEX_SPEED,
       codexReviewer: latestSession?.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
+      ...(latestSession?.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
       customAgentName: latestSession?.customAgentName ?? "",
     };
   }

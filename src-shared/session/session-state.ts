@@ -111,6 +111,7 @@ export type Session = Partial<SessionRelationship> & {
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
+  withMateReviewerExplicit?: true;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -206,6 +207,7 @@ export type CreateSessionInput = {
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
   codexReviewer?: CodexReviewer;
+  withMateReviewerExplicit?: true;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
@@ -233,6 +235,7 @@ export type CreateSessionRequest = Omit<
   | "codexSandboxMode"
   | "codexSpeed"
   | "codexReviewer"
+  | "withMateReviewerExplicit"
   | "model"
   | "reasoningEffort"
   | "customAgentName"
@@ -541,6 +544,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     ),
     codexSpeed: normalizeCodexSpeed((candidate as { codexSpeed?: unknown }).codexSpeed),
     codexReviewer: normalizeCodexReviewer((candidate as { codexReviewer?: unknown }).codexReviewer),
+    ...(candidate.withMateReviewerExplicit === true ? { withMateReviewerExplicit: true } : {}),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
@@ -755,6 +759,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
     codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
     codexReviewer: normalizeCodexReviewer(input.codexReviewer ?? DEFAULT_CODEX_REVIEWER),
+    ...(input.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
@@ -833,6 +838,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.codexSandboxMode,
     summary.codexSpeed,
     summary.codexReviewer,
+    summary.withMateReviewerExplicit,
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,

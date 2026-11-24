@@ -87,6 +87,7 @@ export type AuxiliarySession = {
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
+  withMateReviewerExplicit?: true;
   customAgentName: string;
   threadId: string;
   composerDraft: string;
@@ -128,7 +129,7 @@ export function applyAuxiliarySessionPatch(
 
 export function applyAuxiliarySessionRuntimeOptionsPatch(
   session: AuxiliarySession,
-  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer">>,
+  patch: Partial<Pick<AuxiliarySession, "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "withMateReviewerExplicit">>,
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
@@ -430,6 +431,7 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     codexSandboxMode: normalizeCodexSandboxMode(candidate.codexSandboxMode),
     codexSpeed: normalizeCodexSpeed(candidate.codexSpeed),
     codexReviewer: normalizeCodexReviewer(candidate.codexReviewer),
+    ...(candidate.withMateReviewerExplicit === true ? { withMateReviewerExplicit: true } : {}),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
     threadId: typeof candidate.threadId === "string" ? candidate.threadId : "",
     composerDraft: typeof candidate.composerDraft === "string" ? candidate.composerDraft : "",

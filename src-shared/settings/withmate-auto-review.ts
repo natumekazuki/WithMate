@@ -13,7 +13,7 @@ export function isWithMateReviewProvider(providerId: unknown): providerId is Wit
   return WITHMATE_REVIEW_PROVIDER_IDS.some((id) => id === providerId);
 }
 
-export function supportsWithMateAutoReview(providerId: string): boolean {
+export function supportsWithMateAutoReview(providerId: unknown): boolean {
   return providerId === "copilot" || providerId === "opencode";
 }
 

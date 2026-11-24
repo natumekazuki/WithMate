@@ -30,12 +30,8 @@ import {
   type Session,
 } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import {
-  getApprovalOptionsForProvider,
-  getApprovalReviewerOptionsForProvider,
-  getDefaultApprovalModeForProvider,
-  getSandboxOptionsForProvider,
-} from "../../src-shared/settings/provider-runtime-options.js";
+import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { getSessionApprovalChoices } from "../../src-shared/settings/session-approval-choice.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSteerResult } from "../../src-shared/session/session-turn-queue.js";
 import { isSessionOperatingPolicyOperation, type SessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
@@ -200,11 +196,9 @@ export class SessionManagementApplication {
           catalog,
           options: catalog.providers.map((provider) => ({
             provider: provider.id,
-            approvalModes: getApprovalOptionsForProvider(provider.id),
+            approvalModes: getSessionApprovalChoices(),
             sandboxModes: getSandboxOptionsForProvider(provider.id),
-            reviewers: provider.id === "codex"
-              ? getApprovalReviewerOptionsForProvider(provider.id, getDefaultApprovalModeForProvider(provider.id))
-              : [],
+            reviewers: [],
           })),
         };
       }

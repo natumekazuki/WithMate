@@ -20,7 +20,8 @@ import type {
   ModelReasoningEffort,
 } from "../../../src-shared/settings/model-catalog.js";
 import { getSessionIncarnationId, type Session } from "../../../src-shared/session/session-state.js";
-import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
+import { applyAuxiliarySessionRuntimeOptionsPatch, type AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
+import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApprovalChoice, type SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 import type { AuxiliaryDraftPersistence } from "../auxiliary/use-auxiliary-draft-persistence.js";
 import type {
   ComposerControllerRegistry,
@@ -35,9 +36,7 @@ import {
 } from "../auxiliary-runtime-option-routing.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "../send-or-cancel.js";
 import {
-  runAuxiliaryApprovalModeChangeOperation,
   runAuxiliaryCodexSpeedChangeOperation,
-  runAuxiliaryCodexReviewerChangeOperation,
   runAuxiliaryModelChangeOperation,
   runAuxiliaryReasoningEffortChangeOperation,
   runAuxiliarySandboxModeChangeOperation,
@@ -324,11 +323,11 @@ export function useSessionComposerFeature(input: {
       selectedModel: bridge.session.model,
       selectedReasoningEffort: bridge.session.reasoningEffort,
       reasoningEfforts: bridge.runtime.reasoningEfforts,
-      selectedApprovalMode: bridge.session.approvalMode,
       selectedCodexSandboxMode: bridge.session.codexSandboxMode,
       selectedCodexSpeed: bridge.session.codexSpeed,
-      selectedCodexReviewer: bridge.session.codexReviewer,
     });
+    const approval = getSessionApprovalDisplay(bridge.session);
+    const approvalOptions = getSessionApprovalChoices();
     const composerSendability = bridge.target === "auxiliary"
       ? buildComposerSendabilityState({
           runState: bridge.runtime.auxiliaryRunState,
@@ -362,12 +361,6 @@ export function useSessionComposerFeature(input: {
       onSendSelectedSession: bridge.operations.send.main,
     });
     const auxiliaryRuntime = bridge.operations.runtimeOptions.auxiliary;
-    const onAuxiliaryApproval = (approvalMode: Session["approvalMode"], confirmedReviewerChange?: ConfirmedReviewerChange) => runAuxiliaryApprovalModeChangeOperation({
-      approvalMode,
-      confirmedReviewerChange,
-      updateActiveAuxiliarySession: auxiliaryRuntime.update,
-      createTimestampLabel: auxiliaryRuntime.timestamp,
-    });
     const onAuxiliarySandbox = (codexSandboxMode: Session["codexSandboxMode"]) => runAuxiliarySandboxModeChangeOperation({
       codexSandboxMode,
       updateActiveAuxiliarySession: auxiliaryRuntime.update,
@@ -378,16 +371,6 @@ export function useSessionComposerFeature(input: {
       updateActiveAuxiliarySession: auxiliaryRuntime.update,
       createTimestampLabel: auxiliaryRuntime.timestamp,
     });
-    const onAuxiliaryReviewer = (codexReviewer: Session["codexReviewer"]) => {
-      if (auxiliaryRuntime.session?.approvalMode === "never") {
-        return;
-      }
-      return runAuxiliaryCodexReviewerChangeOperation({
-        codexReviewer,
-        updateActiveAuxiliarySession: auxiliaryRuntime.update,
-        createTimestampLabel: auxiliaryRuntime.timestamp,
-      });
-    };
     const onAuxiliaryModel = (model: ModelCatalogItem) => {
       return runAuxiliaryModelChangeOperation({
         model,
@@ -406,11 +389,14 @@ export function useSessionComposerFeature(input: {
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
-    const onChangeApprovalMode = (value: Session["approvalMode"], confirmedReviewerChange?: ConfirmedReviewerChange) => {
+    const onChangeApprovalMode = (value: SessionApprovalChoice) => {
       if (isAuxiliaryTarget) {
-        void onAuxiliaryApproval(value, confirmedReviewerChange);
+        void auxiliaryRuntime.update((current) => {
+          const patch = resolveSessionApprovalChoice(current.provider, value);
+          return patch ? applyAuxiliarySessionRuntimeOptionsPatch(current, patch, auxiliaryRuntime.timestamp()) : current;
+        });
       } else {
-        void bridge.operations.runtimeOptions.runMain({ kind: "approval-mode", value, confirmedReviewerChange });
+        void bridge.operations.runtimeOptions.runMain({ kind: "approval-choice", value });
       }
     };
     const onChangeCodexSandboxMode = buildAuxiliaryAwareRuntimeOptionChangeHandler({
@@ -422,11 +408,6 @@ export function useSessionComposerFeature(input: {
       shouldUseAuxiliary: isAuxiliaryTarget,
       onAuxiliaryChange: onAuxiliarySpeed,
       onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "codex-speed", value }),
-    });
-    const onChangeCodexReviewer = buildAuxiliaryAwareRuntimeOptionChangeHandler({
-      shouldUseAuxiliary: isAuxiliaryTarget,
-      onAuxiliaryChange: onAuxiliaryReviewer,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "codex-reviewer", value }),
     });
     const onChangeModel = buildAuxiliaryAwareRuntimeOptionChangeHandler({
       shouldUseAuxiliary: isAuxiliaryTarget,
@@ -567,12 +548,9 @@ export function useSessionComposerFeature(input: {
       forceComposerBlockedFeedback: bridge.runtime.forceBlockedFeedback,
       sendButtonTitle,
       isComposerBlockedFeedbackActive,
-      approvalOptions: runtimeOptions.approvalChoiceOptions,
+      approvalOptions: approval.value ? approvalOptions : [{ value: "", label: approval.label, disabled: true }, ...approvalOptions],
       providerId: bridge.session.provider,
-      runtimeSelectionIdentity: getSessionIncarnationId(bridge.session),
-      selectedApprovalMode: bridge.session.approvalMode,
-      reviewerOptions: runtimeOptions.reviewerSelectOptions,
-      selectedCodexReviewer: bridge.session.codexReviewer,
+      selectedApprovalMode: approval.value,
       sandboxOptions: runtimeOptions.sandboxChoiceOptions,
       selectedCodexSandboxMode: bridge.session.codexSandboxMode,
       speedOptions: runtimeOptions.speedSelectOptions,
@@ -626,7 +604,6 @@ export function useSessionComposerFeature(input: {
       ...onDraftComposition,
       onSendOrCancel,
       onChangeApprovalMode,
-      onChangeCodexReviewer,
       onChangeCodexSandboxMode,
       onChangeCodexSpeed,
       onChangeModel,

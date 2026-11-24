@@ -4,7 +4,7 @@ import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { CopilotClient, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
+import { CopilotClient, createAttributedPermissionResult, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
 
 import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
@@ -898,42 +898,48 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
   const requestIds = new WeakMap<PermissionRequest, string>();
-  switch (normalizeApprovalMode(input.executionOptions.approvalMode)) {
-    case "never":
-      return () => toPermissionDecision("approved");
-    case "untrusted":
-      return (request) => (
-        isReadOnlyPermissionRequest(request)
-          ? toPermissionDecision("approved")
-          : toPermissionDecision("denied-by-rules")
-      );
-    case "on-request":
-    default:
-      return async (request, invocation) => {
-        if (isReadOnlyPermissionRequest(request)) {
-          return toPermissionDecision("approved");
-        }
+  const approvalMode = normalizeApprovalMode(input.executionOptions.approvalMode);
+  return async (request, invocation) => {
+    const promptRequest = invocation?.promptRequest;
+    const assessment = invocation?.assistedApprovalAssessment;
+    const providerRequiresManual = request.managedApprovalRequired
+      || (promptRequest && "managedApprovalRequired" in promptRequest && promptRequest.managedApprovalRequired)
+      || (assessment?.status === "excluded" && assessment.reason === "managed-approval-required")
+      || (assessment?.status === "completed" && assessment.recommendation === "requireApproval");
+    const readOnly = isReadOnlyPermissionRequest(request);
+    if (approvalMode === "safety-focused") {
+      // A classified read without a pending user prompt is the routine SDK
+      // path; managed asks and MCP readOnly hints are not that evidence.
+      return toPermissionDecision(request.kind === "read" && promptRequest === undefined && !providerRequiresManual
+        ? "approved" : "denied-by-rules");
+    }
+    if (approvalMode === "untrusted") {
+      return toPermissionDecision(readOnly ? "approved" : "denied-by-rules");
+    }
+    if (!providerRequiresManual && (approvalMode === "never" || (readOnly && promptRequest === undefined))) {
+      return toPermissionDecision("approved");
+    }
+    if (!input.onApprovalRequest) {
+      return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
+    }
 
-        if (!input.onApprovalRequest) {
-          return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
-        }
-
-        let requestId = requestIds.get(request);
-        if (!requestId) {
-          requestId = randomUUID();
-          requestIds.set(request, requestId);
-        }
-        const promptRequest = invocation?.promptRequest;
-        const providerRequiresManual = request.managedApprovalRequired || invocation?.assistedApprovalAssessment
-          || (promptRequest && "managedApprovalRequired" in promptRequest && promptRequest.managedApprovalRequired);
-        const decision = await input.onApprovalRequest(
-          redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, resolveRunWorkspacePath(input))),
-          undefined,
-          providerRequiresManual ? undefined : { operation: redactor.sanitize({ request, workspacePath: resolveRunWorkspacePath(input) }) },
-        );
-        return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
-      };
-  }
+    let requestId = requestIds.get(request);
+    if (!requestId) {
+      requestId = randomUUID();
+      requestIds.set(request, requestId);
+    }
+    const workspacePath = resolveRunWorkspacePath(input);
+    const decision = await input.onApprovalRequest(
+      redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, workspacePath)),
+      undefined,
+      providerRequiresManual || (assessment && assessment.status !== "not-run" && assessment.status !== "unavailable")
+        ? undefined : { operation: redactor.sanitize({ request, workspacePath }) },
+    );
+    const result = toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
+    return providerRequiresManual && decision === "approve"
+      ? createAttributedPermissionResult(result, { source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user" })
+      : result;
+  };
 }
 
 

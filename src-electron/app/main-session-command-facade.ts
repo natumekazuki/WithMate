@@ -64,7 +64,7 @@ type MainSessionCommandFacadeDeps = {
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
 
 function childCreationRequest(input: ResolvedChildSessionCreation): CreateChildSessionRequest {
-  const { approvalMode: _approval, codexSandboxMode: _sandbox, codexReviewer: _reviewer, ...request } = input;
+  const { approvalMode: _approval, codexSandboxMode: _sandbox, codexReviewer: _reviewer, withMateReviewerExplicit: _explicit, ...request } = input;
   return request;
 }
 
@@ -142,6 +142,7 @@ export class MainSessionCommandFacade {
           operation = await persistence.prepareSessionLifecycleCreation(operationId, { id: target.id, taskTitle: input.title?.trim() || "New task", description: input.description ?? "",
             sessionRole: input.role, rootSessionId: relationship.rootSessionId, parentSessionId: parent.id, createdBySessionId: parent.id,
             provider: input.provider, model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode, codexSandboxMode: input.codexSandboxMode, codexReviewer: input.codexReviewer,
+            withMateReviewerExplicit: input.withMateReviewerExplicit,
             workspacePath: input.workspacePath, workspaceLabel: input.workspacePath, branch: "", characterId: character.id,
             character: snapshot.name, characterIconPath: snapshot.iconFilePath ?? "", characterThemeColors: snapshot.theme, characterRuntimeSnapshot: snapshot });
         }

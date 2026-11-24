@@ -54,6 +54,7 @@ type AuxiliarySessionRow = {
   codex_sandbox_mode: string;
   codex_speed: string;
   codex_reviewer: string;
+  withmate_reviewer_explicit: number;
   custom_agent_name: string;
   thread_id: string;
   display_after_message_index: number | null;
@@ -134,7 +135,7 @@ export type AuxiliaryIdentityPatchInput = {
 
 export type AuxiliaryExecutionOptions = Pick<AuxiliarySession,
   "provider" | "model" | "reasoningEffort" | "approvalMode"
-  | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName">;
+  | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "withMateReviewerExplicit" | "customAgentName">;
 
 export type AuxiliaryCredentialThreadInfo = Pick<AuxiliarySession,
   "id" | "parentSessionId" | "createdAt" | "provider" | "threadId" | "runState">;
@@ -164,6 +165,7 @@ const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
     codex_sandbox_mode TEXT NOT NULL DEFAULT '',
     codex_speed TEXT NOT NULL DEFAULT '',
     codex_reviewer TEXT NOT NULL DEFAULT '',
+    withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1)),
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
@@ -193,7 +195,7 @@ const CREATE_AUXILIARY_MESSAGES_TABLE_SQL = `
 const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.created_at, a.updated_at,
   a.title, a.description, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
   a.reasoning_effort, a.approval_mode, a.codex_sandbox_mode, a.codex_speed,
-  a.codex_reviewer, a.custom_agent_name,
+  a.codex_reviewer, a.withmate_reviewer_explicit, a.custom_agent_name,
   a.thread_id, a.display_after_message_index, a.character_id,
   NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
   CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
@@ -932,9 +934,9 @@ export class AuxiliarySessionStorage {
     const options = input.options;
     return this.updateScalarIfMatches(input,
       `provider_id = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
-        codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?`,
+        codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, withmate_reviewer_explicit = ?, custom_agent_name = ?`,
       [options.provider, options.model, options.reasoningEffort,
-        options.approvalMode, options.codexSandboxMode, options.codexSpeed, options.codexReviewer, options.customAgentName]);
+        options.approvalMode, options.codexSandboxMode, options.codexSpeed, options.codexReviewer, options.withMateReviewerExplicit ? 1 : 0, options.customAgentName]);
   }
 
   updateAuxiliaryDisplayAnchorIfMatches(input: AuxiliaryIdentityPatchInput & { displayAfterMessageIndex: number | null }): boolean {
@@ -1023,6 +1025,7 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
       codexSandboxMode: row.codex_sandbox_mode,
       codexSpeed: row.codex_speed,
       codexReviewer: row.codex_reviewer,
+      withMateReviewerExplicit: row.withmate_reviewer_explicit === 1 ? true : undefined,
       customAgentName: row.custom_agent_name,
       threadId: row.thread_id,
       displayAfterMessageIndex: row.display_after_message_index,
@@ -1076,14 +1079,14 @@ function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession, ini
   db.prepare(`UPDATE auxiliary_sessions SET parent_session_id = ?, created_at = ?, updated_at = ?,
     title = CASE WHEN ? THEN ? ELSE title END, description = CASE WHEN ? THEN ? ELSE description END,
     run_state = ?, preview = ?, provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
-    approval_mode = ?, codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?,
+    approval_mode = ?, codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, withmate_reviewer_explicit = ?, custom_agent_name = ?,
     thread_id = ?, display_after_message_index = ?,
     character_id = ?, character_snapshot_json = ?, character_snapshot_invalid = ?, character_icon_path = ?,
     client_request_id = ?, creation_context_json = ?, creation_request_json = ? WHERE id = ?`).run(
     session.parentSessionId, session.createdAt, session.updatedAt,
     initializeMetadata ? 1 : 0, session.title, initializeMetadata ? 1 : 0, session.description ?? "", session.runState, session.preview ?? buildAuxiliaryPreview(session.messages),
     session.provider, session.catalogRevision, session.model, session.reasoningEffort,
-    session.approvalMode, session.codexSandboxMode, session.codexSpeed, session.codexReviewer,
+    session.approvalMode, session.codexSandboxMode, session.codexSpeed, session.codexReviewer, session.withMateReviewerExplicit ? 1 : 0,
     session.customAgentName, session.threadId,
     session.displayAfterMessageIndex, session.characterId ?? null,
     session.characterRuntimeSnapshot === undefined ? null : JSON.stringify(session.characterRuntimeSnapshot),
@@ -1192,6 +1195,7 @@ function migrateAuxiliaryDrafts(db: DatabaseSync): void {
 function migrateAuxiliaryStorage(db: DatabaseSync): void {
   const columns = new Set((db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as TableInfoRow[]).map(({ name }) => name));
   if (!columns.has("description")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+  if (!columns.has("withmate_reviewer_explicit")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))");
   db.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     db.exec(CREATE_AUXILIARY_MESSAGES_TABLE_SQL);

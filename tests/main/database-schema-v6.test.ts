@@ -147,9 +147,9 @@ describe("database-schema-v6", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "既存V6会話とqueueを保持してCrew列を追加し、未知の受付時・採用入力はNULLのままにする"
+  // claim = "既存V6会話とqueueを保持し、未知の受付時・採用入力と旧Auxiliaryの未指定Reviewerを明示値にしない"
   // oracle = { type = "contract", ref = "docs/design/database-schema.md; https://github.com/natumekazuki/WithMate/issues/834; https://github.com/natumekazuki/WithMate/issues/735" }
-  // fault = "列追加で既存会話・queueを破壊する、root identityを失う、または未知の受付時・採用入力を捏造する"
+  // fault = "列追加で既存会話・queueを破壊する、root identityを失う、未知の入力や旧Reviewerの明示選択を捏造する"
   // observable = "ensure前後のSession・Auxiliary・message・queue行、追加列、index、JSON入力拒否結果"
   // observation_boundary = "component-behavior"
   // scope = "V6 additive Crew and turn queue migration"
@@ -170,6 +170,7 @@ describe("database-schema-v6", () => {
         ALTER TABLE session_turn_queue_v6 DROP COLUMN accepted_json;
         ALTER TABLE session_turn_queue_v6 DROP COLUMN dispatched_json;
         ALTER TABLE auxiliary_sessions DROP COLUMN description;
+        ALTER TABLE auxiliary_sessions DROP COLUMN withmate_reviewer_explicit;
         ALTER TABLE auxiliary_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed'));
         ALTER TABLE auxiliary_sessions ADD COLUMN closed_at TEXT NOT NULL DEFAULT '';
         INSERT INTO sessions_v6 (id, incarnation_id, title, state, provider_id, catalog_revision,
@@ -194,7 +195,9 @@ describe("database-schema-v6", () => {
         ...previousSession, session_role: "standalone", root_session_id: "main",
         parent_session_id: null, created_by_session_id: null, description: "",
       });
-      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() }, { ...previousAuxiliary, description: "" });
+      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() },
+        { ...previousAuxiliary, description: "", withmate_reviewer_explicit: 0 });
+      assert.throws(() => db.exec("UPDATE auxiliary_sessions SET withmate_reviewer_explicit = 2"), /CHECK constraint failed/);
       assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_session_messages").get() }, previousMessage);
       assert.deepEqual({ ...db.prepare("SELECT * FROM session_turn_queue_v6").get() }, {
         ...previousQueue, accepted_json: null, dispatched_json: null,
@@ -516,6 +519,7 @@ describe("database-schema-v6", () => {
         "codex_sandbox_mode",
         "codex_speed",
         "codex_reviewer",
+        "withmate_reviewer_explicit",
         "custom_agent_name",
         "thread_id",
         "display_after_message_index",

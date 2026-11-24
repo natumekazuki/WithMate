@@ -1328,6 +1328,7 @@ export class SessionRuntimeService {
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
         onApprovalRequest: (approvalRequest, requestSignal, nativeReview) => {
+          if (executionOptions.approvalMode === "safety-focused") return "deny";
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return "deny";
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const request = {
@@ -1336,6 +1337,7 @@ export class SessionRuntimeService {
           };
           let review: PendingApprovalReview | undefined;
           if (!signal.aborted && executionOptions.approvalMode === "on-request" && appSettings.withMateAutoReview
+            && (!executionOptions.withMateReviewerExplicit || executionOptions.codexReviewer === "auto-review")
             && approvalRequest.provider === effectiveTurnSession.provider && supportsWithMateAutoReview(effectiveTurnSession.provider)
             && approvalRequest.decisionMode === "direct-decision" && nativeReview) {
             approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection: appSettings.withMateAutoReview,

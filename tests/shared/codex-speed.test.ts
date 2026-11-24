@@ -54,10 +54,8 @@ describe("Codex speed runtime option", () => {
       models: [],
       selectedModel: "",
       reasoningEfforts: [],
-      selectedApprovalMode: "untrusted" as const,
       selectedCodexSandboxMode: "workspace-write" as const,
       selectedCodexSpeed: "fast" as const,
-      selectedCodexReviewer: "auto-review" as const,
     };
 
     assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "copilot" }).speedSelectOptions, []);

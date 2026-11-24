@@ -1671,7 +1671,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           input.executionOptions.codexSpeed,
         ),
         reviewer: mapCodexReviewerToApprovalsReviewer(
-          input.executionOptions.codexReviewer,
+          input.executionOptions.approvalMode === "safety-focused" ? "user" : input.executionOptions.codexReviewer,
         ),
         input: userInput(prompt.logicalPrompt.composedText, prompt.imagePaths),
         signal: input.signal,

@@ -199,8 +199,8 @@ async function fixture(provider = "codex") {
 
 // @test-value v2
 // kind = "contract"
-// claim = "通常子作成は実行中の親権限を継承し、異種で制限を再現できなければ作成しない"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Bound Session API" }
+// claim = "通常子作成は実行中の親権限と明示Reviewerを継承し、異種で制限を再現できなければ作成しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Bound Session API; docs/design/provider-adapter.md#approval-modes" }
 // fault = "親の保存設定を実行中設定と誤認する、実行中の権限が取れないのに作成する、異種で制限を失う、再試行で作成済み条件を再解決する"
 // observable = "両入口の作成結果、拒否理由と保存子・lifecycle不存在、再試行、adapter境界に渡る初回受付設定"
 // observation_boundary = "public-boundary"
@@ -217,20 +217,21 @@ test("child creation uses the active parent permissions through retry and first 
     await f.bundle.stores.session.updateSession({ ...f.parent, approvalMode: "never", codexSandboxMode: "read-only", codexReviewer: "user" });
     const parent = await f.endpoint(f.parent, active);
     const base = { role: "executor", provider: "codex", model: "fast", reasoningEffort: "low", workspacePath: join(f.parent.workspacePath, "..") };
-    const created: { session: Session; request: typeof base & { requestId: string }; requestId: string; reviewer: string; sandbox: string; response: Record<string, unknown> }[] = [];
+    const created: { session: Session; request: typeof base & { requestId: string }; requestId: string; reviewer: string; explicit: true | undefined; sandbox: string; response: Record<string, unknown> }[] = [];
     for (const transport of ["mcp", "cli"] as const) {
-      for (const [provider, reviewer, sandbox] of [
-        ["codex", "auto-review", "danger-full-access"],
-        ["claude", "auto-review", "workspace-write"],
-        ["copilot", "user", "workspace-write"],
-        ["opencode", "user", "workspace-write"],
-      ]) {
+      for (const [provider, reviewer, sandbox, explicit] of [
+        ["codex", "auto-review", "danger-full-access", undefined],
+        ["claude", "auto-review", "workspace-write", undefined],
+        ["copilot", "auto-review", "workspace-write", true],
+        ["opencode", "auto-review", "workspace-write", true],
+      ] as const) {
         const request = { ...base, provider, requestId: randomUUID() };
         const response = await parent(transport, "create_child", request);
         assert.equal(response.ok, true, JSON.stringify(response));
         const options = response.executionOptions as SessionExecutionOptions;
         assert.equal(options.approvalMode, "on-request");
         assert.equal(options.codexReviewer, reviewer);
+        assert.equal(options.withMateReviewerExplicit, explicit);
         assert.equal(options.codexSandboxMode, sandbox);
         assert.equal(options.model, "fast");
         assert.equal(options.reasoningEffort, "low");
@@ -242,14 +243,14 @@ test("child creation uses the active parent permissions through retry and first 
         const sent = await parent(transport, "enqueue", { target: target(session), requestId, message: "first assigned task", model: "fast", reasoningEffort: "low" });
         assert.equal(sent.ok, true, JSON.stringify(sent));
         assert.deepEqual((sent.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions, options);
-        created.push({ session, request, requestId, reviewer, sandbox, response });
+        created.push({ session, request, requestId, reviewer, sandbox, explicit, response });
       }
     }
 
     parent.endTurn();
     const restricted = await f.endpoint(f.parent, { ...active, codexSandboxMode: "workspace-write-network" });
     await f.reopen();
-    for (const { session, request, requestId, reviewer, sandbox, response } of created) {
+    for (const { session, request, requestId, reviewer, sandbox, explicit, response } of created) {
       assert.deepEqual(await restricted("cli", "create_child", request), response);
       assertRejected(await restricted("cli", "create_child", { ...request, title: "different request" }));
       const dispatched = await f.dispatchNext(session);
@@ -258,6 +259,7 @@ test("child creation uses the active parent permissions through retry and first 
       assert.equal(dispatched.executed[0].provider, session.provider);
       assert.equal(dispatched.executed[0].input.executionOptions.approvalMode, "on-request");
       assert.equal(dispatched.executed[0].input.executionOptions.codexReviewer, reviewer);
+      assert.equal(dispatched.executed[0].input.executionOptions.withMateReviewerExplicit, explicit);
       assert.equal(dispatched.executed[0].input.executionOptions.codexSandboxMode, sandbox);
       assert.equal((await f.bundle.stores.queue.getReceipt(target(session), requestId))!.state, "completed");
     }
@@ -273,6 +275,18 @@ test("child creation uses the active parent permissions through retry and first 
     assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
     assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
     restricted.endTurn();
+    for (const codexSandboxMode of ["danger-full-access", "read-only"] as const) {
+      const autoRun = await f.endpoint(f.parent, { ...active, approvalMode: "never", codexSandboxMode });
+      for (const transport of ["mcp", "cli"] as const) {
+        const rejected = await autoRun(transport, "create_child", { ...base, provider: "copilot", requestId: randomUUID() });
+        assertRejected(rejected);
+        assert.match(String(rejected.message), codexSandboxMode === "danger-full-access"
+          ? /approval mode "never" in copilot/ : /sandbox mode "read-only" in copilot/);
+      }
+      autoRun.endTurn();
+    }
+    assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
+    assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
     const unavailable = await f.endpoint(f.parent, null);
     for (const transport of ["mcp", "cli"] as const) {
       const rejected = await unavailable(transport, "create_child", { ...base, requestId: randomUUID() });
@@ -343,10 +357,13 @@ test("enqueue settings validate both directions and all Provider options through
         assert.equal((choices.catalog as { workspacePath: string }).workspacePath, f.child.workspacePath);
         const native = (choices.options as { provider: string; approvalModes: { value: string }[]; sandboxModes: { value: string }[]; reviewers: { value: string }[] }[])[0];
         assert.equal(native.provider, provider);
-        assert.ok(native.approvalModes.some((option) => option.value === "never"));
+        assert.deepEqual(native.approvalModes, [
+          { value: "auto-run", label: "Auto Run" }, { value: "auto-review", label: "Auto Review" },
+          { value: "user", label: "User" }, { value: "safety-focused", label: "Safety Focused" },
+        ]);
         assert.equal(native.sandboxModes.some((option) => option.value === "read-only"), provider === "codex");
         if (provider !== "codex") assert.deepEqual(native.sandboxModes, []);
-        assert.deepEqual(native.reviewers.map((option) => option.value).sort(), provider === "codex" ? ["auto-review", "user"] : []);
+        assert.deepEqual(native.reviewers, []);
         const request = { target: target(f.child), requestId: randomUUID(), message: "do work", model: "plain", reasoningEffort: "" };
         const sent = await parent(transport, "enqueue", request);
         assert.equal(sent.ok, true);
@@ -479,6 +496,51 @@ test("enqueue freezes per-Turn settings across retries, delayed dispatch and res
       assert.deepEqual(dispatched!.dispatched!.request.executionOptions, legacyOptions);
       await f.bundle.stores.queue.settle(target(f.child), receipt.id, "completed");
     }
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "明示User/Auto ReviewはMainとAuxiliaryで再読込でき、変更前の未指定受付を上書きしない"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲; docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "旧Userを明示設定と解釈する、新しい明示User/Auto Reviewをチェックポイントで失う、または受付済み設定に現在値を反映する"
+// observable = "実Storage Worker再接続後のMain/AuxiliaryのReviewer選択と、変更前/後の公開受付の捕捉値"
+// observation_boundary = "public-boundary"
+// scope = "CopilotのSession選択チェックポイント、Auxiliary保存、MCP/CLIの通常送信"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "手動と仲介Auto Reviewが再起動やキュー待機で利用者の選択に反して切り替わる"
+// distinction = "runtimeの審査テストはSQLiteや過去受付を通さず、型検査は選択の保存と復元を保証しない"
+// @end-test-value
+test("explicit WithMate reviewer survives reopening without changing an earlier receipt", async () => {
+  const f = await fixture("copilot");
+  try {
+    const child = await f.endpoint(f.child);
+    const original = captureSessionExecutionOptions(f.parent);
+    const input = { target: target(f.parent), message: "review checkpoint", requestId: randomUUID(), deliveryTiming: "after_source_turn" };
+    const legacy = await child("mcp", "enqueue", input);
+    assert.equal(legacy.ok, true, JSON.stringify(legacy));
+    assert.equal((legacy.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions.withMateReviewerExplicit, undefined);
+    const auxiliary = { ...f.parent, id: "review-aux", parentSessionId: f.parent.id, title: "Reviewer",
+      createdAt: f.parent.updatedAt, runState: "idle" as const, composerDraft: "", displayAfterMessageIndex: null };
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
+    const manual = { ...original, codexReviewer: "user" as const, withMateReviewerExplicit: true as const };
+    const auto = { ...manual, codexReviewer: "auto-review" as const };
+    await f.bundle.stores.session.setSessionExecutionOptions(f.parent.id, getSessionIncarnationId(f.parent), manual);
+    assert.equal(await f.bundle.stores.auxiliary.updateAuxiliaryExecutionOptionsIfMatches({
+      auxiliarySessionId: auxiliary.id, parentSessionId: f.parent.id, createdAt: auxiliary.createdAt, updatedAt: auxiliary.updatedAt,
+      options: { ...auto, provider: "copilot" },
+    }), true);
+    await f.reopen();
+    const parentStored = await f.bundle.stores.session.getSession(f.parent.id);
+    const auxStored = await f.bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id);
+    assert.deepEqual(captureSessionExecutionOptions(parentStored!), manual);
+    assert.deepEqual(captureSessionExecutionOptions(auxStored!), auto);
+    const prior = await child("cli", "get_receipt", { target: target(f.parent), requestId: input.requestId });
+    assert.deepEqual((prior.receipt as SessionTurnQueueReceipt).accepted, (legacy.receipt as SessionTurnQueueReceipt).accepted);
+    const current = await child("cli", "enqueue", { ...input, requestId: randomUUID() });
+    assert.equal(current.ok, true, JSON.stringify(current));
+    assert.deepEqual((current.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions, manual);
   } finally { await f.close(); }
 });
 

@@ -218,35 +218,20 @@ adapter 実行に必要な保存済み session context:
 
 ## Approval Modes
 
-ApprovalとReviewerはproviderのnative設定名ではなく、WithMateの承認方式として定義する。Approvalは操作を自動許可・確認・拒否する方針、Reviewerは確認が必要な操作を誰が判断するかを表す。provider固有の実現方式はAdapterが写像し、対応しない選択や組合せを別設定へ暗黙変換しない。Sandboxは別の隔離設定であり、ApprovalやReviewerによるOSレベルの隔離は保証しない。
+GUI・MCP・CLIでは `Auto Run / Auto Review / User / Safety Focused` の同じ4択を公開する。承認方針と確認時の判断担当は、内部で `approvalMode` と `codexReviewer` に分けて保存・捕捉する。通常のSession作成・送信APIに権限上書き引数は追加しない。SandboxはCodexだけの独立設定であり、ApprovalによるOS隔離は保証しない。
 
-| Approval | 共通値 | WithMateでの意味 | Codex | Copilot | Claude（Reviewer: User） |
-| --- | --- | --- | --- | --- | --- |
-| Auto Run | `never` | 通常操作で承認確認を求めない。providerの明示的な禁止・必須確認は維持する | `never` | permission requestを自動許可 | `bypassPermissions`＋明示opt-in |
-| Provider Controlled | `on-request` | 確認が必要な操作をReviewerへ渡す。対象はproviderとWithMateの実行方針に従う | `on-request` | permission requestを共通UIへ | `default`＋read-only以外を強制ask |
-| Safety Focused | `untrusted` | 通常より許可範囲を絞り、provider別の安全側の方針で実行する | `untrusted` | read-only以外を拒否 | 非対応 |
-| Accept Edits | `accept-edits` | 編集・filesystem操作を自動許可し、それ以外の確認を維持する | 非対応 | 非対応 | `acceptEdits` |
-| Preapproved Only | `dont-ask` | 事前許可された操作だけ実行し、承認・AskUserQuestionの対話を開始しない | 非対応 | 非対応 | `dontAsk` |
-| Plan | `plan` | 計画用の権限制御で実行する。書込許可を自動的には与えない | 非対応 | 非対応 | `plan` |
+| Approval | Codex | Claude | Copilot | OpenCode |
+| --- | --- | --- | --- | --- |
+| Auto Run | `never`。nativeのSandbox・禁止規則を上書きしない | `bypassPermissions` ＋明示opt-in。SDKのdeny、hook、managed policyを維持 | 通常のpermission要求は `approve-once`。本人確認必須は手動へ、利用不能なら許可しない | native askへ `once`。native denyは上書きせず永続許可は発行しない |
+| Auto Review | `on-request` ＋native `auto_review` | `auto` のnative審査 | 適格な `on-request` を[WithMate仲介審査](withmate-auto-review.md)へ | 適格なnative askをWithMate仲介審査へ |
+| User | `on-request` ＋native `user` | `default`。現行どおりread-only以外を強制ask | SDKの確認要求を手動判断へ | native askを手動判断へ |
+| Safety Focused | `on-request` ＋native `user` で受けた実承認を拒否 | `default` でWithMateの強制askを追加せず、SDKの実承認を拒否 | SDKの通常read分類は通す。実ask、managed要求、readOnlyヒントだけのMCPは許可しない | native `permission.asked` を拒否。事前許可とdenyはnativeのまま |
 
-Reviewerは`User / Auto Review`をCodexとClaudeで提供し、既定値は`user`。既存の`codexReviewer` fieldを保存・送信時捕捉に共用し、新規fieldやmigrationは追加しない。
+Safety Focusedは承認不要の読取・nativeで既に許可された操作を止めず、実際に承認を求められれば読取／書込／shell等の種類にかかわらず拒否する。手動確認や自動審査は起動しない。一般の質問やその他の入力は承認と区別する。Copilot SDKの通常のpermission分類と、`promptRequest` や本人必須を示すmanaged／Assisted判定を区別する。Assisted通知の存在だけでは実確認ではなく、MCPの自己申告で実確認を許可しない。
 
-- `User`はproviderが要求した操作承認をWithMateの共通approval UIへ中継する。
-- `Auto Review`は確認対象の操作をproviderの自動審査へ任せる。Codexは`approvalsReviewer: "auto_review"`、ClaudeはApprovalが`on-request`の場合に`permissionMode: "auto"`へ写像する。審査方式・対象・利用条件の同一性は保証しない。providerが人の確認をなお要求した場合は共通UIへ中継する。
-- Claudeの`accept-edits / dont-ask / plan`はReviewerが`user`のときだけ有効。Auto Review中にこれらのApprovalを選ぶ場合は、UIでReviewerをUserへ変更する確認を求め、承認時に両方を一括変更する。送信時検証とAdapterは不正な組合せを拒否する。保存値が不正な組合せならinvalidを示し、Reviewerの明示変更で修正できる。
-- `never`ではReviewerを適用せず、controlをdisabledにして保存済み値を保持する。Reviewerが有効なApprovalへ戻した場合は以前の選択を再利用する。保存済みApprovalが`never`の間の通常のReviewer更新は採用しない。ClaudeでUserを要するApprovalへの変更を確認した場合に限り、変更前の選択を照合したうえで両方を一括変更する。
-- Auxiliary作成時のReviewerは既存どおり親Sessionから継承する。作成時に実際に保存するApprovalとの組合せをcommit前に検証し、非対応なら作成を拒否する。親や作成要求の設定をUserへ暗黙変更しない。
-- OpenCodeAdapterは`on-request`（既定）と`never`だけを選択可能にし、native askへそれぞれ共通UIの判断／今回だけ許可を返す。nativeの明示denyを上書きしない。
+Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介が構成されていない／使用できない場合は共通UIで手動確認する。選択は書き換えない。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
 
-renderer / shared state / session persistence / 最小turn記録は上記の共通値を保持する。既存rowのlegacy値はread-pathで`allow-all -> never`、`safety -> untrusted`、`provider-controlled -> on-request`へ正規化する。Codex／CopilotのApproval既定値は`untrusted`、Claude／OpenCodeは`on-request`とする。
-
-Claudeの実行制御:
-
-- `never`では`allowDangerouslySkipPermissions: true`を渡す。SDKのdeny / askルール、hook、managed policyは上書きしない。
-- `on-request + user`では`Read / Glob / Grep / WebSearch / WebFetch`以外を`PreToolUse`でaskにする。他の有効な承認方式では通常toolを強制askせず、選択したnative modeの制御へ任せる。
-- `Preapproved Only`以外の`AskUserQuestion`と、SDKから届くMCP elicitationは共通質問UIを使う。残るSDK承認要求は共通approval UIへ中継し、拒否・取消・UI不在ではdenyする。
-- Auto Reviewのmodel・契約・managed policy等の利用条件はSDKが判定する。起動時に要求と異なるpermission modeが返れば失敗として通知する。
-- artifactには送信時のApprovalとReviewerを分けて記録する。Reviewerは選択値であり、個々の操作で自動審査が実行された証明ではない。
+既存の `untrusted` は従来の制限のまま（Codexのnative untrusted、Copilotのread-only分類）。新しい `safety-focused` に自動変換しない。Claudeの保存済み `accept-edits / dont-ask / plan` は対応する `acceptEdits / dontAsk / plan` を維持し、新規選択肢には出さない。旧 `allow-all / safety / provider-controlled` の読取時正規化と、保存履歴・捕捉済み受付、新規の初期値は変更しない。Claudeで使用中のnative permission modeが要求と異なる場合は失敗を通知する。
 
 ## Speed
 

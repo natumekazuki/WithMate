@@ -240,7 +240,7 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
   const normalizedColumns = ["title", "description", "run_state", "preview", "provider_id", "catalog_revision",
     "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
-    "codex_reviewer", "custom_agent_name", "thread_id",
+    "codex_reviewer", "withmate_reviewer_explicit", "custom_agent_name", "thread_id",
     "display_after_message_index", "character_id", "character_snapshot_json",
     "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
     "creation_request_json"];
@@ -569,6 +569,7 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     codex_sandbox_mode TEXT NOT NULL DEFAULT '',
     codex_speed TEXT NOT NULL DEFAULT '',
     codex_reviewer TEXT NOT NULL DEFAULT '',
+    withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1)),
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
@@ -856,6 +857,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
+  const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+  if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("withmate_reviewer_explicit")) {
+    db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))");
+  }
 
   db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 

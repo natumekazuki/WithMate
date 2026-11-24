@@ -1034,12 +1034,13 @@ export class SessionStorageV6 {
           codex_sandbox_mode = ?, custom_agent_name = ?,
           runtime_policy_json = json_set(
             CASE WHEN json_valid(runtime_policy_json) THEN runtime_policy_json ELSE '{}' END,
-            '$.codexSpeed', ?, '$.codexReviewer', ?
+            '$.codexSpeed', ?, '$.codexReviewer', ?, '$.withMateReviewerExplicit', json(?)
           )
       WHERE id = ? AND incarnation_id = ?
     `).run(
       options.model, options.reasoningEffort, options.approvalMode,
       options.codexSandboxMode, options.customAgentName, options.codexSpeed, options.codexReviewer,
+      options.withMateReviewerExplicit ? "true" : "null",
       sessionId, incarnationId,
     );
     if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
@@ -1597,6 +1598,7 @@ export class SessionStorageV6 {
       characterThemeColors: session.characterThemeColors,
       codexSpeed: session.codexSpeed,
       codexReviewer: session.codexReviewer,
+      withMateReviewerExplicit: session.withMateReviewerExplicit,
     };
     const conflictClause = operation === "create"
       ? "ON CONFLICT(id) DO NOTHING"
@@ -1780,6 +1782,7 @@ export class SessionStorageV6 {
       codexSandboxMode: row.codex_sandbox_mode,
       codexSpeed: runtimePolicy.codexSpeed,
       codexReviewer: runtimePolicy.codexReviewer,
+      withMateReviewerExplicit: runtimePolicy.withMateReviewerExplicit,
       model: row.model_id,
       reasoningEffort: row.reasoning_effort,
       customAgentName: row.custom_agent_name,

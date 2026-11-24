@@ -194,7 +194,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     const workspacePath = resolveRunWorkspacePath(input);
     this.assertCleanupComplete(workspacePath, input.session.id, input.session.threadId);
     if (!input.runtimeOwner?.id || !input.runtimeOwner.incarnationId) throw new Error("OpenCode runtime owner is required");
-    if (input.executionOptions.approvalMode !== "on-request" && input.executionOptions.approvalMode !== "never") throw new Error("Unsupported OpenCode approval mode");
+    if (input.executionOptions.approvalMode !== "on-request" && input.executionOptions.approvalMode !== "never" && input.executionOptions.approvalMode !== "safety-focused") throw new Error("Unsupported OpenCode approval mode");
     const owner = input.runtimeOwner;
     const prompt = this.composePrompt(input);
     const model = resolveOpenCodeModelRef(input.executionOptions.model, input.executionOptions.reasoningEffort);
@@ -351,7 +351,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
             throw new Error("OpenCode permission request ownership is unknown");
           }
           enqueue(key, async (pendingSignal) => {
-            const decision = request.action === "opencode_session_move" ? "deny"
+            const decision = request.action === "opencode_session_move" || input.executionOptions.approvalMode === "safety-focused" ? "deny"
               : input.executionOptions.approvalMode === "never" ? "approve"
               : await withSignal(Promise.resolve(input.onApprovalRequest?.(redactor.sanitize({
                 requestId: randomUUID(), provider: "opencode", kind: request.action, title: "OpenCode permission",

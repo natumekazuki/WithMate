@@ -19,4 +19,5 @@ export type ResolvedChildSessionCreation = CreateChildSessionRequest & {
   approvalMode: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
   codexReviewer?: CodexReviewer;
+  withMateReviewerExplicit?: true;
 };

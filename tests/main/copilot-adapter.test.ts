@@ -2405,27 +2405,40 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "never approvalはCopilot write permission requestをapprove-onceへ変換する"
+  // claim = "CopilotのAuto Runは通常要求を今回だけ許可し、本人必須の要求には自動許可を返さない"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Approval-Modes" }
-  // fault = "never送信値を無視してwriteを拒否する"
-  // observable = "onPermissionRequestのdecision"
+  // fault = "通常writeを拒否するか、本人確認必須のread/writeを自動許可する"
+  // observable = "SDK callbackの通常・本人必須・確認不能時のdecisionと手動コールバックの引数"
   // observation_boundary = "component-behavior"
   // scope = "allow-all permission handler"
   // lifecycle = "permanent"
   // impact = "選択したpermission policyと実行が食い違う"
   // distinction = "untrusted/on-requestのpermission testとは異なるpolicy branch"
   // @end-test-value
-  it("allow-all permission handler は legacy approve-once を返す", async () => {
+  it("Copilot Auto Run skips ordinary confirmation but preserves mandatory human approval", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "never";
     input.executionOptions = captureSessionExecutionOptions(input.session);
+    const manual: unknown[] = [];
+    input.onApprovalRequest = (_request, _signal, review) => {
+      manual.push(review);
+      return "approve";
+    };
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
-    await assert.doesNotReject(async () => {
-      const result = await settings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
-      assert.deepEqual(result, { kind: "approve-once" });
-    });
+    const invocation = { sessionId: "session-1" };
+    assert.deepEqual(await settings.config.onPermissionRequest(createWritePermissionRequest(), invocation), { kind: "approve-once" });
+    assert.deepEqual(manual, []);
+    for (const request of [createReadPermissionRequest(), createWritePermissionRequest()]) {
+      assert.deepEqual(await settings.config.onPermissionRequest({ ...request, managedApprovalRequired: true }, invocation),
+        { kind: "attributed", result: { kind: "approve-once" },
+          decisionContext: { source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user" } });
+    }
+    assert.deepEqual(manual, [undefined, undefined]);
+    const unavailable = buildCopilotSessionSettings({ ...input, onApprovalRequest: undefined }, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    assert.deepEqual(await unavailable.config.onPermissionRequest?.({ ...createWritePermissionRequest(), managedApprovalRequired: true }, invocation),
+      { kind: "user-not-available" });
   });
 
   // @test-value v2
@@ -2452,6 +2465,37 @@ describe("CopilotAdapter session settings", () => {
 
     assert.deepEqual(readResult, { kind: "approve-once" });
     assert.deepEqual(writeResult, { kind: "reject" });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilot Safety Focusedは通常のSDK分類readを通し、実際の要承認read/writeとMCPの自己申告を承認しない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+  // fault = "すべてのcallbackを拒否して通常readを失うか、実askやMCP readOnlyヒントを承認不要と誤認する"
+  // observable = "通常read・要承認read/write・MCP callbackのSDK返却値と手動／審査bridgeの呼出"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot SDK permission callback、新しいSafety Focused"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // impact = "要承認操作が無断で実行されるか、通常読取まで使えなくなる"
+  // distinction = "runtime共通の実ask testはSDKの通常分類・promptRequestの差を通らない"
+  // @end-test-value
+  it("Copilot Safety Focused distinguishes read classification from a real approval prompt", async () => {
+    const input = createRunSessionInput();
+    input.executionOptions = { ...input.executionOptions, approvalMode: "safety-focused" };
+    input.onApprovalRequest = () => assert.fail("Safety Focused must not open an approval or a review");
+    const handler = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents).config.onPermissionRequest!;
+    const invocation = { sessionId: "session-1" };
+    const read = createReadPermissionRequest();
+    const readPrompt: NonNullable<Parameters<typeof handler>[1]["promptRequest"]> = { kind: "read", path: "F:/repo/sample.txt", intention: "Read fixture" };
+    assert.deepEqual(await handler(read, invocation), { kind: "approve-once" });
+    assert.deepEqual(await handler(read, { ...invocation, assistedApprovalAssessment: { status: "not-run", reason: "inactive" } }),
+      { kind: "approve-once" });
+    assert.deepEqual(await handler(read, { ...invocation, promptRequest: readPrompt }), { kind: "reject" });
+    assert.deepEqual(await handler({ ...read, managedApprovalRequired: true }, invocation), { kind: "reject" });
+    assert.deepEqual(await handler(createWritePermissionRequest(), invocation), { kind: "reject" });
+    const mcp = { kind: "mcp", serverName: "fixture", toolName: "test", args: {}, readOnly: true } as PermissionRequest;
+    assert.deepEqual(await handler(mcp, invocation), { kind: "reject" });
   });
 
   // @test-value v2
@@ -2495,6 +2539,10 @@ describe("CopilotAdapter session settings", () => {
     await approvedSettings.config.onPermissionRequest?.({ ...createWritePermissionRequest(), managedApprovalRequired: true }, { sessionId: "session-1" });
     assert.equal(approvalRequests.length, 3);
     assert.equal(approvalRequests[2].review, undefined);
+    const promptedRead = createReadPermissionRequest();
+    assert.deepEqual(await approvedSettings.config.onPermissionRequest(promptedRead, { sessionId: "session-1",
+      promptRequest: { kind: "read", path: "F:/repo/sample.txt", intention: "Read fixture" } }), { kind: "approve-once" });
+    assert.deepEqual(approvalRequests[3].review, { operation: { request: promptedRead, workspacePath: "F:/repo" } });
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";

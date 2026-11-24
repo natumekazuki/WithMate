@@ -2,9 +2,9 @@
 
 ## 設定と適用範囲
 
-Settings の `WithMate Auto Review` で `Review Provider`、`Review Model`、対応する場合は `Review Depth` を選び、保存すると有効になる。既定は `Off`。審査役はネイティブAuto Reviewと構造化出力を使えるClaudeまたはCodexで、選択先の通常の認証・利用枠を使用する。現在の選択が使えなければ既存の手動承認を使い、別モデル・別Providerへ切り替えない。
+Settings の `WithMate Auto Review` で `Review Provider`、`Review Model`、対応する場合は `Review Depth` を保存して、共通の審査エンジンを構成する。既定は `Off`。審査役はネイティブAuto Reviewと構造化出力を使えるClaudeまたはCodexで、選択先の通常の認証・利用枠を使用する。現在の選択が使えなければ既存の手動承認を使い、別モデル・別Providerへ切り替えない。
 
-Copilot／OpenCode の `Provider Controlled` で実際に発生した承認要求が対象。CopilotでProviderが本人の判断を要求する場合は手動承認を維持する。Codex／Claude のネイティブ審査、各ProviderのSandbox・既定権限、通常親子の実行条件の継承・捕捉は変わらない。通常Session MCP／CLIはApproval・Sandbox・Reviewerの指定を引き続き受け付けない。
+Copilot／OpenCodeのMain／Auxiliaryでは、`Approval` の `User / Auto Review` が手動判断とWithMate仲介審査を選ぶ。未指定（`Settings Default` 表示）は共通設定に従い、明示した `User` は共通設定が有効でも手動承認を使う。`Auto Review` は構成済みエンジンで適格な要求だけを審査する。未構成・使用不能・本人判断必須の場合は手動で、選択は保持する。旧保存値は未指定のままとし、自動審査を一括で停止したり個別の選択へ書き換えたりしない。Codex／Claudeはネイティブ審査を使う。通常Session MCP／CLIはcatalogで共通のApproval候補を列挙するが、作成・送信時の権限上書きは受け付けない。
 
 ## 審査会話と履歴の境界
 

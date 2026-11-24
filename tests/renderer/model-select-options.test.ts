@@ -106,8 +106,7 @@ test("SDK候補にない保存済みDepthを表示候補に保持する", () => 
   const options = buildRuntimeSelectionOptions({
     providerId: "codex", providerCatalog, models, selectedModel: "gpt-test",
     selectedReasoningEffort: "sdk-specific-depth", reasoningEfforts: ["low"],
-    selectedApprovalMode: "never", selectedCodexSandboxMode: "workspace-write",
-    selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
+    selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard",
   });
   assert.deepEqual(options.reasoningSelectOptions, [
     { value: "sdk-specific-depth", label: "sdk-specific-depth" }, { value: "", label: "Default" }, { value: "low", label: "Low" },
@@ -129,8 +128,7 @@ test("SDK候補にない保存済みDepthを表示候補に保持する", () => 
 test("Depthの省略値をDefaultとして一度だけ表示し非対応モデルでは欄を作らない", () => {
   const input = {
     providerId: "codex", providerCatalog, models, selectedModel: "gpt-test", selectedReasoningEffort: "",
-    selectedApprovalMode: "never" as const, selectedCodexSandboxMode: "workspace-write" as const,
-    selectedCodexSpeed: "standard" as const, selectedCodexReviewer: "user" as const,
+    selectedCodexSandboxMode: "workspace-write" as const, selectedCodexSpeed: "standard" as const,
   };
   const expected = [{ value: "", label: "Default" }, { value: "low", label: "Low" }];
   assert.deepEqual(buildRuntimeSelectionOptions({ ...input, reasoningEfforts: ["low"] }).reasoningSelectOptions, expected);
