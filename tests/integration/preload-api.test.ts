@@ -740,6 +740,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "changeSessionAdditionalDirectory",
     "getCoordinationIdentity",
     "executeCoordination",
+    "getCoordinationStatus",
     "subscribeCoordinationChanged",
     "openCoordination",
     "subscribeOpenCoordination",

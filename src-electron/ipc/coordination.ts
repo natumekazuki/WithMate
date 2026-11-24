@@ -6,7 +6,9 @@ import {
   type CoordinationRequest,
 } from "../../src-shared/coordination/coordination-contract.js";
 import {
+  coordinationStatusRequestSchema,
   openCoordinationRequestSchema,
+  type CoordinationStatus,
   type OpenCoordinationRequest,
   type CoordinationDisplayIdentity,
 } from "../../src-shared/coordination/coordination-window-contract.js";
@@ -27,6 +29,7 @@ export function registerCoordinationHandlers(
     ): Promise<void>;
     open(request: OpenCoordinationRequest): Promise<BrowserWindow>;
     resolveIdentity(identity: CoordinationIdentity): Promise<CoordinationDisplayIdentity | null>;
+    readStatus(id: string): Promise<CoordinationStatus>;
   },
 ) {
   const navigation = new Map<number, OpenCoordinationRequest>();
@@ -47,6 +50,21 @@ export function registerCoordinationHandlers(
     const result = await deps.resolveIdentity(identity);
     authorize(event);
     return result;
+  });
+  ipc.handle("withmate:coordination:status", async (event, raw) => {
+    const window = authorize(event);
+    const { id } = coordinationStatusRequestSchema.parse(raw);
+    try {
+      await deps.authorizeRequest(window, { operation: "get", id });
+      authorize(event);
+      const result = await deps.readStatus(id);
+      authorize(event);
+      return result;
+    } catch (error) {
+      if (!isCoordinationDeletedError(error)) throw error;
+      authorize(event);
+      return { error: { code: error.code, message: error.message } };
+    }
   });
   ipc.handle("withmate:coordination:execute", async (event, raw) => {
     const window = authorize(event);

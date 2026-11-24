@@ -12,9 +12,9 @@ import type { CoordinationInvalidation } from "../../src-shared/coordination/coo
 // claim = "表示範囲の相談だけ正確なIDで状態を取得し、現行回答と解決を区別し、通知・再表示・失敗回復・削除と対象変更を反映する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談状態の取得・状態文言・失敗・消去" }
 // fault = "非表示/無関係通知で取得する、改訂番号を回答と誤認する、別IDの遅い応答を表示する、または失敗を解決済みとして扱う"
-// observable = "get request列、詳細buttonの状態説明、回答待ち/回答あり/解決/削除の異なる描画形状、loading、再試行、詳細操作のexact identity/ID"
+// observable = "status request列、詳細buttonの状態説明、回答待ち/回答あり/解決/削除の異なる描画形状、loading、再試行、詳細操作のexact identity/ID"
 // observation_boundary = "consumer"
-// scope = "CoordinationNoticeと既存useCoordinationQuery、IPCはfixture"
+// scope = "CoordinationNoticeとuseCoordinationStatus、IPCはfixture"
 // lifecycle = "permanent"
 // impact = "相談の現在状態を誤認し別の相談へ操作する、または長い履歴で不要な取得を増やす"
 // distinction = "storage testや型検査では可視範囲・非同期通知からbuttonと状態への接続を保証できない。小さなDOMで状態遷移を確認する"
@@ -39,12 +39,12 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
   let failure = false, deleted = false;
   let deferred: Promise<unknown> | null = null;
   Object.defineProperty(dom.window, "withmate", { value: {
-    executeCoordination: async (request: unknown) => {
+    getCoordinationStatus: async (request: unknown) => {
       requests.push(request);
       if (deferred) return deferred;
       if (failure) throw new Error("Read failed");
       if (deleted) return { error: { code: "COORDINATION_DELETED", message: "Deleted" } };
-      return { record: structuredClone(record) };
+      return { state: record.state, respondentKind: record.respondent.kind, hasAnswer: record.answers.length > 0 };
     },
     subscribeCoordinationChanged: (listener: (summary: CoordinationInvalidation) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     openCoordination: async (request: unknown) => { opened.push(request); },
@@ -69,7 +69,7 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
     await act(async () => root.render(<CoordinationNotice id="first" consultation="First **question**" target={target} />));
     assert.equal(requests.length, 0);
     await visible(true);
-    assert.deepEqual(requests, [{ operation: "get", id: "first" }]);
+    assert.deepEqual(requests, [{ id: "first" }]);
     assert.equal(state(), "Awaiting Your Reply"); // Retiring an answer can leave a positive revision without an answer.
     checkShape();
     const count = requests.length;
@@ -113,7 +113,7 @@ test("consultation notices read visible IDs and distinguish live answer, resolut
     assert.equal(dom.window.document.querySelector('[aria-label="Loading Consultation State"]')?.getAttribute("aria-busy"), "true");
     deferred = null; record = { ...record, id: "second", state: "open", answers: [] };
     await act(async () => root.render(<CoordinationNotice id="second" consultation="Second question" target={target} />));
-    await act(async () => resolveOld({ record: { ...record, id: "first", state: "withdrawn" } }));
+    await act(async () => resolveOld({ state: "withdrawn", respondentKind: "user", hasAnswer: false }));
     assert.equal(state(), "Awaiting Reply");
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-notice-link")!.click());
     assert.deepEqual(opened.at(-1), { id: "second", ...target });
