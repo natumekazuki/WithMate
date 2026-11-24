@@ -33,41 +33,72 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
   const canRead = Boolean(owner && api?.readSessionExecution && api.getConversationPage);
   const [state, setState] = useState<{ owner: string; projection?: ConversationThreads; error: string; loading: boolean }>();
   const [selected, setSelected] = useState<{ owner: string; id: string }>();
-  const [revision, setRevision] = useState(0);
-  const childSessions = useRef<readonly ConversationThread[]>(EMPTY_CHILDREN);
-  const reload = () => setRevision((value) => value + 1);
+  const requestRead = useRef<() => void>(undefined);
   useEffect(() => {
-    if (!enabled || !canRead) return;
-    const changed = (id: string) => { if (id === target?.sessionId) reload(); };
-    const sent = api?.onSessionSentDeliveriesChanged?.(changed);
-    const turns = api?.onSessionTurnUpdated?.((id) => {
-      if (id === target?.sessionId || childSessions.current.some(({ target: child }) => child.sessionId === id)) reload();
-    });
-    const queue = api?.onSessionTurnQueueChanged?.(changed);
-    // A new child may be the only ID in the invalidation and need not have sent anything.
-    const sessions = api?.subscribeSessionInvalidation?.(reload);
-    return () => { sent?.(); turns?.(); queue?.(); sessions?.(); };
-  }, [owner, api, enabled, canRead]);
-  useEffect(() => {
-    if (!enabled || !context || !canRead || !api?.readSessionExecution) return;
+    if (!enabled || !canRead || !api || target?.kind !== "main") return;
     let active = true;
+    let childSessionIds = new Set<string>();
+    let changedDuringRead: Set<string> | undefined;
+    let readAgain = false;
     const update = (loading: boolean, error: string) => setState((previous) => ({
       owner, projection: previous?.owner === owner ? previous.projection : undefined, error, loading,
     }));
-    update(true, "");
-    void api.readSessionExecution(context.ownerSessionId, "read_conversation_threads", { target: context.target }).then((result) => {
+
+    const read = async () => {
       if (!active) return;
-      if (result.ok) setState({ owner, projection: result, error: "", loading: false });
-      else update(false, result.message);
-    }, (error: unknown) => {
-      if (active) update(false, error instanceof Error ? error.message : "Could not load conversations.");
+      if (changedDuringRead) {
+        readAgain = true;
+        return;
+      }
+      update(true, "");
+      do {
+        readAgain = false;
+        const changedIds = changedDuringRead = new Set<string>();
+        try {
+          const result = await api.readSessionExecution(target.sessionId, "read_conversation_threads", { target });
+          if (!active) return;
+          if (result.ok) {
+            childSessionIds = new Set(result.children.map(({ target: child }) => child.sessionId));
+            // A child can change after the snapshot but before its ID is known here.
+            readAgain ||= result.children.some(({ target: child }) => changedIds.has(child.sessionId));
+            if (!readAgain) setState({ owner, projection: result, error: "", loading: false });
+          } else if (!readAgain) {
+            update(false, result.message);
+          }
+        } catch (error) {
+          if (!active) return;
+          if (!readAgain) update(false, error instanceof Error ? error.message : "Could not load conversations.");
+        }
+      } while (readAgain);
+      changedDuringRead = undefined;
+    };
+    const reload = () => { void read(); };
+    const changed = (id: string) => { if (id === target.sessionId) reload(); };
+    const affectsProjection = (id: string) => id === target.sessionId || childSessionIds.has(id);
+    const changedPeer = (id: string) => {
+      if (affectsProjection(id)) reload();
+      else changedDuringRead?.add(id);
+    };
+    const sent = api.onSessionSentDeliveriesChanged?.(changed);
+    const turns = api.onSessionTurnUpdated?.(changedPeer);
+    const queue = api.onSessionTurnQueueChanged?.(changed);
+    // Publishing a new direct child invalidates its parent before the child ID is known here.
+    const sessions = api.subscribeSessionInvalidation?.((event) => {
+      if (event.scope === "all" || event.sessionIds.some(affectsProjection)) reload();
+      else for (const id of event.sessionIds) changedDuringRead?.add(id);
     });
-    return () => { active = false; };
-  }, [owner, api, enabled, canRead, revision, historyRevision]);
+    requestRead.current = reload;
+    return () => {
+      active = false;
+      requestRead.current = undefined;
+      sent?.(); turns?.(); queue?.(); sessions?.();
+    };
+  }, [owner, api, enabled, canRead]);
+  // A history change invalidates the current read without replacing its subscription.
+  useEffect(() => { requestRead.current?.(); }, [owner, api, enabled, canRead, historyRevision]);
 
   const available = state?.owner === owner ? state : undefined;
   const projection = available?.projection;
-  childSessions.current = projection?.children ?? EMPTY_CHILDREN;
   const children = useMemo(() => projection?.children.slice().sort((left, right) =>
     Number(right.hasUnreadResult === true) - Number(left.hasUnreadResult === true)
     || (right.lastActivityAt ?? Number.MIN_SAFE_INTEGER) - (left.lastActivityAt ?? Number.MIN_SAFE_INTEGER)
@@ -84,6 +115,6 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
     beforeSwitch();
     setSelected({ owner, id });
   };
-  return { canRead, ready: !canRead || !!projection, projection: available?.error ? undefined : projection, children, frame, selectedId, showAllThreads, select, retry: reload,
+  return { canRead, ready: !canRead || !!projection, projection: available?.error ? undefined : projection, children, frame, selectedId, showAllThreads, select, retry: () => requestRead.current?.(),
     loading: available?.loading ?? canRead, error: available?.error ?? "" };
 }
