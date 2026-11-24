@@ -36,7 +36,10 @@ export function resolveOpenCodeBinaryPath(): string {
 }
 
 export function buildOpenCodePermissions(additionalDirectories: string[]): PermissionRuleset {
-  const permissions: PermissionRuleset = [{ action: "opencode_session_move", resource: "*", effect: "deny" }];
+  const permissions: PermissionRuleset = [
+    { action: "opencode_session_move", resource: "*", effect: "deny" },
+    { action: "subagent", resource: "*", effect: "deny" },
+  ];
   for (const directory of new Set(additionalDirectories)) {
     if (!path.isAbsolute(directory) || /[*?]/.test(directory)) throw new Error(`Invalid OpenCode additional directory: ${directory}`);
     permissions.push({ action: "external_directory", resource: path.join(directory, "*"), effect: "allow" });

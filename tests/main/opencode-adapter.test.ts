@@ -595,12 +595,57 @@ it("OpenCode native conversions preserve model and permission boundaries", () =>
   assert.deepEqual(resolveOpenCodeModelRef("provider/model/nested", "high"), { providerID: "provider", id: "model/nested", variant: "high" });
   assert.throws(() => resolveOpenCodeModelRef("provider/model#high", "high"));
   assert.throws(() => buildOpenCodePermissions([path.join(process.cwd(), "wild*card")]));
-  assert.deepEqual(buildOpenCodePermissions([process.cwd()]), [{ action: "opencode_session_move", resource: "*", effect: "deny" }, { action: "external_directory", resource: path.join(process.cwd(), "*"), effect: "allow" }]);
+  assert.deepEqual(buildOpenCodePermissions([process.cwd()]), [
+    { action: "opencode_session_move", resource: "*", effect: "deny" },
+    { action: "subagent", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: path.join(process.cwd(), "*"), effect: "allow" },
+  ]);
   const form: FormInfo1 = { id: "form", sessionID: "root", title: "question", fields: [{ key: "choice", type: "string", options: [{ value: "a", label: "A" }] }] };
   const field = buildOpenCodeElicitation(form, "request").fields[0];
   assert.equal(field.type, "select");
   if (field.type === "select") assert.deepEqual(field.options, [{ value: "a", label: "A" }]);
   assert.throws(() => buildOpenCodeElicitation({ ...form, fields: [{ key: "x", type: "string", pattern: "a+" }] }, "request"));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeのnative子起動・継続は新規Sessionと既存threadのどちらでもprompt前に拒否される設定を使う"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md の OpenCode 実行設定" }
+// fault = "native子の拒否を作成時か再開前の更新で渡さない、または設定の適用前にpromptを送る"
+// observable = "native Session createのpermissionsと、prompt受信時点でrootに最後に適用されたpermissions"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode adapter → OpenCode 2.2.5 Session API（fixture）、新規と保存済みnative thread"
+// lifecycle = "permanent"
+// impact = "WithMateが結果受領を保証しないnative子が実行されるのを防ぐ"
+// distinction = "既存の完了・再開testはprompt前のnative権限値を観測せず、権限生成関数だけでは経路漏れを検出できない"
+// risk_tags = ["authorization"]
+// @end-test-value
+it("OpenCode passes the native subagent deny when creating and before prompting a resumed session", async () => {
+  const expected = { action: "subagent", resource: "*", effect: "deny" };
+  for (const thread of ["", "native:root"]) {
+    const turn = input(thread);
+    const { adapter, client } = fixture(turn);
+    const create = client.session.create;
+    const prompt = client.session.prompt;
+    let created = false;
+    let updatedPermissions: Parameters<typeof client.session.update>[0]["permissions"];
+    client.session.create = async (request) => {
+      created = true;
+      assert.deepEqual(request?.permissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      return create(request);
+    };
+    client.session.update = async ({ sessionID, permissions }) => {
+      assert.equal(sessionID, "root");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      updatedPermissions = permissions;
+    };
+    client.session.prompt = async (...args) => {
+      assert.deepEqual(updatedPermissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      return prompt(...args);
+    };
+    await adapter.runSessionTurn(turn);
+    assert.equal(created, thread === "");
+  }
 });
 
 // @test-value v2
