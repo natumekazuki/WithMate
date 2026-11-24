@@ -154,9 +154,9 @@ test("assistant reference search matches preview while source and ordinary Markd
 
 // @test-value v2
 // kind = "contract"
-// claim = "Codex visualizeはHTMLを共通previewへ渡し、file名linkで元pathを開け、Reloadのbusyと失敗回復を持ち、stream追記で再読込しない"
+// claim = "Codex visualizeはHTMLの初回待ちを本文だけに示し、明示Reloadはボタンのbusyを示す。元pathを開け、失敗から回復し、stream追記で再読込しない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "本文追記で読込をやり直す、失敗を通常linkとして隠す、またはtoolbar・errorが本文検索へ混入する"
+// fault = "取得中に本文の待機が見えない、初回をReload実行中として表示する、明示Reloadのbusyを欠く、本文追記で再読込する、または失敗表示や回復を失う"
 // observable = "readSessionHtmlPreviewのrequest数と対象、file名labelと完全pathのtooltip・accessible name、Reloadのdisabled・busy・spinner、loading/error・共通preview、click結果と検索index"
 // observation_boundary = "component-behavior"
 // scope = "Codex HTML preview entryとsession readの接続・再試行"
@@ -190,7 +190,12 @@ test("visualize preview preserves its session read across streaming and exposes 
   try {
     await act(async () => render(text));
     assert.deepEqual(requests, [{ sessionId: "session", target: "/work/chart.html" }]);
-    assert.ok(dom.window.document.querySelector('[aria-label="Loading HTML preview"]'));
+    const shell = dom.window.document.querySelector('.message-file-preview[data-format="html"]');
+    assert.ok(shell);
+    const readStatus = '.message-file-preview-content [role="status"][aria-label="Loading HTML preview"]';
+    const initialStatus = shell.querySelector(readStatus);
+    assert.equal(initialStatus?.getAttribute("aria-busy"), "true");
+    assert.ok(initialStatus?.querySelector(".loading-indicator-spinner"));
     const fileLink = dom.window.document.querySelector<HTMLAnchorElement>("a")!;
     assert.equal(fileLink.textContent, "chart.html");
     assert.equal(fileLink.title, "/work/chart.html");
@@ -198,32 +203,36 @@ test("visualize preview preserves its session read across streaming and exposes 
     const reload = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Reload HTML Preview"]')!;
     assert.equal(reload.disabled, true);
     assert.equal(reload.title, "Reload HTML Preview");
-    assert.equal(reload.getAttribute("aria-busy"), "true");
-    const shell = dom.window.document.querySelector('.message-file-preview[data-format="html"]');
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    assert.equal(reload.querySelector(".button-content-spinner, .loading-indicator-spinner"), null);
     await act(async () => render(`${text}\n\nMore text`));
     assert.equal(dom.window.document.querySelector('.message-file-preview[data-format="html"]'), shell);
     assert.equal(requests.length, 1);
     await act(async () => rejectRead(new Error("HTML access denied.")));
     assert.equal(dom.window.document.querySelector('[role="alert"]')?.textContent, "HTML access denied.");
+    assert.equal(shell.querySelector(readStatus), null);
+    assert.equal(reload.disabled, false);
     assert.equal(dom.window.document.querySelector("p div"), null);
     const index = createRenderedTextSearchIndex(dom.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
     assert.equal(index.normalizedText, projectMessageRenderedSearchText(`${text}\n\nMore text`, "codex").toLocaleLowerCase());
     await act(async () => dom.window.document.querySelector<HTMLAnchorElement>("a")!.click());
     assert.deepEqual(opened, ["/work/chart.html"]);
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button")!.click());
-    assert.equal(requests.length, 2);
+    await act(async () => reload.click());
+    assert.deepEqual(requests.slice(1), [{ sessionId: "session", target: "/work/chart.html" }]);
     assert.equal(reload.disabled, true);
     assert.equal(reload.getAttribute("aria-busy"), "true");
     assert.ok(reload.querySelector(".button-content-spinner"));
+    assert.equal(shell.querySelector(readStatus)?.getAttribute("aria-busy"), "true");
     assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
     await act(async () => resolveRead({ html: "<!doctype html><h1>Chart content</h1>", fileName: "chart.html" }));
     assert.ok(dom.window.document.querySelector('.html-preview[aria-label="Chart"]'));
+    assert.equal(shell.querySelector(readStatus), null);
     assert.equal(reload.disabled, false);
     assert.equal(reload.getAttribute("aria-busy"), null);
     assert.equal(reload.querySelector(".button-content-spinner"), null);
     assert.equal(dom.window.document.querySelector("h1"), null);
     assert.equal(dom.window.document.querySelector('.message-file-preview[data-format="html"]'), shell);
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button")!.click());
+    await act(async () => reload.click());
     assert.equal(requests.length, 3);
     await act(async () => render('visualize{"path":"/work/book.xlsx"}'));
     assert.equal(dom.window.document.querySelector("a")?.textContent, "book.xlsx");

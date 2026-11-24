@@ -2114,15 +2114,15 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
 
 // @test-value v2
 // kind = "invariant"
-// claim = "未完了の直接Markdown画像だけが閾値後に画像領域内のspinnerを表示し、完了時に除去する"
-// oracle = { type = "contract", ref = "Issue #714: 高速loadでは非表示、遅いloadでは遅延spinner" }
-// fault = "遅い画像の待機中にspinnerが出ない、spinnerが本文の高さを占有する、またはload後も残る"
-// observable = "message-image-shellの状態、画像DOM、message-image-loadingのrole・aria-label"
+// claim = "未完了の直接Markdown画像だけが閾値後に領域内の名前付き待機状態を表示し、完了または失敗で除去する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#image-handling" }
+// fault = "閾値前に表示する、未完了の画像だけに名前付きで表示しない、または完了・失敗後も待機が残る"
+// observable = "画像ごとのshell、overlay内のstatus名・busy・spinner、完了画像と失敗のalert"
 // observation_boundary = "component-behavior"
 // scope = "MessageRichTextの直接Markdown画像遅延表示境界"
 // lifecycle = "permanent"
 // impact = "入力中の会話表示へ不要なloading文字やレイアウト変化を持ち込まず、遅いresourceだけを識別可能にする"
-// distinction = "高速loadのtimer破棄とは別に、保留timer発火後のspinner表示とload eventによる除去を観測する"
+// distinction = "高速load単体のtimer破棄とは別に、同じ本文内の待機表示をresource別に観測し、待機後のloadとerrorを比較する"
 // @end-test-value
 test("MessageRichText は遅い直接 image だけに領域内 spinner を表示する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -2141,43 +2141,50 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
       root?.render(
         React.createElement(MessageRichText, {
           forceFullRender: true,
-          text: "![slow](data:image/png;base64,AAAA)",
+          text: "![fast](data:image/png;base64,AAAA) ![slow](data:image/png;base64,AAAB) ![broken](data:image/png;base64,AAAC)",
         }),
       );
     });
 
-    const image = container.querySelector<HTMLImageElement>(".message-image");
-    const timerEntry = Array.from(timers.pending.entries())[0];
-    const shell = container.querySelector<HTMLElement>(".message-image-shell");
-    assert.ok(image);
-    assert.ok(timerEntry);
-    assert.ok(shell);
+    const fast = container.querySelector<HTMLImageElement>('img[alt="fast"]')!;
+    const slow = container.querySelector<HTMLImageElement>('img[alt="slow"]')!;
+    const broken = container.querySelector<HTMLImageElement>('img[alt="broken"]')!;
+    const fastShell = fast.closest(".message-image-shell")!;
+    const slowShell = slow.closest(".message-image-shell")!;
+    const brokenShell = broken.closest(".message-image-shell")!;
     assert.equal(container.querySelector(".message-image-loading"), null);
-    assert.equal(timerEntry[1].delay, 1_000);
+    assert.deepEqual(Array.from(timers.pending.values(), ({ delay }) => delay), [1_000, 1_000, 1_000]);
 
-    timers.pending.delete(timerEntry[0]);
+    await act(async () => fast.dispatchEvent(new dom.window.Event("load")));
+    assert.equal(timers.pending.size, 2);
     await act(async () => {
-      timerEntry[1].callback();
+      for (const [id, { callback }] of timers.pending) {
+        timers.pending.delete(id);
+        callback();
+      }
     });
 
-    const loading = container.querySelector<HTMLElement>(
-      ".message-image-loading",
-    );
-    assert.equal(
-      container.querySelector<HTMLImageElement>(".message-image"),
-      image,
-    );
-    assert.ok(loading);
-    assert.equal(loading.getAttribute("role"), "status");
-    assert.equal(loading.getAttribute("aria-label"), "Loading image");
-    assert.equal(loading.textContent, "");
-    assert.equal(loading.parentElement, shell);
-    assert.doesNotMatch(container.textContent ?? "", /Image loading/);
+    assert.equal(container.querySelector('img[alt="slow"]'), slow);
+    assert.equal(fastShell.querySelector(".message-image-loading"), null);
+    assert.equal(container.querySelectorAll('[role="status"]').length, 2);
+    for (const [shell, name] of [[slowShell, "slow"], [brokenShell, "broken"]] as const) {
+      const status = shell.querySelector(':scope > .message-image-loading [role="status"]');
+      assert.equal(status?.getAttribute("aria-label"), `Loading image: ${name}`);
+      assert.equal(status?.getAttribute("aria-busy"), "true");
+      assert.ok(status?.querySelector('.loading-indicator-spinner[aria-hidden="true"]'));
+      assert.equal(status?.textContent, "");
+    }
 
-    await act(async () => {
-      image.dispatchEvent(new dom.window.Event("load"));
-    });
-
+    await act(async () => slow.dispatchEvent(new dom.window.Event("load")));
+    assert.equal(slowShell.querySelector(".message-image-loading"), null);
+    assert.equal(slowShell.getAttribute("aria-busy"), null);
+    assert.equal(slowShell.querySelector('[role="alert"]'), null);
+    assert.equal(brokenShell.querySelector('[role="status"]')?.getAttribute("aria-label"), "Loading image: broken");
+    await act(async () => broken.dispatchEvent(new dom.window.Event("error")));
+    const error = brokenShell.querySelector('[role="alert"]');
+    assert.equal(error?.textContent?.trim(), "Image could not be loaded.");
+    assert.equal(error?.getAttribute("title"), "data:image/png;base64,AAAC");
+    assert.equal(brokenShell.getAttribute("aria-busy"), null);
     assert.equal(container.querySelector(".message-image-loading"), null);
     assert.equal(timers.pending.size, 0);
   } finally {
@@ -2947,10 +2954,10 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
 
 // @test-value v2
 // kind = "contract"
-// claim = "Markdown画像の遅延spinnerはCSS上で画像領域へ重なり、通常animationと後続のreduced-motion無効化を持つ"
-// oracle = { type = "contract", ref = "Issue #714: spinnerは周辺高さを変えず、prefers-reduced-motionに配慮する" }
+// claim = "Markdown画像の遅延spinnerは領域内overlay、共通spinnerは通常animationと後続するreduced-motion無効化の宣言を持つ"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#image-handling" }
 // fault = "spinnerが本文へ一行を追加して画像周囲を押し下げる、またはreduced-motionでも回転し続ける"
-// observable = "message-image-loadingとmessage-image-shellのCSS declarationと適用順"
+// observable = "製品stylesheetの画像shell・overlayと共通spinnerのCSS宣言、reduced-motionメディア条件、ソース順"
 // observation_boundary = "declaration"
 // scope = "MessageRichText画像loading UIのstylesheet declaration"
 // lifecycle = "permanent"
@@ -2958,35 +2965,34 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
 // distinction = "DOMでは算出できないoverlay配置、pointer event、spinner animation、通常ruleより後ろにあるreduced-motion overrideの適用順をstylesheet declarationから観測する"
 // @end-test-value
 test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion を持つ", async () => {
-  const styles = await readStylesheet();
-  const loadingRule =
-    styles.match(/\.message-image-loading\s*{(?<body>[^}]*)}/)?.groups?.body ??
-    "";
-  const shellRule =
-    styles.match(/\.message-image-shell\s*{(?<body>[^}]*)}/)?.groups?.body ??
-    "";
-  const spinnerRuleMatch =
-    /\.message-image-loading::before\s*{(?=[^}]*animation:\s*message-image-loading-spin)[^}]*}/.exec(
-      styles,
-    );
-  const spinnerRule = spinnerRuleMatch?.[0] ?? "";
-  const reducedMotionRuleMatch =
-    /\.message-image-loading::before\s*{(?=[^}]*animation:\s*none;)[^}]*}/.exec(
-      styles,
-    );
+  const dom = new JSDOM("<!doctype html>", { url: "http://localhost/" });
+  try {
+    const style = dom.window.document.createElement("style");
+    style.textContent = await readStylesheet();
+    dom.window.document.head.append(style);
+    assert.ok(style.sheet);
+    const rules = Array.from(style.sheet.cssRules);
+    const styleRule = (rule: CSSRule, selector: string): rule is CSSStyleRule =>
+      rule instanceof dom.window.CSSStyleRule && rule.selectorText === selector;
+    const declarationsFor = (selector: string) =>
+      rules.find((rule): rule is CSSStyleRule => styleRule(rule, selector))?.style;
 
-  assert.match(loadingRule, /position:\s*absolute;/);
-  assert.match(loadingRule, /inset:\s*[^;]+;/);
-  assert.match(loadingRule, /pointer-events:\s*none;/);
-  assert.match(shellRule, /position:\s*relative;/);
-  assert.match(spinnerRule, /animation:\s*message-image-loading-spin/);
-  assert.match(
-    styles,
-    /@media \(prefers-reduced-motion: reduce\)\s*{[\s\S]*?\.message-image-loading::before\s*{[\s\S]*?animation:\s*none;/,
-  );
-  assert.ok(spinnerRuleMatch);
-  assert.ok(reducedMotionRuleMatch);
-  assert.ok(reducedMotionRuleMatch.index > spinnerRuleMatch.index);
+    const loading = declarationsFor(".message-image-loading");
+    assert.equal(loading?.getPropertyValue("position"), "absolute");
+    assert.ok(loading?.getPropertyValue("inset"));
+    assert.equal(loading?.getPropertyValue("pointer-events"), "none");
+    assert.equal(declarationsFor(".message-image-shell")?.getPropertyValue("position"), "relative");
+
+    const spinner = ".loading-indicator-spinner";
+    const normal = rules.findIndex((rule) => styleRule(rule, spinner) && /\binfinite\b/.test(rule.style.getPropertyValue("animation")));
+    const reduced = rules.findIndex((rule) =>
+      rule instanceof dom.window.CSSMediaRule && rule.conditionText === "(prefers-reduced-motion: reduce)"
+      && Array.from(rule.cssRules).some((entry) => styleRule(entry, spinner) && entry.style.getPropertyValue("animation") === "none"));
+    assert.ok(normal >= 0, "the shared spinner animates normally");
+    assert.ok(reduced > normal, "reduced motion overrides the same spinner's animation");
+  } finally {
+    dom.window.close();
+  }
 });
 
 // @test-value v2

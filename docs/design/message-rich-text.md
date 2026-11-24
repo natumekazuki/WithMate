@@ -42,6 +42,8 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - HTMLはDOM内のwebviewとして既存のclipと重なり順へ参加する。Jump to latest、選択action、tooltip、通知、dialog、非対象会話のdimを覆わず、浮動操作のための専用領域や余白を追加しない。一時surfaceを表示するためにHTML全体を隠したり再実行したりしない。権限要求・子Window・外部protocolのhost確認ではHTMLを背後に残してdimを重ね、明示選択またはCancel／Escapeで回答する。
 - Codex固有構文は`src-shared/text/codex-file-references.ts`へ分離する。`src-shared/text/provider-response-markdown.ts`が応答元providerに応じたparser extensionを選び、本文描画・検索・plain summaryで共有する。providerは対象会話の所有元から渡し、User本文・通常のMarkdown・未対応providerには固有解析を適用しない。Markdownとfile linkの描画・操作はprovider共通とする。
 
+- HTML本文の初回取得中は、プレビュー領域に共通LoadingIndicatorの名前付き待機状態を表示し、Reloadは無効にするがbusyやspinnerには切り替えない。利用者がReloadを実行したときはボタンにもbusyと共通ButtonContentのspinnerを表示する。取得に失敗した場合は理由を表示し、Reloadから再試行できる。
+
 ## Image Handling
 
 - 通常Markdown画像はリンク内にあっても画像の選択でlightboxだけを開き、親リンク先へは移動しない。lightboxの背景click・Escapeは閉じる操作だけを行い、元の画像へfocusを戻す。画像以外のリンク本文を明示的に選択した場合は通常のLink Handlingを維持する
@@ -52,7 +54,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - local画像はchat column／file previewごとに4並列、1MiB chunkで読み込む。通常Markdownのlocal画像は画像領域がviewportへ入った時にinspect／bytes取得を開始し、画面外の未表示resourceでは取得もloading表示のタイマーも開始しない。sourceまたはresolver世代が変われば新しいresourceの表示タイミングを確認し直す。取得開始後は画面外へ移動しても表示resourceをmount中は保持する。Mermaid画像は図のlayoutに必要な寸法を得る時に取得する。file、reload、mode、encoding、画像sourceの切替またはunmountで待機中の旧処理を破棄し、実行中のstale readを次のchunkへ進めない。表示継続時もresolverを更新して再解決する。容量・画素・総枚数・timeoutの上限は設けず、全量保持のメモリー負荷は残る。画像表示による通信・私的画像の表示は自動的に起こり得る。
 - 画像専用loaderはIPCのexact ArrayBuffer chunkを順序どおりBlobへ渡し、全サイズの連結bufferを作らない。Blobがbytesをsnapshotした後、完了／error／取消／世代無効化時にはloaderが保持するchunk参照を解放する。decodeとBlob内部の割当は別であり、同時数とコピー削減は総メモリー容量の保証ではない。
 - local画像はMainの画像専用inspect/chunk APIでSessionとbase resourceの所有関係、通常file、実path・identity・revision、画像headerを確認する。拡張子だけで認定せず、ブラウザーがdecodeできる画像を表示する。directory列挙・Gitの作業rootとdetached Previewのcanonical file所有境界は維持する
-- 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値を超えて未完了の場合だけ、画像領域内へ小さなspinnerを重ねて表示し、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。spinnerは`role="status"`相当の読み上げ名を持つが、本文の検索対象へ補助文字列を追加しない。errorは対象resourceを識別できる既存の失敗表示を維持する
+- 画像の resolving/loading はresourceの待機状態として保持し、表示開始から1,000ms未満は補助UIを表示しない。閾値に達して未完了の場合だけ、画像領域内へ共通LoadingIndicatorを周囲の高さや操作を変えずに重ね、完了またはerrorで除去する。resolvingからloadingへ進む同一resourceの待機では表示タイマーをリセットしない。`role="status"`の名前はaltがあれば画像名を含み、本文の検索対象へ補助文字列を追加しない。`prefers-reduced-motion: reduce`では待機表示を残して回転を停止する。errorは対象resourceを識別できる既存の失敗表示を維持する
 - Markdownの`img`、`a`、`pre` component typeはrenderごとに再生成せず、動的な操作callback、resource resolver、受信状態だけを現在のcontextとして渡す。これによりcallback更新と本文末尾への追記では同じ位置の画像DOM・読み込みstate・lightbox stateを保持し、sourceまたはresource世代の変更では既存のresolver lifecycleに従って再読み込みする
 
 ## Mermaid Images
