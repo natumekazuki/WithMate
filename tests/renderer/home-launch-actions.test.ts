@@ -411,9 +411,9 @@ describe("home-launch-actions", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "Character usage履歴がloading中のrandom launchはSession作成を保留し、再試行可能なpending feedbackを返す"
-  // oracle = { type = "contract", ref = "Issue #731 New session random selection data-state distinction" }
-  // fault = "履歴が未取得のままrandom候補を確定してSessionを作成するか、loading理由を表示しない"
-  // observable = "createSession call count、Session history is not ready yet feedback、launchStarting callback state"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialogのRandom開始条件" }
+  // fault = "履歴が未取得のままrandom候補を確定してSessionを作成するか、履歴待ちの理由を返さない"
+  // observable = "createSession call count、Session historyの取得中を示すfeedback、launchStarting callback state"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch random launch usage loading"
   // lifecycle = "permanent"
@@ -437,7 +437,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Session history is not ready yet. Try again when it finishes."]);
+    assert.deepEqual(harness.feedback, ["Loading session history for random character selection"]);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -477,9 +477,9 @@ describe("home-launch-actions", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "open Session Window一覧がloading中のrandom launchはSession作成を保留し、確認中feedbackを返す"
-  // oracle = { type = "contract", ref = "Issue #731 New session random selection open-window state" }
-  // fault = "open window情報が未取得のまま候補を確定してSessionを作成するか、確認中状態を利用者へ伝えない"
-  // observable = "createSession call count、Open session windows are not ready yet feedback、launchStarting callback state"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialogのRandom開始条件" }
+  // fault = "open window情報が未取得のまま候補を確定してSessionを作成するか、Window取得待ちの理由を返さない"
+  // observable = "createSession call count、Open session windowsの取得中を示すfeedback、launchStarting callback state"
   // observation_boundary = "public-boundary"
   // scope = "startHomeLaunch random launch open-window loading"
   // lifecycle = "permanent"
@@ -504,7 +504,7 @@ describe("home-launch-actions", () => {
 
     assert.equal(createCount, 0);
     assert.deepEqual(harness.feedback, [
-      "Open session windows are not ready yet. Try again when the check finishes.",
+      "Loading open session windows for random character selection",
     ]);
     assert.deepEqual(harness.startingStates, []);
   });

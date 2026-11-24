@@ -180,6 +180,9 @@ export function SessionGlossaryPane({
   );
   const visibleEntries = searchQuery.trim() ? searchEntries : entries;
   const visibleTotal = searchQuery.trim() ? searchTotal : entries.length;
+  const showLoadMore = visibleEntries.length < visibleTotal && !searchError && (!searchStale || searchLoading);
+  const searchWaitLabel = searchStale ? "Refreshing glossary search results"
+    : showLoadMore ? "Loading more glossary results" : "Searching glossary";
 
   useLayoutEffect(() => {
     if (!restoreSearchFocusRef.current || projectionError || searchError) return;
@@ -252,7 +255,9 @@ export function SessionGlossaryPane({
       )}
 
       {projectionError ? <GlossaryFailure label="Glossary Refresh Failed" detail={projectionError} onRetry={onRetryProjection} busy={projectionLoading} /> : null}
-      {searchStale ? <p className="glossary-search-stale" role="status">Showing previous search results.</p> : null}
+      {searchStale ? (
+        <p className={searchLoading ? "sr-only" : "glossary-search-stale"} role="status">Showing previous search results.</p>
+      ) : null}
 
       {projection.state.status === "missing" || isNotApplicable ? null : unavailable ? (
         projection.state.status === "watch-error" && projectionError ? null : (
@@ -291,14 +296,17 @@ export function SessionGlossaryPane({
                 <span className="glossary-entry-term">{entry.term}</span>
               </button>
             ))}
-            {searchLoading && !searchError ? (
+            {searchLoading && !searchError && !showLoadMore ? (
               <div className="glossary-search-loading">
-                <LoadingIndicator label="Searching" />
+                <LoadingIndicator label={searchWaitLabel} />
               </div>
             ) : null}
-            {visibleEntries.length < visibleTotal && !searchLoading && !searchError && !searchStale ? (
-              <button className="glossary-load-more" type="button" onClick={onLoadMoreSearchResults}>
-                Load More
+            {showLoadMore ? (
+              <button className="glossary-load-more" type="button" aria-disabled={searchLoading || undefined}
+                aria-busy={searchLoading || undefined}
+                aria-label={searchLoading ? searchWaitLabel : undefined}
+                onClick={searchLoading ? undefined : onLoadMoreSearchResults}>
+                <ButtonContent busy={searchLoading}>Load More</ButtonContent>
               </button>
             ) : null}
           </div>

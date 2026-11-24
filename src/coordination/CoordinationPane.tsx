@@ -10,6 +10,7 @@ import type { OpenCoordinationRequest } from "../../src-shared/coordination/coor
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useCoordinationQuery } from "./use-coordination-query.js";
 import { CoordinationAnswerDelivery, receiptStateLabel } from "./CoordinationAnswerDelivery.js";
@@ -31,6 +32,7 @@ function responseLabel(item: CoordinationSummary): string | null {
   }
   return item.state === "open" ? null : stateLabel(item.state);
 }
+const loadingOriginLabel = "Loading Originating Session";
 type Draft = {
   body: string;
   choices: string[];
@@ -133,8 +135,10 @@ export function CoordinationPane({
   const identityRead = (identity: CoordinationIdentity) => identities.reads[coordinationIdentityKey(identity)];
   const identityTitle = (identity: CoordinationIdentity) => {
     const read = identityRead(identity);
-    return read?.identity?.title ?? (read?.error ? "Session Identity Unavailable" : read ? "Session Unavailable" : "Loading Session");
+    return read?.identity?.title ?? (read?.error ? "Session Identity Unavailable" : read ? "Session Unavailable" : null);
   };
+  const renderIdentityTitle = (title: string | null, loadingLabel: string) =>
+    title ?? <LoadingIndicator label={loadingLabel} inline className="coordination-inline-loading" />;
   const identityName = (identity: CoordinationIdentity) => identityRead(identity)?.identity?.character.name ?? "Session";
   const identityAvatar = (identity: CoordinationIdentity) => (
     <CharacterAvatar key={coordinationIdentityKey(identity)} character={identityRead(identity)?.identity?.character ?? { name: "?", iconPath: "" }} size="tiny" />
@@ -224,6 +228,7 @@ export function CoordinationPane({
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
   const renderAnswer = (answer: CoordinationAnswer, onEdit?: () => void) => {
     const userAnswer = answer.actor.kind === "user";
+    const actorTitle = answer.actor.kind === "user" ? null : identityTitle(answer.actor);
     const answerTime = new Date(answer.createdAt).toLocaleString("en-US");
     return (
       <article key={answer.id} className={`message-row coordination-answer ${userAnswer ? "user" : "assistant"}`}>
@@ -232,7 +237,7 @@ export function CoordinationPane({
             <div className="coordination-detail-heading">
               {userAnswer ? (
                 <time dateTime={answer.createdAt} className="messages-navigator-speaker-glyph user" role="img" tabIndex={0} aria-label={`Your Answer · ${answerTime}`} title={`Your Answer · ${answerTime}`}>↗</time>
-              ) : <time dateTime={answer.createdAt} className="coordination-answer-actor" role="img" tabIndex={0} aria-label={`${identityTitle(answer.actor as CoordinationIdentity)} · ${answerTime}`} title={answerTime}>{identityTitle(answer.actor as CoordinationIdentity)}</time>}
+              ) : <time dateTime={answer.createdAt} className="coordination-answer-actor" role={actorTitle === null ? "group" : "img"} tabIndex={0} aria-label={`${actorTitle ?? "Loading Answering Session"} · ${answerTime}`} title={answerTime}>{renderIdentityTitle(actorTitle, "Loading Answering Session")}</time>}
               <CoordinationAnswerDelivery
                 ownerSessionId={sessionId}
                 target={initiatorTarget}
@@ -252,6 +257,7 @@ export function CoordinationPane({
     );
   };
   const renderDetail = (item: CoordinationRecord) => {
+    const originTitle = identityTitle(item.initiator);
     const latestUserAnswer = [...item.answers].reverse().find((answer) => answer.actor.kind === "user");
     const answerAcquired = Boolean(item.answers.at(-1)?.acquiredAt);
     const showEditor = item.respondent.kind === "user" && !answerAcquired && (!latestUserAnswer || draft.editing || Boolean(draft.pendingRequest));
@@ -266,11 +272,11 @@ export function CoordinationPane({
     <>
       <div className="coordination-origin">
         <div className="coordination-origin-heading">
-          <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityName(item.initiator)} · ${identityTitle(item.initiator)} (${item.initiator.kind === "main" ? "Main" : "Auxiliary"})`} onClick={() => void openOrigin()}>
+          <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${originTitle === null ? loadingOriginLabel : `${identityName(item.initiator)} · ${originTitle}`} (${item.initiator.kind === "main" ? "Main" : "Auxiliary"})`} onClick={() => void openOrigin()}>
             {identityAvatar(item.initiator)}
             <span className="coordination-session-identity">
               {identityKind(item.initiator)}
-              <span className="coordination-session-title" title={identityTitle(item.initiator)}>{identityTitle(item.initiator)}</span>
+              <span className="coordination-session-title" title={originTitle ?? undefined}>{renderIdentityTitle(originTitle, loadingOriginLabel)}</span>
             </span>
           </button>
           <details key={item.id} className="coordination-actions" onKeyDown={(event) => {
@@ -292,7 +298,7 @@ export function CoordinationPane({
         {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
       </div>
       {item.state !== "open" && item.state !== "withdrawn" ? <p className="coordination-response-state">{stateLabel(item.state)}{item.correctionId ? <> · <button type="button" className="drawer-toggle compact secondary" onClick={() => setSelectedId(item.correctionId!)}>Open Correction</button></> : null}</p> : null}
-      {item.respondent.kind !== "user" ? <p className="coordination-parties">Assigned To: {identityTitle(item.respondent)}</p> : null}
+      {item.respondent.kind !== "user" ? <p className="coordination-parties">Assigned To: {renderIdentityTitle(identityTitle(item.respondent), "Loading Assigned Session")}</p> : null}
       <section className="coordination-body" aria-label="Consultation"><MessageRichText text={item.body} embeddedMedia="text" /></section>
       {item.escalationBody ? <section className="coordination-body" aria-label="Escalation"><MessageRichText text={item.escalationBody} embeddedMedia="text" /></section> : null}
       {item.state === "withdrawn" ? (
@@ -410,9 +416,14 @@ export function CoordinationPane({
           type="button"
           className="drawer-toggle compact secondary coordination-toolbar-icon"
           title="Refresh Coordination" aria-label="Refresh Coordination"
-          disabled={selectedId ? detail.loading : list.loading}
+          aria-disabled={selectedId ? detail.loading : list.loading}
           aria-busy={selectedId ? detail.loading : list.loading}
-          onClick={() => { (selectedId ? detail.refresh : list.refresh)(); identities.refresh(); }}
+          onClick={() => {
+            const query = selectedId ? detail : list;
+            if (query.loading) return;
+            query.refresh();
+            identities.refresh();
+          }}
         >
           <ButtonContent busy={selectedId ? detail.loading : list.loading} busyLabel="Refreshing Coordination"><span aria-hidden="true">↻</span></ButtonContent>
         </button> : null}
@@ -451,32 +462,37 @@ export function CoordinationPane({
       ) : (
         <>
           <div className="coordination-list">
-            {page?.items.map((item) => (
-              <button
-                type="button"
-                className="coordination-list-row"
-                key={item.id}
-                ref={(node) => { if (node) listRowRefs.current.set(item.id, node); else listRowRefs.current.delete(item.id); }}
-                onClick={() => {
-                  savedListScrollTop.current = scrollContainerRef?.current?.scrollTop ?? 0;
-                  selectedListRow.current = item.id;
-                  setSelectedId(item.id);
-                }}
-              >
-                {identityAvatar(item.initiator)}
-                <span className="coordination-event-copy">
-                  <strong className="coordination-list-preview">{item.bodyPreview}</strong>
-                  <span className="coordination-session-identity">
-                    {identityKind(item.initiator)}
-                    <span className="visually-hidden">{identityName(item.initiator)} · </span>
-                    <span className="coordination-session-title" title={`${identityName(item.initiator)} · ${identityTitle(item.initiator)}`}>{identityTitle(item.initiator)}</span>
-                    {responseLabel(item) ? item.state === "open" ? (
-                      <span className="coordination-list-status" role="img" aria-label="Reply Recorded" title="Reply Recorded"><ComposerIcon name="submit" /></span>
-                    ) : <span className="coordination-list-status">{responseLabel(item)}</span> : null}
+            {page?.items.map((item) => {
+              const title = identityTitle(item.initiator);
+              const response = responseLabel(item);
+              return (
+                <button
+                  type="button"
+                  className="coordination-list-row"
+                  aria-label={title === null ? [item.bodyPreview, item.initiator.kind === "main" ? "Main" : "Auxiliary", loadingOriginLabel, response].filter(Boolean).join(" · ") : undefined}
+                  key={item.id}
+                  ref={(node) => { if (node) listRowRefs.current.set(item.id, node); else listRowRefs.current.delete(item.id); }}
+                  onClick={() => {
+                    savedListScrollTop.current = scrollContainerRef?.current?.scrollTop ?? 0;
+                    selectedListRow.current = item.id;
+                    setSelectedId(item.id);
+                  }}
+                >
+                  {identityAvatar(item.initiator)}
+                  <span className="coordination-event-copy">
+                    <strong className="coordination-list-preview">{item.bodyPreview}</strong>
+                    <span className="coordination-session-identity">
+                      {identityKind(item.initiator)}
+                      {title !== null ? <span className="visually-hidden">{identityName(item.initiator)} · </span> : null}
+                      <span className="coordination-session-title" title={title === null ? undefined : `${identityName(item.initiator)} · ${title}`}>{renderIdentityTitle(title, loadingOriginLabel)}</span>
+                      {response ? item.state === "open" ? (
+                        <span className="coordination-list-status" role="img" aria-label="Reply Recorded" title="Reply Recorded"><ComposerIcon name="submit" /></span>
+                      ) : <span className="coordination-list-status">{response}</span> : null}
+                    </span>
                   </span>
-                </span>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
           {page && (offset > 0 || page.nextOffset !== null) ? (
             <nav
@@ -486,8 +502,9 @@ export function CoordinationPane({
               <button
                 type="button"
                 className="drawer-toggle compact secondary"
-                disabled={offset === 0 || list.loading}
-                onClick={() => { setOffset(Math.max(0, offset - 30)); resetListScroll(); }}
+                disabled={offset === 0}
+                aria-disabled={list.loading || undefined}
+                onClick={() => { if (list.loading) return; setOffset(Math.max(0, offset - 30)); resetListScroll(); }}
               >
                 Previous
               </button>
@@ -497,8 +514,9 @@ export function CoordinationPane({
               <button
                 type="button"
                 className="drawer-toggle compact secondary"
-                disabled={page.nextOffset === null || list.loading}
-                onClick={() => { setOffset(page.nextOffset!); resetListScroll(); }}
+                disabled={page.nextOffset === null}
+                aria-disabled={list.loading || undefined}
+                onClick={() => { if (list.loading) return; setOffset(page.nextOffset!); resetListScroll(); }}
               >
                 Next
               </button>

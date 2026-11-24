@@ -15,21 +15,21 @@ export type HomeLaunchFeedbackSource = "launch" | "readiness" | "creation-error"
 export type HomeLaunchResult = { title: string; message: string };
 export type HomeLaunchCreationAttempt = { request?: CreateSessionRequest };
 
-export function resolveRandomHomeLaunchFeedback(
+export function resolveRandomHomeLaunchReadiness(
   characterUsageStatus: SessionSummariesLoadStatus,
   openSessionsStatus: OpenSessionWindowIdsLoadStatus,
-): string {
+): { kind: "loading" | "error"; message: string } | null {
   if (characterUsageStatus !== "loaded") {
     return characterUsageStatus === "loading"
-      ? "Session history is not ready yet. Try again when it finishes."
-      : "Session history is unavailable, so random selection cannot start.";
+      ? { kind: "loading", message: "Loading session history for random character selection" }
+      : { kind: "error", message: "Session history is unavailable, so random selection cannot start." };
   }
   if (openSessionsStatus !== "loaded") {
     return openSessionsStatus === "loading"
-      ? "Open session windows are not ready yet. Try again when the check finishes."
-      : "Open session windows are unavailable, so random selection cannot start.";
+      ? { kind: "loading", message: "Loading open session windows for random character selection" }
+      : { kind: "error", message: "Open session windows are unavailable, so random selection cannot start." };
   }
-  return "";
+  return null;
 }
 
 
@@ -73,11 +73,11 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  const readinessFeedback = input.draft.characterSelectionMode === "random"
-    ? resolveRandomHomeLaunchFeedback(input.sessionCharacterUsageLoadStatus, input.openSessionWindowIdsLoadStatus)
-    : "";
-  if (readinessFeedback) {
-    input.setLaunchFeedback(readinessFeedback, "readiness");
+  const readiness = input.draft.characterSelectionMode === "random"
+    ? resolveRandomHomeLaunchReadiness(input.sessionCharacterUsageLoadStatus, input.openSessionWindowIdsLoadStatus)
+    : null;
+  if (readiness) {
+    input.setLaunchFeedback(readiness.message, "readiness");
     return;
   }
 

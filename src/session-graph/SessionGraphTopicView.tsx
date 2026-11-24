@@ -783,6 +783,17 @@ export function SessionGraphTopicView({
     : Math.max(0, (view?.total ?? 0) - (view?.items.length ?? 0));
   const loadMoreLabel = `Load ${Math.min(PAGE_SIZE, remaining).toLocaleString("en-US")} More`;
   const nodeTitle = (id: string) => collapsedTopics.find((topic) => `topic:${topic.id}` === id)?.title ?? projection.nodes.find((node) => node.id === id)?.records[0].title;
+  const totalRecords = allTopics
+    ? topicOverviews.reduce((total, topic) => total + (expandedTopicIds.includes(topic.id) ? topic.recordCount : 0), 0)
+    : view?.total ?? 0;
+  const loadedRecords = view?.items.filter((record) => !allTopics || expandedTopicIds.includes(record.topicId)).length ?? 0;
+  const topicBands = layout.topicGroups?.map((group) => {
+    const topic = topicOverviews.find((item) => item.id === group.topicId);
+    const loaded = records.filter((record) => record.topicId === group.topicId).length;
+    // Expanding a band schedules a read before the queued effect sets loading.
+    const waiting = !loaded && topic?.recordCount !== 0 && !error && !loadMoreError;
+    return { group, topic, loaded, waiting };
+  }) ?? [];
   return (
     <section
       className={`session-graph-preview${tooltipsDismissed ? " tooltips-dismissed" : ""}`}
@@ -873,7 +884,7 @@ export function SessionGraphTopicView({
         >{edge.label ?? label(edge.kind)}</span>)}
       </div>
       <div className="session-graph-load-status" aria-busy={loading && !loadingMore}>
-        {loading && !loadingMore ? (
+        {loading && !loadingMore && !topicBands.some((band) => band.waiting) ? (
           <LoadingIndicator label="Loading Session Graph" inline />
         ) : null}
         {error ? (
@@ -926,9 +937,7 @@ export function SessionGraphTopicView({
                   transform: `scale(${zoom})`,
                 }}
               >
-                {layout.topicGroups?.map((group) => {
-                  const topic = topicOverviews.find((item) => item.id === group.topicId);
-                  const loaded = records.filter((record) => record.topicId === group.topicId).length;
+                {topicBands.map(({ group, topic, loaded, waiting }) => {
                   return <section key={group.topicId} className="session-graph-topic-band" aria-label={topic?.title ?? "Topic"}
                     style={{ left: group.x, top: group.y, width: group.width, height: group.height }}>
                     <div className="session-graph-topic-heading" onDoubleClick={(event) => { if (!(event.target as Element).closest("button")) toggleTopic(group.topicId); }}>
@@ -938,7 +947,12 @@ export function SessionGraphTopicView({
                         <button type="button" title="Focus Topic" aria-label={`Focus Topic: ${topic?.title ?? "Topic"}`} onClick={() => onFocusTopic?.(group.topicId)}>↗</button>
                       </span></div>
                     </div>
-                    {!loaded ? <div className="session-graph-topic-empty">{loading && topic?.recordCount ? <LoadingIndicator label="Loading Topic" inline /> : topic?.recordCount === 0 ? "No Records" : "Records Not Loaded"}</div> : null}
+                    {!loaded ? (
+                      <div className="session-graph-topic-empty" aria-busy={waiting || undefined}>
+                        {waiting ? <LoadingIndicator label={`Loading records for ${topic?.title ?? "topic"}`} inline />
+                          : topic?.recordCount === 0 ? "No Records" : "Records Not Loaded"}
+                      </div>
+                    ) : null}
                   </section>;
                 })}
                 {collapsedTopics.map((topic) => {
@@ -1083,7 +1097,7 @@ export function SessionGraphTopicView({
             {view && (!allTopics || expandedTopicIds.length > 0) ? <div className="session-graph-records">
               <div className="session-graph-record-status">
                 <span ref={loadedCountRef} tabIndex={-1}>
-                  {view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records Loaded
+                  {loadedRecords.toLocaleString("en-US")} / {totalRecords.toLocaleString("en-US")} Records Loaded
                 </span>
                 {relationsIncomplete ? <span>Some Relations Are Unconfirmed</span> : null}
               </div>

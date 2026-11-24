@@ -902,10 +902,10 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Refreshはrepositoryごとに完了を反映し、初期表示と変更ありから0件への更新後もrepositoryを残し、連続Refresh中の現行結果を表示してSession切替後の結果だけを無視する"
+// claim = "Refreshはrepositoryごとに完了を反映し、更新中も取得済み件数と一覧を表示しながら待機を示し、Session切替後の結果を無視する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Changesのrepository別取得・変更0件表示・owner境界" }
-// fault = "遅いrepositoryや連続Refreshが完了済み結果の表示を止める、変更0件のrepositoryを隠す、またはSession切替後の結果が現行stateを上書きする"
-// observable = "repository groupの完了順表示、変更0件と変更ありの混在、変更ありから0件への更新後の見出しと件数、連続更新・失敗後の既存listとfocus、およびSession切替後のstale結果の無視"
+// fault = "遅いrepositoryや連続Refreshが完了済み結果の表示を止める、更新中に取得済み件数か待機表示を隠す、またはSession切替後の結果が現行stateを上書きする"
+// observable = "repository groupのbusy・対象付きindicator・完了順、変更ありと0件の更新前・更新中・更新後の件数、連続更新・失敗後の既存listとfocus、Session切替後のstale結果の無視"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository request generation"
 // lifecycle = "permanent"
@@ -1025,6 +1025,11 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       await Promise.resolve();
     });
     assert.equal(pendingRequests.length, 4);
+    assert.equal(cleanGroup.getAttribute("aria-busy"), "true");
+    assert.equal(cleanGroup.querySelector("[aria-label='0 changed files']")?.textContent, "0");
+    assert.ok(cleanGroup.querySelector("[role='status'][aria-label='Refreshing changes for Slow'][aria-busy='true']"));
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast'] [aria-label='2 changed files']")?.textContent, "2");
+    assert.ok(dom.window.document.querySelector("[data-root-id='fast'] [role='status'][aria-label='Refreshing changes for Fast'][aria-busy='true']"));
     const fastList = dom.window.document.querySelector<HTMLElement>("[data-root-id='fast'] .workspace-changes-list");
     assert.ok(fastList);
     fastList.focus();

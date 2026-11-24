@@ -7,6 +7,7 @@ type HomeLaunchDialogPropsInput = {
   projection: HomeLaunchProjection;
   canUsePrimaryFeatures: boolean;
   launchFeedback: string;
+  randomLaunchReadiness: HomeLaunchDialogProps["randomLaunchReadiness"];
   launchCreationError?: string;
   launchStarting: boolean;
   onClose: () => void;
@@ -26,6 +27,7 @@ export function buildHomeLaunchDialogProps({
   projection,
   canUsePrimaryFeatures,
   launchFeedback,
+  randomLaunchReadiness,
   launchCreationError,
   launchStarting,
   onClose,
@@ -58,6 +60,7 @@ export function buildHomeLaunchDialogProps({
     characterLoadStatus: projection.characterLoadStatus,
     canStartSession: projection.canStartSession && canUsePrimaryFeatures,
     launchFeedback,
+    randomLaunchReadiness,
     launchCreationError,
     launchStarting,
     onClose,

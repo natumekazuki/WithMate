@@ -179,11 +179,12 @@ export function FileRootChangesPane({
       const failures = new Map(result.failures.map((failure) => [failure.rootId, failure.message]));
       setRootChanges((current) => currentRoots.flatMap<GitRootChanges>((root) => {
         const existing = current.find((item) => item.root.id === root.id);
+        const hasSnapshot = existing?.status === "success" || existing?.status === "empty" || existing?.hasSnapshot;
         if (repositoryIds.has(root.id)) {
-          return [{ root, status: "pending", entries: existing?.entries ?? [], message: "" }];
+          return [{ root, status: "pending", entries: existing?.entries ?? [], message: "", hasSnapshot }];
         }
         const failure = failures.get(root.id);
-        return failure ? [{ root, status: "failed", entries: existing?.entries ?? [], message: failure }] : [];
+        return failure ? [{ root, status: "failed", entries: existing?.entries ?? [], message: failure, hasSnapshot }] : [];
       }));
       refreshQueueRef.current = {
         revision,

@@ -3,6 +3,7 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { LoadError } from "../ui/load-error.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
 
@@ -56,11 +57,15 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, 
   if (!receiptId) return <p className="coordination-parties" role="status">{acquired ? "Received" : "Saved · Not Sent"}{consumed ? " · Answer Used" : ""}</p>;
   const turnFailure = result && ["failed", "canceled", "interrupted"].includes(result.turnState ?? "")
     ? ` · Turn ${receiptStateLabel(result.turnState)}` : "";
+  const deliveryLabel = acquired ? `Received${turnFailure}` : error ? "Delivery Unknown" : result
+    ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : null;
   return <div className="coordination-answer-delivery" aria-busy={loading || undefined}>
-    <p className="coordination-parties" role="status">
-      {acquired ? `Received${turnFailure}` : error ? "Delivery Unknown" : result ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : "Checking Delivery"}
-      {consumed ? " · Answer Used" : ""}
-    </p>
+    {active && deliveryLabel === null ? <LoadingIndicator label="Checking Answer Delivery" inline className="coordination-inline-loading" /> : null}
+    {deliveryLabel !== null || consumed ? (
+      <p className="coordination-parties" role="status">
+        {deliveryLabel}{consumed ? " · Answer Used" : ""}
+      </p>
+    ) : null}
     {error ? <LoadError message={error} onRetry={() => setRevision((value) => value + 1)} /> : null}
   </div>;
 }

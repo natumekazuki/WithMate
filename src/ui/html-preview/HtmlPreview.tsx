@@ -124,6 +124,7 @@ export function HtmlPreview({ html, source, title, className = "", onFind }: {
     };
   }, [html, stableSource, intersects, reload]);
 
+  const loading = intersects && state.loading && !state.prompt;
   return <span ref={root} className={`html-preview ${className}`} role="group" tabIndex={0} aria-label={title}
     aria-description="Press Enter to interact with HTML. Press F6 to return to the app."
     onKeyDown={(event) => {
@@ -133,7 +134,7 @@ export function HtmlPreview({ html, source, title, className = "", onFind }: {
       }
     }}>
     {state.warning && !state.error && <span className="html-preview-notice" role="status">{state.warning}</span>}
-    <span ref={viewport} className="html-preview-viewport" aria-busy={state.loading}>
+    <span ref={viewport} className="html-preview-viewport" aria-busy={loading}>
       <span ref={guestHost} className="html-preview-guest-host" />
       {state.prompt && <span className="html-preview-prompt-backdrop"><span className="html-preview-prompt" role="dialog" aria-modal="true"
         aria-labelledby={promptTitleId} aria-describedby={promptDetailId} aria-busy={promptBusy}
@@ -154,7 +155,7 @@ export function HtmlPreview({ html, source, title, className = "", onFind }: {
       </span></span>}
       {state.error ? <span className="html-preview-notice"><span role="alert">{state.error}</span>{" "}
         <button type="button" onClick={() => setReload((value) => value + 1)}>Reload</button></span>
-        : state.loading && !state.prompt ? <LoadingIndicator label="Loading HTML preview" /> : null}
+        : loading ? <LoadingIndicator label="Loading HTML preview" /> : null}
     </span>
   </span>;
 }

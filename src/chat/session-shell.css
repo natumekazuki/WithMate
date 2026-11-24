@@ -1099,6 +1099,11 @@
   color: #fca5a5;
 }
 
+.chat-skill-picker-refresh-error {
+  min-height: 0;
+  padding: 8px 12px;
+}
+
 .session-page .session-action-dock-compact-row.running .session-action-dock-compact-actions {
   justify-content: flex-end;
 }

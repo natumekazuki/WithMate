@@ -12,6 +12,7 @@ import type { CharacterCatalogEntry } from "../../src-shared/character/character
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { ErrorDetailsButton } from "../ui/error-details.js";
+import type { resolveRandomHomeLaunchReadiness } from "./home-launch-actions.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
@@ -32,6 +33,7 @@ export type HomeLaunchDialogProps = {
   characterLoadStatus?: HomeCharacterLoadStatus;
   canStartSession: boolean;
   launchFeedback: string;
+  randomLaunchReadiness?: ReturnType<typeof resolveRandomHomeLaunchReadiness>;
   launchCreationError?: string;
   launchStarting: boolean;
   onClose: () => void;
@@ -65,6 +67,7 @@ export function HomeLaunchDialog({
   characterLoadStatus,
   canStartSession,
   launchFeedback,
+  randomLaunchReadiness,
   launchCreationError = "",
   launchStarting,
   onClose,
@@ -96,6 +99,8 @@ export function HomeLaunchDialog({
 
   const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
   const providerLoadReady = providerLoadStatus === "loaded";
+  const readiness = !launchStarting && !launchCreationError && !launchFeedback
+    && providerLoadReady && resolvedCharacterLoadStatus === "loaded" ? randomLaunchReadiness : null;
 
   return (
     <LaunchDialogShell
@@ -108,13 +113,16 @@ export function HomeLaunchDialog({
       dialogClassName="home-launch-dialog"
       footer={
         <>
-          <div className="home-launch-feedback">
+          <div className="home-launch-feedback" aria-busy={readiness?.kind === "loading" || undefined}>
             {!launchStarting && (launchCreationError
               ? <div className="home-launch-error" key={launchCreationError}>
                   <ErrorDetailsButton message={launchCreationError} label="Session Creation Error Details" />
                   <span role="alert">Check Recent Sessions before trying again.</span>
                 </div>
-              : launchFeedback ? <p className="launch-feedback" role="status">{launchFeedback}</p> : null)}
+              : launchFeedback ? <p className="launch-feedback" role="status">{launchFeedback}</p>
+              : readiness?.kind === "error" ? <p className="launch-feedback" role="alert">{readiness.message}</p>
+              : readiness?.kind === "loading" ? <LoadingIndicator label={readiness.message} inline />
+              : null)}
           </div>
           <LaunchDialogFooter
             feedback=""

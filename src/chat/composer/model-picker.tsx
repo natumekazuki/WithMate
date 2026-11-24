@@ -45,7 +45,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   const selectedLabel = current?.label ?? fallbackLabel ?? value;
   const loading = discoveryStatus === "idle" || discoveryStatus === "loading";
   const error = discoveryStatus === "error" ? discoveryError || "Models could not be loaded." : null;
-  const emptyStatus = loading ? "Loading models…" : error ? "Could not load models."
+  const showEmptyLoading = open && loading && awaitingFirstResult.current && visible.length === 0;
+  const emptyStatus = error ? "Could not load models."
     : query.trim() ? "No matching models." : "No models available.";
 
   function close(returnFocus = false) {
@@ -109,7 +110,6 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
       });
     };
     update();
-    searchRef.current?.focus();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     window.visualViewport?.addEventListener("resize", update);
@@ -121,6 +121,10 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
       window.visualViewport?.removeEventListener("scroll", update);
     };
   }, [open, visible.length]);
+
+  useLayoutEffect(() => {
+    if (open) searchRef.current?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (disabled) { awaitingFirstResult.current = false; setSnapshot(null); }
@@ -199,7 +203,7 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
         if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); show(); }
       }}>
       <span>{selectedLabel}</span><span className="composer-model-indicator">
-        {loading ? <LoadingIndicator label="Loading Models" inline /> : <span aria-hidden="true">{error ? "!" : "⌄"}</span>}
+        {loading && !showEmptyLoading ? <LoadingIndicator label="Loading Models" inline /> : <span aria-hidden="true">{error ? "!" : "⌄"}</span>}
       </span>
     </button>
     {error ? <span id={`${id}-error`} role="status" className="visually-hidden">{error}</span> : null}
@@ -220,6 +224,7 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
         <button type="button" aria-label="Close Model Picker" onClick={() => close(true)}>×</button>
       </div>
       <div ref={listRef} id={`${id}-list`} role="listbox" aria-label="Models" className="composer-model-list"
+        aria-busy={showEmptyLoading || undefined}
         style={{ height: Math.min(position.listHeight, visible.length * ROW_HEIGHT) }}
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <div style={{ height: visible.length * ROW_HEIGHT, position: "relative" }}>
@@ -237,7 +242,9 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
           })}
         </div>
       </div>
-      {visible.length === 0 ? <div className="composer-model-empty" role="status" style={{ maxHeight: position.listHeight }} title={error ?? undefined}>{emptyStatus}</div>
+      {visible.length === 0 ? <div className="composer-model-empty" style={{ maxHeight: position.listHeight }} title={error ?? undefined}>
+        {showEmptyLoading ? <LoadingIndicator label="Loading Models" inline /> : <span role="status">{emptyStatus}</span>}
+      </div>
         : <span className="visually-hidden" role="status">{visible.length} Models</span>}
     </div>, document.body)}
   </div>;

@@ -31,7 +31,9 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
   const id = useId();
   return (
     <div className="home-previews-body" aria-busy={status === "loading"}>
-      {status === "loading" ? <LoadingIndicator label="Loading previews" /> : null}
+      {status === "loading" ? (
+        <LoadingIndicator label="Loading previews" className={groups.length ? "sr-only" : undefined} />
+      ) : null}
       {readError ? <LoadError message={readError} onRetry={retry} /> : null}
       {actionError ? <LoadError message={actionError} /> : null}
       <div className="home-previews-list" aria-label="Open Previews">
