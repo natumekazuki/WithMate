@@ -820,8 +820,12 @@ export class SessionRuntimeService {
         const provenance = queued ? queuedInputProvenance(queued, queued.dispatched!) : parent ? { origin: parent.origin, originalChanged: false } : undefined;
         const messageIdentity = replyTo && inputSeq !== undefined && !isAuxiliary
           ? { sessionId, incarnationId: getSessionIncarnationId(session), seq: inputSeq } : undefined;
+        // Coordination is delivered into the same live Turn. Its queue acceptance
+        // records that Turn's thread; there is no new saved message identity yet.
+        const mainConversationFrame = queued?.dispatched?.coordination?.operation === "answer"
+          ? queued.dispatched.request.mainConversationFrame : undefined;
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId,
-          userMessage: provenance || replyTo ? composeProviderInput(inputText, provenance, !!queued, { replyTo, messageIdentity }) : inputText, attachments: preview.attachments });
+          userMessage: provenance || replyTo ? composeProviderInput(inputText, provenance, !!queued, { replyTo, messageIdentity, mainConversationFrame }) : inputText, attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, "confirmed");

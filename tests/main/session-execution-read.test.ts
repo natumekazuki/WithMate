@@ -288,9 +288,9 @@ test("Main child candidates keep their own avatar and reflect run completion", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接の子の枠は正確な来歴に従い、Agentの返信参照も現在Turnを開始した本来の送信元宛でだけ保存入力を指す"
+// claim = "直接の子の枠は正確な来歴に従い、GUI直接／予約Steerだけ実際の対象Turnの所属を継ぎ、Agentの返信参照は現在Turnの起点だけを指す"
 // oracle = { type = "contract", ref = "docs/design/session-history.md#main列の初期枠子session枠; docs/design/session-history.md#明示返信" }
-// fault = "送受信相手から枠を作る、本文や同じTurnだけで所属を推定する、子の会話を初期枠にも載せる"
+// fault = "本文で所属を推定する、GUI Steerを初期枠や予約時の枠に残す、またはAgent追加入力をGUIと同じ所属にする"
 // observable = "実SQLiteの枠と正本seq、既存送信一覧と履歴page、同じ保存受付を使うAgent送信の返信先判定"
 // observation_boundary = "public-boundary"
 // scope = "初期枠・直接の子の枠と既存送信一覧・本文pageの接続。人工fixtureだけを使用"
@@ -378,6 +378,30 @@ test("Main conversation frames keep only created children and preserve unattribu
     assert.ok(sessions.getConversationPage(main.id)!.startIndex > 2);
     assert.deepEqual(sessions.getConversationPage(main.id, { messageIndexes: [1, 2, 67] })!.messages.map(({ historyIndex, text }) => [historyIndex, text]),
       [[1, "identical text"], [2, "reply from the starting input"], [67, "unlinked legacy"]]);
+    const now = turns.createSessionTurn({ ...base, userMessageSeq: 74 });
+    const start = send(b, main);
+    assert.equal(queue.claimNext(target)?.id, start.id);
+    queue.markStarted(target, start.id, { turnId: String(now.id), userMessageSeq: 74 });
+    const continued = queue.enqueue(target, { origin: { kind: "gui", operation: "send", targetSessionId: main.id, targetIncarnationId: target.incarnationId },
+      attachments: [], provider: main.provider, workspacePath: main.workspacePath, request: { userMessage: "identical text",
+        submitSource: "composer", mainConversationFrame: select(a), clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(main) } });
+    sessions.updateSession({ ...sessions.getSession(main.id)!, runState: "running", messages: [
+      ...sessions.getSession(main.id)!.messages, { role: "user", text: "identical text" },
+    ] });
+    const directInput = { ...target, turnId: now.id, nativeTurnId: "native-live", expectedMessageCount: 75, updatedAt: "now",
+      attachments: [], userMessage: { role: "user" as const, text: "identical text" } };
+    sessions.beginSessionSteer(directInput);
+    assert.deepEqual(projection().children.find(({ target }) => target.sessionId === b.id)?.messageIndexes, [1, 5, 6, 74, 75]);
+    sessions.settleSessionSteer({ ...directInput, expectedMessageCount: 76, messageSeq: 75, state: "confirmed" });
+    queue.claimForInput(target, continued.id, "native-live");
+    sessions.appendSessionSteer({ ...directInput, expectedMessageCount: 76, queuedInput: { queueId: continued.id, inputTurnId: "native-live" } });
+    const list = (thread?: ReturnType<typeof select> | null) => (executionOperationResultSchemas.list_messages.parse(read.execute({
+      target, operation: "list_messages", request: { target, thread, limit: 100 },
+    })).items as { seq: number }[]).map(({ seq }) => seq).filter((seq) => seq >= 74);
+    assert.deepEqual(list(select(b)), [74, 75, 76]);
+    assert.deepEqual(list(select(a)), []);
+    assert.deepEqual(list(null), []);
+    assert.deepEqual(list(), [74, 75, 76]);
   });
 });
 

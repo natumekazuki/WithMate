@@ -9,6 +9,7 @@ import { ensureCoordinationSchemaV7 } from "./coordination-schema-v7.js";
 import { assertSessionLifecycleReady } from "../session/session-lifecycle-operation.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CoordinationDeletedError, CoordinationRejectedError } from "./coordination-errors.js";
+import { readMainCoordinationFrame } from "../storage/conversation-threads.js";
 
 const same = (a: { kind: string; sessionId?: string; incarnationId?: string }, b: { kind: string; sessionId?: string; incarnationId?: string }) => a.kind === b.kind && a.sessionId === b.sessionId && a.incarnationId === b.incarnationId;
 type Saved = { payload_json: string };
@@ -211,7 +212,9 @@ export class CoordinationStorageV7 {
       const notification: CoordinationNotification = { coordinationId: record.id, kind: record.kind, consultation: record.body, actor, operation: request.operation, answer: answer ?? null, state: record.state, withdrawalReason: record.withdrawalReason ?? null };
       const display = input.delivery.captured.origin;
       const actorRoute = actor.kind === "auxiliary" && display?.actorMainSessionId ? { actorMainSessionId: display.actorMainSessionId } : {};
-      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, userMessage: coordinationNotificationText(notification), submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, targetKind: deliveryTarget.kind, answerId: answer?.id, answerRevision: answer?.revision, notification } };
+      const frame = actor.kind === "user" && request.operation === "answer" && deliveryTarget.kind === "main"
+        ? { mainConversationFrame: readMainCoordinationFrame(this.db, { ...deliveryTarget, kind: "main" }, record) } : {};
+      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, ...frame, userMessage: coordinationNotificationText(notification), submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, targetKind: deliveryTarget.kind, answerId: answer?.id, answerRevision: answer?.revision, notification } };
       receipt = this.queue.enqueue(deliveryTarget, captured);
       if (answer) answer.receiptId = receipt.id;
     }

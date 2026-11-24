@@ -178,6 +178,9 @@ export function useConversationMessageColumn({
     const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
     const { origin } = input;
     if (origin?.targetSessionId !== sessionId || origin.targetIncarnationId !== queueIncarnationId) return undefined;
+    if (origin.kind === "gui" && input.coordination?.operation === "answer" && input.coordination.targetKind === "main") {
+      return input.request.mainConversationFrame !== undefined ? input.request.mainConversationFrame : receipt.captured.request.mainConversationFrame;
+    }
     if (origin.kind === "gui" && receipt.inputTurnId == null && !input.retrySource && input.request.mainConversationFrame !== undefined) {
       return input.request.mainConversationFrame;
     }
@@ -199,11 +202,26 @@ export function useConversationMessageColumn({
   const liveBelongsHere = !frame || !awaitingLiveFrame && child === liveChild;
   const liveRun = liveBelongsHere ? rawLiveRun : null;
   const threadReceipts = useMemo(() => allQueue.receipts.filter((receipt) => {
+    const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
+    if (receipt.inputTurnId != null && input.origin?.kind === "gui" && !input.coordination) {
+      if (receipt.userMessageSeq !== null && threadFullIndexes?.has(receipt.userMessageSeq)) return true;
+      const owner = receipt.turnId ? children?.find(({ inboundTurnIds }) => inboundTurnIds.includes(receipt.turnId!)) : undefined;
+      if (owner) return owner === child;
+      // The live start receipt can arrive before the thread index. Use only the
+      // matching WithMate Turn, never the reservation's former frame.
+      if (receipt.turnId === currentTurnId && entry) {
+        const startFrame = receiptFrame(entry);
+        if (startFrame !== undefined) return startFrame === null ? !child
+          : !!child && conversationPeerKey(startFrame) === conversationPeerKey(child.target);
+        return entry.userMessageSeq !== null && threadFullIndexes?.has(entry.userMessageSeq);
+      }
+      return false;
+    }
     const target = receiptFrame(receipt);
     const owner = target ? children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(target)) : undefined;
-    return receipt.userMessageSeq === null || receipt.inputTurnId == null && target !== undefined
+    return receipt.userMessageSeq === null || (receipt.inputTurnId == null || input.coordination?.operation === "answer") && target !== undefined
       ? owner === child : threadFullIndexes?.has(receipt.userMessageSeq);
-  }), [allQueue.receipts, threadFullIndexes, receiptFrame, children, child]);
+  }), [allQueue.receipts, threadFullIndexes, receiptFrame, children, child, currentTurnId, entry]);
   const queue = frame ? { ...allQueue, receipts: threadReceipts } : allQueue;
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
   const unboundBoundary = submissions.reduce((boundary, submission) => {
