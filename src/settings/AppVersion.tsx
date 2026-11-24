@@ -25,7 +25,7 @@ export function AppVersion() {
   return (
     <div className="settings-app-version">
       <span className="settings-provider-name">App Version</span>
-      {state.status === "loading" ? <LoadingIndicator label="Loading app version" /> : null}
+      {state.status === "loading" ? <LoadingIndicator label="Loading app version" inline /> : null}
       {state.status === "loaded" ? <span>{state.version}</span> : null}
       {state.status === "error" ? <LoadError message="Could not load app version." onRetry={() => setAttempt((value) => value + 1)} /> : null}
     </div>
