@@ -16,8 +16,8 @@ function input(name: string): CodexProjectionStart {
 // @test-value v2
 // kind = "contract"
 // claim = "専用分岐のないscope内通知のmethodとparamsをWorker境界で秘匿化・制限して返し、既存通知とscope外を未対応へ混同しない"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#codex-projection-owner" }
-// fault = "未対応通知を落とす、既知secretを残す、payload上限を適用しない、または無変更の扱い済み通知を未対応にする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#codex-projection-owner; docs/design/app-log-base.md#provider-diagnostic-log-policy" }
+// fault = "未対応通知を落とす、既知secretや切詰め境界にかかるsecretの断片を残す、app log上限を超える、JSON escapeでparams抜粋を失う、または無変更の扱い済み通知を未対応にする"
 // observable = "実Workerのevent結果のunhandledNotification、changed、後続finishのterminalと本文"
 // observation_boundary = "public-boundary"
 // scope = "Codex unhandled notification projection"
@@ -28,24 +28,38 @@ function input(name: string): CodexProjectionStart {
 // @end-test-value
 test("Worker returns bounded redacted diagnostics only for unhandled in-scope notifications", async () => {
   const client = new CodexProjectionClient();
-  const run = await client.begin({ ...input("unhandled"), progress: false });
+  const run = await client.begin(input("unhandled"));
   const apply = (method: string, params?: unknown) => client.call<CodexProjectionEvent>(run, { type: "event", event: { method, params } });
   try {
+    const large = "x".repeat(3897) + "api-unhandled" + "x".repeat(128 * 1024);
     const result = await apply("future/api-unhandled", {
       threadId: "thread", turnId: "turn", category: "display-candidate",
       nested: { "binding-unhandled": ["cap-unhandled", "api-unhandled", "synthetic conversation"] },
-      large: "x".repeat(PROVIDER_RAW_ITEM_CLONE_LIMIT * 2),
+      large,
       many: Array.from({ length: 1000 }, () => "y".repeat(500)),
     });
     assert.equal(result.changed, false);
     const diagnostic = result.unhandledNotification!;
     const serialized = JSON.stringify(diagnostic);
-    assert.ok(serialized.length <= PROVIDER_RAW_ITEM_CLONE_LIMIT);
+    assert.ok(serialized.length <= 12_000);
     for (const secret of ["binding-unhandled", "cap-unhandled", "api-unhandled"]) assert.ok(!serialized.includes(secret));
     assert.match(serialized, /synthetic conversation/);
-    assert.match(serialized, /truncated/);
-    assert.equal((diagnostic.data!.params as { category: string }).category, "display-candidate");
-    assert.match(diagnostic.data!.method as string, /^future\//);
+    const params = diagnostic.params as { category: string; large: { text: string; truncated: boolean; originalLength: number } };
+    assert.equal(params.category, "display-candidate");
+    assert.equal(params.large.truncated, true);
+    assert.equal(params.large.originalLength, large.length);
+    assert.ok(params.large.text.length <= 4000);
+    assert.ok(params.large.text.startsWith("x".repeat(3000)));
+    assert.ok(!params.large.text.includes("api"), "no surviving secret prefix at the excerpt boundary");
+    assert.deepEqual([diagnostic.sessionId, diagnostic.threadId, diagnostic.turnId, diagnostic.method], [
+      "unhandled", "thread", "turn", "future/[WITHMATE_BINDING_REFERENCE_REDACTED]",
+    ]);
+    const escaped = await apply("future/escaped", { text: "diff:" + "\0".repeat(4000) });
+    assert.ok(escaped.unhandledNotification);
+    assert.ok(JSON.stringify(escaped.unhandledNotification).length <= 12_000);
+    const escapedField = (escaped.unhandledNotification.params as { text: typeof params.large }).text;
+    assert.ok(escapedField.text.startsWith("diff:" + "\0".repeat(100)));
+    assert.equal(escapedField.truncated, true);
     assert.ok((await apply("future/no-params")).unhandledNotification);
     for (const params of [{ threadId: "foreign" }, { turnId: "foreign" }]) {
       assert.equal((await apply("future/scoped", params)).unhandledNotification, undefined);

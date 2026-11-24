@@ -1133,7 +1133,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
             if (result.unhandledNotification) this.writeLog({
               level: "info", kind: "codex.run.unhandled-notification",
               message: "Codex notification has no dedicated projection handler",
-              data: result.unhandledNotification.data,
+              data: result.unhandledNotification,
             });
             if (!sessionInput || !args.onProgress) continue;
             if (result.errorMessage !== undefined) publishControl({ errorMessage: result.errorMessage });
