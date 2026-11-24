@@ -74,8 +74,8 @@ type ChildSessionPermissions = {
 const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "opencode"]);
 
 /**
- * Maps a validated parent Turn's permissions to a child provider.
- * Throws if the transfer would discard a restriction; it does not select a different provider.
+ * Maps the admitted parent Turn's captured permission options, not its native rule set.
+ * Cross-provider transfers use only the existing on-request mapping; unsupported transfers throw.
  */
 export function resolveChildSessionPermissions(
   sourceProviderId: string,
@@ -93,9 +93,11 @@ export function resolveChildSessionPermissions(
   if (sourceProviderId === "codex" && codexSandboxMode !== "danger-full-access") {
     throw new Error(`Cannot inherit the Codex sandbox mode "${codexSandboxMode}" in ${targetProviderId}.`);
   }
-  // Auto Run and provider-specific modes do not have equivalent restrictions in other providers.
+  // Auto Run and Safety Focused answer only the requests their adapter sees.
+  // Permission options do not prove that another provider has the same native preapprovals,
+  // denials, or administrator rules. Do not infer a new mapping from the shared label.
   if (approvalMode !== "on-request") {
-    throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}.`);
+    throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}. The calling Turn's native permission constraints cannot be preserved by the supported mapping.`);
   }
 
   const sourceHasReviewer = supportsWithMateAutoReview(sourceProviderId)

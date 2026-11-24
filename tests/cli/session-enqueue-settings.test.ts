@@ -275,18 +275,6 @@ test("child creation uses the active parent permissions through retry and first 
     assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
     assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
     restricted.endTurn();
-    for (const codexSandboxMode of ["danger-full-access", "read-only"] as const) {
-      const autoRun = await f.endpoint(f.parent, { ...active, approvalMode: "never", codexSandboxMode });
-      for (const transport of ["mcp", "cli"] as const) {
-        const rejected = await autoRun(transport, "create_child", { ...base, provider: "copilot", requestId: randomUUID() });
-        assertRejected(rejected);
-        assert.match(String(rejected.message), codexSandboxMode === "danger-full-access"
-          ? /approval mode "never" in copilot/ : /sandbox mode "read-only" in copilot/);
-      }
-      autoRun.endTurn();
-    }
-    assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
-    assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
     const unavailable = await f.endpoint(f.parent, null);
     for (const transport of ["mcp", "cli"] as const) {
       const rejected = await unavailable(transport, "create_child", { ...base, requestId: randomUUID() });
@@ -295,6 +283,68 @@ test("child creation uses the active parent permissions through retry and first 
     }
     assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
   } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常子作成は異種全12方向でAuto RunとSafety Focusedを未受付にし、既存on-requestと同一Providerの継承を維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#子sessionへの承認設定の継承; docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "異種の許可または確認範囲を共通名で等価とみなす、拒否後に作成操作を残す、または既存の許可経路まで塞ぐ"
+// observable = "MCPとCLIの未受付結果、拒否requestごとのlifecycle不在、作成済みSessionのProvider・Approval・Sandbox・明示Reviewer設定"
+// observation_boundary = "public-boundary"
+// scope = "MCP SDK・bound CLIからTurn binding・通常子作成・実Storage Workerまで。native Provider・catalog・HTTP交換はfixture"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// distinction = "共通変換関数のtest単体では公開入口での親Turn設定の使用と、拒否時に登録や作成が残らないことを検証できない"
+// @end-test-value
+test("child creation distinguishes per-Provider approval choices from cross-Provider inheritance", async () => {
+  const providers = ["codex", "claude", "copilot", "opencode"] as const;
+  for (const source of providers) {
+    const f = await fixture(source);
+    try {
+      await f.bundle.stores.character.createCharacter({ name: "Child fixture" });
+      for (const approvalMode of ["never", "safety-focused", "on-request"] as const) {
+        const sandboxModes = source === "codex" ? ["danger-full-access", "read-only"] as const : ["danger-full-access"] as const;
+        for (const codexSandboxMode of sandboxModes) {
+          const origin = await f.endpoint(f.parent, { ...captureSessionExecutionOptions(f.parent), approvalMode, codexSandboxMode,
+            codexReviewer: "user", ...((source === "copilot" || source === "opencode") ? { withMateReviewerExplicit: true } : {}) });
+          try {
+            const initialCount = (await f.bundle.stores.session.listSessionSummaries()).length;
+            let created = 0;
+            for (const provider of providers) {
+              const sandboxBlocked = source === "codex" && provider !== source && codexSandboxMode === "read-only";
+              const allowed = provider === source || (approvalMode === "on-request" && !sandboxBlocked);
+              for (const transport of ["mcp", "cli"] as const) {
+                const requestId = randomUUID();
+                const context = `${transport} ${source} → ${provider}: ${approvalMode}, ${codexSandboxMode}`;
+                const result = await origin(transport, "create_child", {
+                  role: "executor", provider, model: "fast", reasoningEffort: "low", workspacePath: f.parent.workspacePath, requestId,
+                });
+                if (!allowed) {
+                  assert.equal(result.ok, false, context);
+                  assert.equal(result.effect, "none", context);
+                  assert.match(String(result.message), sandboxBlocked ? /Cannot inherit the Codex sandbox mode/
+                    : /Cannot inherit .* approval mode.*native permission constraints/, context);
+                  const lifecycleId = JSON.stringify(["create", "agent", f.parent.id, getSessionIncarnationId(f.parent), requestId]);
+                  assert.equal(await f.bundle.stores.session.getSessionLifecycleOperation(lifecycleId), null, context);
+                  continue;
+                }
+                assert.equal(result.ok, true, `${context}: ${JSON.stringify(result)}`);
+                const child = await f.bundle.stores.session.getSession((result.session as { id: string }).id);
+                assert.equal(child?.provider, provider, context);
+                assert.equal(child?.approvalMode, approvalMode, context);
+                assert.equal(child?.codexReviewer, "user", context);
+                assert.equal(child?.withMateReviewerExplicit, provider === "copilot" || provider === "opencode" ? true : undefined, context);
+                if (provider === "codex") assert.equal(child?.codexSandboxMode, source === provider ? codexSandboxMode : "read-only", context);
+                created++;
+              }
+            }
+            assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, initialCount + created);
+          } finally { origin.endTurn(); }
+        }
+      }
+    } finally { await f.close(); }
+  }
 });
 
 // @test-value v2

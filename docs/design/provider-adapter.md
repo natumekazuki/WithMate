@@ -233,6 +233,14 @@ Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介�
 
 既存の `untrusted` は従来の制限のまま（Codexのnative untrusted、Copilotのread-only分類）。新しい `safety-focused` に自動変換しない。Claudeの保存済み `accept-edits / dont-ask / plan` は対応する `acceptEdits / dontAsk / plan` を維持し、新規選択肢には出さない。旧 `allow-all / safety / provider-controlled` の読取時正規化と、保存履歴・捕捉済み受付、新規の初期値は変更しない。Claudeで使用中のnative permission modeが要求と異なる場合は失敗を通知する。
 
+### 子Sessionへの承認設定の継承
+
+上の4択と `get_catalog` は、各ProviderのSessionで使う承認方針を示し、異種Providerへの継承可否は示さない。MCP／CLIの新規 `create_child` は呼出元Turnの捕捉済み設定を使う。同一ProviderにはApproval・Reviewer・Sandboxの設定値を引き継ぐが、別Workspaceのnativeルールを複製する操作ではない。
+
+Codex・Claude・Copilot・OpenCode間の異種12方向では、Auto Run（`never`）とSafety Focused（`safety-focused`）をいずれも受付前に拒否する。既存の `on-request`（User／Auto Review）の変換だけが利用できる。Codexから非Codexへは、捕捉済みSandboxが `danger-full-access` でない場合に拒否する。非CodexからCodexへの `on-request` は `read-only` を適用する。旧固有Approvalの異種変換はしない。設定の自動昇格・降格やProviderの代替選択は行わない。
+
+Auto Runが承認を返せる範囲、Safety Focusedで承認が発生する範囲は、Providerの事前許可・禁止・本人必須のルールによって異なる。例えばClaude／OpenCodeのnative許可はWithMateまで要求が届かない場合があり、CopilotはSDKの通常分類・実承認・本人必須を区別し、Codexは承認とは別にSandboxやnativeルールを適用する。作成経路が受け取るApproval・Reviewer・Sandboxの値にはこれらの実効ルールが含まれず、`danger-full-access` も管理者制限がないことを示さない。既存の `on-request` の設定変換は、nativeルール一般の等価性を保証しない。通常の `enqueue` は継承ではなく、受付時に宛先の保存設定を捕捉する。
+
 ## Speed
 
 - 共通の`Standard / Fast`選択をCodexとClaudeで提供する。保存・送信時捕捉には既存の`codexSpeed` fieldを使用し、新しい保存fieldやmigrationは追加しない。既定値は`standard`
