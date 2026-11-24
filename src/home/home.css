@@ -633,6 +633,10 @@
   font-weight: 700;
 }
 
+.home-page .home-monitor-count[aria-hidden="true"] {
+  visibility: hidden;
+}
+
 .home-page .home-monitor-list {
   flex: 1 1 auto;
   min-height: 0;

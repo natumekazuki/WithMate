@@ -4943,12 +4943,12 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのbusy送信buttonはbusy reasonを可視文言へ昇格せず、spinnerとaria-busyを主表示にして送信を抑止する"
+// claim = "SessionComposerExpandedは送信受付待ちにSendを無効化し、理由をtitleとstatusで伝え、常設文言の代わりにspinnerとaria-busyで示す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Send disabled理由とtitle; docs/design/ui-design-guidelines.md: ボタン" }
 // fault = "busy中のSendが理由と異なるtitleや常設helper feedbackを表示する、spinnerまたはaria-busyが欠ける、または送信を許可する"
 // observable = "Send buttonのdisabled・aria-busy・title・spinner、textareaのaria-busy、status announcement、feedback DOM"
 // observation_boundary = "component-behavior"
-// scope = "expanded composer busy send action"
+// scope = "expanded composer send admission pending"
 // lifecycle = "permanent"
 // impact = "送信直後の待機状態を簡潔な視覚表示とaccessible statusで示し、同じbusy説明の重複表示を防ぐ"
 // distinction = "sendability state testはbusy/error併存判定を確認し、このtestはSessionComposerExpandedへの表示投影を確認する"
@@ -4959,6 +4959,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
     React.createElement(SessionComposerExpanded, createComposerTestProps({
       draft: "hello",
       isSendDisabled: true,
+      queueTurnBusy: true,
       composerSendability: {
         isBusy: true,
         busyReason,

@@ -43,15 +43,15 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは上段のAttention・Coordinationを左右に、Running・Stoppedを下段に表示し、各分類内一覧のscrollと分類の内容幅740pxでの列数切替をCSSへ宣言する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "分類境界や見出しを欠落させる、一覧が割当高さ内でscrollできない、またはviewport幅で列数を決める"
-// observable = "描画したsectionとseparatorの順序と件数、一覧scrollとcontainer queryのCSS"
+// claim = "Monitorは上段のAttention・Coordinationを左右に、Running・Stoppedを下段に配置し、4分類の件数枠を保つ。SSRで未取得のCoordinationには件数を提示せず、一覧scrollと内容幅740pxでの列数切替をCSSへ宣言する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "分類境界・見出し・件数枠を欠落させる、未取得の相談件数を0で提示する、一覧が割当高さ内でscrollできない、またはviewport幅で列数を決める"
+// observable = "SSRのsection・separator・4分類それぞれの件数枠、準備済みの空分類の0と未取得Coordinationの空・aria-labelなし、一覧scrollとcontainer queryのCSS"
 // observation_boundary = "implementation"
 // scope = "HomeMonitorContentとMonitor専用layout CSS"
 // lifecycle = "permanent"
 // impact = "10〜20親の状態を件数の偏りに応じて連続して確認でき、Homeでも実際のMonitor幅に合う密度を使える"
-// distinction = "component描画とCSSのscroll責務・container境界を確認する。境界操作は別component test、実寸法と列の整列はbrowserで確認する"
+// distinction = "初回SSRの件数枠とCSS宣言を確認する。確定0・失敗・境界操作は動的component test、実寸法と列の整列はbrowserで確認する"
 // @end-test-value
 test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列数を宣言する", async () => {
   const stylesSource = await readStylesheet();
@@ -77,7 +77,17 @@ test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列�
       ["home-monitor-approval", null, "home-monitor-coordination"]);
     assert.ok(topRow.querySelector(".home-monitor-top-divider"));
     assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0", "0"]);
+    const headings = [...document.querySelectorAll(".home-monitor-section-head")];
+    assert.equal(headings.length, 4);
+    const [attention, coordination, running, stopped] = headings.map((heading) => {
+      const slots = heading.querySelectorAll(".home-monitor-count");
+      assert.equal(slots.length, 1);
+      return slots[0]!;
+    });
+    assert.deepEqual([attention, running, stopped].map((count) => count?.textContent), ["0", "0", "0"]);
+    assert.ok(coordination);
+    assert.equal(coordination.textContent?.trim(), "");
+    assert.equal(coordination.hasAttribute("aria-label"), false);
   }
   const sectionRule = readCssRule(stylesSource, ".home-page .home-monitor-sections .home-monitor-section");
   assert.match(sectionRule, /display:\s*flex;\s*flex-direction:\s*column;/);

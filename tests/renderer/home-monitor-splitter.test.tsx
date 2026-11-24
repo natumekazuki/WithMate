@@ -215,6 +215,57 @@ test("MonitorはSessionを一か所に分類して分類に応じた移動先を
 
 // @test-value v2
 // kind = "contract"
+// claim = "Monitorの相談件数は読込に成功するまで可視・読み上げとも未提示とし、確認済み0件は初回失敗および後続の更新失敗と区別する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗; docs/design/desktop-ui.md: Home MonitorのCoordination初回取得と背景再取得" }
+// fault = "未取得・初回失敗を0件と扱う、または0件の成功後に再取得・失敗で件数を隠す"
+// observable = "Coordination見出しの件数のtextとaccessible名、初回loading status、失敗alertとRetry、確定0件の保持"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentのCoordination件数の初回開始・失敗・再試行と0件取得後の更新"
+// lifecycle = "permanent"
+// distinction = "既存の分類・再取得テストは成功済みの件数しか観測せず、未取得と確定空snapshotを区別しない欠陥を検出しない"
+// @end-test-value
+test("Monitorの相談件数は初回の成功まで表示せず確定0件は後続の失敗でも保つ", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    let complete: ((result: { items: CoordinationSummary[]; total: number; nextOffset: null }) => void) | undefined;
+    let fail: ((reason: Error) => void) | undefined;
+    Object.defineProperty(dom.window, "withmate", { value: {
+      executeCoordination: () => new Promise((resolve, reject) => { complete = resolve; fail = reject; }),
+      subscribeCoordinationChanged: () => () => {},
+    } });
+    await act(async () => root.render(createElement(HomeMonitorContent, {
+      approvalEntries: [], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+    })));
+    const section = dom.window.document.querySelector('[aria-labelledby="home-monitor-coordination"]')!;
+    const count = () => section.querySelector(".home-monitor-count");
+    const assertUnknown = () => {
+      assert.equal(count()?.textContent?.trim() ?? "", "");
+      assert.equal(count()?.hasAttribute("aria-label") ?? false, false);
+    };
+    const assertZero = () => {
+      assert.equal(count()?.textContent, "0");
+      assert.equal(count()?.getAttribute("aria-label"), "0 Main session groups");
+      assert.notEqual(count()?.getAttribute("aria-hidden"), "true");
+    };
+    assertUnknown();
+    assert.ok(section.querySelector('[role="status"][aria-label="Loading Coordination"]'));
+    await act(async () => fail!(new Error("First Coordination read failed")));
+    assertUnknown();
+    assert.match(section.querySelector('[role="alert"]')!.textContent!, /First Coordination read failed/);
+    await act(async () => section.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+    assertUnknown();
+    await act(async () => complete!({ items: [], total: 0, nextOffset: null }));
+    assertZero();
+    assert.equal(section.querySelector('[role="alert"]'), null);
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    assertZero();
+    await act(async () => fail!(new Error("Coordination refresh failed")));
+    assertZero();
+    assert.match(section.querySelector('[role="alert"]')!.textContent!, /Coordination refresh failed/);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Monitorの相談再取得は取得済み一覧と操作focusを保ちbusyを通知し、成功0件と更新失敗を区別して反映する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: focus再取得でカードが一瞬ずれる不具合を修正" }
 // fault = "背景更新で初回読込へ戻す、取得済みカードを外す、成功0件を反映しない、または更新失敗を正常0件として扱う"
