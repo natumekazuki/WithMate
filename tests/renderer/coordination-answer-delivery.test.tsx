@@ -36,10 +36,10 @@ function harness(read: (operation: ExecutionReadOperation, request: unknown) => 
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存回答の実receiptを起票元へ照会し、配送完了を受信Turn完了や回答利用と混同せずに表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・利用" }
-// fault = "別のSessionやreceiptを読み、受付完了をTurn完了や回答利用として表示する"
-// observable = "実paneの配送statusとexact target/receiptの読取、対象通知後の状態、pane非表示中の購読解除"
+// claim = "保存回答の実receiptを起票元へ照会し、初回は照会だけをbusyと示し、再照会では取得済み配送状態を保つ。配送完了を受信Turn完了や回答利用と混同しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・利用; docs/design/ui-design-guidelines.md 読込・空・失敗" }
+// fault = "別のSessionやreceiptを読む、配送照会で回答本文や取得済み配送を隠す、または受付完了をTurn完了や回答利用として表示する"
+// observable = "実paneの配送statusとexact target/receiptの読取、初回待ちのaccessible statusと回答本文、再照会の保持状態、pane非表示中の購読解除"
 // observation_boundary = "consumer"
 // scope = "CoordinationPaneの最新保存回答からexecution読取まで。storageとIPCはfixture"
 // lifecycle = "permanent"
@@ -48,8 +48,9 @@ function harness(read: (operation: ExecutionReadOperation, request: unknown) => 
 // @end-test-value
 test("saved answer reads the exact delivery without claiming the recipient turn is complete", async () => {
   let turnState = "running";
+  let completeRead: () => void;
   const record: CoordinationRecord = { id: "actual-consultation", crewRootSessionId: "actual-parent", kind: "blocker", initiator: { kind: "auxiliary", sessionId: target.sessionId, incarnationId: target.incarnationId }, initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Need a decision", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [{ id: "answer-1", revision: 1, actor: { kind: "user" }, body: "Use the agreed approach", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z", receiptId: "saved-receipt" }], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z" };
-  const h = harness(async () => ({ ...description, turnState }), {
+  const h = harness(() => new Promise((resolve) => { completeRead = () => resolve({ ...description, turnState }); }), {
     getCoordinationIdentity: async () => ({ title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }),
     subscribeSessionInvalidation: () => () => {},
     executeCoordination: async (request: CoordinationRequest) => request.operation === "get" ? { record, initiatorTarget: target } : { items: [], total: 0, nextOffset: null },
@@ -59,6 +60,12 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
   const renderPane = (active: boolean) => h.root.render(<CoordinationPane sessionId="viewer-main" active={active} navigation={navigation} />);
   try {
     await act(async () => renderPane(true));
+    const deliveryBusy = () => h.dom.window.document.querySelector('[role="status"][aria-label="Checking Answer Delivery"][aria-busy="true"]');
+    assert.ok(deliveryBusy());
+    assert.match(h.dom.window.document.body.textContent!, /Use the agreed approach/);
+    assert.doesNotMatch(h.dom.window.document.body.textContent!, /Checking (Answer )?Delivery/);
+    await act(async () => completeRead());
+    assert.equal(deliveryBusy(), null);
     assert.match(h.dom.window.document.body.textContent!, /Delivered/);
     assert.doesNotMatch(h.dom.window.document.body.textContent!, /Turn Completed|Answer Used/);
     assert.deepEqual(h.requests[0], { owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } });
@@ -66,6 +73,9 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
     assert.equal(h.requests.length, 1);
     turnState = "failed";
     await act(async () => { for (const listener of h.listeners) listener(target.sessionId); });
+    assert.match(h.dom.window.document.body.textContent!, /Delivered/);
+    assert.equal(deliveryBusy(), null);
+    await act(async () => completeRead());
     assert.match(h.dom.window.document.body.textContent!, /Delivered · Turn Failed/);
     await act(async () => renderPane(false));
     assert.equal(h.listeners.size, 0);
