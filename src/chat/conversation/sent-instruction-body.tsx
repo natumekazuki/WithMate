@@ -65,6 +65,7 @@ const viewports = new WeakMap<Element | Document, {
   observer: IntersectionObserver;
   cards: Map<Element, (near: boolean) => void>;
 }>();
+const OVERSCAN_PX = 160;
 
 function observeSentBody(node: HTMLElement, changed: (near: boolean) => void) {
   const root = node.closest(".session-message-list");
@@ -74,7 +75,7 @@ function observeSentBody(node: HTMLElement, changed: (near: boolean) => void) {
     const cards = new Map<Element, (near: boolean) => void>();
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) cards.get(entry.target)?.(entry.isIntersecting);
-    }, { root, rootMargin: "-1px 0px 160px 0px" });
+    }, { root, rootMargin: `-1px 0px ${OVERSCAN_PX}px 0px` });
     observations = { observer, cards };
     viewports.set(viewport, observations);
   }
@@ -135,13 +136,23 @@ export function SentInstructionBodyBoundary({ source, requested = false, render 
     setError("");
     void source.read(key, request.signal).then((result) => {
       if (request.signal.aborted || !result) return;
+      // A reply jump can move the scrollport before the observer reports the
+      // exit. An in-flight body above the new position must not expand there.
+      const node = element.current;
+      const root = node?.closest(".session-message-list")?.getBoundingClientRect();
+      const bounds = node?.getBoundingClientRect();
+      if (!focused && !requested && root && root.height > 0 && bounds
+        && (bounds.bottom <= root.top || bounds.top > root.bottom + OVERSCAN_PX)) {
+        setNear(false);
+        return;
+      }
       loaded.current = { body: result, revision: source.revision, read: source.read, key };
       redraw((value) => value + 1);
     }, (failure) => {
       if (!request.signal.aborted) setError(failure instanceof Error ? failure.message : "Could not read the outgoing message.");
     });
     return () => request.abort();
-  }, [active, key, source.read, source.revision, retry]);
+  }, [active, focused, key, requested, source.read, source.revision, retry]);
   const body = loaded.current?.key === key ? loaded.current.body : undefined;
   return <div ref={element} className="sent-instruction-body" style={{ minHeight: body ? undefined : height.current || 24 }}
     onFocus={() => setFocused(true)} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
