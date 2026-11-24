@@ -3,7 +3,7 @@ import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-
 import { codexReviewerOptions, resolveCodexReviewerUpdate, type CodexReviewer } from "./codex-reviewer.js";
 import type { ConfirmedReviewerChange } from "../session/session-mutation-contract.js";
 import { supportsWithMateAutoReview } from "./withmate-auto-review.js";
-import { resolveSessionApprovalChoice, type SessionApprovalChoice } from "./session-approval-choice.js";
+import { getSessionApprovalChoice, resolveSessionApprovalChoice, type SessionApprovalChoice } from "./session-approval-choice.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
@@ -74,12 +74,12 @@ type ChildSessionPermissions = {
 const CHILD_PERMISSION_PROVIDERS = new Set(["codex", "claude", "copilot", "opencode"]);
 
 /**
- * Maps the admitted parent Turn's captured permission options, not its native rule set.
- * Cross-provider transfers use only the existing on-request mapping; unsupported transfers throw.
+ * Transfers the admitted Turn's public approval choice, not its native permission environment.
+ * Captured restrictions without a destination representation fail before child creation.
  */
 export function resolveChildSessionPermissions(
   sourceProviderId: string,
-  source: Readonly<ChildSessionPermissions & { codexSandboxMode: CodexSandboxMode }>,
+  source: Readonly<ChildSessionPermissions & { codexSandboxMode: CodexSandboxMode; customAgentName: string }>,
   targetProviderId: string,
 ): ChildSessionPermissions {
   const { approvalMode, codexSandboxMode, codexReviewer, withMateReviewerExplicit } = source;
@@ -93,25 +93,26 @@ export function resolveChildSessionPermissions(
   if (sourceProviderId === "codex" && codexSandboxMode !== "danger-full-access") {
     throw new Error(`Cannot inherit the Codex sandbox mode "${codexSandboxMode}" in ${targetProviderId}.`);
   }
-  // Auto Run and Safety Focused answer only the requests their adapter sees.
-  // Permission options do not prove that another provider has the same native preapprovals,
-  // denials, or administrator rules. Do not infer a new mapping from the shared label.
-  if (approvalMode !== "on-request") {
-    throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}. The calling Turn's native permission constraints cannot be preserved by the supported mapping.`);
+  if (sourceProviderId === "copilot" && source.customAgentName.trim()) {
+    throw new Error(`Cannot verify that the selected Copilot agent's tool restrictions can be preserved in ${targetProviderId}.`);
   }
-
-  const sourceHasReviewer = supportsWithMateAutoReview(sourceProviderId)
-    || getApprovalReviewerOptionsForProvider(sourceProviderId, approvalMode).length > 0;
-  const targetHasReviewer = supportsWithMateAutoReview(targetProviderId)
-    || getApprovalReviewerOptionsForProvider(targetProviderId, approvalMode).length > 0;
-  const inheritReviewer = sourceHasReviewer && targetHasReviewer
-    && (!supportsWithMateAutoReview(sourceProviderId) || withMateReviewerExplicit === true);
+  const choice = getSessionApprovalChoice({ ...source, provider: sourceProviderId });
+  const sandbox = targetProviderId === "codex" ? { codexSandboxMode: "read-only" as const } : {};
+  // Unset mediated reviewers historically follow Settings on mediated children and use
+  // native User elsewhere. Never infer a native Auto Review from the global settings.
+  if (choice === null && approvalMode === "on-request" && supportsWithMateAutoReview(sourceProviderId) && !withMateReviewerExplicit) {
+    return { approvalMode, codexReviewer: "user", ...sandbox };
+  }
+  const mapped = choice === null ? null : resolveSessionApprovalChoice(targetProviderId, choice);
+  if (!mapped) {
+    throw new Error(`Cannot inherit the ${sourceProviderId} approval mode "${approvalMode}" in ${targetProviderId}. It is a provider-specific setting, not a shared Approval choice.`);
+  }
+  const hasReviewer = !supportsWithMateAutoReview(sourceProviderId) || withMateReviewerExplicit === true;
   return {
-    approvalMode,
-    codexReviewer: inheritReviewer ? codexReviewer : "user",
-    ...(inheritReviewer && supportsWithMateAutoReview(targetProviderId) ? { withMateReviewerExplicit: true } : {}),
-    // Keep writes and network access outside the initial sandbox so they can require approval.
-    ...(targetProviderId === "codex" ? { codexSandboxMode: "read-only" } : {}),
+    approvalMode: mapped.approvalMode,
+    codexReviewer: mapped.codexReviewer ?? (hasReviewer ? codexReviewer : "user"),
+    ...(hasReviewer && supportsWithMateAutoReview(targetProviderId) ? { withMateReviewerExplicit: true } : {}),
+    ...sandbox,
   };
 }
 

@@ -103,9 +103,9 @@ actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvide
 
 取消grace後に終端を保存しても元Provider処理がterminating guardへ残る場合は、exact送信元Turnの実解放まで配送を開始しない。receiptの`sourceTurnPendingRelease`で区別し、Steerでも迂回しない。保存済み終端だけを元処理の停止完了と同一視しない。
 
-通常子の作成はMCP／CLIの`create_child`から共通lifecycleへ接続する。OはM／W、MはWを作成でき、Provider／Model／Depth／Workspaceを明示する。Approval・Reviewer・Sandboxは呼出元の実行中Turnに捕捉された設定から決まり、Speedは継承しない。公開catalogの4択は各Sessionの選択肢であり、異種Providerへの継承可否とは別である。
+通常子の作成はMCP／CLIの`create_child`から共通lifecycleへ接続する。OはM／W、MはWを作成でき、Provider／Model／Depth／Workspaceを明示する。Approval・Reviewer・Sandboxは呼出元の実行中Turnに捕捉された設定から決まり、Speedは継承しない。
 
-[子Sessionへの承認設定の継承](provider-adapter.md#子sessionへの承認設定の継承)に従い、同一Providerでは設定値を維持する。新規の異種作成ではAuto RunとSafety Focusedは全12方向で未受付とし、既存の `on-request` 変換だけを維持する。例えばCodexの `on-request`／`auto-review`／`danger-full-access` はClaudeではnative auto、CopilotとOpenCodeでは明示Auto Reviewを保存し、構成済みで適格な要求をWithMateで仲介する。Codexの制限付きSandboxは他Providerに継承できない。拒否したrequestには子Sessionもlifecycle操作も作らない。通常の `enqueue` は継承せず宛先の保存設定を使う。両操作は権限上書き引数や継承スイッチを公開せず、旧指定は副作用前にエラーとする。
+[子Sessionへの承認設定の継承](provider-adapter.md#子sessionへの承認設定の継承)に従い、明示したAuto Run・Auto Review・User・Safety Focusedは異種12方向でも子に渡す。宛先のnative権限環境は複製しない。制限付きCodex Sandbox、選択済みCopilot Custom Agent、旧固有Approvalは異種に転送しない。旧未指定Reviewerの互換動作は明示User／Auto Reviewと区別する。拒否したrequestには子Sessionもlifecycle操作も作らない。通常の `enqueue` は継承せず宛先の保存設定を使う。両操作は権限上書き引数や継承スイッチを公開しない。
 
 Characterは同Crewの通常Main使用数から共通作成ownerが選定し、同一request keyの再確認は新しい親Turnの設定で作成をやり直さず、保存した作成条件を使う。子作成前と既存Sessionの実行設定の再選定前には保存された選定方針を読み、実際のcatalogと照合する。Workspaceの準備とGit操作は親Agentに委ね、WithMateはWorktreeの作成・merge・削除や外部Providerルールの同期を行わない。操作・保存境界は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。
 

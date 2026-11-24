@@ -27,6 +27,7 @@ test("非CodexのProvider ControlledはCodexの子でRead Onlyを選ぶ", () => 
   for (const provider of ["claude", "copilot", "opencode"]) {
     const inherited = resolveChildSessionPermissions(provider, {
       approvalMode: "on-request",
+      customAgentName: "",
       codexSandboxMode: "danger-full-access",
       codexReviewer: "user",
     }, "codex");
@@ -36,20 +37,19 @@ test("非CodexのProvider ControlledはCodexの子でRead Onlyを選ぶ", () => 
 
 // @test-value v2
 // kind = "contract"
-// claim = "異種の子ではAuto RunやProvider固有のApprovalを移さない"
+// claim = "公開4択に対応しない旧固有Approvalは異種へ写像しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api の create_child" }
 // fault = "同名のApprovalをそのまま渡すか、等価でないApprovalを別の方針へ変換する"
 // observable = "子の権限変換が返すApproval継承拒否エラー"
 // observation_boundary = "component-behavior"
-// scope = "Auto Run、Claude固有のApproval、Codex/CopilotのSafety Focusedの異種変換"
+// scope = "Claude固有のApproval、Codex/Copilotの旧untrustedの異種変換"
 // lifecycle = "permanent"
 // impact = "子のProviderで表現できない親の承認制限を失う作成が通ることを防ぐ"
 // distinction = "送信時の実行値検証は宛先で同名のApprovalが使えても意味の違いを検出しない"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("異種の子はAuto Runと非等価なApprovalの継承を拒否する", () => {
+test("異種の子は旧固有Approvalの継承を拒否する", () => {
   for (const [source, target, approvalMode] of [
-    ["claude", "codex", "never"],
     ["claude", "codex", "accept-edits"],
     ["claude", "codex", "dont-ask"],
     ["claude", "codex", "plan"],
@@ -58,6 +58,7 @@ test("異種の子はAuto Runと非等価なApprovalの継承を拒否する", (
   ] as const) {
     assert.throws(() => resolveChildSessionPermissions(source, {
       approvalMode,
+      customAgentName: "",
       codexSandboxMode: "danger-full-access",
       codexReviewer: "user",
     }, target), /Cannot inherit .* approval mode/, `${source} → ${target}: ${approvalMode}`);

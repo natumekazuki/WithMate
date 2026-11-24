@@ -148,6 +148,38 @@ class FakeTransport {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codexに捕捉した公開4方針は初回Turnのnative policyとreviewerになり、独立したread-only Sandboxは変わらない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "Safety Focusedをneverやnative autoに写す、手動を自動にする、またはAuto RunでSandboxを外す"
+// observable = "thread/startとturn/startのapprovalPolicy・approvalsReviewerとSandbox"
+// observation_boundary = "public-boundary"
+// scope = "CodexAdapterの初回実行から模擬App Server transportへ送られたRPC"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// distinction = "子作成試験でadapter入力が正しくても、その先のRPCで取り違えた場合を検出する"
+// @end-test-value
+it("sends the captured public approval and independent sandbox to the first Codex turn", async () => workspace(async (directory) => {
+  for (const [approvalMode, codexReviewer, policy, reviewer] of [
+    ["never", "user", "never", "user"], ["on-request", "user", "on-request", "user"],
+    ["on-request", "auto-review", "on-request", "auto_review"], ["safety-focused", "auto-review", "on-request", "user"],
+  ] as const) {
+    const input = createCodexRunSessionTurnInput(directory);
+    input.executionOptions = { ...input.executionOptions, approvalMode, codexReviewer, codexSandboxMode: "read-only" };
+    const transport = new FakeTransport();
+    transport.events = [completed([])];
+    await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input);
+    for (const method of ["thread/start", "turn/start"]) {
+      const native = transport.calls.find((call) => call.method === method)?.params as Record<string, unknown>;
+      assert.ok(native, method);
+      assert.deepEqual([native.approvalPolicy, native.approvalsReviewer], [policy, reviewer]);
+      if (method === "thread/start") assert.equal(native.sandbox, "read-only");
+      else assert.deepEqual(native.sandboxPolicy, { type: "readOnly", networkAccess: false });
+    }
+  }
+}));
+
+// @test-value v2
+// kind = "contract"
 // claim = "Codex turnは空Depthをthread configとturn requestから省略しnative値を保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "SDK未指定を空文字へ変えるか保存済みnative Depthを固定値へ置換する"

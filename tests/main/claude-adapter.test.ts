@@ -1360,7 +1360,7 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 // kind = "contract"
 // claim = "Claudeは送信時ApprovalとReviewerをSDKの全6モードへ写像し、UserのProvider Controlledだけ通常toolを強制askする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
-// fault = "Auto Reviewをdefaultで実行するか、autoに強制askを重ねるか、Auto Runのbypass opt-inを渡さない"
+// fault = "Auto Reviewをdefaultで実行する、auto・Safety Focusedに通常toolの強制askを重ねる、またはAuto Runのbypass opt-inを渡さない"
 // observable = "SDK queryへ渡るpermission設定、PreToolUseの返却値、artifactのReviewer選択値"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn approval mapping"
@@ -1372,6 +1372,7 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
   for (const [approvalMode, codexReviewer, permissionMode] of [
     ["never", "user", "bypassPermissions"], ["never", "auto-review", "bypassPermissions"],
     ["on-request", "user", "default"], ["on-request", "auto-review", "auto"],
+    ["safety-focused", "auto-review", "default"],
     ["accept-edits", "user", "acceptEdits"], ["dont-ask", "user", "dontAsk"], ["plan", "user", "plan"],
   ] as const) {
     const request = input();
@@ -1386,7 +1387,9 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
           tool_name: toolName, tool_input: {}, tool_use_id: "tool-1",
         }, "tool-1", { signal: new AbortController().signal });
         const readOnly = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName);
-        assert.deepEqual(output, readOnly || permissionMode === "dontAsk" || (permissionMode !== "default" && toolName !== "AskUserQuestion") ? {} : {
+        const asks = toolName === "AskUserQuestion" ? permissionMode !== "dontAsk"
+          : !readOnly && approvalMode === "on-request" && codexReviewer === "user";
+        assert.deepEqual(output, !asks ? {} : {
           hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "WithMate approval required" },
         }, `${approvalMode}: ${toolName}`);
       }

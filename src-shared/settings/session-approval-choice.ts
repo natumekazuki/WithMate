@@ -27,11 +27,17 @@ export function getSessionApprovalChoices(): RuntimeSelectOption<SessionApproval
   return [...approvalChoices];
 }
 
+/** Legacy provider modes and a Settings Default reviewer are not explicit public choices. */
+export function getSessionApprovalChoice({ provider, approvalMode, codexReviewer, withMateReviewerExplicit }: ApprovalSelection): SessionApprovalChoice | null {
+  if (approvalMode === "never") return "auto-run";
+  if (approvalMode === "safety-focused") return "safety-focused";
+  if (approvalMode !== "on-request" || (supportsWithMateAutoReview(provider) && !withMateReviewerExplicit)) return null;
+  return codexReviewer === "auto-review" || codexReviewer === "user" ? codexReviewer : null;
+}
+
 export function getSessionApprovalDisplay(settings: ApprovalSelection): { value: SessionApprovalChoice | ""; label: string } {
-  const { provider, approvalMode, codexReviewer, withMateReviewerExplicit } = settings;
-  const value = approvalMode === "never" ? "auto-run" : approvalMode === "safety-focused" ? "safety-focused"
-    : approvalMode === "on-request" && (!supportsWithMateAutoReview(provider) || withMateReviewerExplicit) ? codexReviewer
-      : "";
+  const { approvalMode } = settings;
+  const value = getSessionApprovalChoice(settings) ?? "";
   return {
     value,
     label: approvalChoices.find((option) => option.value === value)?.label
@@ -43,7 +49,7 @@ export function getSessionApprovalDisplay(settings: ApprovalSelection): { value:
 export function resolveSessionApprovalChoice(
   provider: string,
   choice: string,
-): Partial<Omit<ApprovalSelection, "provider">> | null {
+): (Pick<ApprovalSelection, "approvalMode"> & Partial<Omit<ApprovalSelection, "provider" | "approvalMode">>) | null {
   if (choice === "auto-run") return { approvalMode: "never" };
   if (choice === "safety-focused") return { approvalMode: "safety-focused" };
   if (choice !== "user" && choice !== "auto-review") return null;

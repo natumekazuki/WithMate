@@ -235,11 +235,18 @@ Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介�
 
 ### 子Sessionへの承認設定の継承
 
-上の4択と `get_catalog` は、各ProviderのSessionで使う承認方針を示し、異種Providerへの継承可否は示さない。MCP／CLIの新規 `create_child` は呼出元Turnの捕捉済み設定を使う。同一ProviderにはApproval・Reviewer・Sandboxの設定値を引き継ぐが、別Workspaceのnativeルールを複製する操作ではない。
+新規の通常子（MCP／CLIの `create_child`）は、親の保存値や作成引数ではなく、呼出元の実行中Turnに捕捉された方針を使う。同一Providerの子には従来のApproval・Reviewer・Sandbox値を引き継ぐ。異なるProviderの子には、明示された4択の**承認要求への応答方針**を渡し、上表の宛先adapterで実行する。Codex・Claude・Copilot・OpenCode間の全12方向で同じ規則を使う。
 
-Codex・Claude・Copilot・OpenCode間の異種12方向では、Auto Run（`never`）とSafety Focused（`safety-focused`）をいずれも受付前に拒否する。既存の `on-request`（User／Auto Review）の変換だけが利用できる。Codexから非Codexへは、捕捉済みSandboxが `danger-full-access` でない場合に拒否する。非CodexからCodexへの `on-request` は `read-only` を適用する。旧固有Approvalの異種変換はしない。設定の自動昇格・降格やProviderの代替選択は行わない。
+| 呼出元Turnの設定・条件 | 新規の異種子 |
+| --- | --- |
+| Auto Run／Safety Focused | それぞれ同じ方針を保存する。通常の実行や実承認は宛先のnativeルールに従い、権限を追加しない。 |
+| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。審査不能時の手動復帰は保存値を変えない。 |
+| 旧Copilot・OpenCodeの `on-request` でReviewer未指定 | 共通SettingsのOn/Offにかかわらず、Codex・Claudeの子は従来どおりnative User、仲介対応の子は未指定のまま。親を明示Userに変換しない。 |
+| Codex Sandbox | `danger-full-access` の親は異種に4択を渡せる。制限付きSandboxは非Codexに表せないので拒否。非CodexからCodexへは、親に保存された非適用の値を無視して `read-only` で開始する。 |
+| Copilotの選択済みCustom Agent | 捕捉した `customAgentName` が空白以外を含む場合、ツール制限を宛先で維持できるか確認できないため拒否する。名前から制限を推定せず、作成時の再探索・同名Agentへの置換はしない。 |
+| Provider固有の旧Approval（`untrusted`、Claudeの `accept-edits / dont-ask / plan`） | 共通方針に置き換えず拒否する。 |
 
-Auto Runが承認を返せる範囲、Safety Focusedで承認が発生する範囲は、Providerの事前許可・禁止・本人必須のルールによって異なる。例えばClaude／OpenCodeのnative許可はWithMateまで要求が届かない場合があり、CopilotはSDKの通常分類・実承認・本人必須を区別し、Codexは承認とは別にSandboxやnativeルールを適用する。作成経路が受け取るApproval・Reviewer・Sandboxの値にはこれらの実効ルールが含まれず、`danger-full-access` も管理者制限がないことを示さない。既存の `on-request` の設定変換は、nativeルール一般の等価性を保証しない。通常の `enqueue` は継承ではなく、受付時に宛先の保存設定を捕捉する。
+子の作成はOS権限、native事前許可・禁止、管理者ルールや別Workspaceの設定を複製する操作ではない。宛先の強制deny・本人必須を上書きせず、OpenCode固有のSession移動・native subagent禁止も変えない。明示4択に写像できても上表の制限は独立して適用する。拒否時には子もlifecycle操作も作らない。作成済みの同一requestの再試行は受付済み設定を使う。通常送信（`enqueue`）は継承せず、宛先の保存設定を受付時に固定する。
 
 ## Speed
 

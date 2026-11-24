@@ -24,7 +24,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; permissionAction?: string; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -66,7 +66,7 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       assert.ok(prompt, "event connection must be established before prompt admission");
       yield event("session.inbox.delivered", { sessionID: "root", inboxID: prompt.id });
       if (options.interactions) {
-        yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+        yield event("permission.asked", { id: "permission", sessionID: "child", action: options.permissionAction ?? "bash", resources: ["echo test"] });
         await permissionReply;
         yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
         await formReply;
@@ -338,9 +338,9 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 
 // @test-value v2
 // kind = "security"
-// claim = "OpenCodeの子承認では対象を共通承認に渡し、Safety Focusedの実要求は共通承認を起動せずrejectする"
+// claim = "OpenCodeの子承認は対象を共通承認に渡し、Safety Focusedの実要求とSessionの強制denyは手動・自動承認に渡さずrejectする"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界; docs/design/provider-adapter.md: OpenCodeAdapter" }
-// fault = "実要求の対象を失う、承認を永続alwaysへ変換する、Safety Focusedで実要求を承認するかTurnを開始できない"
+// fault = "実要求の対象を失う、永続許可へ変換する、Safety Focusedで実要求を許可する、または強制deny対象をAuto Runや共通審査へ流す"
 // observable = "承認callbackの要求と審査入力、native replyのdecision、form answer"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode child interaction routing"
@@ -350,7 +350,11 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 // distinction = "共通UIのtestはOpenCode native reply変換と子帰属を通らない"
 // @end-test-value
 it("OpenCode routes child permissions and typed forms without permanent grants", async () => {
-  for (const [mode, decision, reply] of [["on-request", "approve", "once"], ["on-request", "deny", "reject"], ["never", "deny", "once"], ["safety-focused", "approve", "reject"]] as const) {
+  for (const [mode, decision, action, reply, expectedApprovals] of [
+    ["on-request", "approve", "bash", "once", 1], ["on-request", "deny", "bash", "reject", 1],
+    ["never", "deny", "bash", "once", 0], ["safety-focused", "approve", "bash", "reject", 0],
+    ["never", "approve", "subagent", "reject", 0], ["on-request", "approve", "opencode_session_move", "reject", 0],
+  ] as const) {
     const turn = input(); turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
     let approvals = 0;
     turn.onApprovalRequest = (request, _signal, review) => {
@@ -361,9 +365,9 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
       return decision;
     };
     turn.onElicitationRequest = (request) => { assert.equal(request.fields[0].name, "answer"); return { action: "accept", content: { answer: "yes" } }; };
-    const run = fixture(turn, { interactions: true });
+    const run = fixture(turn, { interactions: true, permissionAction: action });
     await run.adapter.runSessionTurn(turn);
-    assert.equal(approvals, mode === "on-request" ? 1 : 0);
+    assert.equal(approvals, expectedApprovals);
     assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:")), [`permission:${reply}`]);
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
   }

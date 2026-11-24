@@ -35,11 +35,10 @@ export function resolveOpenCodeBinaryPath(): string {
   return binary;
 }
 
+const deniedSessionActions = new Set(["opencode_session_move", "subagent"]);
+
 export function buildOpenCodePermissions(additionalDirectories: string[]): PermissionRuleset {
-  const permissions: PermissionRuleset = [
-    { action: "opencode_session_move", resource: "*", effect: "deny" },
-    { action: "subagent", resource: "*", effect: "deny" },
-  ];
+  const permissions: PermissionRuleset = Array.from(deniedSessionActions, (action) => ({ action, resource: "*", effect: "deny" }));
   for (const directory of new Set(additionalDirectories)) {
     if (!path.isAbsolute(directory) || /[*?]/.test(directory)) throw new Error(`Invalid OpenCode additional directory: ${directory}`);
     permissions.push({ action: "external_directory", resource: path.join(directory, "*"), effect: "allow" });
@@ -351,7 +350,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
             throw new Error("OpenCode permission request ownership is unknown");
           }
           enqueue(key, async (pendingSignal) => {
-            const decision = request.action === "opencode_session_move" || input.executionOptions.approvalMode === "safety-focused" ? "deny"
+            const decision = deniedSessionActions.has(request.action) || input.executionOptions.approvalMode === "safety-focused" ? "deny"
               : input.executionOptions.approvalMode === "never" ? "approve"
               : await withSignal(Promise.resolve(input.onApprovalRequest?.(redactor.sanitize({
                 requestId: randomUUID(), provider: "opencode", kind: request.action, title: "OpenCode permission",

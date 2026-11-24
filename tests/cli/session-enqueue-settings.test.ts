@@ -287,12 +287,12 @@ test("child creation uses the active parent permissions through retry and first 
 
 // @test-value v2
 // kind = "contract"
-// claim = "通常子作成は異種全12方向でAuto RunとSafety Focusedを未受付にし、既存on-requestと同一Providerの継承を維持する"
+// claim = "通常子の明示4方針が全12方向で保存・初回実行され、制限付きCodex Sandboxや選択済みCopilot Agentでは新規異種作成しない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#子sessionへの承認設定の継承; docs/design/session-run-lifecycle.md#bound-session-api" }
-// fault = "異種の許可または確認範囲を共通名で等価とみなす、拒否後に作成操作を残す、または既存の許可経路まで塞ぐ"
-// observable = "MCPとCLIの未受付結果、拒否requestごとのlifecycle不在、作成済みSessionのProvider・Approval・Sandbox・明示Reviewer設定"
+// fault = "公開モードを拒否する、手動を仲介に置換する、初回Turnで既定に戻す、または制限付きSandbox・選択済みCopilot Agentを捨てて異種の子を作る"
+// observable = "両入口の子・受付・初回adapter入力にあるApprovalとReviewer・Sandbox、拒否時のeffectとlifecycle不在"
 // observation_boundary = "public-boundary"
-// scope = "MCP SDK・bound CLIからTurn binding・通常子作成・実Storage Workerまで。native Provider・catalog・HTTP交換はfixture"
+// scope = "MCP SDK・bound CLIからTurn binding・実SQLite・queue dispatch・宛先adapter境界まで。native実行・catalog・HTTP交換はfixture"
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // distinction = "共通変換関数のtest単体では公開入口での親Turn設定の使用と、拒否時に登録や作成が残らないことを検証できない"
@@ -303,45 +303,112 @@ test("child creation distinguishes per-Provider approval choices from cross-Prov
     const f = await fixture(source);
     try {
       await f.bundle.stores.character.createCharacter({ name: "Child fixture" });
-      for (const approvalMode of ["never", "safety-focused", "on-request"] as const) {
-        const sandboxModes = source === "codex" ? ["danger-full-access", "read-only"] as const : ["danger-full-access"] as const;
-        for (const codexSandboxMode of sandboxModes) {
-          const origin = await f.endpoint(f.parent, { ...captureSessionExecutionOptions(f.parent), approvalMode, codexSandboxMode,
-            codexReviewer: "user", ...((source === "copilot" || source === "opencode") ? { withMateReviewerExplicit: true } : {}) });
+      for (const [approvalMode, reviewer] of [
+        ["never", "user"], ["on-request", "auto-review"], ["on-request", "user"], ["safety-focused", "user"],
+      ] as const) {
+        const scenarios = [
+          { codexSandboxMode: "danger-full-access", customAgentName: source === "copilot" ? " " : "unused-agent" },
+          ...(source === "codex" ? [{ codexSandboxMode: "read-only", customAgentName: "" } as const] : []),
+          ...(source === "copilot" ? [{ codexSandboxMode: "danger-full-access", customAgentName: " selected-agent " } as const] : []),
+        ] as const;
+        let retry: { request: Record<string, unknown>; result: Record<string, unknown> } | undefined;
+        for (const { codexSandboxMode, customAgentName } of scenarios) {
+          const origin = await f.endpoint(f.parent, { ...captureSessionExecutionOptions(f.parent), approvalMode, codexSandboxMode, customAgentName,
+            codexReviewer: reviewer, ...((source === "copilot" || source === "opencode") ? { withMateReviewerExplicit: true } : {}) });
           try {
             const initialCount = (await f.bundle.stores.session.listSessionSummaries()).length;
             let created = 0;
             for (const provider of providers) {
               const sandboxBlocked = source === "codex" && provider !== source && codexSandboxMode === "read-only";
-              const allowed = provider === source || (approvalMode === "on-request" && !sandboxBlocked);
+              const agentBlocked = source === "copilot" && provider !== source && customAgentName.trim() !== "";
               for (const transport of ["mcp", "cli"] as const) {
                 const requestId = randomUUID();
-                const context = `${transport} ${source} → ${provider}: ${approvalMode}, ${codexSandboxMode}`;
-                const result = await origin(transport, "create_child", {
+                const context = `${transport} ${source} → ${provider}: ${approvalMode}, ${reviewer}, ${codexSandboxMode}`;
+                const request = {
                   role: "executor", provider, model: "fast", reasoningEffort: "low", workspacePath: f.parent.workspacePath, requestId,
-                });
-                if (!allowed) {
+                };
+                const result = await origin(transport, "create_child", request);
+                if (sandboxBlocked || agentBlocked) {
                   assert.equal(result.ok, false, context);
                   assert.equal(result.effect, "none", context);
-                  assert.match(String(result.message), sandboxBlocked ? /Cannot inherit the Codex sandbox mode/
-                    : /Cannot inherit .* approval mode.*native permission constraints/, context);
+                  assert.match(String(result.message), sandboxBlocked ? /Cannot inherit the Codex sandbox mode/ : /selected Copilot agent's tool restrictions/, context);
                   const lifecycleId = JSON.stringify(["create", "agent", f.parent.id, getSessionIncarnationId(f.parent), requestId]);
                   assert.equal(await f.bundle.stores.session.getSessionLifecycleOperation(lifecycleId), null, context);
                   continue;
                 }
                 assert.equal(result.ok, true, `${context}: ${JSON.stringify(result)}`);
+                if (source === "copilot" && provider === "claude" && !retry) retry = { request, result };
                 const child = await f.bundle.stores.session.getSession((result.session as { id: string }).id);
-                assert.equal(child?.provider, provider, context);
-                assert.equal(child?.approvalMode, approvalMode, context);
-                assert.equal(child?.codexReviewer, "user", context);
-                assert.equal(child?.withMateReviewerExplicit, provider === "copilot" || provider === "opencode" ? true : undefined, context);
-                if (provider === "codex") assert.equal(child?.codexSandboxMode, source === provider ? codexSandboxMode : "read-only", context);
+                assert.ok(child, context);
+                assert.equal(child.provider, provider, context);
+                const assertInherited = (options: SessionExecutionOptions) => {
+                  assert.equal(options.approvalMode, approvalMode, context);
+                  assert.equal(options.codexReviewer, reviewer, context);
+                  assert.equal(options.withMateReviewerExplicit, provider === "copilot" || provider === "opencode" ? true : undefined, context);
+                  if (provider === "codex") assert.equal(options.codexSandboxMode, source === provider ? codexSandboxMode : "read-only", context);
+                };
+                assertInherited(child);
+                const sent = await origin(transport, "enqueue", { target: target(child), requestId: randomUUID(), message: "first task", model: "fast", reasoningEffort: "low" });
+                assert.equal(sent.ok, true, `${context}: ${JSON.stringify(sent)}`);
+                assertInherited((sent.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions);
+                const first = await f.dispatchNext(child);
+                assert.deepEqual(first.result, { state: "completed" }, context);
+                assert.deepEqual(first.executed.map((run) => run.provider), [provider], context);
+                assertInherited(first.executed[0].input.executionOptions);
                 created++;
               }
             }
             assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, initialCount + created);
+            if (retry && source === "copilot" && customAgentName.trim()) {
+              assert.deepEqual(await origin("mcp", "create_child", retry.request), retry.result);
+            }
           } finally { origin.endTurn(); }
         }
+      }
+    } finally { await f.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "compatibility"
+// claim = "旧未指定の仲介親からは共通Settings On/Offともにnative子が手動、仲介子は未指定のまま作成される"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#子sessionへの承認設定の継承" }
+// fault = "親の共通Onをnative Auto Reviewや明示Userに変換して保存する、または旧未指定のために作成を拒否する"
+// observable = "公開作成後に再読込した子と親の承認方針・審査先・明示marker、native子の初回実行設定"
+// observation_boundary = "public-boundary"
+// scope = "Copilot/OpenCodeの旧保存値、共通Settings On/Off、bound MCP・CLI→隔離SQLiteと初回adapter入力"
+// lifecycle = "permanent"
+// distinction = "明示4択の継承試験は選択前の旧値と当時の共通設定を区別できない"
+// @end-test-value
+test("legacy unset reviewers use native User or remain unset on mediated children", async () => {
+  for (const source of ["copilot", "opencode"]) {
+    const f = await fixture(source);
+    try {
+      await f.bundle.stores.character.createCharacter({ name: "Child fixture" });
+      const origin = await f.endpoint(f.parent);
+      for (const configured of [false, true]) {
+        f.settings.withMateAutoReview = configured ? { providerId: "codex", model: "review", reasoningEffort: "" } : null;
+        for (const provider of ["codex", "claude", source === "copilot" ? "opencode" : "copilot"]) {
+          for (const transport of ["mcp", "cli"] as const) {
+            const response = await origin(transport, "create_child", { requestId: randomUUID(), provider, model: "fast",
+              role: "executor", reasoningEffort: "low", workspacePath: f.parent.workspacePath });
+            assert.equal(response.ok, true, JSON.stringify(response));
+            const child = await f.bundle.stores.session.getSession((response.session as { id: string }).id);
+            assert.ok(child);
+            assert.deepEqual([child.provider, child.approvalMode, child.codexReviewer, child.withMateReviewerExplicit],
+              [provider, "on-request", "user", undefined]);
+            if (provider === "codex" || provider === "claude") {
+              const sent = await origin(transport, "enqueue", { target: target(child), requestId: randomUUID(),
+                message: "first task", model: "fast", reasoningEffort: "low" });
+              assert.equal(sent.ok, true, JSON.stringify(sent));
+              const first = await f.dispatchNext(child);
+              assert.deepEqual(first.executed.map(({ provider, input }) => [provider, input.executionOptions.approvalMode, input.executionOptions.codexReviewer]),
+                [[provider, "on-request", "user"]]);
+            }
+          }
+        }
+        const parent = await f.bundle.stores.session.getSession(f.parent.id);
+        assert.deepEqual(captureSessionExecutionOptions(parent!), captureSessionExecutionOptions(f.parent));
       }
     } finally { await f.close(); }
   }
