@@ -3,7 +3,7 @@
 UIの設計・変更・reviewでは、画面横断の原則と共通パターンを定めた[UI Design Guidelines](ui-design-guidelines.md)を参照する。
 
 ## Auxiliary Session (Issue #710)
-Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。未取得・折りたたみ中の列、Graph表示中に送信対象でない列、Auxiliaryの読込中・取得失敗、中央Previewやfull表示のGraphで会話が隠れている間は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
+Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。取得済みの同じAuxiliary本文を表示している間は、再取得中・失敗後も実行できる。未取得・折りたたみ中の列、Graph表示中に送信対象でない列、中央Previewやfull表示のGraphで会話が隠れている間は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
 
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。
 

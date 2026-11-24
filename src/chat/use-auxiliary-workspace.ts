@@ -829,7 +829,7 @@ export function useAuxiliaryWorkspace(input: {
   const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
     const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
     const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
-    const auxiliaryMessages = input.auxiliarySession?.messages ?? [];
+    const auxiliarySession = input.auxiliarySession?.id === selectedId ? input.auxiliarySession : null;
     const main = {
       ...input.messageColumn,
       inputReadContext: input.mainSession?.incarnationId ? { ownerSessionId: mainSessionId, target: { kind: "main" as const, sessionId: mainSessionId, incarnationId: input.mainSession.incarnationId } } : undefined,
@@ -839,15 +839,15 @@ export function useAuxiliaryWorkspace(input: {
       onLoadArtifactDetail: input.mainOnLoadArtifactDetail,
       onOpenPath: input.mainOnOpenPath,
     };
-    const auxiliary = input.auxiliarySession
+    const auxiliary = auxiliarySession
       ? {
           ...input.messageColumn,
-          inputReadContext: input.mainSession?.incarnationId && selectedSession?.id === input.auxiliarySession.id ? {
+          inputReadContext: input.mainSession?.incarnationId && selectedSession?.id === auxiliarySession.id ? {
             ownerSessionId: mainSessionId,
             target: { kind: "auxiliary" as const, sessionId: selectedSession.id, incarnationId: selectedSession.createdAt, mainSessionId: selectedSession.parentSessionId, mainIncarnationId: input.mainSession.incarnationId },
           } : undefined,
-          sessionId: input.auxiliarySession.id,
-          messages: auxiliaryMessages,
+          sessionId: auxiliarySession.id,
+          messages: auxiliarySession.messages ?? [],
           onToggleMessageBookmark: input.onToggleMessageBookmark,
           onLoadArtifactDetail: input.auxiliaryOnLoadArtifactDetail,
           onOpenPath: input.auxiliaryOnOpenPath,
@@ -858,7 +858,7 @@ export function useAuxiliaryWorkspace(input: {
       main,
       auxiliary,
       mainSession: input.mainSession,
-      auxiliarySession: input.auxiliarySession,
+      auxiliarySession,
       api: input.api,
       mainLiveRun: input.mainLiveRun,
       auxiliaryLiveRun: input.auxiliaryLiveRun,

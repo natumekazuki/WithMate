@@ -599,7 +599,7 @@ export function ChatWindow({
   }, []);
   const mainReplyTarget = mainVisible ? concurrentChats?.main.inputReadContext?.target : undefined;
   const auxiliaryReplyTarget = isConversationVisible && (isSideSplit ? concurrentChats?.target === "auxiliary" : (concurrentChats?.widthRatio ?? 0) > 0)
-    && !concurrentChats?.loading && !concurrentChats?.error ? concurrentChats?.auxiliary?.inputReadContext?.target : undefined;
+    ? concurrentChats?.auxiliary?.inputReadContext?.target : undefined;
   const mainReplyKey = mainReplyTarget && conversationPeerKey(mainReplyTarget);
   const auxiliaryReplyKey = auxiliaryReplyTarget && conversationPeerKey(auxiliaryReplyTarget);
   const replyScope = useMemo(() => ({ main: mainReplyTarget, auxiliary: auxiliaryReplyTarget, threads: mainThreads.projection }),
@@ -705,7 +705,7 @@ export function ChatWindow({
       controls.followLatest();
       return true;
     },
-    Boolean(concurrentChats?.auxiliary && !concurrentChats.loading && !concurrentChats.error && isConversationVisible
+    Boolean(concurrentChats?.auxiliary && isConversationVisible
       && (isSideSplit ? concurrentChats.target === "auxiliary" : concurrentChats.widthRatio > 0)),
   );
 
@@ -903,12 +903,13 @@ export function ChatWindow({
                 const index = threadOptions.findIndex(({ id }) => id === mainThreads.selectedId);
                 selectConversation(threadOptions[(index + direction + threadOptions.length) % threadOptions.length].id);
               }} />
-            {mainVisible && mainThreads.loading && !mainThreads.ready ? <LoadingIndicator inline label="Loading conversations" /> : null}
             {mainThreads.error ? <div className="main-thread-feedback"><span role="alert">{mainThreads.error}</span>
               <button type="button" className="drawer-toggle compact secondary" onClick={mainThreads.retry}>Retry Conversations</button>
             </div> : null}
-            {concurrentChats?.mainReadFeedback}
-          </div> : concurrentChats?.mainReadFeedback}
+            {concurrentChats?.mainContentReady !== false ? concurrentChats?.mainReadFeedback : null}
+          </div> : null}
+          {!mainThreads.canRead || concurrentChats?.mainContentReady === false ? concurrentChats?.mainReadFeedback : null}
+          {mainVisible && mainThreads.loading && !mainThreads.ready ? <LoadingIndicator className="concurrent-chat-state" label="Loading conversations" /> : null}
           {concurrentChats && (concurrentChats.mainContentReady === false || !mainThreads.ready) ? null : concurrentChats ? (
             <ConversationMessageColumn
               session={concurrentChats.mainSession ?? { id: resolvedMessageColumnProps.sessionId }}
@@ -976,11 +977,7 @@ export function ChatWindow({
       auxiliaryMessageColumn={concurrentChats ? (
         <>
           <div ref={auxiliaryColumnElementRef} id="session-auxiliary-chat-pane" className="concurrent-chat-column-content">
-            {concurrentChats.loading ? (
-              <LoadingIndicator label="Loading Auxiliary" className="concurrent-chat-state" />
-            ) : concurrentChats.error ? (
-              <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
-            ) : concurrentChats.auxiliary ? (
+            {concurrentChats.auxiliary ? (
               <>
                 <ConversationMessageColumn
                   session={concurrentChats.auxiliarySession ?? { id: concurrentChats.auxiliary.sessionId }}
@@ -999,7 +996,12 @@ export function ChatWindow({
                   onColumnControls={handleAuxiliaryColumnControls}
                   navigatorActive={messageNavigatorActive && screenProps.isRightPaneVisible !== false && concurrentChats.target === "auxiliary"}
                 />
+                {concurrentChats.error ? <div className="auxiliary-chat-refresh-error" role="alert">{concurrentChats.error}</div> : null}
               </>
+            ) : concurrentChats.loading ? (
+              <LoadingIndicator label="Loading Auxiliary" className="concurrent-chat-state" />
+            ) : concurrentChats.error ? (
+              <div className="concurrent-chat-state" role="alert">{concurrentChats.error}</div>
             ) : null}
           </div>
           {concurrentChats.target !== "auxiliary" && auxiliaryHasConversationContent ? (

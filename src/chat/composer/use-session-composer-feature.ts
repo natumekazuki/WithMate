@@ -517,7 +517,7 @@ export function useSessionComposerFeature(input: {
       submissionError: bridge.runtime.inputError,
       onSendInput: () => void bridge.operations.send.input?.(),
       onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
-      queueTurnBusy: bridge.runtime.queueTurnBusy || !!bridge.runtime.busyReason,
+      queueTurnBusy: bridge.runtime.queueTurnBusy,
       turnRecoveryAction: turnRecoveryActions[bridge.session.id],
       turnRecoveryError: turnRecoveryErrors[bridge.session.id],
       onCheckTurnReceipt: bridge.runtime.hasUncertainTurn ? () => void recoverTurn("check") : undefined,

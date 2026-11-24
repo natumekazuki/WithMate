@@ -921,7 +921,8 @@ export default function AgentSessionWindowApp() {
   const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId && !isActiveCancelRequested;
   const steeringError = activeRunSessionId && turnInput.errors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
     ? turnInput.errors[activeRunSessionId].message : "";
-  const composerBusyReason = activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId)
+  const isInputSubmissionPending = !!activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId);
+  const composerBusyReason = isInputSubmissionPending
     ? "Input submission is in progress."
     : hasPendingSubmitFor(activeRunSessionId)
     ? "Message submission is in progress."
@@ -2228,7 +2229,8 @@ export default function AgentSessionWindowApp() {
     runtime: {
       isRunning: renderedIsRunning || !!(activeAuxiliarySession ? auxiliaryStopTarget : mainStopTarget),
       canSendInput: !activeQueuedTurnEdit && canSendInput,
-      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : hasPendingSubmitFor(renderedSession.id),
+      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving"
+        : isInputSubmissionPending || hasPendingSubmitFor(renderedSession.id),
       hasUncertainTurn: hasUncertainTurnFor(renderedSession.id),
       inputError: activeQueuedTurnEdit?.error || steeringError
         || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
@@ -2551,7 +2553,7 @@ export default function AgentSessionWindowApp() {
   concurrentChats.captureMessageListSendRef = captureMessageListSendRef;
   concurrentChats.mainReadFeedback = mainSessionRuntime.readError
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
-    : !loadedSession ? <LoadingIndicator label="Loading conversation" /> : null;
+    : !loadedSession ? <LoadingIndicator className="concurrent-chat-state" label="Loading conversation" /> : null;
 
   return (
     <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
