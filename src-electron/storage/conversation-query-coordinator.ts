@@ -6,14 +6,14 @@ import {
   type ConversationSearchRequest, type ConversationNavigatorRequest,
   type ConversationSearchMatch, type ConversationNavigatorEntry,
 } from "../../src-shared/session/conversation-page.js";
-import type { ConversationQueryRow, ConversationQuerySnapshot, MessageTable } from "./conversation-query.js";
+import { CONVERSATION_QUERY_BATCH_SIZE, type ConversationQueryRow, type ConversationQuerySnapshot, type MessageTable } from "./conversation-query.js";
 import type { ConversationProjectionInput, ConversationProjectionResult } from "./conversation-projection-worker.js";
 
 type Item = ConversationSearchMatch | ConversationNavigatorEntry;
 type Query = ConversationProjectionInput["query"];
 export type ConversationQueryReader = {
   getConversationQuerySnapshot(id: string): ConversationQuerySnapshot | null;
-  readConversationQueryBatch(id: string, afterSeq: number, includeSpeakers?: boolean): ConversationQueryRow[];
+  readConversationQueryBatch(id: string, afterSeq: number, includeSpeakers?: boolean, messageIndexes?: readonly number[]): ConversationQueryRow[];
 };
 export type ScheduleConversationRead = <T>(read: () => T) => Promise<T>;
 type Producer = {
@@ -21,7 +21,8 @@ type Producer = {
   stamp?: ConversationQueryStamp; snapshot?: ConversationQuerySnapshot;
   invalidated: boolean; page?: ConversationQueryOutcome<Item>;
   anchor?: ConversationSearchAnchor;
-  scope?: Set<number>;
+  searchScope?: Set<number>;
+  navigatorIndexes?: readonly number[];
   scopeSignature?: string;
 };
 type Job = {
@@ -70,7 +71,8 @@ export class ConversationQueryCoordinator {
         this.producers.delete(idle);
       }
       producer = { table, id, requestId: request.requestId, query, invalidated: false,
-        scope: request.messageIndexes === undefined ? undefined : new Set(request.messageIndexes), scopeSignature,
+        searchScope: kind === "search" && request.messageIndexes !== undefined ? new Set(request.messageIndexes) : undefined,
+        navigatorIndexes: kind === "navigator" ? request.messageIndexes?.slice() : undefined, scopeSignature,
         anchor: kind === "search" ? (request as ConversationSearchRequest).anchor : undefined };
       this.producers.set(request.producerId, producer);
     }
@@ -191,15 +193,25 @@ export class ConversationQueryCoordinator {
     }
     if (producer.page?.status === "complete" && producer.page.offset === job.offset) return producer.page;
     let afterSeq = -1;
+    const indexes = producer.navigatorIndexes;
+    let scopeOffset = 0;
     let totalCount = 0;
     let anchorOrdinal: number | undefined;
     const items: Item[] = [];
-    while (!job.stopped && !(producer.query.kind === "search" && !producer.query.query.trim())) {
-      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq, producer.query.kind === "navigator"));
+    while (!job.stopped && (indexes === undefined || scopeOffset < indexes.length)
+      && !(producer.query.kind === "search" && !producer.query.query.trim())) {
+      const window = indexes?.slice(scopeOffset, scopeOffset + CONVERSATION_QUERY_BATCH_SIZE);
+      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq, producer.query.kind === "navigator", window));
       if (job.stopped) return { status: job.stopped };
-      if (!rows.length) break;
-      const selected = producer.scope ? rows.filter((row) => producer.scope!.has(row.seq)) : rows;
-      afterSeq = rows.at(-1)!.seq;
+      const last = rows.at(-1);
+      // The byte cap may split a window. A window with no more stored rows can be skipped.
+      if (window && (!last || last.seq === window.at(-1))) scopeOffset += window.length;
+      if (!last) {
+        if (!window) break;
+        continue;
+      }
+      afterSeq = last.seq;
+      const selected = producer.searchScope ? rows.filter((row) => producer.searchScope!.has(row.seq)) : rows;
       if (!selected.length) continue;
       const result = await this.project({ cacheScope: `${snapshot.ownerIdentity}:${producer.stamp.contentRevision}`,
         provider: snapshot.provider, rows: selected, query: producer.query, offset: job.offset, countBefore: totalCount, anchor: producer.anchor });

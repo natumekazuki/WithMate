@@ -669,6 +669,12 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     ON session_turn_queue_v6(session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_turn_queue_auxiliary_request
     ON session_turn_queue_v6(auxiliary_session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_main_message
+    ON session_turn_queue_v6(session_id, incarnation_id, user_message_seq)
+    WHERE auxiliary_session_id IS NULL AND user_message_seq IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_auxiliary_message
+    ON session_turn_queue_v6(auxiliary_session_id, incarnation_id, user_message_seq)
+    WHERE auxiliary_session_id IS NOT NULL AND user_message_seq IS NOT NULL;
 `;
 
 export const CREATE_V6_SCHEMA_SQL = [

@@ -22,7 +22,7 @@ import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts }
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import { FailedTurnRetryWithRead } from "./failed-turn-retry.js";
-import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputDetailsContent, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
+import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { ReplyQuote } from "./reply-quote.js";
@@ -1778,9 +1778,10 @@ export function SessionMessageColumn({
                             </section>
                           </div> : null}
 
-                          {hasExecutionDetails ? canRetryFailedTurn
-                            ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} read={read} hasRunChecks={!!visibleRunChecks.length} />
-                            : <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length} /> : null}
+                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}
+                            turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length}
+                            displayReadError={canRetryFailedTurn ? read.readError : undefined}
+                            onRetryDisplay={canRetryFailedTurn && read.readError ? () => read.setRevision((value) => value + 1) : undefined} /> : null}
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">

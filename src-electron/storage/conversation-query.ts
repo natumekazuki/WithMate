@@ -20,6 +20,7 @@ export type ConversationQuerySnapshot = {
   messageCount: number;
 };
 export type ConversationQueryRow = { seq: number; role: string; body: string; runFailure?: string | null; inputOriginJson?: string | null };
+export const CONVERSATION_QUERY_BATCH_SIZE = 32;
 
 export function conversationMessageColumns(table: MessageTable, db: DatabaseSync): string {
   // Auxiliary transcripts are also read during schema initialization, before minimal turns exist.
@@ -33,12 +34,16 @@ export function conversationMessageColumns(table: MessageTable, db: DatabaseSync
     ORDER BY t.id DESC LIMIT 1) AS runFailure`;
 }
 
-/** A cursor read ends synchronously; neither its statement nor a transaction crosses an await. */
-export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number, includeSpeakers = true): ConversationQueryRow[] {
+/** A synchronous cursor read. A scoped read receives at most one batch of canonical indexes. */
+export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable, id: string, afterSeq: number,
+  includeSpeakers = true, messageIndexes?: readonly number[]): ConversationQueryRow[] {
+  if (messageIndexes?.length === 0) return [];
   const owner = table === "session_messages_v6" ? "session_id" : "auxiliary_session_id";
+  const scope = messageIndexes === undefined ? "" : ` AND seq IN (${messageIndexes.map(() => "?").join(",")})`;
   const rows: ConversationQueryRow[] = [];
   let bytes = 0;
-  for (const raw of db.prepare(`SELECT ${conversationMessageColumns(table, db)} FROM ${table} WHERE ${owner} = ? AND seq > ? ORDER BY seq ASC LIMIT 32`).iterate(id, afterSeq)) {
+  for (const raw of db.prepare(`SELECT ${conversationMessageColumns(table, db)} FROM ${table}
+    WHERE ${owner} = ? AND seq > ?${scope} ORDER BY seq ASC LIMIT ${CONVERSATION_QUERY_BATCH_SIZE}`).iterate(id, afterSeq, ...(messageIndexes ?? []))) {
     const row = raw as ConversationQueryRow;
     const size = Buffer.byteLength(row.body, "utf8");
     if (rows.length && bytes + size > 256 * 1024) break;
@@ -46,18 +51,22 @@ export function readConversationQueryBatch(db: DatabaseSync, table: MessageTable
     bytes += size;
     if (bytes >= 256 * 1024) break;
   }
-  if (includeSpeakers && rows.some((row) => row.role === "user")) {
+  if (includeSpeakers) {
+    const userRows = rows.filter((row) => row.role === "user");
+    if (!userRows.length) return rows;
     const main = table === "session_messages_v6";
     const identity = main
       ? db.prepare("SELECT incarnation_id AS incarnation FROM sessions_v6 WHERE id = ?").get(id) as { incarnation: string | null } | undefined
       : db.prepare("SELECT created_at AS incarnation FROM auxiliary_sessions WHERE id = ?").get(id) as { incarnation: string | null } | undefined;
     const receipts = db.prepare(`SELECT user_message_seq AS seq, json_extract(COALESCE(dispatched_json, accepted_json), '$.origin') AS origin
       FROM session_turn_queue_v6 WHERE ${owner} = ? ${main ? "AND auxiliary_session_id IS NULL" : ""}
-        AND incarnation_id = ? AND user_message_seq BETWEEN ? AND ? ORDER BY sequence`).all(
-          id, identity?.incarnation?.trim() || `legacy:${id}`, rows[0].seq, rows[rows.length - 1].seq,
+        AND incarnation_id = ? AND user_message_seq IN (${userRows.map(() => "?").join(",")})
+        ORDER BY user_message_seq, sequence`).all(
+          id, identity?.incarnation?.trim() || `legacy:${id}`, ...userRows.map((row) => row.seq),
         ) as { seq: number; origin: string | null }[];
+    // If a seq was linked more than once, the last receipt still wins (even when its origin is null).
     const bySequence = new Map(receipts.map((receipt) => [receipt.seq, receipt.origin]));
-    for (const row of rows) if (bySequence.has(row.seq)) row.inputOriginJson = bySequence.get(row.seq) ?? null;
+    for (const row of userRows) if (bySequence.has(row.seq)) row.inputOriginJson = bySequence.get(row.seq) ?? null;
   }
   return rows;
 }

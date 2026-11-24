@@ -27,6 +27,11 @@ const attachments = (items: ComposerAttachment[]) => items.map(({ id, kind, disp
 const captured = (json: string | null) => json === null ? null : JSON.parse(json) as SessionTurnQueueCapturedInput;
 const publicInput = (value: SessionTurnQueueCapturedInput | null) => value ? { text: value.request.userMessage, attachments: attachments(value.attachments) } : null;
 const comparisonInput = (value: SessionTurnQueueCapturedInput | null) => value ? JSON.stringify([value.request.userMessage, value.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]) : null;
+function isInputUnchanged(acceptedJson: string | null, comparisonJson: string | null): boolean | null {
+  const accepted = comparisonInput(captured(acceptedJson));
+  const comparison = comparisonInput(captured(comparisonJson));
+  return accepted === null || comparison === null ? null : accepted === comparison;
+}
 const page = <T>(all: T[], offset = 0, limit = 32) => ({ items: all.slice(offset, offset + limit), total: all.length, offset, nextOffset: offset + limit < all.length ? offset + limit : null });
 
 function senderTheme(db: DatabaseSync, origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): { main: string; sub: string } | null {
@@ -62,6 +67,108 @@ function senderTheme(db: DatabaseSync, origin: SessionTurnQueueOrigin | SessionS
   return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
 }
 
+type TurnInputDisplayReference = { target: SessionTarget; receiptId?: string; turnId?: string; messageSeq?: number };
+type DisplayReceipt = Pick<Receipt, "id" | "state" | "turn_id" | "input_turn_id" | "user_message_seq"> & {
+  fixed: number;
+  origin_json: string | null;
+  theme_origin_json: string | null;
+  retry_source_json: string | null;
+  coordination_input_json: string | null;
+};
+type DisplayTurn = Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">;
+
+function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference: TurnInputDisplayReference): Result {
+  const mainTarget = target.kind === "main";
+  const table = mainTarget ? "session_messages_v6" : "auxiliary_session_messages";
+  const owner = mainTarget ? "session_id" : "auxiliary_session_id";
+  const targetRow = (mainTarget
+    ? db.prepare("SELECT incarnation_id FROM sessions_v6 WHERE id = ?")
+    : db.prepare(`SELECT a.created_at AS incarnation_id, a.parent_session_id, p.incarnation_id AS parent_incarnation
+        FROM auxiliary_sessions a JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
+        JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`)).get(target.sessionId) as
+    { incarnation_id: string; parent_session_id?: string; parent_incarnation?: string } | undefined;
+  if (!targetRow) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
+  const incarnation = mainTarget ? targetRow.incarnation_id?.trim() || `legacy:${target.sessionId}` : targetRow.incarnation_id;
+  if (incarnation !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
+  if (!mainTarget && (targetRow.parent_session_id !== target.mainSessionId
+    || (targetRow.parent_incarnation?.trim() || `legacy:${target.mainSessionId}`) !== target.mainIncarnationId)) {
+    return failure("EXECUTION_TARGET_REPLACED", "The Auxiliary parent identity does not match.");
+  }
+
+  const where = mainTarget ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
+  const receiptInput = "COALESCE(dispatched_json, captured_json)";
+  const readReceipts = (column: "id" | "user_message_seq", value: string | number) => db.prepare(`
+    SELECT id, state, turn_id, input_turn_id, user_message_seq, dispatched_json IS NOT NULL AS fixed,
+      COALESCE(json_extract(dispatched_json, '$.origin'), json_extract(accepted_json, '$.origin')) AS origin_json,
+      json_extract(COALESCE(dispatched_json, accepted_json, captured_json), '$.origin') AS theme_origin_json,
+      COALESCE(json_extract(dispatched_json, '$.retrySource'), json_extract(accepted_json, '$.retrySource')) AS retry_source_json,
+      CASE WHEN json_type(${receiptInput}, '$.coordination') = 'object' THEN ${receiptInput} END AS coordination_input_json
+    FROM session_turn_queue_v6 WHERE ${where} AND incarnation_id = ? AND ${column} = ? LIMIT 2`)
+    .all(target.sessionId, target.incarnationId, value) as DisplayReceipt[];
+  const turns = `SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${where}`;
+  const readTurn = (id: string | null | undefined) => id ? db.prepare(`${turns} AND id = ?`).get(target.sessionId, id) as DisplayTurn | undefined : undefined;
+  const readMessage = (seq: number) => db.prepare(`SELECT role, CASE WHEN role = 'user' THEN json_extract(body, '$.turnInput') END AS input_json
+    FROM ${table} WHERE ${owner} = ? AND seq = ?`).get(target.sessionId, seq) as { role: string; input_json: string | null } | undefined;
+
+  let receipt: DisplayReceipt | undefined;
+  let turn: DisplayTurn | undefined;
+  let directOrigin: SessionSteerOrigin | undefined;
+  let findStart = reference.turnId !== undefined;
+  if (reference.receiptId !== undefined) {
+    [receipt] = readReceipts("id", reference.receiptId);
+    if (!receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
+    turn = readTurn(receipt.turn_id);
+  } else if (reference.messageSeq !== undefined) {
+    const message = readMessage(reference.messageSeq);
+    if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
+    if (message.role !== "user" && message.role !== "assistant") throw new Error("Invalid saved execution message.");
+    const input = message.input_json === null ? undefined : normalizeMessage({ role: message.role, turnInput: JSON.parse(message.input_json) })?.turnInput;
+    if (!input?.queueId) directOrigin = input?.origin;
+    const matching = readReceipts("user_message_seq", reference.messageSeq);
+    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    [receipt] = matching;
+    if (receipt || input) turn = readTurn(receipt ? receipt.turn_id : input?.turnId);
+    else {
+      const matchingTurns = db.prepare(`${turns} AND (user_message_seq = ? OR assistant_message_seq = ?) LIMIT 2`).all(target.sessionId, reference.messageSeq, reference.messageSeq) as DisplayTurn[];
+      if (matchingTurns.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous Turn linkage.");
+      [turn] = matchingTurns;
+    }
+    if (!receipt && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has no recorded execution linkage.");
+    findStart = message.role === "assistant";
+  } else {
+    turn = readTurn(reference.turnId);
+    if (!turn) return failure("EXECUTION_NOT_FOUND", "The Turn does not belong to this target.");
+  }
+  // The Resend control follows the same response-to-start lookup as Details.
+  if (findStart && !receipt && turn?.user_message_seq != null) {
+    if (readMessage(turn.user_message_seq)?.role !== "user") return failure("EXECUTION_LINK_UNAVAILABLE", "The saved Turn has no exact start input.");
+    const matching = readReceipts("user_message_seq", turn.user_message_seq);
+    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    [receipt] = matching;
+    if (receipt && receipt.turn_id !== String(turn.id)) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
+  }
+  if (receipt?.turn_id && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
+  if (receipt && turn && receipt.input_turn_id === null && receipt.user_message_seq !== null && receipt.user_message_seq !== turn.user_message_seq) {
+    return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's start input does not match its saved Turn.");
+  }
+  const origin = directOrigin ?? (receipt?.origin_json ? JSON.parse(receipt.origin_json) as SessionTurnQueueOrigin : null);
+  const themeOrigin = directOrigin ?? (receipt?.theme_origin_json ? JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin : null);
+  const coordinationInput = captured(receipt?.coordination_input_json ?? null);
+  const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) : null;
+  // Only this already-resolved Retry receipt needs complete snapshots for comparison.
+  // The receipt and snapshots are read in the same transaction.
+  const retryInput = receipt && retrySource ? db.prepare(`
+    SELECT accepted_json, COALESCE(dispatched_json, captured_json) AS comparison_json
+    FROM session_turn_queue_v6 WHERE id = ?`).get(receipt.id) as
+    { accepted_json: string | null; comparison_json: string | null } | undefined : undefined;
+  return { ok: true, origin, senderTheme: senderTheme(db, themeOrigin),
+    retrySource, retryInputUnchanged: retryInput ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json) : null,
+    ...(coordinationInput?.coordination ? { coordination: { id: coordinationInput.coordination.id, text: coordinationDeliveryText(coordinationInput), consultation: readCoordinationNotification(coordinationInput)?.consultation } } : {}),
+    receiptId: receipt?.id ?? null, receiptState: receipt?.state ?? null, turnId: turn ? String(turn.id) : null, turnState: turn?.phase ?? null,
+    isFixedStart: !!receipt?.fixed && receipt.input_turn_id === null,
+  };
+}
+
 /** Synchronous snapshot on the existing DB. No execution state or output copies are owned here. */
 export class SessionExecutionReadStorage {
   private readonly db: DatabaseSync;
@@ -86,6 +193,7 @@ export class SessionExecutionReadStorage {
   }
 
   private read(target: SessionTarget, operation: ExecutionReadInput["operation"], request: ExecutionReadInput["request"]): Result {
+    if (operation === "read_turn_input_display") return readTurnInputDisplay(this.db, target, request);
     const table = target.kind === "main" ? "session_messages_v6" : "auxiliary_session_messages";
     const owner = target.kind === "main" ? "session_id" : "auxiliary_session_id";
     const snapshot = readConversationQuerySnapshot(this.db, table, target.sessionId);
@@ -211,8 +319,7 @@ export class SessionExecutionReadStorage {
     const getTurn = (id: string | null) => id ? this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`).get(target.sessionId, id) as Turn | undefined : undefined;
     const hasAssistant = (turn: Turn) => turn.assistant_message_seq !== null && Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${owner} = ? AND seq = ? AND role = 'assistant'`).get(target.sessionId, turn.assistant_message_seq));
     const inputSummary = (entry: Receipt | undefined, turn: Turn | undefined) => {
-      const entryOriginal = entry ? comparisonInput(captured(entry.accepted_json)) : null;
-      const entryComparison = entry ? comparisonInput(captured(entry.dispatched_json ?? entry.captured_json)) : null;
+      const entryUnchanged = entry ? isInputUnchanged(entry.accepted_json, entry.dispatched_json ?? entry.captured_json) : null;
       const linked = turn ? this.db.prepare(`SELECT seq, role, json_remove(body, '$.text') AS body, withmate_execution_utf16_length(json_extract(body, '$.text')) AS text_chars FROM ${table} WHERE ${owner} = ? AND role = 'user' AND json_extract(body, '$.turnInput.turnId') = ? ORDER BY seq`).all(target.sessionId, String(turn.id)) as SavedMessage[] : [];
       const records = linked.map((row) => ({ seq: row.seq, textChars: row.text_chars ?? 0, message: normalizeMessage({ ...JSON.parse(row.body), role: row.role })! }));
       const confirmed = records.filter((row) => row.message.turnInput?.state === "confirmed");
@@ -227,7 +334,7 @@ export class SessionExecutionReadStorage {
         records, confirmed, unresolvedReferences, notSent,
         summary: {
           entry: entry ? { receiptId: entry.id, inputSeq: entry.user_message_seq, kind: entry.input_turn_id === null ? "start" : "additional", stage: entry.dispatched_json !== null ? "fixed" : entry.state === "queued" ? "planned" : "not-fixed",
-            comparison: entryOriginal !== null && entryComparison !== null ? entryOriginal === entryComparison ? "unchanged" : "changed" : "unknown", detail: { operation: "get_execution_input", receiptId: entry.id } } : null,
+            comparison: entryUnchanged === null ? "unknown" : entryUnchanged ? "unchanged" : "changed", detail: { operation: "get_execution_input", receiptId: entry.id } } : null,
           startChanged: startOriginal !== null && startFixed !== null ? startOriginal !== startFixed : null,
           additional: { confirmedCount: confirmed.length, references: confirmed.slice(0, 100).map(({ seq }) => ({ seq })), referencesNextOffset: confirmed.length > 100 ? 101 : null, unresolved: unresolvedReferences.slice(0, 100), unresolvedCount: unresolvedReferences.length, unresolvedNextOffset: unresolvedReferences.length > 100 ? 100 : null, notSent: notSent.slice(0, 100).map(({ seq }) => ({ seq })), notSentCount: notSent.length, notSentNextOffset: notSent.length > 100 ? 100 : null, coverage: start?.accepted_json ? "recorded" : "unknown" },
         },

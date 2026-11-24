@@ -266,7 +266,7 @@ export class SessionPersistenceService {
     if (!session) throw new SessionNotFoundError(sessionId);
     this.syncStoredSession(session);
     this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(session)));
-    this.deps.broadcastSessions([sessionId]);
+    this.deps.broadcastSessions(session.parentSessionId ? [sessionId, session.parentSessionId] : [sessionId]);
     return session;
   }
 

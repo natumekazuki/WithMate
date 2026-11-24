@@ -22,7 +22,7 @@ export function FailedTurnRetryWithRead({ message, context, turnId, dock = false
   const [error, setError] = useState("");
   const execution = read.observed;
   const available = execution?.turnState === "failed" && execution.receiptState === "failed"
-    && execution.inputs.entry?.kind === "start" && execution.inputs.entry.stage === "fixed"
+    && execution.isFixedStart
     && !!execution.turnId && (!turnId || execution.turnId === turnId) && !!execution.receiptId && !!execution.origin;
   if (!retry) return null;
   if (!dock && execution?.turnId && retry.dockTurn?.sessionId === context.target.sessionId && retry.dockTurn.turnId === execution.turnId) return null;

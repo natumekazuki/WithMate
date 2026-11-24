@@ -6,8 +6,8 @@ import { JSDOM } from "jsdom";
 import { FailedTurnRetry, FailedTurnRetryWithRead } from "../../src/chat/conversation/failed-turn-retry.js";
 import { FailedTurnRetryContext } from "../../src/chat/runtime/failed-turn-retry-context.js";
 import { SessionRecoveryActions } from "../../src/chat/runtime/session-recovery-actions.js";
-import { TurnExecutionDetails, TurnInputDetailsContent, TurnInputReadBoundary } from "../../src/chat/conversation/turn-input-details.js";
-import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
+import { TurnExecutionDetails, TurnInputReadBoundary } from "../../src/chat/conversation/turn-input-details.js";
+import { executionOperationResultSchemas, executionWindowResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { RetryFailedSessionTurnRequest, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 // @test-value v2
@@ -37,9 +37,18 @@ test("failed message resends its saved Turn once and reports edited input", asyn
   const execution = () => executionOperationResultSchemas.get_execution.parse({ ok: true, origin: retried ? guiOrigin : origin, retrySource: retried ? { receiptId: "original", turnId: "40", origin, changedSinceAcceptance: true } : null, receiptId: "source", receiptState: turnState, turnId: "42", turnState, resultState: "partial", userMessageSeq: 4, assistantMessageSeq: 5,
     inputs: { entry: { receiptId: "source", inputSeq: 4, kind: "start", stage: "fixed", comparison: retried ? "unchanged" : "changed", detail: { operation: "get_execution_input", receiptId: "source" } }, startChanged: !retried,
       additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null });
+  const display = (id = "42") => executionWindowResultSchemas.read_turn_input_display.parse({
+    ok: true, origin, receiptId: "source", receiptState: turnState, turnId: id, turnState, isFixedStart: true, senderTheme: null, retryInputUnchanged: null,
+  });
   const reads: unknown[] = [];
   let dockReadFails = false;
-  Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, _operation: string, request: { turnId?: string }) => { reads.push(request); if (dockReadFails && request.turnId) throw new Error("Fixture read unavailable"); return { ...execution(), turnId: request.turnId ?? "42" }; } } });
+  Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: { turnId?: string }) => {
+    reads.push(request);
+    if (operation === "get_execution") return execution();
+    assert.equal(operation, "read_turn_input_display");
+    if (dockReadFails && request.turnId) throw new Error("Fixture read unavailable");
+    return display(request.turnId);
+  } } });
   const sent: Array<Omit<RetryFailedSessionTurnRequest, "executionOptions">> = [];
   let finish: (() => void) | undefined;
   let submissionError = "";
@@ -99,12 +108,19 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     retried = false;
     await act(async () => root.render(<></>));
     let failHistoryRead = true;
-    Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async () => { if (failHistoryRead) throw new Error("History read unavailable"); return execution(); } } });
+    Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string) => {
+      if (operation === "read_turn_input_display") {
+        if (failHistoryRead) throw new Error("History read unavailable");
+        return display();
+      }
+      return execution();
+    } } });
     await act(async () => root.render(<FailedTurnRetryContext.Provider value={context}><TurnInputReadBoundary message={message} context={readContext}>{(read) => <>
       <FailedTurnRetryWithRead message={message} context={readContext} read={read} />
-      <TurnInputDetailsContent message={message} read={read} />
+      <TurnExecutionDetails message={message} context={readContext} displayReadError={read.readError} onRetryDisplay={() => read.setRevision((value) => value + 1)} />
     </>}</TurnInputReadBoundary></FailedTurnRetryContext.Provider>));
     assert.equal(dom.window.document.querySelector('button[aria-label="Main: Resend Failed Turn"]'), null);
+    assert.match(dom.window.document.body.textContent!, /Edited before this Turn started/);
     assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /History read unavailable/);
     failHistoryRead = false;
     await act(async () => [...dom.window.document.querySelectorAll("button")].find((item) => item.textContent === "Retry Input Details")!.click());

@@ -31,7 +31,12 @@ export const executionOperationRequestSchemas = {
 } as const;
 export type ExecutionReadOperation = keyof typeof executionOperationRequestSchemas;
 export type ExecutionReadRequest = z.infer<typeof executionOperationRequestSchemas[ExecutionReadOperation]>;
-export const executionWindowRequestSchemas = { ...executionOperationRequestSchemas, read_conversation_threads: conversationThreadsRequestSchema };
+export const executionWindowRequestSchemas = {
+  ...executionOperationRequestSchemas,
+  read_conversation_threads: conversationThreadsRequestSchema,
+  /** GUI-only display of one exact saved input, without reading execution details. */
+  read_turn_input_display: executionOperationRequestSchemas.get_execution,
+};
 export type ExecutionWindowReadOperation = keyof typeof executionWindowRequestSchemas;
 export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionWindowReadOperation; request: ExecutionReadRequest | z.infer<typeof conversationThreadsRequestSchema> };
 const nullableId = z.string().nullable();
@@ -74,7 +79,23 @@ export const executionOperationResultSchemas = {
     description.extend({ ...ok, seq: z.number(), kind: z.literal("changed_file"), index: z.number(), rows: z.array(z.unknown()), offset: z.number(), nextOffset: z.number().nullable(), totalRows: z.number() }).passthrough(),
   ]),
 } as const;
-export const executionWindowResultSchemas = { ...executionOperationResultSchemas, read_conversation_threads: conversationThreadsResultSchema };
+export const executionWindowResultSchemas = {
+  ...executionOperationResultSchemas,
+  read_conversation_threads: conversationThreadsResultSchema,
+  read_turn_input_display: z.object({
+    ...ok,
+    origin: z.union([origin, steerOrigin]).nullable(),
+    retrySource: description.shape.retrySource,
+    retryInputUnchanged: z.boolean().nullable(),
+    senderTheme: z.object({ main: z.string(), sub: z.string() }).nullable(),
+    coordination: coordinationDisplay.optional(),
+    receiptId: nullableId,
+    receiptState: nullableId,
+    turnId: nullableId,
+    turnState: nullableId,
+    isFixedStart: z.boolean(),
+  }),
+};
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
   list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
   list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
