@@ -31,9 +31,10 @@ function readCoordinationStartSeq(db: DatabaseSync, source: MainTarget, record: 
 }
 
 /** Seed the waiting receipt from the same saved affiliation as its immutable start. */
-export function readMainCoordinationFrame(db: DatabaseSync, source: MainTarget, record: CoordinationOrigin | undefined): MainTarget | null {
+export function readMainCoordinationFrame(db: DatabaseSync, source: MainTarget, record: CoordinationOrigin | undefined,
+  readThreads: () => ConversationThreads = () => readConversationThreads(db, source)): MainTarget | null {
   const seq = readCoordinationStartSeq(db, source, record);
-  return seq === undefined ? null : savedMessageConversationFrame(readConversationThreads(db, source), seq) ?? null;
+  return seq === undefined ? null : savedMessageConversationFrame(readThreads(), seq) ?? null;
 }
 
 export function readConversationCoordinationOrigin(db: DatabaseSync, id: string): CoordinationOrigin | undefined {

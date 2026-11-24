@@ -7,7 +7,8 @@ import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
 import { assertSessionLifecycleReady } from "./session-lifecycle-operation.js";
 import { assertCoordinationInputTurn, coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
-import { readConversationCoordinationOrigin, readMainCoordinationFrame } from "../storage/conversation-threads.js";
+import type { ConversationThreads } from "../../src-shared/session/conversation-threads.js";
+import { readConversationCoordinationOrigin, readConversationThreads, readMainCoordinationFrame } from "../storage/conversation-threads.js";
 
 type QueueRow = {
   id: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; request_id: string; sequence: number;
@@ -134,21 +135,24 @@ export class SessionTurnQueueStorageV6 {
   }
 
   listActive(owner: SessionTurnQueueOwner): SessionTurnQueueReceipt[] {
+    let threads: ConversationThreads | undefined;
+    const readThreads = () => threads ??= readConversationThreads(this.db, { ...owner, kind: "main" });
     return this.withOwner(owner, () => (this.db.prepare(`SELECT * FROM session_turn_queue_v6
       WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ? AND state IN ('queued', 'starting', 'running', 'failed', 'interrupted') ORDER BY queue_position, sequence`)
       .all(owner.sessionId, owner.incarnationId) as QueueRow[]).map((row) => {
         const receipt = this.toReceipt(row);
-        return { ...receipt, captured: this.withLegacyCoordinationFrame(owner, receipt.captured) };
+        return { ...receipt, captured: this.withLegacyCoordinationFrame(owner, receipt.captured, readThreads) };
       }));
   }
 
-  private withLegacyCoordinationFrame(owner: SessionTurnQueueOwner, input: SessionTurnQueueCapturedInput): SessionTurnQueueCapturedInput {
+  private withLegacyCoordinationFrame(owner: SessionTurnQueueOwner, input: SessionTurnQueueCapturedInput,
+    readThreads?: () => ConversationThreads): SessionTurnQueueCapturedInput {
     const { coordination, origin, request } = input;
     if (request.mainConversationFrame !== undefined || coordination?.targetKind !== "main"
       || coordination.operation !== "answer" || coordination.actor.kind !== "user"
       || origin?.kind !== "gui" || origin.targetSessionId !== owner.sessionId || origin.targetIncarnationId !== owner.incarnationId) return input;
     const record = readConversationCoordinationOrigin(this.db, coordination.id);
-    const mainConversationFrame = readMainCoordinationFrame(this.db, { ...owner, kind: "main" }, record);
+    const mainConversationFrame = readMainCoordinationFrame(this.db, { ...owner, kind: "main" }, record, readThreads);
     return { ...input, request: { ...request, mainConversationFrame } };
   }
 
