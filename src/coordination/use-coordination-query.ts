@@ -3,14 +3,28 @@ import type {
   CoordinationRequest,
   CoordinationResult,
 } from "../../src-shared/coordination/coordination-contract.js";
+import type { CoordinationDeletedResult, CoordinationStatus } from "../../src-shared/coordination/coordination-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
+type StatusQuery = { operation: "status"; id: string };
+const readDetails = (api: NonNullable<ReturnType<typeof getWithMateApi>>, request: CoordinationRequest) => api.executeCoordination(request);
+const readStatus = (api: NonNullable<ReturnType<typeof getWithMateApi>>, { id }: StatusQuery) => api.getCoordinationStatus({ id });
+
+export function useCoordinationQuery(request: CoordinationRequest | null, enabled = true) {
+  return useCoordinationRead<CoordinationRequest, CoordinationResult>(request, enabled, readDetails);
+}
+
+export function useCoordinationStatus(id: string, enabled: boolean) {
+  return useCoordinationRead<StatusQuery, CoordinationStatus>({ operation: "status", id }, enabled, readStatus);
+}
+
 /** The query generation, not arrival order, owns the visible snapshot. */
-export function useCoordinationQuery(
-  request: CoordinationRequest | null,
-  enabled = true,
+function useCoordinationRead<Request extends CoordinationRequest | StatusQuery, Result extends CoordinationResult | CoordinationStatus>(
+  request: Request | null,
+  enabled: boolean,
+  read: (api: NonNullable<ReturnType<typeof getWithMateApi>>, request: Request) => Promise<Result | CoordinationDeletedResult>,
 ) {
-  const [result, setResult] = useState<CoordinationResult | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [resultKey, setResultKey] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -55,8 +69,7 @@ export function useCoordinationQuery(
     }
     const current = ++generation.current;
     setLoading(true);
-    void api
-      .executeCoordination(request)
+    void read(api, request)
       .then((next) => {
         if (generation.current === current) {
           if ("error" in next) {
@@ -83,11 +96,11 @@ export function useCoordinationQuery(
       generation.current += 1;
     };
     // The serialized validated request is the query identity.
-  }, [key, enabled, retry, markDeleted]);
+  }, [key, enabled, retry, markDeleted, read]);
   useEffect(() => {
     if (!enabled || !request) return;
     return getWithMateApi()?.subscribeCoordinationChanged((summary) => {
-      if (request.operation === "get" && summary.id !== request.id) return;
+      if ((request.operation === "get" || request.operation === "status") && summary.id !== request.id) return;
       if (
         request.operation === "list" &&
         request.crewRootSessionId &&

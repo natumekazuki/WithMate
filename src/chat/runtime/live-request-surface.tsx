@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
+import { isValidCodexElicitationField } from "../../../src-shared/session/codex-elicitation-validation.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import { ComposerIcon } from "../composer/composer-icon.js";
 import { QuestionAnswerEditor } from "./question-answer-editor.js";
@@ -160,6 +161,22 @@ function buildLiveElicitationResponseContent(
   return Object.fromEntries(entries);
 }
 
+function codexFormFieldError(field: LiveElicitationField, value: LiveElicitationFieldValue | undefined): string | null {
+  if (isValidCodexElicitationField(field, value)) return null;
+  if (value === undefined) return `${field.title} is required.`;
+  if (field.type === "text" && typeof value === "string") {
+    if (field.required && !value.trim()) return `${field.title} is required.`;
+    const length = [...value].length;
+    if (field.minLength !== undefined && length < field.minLength) return `${field.title} must be at least ${field.minLength} characters.`;
+    if (field.maxLength !== undefined && length > field.maxLength) return `${field.title} must be at most ${field.maxLength} characters.`;
+    if (field.format === "date-time") return `Enter ${field.title} as an ISO date and time with a time zone (Z or +09:00).`;
+    if (field.format === "date") return `Enter a valid date (YYYY-MM-DD) for ${field.title}.`;
+    if (field.format === "email") return `Enter a valid email address for ${field.title}.`;
+    if (field.format === "uri") return `Enter a valid URI for ${field.title}.`;
+  }
+  return validateLiveElicitationField(field, value) ?? `Enter a valid answer for ${field.title}.`;
+}
+
 function liveElicitationTextValue(value: LiveElicitationFieldValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
@@ -254,8 +271,12 @@ function LiveElicitationCard({
       for (const field of request.fields) {
         if (field.type === "select" && field.allowFreeText && customFields.includes(field.name)) answers[field.name] = freeTextValues[field.name] ?? "";
       }
+      const content = buildLiveElicitationResponseContent(request, answers);
+      const codexForm = request.provider === "codex" && request.kind !== "question";
       for (const field of request.fields) {
-        const validation = validateLiveElicitationField(field, answers[field.name] ?? "");
+        const validation = codexForm
+          ? codexFormFieldError(field, Object.hasOwn(content, field.name) ? content[field.name] : undefined)
+          : validateLiveElicitationField(field, answers[field.name] ?? "");
         if (validation) {
           setValidationMessage(validation);
           return;
@@ -263,7 +284,6 @@ function LiveElicitationCard({
       }
 
       setValidationMessage(null);
-      const content = buildLiveElicitationResponseContent(request, answers);
       const answerEntries: Array<[string, { selected: number[]; text: string[] }]> = [];
       if (request.kind === "question") for (const field of request.fields) {
         if (field.type === "text" && !field.secret && typeof content[field.name] === "string") {

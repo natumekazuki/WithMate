@@ -5,10 +5,10 @@ import path from "node:path";
 import { describe, it, mock } from "node:test";
 
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { CancelSessionRunRequest, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -25,6 +25,7 @@ import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixt
 import {
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
+  stopWindowSessionRun,
 } from "../../src-electron/session/session-runtime-service.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
@@ -44,6 +45,11 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import { registerSessionRuntimeHandlers } from "../../src-electron/ipc/session-runtime.js";
+import { registerAuxiliaryHandlers } from "../../src-electron/ipc/auxiliary.js";
+import type { IpcHandleRegistrar, MainIpcAuxiliaryDeps, MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts.js";
+import { WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, WITHMATE_CANCEL_SESSION_RUN_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -181,6 +187,132 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     ...overrides,
   });
 }
+
+function createWindowCancelFixture(kind: "main" | "auxiliary", session: Session, runtime: ProductionSessionRuntimeService,
+  queue: Pick<SessionTurnQueueService, "stopClaim">, options: { authorize: () => boolean; lookup?: () => Promise<void>; onApply: () => void }) {
+  const handlers = new Map<string, Parameters<IpcHandleRegistrar["handle"]>[1]>();
+  const ipc: IpcHandleRegistrar = { handle: (channel, listener) => { handlers.set(channel, listener); } };
+  const event = {} as Parameters<Parameters<IpcHandleRegistrar["handle"]>[1]>[0];
+  const window = {} as NonNullable<ReturnType<MainIpcAuxiliaryDeps["resolveEventWindow"]>>;
+  const otherWindow = {} as typeof window;
+  const unused = () => { throw new Error("Unrelated IPC fixture dependency"); };
+  const windowDeps = { resolveEventWindow: () => options.authorize() ? window : otherWindow, resolveSessionWindow: (id: string) => id === "main" ? window : null };
+  const stop = (request: CancelSessionRunRequest, authorize: () => void) => stopWindowSessionRun(request, runtime, queue, authorize, options.onApply);
+  if (kind === "main") {
+    // The registrar captures unrelated handlers without invoking their dependencies.
+    registerSessionRuntimeHandlers(ipc, { ...windowDeps, cancelSessionRun: stop } as unknown as MainIpcSessionRuntimeDeps);
+  } else {
+    registerAuxiliaryHandlers(ipc, {
+      ...windowDeps,
+      getAuxiliarySession: async (id: string) => {
+        assert.equal(id, session.id);
+        await options.lookup?.();
+        return { id, parentSessionId: "main", createdAt: getSessionIncarnationId(session) } as NonNullable<Awaited<ReturnType<NonNullable<MainIpcAuxiliaryDeps["getAuxiliarySession"]>>>>;
+      },
+      listAuxiliarySessions: unused, listOpenAuxiliarySessionSummaries: unused, getLatestAuxiliarySession: unused,
+      createAuxiliarySession: unused, updateAuxiliarySession: unused, runAuxiliarySessionTurn: unused,
+      getAuxiliaryDraft: unused, saveAuxiliaryDraft: unused, getAuxiliarySessionStatus: unused,
+      cancelAuxiliarySessionRun: stop,
+    });
+  }
+  const invoke = handlers.get(kind === "main" ? WITHMATE_CANCEL_SESSION_RUN_CHANNEL : WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)!;
+  return async (request: CancelSessionRunRequest) => invoke(event, request);
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Aに対する古いGUI Cancelは、同じSessionで後から開始したBの実行・承認・質問を取り消さない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975 — 項目4と受入条件" }
+// fault = "Main runtimeのSession読取待ち、またはAuxの所有Window照合待ちの後で対象TurnをSession内の最新実行へ付け替える"
+// observable = "BのAbortSignal、live Turn IDと取消状態、承認・質問の要求ID、Providerが受け取る個別決定、Bの保存本文と承認reviewの入力fence"
+// observation_boundary = "consumer"
+// scope = "Main/Aux GUI Cancel IPCから本番Session runtimeとProvider callbackまで"
+// lifecycle = "permanent"
+// distinction = "runtimeの親子exact stop単体検査ではGUI IPCが操作時の対象を捨てる欠陥を検出できない"
+// @end-test-value
+it("GUI Cancel IPC leaves the next Main and Auxiliary turns and their requests intact", async () => {
+  const results: unknown[] = [];
+  for (const kind of ["main", "auxiliary"] as const) {
+    const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+    const { promise: endA, resolve: finishA } = queueGate();
+    const { promise: ownerGate, resolve: resumeOwnerCheck } = queueGate();
+    let stored = session;
+    let pauseMainLookup = false;
+    let turnNumber = 0;
+    let live: LiveSessionRunState | null = null;
+    let bSignal: AbortSignal | undefined;
+    const updateLiveSessionRun = (_id: string, recipe: (state: LiveSessionRunState) => LiveSessionRunState) => live = live ? recipe(live) : null;
+    const approvals = new SessionApprovalService({ updateLiveSessionRun });
+    const questions = new SessionElicitationService({ updateLiveSessionRun });
+    const decisions: unknown[] = [];
+    const runtime = createProgressRuntime(session, async (input) => {
+      if (turnNumber === 1) {
+        await endA;
+        return createPartialResult({ assistantText: "A completed" });
+      }
+      bSignal = input.signal;
+      decisions.push(...await Promise.all([
+        input.onApprovalRequest!({ requestId: "approval-B", provider: "codex", kind: "shell", title: "Approval", summary: "B", decisionMode: "direct-decision" }),
+        input.onElicitationRequest!({ requestId: "question-B", provider: "codex", mode: "form", message: "B", fields: [] }),
+      ]));
+      return createPartialResult({ assistantText: "B completed" });
+    }, {
+      getSession: async () => {
+        if (pauseMainLookup) {
+          pauseMainLookup = false;
+          await ownerGate;
+        }
+        return stored;
+      },
+      upsertSession: (next) => stored = next,
+      createSessionTurn: (input) => ({ ...input, id: ++turnNumber }),
+      setLiveSessionRun: (_id, state) => { live = state; },
+      getLiveSessionRun: () => live,
+      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+      waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+      resolvePendingApprovalRequest: (id) => approvals.cancelSession(id),
+      resolvePendingElicitationRequest: (id) => questions.cancelSession(id),
+    });
+    const fence = new ApprovalReviewInputFence();
+    const stop = createWindowCancelFixture(kind, session, runtime, { stopClaim: async () => assert.fail("Unexpected receipt stop") }, {
+      authorize: () => true, lookup: () => ownerGate, onApply: () => fence.invalidate(),
+    });
+    const request = { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" };
+    const currentLive = (): LiveSessionRunState | null => live;
+    const a = runtime.runSessionTurn(session.id, request);
+    try {
+      await waitForCondition(() => currentLive()?.sessionTurnId === "1", "A has started");
+      const aStop: CancelSessionRunRequest = { sessionId: session.id, incarnationId: getSessionIncarnationId(session), execution: { kind: "turn", id: currentLive()!.sessionTurnId! } };
+      // Main waits on the exact runtime stop's Session read; Aux waits earlier
+      // on the owning Window lookup in its registered IPC handler.
+      pauseMainLookup = kind === "main";
+      const stale = stop(aStop);
+      finishA();
+      assert.equal((await a).messages.at(-1)?.text, "A completed");
+      const b = runtime.runSessionTurn(session.id, request);
+      await waitForCondition(() => !!currentLive()?.approvalRequest && !!currentLive()?.elicitationRequest, "B awaits both decisions");
+      const reviewCurrent = fence.capture();
+      resumeOwnerCheck();
+      await stale;
+      const preserved = [bSignal?.aborted, currentLive()?.sessionTurnId, currentLive()?.cancellationState,
+        currentLive()?.approvalRequest?.requestId, currentLive()?.elicitationRequest?.requestId, reviewCurrent()];
+      if (!bSignal?.aborted) {
+        approvals.resolveLiveApproval(session.id, "approval-B", "approve");
+        await questions.resolveLiveElicitation(session.id, "question-B", { action: "decline" });
+      }
+      const completed = await b;
+      results.push({ kind, preserved, decisions, text: completed.messages.at(-1)?.text });
+    } finally {
+      finishA();
+      resumeOwnerCheck();
+      runtime.cancelAllRuns();
+      await runtime.waitForPendingRuns();
+    }
+  }
+  assert.deepEqual(results, ["main", "auxiliary"].map((kind) => ({
+    kind, preserved: [false, "2", undefined, "approval-B", "question-B", true], decisions: ["approve", { action: "decline" }], text: "B completed",
+  })));
+});
 
 // @test-value v2
 // kind = "contract"
@@ -364,6 +496,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     appendRunningInput: deps.appendRunningInput ?? ((session: Session) => deps.upsertSession(session)),
     checkpointRuntimeMetadata: deps.checkpointRuntimeMetadata ?? ((session: Session) => deps.upsertSession(session)),
     appendTerminalSession: deps.appendTerminalSession ?? ((session: Session) => deps.upsertSession(session)),
+    beginSourceDisplayTurn: deps.beginSourceDisplayTurn,
   };
   const owner = { assertActive() {}, isActive: () => true };
   const admission = { runSessionAdmissionExclusive: async <T>(_id: string, operation: () => T | Promise<T>): Promise<T> => operation() };
@@ -424,6 +557,170 @@ function queueGate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ世代のMain/Aux Cancelは開始claimから確定Turnまで同じ実行を取り消し、別Window・別世代・別receiptでは実行も審査も変更しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975 — 項目4と受入条件; docs/design/session-run-lifecycle.md#session-run-cancel" }
+// fault = "Turn IDのないclaimを止められない、実行へpromoteした同じreceiptを見失う、または別Windowや別世代の要求を適用する"
+// observable = "受付時のstartingとnull Turn ID、所有違反、入力fence、live取消待ち、Providerの呼出し・AbortSignal、receipt/Turnの終端"
+// observation_boundary = "public-boundary"
+// scope = "Main/Aux本番Cancel IPC・queue claim・runtime admission・Provider実行"
+// lifecycle = "permanent"
+// distinction = "旧StopのA→B競合とは別に、正当なclaim取消のruntime前・admission・開始保存中・同一receipt確定後と通常Turn取消を、保存境界のgateで検証する"
+// @end-test-value
+it("GUI Cancel IPC accepts only the owned starting receipt or current Turn", async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const phase of ["claim", "admission", "atomic", "promoted", "running"] as const) {
+    const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+    const receipt = queuedReceipt(session);
+    const { sessionId, incarnationId } = receipt;
+    const request: CancelSessionRunRequest = { sessionId, incarnationId, execution: { kind: "receipt", id: receipt.id } };
+    const dispatch = queueGate();
+    const admission = queueGate();
+    const atomic = queueGate();
+    const lookup = queueGate();
+    let waitedForAdmission = false;
+    let waitForPromotion = false;
+    let authorized = true;
+    let revokeAfterFirstCheck = false;
+    let live: LiveSessionRunState | null = null;
+    let signal: AbortSignal | undefined;
+    let phaseSaved: string | undefined;
+    let atomicStarts = 0;
+    let state = receipt.state;
+    const readLive = () => live;
+    const runtime = createProgressRuntime(session, async (input) => {
+      const currentSignal = input.signal;
+      assert.ok(currentSignal);
+      signal = currentSignal;
+      if (!currentSignal.aborted) await new Promise<void>((resolve) => currentSignal.addEventListener("abort", () => resolve(), { once: true }));
+      throw new ProviderTurnError("canceled", createPartialResult(), true);
+    }, {
+      runSessionAdmissionExclusive: async (_id, operation) => {
+        waitedForAdmission = true;
+        if (phase === "admission") await admission.promise;
+        return operation();
+      },
+      setLiveSessionRun: (_id, value) => { live = value; },
+      getLiveSessionRun: readLive,
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: async (next, _, id, turn) => {
+        assert.equal(id, receipt.id);
+        atomicStarts++;
+        if (phase === "atomic") await atomic.promise;
+        return { session: next, turn: { ...turn, id: 41 } };
+      },
+      appendTerminalSession: async (next, terminal) => { phaseSaved = terminal.phase; return next; },
+    });
+    const unused = () => { throw new Error("Unrelated queue storage operation"); };
+    const store: SessionTurnQueueStore = {
+      admit: async () => ({ receipt, claimed: receipt }),
+      claimNext: async () => null,
+      markStarted: async (_owner, id, start) => {
+        assert.equal(id, receipt.id);
+        state = "running";
+        return { ...receipt, ...start, state };
+      },
+      settle: async (_owner, id, outcome) => {
+        assert.equal(id, receipt.id);
+        state = outcome;
+        return { ...receipt, state: outcome };
+      },
+      getReceipt: unused, getReceiptById: unused, listActive: unused, listReceipts: unused, listPendingOwners: unused,
+      claimForInput: unused, restoreQueuedInput: unused, cancelQueued: unused, updateQueued: unused, reorderQueued: unused,
+      recoverInterrupted: unused, releaseInterrupted: unused,
+    };
+    const queue = new SessionTurnQueueService({
+      store,
+      isRunInFlight: (id) => runtime.isRunInFlight(id),
+      dispatch: async (claimed, onStarted, control) => {
+        await dispatch.promise;
+        return runtime.runQueuedSessionTurn(claimed, onStarted, control);
+      },
+    });
+    const review = new ApprovalReviewInputFence();
+    const reviewCurrent = review.capture();
+    const stop = createWindowCancelFixture(kind, session, runtime, queue, {
+      authorize: () => {
+        const current = authorized;
+        if (revokeAfterFirstCheck) authorized = false;
+        return current;
+      },
+      lookup: () => waitForPromotion ? lookup.promise : Promise.resolve(),
+      onApply: () => review.invalidate(),
+    });
+    try {
+      const accepted = await queue.enqueue(receipt, receipt.captured);
+      assert.deepEqual([accepted.state, accepted.turnId], ["starting", null]);
+      authorized = false;
+      await assert.rejects(stop(request), /only available from the target Session window/);
+      authorized = true;
+      await stop({ ...request, incarnationId: "other-generation" });
+      await stop({ ...request, execution: { kind: "receipt", id: "other-receipt" } });
+      assert.equal(reviewCurrent(), true);
+      assert.equal(state, "starting");
+      if (phase === "claim") {
+        const ack = stop(request);
+        // Let the owner lookup finish before releasing the production dispatch slot.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        dispatch.resolve();
+        await ack;
+        assert.equal(waitedForAdmission, false);
+      } else {
+        waitForPromotion = phase === "promoted" && kind === "auxiliary";
+        const pendingStop = waitForPromotion ? stop(request) : undefined;
+        dispatch.resolve();
+        if (phase === "admission") {
+          await waitForCondition(() => waitedForAdmission, "runtime reached the admission gate");
+          assert.equal(readLive()?.sessionTurnId, undefined);
+          await stop(request);
+          assert.equal(readLive()?.cancellationState, "requested");
+          admission.resolve();
+        } else if (phase === "atomic") {
+          await waitForCondition(() => atomicStarts === 1, "atomic start has been issued");
+          await stop(request);
+          assert.equal(readLive()?.cancellationState, "requested");
+          atomic.resolve();
+        } else {
+          await waitForCondition(() => Boolean(signal), "the same receipt became a persisted Turn and reached Provider");
+          if (phase === "running") {
+            const running: CancelSessionRunRequest = { ...request, execution: { kind: "turn", id: "41" } };
+            authorized = false;
+            await assert.rejects(stop(running), /only available from the target Session window/);
+            authorized = true;
+            revokeAfterFirstCheck = true;
+            await assert.rejects(stop(running), /only available from the target Session window/);
+            revokeAfterFirstCheck = false;
+            authorized = true;
+            await stop({ ...running, incarnationId: "other-generation" });
+            assert.equal(signal?.aborted, false);
+            assert.equal(reviewCurrent(), true);
+            await stop(running);
+          } else {
+            lookup.resolve();
+            await (pendingStop ?? stop(request));
+          }
+          assert.equal(signal?.aborted, true);
+        }
+      }
+      await queue.waitForPending();
+      assert.equal(state, "canceled", `${kind} ${phase}`);
+      assert.equal(reviewCurrent(), phase === "claim", "only an exact runtime stop invalidates review");
+      assert.equal(atomicStarts, phase === "claim" || phase === "admission" ? 0 : 1);
+      if (phase === "atomic") assert.equal(signal, undefined, "confirmed start must save cancellation without dispatching the Provider");
+      assert.equal(phaseSaved, atomicStarts ? "canceled" : undefined);
+      assert.equal(runtime.isRunInFlight(sessionId), false);
+    } finally {
+      dispatch.resolve();
+      admission.resolve();
+      atomic.resolve();
+      lookup.resolve();
+      await queue.stopClaim(receipt, receipt.id);
+      await queue.close();
+      await runtime.waitForPendingRuns();
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -1391,6 +1688,48 @@ describe("SessionRuntimeService", () => {
       assert.equal(terminalCalls, 1);
       assert.equal(notifications, 0);
       assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Main/Auxの実行は終端保存中に当該Turnの送信位置検証用scopeを保持し、保存成否に関わらずreleaseする"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/974#受入条件検証" }
+  // fault = "scopeの解放を保存成功側へ置くか、Main/Auxの片方でscopeを接続しない"
+  // observable = "終端保存時のscopeのSession・incarnation・Turn、run終了後のscope解放回数"
+  // observation_boundary = "component-behavior"
+  // scope = "Main and Auxiliary runtime assembly / source-display scope lifetime"
+  // lifecycle = "permanent"
+  // impact = "照合前の本文破棄、または終了済みTurnの本文の長期残留を防ぐ"
+  // distinction = "既存の終端保存失敗testは送信位置用scopeやMain/Auxのassemblyを通らない"
+  // @end-test-value
+  it("Main/Auxの送信位置用scopeを終端保存の成否に関わらず解放する", async () => {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+      for (const fail of [false, true]) {
+        const lost = new Error("Terminal persistence response lost");
+        let active: readonly [string, string, string] | undefined;
+        let persistedOwner: readonly [string, string, string] | undefined;
+        let released = 0;
+        const service = createProgressRuntime(session, async () => createPartialResult({ assistantText: "final text" }), {
+          beginSourceDisplayTurn(source, turnId) {
+            active = [source.id, getSessionIncarnationId(source), turnId];
+            return () => { active = undefined; released++; };
+          },
+          async appendTerminalSession(next) {
+            await Promise.resolve();
+            persistedOwner = active;
+            if (fail) throw lost;
+            return next;
+          },
+        }, (deps) => assembleBackgroundEventRuntime(kind, deps, createSession({ id: `${kind}-parent` })));
+        const run = service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS });
+        if (fail) await assert.rejects(run, (error) => error === lost);
+        else await run;
+        assert.deepEqual(persistedOwner, [session.id, getSessionIncarnationId(session), "1"]);
+        assert.equal(active, undefined);
+        assert.equal(released, 1);
+      }
+    }
   });
 
   // @test-value v2

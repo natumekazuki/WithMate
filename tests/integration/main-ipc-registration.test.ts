@@ -3459,7 +3459,9 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
       /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
-      () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, {
+        sessionId: "aux-1", incarnationId: auxiliarySession.createdAt, execution: { kind: "turn", id: "1" },
+      }) as Promise<unknown>,
       /Auxiliary session IPC is only available/,
     );
   }

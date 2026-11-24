@@ -107,7 +107,7 @@ import {
 } from "./files/open-path.js";
 import { launchTerminalAtPath } from "./files/open-terminal.js";
 import { SessionStorage } from "./session/session-storage.js";
-import { SessionRuntimeService } from "./session/session-runtime-service.js";
+import { SessionRuntimeService, stopWindowSessionRun } from "./session/session-runtime-service.js";
 import { createMainSessionRuntime } from "./app/main-session-runtime-assembly.js";
 import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "./app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "./session/session-turn-queue-service.js";
@@ -773,23 +773,36 @@ const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
 });
-const pendingSourceDisplay = new Map<string, { sessionId: string; incarnationId: string; turnId: string; text: string }>();
+const pendingSourceDisplays = new Map<string, Map<string, string>>();
+function sourceDisplayTurnKey(sessionId: string, incarnationId: string, turnId: string): string {
+  return JSON.stringify([sessionId, incarnationId, turnId]);
+}
+function beginSourceDisplayTurn(session: Session, turnId: string): () => void {
+  const key = sourceDisplayTurnKey(session.id, getSessionIncarnationId(session), turnId);
+  const prefixes = new Map<string, string>();
+  pendingSourceDisplays.set(key, prefixes);
+  return () => {
+    if (pendingSourceDisplays.get(key) === prefixes) pendingSourceDisplays.delete(key);
+  };
+}
 function rememberSourceDisplay(receipt: SessionTurnQueueReceipt, text: string): void {
   const origin = receipt.accepted?.origin;
   if (!receipt.sourceDisplayInserted || !origin?.actorSessionId || !origin.actorIncarnationId || !origin.actorTurnId) return;
-  pendingSourceDisplay.set(receipt.id, { sessionId: origin.actorSessionId, incarnationId: origin.actorIncarnationId, turnId: origin.actorTurnId, text });
+  // A receipt can arrive after the source runtime has ended.
+  pendingSourceDisplays.get(sourceDisplayTurnKey(origin.actorSessionId, origin.actorIncarnationId, origin.actorTurnId))?.set(receipt.id, text);
 }
 async function verifySourceDisplays(session: Session, turnId: string): Promise<void> {
   const incarnationId = getSessionIncarnationId(session);
+  const prefixes = pendingSourceDisplays.get(sourceDisplayTurnKey(session.id, incarnationId, turnId));
+  if (!prefixes) return;
   const text = session.messages.at(-1)?.text ?? "";
   let updated = false;
-  for (const [id, pending] of pendingSourceDisplay) {
-    if (pending.sessionId !== session.id || pending.incarnationId !== incarnationId || pending.turnId !== turnId) continue;
-    pendingSourceDisplay.delete(id);
+  for (const [id, prefix] of prefixes) {
+    prefixes.delete(id);
     try {
       const owner = requireActivePersistentStoreOwnerForFactory("Sent delivery position");
       if (owner.storageWorker) {
-        await owner.storageWorker.stores.queue.verifySourceDisplayPosition(id, session.id, incarnationId, turnId, text.startsWith(pending.text));
+        await owner.storageWorker.stores.queue.verifySourceDisplayPosition(id, session.id, incarnationId, turnId, text.startsWith(prefix));
         updated = true;
       }
     } catch (error) {
@@ -1435,6 +1448,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               registerCoordinationHandlers(ipc, {
                 service: coordinationApplicationService,
+                readStatus: async (id) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination status");
+                  if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Coordination storage is unavailable.");
+                  try {
+                    return await owner.storageWorker.stores.coordination.readStatus(id);
+                  } finally {
+                    assertPersistentStoreOwnerIsActive(owner, "Coordination status");
+                  }
+                },
                 resolveIdentity: async (identity) => {
                   const owner = requireActivePersistentStoreOwnerForFactory("Coordination display identity");
                   if (!owner.sessionStorage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");
@@ -1884,10 +1906,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastSessions([session.parentSessionId]);
                   return accepted;
                 })),
-                cancelAuxiliarySessionRun: (auxiliarySessionId) => {
-                  approvalReviewInputs.invalidate();
-                  requireAuxiliarySessionRuntimeService().cancelRun(auxiliarySessionId);
-                },
+                cancelAuxiliarySessionRun: (request, assertAuthorized) => stopWindowSessionRun(
+                  request, requireAuxiliarySessionRuntimeService(), requireMainSessionTurnQueueService(),
+                  assertAuthorized, () => approvalReviewInputs.invalidate(),
+                ),
               },
               sessionRuntime: {
                 queue: {
@@ -1945,10 +1967,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   broadcastSessions([sessionId]);
                   return result;
                 }),
-                cancelSessionRun: (sessionId) => {
-                  approvalReviewInputs.invalidate();
-                  requireMainSessionCommandFacade().cancelSessionRun(sessionId);
-                },
+                cancelSessionRun: (request, assertAuthorized) => stopWindowSessionRun(
+                  request, requireSessionRuntimeService(), requireMainSessionTurnQueueService(),
+                  assertAuthorized, () => approvalReviewInputs.invalidate(),
+                ),
               },
               mate: {
                 getMateState: () => requireMateStorage().getMateState(),
@@ -2586,11 +2608,11 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
           || Boolean(session && settingsCatalogService && !settingsCatalogService.isProviderAvailableForTurn(session.provider))
           || isSessionRunInFlight(sessionId, "self");
       },
-      dispatch: async (receipt, onStarted) => {
+      dispatch: async (receipt, onStarted, control) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         const { runtime, auxiliary } = await resolveQueueSessionRuntime(receipt.sessionId);
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted);
+        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted, control);
         const result = await (auxiliary ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, run) : run());
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;
@@ -2724,6 +2746,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         persistRunningTurnStart: (session, expectedMessageCount) => approvalReviewInputs.during(() => requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount)),
         persistQueuedTurnStart: (session, count, queueId, turn) => approvalReviewInputs.during(() => requireMainSessionPersistenceFacade().persistQueuedTurnStart(session, count, queueId, turn)),
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
+        beginSourceDisplayTurn,
         appendTerminalSession: async (session, terminalCommit) => {
           const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
           await verifySourceDisplays(session, String(terminalCommit.turnId));
@@ -2866,6 +2889,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         appendRunningInput: (...args) => requireAuxiliarySessionService().appendRunningInput(...args),
         beginRunningInput: (...args) => requireAuxiliarySessionService().beginRunningInput(...args),
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
+        beginSourceDisplayTurn,
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
           await verifySourceDisplays(session, String(commit.turnId));

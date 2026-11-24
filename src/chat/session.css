@@ -1140,7 +1140,6 @@
   background: rgb(255 255 255 / 12%);
   pointer-events: none;
 }
-.sent-delivery-position-unknown { color: var(--muted); font-size: 0.75rem; margin: 0; }
 .message-row.session-outbound > .message-avatar-stack { grid-column: 1; grid-row: 1 / span 2; }
 .message-row.session-outbound > .message-character-name,
 .message-row.session-outbound > .message-card { grid-column: 2; }

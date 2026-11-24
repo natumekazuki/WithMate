@@ -40,6 +40,7 @@ import {
   assertAuxiliaryOwnerWindowSender,
   assertAuxiliaryCreateModeForOwner,
   getAuxiliarySessionForMutation,
+  readCancelSessionRunRequest,
 } from "./shared.js";
 import type {
   SetAuxiliaryExecutionOptionsRequest,
@@ -322,14 +323,17 @@ export function registerAuxiliaryHandlers(
   );
   ipcMain.handle(
     WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
-    async (event, auxiliarySessionId: string) => {
+    async (event, value: unknown) => {
+      const request = readCancelSessionRunRequest(value);
       const auxiliaryDeps = getAuxiliaryDeps(deps);
       const session = await getAuxiliarySessionForMutation(
         auxiliaryDeps,
-        auxiliarySessionId,
+        request.sessionId,
       );
-      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return auxiliaryDeps.cancelAuxiliarySessionRun(auxiliarySessionId);
+      const assertAuthorized = () => assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      assertAuthorized();
+      if (session.createdAt !== request.incarnationId) return;
+      return auxiliaryDeps.cancelAuxiliarySessionRun(request, assertAuthorized);
     },
   );
   ipcMain.handle(WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL, async (event, auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {

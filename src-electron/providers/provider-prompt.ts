@@ -55,7 +55,7 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
   const fields = (values: Record<string, string | number | undefined>) => Object.entries(values)
     .filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
   if (metadata?.messageIdentity) sections.push("# Message Identity\n\n" + fields(metadata.messageIdentity));
-  if (metadata?.messageIdentity && metadata.mainConversationFrame !== undefined) {
+  if (metadata?.mainConversationFrame !== undefined) {
     sections.push("# Conversation Thread\n\nthread: " + JSON.stringify(metadata.mainConversationFrame));
   }
   if (provenance) {

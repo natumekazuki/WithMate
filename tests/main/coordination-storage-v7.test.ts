@@ -174,12 +174,12 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存された実呼出元だけへ相談を届け、未取得回答の引継ぎでは旧配送を退けて理由と元の起票Sessionを保つ"
-// oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination" }
-// fault = "宛先や起票元を取り違える、引継ぎ時に未取得の旧回答を配送する、または引継ぎ理由を失う"
-// observable = "保存recordのcaller/initiator/respondentと引継ぎ理由、相談配送の自然文と別通知、旧形式受付の不変原文と自然文dispatch、旧receipt取消、ユーザー回答receiptのowner、権限外操作の拒否"
+// claim = "保存された実呼出元だけへ相談を届け、未取得回答を引き継ぐと旧配送を取り消し、理由・起票元を保持して、状態読取は引継ぎ後の担当と現行回答の有無を返す"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination; docs/design/desktop-ui.md#turn-input-details: 相談状態" }
+// fault = "宛先や起票元を取り違える、引継ぎ時に未取得の旧回答を配送する、引継ぎ理由を失う、または回答revisionを現行回答と誤認する"
+// observable = "保存recordのcaller/initiator/respondentと引継ぎ理由、相談配送の自然文と別通知、旧形式受付の不変原文と自然文dispatch、旧receipt取消、ユーザー回答receiptのowner、権限外操作の拒否、状態読取の回答先種別と回答有無"
 // observation_boundary = "public-boundary"
-// scope = "CoordinationStorageV7の保存origin解決・引継ぎ・通常queue返信"
+// scope = "CoordinationStorageV7の保存origin解決・引継ぎ・通常queue返信と状態読取"
 // lifecycle = "permanent"
 // impact = "相談相手の取り違えと無権限状態変更を防ぐ"
 // distinction = "通常enqueue testでは相談の固定起票元と可変担当者の異なる経路を検証しない"
@@ -224,12 +224,15 @@ test("Coordination escalation retains original initiator and exact saved caller"
     const preliminaryId = randomUUID();
     const preliminary = store.execute({ actor: caller, request: { operation: "answer", operationId: preliminaryId, id, body: "Preliminary", selectedChoices: [], expectedAnswerRevision: 0, send: true }, delivery: { target: initiator, captured: captured(b, preliminaryId) } });
     assert.ok("receipt" in preliminary && preliminary.receipt);
+    assert.deepEqual(store.readStatus(id), { state: "open", respondentKind: "main", hasAnswer: true });
     const escalated = record(store.execute({ actor: caller, request: { operation: "escalate", operationId: randomUUID(), id, body: "Need user decision" } }));
     assert.equal(escalated.id, id);
     assert.equal(escalated.initiator.sessionId, b.id);
     assert.equal(escalated.respondent.kind, "user");
     assert.equal(escalated.escalationBody, "Need user decision");
     assert.deepEqual(escalated.answers, []);
+    assert.ok(escalated.answerRevision > 0);
+    assert.deepEqual(store.readStatus(id), { state: "open", respondentKind: "user", hasAnswer: false });
     assert.equal(queue.getReceipt(initiator, preliminaryId)?.state, "canceled");
     const answerId = randomUUID();
     const response = store.execute({ actor: { kind: "user" }, request: { operation: "answer", operationId: answerId, id, body: "Proceed", selectedChoices: [], expectedAnswerRevision: escalated.answerRevision, send: true }, delivery: { target: initiator, captured: captured(b, answerId) } });

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { CoordinationIdentity } from "../../../src-shared/coordination/coordination-contract.js";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
-import { useCoordinationQuery } from "../../coordination/use-coordination-query.js";
+import { useCoordinationStatus } from "../../coordination/use-coordination-query.js";
 import { ErrorDetailsButton } from "../../ui/error-details.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
@@ -32,11 +32,11 @@ export function CoordinationNotice({ id, consultation, target }: {
     return () => observer.disconnect();
   }, []);
   const api = getWithMateApi();
-  const query = useCoordinationQuery({ operation: "get", id }, visible && Boolean(api?.executeCoordination));
-  const record = query.result && "record" in query.result ? query.result.record : null;
-  const state = query.deleted ? "deleted" : query.error || !api?.executeCoordination ? "unavailable"
+  const query = useCoordinationStatus(id, visible && Boolean(api?.getCoordinationStatus));
+  const record = query.result;
+  const state = query.deleted ? "deleted" : query.error || !api?.getCoordinationStatus ? "unavailable"
     : !record ? null : record.state !== "open" ? record.state
-      : record.answers.length ? "replyRecorded" : record.respondent.kind === "user" ? "awaitingUser" : "awaitingReply";
+      : record.hasAnswer ? "replyRecorded" : record.respondentKind === "user" ? "awaitingUser" : "awaitingReply";
   const status = state && consultationStates[state];
   const preview = projectMessageRenderedSearchText(consultation).replace(/\s+/gu, " ").trim();
   const identity = JSON.stringify([id, target.kind, target.sessionId, target.incarnationId]);

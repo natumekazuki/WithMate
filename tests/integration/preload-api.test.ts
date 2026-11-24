@@ -646,9 +646,15 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:run-auxiliary-session-turn",
     args: ["aux-1", { userMessage: "review", executionOptions: sessionExecutionOptions }],
   });
-  assert.deepEqual(await api.cancelAuxiliarySessionRun("aux-1"), {
+  const auxiliaryStop = { sessionId: "aux-1", incarnationId: "aux-incarnation", execution: { kind: "receipt", id: "start-receipt" } } as const;
+  assert.deepEqual(await api.cancelAuxiliarySessionRun(auxiliaryStop), {
     channel: "withmate:cancel-auxiliary-session-run",
-    args: ["aux-1"],
+    args: [auxiliaryStop],
+  });
+  const mainStop = { sessionId: "session-1", incarnationId: "main-incarnation", execution: { kind: "turn", id: "withmate-turn" } } as const;
+  assert.deepEqual(await api.cancelSessionRun(mainStop), {
+    channel: "withmate:cancel-session-run",
+    args: [mainStop],
   });
   const input = { expectedTurnId: "turn-one", userMessage: "additional" };
   assert.deepEqual(await api.steerSessionTurn("session-1", input), {
@@ -740,6 +746,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "changeSessionAdditionalDirectory",
     "getCoordinationIdentity",
     "executeCoordination",
+    "getCoordinationStatus",
     "subscribeCoordinationChanged",
     "openCoordination",
     "subscribeOpenCoordination",

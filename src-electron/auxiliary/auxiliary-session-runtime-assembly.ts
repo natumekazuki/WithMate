@@ -21,6 +21,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     beginRunningInput?: SessionRuntimeServiceDeps["beginRunningInput"];
     settleRunningInput?: SessionRuntimeServiceDeps["settleRunningInput"];
     appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
+    beginSourceDisplayTurn?: SessionRuntimeServiceDeps["beginSourceDisplayTurn"];
     checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
     persistQueuedTurnStart?: SessionRuntimeServiceDeps["persistQueuedTurnStart"];
@@ -96,6 +97,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
+    beginSourceDisplayTurn: deps.auxiliary.beginSourceDisplayTurn,
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
     persistQueuedTurnStart: deps.auxiliary.persistQueuedTurnStart ? (session, count, queueId, turn) => guarded("queued turn start", () => deps.auxiliary.persistQueuedTurnStart!(session, count, queueId, turn)) : undefined,

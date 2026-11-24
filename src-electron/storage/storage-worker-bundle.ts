@@ -41,7 +41,7 @@ type AsyncStore<T extends object> = {
 };
 
 const STORE_METHODS = {
-  coordination: ["execute", "deliveryTarget"],
+  coordination: ["execute", "deliveryTarget", "readStatus"],
   sessionGraph: ["execute"],
   execution: ["execute"],
   session: [

@@ -351,10 +351,10 @@ export function createSessionApi(
     releaseInterruptedSessionTurn(sessionId, id) {
       return ipcRenderer.invoke(channels.WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, sessionId, id);
     },
-    cancelSessionRun(sessionId) {
+    cancelSessionRun(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-        sessionId,
+        request,
       );
     },
     getLatestSessionTurn(sessionId) {
