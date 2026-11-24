@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { savedFinalAnswerTurnId, type SessionReply } from "../../../src-shared/session/session-reply.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 import type { SessionTurnQueueOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { ReplyLocation } from "./reply-location.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SentInstruction } from "./use-sent-deliveries.js";
+import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 export type ResolvedReply = { reference: SessionReply; text: string; origin?: SessionTurnQueueOrigin | null };
 export type ReplyQuoteNavigation = {
@@ -33,7 +35,8 @@ export async function readReplyQuote(ownerSessionId: string, reference: SessionR
 export function ReplyQuote({ ownerSessionId, reference, navigable = false }: { ownerSessionId: string; reference: SessionReply; navigable?: boolean }) {
   const navigation = useContext(ReplyQuoteNavigationContext);
   const locate = navigable ? navigation?.locate : undefined;
-  const key = JSON.stringify([ownerSessionId, reference]);
+  const key = JSON.stringify([ownerSessionId, conversationPeerKey(reference.target),
+    ...("receiptId" in reference ? ["receipt", reference.receiptId] : ["message", reference.seq, reference.finalAnswerTurnId])]);
   const [state, set] = useState<{ key: string; quote: ResolvedReply | null }>();
   useEffect(() => {
     let active = true;
@@ -54,9 +57,10 @@ export function ReplyQuote({ ownerSessionId, reference, navigable = false }: { o
     return () => { active = false; };
   }, [quote, locate]);
   const location = resolved?.quote === quote && resolved?.locate === locate ? resolved?.location : undefined;
-  const text = quote?.text ?? (current ? "Original message unavailable" : "Loading original message…");
+  const text = quote?.text ?? "Original message unavailable";
   return <blockquote className="session-reply-quote" aria-label="Reply to" aria-busy={!current || undefined}>
-    {location && navigation
+    {!current ? <LoadingIndicator inline label="Loading original message" />
+      : location && navigation
       ? <button type="button" className="session-reply-link" aria-label={`Go to quoted message: ${text}`} onClick={() => navigation.open(location)}>{text}</button>
       : text}
   </blockquote>;
