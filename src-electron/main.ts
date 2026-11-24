@@ -1435,6 +1435,15 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               registerCoordinationHandlers(ipc, {
                 service: coordinationApplicationService,
+                readStatus: async (id) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination status");
+                  if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Coordination storage is unavailable.");
+                  try {
+                    return await owner.storageWorker.stores.coordination.readStatus(id);
+                  } finally {
+                    assertPersistentStoreOwnerIsActive(owner, "Coordination status");
+                  }
+                },
                 resolveIdentity: async (identity) => {
                   const owner = requireActivePersistentStoreOwnerForFactory("Coordination display identity");
                   if (!owner.sessionStorage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");

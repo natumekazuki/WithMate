@@ -8,6 +8,8 @@ export function createCoordinationApi(
   return {
     getCoordinationIdentity: (identity) =>
       ipc.invoke("withmate:coordination:identity", identity),
+    getCoordinationStatus: (request) =>
+      ipc.invoke("withmate:coordination:status", request),
     executeCoordination: (request) =>
       ipc.invoke("withmate:coordination:execute", request),
     subscribeCoordinationChanged: (listener) =>

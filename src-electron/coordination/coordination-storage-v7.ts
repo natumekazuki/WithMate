@@ -3,6 +3,7 @@ import { coordinationNotificationText, type CoordinationNotification } from "../
 import type { DatabaseSync } from "node:sqlite";
 import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationResult, type CoordinationStorageInput, type CoordinationStorageResult } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { CoordinationStatus } from "../../src-shared/coordination/coordination-window-contract.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureCoordinationSchemaV7 } from "./coordination-schema-v7.js";
@@ -21,6 +22,18 @@ export class CoordinationStorageV7 {
   private readonly queue: SessionTurnQueueStorageV6;
   constructor(dbPath: string) { this.db = openAppDatabase(dbPath); ensureCoordinationSchemaV7(this.db); this.queue = new SessionTurnQueueStorageV6(this.db); }
   close() { this.db.close(); }
+  readStatus(id: string): CoordinationStatus {
+    const row = this.db.prepare(`SELECT state, respondent_kind AS respondentKind,
+      json_array_length(payload_json, '$.answers') > 0 AS hasAnswer,
+      initiator_kind AS kind, initiator_session_id AS sessionId, initiator_incarnation_id AS incarnationId
+      FROM coordination_records_v7 WHERE id=?`).get(id) as
+      | (Omit<CoordinationStatus, "hasAnswer"> & CoordinationIdentity & { hasAnswer: number })
+      | undefined;
+    if (!row) throw new CoordinationDeletedError("Coordination was deleted or does not exist.");
+    // Match the detailed read's exact Auxiliary initiator check without loading its navigation payload.
+    if (row.kind === "auxiliary") this.identity(row);
+    return { state: row.state, respondentKind: row.respondentKind, hasAnswer: Boolean(row.hasAnswer) };
+  }
   deliveryTarget(input: Omit<CoordinationStorageInput, "delivery">): CoordinationIdentity | null {
     const request = coordinationRequestSchema.parse(input.request);
     if (input.actor.kind !== "user") this.identity(input.actor);
