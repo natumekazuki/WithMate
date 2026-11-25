@@ -2628,9 +2628,9 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       onTurnRecovered: (receipt) => {
         void (async () => {
-          // The Worker has committed the exact Turn and no runtime guard is left.
+          // The Worker reconciled the durable receipt after the runtime guard ended.
           assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
-          await sessionTurnQueueService?.wakeSourceTurnDependents(receipt.sessionId);
+          if (receipt.state !== "interrupted") await sessionTurnQueueService?.wakeSourceTurnDependents(receipt.sessionId);
           const summary = await owner.sessionStorage.getSessionSummary?.(receipt.sessionId);
           assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
           if (summary?.incarnationId === receipt.incarnationId) {

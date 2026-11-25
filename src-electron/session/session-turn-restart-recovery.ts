@@ -55,7 +55,7 @@ export function recoverSessionTurnsAfterRestart(db: DatabaseSync, now: string): 
   `).all() as RecoveryOwner[];
   let changed = 0;
   for (const owner of owners) {
-    if (hasWritableAuxiliaryParent(db, owner.sessionId)) changed += recoverOwner(db, owner, now);
+    if (hasWritableAuxiliaryParent(db, owner.sessionId)) changed += recoverOwner(db, owner, now).receiptsChanged;
   }
   return changed;
 }
@@ -71,11 +71,11 @@ export function recoverReleasedSessionTurn(db: DatabaseSync, owner: SessionTurnQ
       AND ((q.auxiliary_session_id IS NULL AND s.incarnation_id = q.incarnation_id AND s.id = ?)
         OR (a.created_at = q.incarnation_id AND a.id = ?))
   `).get(receiptId, owner.incarnationId, owner.sessionId, owner.sessionId) as RecoveryOwner | undefined;
-  const changed = row ? recoverOwner(db, row, now, receiptId) : 0;
-  return { changed, auxiliary: row?.auxiliaryId != null };
+  const change = row ? recoverOwner(db, row, now, receiptId) : null;
+  return { changed: Boolean(change && (change.receiptsChanged || change.metadataChanged)), auxiliary: row?.auxiliaryId != null };
 }
 
-function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, receiptId?: string): number {
+function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, receiptId?: string) {
   const { sessionId, auxiliaryId, incarnationId, wasRunning, wasInterrupted } = owner;
   const auxiliary = auxiliaryId !== null;
   const id = auxiliaryId ?? sessionId;
@@ -131,24 +131,28 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
     failedLatest = true;
   }
 
-  if (failedLatest || (!receiptId && (wasRunning || wasInterrupted))) {
+  // The released receipt can still identify stale running metadata without
+  // proving its input sequence. Clear that busy hint, not the Turn outcome.
+  const releasesLatestMetadata = receiptId && wasRunning && latestOwnsInput && referencingStarts.length === 1;
+  let metadataChanged = false;
+  if (failedLatest || releasesLatestMetadata || (!receiptId && (wasRunning || wasInterrupted))) {
     const hasSavedTerminal = latestOwnsInput && latest && latest.completedAt !== null && latest.phase !== "running"
       && isSavedResponse(latest);
     const runState = hasSavedTerminal && latest.phase !== "failed" ? "idle" : "error";
     if (auxiliary) {
-      db.prepare("UPDATE auxiliary_sessions SET run_state = ? WHERE id = ? AND created_at = ?")
-        .run(runState, id, incarnationId);
+      metadataChanged = Number(db.prepare("UPDATE auxiliary_sessions SET run_state = ? WHERE id = ? AND created_at = ?")
+        .run(runState, id, incarnationId).changes) > 0;
     } else {
-      db.prepare(`UPDATE sessions_v6 SET state = 'completed',
+      metadataChanged = Number(db.prepare(`UPDATE sessions_v6 SET state = 'completed',
         runtime_policy_json = json_set(runtime_policy_json, '$.appStatus', 'idle', '$.runState', ?)
-        WHERE id = ? AND incarnation_id = ?`).run(runState, id, incarnationId);
+        WHERE id = ? AND incarnation_id = ?`).run(runState, id, incarnationId).changes) > 0;
     }
   }
 
   const resolveTurn = db.prepare(`${turnSelect} AND id = ? AND user_message_seq = ?`);
   const updateReceipt = db.prepare(`UPDATE session_turn_queue_v6
     SET state = ?, reason = ?, released_at = CASE WHEN ? = 'interrupted' THEN released_at ELSE NULL END, updated_at = ? WHERE id = ?`);
-  let changed = 0;
+  let receiptsChanged = 0;
   for (const receipt of receipts) {
     let state: SavedTurn["phase"] | "interrupted" = "interrupted";
     let reason: string | null = null;
@@ -168,7 +172,7 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
       reason = reasonForAbandonedTurn;
     }
     if (state === "interrupted" && receipt.state === "interrupted") continue;
-    changed += Number(updateReceipt.run(state, reason ?? (state === "interrupted" ? reasonForAbandonedTurn : null), state, now, receipt.id).changes);
+    receiptsChanged += Number(updateReceipt.run(state, reason ?? (state === "interrupted" ? reasonForAbandonedTurn : null), state, now, receipt.id).changes);
   }
-  return changed;
+  return { receiptsChanged, metadataChanged };
 }

@@ -766,3 +766,61 @@ test("dispatch返信喪失はcanonical terminalへ収束し実guardを維持す�
   assert.deepEqual(rows.map((row) => row.state), ["completed", "completed"]);
   await service.close();
 });
+
+
+// @test-value v2
+// kind = "contract"
+// claim = "同一の不明受付を正本確認できた場合にだけ、その結果を変更せず後続FIFOと新規入力を進める"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "実guard中や照会／回収保存の結果不明時に次の入力を開始する、全件回収する、不明受付を再実行する、または証拠確認後も後続を止める"
+// observable = "不明受付の再読込、回収引数のowner/incarnation/receipt ID、確認前後のdispatch ID列"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceの不明な通常dispatch後の稼働中の正本照合"
+// lifecycle = "permanent"
+// @end-test-value
+test("稼働中の照合不明は止め、永続したinterruptedの確認後は元入力を再送せず進める", async () => {
+  for (const fault of ["read", "write"] as const) {
+    const { store, rows } = boundary();
+    const dispatches: string[] = [];
+    const recoveries: Array<Parameters<typeof store.recoverInterrupted>[0]> = [];
+    const getReceipt = store.getReceipt;
+    let guarded = false;
+    let unavailable = false;
+    store.getReceipt = async (...args) => {
+      if (fault === "read" && unavailable) throw new Error("Cannot read the saved receipt.");
+      return getReceipt(...args);
+    };
+    store.recoverInterrupted = async (target) => {
+      recoveries.push(target);
+      if (fault === "write" && unavailable) throw new Error("Recovery reply lost.");
+      return 0; // No exact Turn can be proven for this interrupted receipt.
+    };
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded, dispatch: async (receipt) => {
+      dispatches.push(receipt.id);
+      if (receipt.id === "first") { guarded = true; throw new Error("Dispatch reply lost."); }
+      return { state: "completed" };
+    } });
+    try {
+      await service.enqueue(owner, captured("first"));
+      await service.waitForPending();
+      const interrupted = structuredClone(rows[0]!);
+      assert.equal(interrupted.state, "interrupted");
+      await service.enqueue(owner, captured("second"));
+      await service.waitForPending();
+      assert.equal(recoveries.length, 0);
+      assert.deepEqual(dispatches, ["first"]);
+      unavailable = true;
+      guarded = false;
+      service.wake(owner.sessionId);
+      await service.waitForPending();
+      assert.deepEqual(dispatches, ["first"]);
+      assert.equal(rows[1]?.state, "queued");
+      unavailable = false;
+      await service.enqueue(owner, captured("new"));
+      await service.waitForPending();
+      assert.deepEqual(dispatches, ["first", "second", "new"]);
+      assert.deepEqual(recoveries, Array(fault === "read" ? 1 : 2).fill({ ...owner, receiptId: "first" }));
+      assert.deepEqual(await store.getReceipt(owner, "first"), interrupted);
+    } finally { await service.close(); }
+  }
+});

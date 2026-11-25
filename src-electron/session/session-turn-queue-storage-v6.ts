@@ -354,7 +354,7 @@ export class SessionTurnQueueStorageV6 {
     if (!target) return this.transaction(() => recoverSessionTurnsAfterRestart(this.db, now));
     const result = this.withOwner(target, () => recoverReleasedSessionTurn(this.db, target, target.receiptId, now));
     if (result.changed) this.onConversationChanged?.(result.auxiliary ? "auxiliary_session_messages" : "session_messages_v6", target.sessionId);
-    return result.changed;
+    return Number(result.changed);
   }
 
   private required(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt {

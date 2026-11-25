@@ -321,6 +321,11 @@ test("起動回収は遺失・旧保留・確定成功を照合し、保存結�
       }
       queue.close();
       queue = new SessionTurnQueueStorageV6(dbPath);
+      if (scenario === "wrong-seq") {
+        queue.recoverInterrupted({ ...owner, receiptId: receipt.id });
+        assert.equal(sessions.getSession(session.id)?.runState, "error");
+        assert.equal(turns.getLatestSessionTurn(session.id)?.phase, "running");
+      }
       queue.recoverInterrupted();
       const actual = queue.getReceipt(owner, receipt.requestId);
       const savedTurn = turns.getLatestSessionTurn(session.id);
