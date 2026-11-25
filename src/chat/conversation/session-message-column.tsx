@@ -126,6 +126,7 @@ export type SessionMessageColumnProps = {
   messageKeys?: string[];
   pendingResponseMessageKey?: string | null;
   responsePresentationKey?: string;
+  responseExecutionTurnIds?: readonly (string | undefined)[];
   streamingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
@@ -499,6 +500,7 @@ export function SessionMessageColumn({
   messageKeys: suppliedMessageKeys,
   pendingResponseMessageKey: suppliedPendingResponseKey = null,
   responsePresentationKey,
+  responseExecutionTurnIds,
   streamingResponseMessageKey,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
@@ -1547,8 +1549,9 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const executionTurnId = isAssistant && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined;
-            const hasExecutionDetails = isAssistant && inputReadContext && (message.historyIndex !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
+            const executionTurnId = isAssistant ? responseExecutionTurnIds?.[absoluteIndex]
+              ?? ((sharedPending || !responseExecutionTurnIds) && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined) : undefined;
+            const hasExecutionDetails = isAssistant && inputReadContext && (savedSeq !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
             const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
