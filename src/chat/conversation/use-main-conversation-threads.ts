@@ -103,7 +103,7 @@ export function useMainConversationThreads(context: TurnInputReadContext | undef
     Number(right.hasUnreadResult === true) - Number(left.hasUnreadResult === true)
     || (right.lastActivityAt ?? Number.MIN_SAFE_INTEGER) - (left.lastActivityAt ?? Number.MIN_SAFE_INTEGER)
   ) ?? EMPTY_CHILDREN, [projection]);
-  const requestedId = selected?.owner === owner ? selected.id : "";
+  const requestedId = selected?.owner === owner ? selected.id : canRead ? ALL_MAIN_THREADS_ID : "";
   const showAllThreads = requestedId === ALL_MAIN_THREADS_ID;
   const child = children.find((entry) => conversationPeerKey(entry.target) === requestedId);
   const selectedId = showAllThreads ? ALL_MAIN_THREADS_ID : child ? conversationPeerKey(child.target) : "";

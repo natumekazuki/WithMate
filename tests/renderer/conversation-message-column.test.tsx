@@ -1996,10 +1996,10 @@ test("multiple sent cards retain recipients and order within live and saved resp
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainのALLは同じSessionの連続ページを相手で絞らず読み、個別の枠を往復しても別々の閲覧範囲を維持する"
+// claim = "Mainを新しく開くと既定のALLで同じSessionの連続ページを読む。同じ窓で手動選択した初期・個別枠は履歴revisionが変わっても維持し、個別枠からALLへ戻ると閲覧中だった過去ページに復帰する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
-// fault = "ALLで絞込や別Sessionを使う、個別枠への切替で閲覧中pageを失う、または復帰の取得待ちに末尾を表示する"
-// observable = "初期・全体・相手枠の表示seq、過去pageの未絞込request、復帰の取得待ちと取得後の表示seq"
+// fault = "新しい窓で初期枠を選ぶ、履歴revisionの変更で手動選択をリセットする、ALLで絞込や別Sessionを使う、または個別枠を往復すると閲覧中pageを失う"
+// observable = "初回・再マウント時のALL、履歴revision変更後の選択と表示seq、過去pageの未絞込request、復帰の取得待ちと取得後の表示seq"
 // observation_boundary = "component-behavior"
 // scope = "Mainの選択hookから会話列への接合。保存readのみfixture"
 // lifecycle = "permanent"
@@ -2042,8 +2042,8 @@ test("Main All shows contiguous own history and resumes its older page after a p
   let threads: ReturnType<typeof useMainConversationThreads>;
   let column: ReturnType<typeof useConversationMessageColumn>;
   let controls: ConversationColumnControls;
-  function Probe() {
-    threads = useMainConversationThreads(context, true, "", () => controls?.captureReadingPosition?.());
+  function Probe({ revision = "" }: { revision?: string }) {
+    threads = useMainConversationThreads(context, true, revision, () => controls?.captureReadingPosition?.());
     column = useConversationMessageColumn({
       session: { id: main.sessionId, incarnationId: main.incarnationId, messageCount: saved.length, messages: tail },
       baseProps: createBaseProps(main.sessionId), api, enabled: true, liveRun: null,
@@ -2055,9 +2055,7 @@ test("Main All shows contiguous own history and resumes its older page after a p
   const select = (id: string) => act(async () => threads.select(id));
   try {
     await act(async () => root.render(<Probe />));
-    assert.equal(threads!.selectedId, "");
-    assert.deepEqual(indexes(), initial.slice(-tail.length));
-    await select(ALL_MAIN_THREADS_ID);
+    assert.equal(threads!.selectedId, ALL_MAIN_THREADS_ID);
     assert.deepEqual(indexes(), tail.map(({ historyIndex }) => historyIndex));
     await act(async () => controls.onJumpToMessage("session-main-10"));
     const past = requests.at(-1);
@@ -2070,6 +2068,9 @@ test("Main All shows contiguous own history and resumes its older page after a p
     assert.deepEqual(indexes(), olderPage);
     await select(conversationPeerKey(b.target));
     assert.deepEqual(indexes(), b.messageIndexes);
+    await act(async () => root.render(<Probe revision="peer-update" />));
+    assert.equal(threads!.selectedId, conversationPeerKey(b.target));
+    assert.deepEqual(indexes(), b.messageIndexes);
     suspendRestore = true;
     await select(ALL_MAIN_THREADS_ID);
     assert.ok(releaseRestore, "All requested its older page after switching back");
@@ -2079,6 +2080,12 @@ test("Main All shows contiguous own history and resumes its older page after a p
     assert.deepEqual(indexes(), olderPage);
     await select("");
     assert.deepEqual(indexes(), initial.slice(-tail.length));
+    await act(async () => root.render(<Probe revision="initial-update" />));
+    assert.equal(threads!.selectedId, "");
+    assert.deepEqual(indexes(), initial.slice(-tail.length));
+    await act(async () => root.render(<Probe key="reopened" />));
+    assert.equal(threads!.selectedId, ALL_MAIN_THREADS_ID);
+    assert.deepEqual(indexes(), tail.map(({ historyIndex }) => historyIndex));
     assert.deepEqual([...new Set(requests.map(({ id }) => id))], ["main"]);
   } finally {
     await act(async () => root.unmount());
