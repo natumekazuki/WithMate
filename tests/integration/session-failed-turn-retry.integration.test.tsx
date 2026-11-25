@@ -10,10 +10,10 @@ import { installFailedTurnRetryFixture } from "./failed-turn-retry-fixture.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryでBの実行中に履歴の確定失敗Aを明示受付でき、結果不明の旧失敗を再送せず、現draftとBを保持する。今回の受付結果が不明なら新IDを発行せず同じ要求で回復する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#failed-turn-retry; docs/design/desktop-ui.md: Action Dock・回復操作" }
-// fault = "実行中に確定失敗の操作を止める、旧結果不明を確定失敗に読み替える、選択した履歴やownerを取り違える、draftを消す、現在Turnを停止またはSteerする、不明受付を新IDで作り直す"
-// observable = "実SessionWindowの履歴ボタン・生成継続とdraft、preloadに渡る保存receipt/Turn/owner、受付と照会のID、Stop/Steer/通常送信の呼出有無"
+// claim = "MainとAuxiliaryでBの実行中に履歴の確定失敗Aを明示受付でき、結果不明の旧失敗を再送せず、現draftと表示済みのBの応答本文・行を保持する。今回の受付結果が不明なら新IDを発行せず同じ要求で回復する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#failed-turn-retry; docs/design/desktop-ui.md: Action Dock・回復操作、pending 中の live activity / streaming response" }
+// fault = "実行中に確定失敗の操作を止める、旧結果不明を確定失敗に読み替える、選択した履歴やownerを取り違える、現在Turnの本文・応答行やdraftを失う、現在Turnを停止またはSteerする、不明受付を新IDで作り直す"
+// observable = "実SessionWindowの履歴ボタン・既に表示した本文と応答行の操作直後の継続・draft、preloadに渡る保存receipt/Turn/owner、受付と照会のID、Stop/Steer/通常送信の呼出有無"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowAppの実行中の履歴Resend。読み取り・受付IPCのみ合成"
 // lifecycle = "permanent"
@@ -62,7 +62,18 @@ test("実行中でもMain/Auxの確定失敗Resendを受け付け、未知の受
   const root = createRoot(container);
   const composer = () => container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
   const pane = (label: string) => container.querySelector(`#session-${label.toLowerCase()}-chat-pane`)!;
-  const assertRunningB = (label: string) => assert.match(pane(label).textContent!, /B: Active instruction.*(?:Generating a response|B: Still generating)/s);
+  const displayedB = (label: string) => [...pane(label).querySelectorAll(".message-row.assistant")]
+    .find((row) => row.querySelector('[data-message-body="true"]')?.textContent?.includes("B: Still generating"));
+  const waitForDisplayedB = async (label: string) => {
+    const deadline = performance.now() + 2_000;
+    let row = displayedB(label);
+    while (!row && performance.now() < deadline) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      row = displayedB(label);
+    }
+    assert.ok(row, `${label} must present B before retrying A`);
+    return row;
+  };
   const resend = (label: string) => {
     const buttons = pane(label).querySelectorAll<HTMLButtonElement>(`button[aria-label="${label}: Resend Failed Turn"]`);
     assert.equal(buttons.length, 1, `only the confirmed failed start is eligible in ${label}`);
@@ -71,7 +82,7 @@ test("実行中でもMain/Auxの確定失敗Resendを受け付け、未知の受
   const click = async (button: HTMLButtonElement) => act(async () => { button.click(); });
   try {
     await act(async () => root.render(<App />));
-    assertRunningB("Main");
+    const mainB = await waitForDisplayedB("Main");
     await act(async () => {
       Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(composer(), "Keep Main draft");
       composer().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
@@ -84,12 +95,14 @@ test("実行中でもMain/Auxの確定失敗Resendを受け付け、未知の受
     assert.deepEqual([main.id, main.request.target, main.request.receiptId, main.request.turnId],
       [f.main.id, f.targets[f.main.id], `${f.main.id}:A`, "42"]);
     assert.equal(composer().value, "Keep Main draft");
-    assertRunningB("Main");
+    assert.equal(displayedB("Main"), mainB);
     await click(container.querySelector<HTMLButtonElement>('button.concurrent-chat-splitter[aria-label="Open Auxiliary"]')!);
     await click(container.querySelector<HTMLButtonElement>('.concurrent-chat-target-dock button[title="Auxiliary"]')!);
     assert.equal(composer().value, "Keep Auxiliary draft");
+    const auxB = await waitForDisplayedB("Auxiliary");
     assert.equal(resend("Auxiliary").disabled, false);
     await click(resend("Auxiliary"));
+    assert.equal(displayedB("Auxiliary"), auxB);
     assert.equal(resend("Auxiliary").disabled, true, "an unknown acceptance must block a new request ID");
     assert.equal(f.requests.length, 2);
     const aux = f.requests[1]!;
@@ -102,7 +115,7 @@ test("実行中でもMain/Auxの確定失敗Resendを受け付け、未知の受
     assert.deepEqual(f.requests.slice(1), [aux, aux]);
     assert.equal(resend("Auxiliary").disabled, false);
     assert.equal(composer().value, "Keep Auxiliary draft");
-    assertRunningB("Auxiliary");
+    assert.equal(displayedB("Auxiliary"), auxB);
     assert.deepEqual(f.unexpected, []);
     await click(container.querySelector<HTMLButtonElement>('.concurrent-chat-target-dock button[title="Main"]')!);
     assert.equal(composer().value, "Keep Main draft");
