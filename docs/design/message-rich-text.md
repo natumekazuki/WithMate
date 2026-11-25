@@ -88,6 +88,7 @@ flowchart LR
 - 上位で集約済みの本文は`streamingTextPresented`で通知し、Markdown側のtimerを重ねない。それ以外の呼出元では受信中の追記だけを100ms単位へまとめ、初回・追記以外の置換・受信終了・検索中の`forceFullRender`指定は即時反映する。受信状態は構文描画へ引き続き渡す。
 - 呼び出し元はpath openと画像読込・画像操作のcontextを注入する。画像操作のcontextはlink操作の可否から独立させ、Git previewでも画像読込と同じSession/base resourceを使う
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
+- 会話本文を折りたたむと、本文から投影したplain summaryを表示する。summaryが空なら代替文は表示しない。開閉操作の名前と状態、本文外の失敗表示とDetailsは残す。
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする
 - message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える

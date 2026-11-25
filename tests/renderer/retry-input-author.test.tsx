@@ -29,12 +29,12 @@ const settings = captureSessionExecutionOptions(buildNewSession({ id: "owner", t
 
 // @test-value v2
 // kind = "contract"
-// claim = "再実行の待機中に元の指示を変更していなければ元話者を示し、編集後は元話者の発言として表示しない"
-// oracle = { type = "contract", ref = "docs/design/session-history.md: Main列の初期枠・子Session枠" }
-// fault = "GUI起点を常に話者とみなす、または編集済み再送を元Sessionの原文に見せる"
-// observable = "本番の予約カードに表示される本文・再送label・元話者名とリンクの有無"
+// claim = "再実行のカードは由来の説明文を足さず、未編集の場合だけ元話者を示す。待機グループ名と旧中断の理由を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action DockのResend; docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "GUI起点を常に話者とみなす、編集済み再送を元Sessionの原文に見せる、または由来の説明文をカード・読み上げ・tooltipに足す"
+// observable = "予約カードの本文・元話者名・リンク、説明文の不在、元の待機グループ名と旧中断理由"
 // observation_boundary = "component-behavior"
-// scope = "同一受付で本文編集した再送予約。providerとIPCは使わない"
+// scope = "未編集／本文編集した同一の再送予約と旧interruptedカード。providerとIPCは使わない"
 // lifecycle = "permanent"
 // impact = "相手から新規の依頼が来たか、利用者が編集した再実行かを取り違える"
 // distinction = "SQLiteが来歴を分けて保存しても実際にどの話者をカードへ出すかは決まらない"
@@ -53,21 +53,32 @@ test("Retry queue cards distinguish a replay from a user edit", async () => {
     queuePosition: 1, sequence: 1, createdAt: "now", updatedAt: "now" };
   const renderQueue = (next: SessionTurnQueueReceipt) => root.render(<SessionTurnQueueRow receipt={next} character={character} busy={false} onCancel={() => {}} />);
   const article = () => dom.window.document.querySelector("article")!;
+  const assertNoRetryCaption = () => {
+    assert.doesNotMatch(article().textContent!, /Retry requested by you|Previous input from/);
+    assert.equal(article().getAttribute("aria-label"), null);
+    assert.equal(article().getAttribute("title"), null);
+    assert.equal(article().querySelector("[data-queue-receipt-id]")?.getAttribute("title") ?? null, null);
+  };
   try {
     await act(async () => renderQueue(receipt));
     assert.equal(article().querySelector(".message-character-name")?.textContent, "Original Agent");
     assert.ok(article().querySelector('button[aria-label="Open Sender: Sender Workspace"]'));
-    assert.match(article().textContent!, /Retry requested by you · Previous input from Original Agent/);
     assert.match(article().textContent!, /Original content/);
+    assertNoRetryCaption();
+    assert.ok(article().querySelector('[role="group"][aria-label="Queued turn"] button[aria-label="Cancel queued turn"]'));
 
     const changed = { ...accepted, request: { ...accepted.request, userMessage: "User edited content" } };
     await act(async () => renderQueue({ ...receipt, captured: changed, updatedAt: "edited" }));
     assert.ok(article().classList.contains("user"));
     assert.equal(article().querySelector('button[aria-label="Open Sender: Sender Workspace"]'), null);
-    assert.deepEqual([...article().querySelectorAll(".message-character-name")].map((node) => node.textContent),
-      ["Retry requested by you · Previous input from Original Agent"]);
+    assert.equal(article().querySelector(".message-character-name"), null);
     assert.match(article().textContent!, /User edited content/);
     assert.doesNotMatch(article().textContent!, /Original content/);
+    assertNoRetryCaption();
+
+    await act(async () => renderQueue({ ...receipt, state: "interrupted", reason: "Saved outcome unknown" }));
+    assertNoRetryCaption();
+    assert.match(dom.window.document.body.textContent ?? "", /Saved outcome unknown/);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -77,15 +88,15 @@ test("Retry queue cards distinguish a replay from a user edit", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存Retryは元の未編集入力と今回の入力が同じと確認された場合だけ元話者を表示し、添付だけの変更と比較不能を再読込後も区別する"
-// oracle = { type = "contract", ref = "docs/design/session-history.md: Main列の初期枠・子Session枠" }
-// fault = "本文だけで一致とみなす、比較不能を編集済みと示す、または元入力が編集済みでも今回trueだけで元話者の発言に見せる"
-// observable = "SQLiteの軽量読取の同一本文に対するtrue/false/null、実カードの元話者・再送注記・編集表示、表示読取の件数と自動Details読取の有無"
+// claim = "保存Retryは元の未編集入力と今回の入力が同じと確認された場合だけ元話者を表示し、添付変更と比較不能は再読込後も区別する。いずれのカードにも由来説明は足さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action DockのResend; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "本文だけで一致とみなす、比較不能を編集済みと扱う、元入力が編集済みでも今回trueだけで元話者に見せる、またはカードに説明文を足す"
+// observable = "SQLiteの軽量読取のtrue/false/nullと元来歴、実カードの元話者・本文・説明の不在、表示読取の件数と自動Details読取の有無"
 // observation_boundary = "component-behavior"
 // scope = "分離SQLiteの固定済み再送受付から、本番会話列を初回および再openで描画。IPCは同じ保存readerへのfixture接続"
 // lifecycle = "permanent"
 // impact = "添付を差し替えた方向付けや比較できない本文を、以前の相手から届いた原文と誤認する"
-// distinction = "待機カードtestは保存された三値との接続を通らず、履歴reader単体では話者と注記の組合せが分からない"
+// distinction = "待機カードtestは保存された三値との接続を通らず、履歴reader単体では話者の見え方を確認しない"
 // @end-test-value
 test("Saved Retry cards distinguish changed attachments from an uncomparable input after reopening", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-retry-author-"));
@@ -181,9 +192,13 @@ test("Saved Retry cards distinguish changed attachments from an uncomparable inp
         assert.equal(operations.includes("get_execution"), false, "the rendered card must not read full Details");
         const cards = [...container.querySelectorAll("article")];
         assert.equal(cards.length, checks.length);
-        const caption = "Retry requested by you · Previous input from Original Agent";
         assert.deepEqual(cards.map((card) => [...card.querySelectorAll(".message-character-name")].map((node) => node.textContent)),
-          [["Original Agent", caption], [caption + " · Edited before this Turn started"], [caption], [caption]]);
+          [["Original Agent"], [], [], []]);
+        for (const card of cards) {
+          assert.doesNotMatch(card.textContent!, /Retry requested by you|Previous input from|Edited before this Turn started/);
+          assert.equal(card.getAttribute("aria-label"), null);
+          assert.equal(card.getAttribute("title"), null);
+        }
         assert.deepEqual(cards.map((card) => Boolean(card.querySelector('button[aria-label="Open Sender: Sender Workspace"]'))), [true, false, false, false]);
         assert.deepEqual(cards.map((card) => card.querySelector("[data-message-body]")?.textContent), checks.map(() => content));
       } finally {

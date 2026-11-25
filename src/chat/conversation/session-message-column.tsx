@@ -126,6 +126,7 @@ export type SessionMessageColumnProps = {
   messageKeys?: string[];
   pendingResponseMessageKey?: string | null;
   responsePresentationKey?: string;
+  responseExecutionTurnIds?: readonly (string | undefined)[];
   streamingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
@@ -499,6 +500,7 @@ export function SessionMessageColumn({
   messageKeys: suppliedMessageKeys,
   pendingResponseMessageKey: suppliedPendingResponseKey = null,
   responsePresentationKey,
+  responseExecutionTurnIds,
   streamingResponseMessageKey,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
@@ -1547,8 +1549,9 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const executionTurnId = isAssistant && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined;
-            const hasExecutionDetails = isAssistant && inputReadContext && (message.historyIndex !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
+            const executionTurnId = isAssistant ? responseExecutionTurnIds?.[absoluteIndex]
+              ?? ((sharedPending || !responseExecutionTurnIds) && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined) : undefined;
+            const hasExecutionDetails = isAssistant && inputReadContext && (savedSeq !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
             const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
@@ -1601,18 +1604,15 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
-                const unchanged = read.observed?.retryInputUnchanged;
                 const author = message.role === "user"
-                  ? projectRetryInputAuthor(read.origin, read.observed?.retrySource, unchanged === true) : undefined;
-                const displayOrigin = author?.origin?.kind === "session" ? author.origin : undefined;
+                  ? projectRetryInputAuthor(read.origin, read.observed?.retrySource, read.observed?.retryInputUnchanged === true) : undefined;
+                const displayOrigin = author?.kind === "session" ? author : undefined;
                 const isSessionOrigin = displayOrigin !== undefined;
-                const retryLabel = author?.retryLabel && unchanged === false
-                  ? `${author.retryLabel} · Edited before this Turn started` : author?.retryLabel;
                 const senderTheme = displayOrigin && displayOrigin === read.origin ? read.senderTheme : null;
                 const messageSent = isAssistant ? sent.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
-                return <article aria-label={retryLabel} title={retryLabel}
+                return <article
                 className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
@@ -1646,7 +1646,6 @@ export function SessionMessageColumn({
                 <div className={`message-card ${displayedRole}${senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.sentKey && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
                   style={senderTheme ? { "--sender-main": senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
-                    {retryLabel ? <div className="message-character-name">{retryLabel}</div> : null}
                     {displayOrigin ? <SessionOriginRoute origin={displayOrigin} onError={read.setReadError} /> : null}
                     {artifact && !isAssistant ? (
                       <button
@@ -1681,7 +1680,7 @@ export function SessionMessageColumn({
                               onClick={() => onToggleMessageCollapse(messageKey)}
                               aria-expanded={!isMessageCollapsed}
                               aria-controls={messageBodyId}
-                              aria-label={`${messageCollapseLabel}: ${collapsedPreview}`}
+                              aria-label={collapsedPreview ? `${messageCollapseLabel}: ${collapsedPreview}` : messageCollapseLabel}
                               title={messageCollapseLabel}
                             >
                               <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
@@ -1705,9 +1704,10 @@ export function SessionMessageColumn({
                           ) : null}
                         </div>
                       ) : null}
+                      {/* Keep the disclosure target without treating a collapsed empty body as a visible result. */}
                       <div
                         id={messageBodyId}
-                        data-message-body="true"
+                        data-message-body={shouldRenderFullMessage || collapsedPreview ? "true" : "false"}
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
                         {shouldRenderFullMessage && read.coordination && inputReadContext ? <>
@@ -1754,9 +1754,9 @@ export function SessionMessageColumn({
                               onActivateGlossaryEntry={onActivateGlossaryEntry}
                             />}
                           />
-                        ) : (
+                        ) : collapsedPreview ? (
                           <p className="message-collapsed-preview">{collapsedPreview}</p>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                     {shouldRenderFullMessage ? issuedWithoutReceipt.filter((record) => record.sourceMessageSeq !== null && record.sourceMessageSeq === message.historyIndex).map(renderIssued) : null}

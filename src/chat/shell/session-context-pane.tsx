@@ -160,17 +160,19 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
         style={{ height: virtualizer.getTotalSize() }}>
         {virtualRows.map((row) => {
           const entry = page.items[row.index - page.offset];
+          const label = entry ? messageNavigatorRowLabel(speakerLabel(entry), entry) : undefined;
           return <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
             className="messages-navigator-virtual-row" style={{ transform: `translateY(${row.start - scrollMargin}px)` }}>
             {entry ? <button type="button" className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
               ref={(node) => { if (node) rowRefs.current.set(row.index, node); else rowRefs.current.delete(row.index); }}
               tabIndex={row.index === focusIndex ? 0 : -1}
-              aria-label={`${speakerLabel(entry)}${entry.isBookmarked ? ", Bookmark saved" : ""}: ${entry.preview}`}
-              title={`${speakerLabel(entry)}${entry.isBookmarked ? ", Bookmark saved" : ""}: ${entry.preview}`}
+              aria-label={label}
+              title={label}
               onFocus={() => setFocusIndex(row.index)} onKeyDown={(event) => onKeyDown(event, row.index, entry)}
               onClick={() => onJump?.(entry.key)}>
               <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>{renderSpeaker(entry)}</span>
-              <span className="messages-navigator-copy"><span className="messages-navigator-preview">{entry.preview}</span>
+              <span className="messages-navigator-copy">
+                {entry.preview ? <span className="messages-navigator-preview">{entry.preview}</span> : null}
                 {entry.isCollapsed ? <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span> : null}
               </span>
             </button> : <div className="messages-navigator-placeholder" aria-hidden="true" />}
@@ -179,6 +181,10 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
       </div>
     </div>
   );
+}
+
+function messageNavigatorRowLabel(speaker: string, entry: MessageNavigatorEntry): string {
+  return `${speaker}${entry.isBookmarked ? ", Bookmark saved" : ""}${entry.preview ? `: ${entry.preview}` : ""}`;
 }
 
 type SessionPaneErrorBoundaryProps = {
@@ -667,8 +673,7 @@ export function SessionContextPane({
               <div className="messages-navigator">
                 <div className="messages-navigator-list" role="list" aria-label="Messages">
                   {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {
-                    const speakerLabel = messageNavigatorSpeakerLabel(entry);
-                    const bookmarkStateLabel = entry.isBookmarked ? ", Bookmark saved" : "";
+                    const label = messageNavigatorRowLabel(messageNavigatorSpeakerLabel(entry), entry);
                     return (
                       <button
                         key={entry.key}
@@ -678,8 +683,8 @@ export function SessionContextPane({
                         className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
                         type="button"
                         tabIndex={index === messageNavigatorFocusIndex ? 0 : -1}
-                        aria-label={`${speakerLabel}${bookmarkStateLabel}: ${entry.preview}`}
-                        title={`${speakerLabel}${bookmarkStateLabel}: ${entry.preview}`}
+                        aria-label={label}
+                        title={label}
                         onFocus={() => setMessageNavigatorFocusIndex(index)}
                         onKeyDown={(event) => handleMessageNavigatorKeyDown(event, index)}
                         onClick={() => onJumpToMessage?.(entry.key)}
@@ -688,7 +693,7 @@ export function SessionContextPane({
                           {renderMessageNavigatorSpeaker(entry)}
                         </span>
                         <span className="messages-navigator-copy">
-                          <span className="messages-navigator-preview">{entry.preview}</span>
+                          {entry.preview ? <span className="messages-navigator-preview">{entry.preview}</span> : null}
                           {entry.isCollapsed ? (
                             <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span>
                           ) : null}

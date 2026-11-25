@@ -110,10 +110,10 @@ test("Main thread projection and Monitor share terminal unread state while recen
 
 // @test-value v2
 // kind = "contract"
-// claim = "後続Turnのある保存履歴から選んだ失敗開始receiptはGUIの新しい受付になり、受付と保存済み再実行が元の相手枠を維持する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/session-history.md: Main列の初期枠・子Session枠" }
-// fault = "最新Turnの枠を代用する、履歴や元受付を変更する、Session送信者を新actorにする"
-// observable = "実SQLiteで読んだ選択Turn、受付とdispatchの会話枠、GUI actorと元来歴、元受付と相手/初期/ALLの履歴"
+// claim = "履歴の失敗開始は別Turnの実行中もGUIの新しい受付になり、実行中Turnと先行予約の後ろで、元の相手枠を維持する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#failed-turn-retry; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "実行中に受付を拒否するか早期dispatchする、先行予約を追い越す、最新Turnの枠を代用する、元受付を変更する、Session送信者を新actorにする"
+// observable = "実SQLiteのrunningとqueued receipt・claim順、起動要求、受付とdispatchの会話枠、GUI actorと元来歴、元受付と相手/初期/ALLの履歴"
 // observation_boundary = "public-boundary"
 // scope = "IPC、MainSessionTurnQueueFacade、queue service、SQLite実行履歴"
 // lifecycle = "permanent"
@@ -125,7 +125,6 @@ test("IPC retries the selected older failed Turn from real saved execution state
     const saved = sessions.insertSession({ ...session(), sessionRole: "overall-coordinator", rootSessionId: "read-main",
       model: "current-model", reasoningEffort: "medium", messages: [
       { role: "user", text: "fixed instruction" }, { role: "assistant", text: "failed response", runFailure: "failed" },
-      { role: "user", text: "later instruction" }, { role: "assistant", text: "later response" },
     ] });
     const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
     const target = { kind: "main" as const, ...owner };
@@ -140,10 +139,26 @@ test("IPC retries the selected older failed Turn from real saved execution state
     queue.claimNext(owner); queue.markStarted(owner, original.id, { turnId: String(failed.id), userMessageSeq: 0 });
     turns.updateSessionTurn(failed.id, { ...turnBase, phase: "failed", userMessageSeq: 0, assistantMessageSeq: 1 });
     queue.settle(owner, original.id, "failed", "failed");
-    const later = turns.createSessionTurn({ ...turnBase, phase: "running", userMessageSeq: 2 });
-    turns.updateSessionTurn(later.id, { ...turnBase, phase: "completed", userMessageSeq: 2, assistantMessageSeq: 3 });
+    const enqueueGui = (userMessage: string) => queue.enqueue(owner, {
+      request: { userMessage, clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) },
+      provider: saved.provider, workspacePath: saved.workspacePath, attachments: [],
+      origin: { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId },
+    });
+    const runningReceipt = enqueueGui("later instruction");
+    assert.equal(queue.claimNext(owner)?.id, runningReceipt.id);
+    const running = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: 2, updatedAt: "later-start",
+      userMessage: { role: "user", text: "later instruction" }, queuedTurn: { queueId: runningReceipt.id,
+        turn: { ...turnBase, sandboxMode: captureSessionExecutionOptions(saved).codexSandboxMode, phase: "running", userMessageSeq: 2 } } });
+    const later = running.queuedTurn;
+    assert.ok(later);
+    assert.equal(sessions.getSession(saved.id)?.runState, "running");
+    const earlierQueued = enqueueGui("already waiting");
     const store = new Proxy(queue, { get(instance, key) { const value = Reflect.get(instance, key); return typeof value === "function" ? async (...args: unknown[]) => value.apply(instance, args) : value; } }) as unknown as SessionTurnQueueStore;
-    const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => { throw new Error("No provider calls in fixture"); } });
+    const serviceDispatches: string[] = [];
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async (receipt) => {
+      serviceDispatches.push(receipt.id);
+      throw new Error("This fixture advances dispatch explicitly.");
+    } });
     const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession: async (id) => sessions.getSession(id),
       getAppSettings: async () => createDefaultAppSettings(), validateWorkspace: async () => {},
       validateProvider: async () => ({ provider: { id: "codex", label: "Codex", defaultModelId: saved.model, defaultReasoningEffort: saved.reasoningEffort, models: [{ id: saved.model, label: "Model", reasoningEfforts: [saved.reasoningEffort] }] } }),
@@ -159,21 +174,31 @@ test("IPC retries the selected older failed Turn from real saved execution state
       const retry = (input = request) => handlers.get("withmate:retry-failed-session-turn")!({ sender, senderFrame: frame } as unknown as IpcMainInvokeEvent, saved.id, input);
       const result = await retry();
       assert.equal((await retry()).id, result.id);
+      assert.equal(result.state, "queued");
+      assert.equal(queue.getReceiptById(owner, runningReceipt.id)?.state, "running");
+      assert.deepEqual(queue.listActive(owner).filter(({ state }) => state === "queued").map(({ id }) => id), [earlierQueued.id, result.id]);
+      assert.equal(queue.claimNext(owner), null);
+      assert.deepEqual(serviceDispatches, []);
       assert.equal(result.captured.request.userMessage, "fixed instruction");
       assert.equal(result.captured.origin.kind, "gui");
       assert.deepEqual(result.captured.request.mainConversationFrame, peer);
       assert.deepEqual(queue.listActive(owner).find(({ id }) => id === result.id)?.captured.request.mainConversationFrame, peer);
       assert.deepEqual(result.captured.retrySource.origin, sourceOrigin);
       assert.equal(result.captured.retrySource.turnId, String(failed.id));
-      assert.deepEqual(sessions.getSession(saved.id)?.messages.map((message) => message.text), ["fixed instruction", "failed response", "later instruction", "later response"]);
+      assert.deepEqual(sessions.getSession(saved.id)?.messages.map((message) => message.text), ["fixed instruction", "failed response", "later instruction"]);
       assert.equal(queue.getReceiptById(owner, original.id)?.state, "failed");
       const reread = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, receiptId: result.id } }));
       assert.equal(reread.retrySource?.receiptId, original.id);
-      const run = (id: string, seq: number, text: string) => {
+      sessions.appendSessionTerminal({ ...owner, expectedMessageCount: 3, assistantMessage: { role: "assistant", text: "later response" },
+        metadata: { status: "saved", runState: "idle", threadId: "", updatedAt: "later-finished" },
+        terminalCommit: { turnId: later.id, sessionId: saved.id, phase: "completed", assistantMessageSeq: 3,
+          threadId: "", errorMessage: "", completedAt: "later-finished" } });
+      assert.equal(queue.getReceiptById(owner, runningReceipt.id)?.state, "completed");
+      const run = (id: string, seq: number, text: string, frame?: typeof peer) => {
         const claimed = queue.claimNext(owner);
         assert.equal(claimed?.id, id);
         assert.ok(claimed?.dispatched);
-        assert.deepEqual(claimed.dispatched.request.mainConversationFrame, peer);
+        assert.deepEqual(claimed.dispatched.request.mainConversationFrame, frame);
         assert.equal(claimed.dispatched.request.userMessage, text);
         const running = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: seq, updatedAt: "retry-start",
           userMessage: { role: "user", text: claimed.dispatched.request.userMessage }, queuedTurn: { queueId: id,
@@ -185,16 +210,17 @@ test("IPC retries the selected older failed Turn from real saved execution state
             threadId: "", errorMessage: "", completedAt: "retry-finished" } });
         assert.equal(queue.getReceiptById(owner, id)?.state, "completed");
       };
-      run(result.id, 4, "fixed instruction");
+      run(earlierQueued.id, 4, "already waiting");
+      run(result.id, 6, "fixed instruction", peer);
       const edited = await retry({ ...request, clientRequestId: randomUUID() });
       queue.updateQueued(owner, edited.id, { userMessage: "edited by user", attachments: [] });
-      run(edited.id, 6, "edited by user");
+      run(edited.id, 8, "edited by user", peer);
       const list = (thread?: typeof target | null) => (executionOperationResultSchemas.list_messages.parse(read.execute({
         target, operation: "list_messages", request: { target, thread },
       })).items as { seq: number }[]).map(({ seq }) => seq);
-      assert.deepEqual(list(peer), [0, 1, 4, 5, 6, 7]);
-      assert.deepEqual(list(null), [2, 3]);
-      assert.deepEqual(list(), [0, 1, 2, 3, 4, 5, 6, 7]);
+      assert.deepEqual(list(peer), [0, 1, 6, 7, 8, 9]);
+      assert.deepEqual(list(null), [2, 3, 4, 5]);
+      assert.deepEqual(list(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
       assert.deepEqual(sessions.getSession(saved.id)?.messages.slice(0, 4).map((message) => message.text),
         ["fixed instruction", "failed response", "later instruction", "later response"]);
       assert.deepEqual(queue.getReceiptById(owner, original.id)?.accepted, original.accepted);

@@ -25,19 +25,12 @@ export function inputDetailStateLabel(value: string | null | undefined, fallback
   return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
 }
 
-export function retrySourceLabel(origin: SessionTurnQueueOrigin | undefined) {
-  return origin ? `Retry requested by you · Previous input from ${origin.kind === "session" ? origin.actorSnapshot?.character.name ?? "Unknown Session" : "you"}` : undefined;
-}
-
 /** A card can display the previous author without changing the recorded actor. */
 export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
   source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean) {
   const previous = origin?.kind === "gui" && source && source.origin.targetSessionId === origin.targetSessionId
     && source.origin.targetIncarnationId === origin.targetIncarnationId ? source : null;
-  return {
-    origin: previous?.changedSinceAcceptance === false && unchanged ? previous.origin : origin,
-    retryLabel: retrySourceLabel(previous?.origin),
-  };
+  return previous?.changedSinceAcceptance === false && unchanged ? previous.origin : origin;
 }
 
 export function retryReceiptInputUnchanged(receipt: SessionTurnQueueReceipt) {
@@ -217,7 +210,9 @@ function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false,
         <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
         {execution?.inputs?.entry?.comparison === "changed" ? <InputDetailRow label="Starting Input">Edited before this Turn started</InputDetailRow> : null}
         {execution?.retrySource?.changedSinceAcceptance ? <InputDetailRow label="Original Input">Edited before the original Turn started</InputDetailRow> : null}
-        {execution?.retrySource ? <InputDetailRow label="Retry Source">{retrySourceLabel(execution.retrySource.origin)}</InputDetailRow> : null}
+        {execution?.retrySource ? <InputDetailRow label="Original Sender">
+          {execution.retrySource.origin.kind === "session" ? execution.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "You"}
+        </InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
       </dl>

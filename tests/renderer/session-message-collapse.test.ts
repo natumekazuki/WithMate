@@ -45,19 +45,20 @@ function buildBookmarkProjectionTargets() {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "plain-text projectionはMarkdownと空白を正規化し、空contentをNo contentへ投影して160 code pointsへ収める"
-// oracle = { type = "contract", ref = "src/chat/conversation/session-message-collapse.ts" }
-// fault = "Markdown記号・空白・空本文をそのままpreviewへ出すか、上限を超えてcollapse previewを伸ばす"
-// observable = "通常本文、空本文、長文のprojected textとcode point長"
+// claim = "折りたたみpreviewはMarkdownと空白を正規化して160 code pointsへ収め、派生する本文がなければ空を返す"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#rendering-policy; src/chat/conversation/session-message-collapse.ts のpreview投影" }
+// fault = "空本文に代替文を生成する、本来の本文を代替文と誤認して除く、または上限を超える"
+// observable = "通常本文、summaryが空のMarkdown、本文が実際にNo contentである場合、長文のprojected textとcode point長"
 // observation_boundary = "public-boundary"
 // scope = "session-message-plain-text-projection"
 // lifecycle = "permanent"
-// impact = "collapse previewの可読性と固定高さ契約が崩れ、空messageの状態を説明できなくなる"
-// distinction = "通常・空・上限超過の三つの入力を同一helperの出力で確認する"
+// impact = "実在しない本文の表示、本物の本文の欠落、長いsummaryでの見通し悪化を防ぐ"
+// distinction = "代替文の削除と、その文言を含む実在本文の保持を同じ投影境界で区別する"
 // @end-test-value
 test("plain-text projection は Markdown と空白を正規化し、160 code pointsへ収める", () => {
   assert.equal(projectMessagePlainText("# **hello**\n\n  world `code`"), "hello world code");
-  assert.equal(projectMessagePlainText("***\n\n  \n"), "No content");
+  assert.equal(projectMessagePlainText("***\n\n  \n"), "");
+  assert.equal(projectMessagePlainText("No content"), "No content");
 
   const longText = "あ".repeat(160) + "tail";
   const projected = projectMessagePlainText(longText);

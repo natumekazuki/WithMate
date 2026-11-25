@@ -1390,6 +1390,87 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
 
 // @test-value v2
 // kind = "contract"
+// claim = "本文のない保存済み応答は折りたたんでも代替文を出さず、失敗・Details・開閉のフォーカスと実際の本文を保持する。展開後は表示中の失敗結果を既読にできる"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#rendering-policy; docs/design/desktop-ui.md の確定した送信・実行失敗とMonitorの自動既読" }
+// fault = "空のpreviewを作る、失敗を消す、開閉時にfocusや参照先を失う、実本文を消す、または空の本文を開閉したときに誤って既読にする/できない"
+// observable = "開閉ボタンのname/expanded/controlsとactiveElement、空の本文、Failed・Details、別messageの実preview、表示済み失敗に対する開閉前後の既読API呼出"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn のMain・Aux共通折りたたみ表示"
+// lifecycle = "permanent"
+// distinction = "plain-text projectionや手製DOMのobserver単体では、実Columnでの開閉control・既読の接続を観測できない"
+// @end-test-value
+test("SessionMessageColumn は空の失敗本文を埋めず、実本文と別表示を保つ", async () => {
+  const messages: Message[] = [
+    { ...createArtifactMessage(), text: "", runFailure: "Fixture failure" },
+    { role: "assistant", text: "No content" },
+  ];
+  const messageKeys = ["empty", "literal"];
+  const messageCollapseTargets = buildMessageCollapseTargets(messages, [
+    { kind: "session", messageIndex: 0 },
+    { kind: "auxiliary", sessionId: "aux-fixture", messageIndex: 0, artifact: undefined },
+  ], messageKeys);
+  const collapsedMessageKeys = new Set(["literal"]);
+  const mounted = await mountSessionMessageColumn({
+    messages, messageKeys, messageCollapseTargets, collapsedMessageKeys,
+    expandedArtifacts: { empty: true },
+    onToggleMessageCollapse: (key) => {
+      if (collapsedMessageKeys.has(key)) collapsedMessageKeys.delete(key);
+      else collapsedMessageKeys.add(key);
+    },
+  });
+  let stopObserve: (() => void) | undefined;
+  try {
+    const body = mounted.container.querySelector("#message-body-empty");
+    const row = body?.closest("article");
+    const button = row?.querySelector<HTMLButtonElement>("button[aria-label='Collapse message']");
+    assert.ok(body && row && button);
+    assert.equal(row.querySelector(".session-run-failure strong")?.textContent, "Failed");
+    assert.equal(row.querySelector(".session-run-failure p")?.textContent, "Fixture failure");
+    assert.ok(row.querySelector("#artifact-panel-empty"));
+    await act(async () => { button.focus(); button.click(); });
+    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    assert.equal(mounted.dom.window.document.activeElement, button);
+    assert.equal(button.getAttribute("aria-label"), "Expand message");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    const collapsedBody = mounted.dom.window.document.getElementById(button.getAttribute("aria-controls") ?? "");
+    assert.equal(collapsedBody?.id, body.id);
+    assert.equal(collapsedBody.textContent, "");
+    assert.equal(collapsedBody.querySelector(".message-collapsed-preview"), null);
+    assert.ok(row.querySelector(".session-run-failure")?.textContent?.includes("Fixture failure"));
+    assert.ok(row.querySelector("#artifact-panel-empty"));
+    assert.equal(mounted.container.querySelector("#message-body-literal .message-collapsed-preview")?.textContent, "No content");
+
+    const { window } = mounted.dom;
+    const shownFailure = row.querySelector<HTMLElement>(".session-run-failure")!;
+    shownFailure.getBoundingClientRect = () => createRect({ top: 20, left: 0, width: 400, height: 80 });
+    Object.defineProperty(window.document, "hasFocus", { value: () => true });
+    const acknowledgements: Array<[string, number]> = [];
+    stopObserve = observeSessionResultRead({
+      sessionId: "session-1", list: mounted.messageListRef.current!, assistantMessageIndexes: new Map([[0, 0]]),
+      api: {
+        getUnreadSessionResult: async () => ({ turnId: 7, assistantMessageSeq: 0 }),
+        markSessionResultRead: async (id, turnId) => { acknowledgements.push([id, turnId]); return true; },
+        onSessionTurnUpdated: () => () => {},
+      },
+    });
+    const flushFrame = () => act(async () => {
+      await Promise.resolve();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    await flushFrame();
+    assert.deepEqual(acknowledgements, []);
+    await act(async () => button.click());
+    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    await flushFrame();
+    assert.deepEqual(acknowledgements, [["session-1", 7]]);
+  } finally {
+    stopObserve?.();
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "persisted message のbookmark controlは状態をaccessible nameとaria-pressedへ公開し、clickでsource targetを返す"
 // oracle = { type = "contract", ref = "docs/features/message-bookmark-filter.md: 本文のbookmark control" }
 // fault = "bookmark controlを表示しない、状態を支援技術へ公開しない、または対象messageを誤って返す"
