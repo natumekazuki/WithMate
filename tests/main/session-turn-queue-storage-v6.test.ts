@@ -259,9 +259,9 @@ test("queue store は実Worker経路で受付とterminal再照会を保持する
 
 // @test-value v2
 // kind = "contract"
-// claim = "起動回収は実開始を既存TurnのFailed一件へ収束し、旧保留のrelease時刻によらず入力・部分本文・Details・確定結果を保持する"
+// claim = "実開始を既存TurnのFailed一件へ収束し、旧保留のrelease時刻によらず保存内容と確定結果を保持する。開始根拠のないinterruptedは上書きしない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
-// fault = "旧保留だけを残す、別のownerまたはuser seqで確定する、成功をfailedへ変更する、通知と同文の実発言を削る、または部分内容を失う"
+// fault = "確実な未終端の旧保留を残す、別owner・異user seq・開始証拠なしで確定する、既知終端をfailedへ変更する、または本文・Detailsを失う"
 // observable = "隔離DB再open後のreceipt状態、Turn phaseと本文・artifact、次回claim順、再回収の件数"
 // observation_boundary = "public-boundary"
 // scope = "実SQLiteの開始・終端・旧保留・起動回収"
@@ -277,13 +277,24 @@ test("起動回収は遺失・旧保留・確定成功を照合し、保存結�
   const sameWords = "The previous run may have been interrupted when the app quit. Send again if needed.";
   const detail = { title: "Provider detail", activitySummary: ["Kept"], changedFiles: [], runChecks: [] };
   try {
-    for (const scenario of ["running", "held", "released", "committed", "wrong-seq", "old-incarnation"] as const) {
+    for (const scenario of ["running", "held", "released", "committed", "wrong-seq", "old-incarnation", "no-start-link"] as const) {
       const session = sessions.insertSession({ ...newSession(), id: scenario, taskTitle: scenario, threadId: "thread",
         messages: [{ role: "user", text: sameWords }, { role: "assistant", text: sameWords, accent: true }] });
       const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
       const captured = input("Original start");
       const receipt = queue.enqueue(owner, captured);
       assert.equal(queue.claimNext(owner)?.id, receipt.id);
+      if (scenario === "no-start-link") {
+        const unresolved = queue.settle(owner, receipt.id, "interrupted", "Cannot confirm this attempt");
+        const follower = queue.enqueue(owner, input("Follower"));
+        assert.equal(queue.recoverInterrupted({ ...owner, receiptId: receipt.id }), 0);
+        assert.equal(queue.recoverInterrupted(), 0);
+        assert.deepEqual(queue.getReceipt(owner, receipt.requestId), unresolved);
+        assert.equal(turns.getLatestSessionTurn(session.id), null);
+        assert.equal(queue.claimNext(owner)?.id, follower.id);
+        queue.settle(owner, follower.id, "completed");
+        continue;
+      }
       const options = captured.request.executionOptions;
       const time = "2026-11-24T15:00:00.000Z";
       const start = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: 2, updatedAt: time,

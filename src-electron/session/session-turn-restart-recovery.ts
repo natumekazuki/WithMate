@@ -166,8 +166,10 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, recei
         state = turn.phase;
         reason = turn.reason || null;
       }
-    } else if (receipt.turnId === null && receipt.userMessageSeq === null && !receipt.coordination) {
-      // Without the atomic start record there is no started Turn to settle or source Turn to release.
+    } else if (!receiptId && receipt.state === "starting"
+      && receipt.turnId === null && receipt.userMessageSeq === null && !receipt.coordination) {
+      // An untouched startup claim never reached the atomic start record.
+      // Do not infer this from an already-interrupted receipt's missing fields.
       state = "failed";
       reason = reasonForAbandonedTurn;
     }
