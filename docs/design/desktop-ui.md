@@ -465,7 +465,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Main／Auxiliaryは送信を会話ID・incarnation・request IDで照合する。受付済みの送信文と応答面は同じrequest IDのreceiptを使い、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない
 - streamingの`assistantText`は会話本文として表示する。受付済みTurnの通常の応答用assistant行にCharacter avatarとdot bubbleを置く。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
 - Main／Auxiliaryの通常応答はrequest／turnの表示identityを保ち、待機・live本文・保存済み本文への接続でassistant行・avatar・応答cardを差し替えない。表示中の応答本文はPreview／Source共通で100ms単位の最新snapshotへ集約し、通信の細かな到着間隔をそのまま高さ更新へ流さない。timerの実行が遅れても中間本文を順次再生せず最新を表示する。終了・失敗・取消・承認・質問・本文検索では集約待ちを解除し、会話切替・非表示・unmount時は旧応答の待機更新を破棄する。実行・保存と操作可否は実状態のままとし、表示待ちにはしない
-- 確定した送信・実行失敗は応答側の共通エラー欄へ`Failed`と理由を一度だけ表示する。開始前・本文なしでは同じ欄だけを置き、途中失敗では受信済み本文・Detailsを保持して本文の下へ置く。失敗通知は生成本文に追記せず、Copy／Quote対象の本文と分離し、本文を折りたたんでも理由を隠さない。送信側の失敗理由・Failed表示は重ねない。`Resend`／`Edit`、結果不明の`Interrupted`と`Release Later Turns`、取得失敗の`Retry`はそれぞれの責務を維持する
+- 通常の送信・実行失敗も再起動による失敗も、Main／Auxiliaryの応答側で共通エラー欄に`Failed`と理由を一度だけ表示する。旧`interrupted`値も同じ欄を使う。開始前・本文なしでは同じ欄だけを置き、途中失敗では既存の本文・Detailsを保持して本文の下へ置く。再起動前に保存された実入力・本文・Details・確定応答は保持し、確定済み成功や他のTurnへ失敗を転記しない。通知は生成本文とCopy／Quote対象に含めず、本文を折りたたんでも理由を隠さない。送信側に失敗表示は重ねない
 - 確定失敗の応答枠はCharacter色ではなく固定のエラー色で左線と薄い背景を表示し、エラー欄自体には枠・背景を重ねない。通常応答のCharacter色とavatarによる識別は維持する
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す
 - pending bubble には provider-native pending item を差し込める
@@ -518,7 +518,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ保存済み実行順に置く。初期は受付順とし、Main／Auxiliaryとも未開始項目の`Move Up`／`Move Down`で1件ずつ移動できる。本文を主役にし、下部に右寄せの上下icon、個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順は上から下への配置で示し、開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅でも操作buttonは内容に合う幅を保ち、収まらない時だけ操作行を折り返す。本文を縮小しない
 - 上下操作はTabで到達しEnter／Spaceで実行できる。対象と方向のaccessible name、visible focus、busy stateを維持し、端を越える方向、read-only／入力凍結中は無効にする。保存後も先頭との入れ替えを含めて移動対象へfocusを保ち、端へ移動して元buttonが無効になった場合は同じ項目の操作groupへfocusを置く。開始・取消でfocus中の操作面が消える場合は会話一覧へ退避する。待機中に利用者が別controlへ移したfocusは奪わない。保存済みの変更後位置はaccessible statusで通知する。受付IDと本文の対応は変えず、現在Turnへの入力・質問回答・取消とは別操作にする
 - 並べ替え中は取得済みの順序を保ち、保存確定後に反映する。追加・取消・開始等で待機列が変わっていたら変更せず、最新列を再取得して再操作を案内する。再取得に失敗した場合は競合の案内で取得失敗を隠さず、表示が古い可能性と`Retry Queue`を示す。保存失敗・応答不明では成功表示や自動再送をせず、取得済み本文を保持して再取得手段を示す。開始済み項目と確定履歴は移動しない
-- 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答を失い自動照会でも結果を確認できない場合はComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。通常送信の受付ACKは一致するdraft revisionだけを消す
+- 失敗後も元要求を自動再送せず、後続予約を停止するための専用保留・解除は設けない。失敗した予約は実入力と応答側の共通`Failed`を表示する。旧予約の追加入力が受付結果不明の場合も本文と結果不明の理由を残し、親Turnの失敗、確定未送信、再試行可能な通常Turnとして扱わない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。通常送信で受付応答を失い自動照会でも結果を確認できない場合はComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。通常送信の受付ACKは一致するdraft revisionだけを消す
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は会話内のQuestion Formsで回答し、secret textはpassword inputで扱う。nonblockingの質問も受付状態の見出しは置かず、必須待ちと区別して応答生成中のstatusを維持する
 - Main／Auxiliaryとも取消click直後から同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。通知前の要求待ちは対象会話・Turnに限定し、liveの取消受付・終了待ちへつなぐ。失敗では理由を示して再操作できる状態へ戻し、旧取消要求の遅いACKで後続Turnを巻き戻さない。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する
 - 取消は送信の逆再生にしない。受信済み本文・応答枠・avatarを保持し、同じ枠内の待機状態を停止確定までつなぐ。本文未着では同じ待機枠を使い、停止を完了応答に見せない。取消を理由にdockを自動展開・折りたたみしたり、draft・閲覧位置を巻き戻したりしない
@@ -578,7 +578,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - terminal state 後の再送導線
   - `runState === "running"` 中は recovery action surface を出さず、既存 pending / `Cancel` を維持する
   - 最新turn記録の取得だけでは再送用の警告枠を生成しない。通常の読込中は枠のないspinnerとaccessible busy status、実際の取得失敗はerrorと`Retry`で示す。既知のterminal stateがある場合は、その回復操作を再取得中・取得失敗時にも保持する
-  - `runState === "interrupted"` または `runState === "error"` で、`lastUserMessage` がある場合に回復操作を出す。失敗の事実・理由は応答側の共通failure row、中断は既存のchat noticeで示し、操作列で重複させない
+  - 選択会話に再試行・編集可能な前回要求があれば回復操作を出す。失敗の事実・理由は応答側の共通failure rowで示し、操作列で重複させない。旧`runState === "interrupted"`も確定済み成功を回復対象にしない
   - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら回復操作を出す。取消状態は既存のchat本文で示す
   - `lastUserMessage` がない session では retry 不能のため surface を出さない
   - 共通 `ChatWindow` が回復操作を所有し、Action Dockの既存上段操作列へ配置する。Prompt展開・compact・Terminal・中央file previewのいずれでも到達でき、activeな列だけに描画する。通常時は回復用の空領域を予約せず、既存Cancelの予約領域を維持する
@@ -587,10 +587,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
   - 回復操作は次のとおり
-    - `Resend`: interrupted／canceledの既存回復導線では選択会話の前回本文を送信する。失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を再実行する。受付後の開始入力の編集差と元送信者はDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
+    - `Resend`: 失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を明示的に再実行する。対応する失敗Turnを持たない旧中断・取消の既存回復では選択会話の前回本文を送信する。受付後の開始入力の編集差と元送信者はDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
     - `Edit`: 前回本文を対象会話のdraftへ戻し、Promptを開いてtextareaへfocusする。自動送信はしない
   - 異なる非空draftで`Edit`を押した場合は、`Your current draft is preserved.`を示す確認dialogを開く。`Keep Current Draft`または`Escape`で保持し、`Replace With Previous Request`を明示選択した場合だけ置換する。確認中も背面のDock選択は維持する
-  - 最新turnの取得失敗からの`Retry`、実行受付不明の確認、後続turnの`Release Later Turns`はそれぞれ別の操作として維持する
+  - 最新Turnの取得失敗からの`Retry`と実行受付不明の確認は、それぞれ別の操作とする
 - inline `Diff Viewer` overlay
 - `Open In Window` による `Diff Window` popout
 - inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる

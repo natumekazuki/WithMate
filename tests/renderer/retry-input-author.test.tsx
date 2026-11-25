@@ -51,7 +51,7 @@ test("Retry queue cards distinguish a replay from a user edit", async () => {
   const receipt: SessionTurnQueueReceipt = { id: "retry", requestId: "request", sessionId: target.sessionId, incarnationId: target.incarnationId, state: "queued",
     captured: accepted, accepted, dispatched: null, turnId: null, userMessageSeq: null, inputTurnId: null, reason: null, releasedAt: null,
     queuePosition: 1, sequence: 1, createdAt: "now", updatedAt: "now" };
-  const renderQueue = (next: SessionTurnQueueReceipt) => root.render(<SessionTurnQueueRow receipt={next} character={character} busy={false} onCancel={() => {}} onRelease={() => {}} />);
+  const renderQueue = (next: SessionTurnQueueReceipt) => root.render(<SessionTurnQueueRow receipt={next} character={character} busy={false} onCancel={() => {}} />);
   const article = () => dom.window.document.querySelector("article")!;
   try {
     await act(async () => renderQueue(receipt));

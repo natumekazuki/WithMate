@@ -73,7 +73,7 @@ test("direct Steer cards show the recorded input state and read the exact messag
 // distinction = "保存testではrendererの送信者と受信者の取り違えを検出しない。小さなSSRで識別表示を検証する"
 // @end-test-value
 test("incoming rows use saved sender identity and retain unknown legacy identity", () => {
-  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueRow receipt={value} character={{ name: "Current Recipient", iconPath: "" }} busy={false} onCancel={() => {}} onRelease={() => {}} />)).window.document;
+  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueRow receipt={value} character={{ name: "Current Recipient", iconPath: "" }} busy={false} onCancel={() => {}} />)).window.document;
   const document = render(receipt);
   assert.equal(document.querySelector(".message-character-name")?.textContent, "Saved Sender");
   assert.equal(document.querySelector(".related-session-title")?.textContent, "Saved Sender Title");

@@ -4,6 +4,15 @@ import type { MessageListProjection } from "../auxiliary/auxiliary-session-messa
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 
+export function isFailedTurnReceipt(receipt: SessionTurnQueueReceipt): boolean {
+  return receipt.state === "failed" || receipt.state === "interrupted";
+}
+
+export function turnReceiptFailureReason(receipt: SessionTurnQueueReceipt): string {
+  return receipt.reason ?? (receipt.state === "interrupted" && receipt.inputTurnId
+    ? "Input acceptance could not be confirmed." : "");
+}
+
 export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: {
   submissions: readonly SessionTurnSubmission[];
   hasActiveRun: boolean;
@@ -19,7 +28,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const tail: SessionTurnQueueReceipt[] = [];
   const sessionQueue = options?.sessionQueue?.receipts.filter(isOwned) ?? owned;
   const sessionBusy = (options?.sessionQueue?.hasActiveRun ?? options?.hasActiveRun) || sessionQueue.some((receipt) =>
-    receipt.state === "starting" || receipt.state === "running" || receipt.state === "interrupted" && receipt.releasedAt === null);
+    receipt.state === "starting" || receipt.state === "running");
   // Select the next dispatchable receipt before restricting the presentation to a frame.
   const queueHead = options && !sessionBusy ? sessionQueue.reduce<SessionTurnQueueReceipt | undefined>((head, receipt) =>
     receipt.state === "queued" && getQueuedSourceWaitState(receipt) === null
@@ -44,7 +53,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     }
     const firstSaved = projection.sources.find((source) => source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId);
     if (receipt.userMessageSeq !== null && (firstSaved?.kind === "session" || firstSaved?.kind === "auxiliary") && receipt.userMessageSeq < firstSaved.messageIndex) continue;
-    if (receipt.state === "queued" && receipt !== activeReceipt || ((receipt.state === "failed" || receipt.state === "interrupted") && receipt.userMessageSeq === null)) {
+    if (receipt.state === "queued" && receipt !== activeReceipt || (isFailedTurnReceipt(receipt) && receipt.userMessageSeq === null)) {
       tail.push(receipt);
       continue;
     }
@@ -60,23 +69,51 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     projection.groups.splice(index, 0, null);
     metadata.set(key, receipt);
   }
+  // Keep an earlier, failed reservation before the next response, even if it never acquired a saved user row.
+  const activeUserIndex = activeReceipt
+    ? projection.keys.indexOf(`turn-submission-${activeReceipt.incarnationId}-${activeReceipt.requestId}`) : -1;
+  if (activeUserIndex >= 0 && activeReceipt) {
+    let index = activeUserIndex;
+    for (let tailIndex = 0; tailIndex < tail.length;) {
+      const receipt = tail[tailIndex];
+      if (!isFailedTurnReceipt(receipt) || receipt.queuePosition >= activeReceipt.queuePosition) {
+        tailIndex++;
+        continue;
+      }
+      const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
+      const input = receipt.dispatched ?? receipt.captured;
+      projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(input), ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}) });
+      projection.keys.splice(index, 0, key);
+      projection.sources.splice(index, 0, { kind: "turn-queue", receipt });
+      projection.groups.splice(index, 0, null);
+      metadata.set(key, receipt);
+      tail.splice(tailIndex, 1);
+      index++;
+    }
+  }
   // Keep the terminal notification visible while its canonical response is being loaded.
   for (const [key, receipt] of metadata) {
-    if (receipt.state !== "failed") continue;
+    if (!isFailedTurnReceipt(receipt)) continue;
     const userIndex = projection.keys.indexOf(key);
-    const responseIndex = projection.sources.findIndex((source, index) => index > userIndex
-      && projection.messages[index].role === "assistant"
-      && (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId));
-    if (responseIndex >= 0) continue; // The stored response owns the terminal reason.
-    const liveIndex = projection.sources.findIndex((source, index) => index > userIndex && source.kind === "live-assistant");
+    if (receipt.inputTurnId && projection.messages[userIndex]?.turnInput?.state === "confirmed") continue;
+    const nextPrompt = projection.messages.findIndex((message, index) => index > userIndex && message.role === "user"
+      && !message.turnInput && !metadata.get(projection.keys[index])?.inputTurnId);
+    const belongsToResponse = (index: number) => !receipt.inputTurnId && index > userIndex && (nextPrompt < 0 || index < nextPrompt);
+    if (projection.sources.some((source, index) => belongsToResponse(index) && projection.messages[index].role === "assistant"
+      && (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId))) continue;
+    // A later live response can arrive before its saved prompt or receipt.
+    const liveIndex = projection.sources.findIndex((source, index) => belongsToResponse(index) && source.kind === "live-assistant"
+      && source.sessionId === receipt.sessionId && receipt.turnId !== null && source.withMateTurnId === receipt.turnId);
     if (liveIndex >= 0) {
-      projection.messages[liveIndex] = { ...projection.messages[liveIndex], runFailure: receipt.reason ?? "" };
+      projection.messages[liveIndex] = { ...projection.messages[liveIndex], runFailure: turnReceiptFailureReason(receipt) };
       continue;
     }
-    projection.messages.splice(userIndex + 1, 0, { role: "assistant", text: "", runFailure: receipt.reason ?? "" });
-    projection.keys.splice(userIndex + 1, 0, `${key}-failure`);
-    projection.sources.splice(userIndex + 1, 0, { kind: "turn-queue", receipt });
-    projection.groups.splice(userIndex + 1, 0, projection.groups[userIndex]);
+    let responseIndex = userIndex + 1;
+    while (!receipt.inputTurnId && (projection.messages[responseIndex]?.turnInput || metadata.get(projection.keys[responseIndex])?.inputTurnId)) responseIndex++;
+    projection.messages.splice(responseIndex, 0, { role: "assistant", text: "", runFailure: turnReceiptFailureReason(receipt) });
+    projection.keys.splice(responseIndex, 0, `${key}-failure`);
+    projection.sources.splice(responseIndex, 0, { kind: "turn-queue", receipt });
+    projection.groups.splice(responseIndex, 0, projection.groups[userIndex]);
   }
   // A following turn may already be running while this completed turn's canonical body is still in flight.
   for (const receipt of owned) {

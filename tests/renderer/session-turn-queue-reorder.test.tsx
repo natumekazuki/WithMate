@@ -40,7 +40,7 @@ async function mount() {
     return <div className="session-message-list" tabIndex={-1}>
       {current.queuedReceipts.map((item, index) => <SessionTurnQueueRow key={item.id} receipt={item} character={{ name: "Mate", iconPath: "" }}
         position={index + 1} queueSize={current.queuedReceipts.length} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null}
-        onMove={current.move} onCancel={current.cancel} onRelease={current.release} />)}
+        onMove={current.move} onCancel={current.cancel} />)}
       <span role="status">{current.announcement}</span>
       {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
     </div>;

@@ -26,7 +26,7 @@ const receipt: SessionTurnQueueReceipt = {
 // distinction = "backendの配送検査はrendererの表示とbutton状態を検出しない"
 // @end-test-value
 test("delayed delivery reports source state and gates only steer until terminal", () => {
-  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueStatus receipt={value} busy={false} onCancel={() => {}} onRelease={() => {}} onSendInput={() => {}} />)).window.document;
+  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueStatus receipt={value} busy={false} onCancel={() => {}} onSendInput={() => {}} />)).window.document;
   const button = (document: Document, name: string) => [...document.querySelectorAll("button")].find((item) => item.textContent === name || item.getAttribute("aria-label")?.startsWith(name))!;
   for (const phase of ["running", "unknown", undefined] as const) {
     const document = render({ ...receipt, sourceTurnPhase: phase });

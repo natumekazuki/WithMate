@@ -111,7 +111,6 @@ export type SessionMessageColumnProps = {
   submissionUncertain?: boolean;
   turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
-  onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onMoveQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./use-session-turn-queue.js").SessionTurnQueueMoveDirection) => void;
   queuedTurnIds?: readonly string[];
   queueReorderDisabled?: boolean;
@@ -482,7 +481,6 @@ export function SessionMessageColumn({
   sentReadLiveTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
-  onReleaseInterruptedTurn,
   onMoveQueuedTurn,
   queuedTurnIds,
   queueReorderDisabled,
@@ -1575,7 +1573,7 @@ export function SessionMessageColumn({
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
             const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
-            const canRetryFailedTurn = isAssistant && message.runFailure !== undefined && message.historyIndex !== undefined && !!inputReadContext;
+            const canRetryFailedTurn = isAssistant && message.runFailure !== undefined && savedSeq !== undefined && !!inputReadContext;
             const replyTarget = onSelectReply && inputReadContext && savedSeq !== undefined && message.text.trim()
               ? { target: inputReadContext.target, seq: savedSeq } : undefined;
             const replyKey = replyTarget ? JSON.stringify(["message", conversationPeerKey(replyTarget.target), replyTarget.seq]) : undefined;
@@ -1881,7 +1879,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
-                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
+                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
                     {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator announcement="Loading response" /></div>
                       : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>

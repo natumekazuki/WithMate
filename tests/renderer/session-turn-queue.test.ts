@@ -200,10 +200,10 @@ test("failed Turn recovery keeps a known rejection scoped to its original conver
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryのfailed receiptは保存応答到着まで理由と部分本文を応答側に保持し、開始前と後続予約の受付失敗も同じ欄へ表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 確定した送信・実行失敗; docs/design/session-run-lifecycle.md: GUI Turn Queue" }
-// fault = "terminal先着で理由が消える、本文到着で二重化する、または後続予約だけ送信側へ失敗表示する"
-// observable = "projectionの本文とrunFailure、canonical接続後の応答数、tailのassistant alertとuser本文"
+// claim = "Main/Auxiliaryの通常失敗と旧interruptedは共通Failedを一度使い、部分本文・Details・実入力と確定応答を保つ。旧予約の追加入力の受付不明は親のlive応答とは別に表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 通常の送信・実行失敗も再起動による失敗も; 失敗後も元要求を自動再送せず" }
+// fault = "失敗通知が先着すると消える、二重表示、部分本文・Details欠落、確定済み成功や別Turnへの転記、追加の受付不明を親失敗と混同"
+// observable = "応答の本文・artifact・runFailure、保存済み成功と別Turn、tailのassistant alertとuser本文、受付不明のqueue行に再試行buttonなし"
 // observation_boundary = "consumer"
 // scope = "queue failure response projection"
 // lifecycle = "permanent"
@@ -211,13 +211,46 @@ test("failed Turn recovery keeps a known rejection scoped to its original conver
 // distinction = "Column単体testではreceiptからcanonicalへのbridgeとtail経路を通らない。小さいMain/Auxiliary fixtureで境界を確認する"
 // @end-test-value
 test("failed receipts bridge the response and use the same tail failure surface", () => {
-  const failed = receipt({ state: "failed", userMessageSeq: 40, reason: "Capacity unavailable." });
+  const failed = receipt({ state: "failed", turnId: "failed-turn", userMessageSeq: 40, reason: "Capacity unavailable." });
   const context = { sessionId: owner.id, incarnationId: request.incarnationId };
   for (const primaryMessageSourceKind of ["session", "auxiliary"] as const) {
+    for (const state of ["failed", "interrupted"] as const) {
+      const terminal = { ...failed, state };
+      const prompt = { role: "user" as const, text: "A", historyIndex: 40 };
+      const savedReply = { role: "assistant" as const, text: "saved reply", historyIndex: 41 };
+      const savedPartial = { ...savedReply, text: "saved partial", runFailure: terminal.reason!,
+        artifact: { title: "Execution details", activitySummary: [], changedFiles: [], runChecks: [{ label: "Fixture operation", value: "finished" }] } };
+      const nextPrompt = { role: "user" as const, text: "B", historyIndex: 42 };
+      const nextReply = { role: "assistant" as const, text: "B reply", historyIndex: 43 };
+      const project = (messages: Parameters<typeof buildMessageListProjection>[0]) =>
+        projectSessionTurnQueue(buildMessageListProjection(messages, [], owner.id, { primaryMessageSourceKind }), [terminal], context).projection.messages;
+      assert.deepEqual(project([prompt, savedReply, nextPrompt, nextReply]), [prompt, savedReply, nextPrompt, nextReply]);
+      assert.deepEqual(project([prompt, savedPartial, nextPrompt, nextReply]), [prompt, savedPartial, nextPrompt, nextReply]);
+      assert.deepEqual(project([prompt, nextPrompt, nextReply]), [prompt, { role: "assistant", text: "", runFailure: failed.reason! }, nextPrompt, nextReply]);
+      const confirmedInput = { role: "user" as const, text: "confirmed follow-up", historyIndex: 41,
+        turnInput: { state: "confirmed" as const, turnId: "parent", nativeTurnId: "native", attachments: [] } };
+      const withInput = [prompt, confirmedInput, { ...savedReply, historyIndex: 42 }];
+      const inputHistory = buildMessageListProjection(withInput, [], owner.id, { primaryMessageSourceKind });
+      assert.deepEqual(projectSessionTurnQueue(inputHistory, [{ ...terminal, inputTurnId: "parent", userMessageSeq: 41 }], context).projection.messages, withInput);
+      assert.deepEqual(project([prompt, confirmedInput]), [prompt, confirmedInput, { role: "assistant", text: "", runFailure: failed.reason! }]);
+      const laterLive = buildMessageListProjection([prompt], [], owner.id, {
+        primaryMessageSourceKind,
+        liveAssistant: { sessionId: owner.id, threadId: "shared-thread", withMateTurnId: "later-turn", messageIndex: 42, text: "Later response before its saved prompt" },
+      });
+      assert.deepEqual(projectSessionTurnQueue(laterLive, [terminal], context).projection.messages,
+        [prompt, { role: "assistant", text: "", runFailure: failed.reason! }, laterLive.messages[1]]);
+    }
+    const liveHistory = buildMessageListProjection([{ role: "user", text: "parent input", historyIndex: 40 }], [], owner.id, {
+      primaryMessageSourceKind, liveAssistant: { sessionId: owner.id, threadId: "thread", messageIndex: 41, text: "still generating" },
+    });
+    const unknownInput = { ...failed, state: "interrupted" as const, reason: "Execution outcome is unknown after interruption.", inputTurnId: "parent", userMessageSeq: null };
+    const unknown = projectSessionTurnQueue(liveHistory, [unknownInput], context);
+    assert.deepEqual(unknown.projection.messages, liveHistory.messages);
+    assert.deepEqual(unknown.tail, [unknownInput]);
     for (const live of [false, true]) {
       const history = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 40 }], [], owner.id, {
         primaryMessageSourceKind,
-        ...(live ? { liveAssistant: { sessionId: owner.id, threadId: "thread", messageIndex: 41, text: "partial" } } : {}),
+        ...(live ? { liveAssistant: { sessionId: owner.id, threadId: "thread", withMateTurnId: failed.turnId!, messageIndex: 41, text: "partial" } } : {}),
       });
       const messages = projectSessionTurnQueue(history, [failed], context).projection.messages;
       assert.equal(messages.length, 2);
@@ -231,7 +264,8 @@ test("failed receipts bridge the response and use the same tail failure surface"
   }
   const character = { name: "Mate", iconPath: "" };
   const rows = [
-    React.createElement(SessionTurnQueueRow, { receipt: { ...failed, userMessageSeq: null }, character, busy: false, onCancel() {}, onRelease() {} }),
+    ...(["failed", "interrupted"] as const).map((state) =>
+      React.createElement(SessionTurnQueueRow, { receipt: { ...failed, state, userMessageSeq: null }, character, busy: false, onCancel() {} })),
     React.createElement(SessionTurnSubmissionRow, { character, submission: { ...context, requestId: "local", userMessage: "A", historyMessageCount: 0, queuedBehindRun: true, error: failed.reason! } }),
   ];
   for (const row of rows) {
@@ -240,6 +274,10 @@ test("failed receipts bridge the response and use the same tail failure surface"
     assert.equal(document.querySelectorAll(".session-run-failure").length, 1);
     assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, `Failed${failed.reason}`);
   }
+  const unknown = React.createElement(SessionTurnQueueRow, { receipt: { ...failed, state: "interrupted", reason: null, inputTurnId: "parent", userMessageSeq: null }, character, busy: false, onCancel() {} });
+  const document = new JSDOM(renderToStaticMarkup(unknown)).window.document;
+  assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, "FailedInput acceptance could not be confirmed.");
+  assert.equal(document.querySelectorAll("button").length, 0);
 });
 
 // @test-value v2
