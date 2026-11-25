@@ -238,11 +238,10 @@ import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { SessionManagementApplication, SessionManagementError } from "./session/session-management-application.js";
 import { SessionOperatingPolicyService } from "./session/session-operating-policy-service.js";
-import { SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
-import { resolveRelatedSessions } from "./session/session-relationship-resolver.js";
+import { createSessionManagementScopeReader, SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
 import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
 import { getModelDisabledReason } from "../src-shared/settings/model-availability.js";
-import { SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
+import { notifySessionGraphWindows, SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
 import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
 import { registerSessionRoleHandlers } from "./ipc/session-role.js";
 import { registerSessionExecutionHandlers } from "./ipc/session-execution.js";
@@ -430,6 +429,7 @@ const mainWindowRuntime = new MainWindowRuntime({
   rendererDistPath,
   userDataPath: fixedUserDataPath,
   getSession,
+  getStorageGeneration: () => mainStoreContext.storageWorker,
   readSession: (sessionId) => requireSessionStorage().getSession(sessionId),
   getLiveSessionRunOwnerSessionId: (sessionId) => auxiliaryLiveRunParents.get(sessionId)
     ?? (mainWindowRuntime.getSessionWindowBridge().getWindow(sessionId) ? sessionId : null),
@@ -742,18 +742,6 @@ const sessionGraphApplicationService = new SessionGraphApplicationService({
   },
   resolveSession: resolveSessionGraphSession,
 });
-sessionGraphApplicationService.subscribe((sessionId) => {
-  void (async () => {
-    const owner = requireActivePersistentStoreOwnerForFactory("Session Graph notification");
-    const members = await owner.sessionStorage.listSessionSummaries();
-    assertPersistentStoreOwnerIsActive(owner, "Session Graph notification");
-    for (const member of members.filter((entry) => (entry.rootSessionId ?? entry.id) === sessionId)) {
-      const window = requireSessionWindowBridge().getWindow(member.id);
-      if (window && !window.isDestroyed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, member.id);
-    }
-    await sessionGraphWindowService.notify(sessionId);
-  })().catch((error: unknown) => writeAppLog({ level: "warn", kind: "session-graph.notification-failed", process: "main", message: "Crew Session Graph notification failed", error: appLogService.errorToLogError(error) }));
-});
 const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
   application: sessionGraphApplicationService,
   createWindow: () => mainWindowComposition.createCursorPlacedWindow({ width: 1100, height: 780, minWidth: 600, minHeight: 480, title: "Session Graph" }),
@@ -764,9 +752,31 @@ const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
     const home = mainWindowRuntime.getAuxWindowService().getHomeWindow();
     if (home && !home.isDestroyed() && !home.webContents.isDestroyed() && !home.webContents.isCrashed()) home.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT);
   },
-  notify: (window, sessionId) => {
-    if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
-  },
+  notify: sendSessionGraphChanged,
+});
+function logSessionGraphNotificationFailure(error: unknown): void {
+  writeAppLog({ level: "warn", kind: "session-graph.notification-failed", process: "main", message: "Crew Session Graph notification failed", error: appLogService.errorToLogError(error) });
+}
+function sendSessionGraphChanged(window: BrowserWindow, sessionId: string): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isCrashed()) return;
+  try {
+    window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
+  } catch (error) {
+    logSessionGraphNotificationFailure(error);
+  }
+}
+sessionGraphApplicationService.subscribe((change) => {
+  const generation = mainStoreContext.storageWorker;
+  const storeOwner = mainStoreContext.activePersistentStoreOwner;
+  if (!generation || !storeOwner || generation !== change.generation || databaseMaintenanceRequested) return;
+  void notifySessionGraphWindows(change, {
+    sessionStorage: generation.stores.session,
+    sessionWindows: requireSessionWindowBridge(),
+    graphWindows: sessionGraphWindowService,
+    isCurrent: () => mainStoreContext.storageWorker === generation
+      && mainStoreContext.activePersistentStoreOwner === storeOwner && !databaseMaintenanceRequested,
+    send: sendSessionGraphChanged,
+  }).catch(logSessionGraphNotificationFailure);
 });
 const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   applicationService: sessionGraphApplicationService,
@@ -878,13 +888,7 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
     },
     crewFolder: async (actor) => ({ rootSessionId: actor.rootSessionId, path: resolveCrewFilesDirectory(app.getPath("userData"), actor.rootSessionId) }),
     directories: (target, change, assertCurrent) => manageSessionDirectories(requireSessionPersistenceService(), app.getPath("userData"), target, change, assertCurrent),
-    listSessions: async () => {
-      const owner = requireActivePersistentStoreOwnerForFactory("Session relationships");
-      const mains = await owner.sessionStorage.listSessionSummaries();
-      const auxiliaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(mains.map((session) => session.id));
-      assertPersistentStoreOwnerIsActive(owner, "Session relationships");
-      return resolveRelatedSessions(mains, auxiliaries);
-    },
+    readSessionScope: createSessionManagementScopeReader(() => mainStoreContext.activePersistentStoreOwner),
     currentTurn: async (actor) => {
       const owner = requireActivePersistentStoreOwnerForFactory("Session current Turn");
       const mainRunning = Boolean(sessionRuntimeService?.isRunInFlight(actor.id));
@@ -2048,6 +2052,13 @@ function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getReadySessionSummary: async (sessionId) => {
+        const owner = requireActivePersistentStoreOwnerForFactory("Session query");
+        if (!owner.storageWorker) throw new Error("Saved Session queries require V6 storage.");
+        const summary = await owner.storageWorker.stores.session.getReadySessionSummary(sessionId);
+        assertPersistentStoreOwnerIsActive(owner, "Session query");
+        return summary;
+      },
       getSessionSummaryPage: (request) => {
         const storage = requireSessionStorage();
         if (!storage.listSessionSummaryPage) {

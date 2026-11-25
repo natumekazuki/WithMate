@@ -8,6 +8,7 @@ import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js
 
 type MainQueryServiceDeps = {
   getSessionSummaries(): Awaitable<SessionSummary[]>;
+  getReadySessionSummary(sessionId: string): Awaitable<SessionSummary | null>;
   getSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   getSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
@@ -32,7 +33,7 @@ export class MainQueryService {
   }
 
   private async getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
-    const session = (await this.deps.getSessionSummaries()).find((entry) => entry.id === sessionId);
+    const session = await this.deps.getReadySessionSummary(sessionId);
     return session ? this.cloneSessionSummary(session) : null;
   }
 

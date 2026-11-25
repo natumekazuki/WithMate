@@ -33,6 +33,7 @@ import { normalizeAppSettings } from "../../src-shared/settings/provider-setting
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
+import { fixtureSessionManagementScope } from "../main/fixtures/session-management-scope.js";
 import {
   buildNewSession,
   getSessionIncarnationId,
@@ -121,7 +122,7 @@ test("bundled CLI and MCP read the same Main thread through the persisted runtim
     const boundEnv = { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference, WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability };
     const unused = async () => { throw new Error("Unexpected operation"); };
     const application = new SessionManagementApplication({
-      listSessions: async () => resolveRelatedSessions(sessions.listSessionSummaries(), []),
+      readSessionScope: async (actor, selection) => sessions.readSessionManagementScope(actor, selection),
       operatingPolicy: unused, directories: unused, currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
       updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
       createChild: unused, catalog: unused, coordinate: unused,
@@ -800,7 +801,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
   const boundEnv = { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference, WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability };
   const unused = async () => { throw new Error("Unexpected operation"); };
   const application = new SessionManagementApplication({
-    listSessions: async () => resolveRelatedSessions(storage.listSessionSummaries(), []),
+    readSessionScope: async (actor, selection) => storage.readSessionManagementScope(actor, selection),
     operatingPolicy: unused,
     directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
@@ -924,7 +925,7 @@ test("saved Coordination details cross the real application and both public sche
     throw new Error("Unexpected operation");
   };
   const application = new SessionManagementApplication({
-    listSessions: async () => resolveRelatedSessions([source], []),
+    readSessionScope: fixtureSessionManagementScope(() => resolveRelatedSessions([source], [])),
     operatingPolicy: unused,
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: source.id, path: directory }),

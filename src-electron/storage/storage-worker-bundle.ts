@@ -47,9 +47,9 @@ const STORE_METHODS = {
   session: [
     "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
-    "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
+    "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage", "readSessionManagementScope",
     "listHomeCrewMembersPage",
-    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
+    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getReadySessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
     "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
     "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
@@ -63,7 +63,7 @@ const STORE_METHODS = {
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
-    "listRunningAuxiliarySessions", "getLatestAuxiliarySession",
+    "listRunningAuxiliarySessions", "getLatestAuxiliarySession", "getLatestAuxiliarySessionView",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
     "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
     "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",

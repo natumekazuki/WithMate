@@ -357,8 +357,10 @@ export class AuxiliarySessionService {
 
   async getLatestAuxiliarySessionView(parentSessionId: string): Promise<AuxiliarySession | null> {
     const storage = this.deps.getStorage();
-    const summary = (await storage.listAuxiliarySessionSummaries([parentSessionId])).at(-1);
-    return summary ? this.getAuxiliarySessionView(summary.id) : null;
+    const identity = this.deps.captureStorageIdentity?.();
+    const session = await storage.getLatestAuxiliarySessionView(parentSessionId);
+    this.assertStorageIdentity(storage, identity);
+    return session ? this.overlayExecutionOptions(session) : null;
   }
 
   async getAuxiliarySessionSummary(auxiliarySessionId: string): Promise<AuxiliarySessionSummary | null> {

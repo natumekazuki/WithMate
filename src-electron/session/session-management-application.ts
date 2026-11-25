@@ -9,8 +9,10 @@ import {
 import {
   assertDirectChildSessionControl,
   assertDirectSessionSend,
-  queryRelatedSessions,
+  matchesRelatedSession,
   type RelatedSession,
+  type SessionManagementScope,
+  type SessionManagementSelection,
 } from "./session-relationship-resolver.js";
 import type {
   ExecutionReadOperation,
@@ -48,7 +50,7 @@ export type SessionManagementContext = {
 };
 export type SessionManagementApplicationDeps = {
   operatingPolicy(actor: RelatedSession, operation: SessionOperatingPolicyOperation, request: unknown, assertCurrent: () => void): Promise<SessionOperationResult>;
-  listSessions(): Promise<RelatedSession[]>;
+  readSessionScope(actor: SessionTarget, selection: SessionManagementSelection): Promise<SessionManagementScope>;
   currentTurn(actor: RelatedSession): Promise<SessionCurrentTurn>;
   crewFolder(
     actor: RelatedSession,
@@ -144,22 +146,11 @@ export class SessionManagementApplication {
         effect: "none",
         message: parsed.error.message,
       };
-    const entries = await this.deps.listSessions();
+    const selection = operation === "list" ? { query: parsed.data as SessionOperationRequest<"list"> }
+      : "target" in parsed.data ? { target: parsed.data.target } : null;
+    const { actor, target: savedTarget, page } = await this.deps.readSessionScope(context.actor, selection);
     context.assertCurrent();
-    const matches = (entry: RelatedSession, reference: SessionTarget) =>
-      entry.id === reference.sessionId &&
-      entry.kind === reference.kind &&
-      entry.incarnationId === reference.incarnationId &&
-      (reference.kind !== "auxiliary" ||
-        (entry.mainSessionId === reference.mainSessionId &&
-          entries.some(
-            (main) =>
-              main.kind === "main" &&
-              main.id === reference.mainSessionId &&
-              main.incarnationId === reference.mainIncarnationId,
-          )));
-    const actor = entries.find((entry) => matches(entry, context.actor));
-    if (!actor)
+    if (!actor || !matchesRelatedSession(actor, context.actor))
       throw new SessionManagementError(
         "SESSION_ACTOR_UNAVAILABLE",
         "The bound actor no longer exists.",
@@ -168,16 +159,13 @@ export class SessionManagementApplication {
       return this.deps.operatingPolicy(actor, operation, parsed.data, context.assertCurrent);
     }
     const target = (reference: SessionTarget): RelatedSession => {
-      const found = entries.find(
-        (entry) =>
-          entry.id === reference.sessionId && entry.kind === reference.kind,
-      );
+      const found = savedTarget;
       if (!found)
         throw new SessionManagementError(
           "SESSION_NOT_FOUND",
           "The target Session does not exist.",
         );
-      if (!matches(found, reference))
+      if (!matchesRelatedSession(found, reference))
         throw new SessionManagementError(
           "SESSION_REPLACED",
           "The target Session incarnation changed.",
@@ -315,14 +303,8 @@ export class SessionManagementApplication {
           crewFolder: await this.deps.crewFolder(actor),
         };
       case "list":
-        return {
-          ok: true,
-          ...queryRelatedSessions(
-            entries,
-            actor,
-            parsed.data as SessionOperationRequest<"list">,
-          ),
-        };
+        if (!page) throw new Error("The saved Session page is unavailable.");
+        return { ok: true, ...page };
       case "get": {
         const destination = target(
           (parsed.data as SessionOperationRequest<"get">).target,

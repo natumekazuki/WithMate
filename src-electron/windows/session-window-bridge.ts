@@ -37,6 +37,7 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
     payload: AuxiliarySessionNavigationPayload,
   ): void;
   getSession(sessionId: string): Session | null;
+  getStorageGeneration?(): object | string | null;
   isRunInFlight(sessionId: string): boolean;
   getTerminalCloseConfirmationCount?(window: TWindow): number;
   confirmCloseWhileRunning(window: TWindow, sessionId: string, signal: AbortSignal): boolean | Promise<boolean>;
@@ -65,7 +66,7 @@ type SessionWindowPresentation<TWindow> = {
 
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
-  private readonly windowIncarnations = new WeakMap<TWindow, string>();
+  private readonly windowIdentities = new WeakMap<TWindow, { incarnationId: string; generation: object | string | null }>();
   private readonly homeCrewCloseAttempts = new Map<TWindow, { validate(): boolean; committed: boolean }>();
   private readonly retainedMonitorSessionIds = new Set<string>();
   private readonly retainMonitorOnClose = new Map<TWindow, boolean>();
@@ -171,7 +172,11 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   getWindowIncarnation(window: TWindow): string | undefined {
-    return this.windowIncarnations.get(window);
+    return this.windowIdentities.get(window)?.incarnationId;
+  }
+
+  getWindowStorageGeneration(window: TWindow): object | string | null | undefined {
+    return this.windowIdentities.get(window)?.generation;
   }
 
   listOpenSessionWindowIdentities(): { sessionId: string; incarnationId: string }[] {
@@ -253,7 +258,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   ): Promise<TWindow> {
     const window = this.deps.createWindow(sessionId);
     const session = this.deps.getSession(sessionId);
-    if (session) this.windowIncarnations.set(window, getSessionIncarnationId(session));
+    if (session) this.windowIdentities.set(window, {
+      incarnationId: getSessionIncarnationId(session),
+      generation: this.deps.getStorageGeneration?.() ?? null,
+    });
     presentation.window = window;
     this.sessionWindows.set(sessionId, window);
     this.broadcast();
