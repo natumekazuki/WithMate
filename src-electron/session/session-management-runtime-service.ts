@@ -13,9 +13,27 @@ import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-
 import {
   SessionManagementApplication,
   SessionManagementError,
+  type SessionManagementApplicationDeps,
 } from "./session-management-application.js";
 import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
+import { capturePersistentStoreOwner } from "../storage/persistent-store-owner-guard.js";
 import { isSessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
+
+type ScopeReader = SessionManagementApplicationDeps["readSessionScope"];
+type ScopeReaderOwner = {
+  storageWorker?: { stores: { session: { readSessionManagementScope: ScopeReader } } };
+};
+
+/** Scope lookup is tied to the store generation that supplied the saved relationships. */
+export function createSessionManagementScopeReader(getActiveOwner: () => ScopeReaderOwner | null): ScopeReader {
+  return async (actor, selection) => {
+    const { owner, assertActive } = capturePersistentStoreOwner(getActiveOwner, "Session relationships");
+    if (!owner.storageWorker) throw new Error("Saved Session management requires V6 storage.");
+    const scope = await owner.storageWorker.stores.session.readSessionManagementScope(actor, selection);
+    assertActive("Session relationships");
+    return scope;
+  };
+}
 
 export class SessionManagementRuntimeService {
   constructor(

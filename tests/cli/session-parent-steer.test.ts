@@ -262,10 +262,14 @@ async function fixture(provider = "codex") {
     const extra: RelatedSession[] = [];
     const application = new SessionManagementApplication({
       operatingPolicy: unused,
-      listSessions: async () => [
-        ...resolveRelatedSessions(await bundle.stores.session.listSessionSummaries(), []),
-        ...extra,
-      ],
+      readSessionScope: async (actor, selection) => {
+        const fixtureAuxiliary = actor.kind === "auxiliary" && extra.find((entry) => entry.id === actor.sessionId);
+        if (!fixtureAuxiliary || actor.kind !== "auxiliary") return bundle.stores.session.readSessionManagementScope(actor, selection);
+        const scope = await bundle.stores.session.readSessionManagementScope({
+          kind: "main", sessionId: actor.mainSessionId, incarnationId: actor.mainIncarnationId,
+        }, selection);
+        return { ...scope, actor: scope.actor ? fixtureAuxiliary : null };
+      },
       currentTurn: async (actor) => ({
         turnId: actor.id === parent.id ? String(source.id) : (live.get(actor.id)?.sessionTurnId ?? null),
         receipt: null,

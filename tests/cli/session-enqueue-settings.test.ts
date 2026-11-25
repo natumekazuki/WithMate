@@ -14,7 +14,6 @@ import { SessionManagementRuntimeService } from "../../src-electron/session/sess
 import { SessionOperatingPolicyService } from "../../src-electron/session/session-operating-policy-service.js";
 import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
-import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
@@ -115,7 +114,7 @@ async function fixture(provider = "codex") {
   const operatingPolicy = new SessionOperatingPolicyService({ getStore: () => bundle.stores.settings, getQuota: () => null });
   const application = new SessionManagementApplication({
     operatingPolicy: (actor, operation, request, current) => operatingPolicy.execute(operation, request, actor.workspacePath, current),
-    listSessions: async () => resolveRelatedSessions(await bundle.stores.session.listSessionSummaries(), []),
+    readSessionScope: (actor, selection) => bundle.stores.session.readSessionManagementScope(actor, selection),
     currentTurn: async (actor) => ({ turnId: sourceTurns.get(actor.id)!, receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: parent.id, path: directory }),
     catalog: async (actor, input) => ({ workspacePath: input.workspacePath ?? actor.workspacePath, providers: input.provider ? [catalogFor(input.provider)] : catalogs }),
