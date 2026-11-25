@@ -143,6 +143,7 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "appendAuxiliaryTerminal"
   | "checkpointAuxiliaryRuntimeMetadata"
   | "getAuxiliarySessionView"
+  | "getLatestAuxiliarySessionView"
   | "getConversationPage"
   | "upsertAuxiliarySession"
   | "updateAuxiliarySessionIfMatches"
@@ -440,6 +441,7 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   appendAuxiliaryTerminal(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   checkpointAuxiliaryRuntimeMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   getAuxiliarySessionView(): null { return null; }
+  getLatestAuxiliarySessionView(): null { return null; }
   getConversationPage(): null { return null; }
   listAllAuxiliarySessions(): AuxiliarySession[] {
     return [];

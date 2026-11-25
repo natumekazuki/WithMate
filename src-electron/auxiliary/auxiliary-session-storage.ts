@@ -67,7 +67,7 @@ type AuxiliarySessionRow = {
   creation_request_json: string | null;
 };
 
-type AuxiliarySessionSummaryRow = AuxiliarySessionRow & { effective_updated_at?: string; character_description?: string; character_name?: string };
+export type AuxiliarySessionSummaryRow = AuxiliarySessionRow & { effective_updated_at?: string; character_description?: string; character_name?: string };
 
 type AuxiliaryDraftRow = {
   id: string;
@@ -192,16 +192,18 @@ const CREATE_AUXILIARY_MESSAGES_TABLE_SQL = `
   )
 `;
 
-const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.created_at, a.updated_at,
+export const AUXILIARY_PUBLIC_CHARACTER_DESCRIPTION = `CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
+  THEN json_extract(a.character_snapshot_json, '$.description') ELSE '' END ELSE '' END`;
+export const AUXILIARY_PUBLIC_CHARACTER_NAME = `CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
+  THEN json_extract(a.character_snapshot_json, '$.name') ELSE '' END ELSE '' END`;
+export const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.created_at, a.updated_at,
   a.title, a.description, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
   a.reasoning_effort, a.approval_mode, a.codex_sandbox_mode, a.codex_speed,
   a.codex_reviewer, a.withmate_reviewer_explicit, a.custom_agent_name,
   a.thread_id, a.display_after_message_index, a.character_id,
   NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
-  CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
-    THEN json_extract(a.character_snapshot_json, '$.description') ELSE '' END ELSE '' END AS character_description,
-  CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
-    THEN json_extract(a.character_snapshot_json, '$.name') ELSE '' END ELSE '' END AS character_name,
+  ${AUXILIARY_PUBLIC_CHARACTER_DESCRIPTION} AS character_description,
+  ${AUXILIARY_PUBLIC_CHARACTER_NAME} AS character_name,
   a.client_request_id, NULL AS creation_context_json, NULL AS creation_request_json`;
 
 const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
@@ -510,6 +512,19 @@ export class AuxiliarySessionStorage {
       if (!session) return null;
       const page = readConversationPage(db, "auxiliary_session_messages", row.id, row.created_at);
       return this.composeDraft(db, { ...session, messages: page.messages, messageCount: page.totalCount });
+    });
+  }
+
+  /** Read only the selected Auxiliary's View, preserving the saved summary list's last-entry order. */
+  getLatestAuxiliarySessionView(parentSessionId: string): AuxiliarySession | null {
+    const id = parentSessionId.trim();
+    if (!id) return null;
+    return this.withDb((db) => {
+      const row = db.prepare(`SELECT a.id FROM auxiliary_sessions a
+        LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
+        WHERE a.parent_session_id = ? AND trim(a.id) <> ''
+        ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC LIMIT 1`).get(id) as { id: string } | undefined;
+      return row ? this.getAuxiliarySessionView(row.id.trim()) : null;
     });
   }
 
@@ -1316,7 +1331,7 @@ export function hasWritableAuxiliaryParent(db: DatabaseSync, parentSessionId: st
   });
 }
 
-function parseAuxiliarySessionSummaryRow(
+export function parseAuxiliarySessionSummaryRow(
   row: AuxiliarySessionSummaryRow,
 ): AuxiliarySessionSummary | null {
   const session = parseAuxiliarySessionRow({ ...row,

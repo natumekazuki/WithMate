@@ -13,7 +13,6 @@ import type { callAgentRuntime, AgentRuntimeConnection } from "../../src-electro
 import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
 import { SessionOperatingPolicyService } from "../../src-electron/session/session-operating-policy-service.js";
-import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
@@ -50,7 +49,7 @@ async function fixture() {
   const unused = async (): Promise<never> => { throw new Error("Unexpected operation"); };
   const operating = new SessionOperatingPolicyService({ getStore: () => bundle.stores.settings, getQuota: (id) => quotas.get(id) ?? null });
   const application = new SessionManagementApplication({
-    listSessions: async () => resolveRelatedSessions(await bundle.stores.session.listSessionSummaries(), []),
+    readSessionScope: (actor, selection) => bundle.stores.session.readSessionManagementScope(actor, selection),
     operatingPolicy: (actor, operation, request, current) => operating.execute(operation, request, actor.workspacePath, current),
     currentTurn: unused, crewFolder: unused, directories: unused, updateMetadata: unused, enqueue: unused,
     getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,

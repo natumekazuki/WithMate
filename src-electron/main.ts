@@ -238,8 +238,7 @@ import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { SessionManagementApplication, SessionManagementError } from "./session/session-management-application.js";
 import { SessionOperatingPolicyService } from "./session/session-operating-policy-service.js";
-import { SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
-import { resolveRelatedSessions } from "./session/session-relationship-resolver.js";
+import { createSessionManagementScopeReader, SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
 import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
 import { getModelDisabledReason } from "../src-shared/settings/model-availability.js";
 import { notifySessionGraphWindows, SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
@@ -889,13 +888,7 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
     },
     crewFolder: async (actor) => ({ rootSessionId: actor.rootSessionId, path: resolveCrewFilesDirectory(app.getPath("userData"), actor.rootSessionId) }),
     directories: (target, change, assertCurrent) => manageSessionDirectories(requireSessionPersistenceService(), app.getPath("userData"), target, change, assertCurrent),
-    listSessions: async () => {
-      const owner = requireActivePersistentStoreOwnerForFactory("Session relationships");
-      const mains = await owner.sessionStorage.listSessionSummaries();
-      const auxiliaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(mains.map((session) => session.id));
-      assertPersistentStoreOwnerIsActive(owner, "Session relationships");
-      return resolveRelatedSessions(mains, auxiliaries);
-    },
+    readSessionScope: createSessionManagementScopeReader(() => mainStoreContext.activePersistentStoreOwner),
     currentTurn: async (actor) => {
       const owner = requireActivePersistentStoreOwnerForFactory("Session current Turn");
       const mainRunning = Boolean(sessionRuntimeService?.isRunInFlight(actor.id));
@@ -2060,6 +2053,13 @@ function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getReadySessionSummary: async (sessionId) => {
+        const owner = requireActivePersistentStoreOwnerForFactory("Session query");
+        if (!owner.storageWorker) throw new Error("Saved Session queries require V6 storage.");
+        const summary = await owner.storageWorker.stores.session.getReadySessionSummary(sessionId);
+        assertPersistentStoreOwnerIsActive(owner, "Session query");
+        return summary;
+      },
       getSessionSummaryPage: (request) => {
         const storage = requireSessionStorage();
         if (!storage.listSessionSummaryPage) {

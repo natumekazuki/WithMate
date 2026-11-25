@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 import type { Session, SessionSummary } from "../../src-shared/session/session-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/app/main-query-service.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { resolveV6FreshDatabasePath } from "../../src-electron/storage/database-schema-v6.js";
+import { createV6StorageWorkerBundle, type V6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -50,23 +56,39 @@ function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSumma
 
 // @test-value v2
 // kind = "contract"
-// claim = "Sessionごとのworkspaceをskills/custom agent/preview/terminalへ渡し、利用者が別workspaceを操作しない"
-// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
-// fault = "対象Session以外のworkspaceをdiscoveryまたはterminalへ渡す"
-// observable = "discovery/preview/terminalへの引数とhydration対象ID"
+// claim = "Skills、Custom Agents、添付preview、Terminalは準備完了した対象Sessionのworkspaceだけを使い、全一覧を取得しない"
+// oracle = { type = "contract", ref = "Session Graph v7-0-1-issue-coordination / v701-notion-567-main-query-exact" }
+// fault = "単体操作で全件取得するか、未準備・不在のSessionのworkspaceを使う"
+// observable = "実SQLiteを使う操作の対象引数、未準備・不在時の拒否、全件およびdetail取得回数"
 // observation_boundary = "public-boundary"
 // scope = "main query service"
 // lifecycle = "permanent"
 // @end-test-value
-test("MainQueryService は session skills/custom agents と preview/terminal を解決する", async () => {
+test("MainQueryService は session skills/custom agents と preview/terminal を解決する", async (t) => {
   const calls: string[] = [];
   const sourceSessions = [
-    createSession(),
+    createSession({ allowedAdditionalDirectories: ["C:/additional"] }),
     createSession({ id: "session-2", provider: "copilot", workspacePath: "C:/copilot" }),
   ];
+  const directory = mkdtempSync(path.join(os.tmpdir(), "withmate-main-query-exact-"));
+  const dbPath = resolveV6FreshDatabasePath(directory);
+  const storage = new SessionStorageV6(dbPath);
+  let worker: V6StorageWorkerBundle | undefined;
+  t.after(async () => {
+    try { await worker?.client.close(); }
+    finally { storage.close(); rmSync(directory, { recursive: true, force: true }); }
+  });
+  for (const session of sourceSessions) storage.insertSession(session);
+  storage.insertSession(createSession({ id: "pending", workspacePath: "C:/not-ready" }));
+  storage.beginSessionLifecycleOperation({ operationId: "pending-create", kind: "create", input: {}, targets: [{ id: "pending" }] });
+  worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory });
+  await worker.initialize();
+  const { stores } = worker;
+  let fullListRequests = 0;
   const fullSessionRequests: string[] = [];
   const service = new MainQueryService({
-    getSessionSummaries: () => sourceSessions.map((session) => createSessionSummary(session)),
+    getSessionSummaries: () => { fullListRequests += 1; return storage.listSessionSummaries(); },
+    getReadySessionSummary: (sessionId) => stores.session.getReadySessionSummary(sessionId),
     getSessionSummaryPage: () => ({ entries: sourceSessions.map((session) => createSessionSummary(session)), nextCursor: null, hasMore: false }),
     getSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
     getSession: (sessionId) => {
@@ -91,7 +113,7 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
       return [];
     },
     async resolveComposerPreview(session, userMessage) {
-      calls.push(`preview:${session.id}:${userMessage}`);
+      calls.push(`preview:${session.id}:${session.workspacePath}:${session.allowedAdditionalDirectories.join(",")}:${userMessage}`);
       return { attachments: [], errors: [] };
     },
     async launchTerminalAtPath(workspacePath) {
@@ -99,7 +121,7 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
     },
   });
 
-  assert.equal((await service.listSessionSummaries()).length, 2);
+  assert.deepEqual(new Set((await service.listSessionSummaries()).map(({ id }) => id)), new Set(["session-1", "session-2"]));
   const session = await service.getSession("session-1");
   assert.notEqual(session, sourceSessions[0]);
   assert.equal(session?.workspacePath, "C:/workspace");
@@ -107,14 +129,21 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
   await service.listSessionCustomAgents("session-2");
   await service.previewComposerInput("session-1", "@src/main.ts");
   await service.openSessionTerminal("session-1");
+  for (const id of ["pending", "missing"]) {
+    await assert.rejects(service.listSessionSkills(id), /session could not be found/i);
+    await assert.rejects(service.listSessionCustomAgents(id), /session could not be found/i);
+    await assert.rejects(service.previewComposerInput(id, "@src/main.ts"), /session could not be found/i);
+    await assert.rejects(service.openSessionTerminal(id), /session could not be found/i);
+  }
 
   assert.deepEqual(calls, [
     "skills:C:/workspace",
     "agents:C:/copilot",
-    "preview:session-1:@src/main.ts",
+    "preview:session-1:C:/workspace:C:/additional:@src/main.ts",
     "terminal:C:/workspace",
   ]);
   assert.deepEqual(fullSessionRequests, ["session-1"]);
+  assert.equal(fullListRequests, 1);
 });
 
 // @test-value v2
@@ -132,6 +161,7 @@ test("MainQueryService は bounded summary page と Character usage を clone �
   const usage = { characterId: "char-page", sessionKind: "default" as const };
   const service = new MainQueryService({
     getSessionSummaries: () => [],
+    getReadySessionSummary: () => null,
     getSessionSummaryPage: () => ({ entries: [entry], nextCursor: "cursor-1", hasMore: true }),
     getSessionCharacterUsage: () => [usage],
     getSession: () => null,
@@ -167,7 +197,7 @@ test("MainQueryService は bounded summary page と Character usage を clone �
 // @test-value v2
 // kind = "contract"
 // claim = "添付参照のないdraftのpreviewは空の正常previewで追加discoveryを要求しない"
-// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// oracle = { type = "contract", ref = "Session Graph v7-0-1-issue-coordination / v701-notion-567-main-query-exact" }
 // fault = "添付参照のないdraftをdiscoveryへ流して不要な失敗を引き起こす"
 // observable = "空previewとSession summary取得回数"
 // observation_boundary = "public-boundary"
@@ -176,10 +206,15 @@ test("MainQueryService は bounded summary page と Character usage を clone �
 // @end-test-value
 test("MainQueryService は path 参照なし draft の preview を早期 return する", async () => {
   let getSessionSummariesCalls = 0;
+  let getReadySessionSummaryCalls = 0;
   const service = new MainQueryService({
     getSessionSummaries: () => {
       getSessionSummariesCalls += 1;
       return [createSessionSummary()];
+    },
+    getReadySessionSummary: () => {
+      getReadySessionSummaryCalls += 1;
+      return createSessionSummary();
     },
     getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
     getSessionCharacterUsage: () => [],
@@ -204,6 +239,7 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
   const preview = await service.previewComposerInput("session-1", "hello");
   assert.deepEqual(preview, { attachments: [], errors: [] });
   assert.equal(getSessionSummariesCalls, 0);
+  assert.equal(getReadySessionSummaryCalls, 0);
 });
 
 // @test-value v2
@@ -233,11 +269,13 @@ test("MainQueryService は session provider ごとの skill directory を discov
     skillRelativePath: "skills",
     instructionRelativePath: "copilot-instructions.md",
   };
+  const summaries = [
+    createSessionSummary({ id: "codex-session", provider: "codex", workspacePath: "C:/workspace" }),
+    createSessionSummary({ id: "copilot-session", provider: "copilot", workspacePath: "C:/workspace" }),
+  ];
   const service = new MainQueryService({
-    getSessionSummaries: () => [
-      createSessionSummary({ id: "codex-session", provider: "codex", workspacePath: "C:/workspace" }),
-      createSessionSummary({ id: "copilot-session", provider: "copilot", workspacePath: "C:/workspace" }),
-    ],
+    getSessionSummaries: () => summaries,
+    getReadySessionSummary: (id) => summaries.find((summary) => summary.id === id) ?? null,
     getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
     getSessionCharacterUsage: () => [],
     getSession: () => null,
@@ -277,6 +315,7 @@ test("MainQueryService は session provider ごとの skill directory を discov
 test("MainQueryService は一覧を summary に射影して detail payload を含めない", async () => {
   const service = new MainQueryService({
     getSessionSummaries: () => [createSessionSummary()],
+    getReadySessionSummary: () => null,
     getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
     getSessionCharacterUsage: () => [],
     getSession: () => createSession(),
@@ -317,6 +356,7 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
   let requestedSessionId: string | null = null;
   const service = new MainQueryService({
     getSessionSummaries: () => [createSessionSummary(targetSession)],
+    getReadySessionSummary: () => null,
     getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
     getSessionCharacterUsage: () => [],
     getSession: (sessionId) => {

@@ -6,6 +6,7 @@ import {
   type SessionManagementApplicationDeps,
 } from "../../src-electron/session/session-management-application.js";
 import type { RelatedSession } from "../../src-electron/session/session-relationship-resolver.js";
+import { fixtureSessionManagementScope } from "./fixtures/session-management-scope.js";
 const main = (
   id: string,
   parentSessionId: string | null = null,
@@ -35,7 +36,7 @@ function setup(entries: RelatedSession[]) {
   const calls: string[] = [];
   const deps: SessionManagementApplicationDeps = {
     operatingPolicy: async () => { throw new Error("unused"); },
-    listSessions: async () => entries,
+    readSessionScope: fixtureSessionManagementScope(() => entries),
     currentTurn: async () => ({
       turnId: "turn-actual",
       receipt: null,
