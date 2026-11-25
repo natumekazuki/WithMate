@@ -89,6 +89,7 @@ export type SessionComposerFeatureBridge = {
   runtime: {
     isRunning: boolean;
     isCanceling?: boolean;
+    isAwaitingRunStop?: boolean;
     canSendInput?: boolean;
     queueTurnBusy?: boolean;
     hasUncertainTurn?: boolean;
@@ -615,6 +616,7 @@ export function useSessionComposerFeature(input: {
     const dockSurface = buildLiveSessionComposerDockProps({
       ...dock,
       isCanceling: bridge.runtime.isCanceling,
+      isAwaitingRunStop: bridge.runtime.isAwaitingRunStop,
       showCustomAgentPicker: canSelectCustomAgent,
       showSkillPicker: !bridge.isCharacterAuthoringSession,
       showPromptTemplateButton: true,

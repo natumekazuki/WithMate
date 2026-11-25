@@ -47,6 +47,7 @@ export function SessionActionDockModeSwitch({ mode, onChange }: {
 export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   isCanceling?: boolean;
+  isAwaitingRunStop?: boolean;
   targetDock?: ReactNode;
   recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
@@ -66,6 +67,7 @@ export type SessionActionDockCompactRowProps = {
 export function SessionActionDockCompactRow({
   isRunning,
   isCanceling = false,
+  isAwaitingRunStop = false,
   targetDock = null,
   recoveryActions = null,
   dockModeSwitch = null,
@@ -107,7 +109,7 @@ export function SessionActionDockCompactRow({
               disabled={isCanceling}
               aria-busy={isCanceling || undefined}
             >
-              <ButtonContent busy={isCanceling}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
+              <ButtonContent busy={isCanceling && !isAwaitingRunStop}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
             </button>
         ) : null}
         </div>

@@ -2236,6 +2236,7 @@ export default function AgentSessionWindowApp() {
       inputError: activeQueuedTurnEdit?.error
         || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
+      isAwaitingRunStop: !!activeCancellationState,
       selectedRunState: mainStopTarget ? "running" : selectedSessionRunState,
       auxiliaryRunState: auxiliaryStopTarget ? "running" : activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,

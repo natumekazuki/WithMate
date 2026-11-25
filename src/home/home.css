@@ -984,10 +984,14 @@
 }
 
 .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark {
-  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: home-monitor-status-spin 0.8s linear infinite;
+  background: currentColor;
+  clip-path: polygon(18% 0, 94% 50%, 18% 100%);
+}
+
+@media (forced-colors: active) {
+  .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark {
+    background: CanvasText;
+  }
 }
 
 .home-page .home-monitor-status-icon.error {
@@ -1431,7 +1435,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .home-page .home-session-list-load-spinner,
-  .home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark,
   .home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark {
     animation: none;
   }

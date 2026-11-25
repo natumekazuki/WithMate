@@ -1447,13 +1447,13 @@ export function SessionMessageColumn({
       {liveRunErrorMessage ? (
         <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
       ) : null}
-      <PendingRunIndicator announcement={pendingRunIndicatorAnnouncement} />
+      <PendingRunIndicator phase="running" announcement={pendingRunIndicatorAnnouncement} />
     </div>
   );
 
   const renderResponseStatus = () => isRunning ? renderPendingContent() : <div className="pending-response-content">
     {submissionError ? submissionUncertain ? <p className="pending-run-error-note" role="alert">{submissionError}</p> : <SessionRunFailure reason={submissionError} />
-      : <PendingRunIndicator announcement="Waiting for response" />}
+      : <PendingRunIndicator phase="waiting" announcement="Waiting for response" />}
   </div>;
   const renderPendingResponse = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
@@ -1880,7 +1880,7 @@ export function SessionMessageColumn({
                       </section>
                     ) : null}
                     {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
-                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator announcement="Loading response" /></div>
+                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator phase="waiting" announcement="Loading response" /></div>
                       : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>

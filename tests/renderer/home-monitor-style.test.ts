@@ -8,9 +8,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 
-function readCssRule(stylesSource: string, selector: string): string {
+function readCssRules(stylesSource: string, selector: string): string[] {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return stylesSource.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  return Array.from(stylesSource.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g")), (match) => match[1]!);
+}
+
+function readCssRule(stylesSource: string, selector: string): string {
+  return readCssRules(stylesSource, selector)[0] ?? "";
 }
 
 function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
@@ -104,15 +108,15 @@ test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Home Monitorの承認は静止した感嘆符、他の状態は固有形状で区別し、待機と終了は円形で揃えreduced motionにも従う"
+// claim = "Homeと独立Monitorで共有する実行中マークは静止した右向き三角で、待機・終了の中空円や承認の丸囲み感嘆符と形状で区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-// fault = "承認を回転spinnerや色だけで示す、他の状態の形を失う、またはreduced motion時も回転を続ける"
-// observable = "状態別status icon rule本体とreduced motion時のanimation無効化CSS"
+// fault = "実行中マークを回すか中空円にする、または承認の丸囲み感嘆符・失敗の警告三角・待機と終了の中空円のCSS宣言を失う"
+// observable = "状態別status iconのCSS宣言から実行中の三角の向きとアニメーション有効化の不在、他状態の形状を確認する"
 // observation_boundary = "implementation"
 // scope = "Home Monitor and shared session status icon CSS"
 // lifecycle = "permanent"
-// impact = "承認待ちを実行中と混同せず、共通の失敗・待機・終了・未確定も静止形状で区別できる"
-// distinction = "Home Monitor専用iconと共有status iconの形状・reduced motionをまとめて検証する。待機と終了は共通neutral表現を使う"
+// impact = "動きや色に頼らず、実行中を承認待ち・失敗・待機・終了から見分けられる"
+// distinction = "CSSが宣言するマーク形状を確認する。状態判定・件数・操作はcomponent test、実描画とフレームはbrowser測定で確認する"
 // @end-test-value
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
   const stylesSource = await readStylesheet();
@@ -143,11 +147,20 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   assert.doesNotMatch(approvalRule, /animation:/);
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"), "");
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.loading"), "");
-  assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark"),
-    /border-top-color: currentColor;/,
-  );
+  const runningRules = readCssRules(stylesSource, ".home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark");
+  const runningRule = runningRules.find((rule) => rule.includes("clip-path"));
+  assert.ok(runningRule);
+  assert.match(runningRule, /background: currentColor;/);
+  const triangle = runningRule.match(/clip-path:\s*polygon\(\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*,\s*([\d.]+)%?\s+([\d.]+)%?\s*\)/);
+  assert.ok(triangle);
+  const [topX, topY, tipX, tipY, bottomX, bottomY] = triangle.slice(1).map(Number);
+  assert.equal(topX, bottomX);
+  assert.ok(tipX! > topX! && topY! < tipY! && tipY! < bottomY!);
+  for (const rule of runningRules) {
+    for (const declaration of rule.matchAll(/(?:^|;)\s*animation(?:-name)?:\s*([^;]+)/g)) {
+      assert.match(declaration[1]!, /^none(?:\s+!important)?\s*$/);
+    }
+  }
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error .home-monitor-status-icon-mark"),
     /clip-path: polygon\(50% 0, 100% 100%, 0 100%\);/,
@@ -160,23 +173,6 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark"),
     /border-radius: 50%;/,
   );
-  assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.loading .home-monitor-status-icon-mark"),
-    /border: 1\.5px dashed currentColor;/,
-  );
-  const reducedMotionBlock = readCssAtRuleBlocks(
-    stylesSource,
-    "@media (prefers-reduced-motion: reduce)",
-  ).find((block) => block.includes(".home-monitor-status-icon.running"));
-  assert.ok(reducedMotionBlock);
-  for (const state of ["running", "loading"]) {
-    assert.match(
-      reducedMotionBlock,
-      new RegExp(
-        String.raw`\.home-monitor-status-icon\.${state} \.home-monitor-status-icon-mark[^{}]*\{[^}]*animation:\s*none;`,
-      ),
-    );
-  }
 });
 
 // @test-value v2

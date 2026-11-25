@@ -317,6 +317,7 @@ export function buildLiveSessionComposerDockProps(
     compactActionDock: {
       isRunning: input.isRunning,
       ...(input.isCanceling !== undefined ? { isCanceling: input.isCanceling } : {}),
+      ...(input.isAwaitingRunStop !== undefined ? { isAwaitingRunStop: input.isAwaitingRunStop } : {}),
       showJumpToBottom,
       cancelButtonTitle: input.canSendInput ? "Cancel run" : input.sendButtonTitle,
       onExpand: onExpandActionDock,

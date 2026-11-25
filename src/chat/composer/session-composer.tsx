@@ -62,6 +62,7 @@ export type SessionComposerExpandedProps = {
   onRetryComposerSave?: () => void;
   isRunning: boolean;
   isCanceling?: boolean;
+  isAwaitingRunStop?: boolean;
   canSendInput?: boolean;
   onSendInput?: () => void;
   onQueueTurn?: () => void;
@@ -165,6 +166,7 @@ export function SessionComposerExpanded({
   onRetryComposerSave,
   isRunning,
   isCanceling = false,
+  isAwaitingRunStop = false,
   canSendInput = false,
   onSendInput,
   onQueueTurn,
@@ -536,7 +538,7 @@ export function SessionComposerExpanded({
                     disabled={isCanceling}
                     aria-busy={isCanceling || undefined}
                   >
-                    <ButtonContent busy={isCanceling}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
+                    <ButtonContent busy={isCanceling && !isAwaitingRunStop}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
                   </button>
                 ) : null}
               </div>
