@@ -1,6 +1,6 @@
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeCrewMember } from "../../src-shared/window/home-crew-types.js";
-import { getHomeSessionState, sortAuxiliarySessions, type HomeSessionState } from "./home-session-projection.js";
+import { getHomeSessionState, HOME_SESSION_FAILURE_STATE, sortAuxiliarySessions, type HomeSessionState } from "./home-session-projection.js";
 
 type CountedState = HomeSessionState & { count: number };
 
@@ -17,7 +17,7 @@ export type HomeCrewNode = {
 
 export type HomeCrewBranch = { node: HomeCrewNode; children: HomeCrewBranch[] };
 
-const stateOrder = ["Attention", "Running", "Canceling", "Waiting For Stop", "Error", "Interrupted", "Idle", "Saved", "Unknown"];
+const stateOrder = ["Attention", "Running", "Canceling", "Waiting For Stop", HOME_SESSION_FAILURE_STATE.label, "Idle", "Saved", "Unknown"];
 
 function compareMembers(left: HomeCrewMember, right: HomeCrewMember): number {
   return Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.id.localeCompare(right.id, "en");

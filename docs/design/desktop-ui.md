@@ -142,7 +142,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
     - `Coordination`: Attentionに該当せず、Main／配下Auxiliaryに保存済みのユーザー対応待ち相談がある親Session
     - `Running`: Attention／Coordinationに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
-    - `Stopped`: 他の3枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
+    - `Stopped`: 他の3枠に該当しない失敗済み・待機・終了などのnon-running
   - `Attention`、`Coordination`、`Running`、`Stopped`の優先順位で同じ親Sessionを一か所だけに分類する。全分類で通常の監視対象と共通検索語の条件を共有し、保存相談があるだけでは監視対象外のSessionを追加しない。Provider要求と相談が同時にある場合はAttentionの通常カードからSessionを開き、相談はそのSessionの既存Coordination入口から参照する。カードに相談専用の補助行を追加しない。最後の要求や相談が解消すると残る条件で再分類する。分類は表示用の投影であり、内部の`runState`を変更しない
   - 上段は`Attention | Coordination`の左右等分とし、同じ一段の高さを共有する。その下に全幅のRunning、Stoppedを置き、三段の初期縦配分は1:1:1とする。各分類の一覧を独立してscrollする。上下二つの共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている段は48pxの最小領域へ補正する。開閉・Window resizeによる一時的な高さ配分で、保持する段の比率を変更しない。左右の境界は区切りのみとし、狭幅でも縦積みへ切り替えない
   - Coordinationの見出しは表示対象のMainグループ数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Main/Auxiliaryの表示情報は通常の監視summaryを使い、相談queryで別取得しない。保存相談はMonitorの表示対象から外れても削除・自動終了しない。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
@@ -157,7 +157,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Main／Auxiliaryの新しい終了結果は、未読の間だけMain title、Aux状態集約、対象Auxiliary previewを青で示す。実行状態とは分け、件数ラベル・未読dot・未読による並べ替えは追加しない。成功・失敗・取消の結果を対象とし、OS通知の設定や配送とは独立する
   - 対象Session Windowがfocus中で、その会話の保存済み最新結果が表示領域内に見えていると自動で既読にする。本文なしの結果は失敗理由、または取得済みDetailsの展開表示で判定し、Detailsの読込中・取得失敗だけでは既読にしない。Windowの単なる表示・最前面固定、過去履歴・別会話の閲覧、Auxiliary一覧の展開だけでは既読にしない。Main／Auxiliaryを独立に扱い、古い結果の既読要求で新しい結果を既読にしない
   - 既読・未読はMain Processのメモリだけで共有し、アプリ再起動やDB切替・初期化でリセットする。過去の結果から未読を復元せず、新たに保存された終了結果から追跡する
-  - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
+  - 実行中と失敗済みは形状を含む状態アイコンで判別する。旧`interrupted`と`error`は同じ`Failed`の形状・状態名・集計へ投影し、再起動専用の操作は設けない。待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
   - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、Main行では`Attention`の状態文字も示す。Auxiliaryの個別行・Aux状態集約はアイコンとtooltip・accessible nameを使う。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
   - 取消・承認・入力待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。summaryと本文を含まないlive状態通知は共通の投影を使い、`approvalPending`に承認・入力待ちを集約する。Home／Monitorは初回・再表示時にsummaryを取得し、取消・承認・入力待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
@@ -303,7 +303,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認・入力待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけ、右端に状態集約を含むdisclosureを表示する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
-  - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Error`、`Idle`を別々に数える。Idleは中空円とし、interruptedとerrorは別の形状で表示する
+  - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Failed`、`Idle`を別々に数える。Idleは中空円とし、失敗はMainと共通の形状と状態名で示す
   - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Homeと同じ`Attention`→`Coordination`→`Running`→`Stopped`の優先順位と監視対象条件を使う。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
@@ -478,7 +478,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、現在の引継ぎ理由・回答・訂正先、取り下げ理由と後着回答を読み、ユーザー担当の回答・未取得時の回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の取得、通常queueへの配送、実際の利用・解決を区別する。受付・Session・Turnの内部IDは通常UIへ並べない
 - Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Main／Auxiliaryの共通pane iconとSession titleで起票元を識別する。Character名はaccessible nameに保持する。回答があるopen相談は`Reply Recorded` iconを添えるが、Agentの回答をユーザーの回答済みと断定しない。詳細の`Open Origin`は正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxを使い、通常質問と共通の送信icon（`Save And Send Answer`）を明示操作した時だけ保存・送信する。操作名はtooltipとaccessible name、入力groupの名前はaccessible nameに保持する
 - 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・現在の回答を主内容とし、会話と共通の話者表現に回答と配送・取得状態をまとめる。起票元の取得前だけ`Change Answer`で編集でき、取得中に編集中だった未送信draftは読取専用で保持する。回答日時は話者表示のtooltipとaccessible nameから確認できる。過去回答や操作のHistoryは表示しない。解決・理由付き取り下げは起票元行の補助操作へまとめる。操作結果と結果不明時の回復は回答操作の近くに置く
-- 表示中の最新回答は、回答receiptと保存済み起票元identityに対応する受付配送状態を取得する。受付completedをTurn全体の完了と同一視せず、Turnの失敗・取消・結果不明や回答の利用を区別する。保存済みTurnの内容は起票元の会話を開いて確認し、右ペインに出力viewerを重ねない。取得失敗は不明として再取得できる
+- 表示中の最新回答は、回答receiptと保存済み起票元identityに対応する受付配送状態を取得する。受付completedをTurn全体の完了と同一視せず、Turnの失敗・取消・配送の結果不明や回答の利用を区別する。開始入力が一致し、receiptとそのTurnが同じ実行の失敗を表す場合は`Turn Failed`と一度だけ表示する。追加配送自身の失敗はTurnの失敗と別に示す。保存済みTurnの内容は起票元の会話を開いて確認し、右ペインに出力viewerを重ねない。取得失敗は不明として再取得できる
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
 - 通常Sessionの起点headerに`Delete Crew`を置く。確認dialogは起点・全通常子孫・各Mainの全Auxiliaryを対象とし、Workspace保持と削除範囲を示す。保存側のCrew全体の削除可否を取得し、未対応Coordinationの理由と対象への移動を表示する。回答・解決・取り下げ後の更新で可否を再取得し、受理済みqueue等の拒否理由も保持する。削除そのものはtransactionで再検証する

@@ -618,7 +618,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       }
       auxiliary = { ...auxiliary, runState: "error" };
       await emitLive(auxiliary.id, createLiveState(auxiliary.id, "error"));
-      assertMonitor("inactive", "Idle", "Error");
+      assertMonitor("inactive", "Idle", "Failed");
       auxiliary = { ...auxiliary, runState: "running" };
       await emitLive(auxiliary.id, createLiveState(auxiliary.id, "running"));
       assertMonitor("running", "Idle", "Running");

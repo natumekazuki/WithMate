@@ -290,7 +290,7 @@ test("HomeとMonitorは結果更新でMain/Auxを独立に既読表示する", a
       assert.doesNotMatch(disclosure().getAttribute("aria-label")!, /Unread Result/);
       assert.equal(child().classList.contains("has-unread-result"), false);
       assert.doesNotMatch(child().getAttribute("aria-label")!, /Unread Result/);
-      assert.ok(card().querySelector('.home-monitor-parent-identity [aria-label="Main Error"]'));
+      assert.ok(card().querySelector('.home-monitor-parent-identity [aria-label="Main Failed"]'));
       assert.deepEqual([...h.element.querySelectorAll(".home-monitor-parent-title")].map((title) => title.textContent), ["open", "other"]);
       await act(async () => { main().click(); child().click(); });
       assert.deepEqual(h.opened, [["open", undefined], ["open", "aux"]]);

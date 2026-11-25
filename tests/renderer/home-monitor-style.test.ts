@@ -111,7 +111,7 @@ test("Monitorは上段左右分割と分類内scrollと内容幅に応じた列�
 // observation_boundary = "implementation"
 // scope = "Home Monitor and shared session status icon CSS"
 // lifecycle = "permanent"
-// impact = "承認待ちを実行中と混同せず、失敗・中断・待機・終了・未確定も静止形状で区別できる"
+// impact = "承認待ちを実行中と混同せず、共通の失敗・待機・終了・未確定も静止形状で区別できる"
 // distinction = "Home Monitor専用iconと共有status iconの形状・reduced motionをまとめて検証する。待機と終了は共通neutral表現を使う"
 // @end-test-value
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
@@ -125,7 +125,7 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     stylesSource,
     /\.home-page \.home-session-chip-status,\s*\.home-page \.home-session-status,\s*\.home-page \.session-mode-badge\s*{/,
   );
-  for (const state of ["running", "interrupted", "error", "neutral"]) {
+  for (const state of ["running", "error", "neutral"]) {
     assert.match(
       stylesSource,
       new RegExp(
@@ -142,7 +142,6 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.approval .home-monitor-status-icon-mark::before"), /content: "!";/);
   assert.doesNotMatch(approvalRule, /animation:/);
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"), "");
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.interrupted"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.loading"), "");
   assert.match(
@@ -152,10 +151,6 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error .home-monitor-status-icon-mark"),
     /clip-path: polygon\(50% 0, 100% 100%, 0 100%\);/,
-  );
-  assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.interrupted .home-monitor-status-icon-mark"),
-    /linear-gradient\(/,
   );
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark"),

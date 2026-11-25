@@ -36,9 +36,7 @@ function fallbackLabel(name: string): string {
   return name.slice(0, 1);
 }
 
-type SessionStateSnapshot = Pick<Session, "status" | "runState">;
-
-function statusLabel(status: Session["status"]): string {
+export function sessionStatusLabel(status: Session["status"]): string {
   switch (status) {
     case "running":
       return "Running";
@@ -49,22 +47,6 @@ function statusLabel(status: Session["status"]): string {
     default:
       return "Unknown";
   }
-}
-
-export function sessionStateLabel(session: SessionStateSnapshot): string {
-  if (session.runState === "interrupted") {
-    return "Interrupted";
-  }
-
-  return statusLabel(session.status);
-}
-
-export function sessionStateClassName(session: Session): string {
-  if (session.runState === "interrupted") {
-    return "interrupted";
-  }
-
-  return session.status;
 }
 
 export function liveRunStepStatusLabel(status: string): string {

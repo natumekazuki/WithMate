@@ -999,20 +999,6 @@
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
-.home-page .home-monitor-status-icon.interrupted {
-  color: #ffab77;
-}
-
-.home-page .home-monitor-status-icon.interrupted .home-monitor-status-icon-mark {
-  background: linear-gradient(
-    to right,
-    currentColor 0 32%,
-    transparent 32% 68%,
-    currentColor 68% 100%
-  );
-  border-radius: 1px;
-}
-
 .home-page .home-monitor-status-icon.neutral {
   color: #aab6c8;
 }
@@ -1117,11 +1103,6 @@
   border-color: rgba(111, 184, 199, 0.34);
   background: rgba(111, 184, 199, 0.22);
   color: var(--card-ink, var(--ink));
-}
-
-.home-page .home-session-chip-status.interrupted {
-  border-color: rgba(255, 171, 119, 0.34);
-  background: rgba(255, 171, 119, 0.22);
 }
 
 .home-page .home-session-chip-status.error {
@@ -1377,12 +1358,6 @@
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(111, 184, 199, 0.18);
   color: var(--ink);
-}
-
-.home-page .session-chip.interrupted,
-.home-page .running-session-chip.interrupted {
-  background: rgba(255, 171, 119, 0.1);
-  border-color: rgba(255, 171, 119, 0.18);
 }
 
 .home-page .window-chip,

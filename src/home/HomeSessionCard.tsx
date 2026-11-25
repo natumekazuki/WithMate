@@ -5,7 +5,7 @@ import type { HomeSessionSummary } from "../../src-shared/session/session-state.
 import type { SessionMonitorContextMenuPoint } from "../../src-shared/window/withmate-window-types.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
-import { getHomeAuxiliarySessionState, type HomeSessionState } from "./home-session-projection.js";
+import { getHomeAuxiliarySessionState, HOME_SESSION_FAILURE_STATE, type HomeSessionState } from "./home-session-projection.js";
 
 export function MonitorStatusIcon({
   kind, label, count, description,
@@ -52,7 +52,7 @@ export function HomeSessionCard({
     { kind: "running" as const, label: "Running" },
     { kind: "running" as const, label: "Canceling" },
     { kind: "running" as const, label: "Waiting For Stop" },
-    { kind: "error" as const, label: "Error" },
+    HOME_SESSION_FAILURE_STATE,
     { kind: "neutral" as const, label: "Idle" },
   ].map((group) => ({
     ...group,
