@@ -133,9 +133,9 @@ export function resolveRetryKind(input: {
   runState: string | null | undefined;
   latestTurnPhase?: SessionTurnRecord["phase"] | null;
 }): RetryKind | null {
-  if (input.runState === "running") return null;
+  if (input.runState === "running" || input.latestTurnPhase === "completed") return null;
   if (input.runState === "interrupted") {
-    return "interrupted";
+    return input.latestTurnPhase === "failed" ? "failed" : "interrupted";
   }
 
   if (input.runState === "error") {
@@ -163,13 +163,13 @@ export function resolveRetrySource(input: {
   let lastUserMessageSeq = -1;
   let lastUserMessage: Message | null = null;
   for (let index = input.messages.length - 1; index >= 0; index -= 1) {
-    if (input.messages[index]?.role === "user") {
+    if (input.messages[index]?.role === "user" && !input.messages[index].turnInput) {
       lastUserMessageSeq = getMessageHistoryIndex(input.messages[index], index);
       lastUserMessage = input.messages[index];
       break;
     }
   }
-  if (!lastUserMessage && input.latestUserMessage?.role === "user") {
+  if (!lastUserMessage && input.latestUserMessage?.role === "user" && !input.latestUserMessage.turnInput) {
     lastUserMessage = input.latestUserMessage;
     lastUserMessageSeq = input.latestUserMessage.historyIndex ?? -1;
   }

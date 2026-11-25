@@ -899,6 +899,64 @@ test("exact receipt and Turn reads preserve partial output and committed input i
 
 // @test-value v2
 // kind = "contract"
+// claim = "同じ追加入力の受付をstartingではpending、interruptedではunknownとして照会でき、復元した予約や保存確定した入力と混ざらない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "interruptedの追加入力を未確定一覧から落とすかpending・確定扱いにする、または復元予約や保存確定入力を未確定として返す"
+// observable = "実SQLiteのget_execution未確定概要、list_execution_inputsのreceipt IDと状態、get_execution_inputの元受付本文とreceiptState、保存確定入力"
+// observation_boundary = "public-boundary"
+// scope = "MCP/CLI共通のbounded execution read projection"
+// lifecycle = "permanent"
+// impact = "利用者が送付済みかもしれない追加入力を未送付と誤認して再送する"
+// distinction = "公開schemaだけでは同一Turn・receiptに紐づくSQLite上の送信証拠が状態変更後も投影されることを保証しない"
+// @end-test-value
+test("execution reads keep pending and unknown input claims separate from restored and confirmed input", async () => {
+  await fixture(({ sessions, queue, read }) => {
+    const saved = sessions.insertSession(session());
+    const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
+    const target = { kind: "main" as const, ...owner };
+    const enqueue = (userMessage: string) => queue.enqueue(owner, { provider: saved.provider, workspacePath: saved.workspacePath,
+      attachments: [], request: { userMessage, clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(saved) } });
+    const start = enqueue("Initial input");
+    queue.claimNext(owner);
+    const started = sessions.appendRunningTurnStart({ ...owner, updatedAt: "running", expectedMessageCount: 0,
+      userMessage: { role: "user", text: "Initial input" },
+      queuedTurn: { queueId: start.id, turn: { sessionId: saved.id, provider: saved.provider, model: saved.model,
+        reasoningEffort: saved.reasoningEffort, approvalMode: saved.approvalMode, sandboxMode: saved.codexSandboxMode,
+        threadId: "", errorMessage: "", phase: "running", userMessageSeq: 0, createdAt: "start" } } });
+    assert.ok(started.queuedTurn);
+    const turnId = started.queuedTurn.id;
+    const claim = (text: string) => queue.claimForInput(owner, enqueue(text).id, "native");
+    const confirmed = claim("Confirmed");
+    sessions.appendSessionSteer({ ...owner, expectedMessageCount: 1, turnId, updatedAt: "confirmed",
+      queuedInput: { queueId: confirmed.id, inputTurnId: "native" }, userMessage: { role: "user", text: "Confirmed" } });
+    const restored = claim("Not dispatched");
+    queue.restoreQueuedInput(owner, restored.id, "native");
+    const uncertain = claim("Unconfirmed input");
+    const call = (operation: ExecutionReadOperation, fields: object) =>
+      read.execute({ target, operation, request: { target, ...fields } as never });
+    const summary = () => executionOperationResultSchemas.get_execution.parse(
+      call("get_execution", { turnId: String(turnId) })).inputs.additional;
+    assert.deepEqual(summary().unresolved, [{ seq: null, receiptId: uncertain.id, state: "pending" }]);
+    queue.settle(owner, uncertain.id, "interrupted", "Input delivery was not confirmed.");
+    const additional = summary();
+    assert.equal(additional.confirmedCount, 1);
+    assert.deepEqual(additional.references, [{ seq: 1 }]);
+    assert.equal(additional.unresolvedCount, 1);
+    assert.deepEqual(additional.unresolved, [{ seq: null, receiptId: uncertain.id, state: "unknown" }]);
+    const unresolved = executionOperationResultSchemas.list_execution_inputs.parse(
+      call("list_execution_inputs", { turnId: String(turnId), state: "unresolved" }));
+    assert.deepEqual(unresolved.items, [{
+      seq: null, state: "unknown", kind: "additional", textChars: null, attachments: null, queueId: uncertain.id, inputOrigin: null,
+    }]);
+    const input = executionOperationResultSchemas.get_execution_input.parse(
+      call("get_execution_input", { receiptId: uncertain.id, stage: "original" }));
+    assert.deepEqual([input.receiptId, input.turnId, input.receiptState, input.text],
+      [uncertain.id, String(turnId), "interrupted", "Unconfirmed input"]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "長文予定入力の続きを編集中の古いsnapshotへ継ぎ足さず、原文比較と未実行受付を結果へ偽装しない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836" }
 // fault = "予定入力の再編集後に旧cursorで新本文を返すか、取消済み未開始受付へ最新Turnを割り当てる"

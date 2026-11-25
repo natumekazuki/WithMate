@@ -70,6 +70,48 @@ function setup() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Crewは通常失敗と旧interruptedの子SessionをFailedとして一つに集計し、各Sessionへの移動を保つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window の Crewの集計と MonitorのFailed状態" }
+// fault = "再起動の失敗を別集計にするか、同じ失敗状態の別Sessionを一つの操作対象にする"
+// observable = "子孫のaccessible件数と展開後の個別状態、選んだSessionのopen先"
+// observation_boundary = "component-behavior"
+// scope = "HomeCrewPanelでの混在する失敗の投影・展開・移動"
+// lifecycle = "permanent"
+// distinction = "projection単体の状態名だけでなく別Sessionのgroupと個別操作を観測する"
+// @end-test-value
+test("Crew groups legacy interrupted and ordinary failures without merging their navigation", async () => {
+  const { dom, element, root, dispose } = setup();
+  const entries = [
+    member("origin", { isWindowOpen: true }),
+    member("legacy", { rootSessionId: "origin", parentSessionId: "origin", runState: "interrupted" }),
+    member("ordinary", { rootSessionId: "origin", parentSessionId: "origin", runState: "error" }),
+  ];
+  const opens: string[] = [];
+  const api: Partial<WithMateWindowApi> = {
+    listHomeCrewPage: async () => page(entries),
+    subscribeLiveSessionRunStatus: () => () => {},
+    subscribeSessionInvalidation: () => () => {},
+    subscribeOpenSessionWindowIds: () => () => {},
+    onSessionTurnUpdated: () => () => {},
+    openSession: async (id) => { opens.push(id); },
+  };
+  dom.window.withmate = api as WithMateWindowApi;
+  try {
+    await act(async () => root.render(<HomeCrewPanel active searchText="" />));
+    const descendants = element.querySelector<HTMLButtonElement>('button[aria-label^="Show Children of origin"]')!;
+    assert.deepEqual([...descendants.querySelectorAll('[role="img"][aria-label]')].map((item) => item.getAttribute("aria-label")), ["Failed: 2"]);
+    await act(async () => descendants.click());
+    for (const id of ["legacy", "ordinary"]) {
+      const open = element.querySelector<HTMLButtonElement>(`button[aria-label="Open Session: ${id}; Window Closed; Main Failed"]`)!;
+      assert.ok(open);
+      await act(async () => open.click());
+    }
+    assert.deepEqual(opens, ["legacy", "ordinary"]);
+  } finally { await dispose(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Crewは開いたMainを含むrootを保存順に載せ、closed Mainの枝・検索経路と独立したAux操作を保持し、状態集計とメニュー対象を本人またはAuxと混同しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window の Crew（掲載、検索、集計、個別操作）" }
 // fault = "閉じた祖先・葉を省く、検索展開が手動展開を上書きする、本人・Auxを子孫件数に足す、または操作を違う会話へ送る"

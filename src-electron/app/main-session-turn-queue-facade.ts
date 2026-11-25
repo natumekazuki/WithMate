@@ -367,11 +367,6 @@ export class MainSessionTurnQueueFacade {
     return { ...result, receipts: result.receipts.map((receipt) => this.projectSourceRelease(receipt)) };
   }
 
-  async releaseInterruptedSessionTurn(sessionId: string, id: string) {
-    this.deps.assertAccepting();
-    return this.deps.service.releaseInterrupted(this.owner(await this.readSession(sessionId)), this.requireId(id));
-  }
-
   async sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string) {
     this.deps.assertAccepting();
     const owner = this.owner(await this.readSession(sessionId));

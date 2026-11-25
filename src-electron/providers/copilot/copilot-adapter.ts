@@ -7,7 +7,7 @@ import path from "node:path";
 import { CopilotClient, createAttributedPermissionResult, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
 
 import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
-import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
+import type { Session } from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
@@ -219,42 +219,6 @@ function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolea
     || normalized.includes("thread_not_found")
     || normalized.includes("session not found")
     || normalized.includes("thread not found");
-}
-
-function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
-  if (!artifact) {
-    return false;
-  }
-
-  return artifact.changedFiles.length > 0
-    || (artifact.operationTimeline?.some((operation) =>
-      operation.status === "completed"
-      || operation.status === "failed"
-      || operation.status === "canceled"
-      || operation.exitCode !== undefined
-      || operation.error !== undefined
-    ) ?? false);
-}
-
-function hasMeaningfulRetryBlockingPartialResult(partialResult: RunSessionTurnResult): boolean {
-  return partialResult.assistantText.trim().length > 0
-    || hasMeaningfulArtifact(partialResult.artifact);
-}
-
-export function shouldRetryCopilotTurn(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    !isRecoverableCopilotConnectionErrorMessage(message)
-    && !isRecoverableCopilotMissingSessionErrorMessage(message)
-  ) {
-    return false;
-  }
-
-  if (!(error instanceof ProviderTurnError)) {
-    return true;
-  }
-
-  return !error.canceled && !hasMeaningfulRetryBlockingPartialResult(error.partialResult);
 }
 
 function stringifyUnknown(value: unknown): string | undefined {
@@ -1813,7 +1777,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
-    onAcquiredToolResult?: () => void,
+    onSendInvoked?: () => void,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
@@ -1908,10 +1872,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
-      if (event.type === "tool.execution_complete"
-        || (event.type === "tool.execution_partial_result" && event.data.partialOutput.trim())) {
-        onAcquiredToolResult?.();
-      }
       if (event.type === "elicitation.requested" || event.type === "user_input.requested") {
         const request = event.type === "user_input.requested"
           ? buildLiveElicitationRequestFromCopilotUserInput(input.providerCatalog.id, event)
@@ -1964,6 +1924,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         interestHandles.push(handle);
       }
       if (!observingTurn || input.signal?.aborted) return;
+      // A rejected or lost acknowledgement cannot prove the SDK did not execute the input.
+      onSendInvoked?.();
       return session.send({
         prompt: prompt.inputBodyText,
         ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
@@ -2137,21 +2099,23 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-    let acquiredToolResult = false;
+    let sendInvoked = false;
 
     try {
-      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolResult = true; });
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { sendInvoked = true; });
     } catch (error) {
-      if (acquiredToolResult || !shouldRetryCopilotTurn(error)) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (sendInvoked || input.signal?.aborted || (error instanceof ProviderTurnError && error.canceled)
+        || (!isRecoverableCopilotConnectionErrorMessage(message) && !isRecoverableCopilotMissingSessionErrorMessage(message))) {
         throw error;
       }
 
-      logCopilotRuntime("retrying stale connection", {
+      logCopilotRuntime("retrying connection preparation before send", {
         provider: input.providerCatalog.id,
         model: input.executionOptions.model,
         workspacePath: resolveRunWorkspacePath(input),
         threadId: input.session.threadId,
-        message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
+        message: redactor.sanitizeText(message),
       });
       await this.resetRecoverableConnection(input);
       return this.runSessionTurnOnce(input, prompt, onProgress);

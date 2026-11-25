@@ -43,7 +43,7 @@ export function SessionRecoveryAnnouncement({ recovery }: { recovery?: SessionRe
     if (pending && previousConflict.current !== key) {
       setAnnouncement(`${targetLabel}: Your current draft is preserved. Choose whether to replace it.`);
     } else if (!announced.current.has(key)) {
-      setAnnouncement(state.kind === "failed" ? `${targetLabel}: Previous request failed.` : `${targetLabel}: Resend and Edit are available for the previous request.`);
+      setAnnouncement(state.kind === "failed" ? `${targetLabel}: Edit is available for the previous request.` : `${targetLabel}: Resend and Edit are available for the previous request.`);
     } else {
       setAnnouncement("");
     }

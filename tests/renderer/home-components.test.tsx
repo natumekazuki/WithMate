@@ -1978,7 +1978,7 @@ describe("HomeMonitorContent", () => {
     assert.ok(auxiliaryDisclosure);
     assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
     assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Error: 1"]'));
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Failed: 1"]'));
     assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'));
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 2);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
@@ -1989,7 +1989,7 @@ describe("HomeMonitorContent", () => {
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
-    assert.ok(html.includes('aria-label="Auxiliary Error: 1"'));
+    assert.ok(html.includes('aria-label="Auxiliary Failed: 1"'));
     assert.ok(html.includes('aria-label="Auxiliary Idle: 1"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);

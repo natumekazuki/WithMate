@@ -4,13 +4,13 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
-export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
+export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
 type QueueState = {
   owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean; ready: boolean;
   reconciledHistory?: { canonicalSignature: string; submissionSignature: string };
 };
-export type SessionTurnQueueActionKind = "cancel" | "release" | "input" | "move-up" | "move-down";
+export type SessionTurnQueueActionKind = "cancel" | "input" | "move-up" | "move-down";
 export type SessionTurnQueueMoveDirection = "up" | "down";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
@@ -149,7 +149,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
             ? [...current.bridges.filter((item) => item.id !== receipt.id), accepted] : current.bridges,
         });
       } else {
-        const operation = kind === "cancel" ? api?.cancelQueuedSessionTurn : api?.releaseInterruptedSessionTurn;
+        const operation = api?.cancelQueuedSessionTurn;
         if (!operation) throw new Error("Queue action is unavailable.");
         await operation(sessionId, receipt.id);
       }
@@ -168,7 +168,6 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   }, [api, owner, sessionId, incarnationId, reload]);
   const retry = useCallback(() => { setActionError(null); reload(); }, [reload]);
   const cancel = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "cancel"), [act]);
-  const release = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "release"), [act]);
   const sendInput = useCallback((receipt: SessionTurnQueueReceipt, expectedTurnId: string) => void act(receipt, "input", expectedTurnId), [act]);
   const receipts = useMemo(() => {
     if (!enabled) return EMPTY_RECEIPTS;
@@ -198,6 +197,6 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
     busyId: pendingAction?.owner === owner ? pendingAction.id : null,
     busyKind: pendingAction?.owner === owner ? pendingAction.kind : null,
-    reload: retry, cancel, release, sendInput, move,
+    reload: retry, cancel, sendInput, move,
   };
 }

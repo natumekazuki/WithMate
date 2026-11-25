@@ -594,7 +594,6 @@ test("conversation column shows question answers independently of queued submiss
           getSessionTurnQueueReceipt: async (_id, requestId) => terminals.get(requestId) ?? active.find((item) => item.requestId === requestId) ?? null,
           onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
           cancelQueuedSessionTurn: async () => { mutations.push("cancel"); throw new Error("Unexpected queue mutation"); },
-          releaseInterruptedSessionTurn: async () => { mutations.push("release"); throw new Error("Unexpected queue mutation"); },
           sendQueuedSessionInput: async () => { mutations.push("input"); throw new Error("Unexpected queue mutation"); },
         };
         let saved: SessionMessageColumnProps["messages"] = [{ role: "user", text: "current prompt", historyIndex: 0 }];
@@ -1918,7 +1917,7 @@ test("received Coordination text stays authored across queue and saved Main/Aux 
       for (const legacy of [false, true]) {
         const input = structuredClone(captured);
         if (legacy) { input.request.userMessage = raw; delete input.coordination!.notification; }
-        await act(async () => root.render(<SessionTurnQueueRow inputReadContext={context} receipt={{ ...receipt, captured: input }} character={{ name: "Receiver", iconPath: "" }} busy={false} onCancel={() => {}} onRelease={() => {}} />));
+        await act(async () => root.render(<SessionTurnQueueRow inputReadContext={context} receipt={{ ...receipt, captured: input }} character={{ name: "Receiver", iconPath: "" }} busy={false} onCancel={() => {}} />));
         assert.match(dom.window.document.querySelector(".coordination-notice-link")?.textContent ?? "", /Which approach\?/);
         const content = dom.window.document.querySelector<HTMLElement>('[aria-label="Received Content"]')!;
         if (operation === "answer") {
@@ -2690,7 +2689,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
   const store: SessionTurnQueueStore = {
     getReceipt: async () => terminal, getReceiptById: async () => terminal, listActive: async () => [], claimNext: async () => null,
     admit: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
-    settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected,
     claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected, updateQueued: unexpected,
   };
   let listener: ((id: string) => void) | undefined;
@@ -2749,15 +2748,15 @@ test("completed receipt reads converge even when queue notifications arrive befo
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendは通常の受付待機中に仮行を追加せず、受付を確認してから開始・終端先着・追加入力userを含むcanonical到着まで同じ応答DOMを保持する。Preview/Source本文は100ms集約し終端で最新rawへ接続する。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する"
+// claim = "Main/AuxのSendは受付を確認してからcanonical到着まで同じ応答DOMを保持し、集約した本文を終端で最新rawへ接続する。旧interruptedもFailedを一度表示し、後続は専用解除なしで順に待機・開始し、個別に取消せる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復; docs/design/auxiliary-session.md#送信受付の共通反映" }
-// fault = "受付待機中にpromptや枠を出す、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答や未解放中断より先に表示する、保留中に応答枠を出す、取消/解放の対象を誤る、または失敗をspinnerのまま隠す"
-// observable = "実Column DOMのprompt件数・pending枠と応答のnode identity・制御clockごとの本文・alert・予約の表示順、Cancel/Release操作の宛先、ColumnのisRunning/responsePending、storeの所有request"
+// fault = "受付前に仮行が出る、ACK/保存到着でpromptや枠を消す・二重化する、旧失敗に解除を要求する、後続順と取消対象を誤る、または失敗をspinnerに隠す"
+// observable = "実Columnのprompt件数・応答DOM identity・制御clockごとの本文・Failed件数、後続の順とCancel対象、isRunning/responsePendingと所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
 // lifecycle = "permanent"
-// impact = "送信直後とデータ到着順により会話が飛び、失敗した要求を待ち続けたり別会話に誤表示したりする。中断後に保留された後続を実行待機と誤認させない"
-// distinction = "operation通知testはColumnの実購読とreceipt/canonical結合、保留中のCancel/Releaseを通らない。小さいJSDOM遷移で正常・失敗・高速終端・中断保留の継続契約を確認する"
+// impact = "データ到着順による会話の飛び、失敗した要求を待ち続ける状態、別会話への誤表示を防ぐ。再起動後も後続を手動で解除する必要がない"
+// distinction = "operation通知testはColumnの実購読、receipt/canonical結合、旧失敗後の次予約の表示と実Cancelを通らない"
 // @end-test-value
 test("conversation column shows accepted sends and preserves the canonical response handoff", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
@@ -2780,7 +2779,6 @@ test("conversation column shows accepted sends and preserves the canonical respo
       let holdQueue = true;
       let changed: ((id: string) => void) | undefined;
       const canceled: string[] = [];
-      const released: string[] = [];
       const api: ConversationMessageColumnApi = {
         listSessionTurnQueue: () => holdQueue ? new Promise(() => {}) : Promise.resolve(active),
         getSessionTurnQueueReceipt: async (_id, requestId) => resolved?.requestId === requestId ? resolved : active.find((item) => item.requestId === requestId) ?? null,
@@ -2790,12 +2788,6 @@ test("conversation column shows accepted sends and preserves the canonical respo
           resolved = { ...active.find((item) => item.id === receiptId)!, state: "canceled" };
           active = active.filter((item) => item.id !== receiptId);
           return resolved;
-        },
-        releaseInterruptedSessionTurn: async (_id, receiptId) => {
-          released.push(receiptId);
-          const updated = { ...active.find((item) => item.id === receiptId)!, releasedAt: "released" };
-          active = active.map((item) => item.id === receiptId ? updated : item);
-          return updated;
         },
       };
       let latest: SessionMessageColumnProps | null = null;
@@ -2928,7 +2920,7 @@ test("conversation column shows accepted sends and preserves the canonical respo
       assert.equal([...dom.window.document.querySelectorAll(".message-row.assistant")].at(-1), fastResponseRow, "canonical-first completion preserves the initial response row");
       assert.equal(store.getSnapshot().length, 0);
 
-      const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, queuePosition: 4, state: "interrupted" as const,
+      const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, queuePosition: 4, state: "interrupted" as const, reason: "Interrupted by restart.",
         captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "interrupted-request", userMessage: "first interrupted prompt" } } };
       const held = { ...nextReceipt, id: "held", requestId: "held-request", sequence: 5, queuePosition: 5,
         captured: { ...nextReceipt.captured, request: { ...nextReceipt.captured.request, clientRequestId: "held-request", userMessage: "second held prompt" } } };
@@ -2937,15 +2929,17 @@ test("conversation column shows accepted sends and preserves the canonical respo
       resolved = null;
       await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
       const queueOrder = () => [...dom.window.document.querySelectorAll(".message-row.user")].map((row) => row.querySelector(".message-card-content")?.firstElementChild?.textContent);
-      assert.deepEqual(column().messages, [], "unreleased interruption holds later turns outside the normal response surface");
+      assert.deepEqual(column().messages.map((message) => message.text), ["first interrupted prompt", "", "second held prompt"]);
       assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt"]);
-      assert.equal(pendingCount(), 0);
-      assert.equal(column().responsePending, false);
+      assert.equal(pendingCount(), 1);
+      assert.equal(column().responsePending, true);
+      assert.equal(dom.window.document.querySelectorAll(".session-run-failure").length, 1);
+      assert.match(dom.window.document.querySelector(".message-row.assistant .session-run-failure")!.textContent!, /FailedInterrupted by restart/);
+      assert.doesNotMatch(dom.window.document.body.textContent!, /Release Later Turns|Later turns are held/);
       const local = { sessionId: kind, incarnationId: "inc", requestId: "local-held-request", userMessage: "third held prompt", historyMessageCount: 0, queuedBehindRun: false, error: "" };
       await act(async () => { store.start(local); });
-      assert.deepEqual(column().messages, [], "an ACK-waiting local send respects the same interruption barrier");
       assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt"]);
-      assert.equal(pendingCount(), 0);
+      assert.equal(pendingCount(), 1);
       const third = { ...held, id: "third", requestId: local.requestId, sequence: 6, queuePosition: 6,
         captured: { ...held.captured, request: { ...held.captured.request, clientRequestId: local.requestId, userMessage: local.userMessage } } };
       active = [interrupted, held, third];
@@ -2956,12 +2950,8 @@ test("conversation column shows accepted sends and preserves the canonical respo
       await act(async () => { cancel.click(); });
       assert.deepEqual(canceled, ["held"]);
       assert.deepEqual(queueOrder(), ["first interrupted prompt", "third held prompt"]);
-      assert.equal(pendingCount(), 0);
-      const release = [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Release Later Turns");
-      assert.ok(release);
-      await act(async () => { release.click(); });
-      assert.deepEqual(released, ["interrupted"]);
-      assert.deepEqual(column().messages.map((message) => message.text), ["third held prompt"]);
+      assert.deepEqual(column().messages.map((message) => message.text), ["first interrupted prompt", "", "third held prompt"]);
+      assert.equal(dom.window.document.querySelectorAll(".session-run-failure").length, 1);
       assert.equal(pendingCount(), 1);
       assert.equal(column().isRunning, false);
       await act(async () => {
@@ -3046,7 +3036,6 @@ test("conversation columns は応答後の遅い再取得から次の要求を�
     onSessionTurnQueueChanged: () => () => {},
     sendQueuedSessionInput: async () => { queueActions.push("steer"); return nextQueued; },
     cancelQueuedSessionTurn: async () => { queueActions.push("cancel"); return nextQueued; },
-    releaseInterruptedSessionTurn: async () => { queueActions.push("release"); return nextQueued; },
     reorderQueuedSessionTurns: async () => { queueActions.push("reorder"); throw new Error("Unexpected queue reorder"); },
   };
   let main: SessionMessageColumnProps | null = null;

@@ -19,6 +19,7 @@ export type MessageListSource =
       kind: "live-assistant";
       sessionId: string;
       threadId: string | null;
+      withMateTurnId?: string;
     };
 
 export type MessageListProjection = {
@@ -47,6 +48,7 @@ type AuxiliaryMessageLookupSession = Pick<AuxiliarySession, "id" | "messages">;
 export type LiveAssistantProjection = {
   sessionId: string;
   threadId: string | null;
+  withMateTurnId?: string;
   messageIndex: number;
   text: string;
 };
@@ -213,6 +215,7 @@ export function buildMessageListProjection(
       kind: "live-assistant",
       sessionId: liveAssistant.sessionId,
       threadId: liveAssistant.threadId,
+      ...(liveAssistant.withMateTurnId ? { withMateTurnId: liveAssistant.withMateTurnId } : {}),
     });
     keys.push(liveAssistantKey);
     groups.push(group);
@@ -281,7 +284,8 @@ export function projectLiveAssistantOnSessionHistory(
 
   return {
     messages: [...history.messages, { role: "assistant", text: live.text }],
-    sources: [...history.sources, { kind: "live-assistant", sessionId, threadId: live.threadId }],
+    sources: [...history.sources, { kind: "live-assistant", sessionId, threadId: live.threadId,
+      ...(live.withMateTurnId ? { withMateTurnId: live.withMateTurnId } : {}) }],
     keys: [...history.keys, key],
     groups: [...history.groups, null],
   };

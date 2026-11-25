@@ -260,10 +260,10 @@ test("子の作成・復旧と実行にはWindowを作らずMonitorから明示o
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Workerの初回受付は実行枠を同時確保してACK・一覧ともstartingとなり、同時送信の後続だけが待機する。固定入力・Provider thread・会話枠を維持し、terminal返信喪失と開始保存後の不明実行から従来の契約で回復する"
+// claim = "初回受付で実行枠を同時確保し、後続の固定入力・Provider thread・会話枠を保持する。終端返信喪失は正本を保持し、開始保存の返信不明は稼働中に実guard解放後だけ照合して後続を進める"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/electron-session-store.md#turn-queue; docs/design/prompt-composition.md#metadataと必要時取得" }
 // fault = "即時開始の受付を先にqueuedでcommitまたは通知する、同時送信も開始する、受付後に入力や表示所属が変わる、または不明実行を自動再送する"
-// observable = "Worker commit直後と受付通知からの一覧、ACK、保存receipt、Provider入力に含む会話枠と呼出順、公開履歴seq、実WorkerのTurn状態と解放後のthread・終端"
+// observable = "Worker commit直後と受付通知からの一覧、ACK、保存receipt、Provider入力に含む会話枠と呼出順、公開履歴seq、実guard解除前後の実WorkerのTurn状態・thread・終端"
 // observation_boundary = "public-boundary"
 // scope = "MainSessionRuntimeAssembly + QueueFacade/Service + SessionPersistenceService + V6StorageWorkerBundle"
 // lifecycle = "permanent"
@@ -453,13 +453,14 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     assert.equal((await bundle.stores.queue.getReceipt(owner, unknownRequestId))?.state, "interrupted");
     const follower = await facade.enqueueSessionTurn(saved.id, { incarnationId: owner.incarnationId, clientRequestId: followerRequestId,
       submitSource: "composer", userMessage: "After recovery", executionOptions: options });
-    await queue.releaseInterrupted(owner, unknown.id);
+    queue.wake(owner.sessionId);
     await queue.waitForPending();
     assert.equal(dispatches, 3);
     assert.equal((await bundle.stores.session.getSession(saved.id))?.runState, "running");
+    assert.equal((await bundle.stores.turn.getLatestSessionTurn(saved.id))?.phase, "running");
     assert.equal((await bundle.stores.queue.getReceipt(owner, followerRequestId))?.state, "queued");
     cleanupGuard = false;
-    queue.wake(saved.id);
+    queue.wake(owner.sessionId);
     await queue.waitForPending();
     await runtime.waitForPendingRuns();
     assert.equal(dispatches, 4);
@@ -469,8 +470,12 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     assert.equal(calls[2]?.thread, "thread-2");
     assert.equal(calls[2]?.text, "After recovery");
     const recoveredUnknown = await bundle.stores.queue.getReceipt(owner, unknownRequestId);
-    assert.equal(recoveredUnknown?.state, "interrupted");
-    assert.ok(recoveredUnknown?.releasedAt);
+    assert.equal(recoveredUnknown?.id, unknown.id);
+    assert.equal(recoveredUnknown?.state, "failed");
+    assert.equal(recoveredUnknown?.releasedAt, null);
+    const recoveredMessage = (await bundle.stores.session.getSession(saved.id))?.messages[5];
+    assert.equal(recoveredMessage?.text, "");
+    assert.equal(recoveredMessage?.runFailure, recoveredUnknown?.reason);
     assert.equal((await bundle.stores.queue.getReceipt(owner, followerRequestId))?.id, follower.id);
     assert.equal((await bundle.stores.session.getSession(saved.id))?.threadId, "thread-3");
   } finally {

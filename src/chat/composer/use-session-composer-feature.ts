@@ -93,6 +93,7 @@ export type SessionComposerFeatureBridge = {
     queueTurnBusy?: boolean;
     hasUncertainTurn?: boolean;
     inputError?: string;
+    inputAcceptanceError?: string;
     selectedRunState: Session["runState"] | null;
     auxiliaryRunState: Session["runState"] | null;
     busyReason: string;
@@ -514,7 +515,8 @@ export function useSessionComposerFeature(input: {
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
       canSendInput: bridge.runtime.canSendInput,
-      submissionError: bridge.runtime.inputError,
+      submissionError: bridge.runtime.inputAcceptanceError || bridge.runtime.inputError,
+      inputAcceptanceUnconfirmed: !!bridge.runtime.inputAcceptanceError,
       onSendInput: () => void bridge.operations.send.input?.(),
       onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
       queueTurnBusy: bridge.runtime.queueTurnBusy,

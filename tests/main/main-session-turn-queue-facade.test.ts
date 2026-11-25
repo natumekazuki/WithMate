@@ -269,7 +269,7 @@ function fixture() {
     getReceiptById: async (owner, id) => rows.find((row) => row.id === id && row.incarnationId === owner.incarnationId) ?? null,
     listActive: unexpected, listReceipts: unexpected, listPendingOwners: unexpected,
     claimNext: async () => null, markStarted: unexpected, settle: unexpected, cancelQueued: unexpected,
-    recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    recoverInterrupted: unexpected,
     claimForInput: unexpected, restoreQueuedInput: unexpected,
   };
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: unexpected });

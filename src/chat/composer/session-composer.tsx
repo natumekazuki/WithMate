@@ -71,6 +71,7 @@ export type SessionComposerExpandedProps = {
   onCheckTurnReceipt?: () => void;
   onRetryOriginalTurn?: () => void;
   submissionError?: string;
+  inputAcceptanceUnconfirmed?: boolean;
   targetDock?: ReactNode;
   recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
@@ -173,6 +174,7 @@ export function SessionComposerExpanded({
   onCheckTurnReceipt,
   onRetryOriginalTurn,
   submissionError,
+  inputAcceptanceUnconfirmed = false,
   targetDock = null,
   recoveryActions = null,
   dockModeSwitch = null,
@@ -630,9 +632,10 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
-          {submissionError && !onCheckTurnReceipt ? (
+          {submissionError && (inputAcceptanceUnconfirmed || !onCheckTurnReceipt) ? (
             <div id={submissionErrorId} className="composer-save-feedback">
-              <span role="status">{queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
+              <span role="status">{inputAcceptanceUnconfirmed ? "Input acceptance could not be confirmed. Your draft is preserved."
+                : queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
               <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} isActive={isActive} label="Message Submission Error Details" message={submissionError} />
             </div>
           ) : null}

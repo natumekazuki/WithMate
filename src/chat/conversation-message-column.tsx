@@ -38,7 +38,7 @@ export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Sessi
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator" | "cancelConversationQuery"
-  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns"
+  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns"
   | "getUnreadSessionResult" | "markSessionResultRead" | "onSessionTurnUpdated"
 >>;
 
@@ -439,6 +439,7 @@ export function useConversationMessageColumn({
   const currentBridge = assistantText ? {
     sessionId,
     threadId: liveRun?.threadId ?? session?.threadId ?? null,
+    ...(liveRun?.sessionTurnId ? { withMateTurnId: liveRun.sessionTurnId } : {}),
     messageIndex: Math.max(
       liveResponseOwner.current?.owner === pageOwner ? liveResponseOwner.current.messageIndex : 0,
       resolveLiveAssistantMessageIndex(tailMessages, [], sessionId, sessionId, assistantText),
@@ -516,12 +517,12 @@ export function useConversationMessageColumn({
   const keyedHistory = useMemo(() => projectLiveAssistantOnSessionHistory(
     historyProjection, messages, sessionId,
     hasSavedBridge ? bridge : null,
-  ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey]);
+  ), [historyProjection, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.withMateTurnId]);
   const currentLiveProjection = useMemo(() => hasSavedBridge
     ? keyedHistory
     : projectLiveAssistantOnSessionHistory(historyProjection, messages, sessionId, isBrowsing ? null : bridge),
-  [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, isBrowsing]);
-  const retainedSignature = retainedBridges.current.projections.map((candidate) => `${candidate.messageIndex}:${candidate.text.length}`).join(",");
+  [historyProjection, keyedHistory, messages, sessionId, hasSavedBridge, bridgeKey, bridge?.text, bridge?.withMateTurnId, isBrowsing]);
+  const retainedSignature = retainedBridges.current.projections.map((candidate) => `${candidate.messageIndex}:${candidate.withMateTurnId}:${candidate.text.length}`).join(",");
   const liveProjection = useMemo(() => {
     const candidates = isBrowsing ? [] : retainedBridges.current.projections;
     if (!candidates.length && !bridge) return currentLiveProjection;
@@ -1009,13 +1010,13 @@ export function useConversationMessageColumn({
   const queueReorderDisabled = !enabled || queueActionsFrozen || (session?.accessMode !== undefined && session.accessMode !== "active");
   const renderQueueTail = useMemo(() => !isBrowsing
     && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || liveState.liveReadError || queue.error || queue.announcement || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => <>
-    {queuedProjection.tail.map((receipt) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} inputReadContext={baseProps.inputReadContext} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} position={receipt.state === "queued" ? queuedTurnIds.indexOf(receipt.id) + 1 : undefined} queueSize={queuedTurnIds.length} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} onMove={moveAction} moveDisabled={queueReorderDisabled} />)}
+    {queuedProjection.tail.map((receipt) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} inputReadContext={baseProps.inputReadContext} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} position={receipt.state === "queued" ? queuedTurnIds.indexOf(receipt.id) + 1 : undefined} queueSize={queuedTurnIds.length} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onSendInput={inputAction} onMove={moveAction} moveDisabled={queueReorderDisabled} />)}
     {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} character={columnCharacter} submission={submission} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
     <span className="visually-hidden" role="status">{queue.announcement}</span>
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
     {liveState.liveReadError ? <div className="pending-run-error-note" role="alert">{liveState.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
-  </> : undefined, [isBrowsing, api, columnCharacter, baseProps.inputReadContext, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.announcement, queue.reload, queuedTurnIds, moveAction, queueReorderDisabled, inputAction, liveState.liveReadError]);
+  </> : undefined, [isBrowsing, api, columnCharacter, baseProps.inputReadContext, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.loading, queue.receipts.length, queue.error, queue.announcement, queue.reload, queuedTurnIds, moveAction, queueReorderDisabled, inputAction, liveState.liveReadError]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -1032,7 +1033,6 @@ export function useConversationMessageColumn({
     messageKeys: projection.keys,
     turnQueueMetadata: queuedProjection.metadata,
     onCancelQueuedTurn: queue.cancel,
-    onReleaseInterruptedTurn: queue.release,
     onMoveQueuedTurn: moveAction,
     queuedTurnIds,
     queueReorderDisabled,

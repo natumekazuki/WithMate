@@ -11,10 +11,10 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Codexの受付可能な現在turnだけにMain/Auxiliary composerから追加入力し、重複送信を防ぎ、受付確認したrevisionだけを消す。AuxiliaryのACK待ち中に編集したdraftは成功/拒否後のdurable revisionへ保存され、拒否後に明示再送できる。対象切替ではdraftを保持し、nonblocking質問では生成を継続表示する"
+// claim = "Codexの受付可能な現在turnだけにMain/Auxiliary composerから追加入力し、受付確認したrevisionだけを消す。受付不明はdraftを保ちComposerに一度だけ出し、親応答をFailedにしない。AuxiliaryのACK待ち中に編集したdraftは成功/拒否後のdurable revisionへ保存され、拒否後に明示再送できる。対象切替ではdraftを保持し、nonblocking質問でも生成を継続表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 独立した追加入力shortcutとdraft revision" }
-// fault = "追加入力を新turnへ振り替える、二重送信する、拒否や編集後のdraftを消す、対象切替後の古い送信を開始する、AuxiliaryのACK前の編集を古いdurable revisionで保存してCAS staleにする、失敗後に古いdurable revisionで再送する、またはnonblocking質問を承認待ちと表示する"
-// observable = "実SessionWindowの追加入力shortcut/Cancel、textarea、pending status、preload steer/queue呼出とrequest、CAS付きdraft record"
+// fault = "追加入力の結果を送信失敗や親応答の失敗と混同する、受付不明の表示を重複する、入力を新turnへ振り替える、二重送信する、拒否や編集後のdraftを消す、会話切替後に送る、Auxiliaryの古いdurable revisionで保存・再送する、またはnonblocking質問を承認待ちと表示する"
+// observable = "実SessionWindowの追加入力shortcut/Cancel、textarea、受付状態とエラーの件数、preload steer/queue呼出とrequest、CAS付きdraft record"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp mid-turn composer input"
 // lifecycle = "permanent"
@@ -158,7 +158,19 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     await sendInput();
     await act(async () => { reject(new Error("turn ended")); });
     assert.equal(textarea().value, "newer draft");
-    assert.match(dom.window.document.body.textContent!, /Main was not confirmed.*draft is preserved/);
+    const assertUnconfirmedInput = async (reason: string) => {
+      const acceptanceNotes = [...dom.window.document.querySelectorAll("[role=status]")]
+        .filter((element) => element.textContent?.includes("Input acceptance could not be confirmed."));
+      assert.equal(acceptanceNotes.length, 1);
+      assert.match(acceptanceNotes[0].textContent!, /Your draft is preserved/);
+      assert.doesNotMatch(dom.window.document.body.textContent!, /Message could not be sent|(?:Main|Auxiliary) was not confirmed/);
+      assert.equal(dom.window.document.querySelectorAll(".session-run-failure").length, 0);
+      const errorDetails = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Message Submission Error Details']");
+      assert.ok(errorDetails);
+      await act(async () => { errorDetails.click(); });
+      assert.ok(dom.window.document.querySelector("[role=dialog][aria-label='Message Submission Error Details']")?.textContent?.includes(reason));
+    };
+    await assertUnconfirmedInput("turn ended");
     await sendInput();
     await act(async () => { accept(); });
     assert.equal(textarea().value, "");
@@ -180,6 +192,7 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     const rejectedDraftRevision = calls.at(-1)!.request.auxiliaryDraftDurableRevision!;
     await act(async () => { reject(new Error("steer was rejected")); });
     assert.equal(textarea().value, "auxiliary input");
+    await assertUnconfirmedInput("steer was rejected");
     assert.equal(records.get(auxiliaryId)!.durableRevision, rejectedDraftRevision + 2);
     await sendInput();
     assert.equal(calls.at(-1)!.request.auxiliaryDraftDurableRevision, rejectedDraftRevision + 2);

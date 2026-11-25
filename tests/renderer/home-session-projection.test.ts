@@ -101,7 +101,7 @@ describe("home-session-projection", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "取消待ちのMainとAuxiliaryは保存済みidleより優先されRunningに属し、対象別labelと実終了後のStopped復帰を保つ"
+  // claim = "取消待ちのMainとAuxiliaryは保存済みrunStateより優先されRunningに属し、対象別labelと実終了後のStopped復帰を保つ"
   // oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
   // fault = "取消待ちをStoppedへ分類する、Auxiliaryの取消をMainへ混同する、実終了後も取消表示を残す"
   // observable = "projectionのRunning/Stopped所属、Main state、Auxiliary stateと順序、summary正規化後の取消state"
@@ -131,15 +131,15 @@ describe("home-session-projection", () => {
 
     const released = buildHomeSessionProjection([{ ...main, cancellationState: undefined }, auxiliaryParent], ["main", "parent"], "", [idle, { ...waiting, cancellationState: undefined }]);
     assert.equal(released.runningMonitorEntries.length, 0);
-    assert.deepEqual(released.nonRunningMonitorEntries.map((entry) => entry.state.label), ["Error", "Idle"]);
+    assert.deepEqual(released.nonRunningMonitorEntries.map((entry) => entry.state.label), ["Failed", "Idle"]);
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "getHomeSessionStateは既知runStateを対応する表示stateへ変換し、未知enumをUnknownとして中立表示する"
-  // oracle = { type = "contract", ref = "Issue #731 Home session status labels" }
-  // fault = "未知runStateのraw enumを利用者向けlabelへ露出するか、running/interruptedの識別を失う"
-  // observable = "getHomeSessionStateのkindとlabel"
+  // claim = "Homeでは通常失敗と旧interruptedを同じFailed状態へ投影し、実行中と未知状態は区別する"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window の Monitor状態" }
+  // fault = "再起動時だけ別の失敗状態を表示するか、実行中と失敗を混同するか、未知enumを露出する"
+  // observable = "Mainの旧interrupted・error・running・未知とAuxiliaryのerrorを投影したkindとlabel"
   // observation_boundary = "public-boundary"
   // scope = "getHomeSessionState runState projection"
   // lifecycle = "permanent"
@@ -151,10 +151,10 @@ describe("home-session-projection", () => {
       getHomeSessionState(createSession({ id: "a", taskTitle: "A", runState: "running" })),
       { kind: "running", label: "Running" },
     );
-    assert.deepEqual(
-      getHomeSessionState(createSession({ id: "b", taskTitle: "B", runState: "interrupted" })),
-      { kind: "interrupted", label: "Interrupted" },
-    );
+    for (const runState of ["error", "interrupted"]) {
+      assert.deepEqual(getHomeSessionState(createSession({ id: "b", taskTitle: "B", runState })), { kind: "error", label: "Failed" });
+    }
+    assert.deepEqual(getHomeAuxiliarySessionState(createAuxiliarySession({ id: "aux", parentSessionId: "b", runState: "error" })), { kind: "error", label: "Failed" });
     assert.deepEqual(
       getHomeSessionState(createSession({ id: "c", taskTitle: "C", runState: "future-state" })),
       { kind: "neutral", label: "Unknown" },

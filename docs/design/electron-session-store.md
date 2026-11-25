@@ -78,7 +78,7 @@ Mainの`title`／`description`とAuxiliary自身の`title`／`description`は、
 
 Auxiliaryの通常送信はdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。前回依頼の明示再送（`submitSource: retry`）は現在のdraftを送信元とせず、draftの本文・revisionを変更しない。
 
-対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。通常の新規受付は、claimできる場合に同じWorker transactionで実行可能な先頭一件を`starting`へ更新し、採用入力を固定する。Auxiliaryのdraft consumeと表示anchorも同じtransactionに含む。受付はtransaction commit後にACKし、新規受付自身が選ばれた場合はACKと一覧の両方で最初から`starting`となる。既知request IDは現在のreceiptを返すだけで、claimを追加しない。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。claim結果を確認できなかった`starting`は起動時に既存の`interrupted`回収に従う。
+対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。通常の新規受付は、claimできる場合に同じWorker transactionで実行可能な先頭一件を`starting`へ更新し、採用入力を固定する。Auxiliaryのdraft consumeと表示anchorも同じtransactionに含む。受付はtransaction commit後にACKし、新規受付自身が選ばれた場合はACKと一覧の両方で最初から`starting`となる。既知request IDは現在のreceiptを返すだけで、claimを追加しない。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。起動時の`starting`／`running`と旧保留は[保存回収](session-run-lifecycle.md#persistence-expectations)で照合する。
 
 `after_source_turn`の受付は既存queueへ保存するが、送信元Turnの終了・保存が確定するまでclaimしない。判定とclaimは同じWorkerのtransactionで行い、宛先queueの実行可能な項目だけを`queue_position`順に選ぶ。終了待ち項目のEdit・Cancelは可能で、Steerも同じ送信元条件を検査する。送信元run解放時は、保存originからその送信元を待つ宛先だけを取得し、既存queueをwakeする。起動時も保存済みTurnから条件を再評価する。終了を確定できない中断は待機を保ち、成功・失敗・取消へ推測しない。通常の即時送信・Coordination配送にこの待機条件を追加しない。
 
@@ -100,7 +100,7 @@ queue Steerの本文は前後空白も含めProviderへの本文と保存message
 
 並べ替えは同じowner／incarnationのqueued ID列をtransaction内で期待列と直接比較し、同一集合の新順序へ既存の`queue_position`値を再配分する。本文・添付・設定・受付ID・sequenceと開始済みreceiptは変更しない。競合では無変更の結果と現在のactive列を返し、保存例外では全更新をrollbackする。新規受付は末尾へ追加し、開始前のSteer拒否によるqueued復元は元のpositionを保持する。
 
-active取得は保存済み実行順、cursor付きreceipt履歴取得は不変の受付順とし、request IDによる個別照会と分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
+active取得は保存済み実行順、cursor付きreceipt履歴取得は不変の受付順とし、request IDによる個別照会と分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・保存結果の照合・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
 
 予約の編集は既存receiptのqueued状態とowner／incarnationをtransaction内で確認し、予定入力`captured_json`の本文と解決済み添付descriptorだけを同時更新する。受付ID・request ID・sequence・実行順・origin・実行設定・provider／workspaceは維持する。添付は編集後の本文を既存Composer previewで再解決し、通常のpath認可を適用する。通常dispatchとqueue経由Steerはclaim transactionで予定入力を`dispatched_json`へ固定する。未送信と確認したSteerのqueued復帰では固定を解除し、結果不明・取消・失敗では固定値を保持する。更新は既存Workerのtyped commandから行い、専用tableや編集履歴を追加しない。
 

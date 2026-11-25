@@ -25,9 +25,9 @@ async function mount(api: SessionTurnQueueApi) {
       messages: seqs.map(() => ({ role: "user" as const, text: "saved prompt" })),
       keys: seqs.map((seq) => `saved-${seq}`), sources: seqs.map((seq) => ({ kind: "session" as const, messageIndex: seq })), groups: seqs.map(() => null),
     }, current.receipts, { sessionId: "session", incarnationId: "incarnation" });
-    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} character={{ name: "Mate", iconPath: "" }} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
+    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} character={{ name: "Mate", iconPath: "" }} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
     return <>
-      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} busyKind={current.busyId === metadata.get(projection.keys[index])!.id ? current.busyKind : null} onCancel={current.cancel} onRelease={current.release} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
+      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} busyKind={current.busyId === metadata.get(projection.keys[index])!.id ? current.busyKind : null} onCancel={current.cancel} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
       {tail.map(row)}
       {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
     </>;
@@ -207,51 +207,40 @@ test("queued chat input captures the turn once and bridges a fast canonical acce
 
 // @test-value v2
 // kind = "contract"
-// claim = "結果不明の予約本文は同じbubbleに保持し、後続turnの解放を一度だけ要求し、取得失敗時は本文と明示Retryを維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 予約行の結果不明とRelease Later Turns" }
-// fault = "結果不明の本文を落とす、解放を連打で重複する、または取得失敗を空成功へ置換する"
-// observable = "bubbleの本文と状態、解放API引数と回数、待機中disabled、失敗後本文とRetry後error解消"
+// claim = "旧interruptedの予約は本文を保持して共通Failedを一度表示し、後続解放操作は出さない。queue取得失敗とそのRetryは独立する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 確定した送信・実行失敗、Retry Queue" }
+// fault = "旧値の本文やFailedを落とす・二重にする、専用解除ボタンを残す、または取得障害で本文を消す"
+// observable = "user本文、assistantのFailed件数・理由、表示するbutton、取得障害とRetry後の状態"
 // observation_boundary = "component-behavior"
 // scope = "queue-bubble-recovery"
 // lifecycle = "permanent"
-// impact = "元要求を再実行せず後続を解放でき、取得障害中に受付本文を見失わない"
-// distinction = "純粋projectionやstorage testではbubbleの回復buttonと購読hookへの接続を検証できない"
+// impact = "旧値でも追加操作を求めず失敗が分かり、取得障害から回復しても受付本文と理由を見失わない"
+// distinction = "純粋projectionやstorage testでは取得障害を挟んだ実bubbleとRetry Queueの共存を検証しない"
 // @end-test-value
-test("interrupted bubble releases later turns once and retains its body through retry", async () => {
-  let interrupted = receipt({ state: "interrupted", turnId: null, userMessageSeq: null });
+test("legacy interrupted reservation keeps its prompt and one Failed response through a queue read retry", async () => {
+  const interrupted = receipt({ state: "interrupted", turnId: null, userMessageSeq: null, reason: "Execution outcome is unknown." });
   let fail = false;
-  let completeRelease!: () => void;
-  const released: Array<[string, string]> = [];
   let listener!: (id: string) => void;
   const view = await mount({
     listSessionTurnQueue: async () => { if (fail) throw new Error("queue unavailable"); return [interrupted]; },
     onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
-    releaseInterruptedSessionTurn: async (sessionId, id) => {
-      released.push([sessionId, id]);
-      await new Promise<void>((resolve) => { completeRelease = resolve; });
-      interrupted = { ...interrupted, releasedAt: "released" };
-      return interrupted;
-    },
   });
   try {
-    const bubble = view.document.querySelector(".message-card.user")!;
-    assert.match(bubble.textContent!, /original prompt/);
-    assert.match(bubble.textContent!, /Execution outcome is unknown/);
-    await view.click("Release Later Turns");
-    await view.click("Release Later Turns");
-    assert.deepEqual(released, [["session", "item"]]);
-    assert.equal(bubble.querySelector("button")!.disabled, true);
-    await act(async () => completeRelease());
-    assert.equal(view.current.receipts[0]?.releasedAt, "released");
+    const assertFailedResponse = () => {
+      assert.match(view.document.querySelector(".message-card.user")!.textContent!, /original prompt/);
+      assert.equal(view.document.querySelectorAll(".session-run-failure").length, 1);
+      assert.match(view.document.querySelector(".message-row.assistant [role=alert]")!.textContent!, /FailedExecution outcome is unknown/);
+    };
+    assertFailedResponse();
+    assert.equal(view.document.querySelectorAll("button").length, 0);
     fail = true;
     await act(async () => listener("session"));
-    assert.match(bubble.textContent!, /original prompt/);
-    assert.match(view.document.querySelector("[role=alert]")!.textContent!, /queue unavailable/);
+    assertFailedResponse();
+    assert.match([...view.document.querySelectorAll("[role=alert]")].at(-1)!.textContent!, /queue unavailable/);
     fail = false;
     await view.click("Retry Queue");
     assert.equal(view.current.error, "");
-    assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");
-    assert.equal(released.length, 1);
+    assertFailedResponse();
   } finally { await view.unmount(); }
 });
 

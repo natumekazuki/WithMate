@@ -377,11 +377,9 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 - Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
 - 失敗時は最小turnに `phase=failed` とerror summaryを記録する
 - canceled / failed のどちらでも、取得済みの `assistant text` / operations / artifact があれば捨てずに残す
-- `CopilotAdapter` は cached session 再利用中の `SessionNotFound` / stale connection も同一 turn 内で 1 回だけ internal retry できる
-  - retry 前には cached `CopilotSession` と client cache を破棄する
-  - retry 後は既存の `resumeSession(threadId)` を再試行し、missing session なら `createSession()` fallback へ落とす
-  - `session.error` や未対応event診断だけの局面では retry を妨げず、取得済みの `assistantText` / terminal操作（completed・failed・canceled）/ exitCode・error・操作の非空partial output / `artifact.changedFiles` がある時は retry を止める。partial outputの取得はturn実行中の証拠で判定し、artifactのdetails本文から推定しない
-  - `tool.execution_start` や pending permission のような未確定 step だけでは retry を妨げない。承認情報を継承した開始details、開始step由来のactivity summary、実行設定由来のrun checksも実行結果として扱わない
+- adapter は送出済み、または送出・実行結果が不明な入力を自動再送しない。応答ACK・本文・tool結果の欠落は未送出の根拠としない
+- `CopilotAdapter` は `session.send()` の未呼出が確実で、取消でない場合に限り、`SessionNotFound` や stale connection による接続準備を同一turn内で一度だけ回復できる。cached Sessionとclient cacheを破棄し、保存済みthread IDの `resumeSession(threadId)` を試す。resume時にmissing sessionが確定した場合の `createSession()` は送出前のSession準備として扱う
+- `CopilotAdapter` は `session.send()` の呼出後、ACKのrejectもeventの接続失敗も同一入力の再試行条件にしない。元の失敗と取得済みpartial resultを通常の終端処理へ返す
 - DB reset は running session がある間は拒否し、そのエラーメッセージを renderer にそのまま返す
 
 ## 通常履歴と最小turn

@@ -36,6 +36,7 @@ export type SessionTurnQueueServiceDeps = {
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
     control: SessionTurnQueueDispatchControl,
   ): Promise<SessionTurnQueueDispatchResult>;
+  onTurnRecovered?(receipt: SessionTurnQueueReceipt): void;
   onChanged?(owner: SessionTurnQueueOwner, origin?: SessionTurnQueueOrigin): void;
 };
 
@@ -55,10 +56,11 @@ export class SessionTurnQueueService {
 
   constructor(private readonly deps: SessionTurnQueueServiceDeps) {}
 
-  async start(): Promise<void> {
+  async start(refreshRecoveredSessions?: () => Promise<void>): Promise<void> {
     this.requireAccepting();
     await this.track((async () => {
       await this.deps.store.recoverInterrupted();
+      await refreshRecoveredSessions?.();
       const owners = await this.deps.store.listPendingOwners();
       for (const owner of owners) {
         this.adoptOwner(owner);
@@ -109,9 +111,7 @@ export class SessionTurnQueueService {
 
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
     this.adoptOwner(receipt);
-    if (this.lastClaim.get(receipt.sessionId)?.id === receipt.id && isConfirmedTerminal(receipt)) {
-      this.blocked.delete(receipt.sessionId);
-    }
+    this.rememberCanonicalClaim(receipt);
     // Receipt reads can wake recovered work, but must not invalidate the read
     // itself through another queue-change notification.
     this.wake(receipt.sessionId);
@@ -255,8 +255,8 @@ export class SessionTurnQueueService {
                 && canonical.inputTurnId === expectedTurnId && canonical.userMessageSeq === null) {
                 // No provider call has begun. Restore only this confirmed input
                 // claim, and resolve a lost restore reply by reading, not retrying.
-                const restored = await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
-                if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+                await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
+                if (this.isCurrentOwner(owner)) {
                   this.blocked.delete(owner.sessionId);
                   this.lastClaim.delete(owner.sessionId);
                   this.wake(owner.sessionId);
@@ -296,8 +296,8 @@ export class SessionTurnQueueService {
           }
           if (error instanceof QueuedInputPreDispatchError) {
             try {
-              const restored = await this.restoreInputClaim(owner, id, expectedTurnId, receipt.requestId);
-              if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+              await this.restoreInputClaim(owner, id, expectedTurnId, receipt.requestId);
+              if (this.isCurrentOwner(owner)) {
                 this.blocked.delete(owner.sessionId);
                 this.lastClaim.delete(owner.sessionId);
                 this.wake(owner.sessionId);
@@ -309,7 +309,11 @@ export class SessionTurnQueueService {
           }
           if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
           try {
-            await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
+            const saved = await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
+            if (this.isCurrentOwner(owner) && (saved.state === "interrupted" || isConfirmedTerminal(saved))) {
+              this.blocked.delete(owner.sessionId);
+              this.wake(owner.sessionId);
+            }
           } finally {
             this.notify(receipt);
           }
@@ -327,33 +331,19 @@ export class SessionTurnQueueService {
       if (current?.state === "queued") return current;
       if (current?.state === "starting" && current.id === id && current.inputTurnId === expectedTurnId
         && current.userMessageSeq === null) {
-        await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
+        return this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
       }
       throw error;
     }
   }
 
-  releaseInterrupted(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
-    this.requireAccepting();
-    return this.track(this.withLock(owner.sessionId, async () => {
-      const claimed = this.isCurrentOwner(owner) ? this.lastClaim.get(owner.sessionId) : undefined;
-      const current = claimed?.id === id ? await this.deps.store.getReceipt(owner, claimed.requestId) : null;
-      const receipt = current && isConfirmedTerminal(current)
-        ? current
-        : await this.deps.store.releaseInterrupted(owner, id, { runReleased: !await this.deps.isRunInFlight(owner.sessionId) });
-      if (this.isCurrentOwner(owner)) {
-        this.blocked.delete(owner.sessionId);
-        this.notify(receipt);
-        this.wake(owner.sessionId);
-      }
-      return receipt;
-    }));
-  }
-
   wake(sessionId: string): void {
     const owner = this.owners.get(sessionId);
-    if (!owner || this.claimHeld(owner)) return;
+    if (!owner || (this.claimHeld(owner) && !this.recoverableClaim(owner))) return;
     const claim = this.withLock(sessionId, async () => {
+      if (!this.isCurrentOwner(owner)) return null;
+      const recovery = this.recoverableClaim(owner);
+      if (recovery) await this.recoverReleasedClaim(recovery);
       if (!this.isCurrentOwner(owner) || !await this.canClaim(owner) || !this.isCurrentOwner(owner)) return null;
       const receipt = await this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
       if (!receipt || !this.isCurrentOwner(owner)) return null;
@@ -402,6 +392,62 @@ export class SessionTurnQueueService {
     return !this.claimHeld(owner) && !await this.deps.isRunInFlight(owner.sessionId) && !this.claimHeld(owner);
   }
 
+  private recoverableClaim(owner: SessionTurnQueueOwner): SessionTurnQueueReceipt | null {
+    if (this.closing || !this.blocked.has(owner.sessionId) || this.dispatching.has(owner.sessionId)) return null;
+    const last = this.lastClaim.get(owner.sessionId);
+    return last?.state === "interrupted" && !last.inputTurnId && last.incarnationId === owner.incarnationId ? last : null;
+  }
+
+  private async recoverReleasedClaim(claim: SessionTurnQueueReceipt): Promise<void> {
+    if (await this.deps.isRunInFlight(claim.sessionId) || this.recoverableClaim(claim)?.id !== claim.id || !this.isCurrentOwner(claim)) return;
+    const read = async () => {
+      const current = await this.deps.store.getReceipt(claim, claim.requestId);
+      return current && current.id === claim.id && current.sessionId === claim.sessionId
+        && current.incarnationId === claim.incarnationId && this.isCurrentOwner(claim) ? current : null;
+    };
+    const before = await read();
+    if (!before) return;
+    if (isConfirmedTerminal(before)) {
+      this.rememberCanonicalClaim(before);
+      this.notify(before);
+      return;
+    }
+    if (before.state !== "interrupted" || before.inputTurnId || this.recoverableClaim(claim)?.id !== claim.id) return;
+    // This is a new, exact reconciliation of a saved interrupted claim, not a
+    // repeat of either the original terminal write or provider dispatch.
+    const changed = await this.deps.store.recoverInterrupted({ sessionId: claim.sessionId, incarnationId: claim.incarnationId, receiptId: claim.id });
+    const canonical = await read();
+    if (!canonical) return;
+    this.rememberCanonicalClaim(canonical);
+    if (isConfirmedTerminal(canonical)) this.notify(canonical);
+    else if (canonical.state === "interrupted" && !canonical.inputTurnId) {
+      // The status of this attempt remains unknown, but the saved receipt
+      // proves there is no older claim left to dispatch.
+      this.blocked.delete(claim.sessionId);
+      this.lastClaim.delete(claim.sessionId);
+      if (changed) this.publishRecoveredTurn(canonical);
+    }
+  }
+
+  private rememberCanonicalClaim(receipt: SessionTurnQueueReceipt): void {
+    const last = this.lastClaim.get(receipt.sessionId);
+    if (!last || last.id !== receipt.id || last.incarnationId !== receipt.incarnationId) return;
+    if (isConfirmedTerminal(receipt)) {
+      this.blocked.delete(receipt.sessionId);
+      this.lastClaim.set(receipt.sessionId, receipt);
+      if (last.state === "interrupted" && !last.inputTurnId) {
+        this.publishRecoveredTurn(receipt);
+      }
+    } else if (receipt.state === "interrupted") {
+      if (!receipt.inputTurnId) this.lastClaim.set(receipt.sessionId, receipt);
+      else if (receipt.userMessageSeq === null) this.blocked.delete(receipt.sessionId);
+    }
+  }
+
+  private publishRecoveredTurn(receipt: SessionTurnQueueReceipt): void {
+    try { this.deps.onTurnRecovered?.(receipt); } catch { /* Observers do not own durable state. */ }
+  }
+
   private reserveDispatch(receipt: SessionTurnQueueReceipt): void {
     let release!: () => void;
     const released = new Promise<void>((resolve) => { release = resolve; });
@@ -445,11 +491,14 @@ export class SessionTurnQueueService {
     } catch (error) {
       if (!this.isCurrentOwner(receipt)) return;
       this.blocked.add(sessionId);
+      // A concurrent queued Steer can have replaced lastClaim. Once the
+      // normal dispatch has returned, reconcile its own receipt, not the input.
+      this.lastClaim.set(sessionId, receipt);
       this.notify(receipt);
       const canonical = await this.deps.store.settle(receipt, receipt.id, "interrupted", error instanceof Error ? error.message : "The execution outcome could not be confirmed.");
       if (!this.isCurrentOwner(receipt)) return;
       this.notify(receipt);
-      if (isConfirmedTerminal(canonical)) this.blocked.delete(sessionId);
+      this.rememberCanonicalClaim(canonical);
       return;
     }
     if (!this.isCurrentOwner(receipt)) return;

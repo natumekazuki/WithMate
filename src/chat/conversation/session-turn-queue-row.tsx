@@ -14,6 +14,7 @@ import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourc
 import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
+import { isFailedTurnReceipt, turnReceiptFailureReason } from "./session-turn-queue-projection.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
@@ -32,15 +33,15 @@ export function SessionTurnQueueStatus(props: {
   queueSize?: number;
   moveDisabled?: boolean;
   busyKind?: SessionTurnQueueActionKind | null;
-  onCancel: (receipt: SessionTurnQueueReceipt) => void; onRelease: (receipt: SessionTurnQueueReceipt) => void;
+  onCancel: (receipt: SessionTurnQueueReceipt) => void;
   onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
   onMove?: (receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => void;
 }) {
-  if (props.receipt.state !== "queued" && props.receipt.state !== "interrupted") return null;
+  if (props.receipt.state !== "queued") return null;
   return <SessionTurnQueueControls {...props} />;
 }
 
-function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
+function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
   const editableInput = !receipt.captured.coordination;
@@ -61,14 +62,11 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
       if (status?.contains(status.ownerDocument.activeElement)) status.closest<HTMLElement>(".session-message-list")?.focus({ preventScroll: true });
     };
   }, []);
-  const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
   const retryLabel = retrySourceLabel(receipt.captured.retrySource?.origin);
-  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} title={retryLabel} aria-label={`${label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}${retryLabel ? ` · ${retryLabel}` : ""}`}>
+  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role="group" title={retryLabel} aria-label={`${position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`}${retryLabel ? ` · ${retryLabel}` : ""}`}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
-    {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
-    {label ? <span>{label}</span> : null}
     {sourceWaitState === "unknown" ? <span className="session-turn-queue-reason">Source Turn State Unknown</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
       {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
@@ -81,7 +79,6 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     {receipt.state === "queued" && editableInput && !receipt.captured.retrySource && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
     {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
-    {receipt.state === "interrupted" && receipt.releasedAt === null ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busyKind === "release" || undefined} onClick={() => onRelease(receipt)}><ButtonContent busy={busyKind === "release"}>Release Later Turns</ButtonContent></button> : null}
   </div>;
 }
 
@@ -110,6 +107,6 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>
-    {props.receipt.state === "failed" ? <SessionRunFailureRow reason={props.receipt.reason ?? ""} character={props.character} /> : null}
+    {isFailedTurnReceipt(props.receipt) ? <SessionRunFailureRow reason={turnReceiptFailureReason(props.receipt)} character={props.character} /> : null}
   </>;
 }

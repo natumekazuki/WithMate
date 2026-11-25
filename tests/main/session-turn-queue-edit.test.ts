@@ -37,7 +37,6 @@ async function fixture(model?: string) {
     markStarted: async (...args) => queue.markStarted(...args), settle: async (...args) => queue.settle(...args),
     cancelQueued: async (...args) => queue.cancelQueued(...args), updateQueued: async (...args) => queue.updateQueued(...args),
     reorderQueued: async (...args) => queue.reorderQueued(...args), recoverInterrupted: async () => queue.recoverInterrupted(),
-    releaseInterrupted: async (...args) => queue.releaseInterrupted(...args),
   };
   return { sessions, queue, session, owner, capture, store, dbPath, temporary, close: async () => { queue.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); } };
 }

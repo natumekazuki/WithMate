@@ -98,7 +98,7 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
 // @end-test-value
 test("answer delivery preserves unknown and failure for the exact receipt", async () => {
   let unavailable = true;
-  const h = harness(async () => unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnState: "failed" });
+  const h = harness(async () => unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnId: null, turnState: null, userMessageSeq: null });
   try {
     await act(async () => h.root.render(<CoordinationAnswerDelivery ownerSessionId="viewer-main" target={target} receiptId="saved-receipt" />));
     assert.match(h.dom.window.document.body.textContent!, /Delivery Unknown/);
@@ -107,5 +107,47 @@ test("answer delivery preserves unknown and failure for the exact receipt", asyn
     await act(async () => retry.click());
     assert.match(h.dom.window.document.body.textContent!, /Delivery Failed/);
     assert.deepEqual(h.requests.map(({ owner, operation, request }) => ({ owner, operation, request })), [0, 1].map(() => ({ owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } })));
+  } finally { await h.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ開始入力とTurnが表す失敗を一度だけ表示し、追加配送自身の失敗、配送結果不明、確定した成功は潰さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Coordinationの最新回答と配送状態" }
+// fault = "保存された同じTurnの失敗を配送と二重に表示する、または追加配送の独立した失敗・結果不明をTurn失敗へ読み替える"
+// observable = "正確なreceiptの読取応答ごとに実CoordinationAnswerDeliveryが表示する一つのstatus"
+// observation_boundary = "consumer"
+// scope = "Coordinationの保存回答に付く開始・追加配送およびTurnの表示。IPC応答だけを置換"
+// lifecycle = "permanent"
+// distinction = "既存の取得Retryテストと異なり、同じphaseでも開始と追加の意味が違う場合を検証する"
+// @end-test-value
+test("only the matching start input shares its failure with the saved turn", async () => {
+  const start = { kind: "start", inputSeq: 10 };
+  let state: { receiptState: string; turnState: string | null; entry?: { kind: string; inputSeq: number | null } } =
+    { receiptState: "failed", turnState: "failed", entry: start };
+  const h = harness(async () => ({
+    ...description, receiptState: state.receiptState, turnState: state.turnState,
+    ...(state.turnState === null ? { turnId: null, userMessageSeq: null } : {}),
+    resultState: state.turnState === "completed" ? "saved" : state.turnState === "failed" ? "partial" : "unknown",
+    inputs: { entry: state.entry ?? null },
+  }));
+  const statuses = () => Array.from(
+    h.dom.window.document.querySelectorAll(".coordination-answer-delivery [role='status']"),
+    (element) => element.textContent,
+  );
+  try {
+    await act(async () => h.root.render(<CoordinationAnswerDelivery ownerSessionId="viewer-main" target={target} receiptId="saved-receipt" />));
+    assert.deepEqual(statuses(), ["Turn Failed"]);
+    const expect = async (next: typeof state, label: string) => {
+      state = next;
+      await act(async () => { for (const notify of h.listeners) notify(target.sessionId); });
+      assert.deepEqual(statuses(), [label]);
+    };
+    await expect({ receiptState: "interrupted", turnState: "failed", entry: start }, "Turn Failed");
+    await expect({ receiptState: "failed", turnState: "failed", entry: { kind: "additional", inputSeq: null } }, "Delivery Failed · Turn Failed");
+    await expect({ receiptState: "interrupted", turnState: "failed", entry: { kind: "additional", inputSeq: null } }, "Delivery Outcome Unknown · Turn Failed");
+    await expect({ receiptState: "failed", turnState: "failed", entry: { kind: "start", inputSeq: null } }, "Delivery Failed · Turn Failed");
+    await expect({ receiptState: "interrupted", turnState: null }, "Delivery Outcome Unknown");
+    await expect({ receiptState: "completed", turnState: "completed", entry: start }, "Delivered");
   } finally { await h.close(); }
 });

@@ -2232,7 +2232,8 @@ export default function AgentSessionWindowApp() {
       queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving"
         : isInputSubmissionPending || hasPendingSubmitFor(renderedSession.id),
       hasUncertainTurn: hasUncertainTurnFor(renderedSession.id),
-      inputError: activeQueuedTurnEdit?.error || steeringError
+      inputAcceptanceError: !activeQueuedTurnEdit ? steeringError : undefined,
+      inputError: activeQueuedTurnEdit?.error
         || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
       selectedRunState: mainStopTarget ? "running" : selectedSessionRunState,
@@ -2413,7 +2414,8 @@ export default function AgentSessionWindowApp() {
   const feedbackLastUserSeq = resolveRetrySource({ sessionId: renderedSession.id, messages: renderedSession.messages,
     latestUserMessage: activeAuxiliarySession ? null : selectedSession.latestUserMessage, latestTurn: null, runState: "error" })?.userMessageSeq ?? null;
   const feedbackIncarnation = activeAuxiliarySession?.createdAt ?? getSessionIncarnationId(selectedSession);
-  const failedRetry = retryState?.kind === "failed" && !latestRecoveryTurn.loading && !latestRecoveryTurn.error && latestRecoveryTurn.turn?.phase === "failed" && recoverySession
+  const retryTurn = retrySource?.terminalTurn;
+  const failedRetry = retryState?.kind === "failed" && !latestRecoveryTurn.loading && !latestRecoveryTurn.error && retryTurn?.phase === "failed" && recoverySession
     ? {
         context: {
           ownerSessionId: selectedSession.id,
@@ -2421,7 +2423,7 @@ export default function AgentSessionWindowApp() {
             ? { kind: "auxiliary" as const, sessionId: activeAuxiliarySession.id, incarnationId: activeAuxiliarySession.createdAt, mainSessionId: selectedSession.id, mainIncarnationId: getSessionIncarnationId(selectedSession) }
             : { kind: "main" as const, sessionId: selectedSession.id, incarnationId: getSessionIncarnationId(selectedSession) },
         },
-        turnId: String(latestRecoveryTurn.turn.id),
+        turnId: String(retryTurn.id),
       }
     : undefined;
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
@@ -2443,9 +2445,7 @@ export default function AgentSessionWindowApp() {
     },
     composerFeedback: {
       ...chatComposerFeature.composer.composerSendability,
-      ...(steeringError && !chatComposerFeature.composer.composerSendability.primaryFeedback
-        ? { primaryFeedback: steeringError, feedbackTone: "blocked" as const } : {}),
-      shouldShowFeedback: (chatComposerFeature.composer.composerSendability.shouldShowFeedback || !!steeringError)
+      shouldShowFeedback: chatComposerFeature.composer.composerSendability.shouldShowFeedback
         && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError)
         && !(sessionExecutionBlockedReason && (
           sessionExecutionBlockedReason === appSettingsLoadError || sessionExecutionBlockedReason === modelCatalogLoadError

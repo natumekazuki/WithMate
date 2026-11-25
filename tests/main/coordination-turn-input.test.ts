@@ -68,7 +68,6 @@ async function openFixture() {
     claimNext: async (...args) => queue.claimNext(...args), claimForInput: async (...args) => queue.claimForInput(...args), restoreQueuedInput: async (...args) => queue.restoreQueuedInput(...args),
     markStarted: async (...args) => queue.markStarted(...args), settle: async (...args) => queue.settle(...args), cancelQueued: async (...args) => queue.cancelQueued(...args),
     updateQueued: async (...args) => queue.updateQueued(...args), reorderQueued: async (...args) => queue.reorderQueued(...args), recoverInterrupted: async () => queue.recoverInterrupted(),
-    releaseInterrupted: async (...args) => queue.releaseInterrupted(...args),
   };
   return { directory, filename, db, sessions, queue, coordination, port, newSession, input, begin, ask, answer,
     async dispose() { db.close(); coordination.close(); queue.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); } };

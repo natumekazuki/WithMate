@@ -1,8 +1,5 @@
-import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { SessionPersistenceService } from "../session/session-persistence-service.js";
-import type { SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
-import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "../session/session-storage-v6.js";
 import type { SessionRuntimeMetadataPatchResult, SessionThreadPatchResult } from "../session/session-storage-v6.js";
@@ -16,43 +13,8 @@ type ReplaceAllSessionsOptions = {
 };
 
 type MainSessionPersistenceFacadeDeps = {
-  getSessions(): Session[];
-  setSessions(nextSessions: Session[]): void;
   getSessionPersistenceService(): SessionPersistenceService;
-  getSessionStorage(): SessionStorageRead;
 };
-
-function isRunningSession(session: Session): boolean {
-  return session.status === "running" || session.runState === "running";
-}
-
-const LEGACY_INTERRUPTED_SESSION_MESSAGE = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
-const INTERRUPTED_SESSION_MESSAGE = "The previous run may have been interrupted when the app quit. Send again if needed.";
-
-function buildInterruptedSession(session: Session): Session {
-  const lastMessage = session.messages.at(-1);
-  const nextMessages =
-    lastMessage?.role === "assistant"
-      && (lastMessage.text === INTERRUPTED_SESSION_MESSAGE
-        || lastMessage.text === LEGACY_INTERRUPTED_SESSION_MESSAGE)
-      ? session.messages
-      : [
-          ...session.messages,
-          {
-            role: "assistant" as const,
-            text: INTERRUPTED_SESSION_MESSAGE,
-            accent: true,
-          },
-        ];
-
-  return {
-    ...session,
-    status: "idle",
-    runState: "interrupted",
-    updatedAt: currentTimestampLabel(),
-    messages: nextMessages,
-  };
-}
 
 export class MainSessionPersistenceFacade {
   constructor(private readonly deps: MainSessionPersistenceFacadeDeps) {}
@@ -126,24 +88,5 @@ export class MainSessionPersistenceFacade {
 
   async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<SessionRuntimeMetadataPatchResult | null> {
     return this.deps.getSessionPersistenceService().updateSessionRuntimeMetadataIfMatches(input);
-  }
-
-  async recoverInterruptedSessions(): Promise<void> {
-    const runningSessions = this.deps.getSessions().filter(isRunningSession);
-    if (runningSessions.length === 0) {
-      return;
-    }
-
-    const storage = this.deps.getSessionStorage();
-    for (const session of runningSessions) {
-      const hydratedSession = await storage.getSession(session.id);
-      if (!hydratedSession) {
-        continue;
-      }
-
-      await this.upsertSession(buildInterruptedSession(hydratedSession));
-    }
-
-    this.deps.setSessions(sessionSummariesToSessions(await storage.listSessionSummaries()));
   }
 }

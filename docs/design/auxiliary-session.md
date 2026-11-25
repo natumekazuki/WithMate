@@ -202,7 +202,7 @@ Auxiliary の作成準備は provider / ownership coordinator の外で行う。
 
 Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除しない。作成済み Main と Auxiliary 結果未確定または失敗を明示する。
 
-既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。通常更新と中断復旧は読込み済み会話と現行行をtransaction内で照合する。
+既存 Auxiliary の更新・runtime 保存・終了は、非同期読込み時に捕捉した storage へ update-only で送る。通常更新は読込み済み会話と現行行をtransaction内で照合する。
 
 runtimeはmetadataとmessageCountだけを読み、開始・steer・terminalの専用commandで対象messageを追加する。ID・親ID・作成時刻によるincarnation・件数・親の生存を照合し、steerとterminalはrunning turn ownerも確認する。
 
@@ -222,7 +222,7 @@ Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行�
 
 ## Recovery
 
-アプリ強制終了などで `runState = running` の Auxiliary が残った場合、次回起動時に対象行を `runState = error` へ補正し、中断を示す assistant message を重複なく追加する。自動 resume は行わず、Session Window から直前 user message を明示的に再送する。保存済み Character / provider identity は変更しない。
+アプリ強制終了の後は[Mainと共通の保存回収](session-run-lifecycle.md#persistence-expectations)で最小Turnと既存メッセージを照合する。実行の再開は自動で行わず、保存済み Character / provider identity は変更しない。
 
 ## Preview contract
 

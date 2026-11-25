@@ -773,7 +773,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "updateQueuedSessionTurn",
     "cancelQueuedSessionTurnEdit",
     "reorderQueuedSessionTurns",
-    "releaseInterruptedSessionTurn",
     "sendQueuedSessionInput",
     "onSessionTurnQueueChanged",
     "onSessionSentDeliveriesChanged",
@@ -987,7 +986,6 @@ test("queue preloadは専用引数を伝達しchanged購読を解除する", asy
   const update = { ...edit, userMessage: "Edited @input.txt" };
   assert.deepEqual(await api.updateQueuedSessionTurn("session-1", update), { channel: "withmate:update-queued-session-turn", args: ["session-1", update] });
   assert.deepEqual(await api.cancelQueuedSessionTurnEdit("session-1", edit), { channel: "withmate:cancel-queued-session-turn-edit", args: ["session-1", edit] });
-  assert.deepEqual(await api.releaseInterruptedSessionTurn("session-1", "item-1"), { channel: "withmate:release-interrupted-session-turn", args: ["session-1", "item-1"] });
   assert.deepEqual(await api.sendQueuedSessionInput("aux-1", "item-2", "turn-1"), { channel: "withmate:send-queued-session-input", args: ["aux-1", "item-2", "turn-1"] });
   const changed: string[] = [];
   const dispose = api.onSessionTurnQueueChanged((id) => changed.push(id));

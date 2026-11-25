@@ -153,7 +153,6 @@ export const WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL = "withmate:begin-q
 export const WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL = "withmate:update-queued-session-turn";
 export const WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL = "withmate:cancel-queued-session-turn-edit";
 export const WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL = "withmate:send-queued-session-input";
-export const WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL = "withmate:release-interrupted-session-turn";
 export const WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT = "withmate:session-turn-queue-changed";
 export const WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT = "withmate:session-sent-deliveries-changed";
 export const WITHMATE_CANCEL_SESSION_RUN_CHANNEL = "withmate:cancel-session-run";

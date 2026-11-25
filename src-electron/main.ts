@@ -75,7 +75,7 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "../src-shared/prompt-template.js";
-import { sessionSummaryToSession } from "./session/session-summary-adapter.js";
+import { sessionSummariesToSessions, sessionSummaryToSession } from "./session/session-summary-adapter.js";
 import { AuxiliarySessionService } from "./auxiliary/auxiliary-session-service.js";
 import { AuxiliaryLiveRunParents } from "./auxiliary/auxiliary-live-run-parents.js";
 import { admitSessionTurn } from "./session/session-turn-admission.js";
@@ -1540,7 +1540,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
             },
             initializePersistentStores,
-            recoverInterruptedSessions,
+            recoverInterruptedSessions: () => recoverInterruptedSessions(startAgentRuntimeApiBestEffort),
             broadcastModelCatalog: () => {
               void getModelCatalog().then(broadcastModelCatalog).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.bootstrap-failed", process: "main", message: "Model choices could not be loaded", error: appLogService.errorToLogError(error) }));
             },
@@ -1925,7 +1925,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   cancelQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurnEdit(sessionId, request),
                   releaseQueuedSessionTurnEdit: (sessionId) => sessionTurnQueueService?.releaseQueuedEdit(sessionId) ?? Promise.resolve(),
                   reorderQueuedSessionTurns: (sessionId, request) => requireMainSessionTurnQueueFacade().reorderQueuedSessionTurns(sessionId, request),
-                  releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
                 },
                 getAuxiliarySessionStatus: (sessionId) => requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId),
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),
@@ -2220,18 +2219,9 @@ function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
   if (!mainSessionPersistenceFacade) {
     const owner = requireActivePersistentStoreOwnerForFactory("Main session persistence facade");
     mainSessionPersistenceFacade = new MainSessionPersistenceFacade({
-      getSessions: () => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade cache read");
-        return mainStoreContext.sessions;
-      },
-      setSessions: (nextSessions) => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade cache write");
-        mainStoreContext.setSessions(nextSessions);
-      },
-      getSessionPersistenceService: () => requireSessionPersistenceService(),
-      getSessionStorage: () => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade storage read");
-        return owner.sessionStorage;
+      getSessionPersistenceService: () => {
+        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade");
+        return requireSessionPersistenceService();
       },
     });
   }
@@ -2632,6 +2622,28 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
         const turnId = await runtime.getCoordinationInputTurnId(receipt);
         assertPersistentStoreOwnerIsActive(owner, "Coordination input");
         return turnId;
+      },
+      onTurnRecovered: (receipt) => {
+        void (async () => {
+          // The Worker reconciled the durable receipt after the runtime guard ended.
+          assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
+          if (receipt.state !== "interrupted") await sessionTurnQueueService?.wakeSourceTurnDependents(receipt.sessionId);
+          const summary = await owner.sessionStorage.getSessionSummary?.(receipt.sessionId);
+          assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
+          if (summary?.incarnationId === receipt.incarnationId) {
+            mainStoreContext.setSessions(mainStoreContext.sessions.map((session) =>
+              session.id === summary.id && getSessionIncarnationId(session) === receipt.incarnationId
+                ? sessionSummaryToSession(summary) : session));
+            broadcastSessions([summary.id]);
+          } else {
+            const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(receipt.sessionId);
+            assertPersistentStoreOwnerIsActive(owner, "Recovered Auxiliary Turn publication");
+            if (auxiliary?.createdAt === receipt.incarnationId) broadcastSessions([auxiliary.parentSessionId]);
+          }
+        })().catch((error) => writeAppLog({
+          level: "warn", kind: "session.queue.recovery-publication-failed", process: "main",
+          message: "Could not publish the recovered Turn", error: appLogService.errorToLogError(error),
+        }));
       },
       onChanged: ({ sessionId }, origin) => {
         if (mainStoreContext.activePersistentStoreOwner === owner) {
@@ -3431,7 +3443,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   await recoverSessionLifecycleOperations();
   mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
-  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
+  await recoverInterruptedSessions();
   if (runtimeToStop) {
     await startAgentRuntimeApiBestEffort();
     if (!agentRuntimeApi) {
@@ -3720,10 +3732,18 @@ async function replaceAllSessions(
   return requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options);
 }
 
-async function recoverInterruptedSessions(): Promise<void> {
-  await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
-  await requireAuxiliarySessionService().recoverInterruptedSessions();
-  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
+async function recoverInterruptedSessions(beforeDispatch?: () => Promise<void>): Promise<void> {
+  const owner = mainStoreContext.activePersistentStoreOwner;
+  if (!owner?.storageWorker) {
+    await beforeDispatch?.();
+    return;
+  }
+  await requireMainSessionTurnQueueService().start(async () => {
+    const summaries = await owner.sessionStorage.listSessionSummaries();
+    assertPersistentStoreOwnerIsActive(owner, "Refresh recovered Session summaries");
+    mainStoreContext.setSessions(sessionSummariesToSessions(summaries));
+    await beforeDispatch?.();
+  });
 }
 
 async function recoverSessionLifecycleOperations(): Promise<void> {
@@ -3991,7 +4011,6 @@ if (!hasSingleInstanceLock) {
       });
       await requireMainBootstrapService().handleReady();
       requireMainObservabilityFacade().configureProviderQuotaPolling(await requireAppSettingsStorage().getSettings());
-      await startAgentRuntimeApiBestEffort();
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(
         app,
