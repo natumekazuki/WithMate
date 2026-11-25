@@ -99,6 +99,8 @@ actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvide
 
 `applied`はProviderの受理と追加入力保存の確定、`not-applied`はProvider未呼出を表す。終了・交代・非対応・送信準備中の失効では送信せず、別Turnや通常キューへ自動転送しない。Provider呼出後に受理または保存が確認できない場合は`SESSION_STEER_UNKNOWN`／`effect: unknown`と既知なら`result.messageSeq`を返す。自動再送せず、同じTurnの`list_execution_inputs`（不明分は`state: unresolved`）と`get_execution_input`で本文・配送状態・`inputOrigin`を照会する。`inputOrigin`はその補足を送った実親であり、開始入力の`origin`とは別に保持する。
 
+受付の`failed`は通常の実行失敗と再起動で確定した実行失敗で使う。失敗した受付を自動実行し直さない。受付・実行状態と追加入力の配送結果は別であり、対象Turnへclaimした追加入力の保存済み入力seqがない場合、処理中の`starting`は`pending`、結果未確認の`interrupted`は`unknown`として`get_execution`と`list_execution_inputs`で照会できる。未呼出が確定して予約に戻った入力や保存で確定した入力は未確定receiptに含めず、`failed`だけで送付の有無を推定しない。
+
 `enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。送信元の終端・実解放を待つ予約は応答待機の対象にせず、配送可能な別の予約は応答面へ進める。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
 
 取消grace後に終端を保存しても元Provider処理がterminating guardへ残る場合は、exact送信元Turnの実解放まで配送を開始しない。receiptの`sourceTurnPendingRelease`で区別し、Steerでも迂回しない。保存済み終端だけを元処理の停止完了と同一視しない。
@@ -122,7 +124,7 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 
 相談・GUI回答・Agent回答は、Coordinationと通常queue receiptを原子的に保存してから、入力可能なCodexの関連TurnへのSteerを既定で試す。回答はimmutable起票元のkind・Session・incarnation・起票Turnとの完全一致を必要とする。相談は起票Turnの元依頼を開始したreceiptのcaller kind・Session・incarnation・actorTurnIdが、宛先の実行中Turnと完全一致する場合だけ対象にする。追加Steerは開始originを置換せず、本文や別Turnの意味から関係を補わない。親依頼の実行中に子が起票しユーザーへ昇格された回答も、同じ起票Turnなら対象となる。関係不明・不一致・非対応Provider・非実行中の場合は同じreceiptの通常queue配送を維持する。
 
-来歴をclaim transactionで照合し、runtimeはProvider呼出前にexact incarnation、WithMate Turn、native Turnを再確認する。Steerは実行中のModel・Depth・権限を維持する。Provider未呼出と確定した拒否や終了競合は同じreceiptをqueuedへ復元するが、呼出後の結果不明はinterruptedで保留し、通常配送や新しい操作IDで自動再送しない。再起動でも保留を維持する。Main／AuxiliaryのSteer入力保存・回答取得済み・receipt完了は同一transactionで確定し、consume・resolveとは区別する。通常送信・起票元/実ユーザーのResolve権限は変更しない。
+来歴をclaim transactionで照合し、runtimeはProvider呼出前にexact incarnation、WithMate Turn、native Turnを再確認する。Steerは実行中のModel・Depth・権限を維持する。Provider未呼出と確定した拒否や終了競合は同じreceiptをqueuedへ復元する。結果未確認の追加入力が送付されたかを推測せず、通常配送や新しい操作IDで自動再送しない。Main／AuxiliaryのSteer入力保存・回答取得済み・receipt完了は同一transactionで確定し、consume・resolveとは区別する。通常送信・起票元/実ユーザーのResolve権限は変更しない。
 
 ## Ownership
 

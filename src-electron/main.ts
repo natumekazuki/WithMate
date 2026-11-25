@@ -1925,7 +1925,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   cancelQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurnEdit(sessionId, request),
                   releaseQueuedSessionTurnEdit: (sessionId) => sessionTurnQueueService?.releaseQueuedEdit(sessionId) ?? Promise.resolve(),
                   reorderQueuedSessionTurns: (sessionId, request) => requireMainSessionTurnQueueFacade().reorderQueuedSessionTurns(sessionId, request),
-                  releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
                 },
                 getAuxiliarySessionStatus: (sessionId) => requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId),
                 getLiveSessionRun: (sessionId) => getLiveSessionRun(sessionId),

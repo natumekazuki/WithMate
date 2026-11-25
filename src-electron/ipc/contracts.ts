@@ -595,7 +595,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
     cancelSessionRun(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
     queue?: Pick<import("../../src-shared/ipc/withmate-window-api.js").WithMateWindowSessionApi,
       "enqueueSessionTurn" | "getSessionTurnQueueReceipt" | "listSessionTurnQueue" | "reorderQueuedSessionTurns" |
-      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" |
+      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "sendQueuedSessionInput" |
       "beginQueuedSessionTurnEdit" | "updateQueuedSessionTurn" | "cancelQueuedSessionTurnEdit"> & {
         retryFailedSessionTurn(sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest, assertCurrent?: () => void): Promise<import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
         releaseQueuedSessionTurnEdit(sessionId: string): Promise<void>;
