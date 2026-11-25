@@ -22,7 +22,8 @@ function setup() {
   const windows: Window[] = []; const notifications: Window[] = [];
   const titles = new Map<Window, string>();
   const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w), title: (w, title) => titles.set(w, title) });
-  return { service, windows, notifications, titles, rename: (value: string) => { sessionTitle = value; }, reads: () => reads, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
+  const notifyOwner = () => service.notify({ owner: { sessionId: "owner", incarnationId: incarnation }, generation }, () => true);
+  return { service, windows, notifications, titles, notifyOwner, rename: (value: string) => { sessionTitle = value; }, reads: () => reads, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
 }
 
 // @test-value v2
@@ -43,13 +44,13 @@ test("Graph window titles reuse renderer data without additional graph reads", a
   const b = await s.service.open("owner", state, () => true);
   await s.service.update(s.windows[0]!, a.token, { ...state, topicId: "topic", selectedId: "work" }, "Topic · Work");
   await s.service.update(s.windows[0]!, a.token, { ...state, topicId: "topic", selectedId: "work", zoom: 2 });
-  await s.service.notify("owner");
+  await s.notifyOwner();
   assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — owner");
   assert.equal((await s.service.payload(s.windows[1]!, b.token)).windowTitle, "Session Graph — owner");
   assert.deepEqual(s.service.list().map((entry) => entry.title), ["Topic · Work", "Graph"]);
   const selectedState = (await s.service.payload(s.windows[0]!, a.token)).state;
   s.rename("Renamed");
-  await s.service.notify("owner");
+  await s.notifyOwner();
   assert.equal(s.titles.get(s.windows[0]!), "Topic · Work — Renamed");
   assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — Renamed");
   assert.deepEqual((await s.service.payload(s.windows[0]!, a.token)).state, selectedState);
@@ -122,6 +123,6 @@ test("Graph views remain independent and owner operations are isolated", async (
   assert.notEqual(a.token, b.token);
   await s.service.update(s.windows[0]!, a.token, { ...state, zoom: 2 });
   assert.equal((await s.service.payload(s.windows[1]!, b.token)).state.zoom, 1);
-  await s.service.notify("owner"); assert.deepEqual(s.notifications, s.windows.slice(0, 2));
+  await s.notifyOwner(); assert.deepEqual(s.notifications, s.windows.slice(0, 2));
   s.service.closeOwner("owner"); assert.deepEqual(s.service.list().map((entry) => entry.ownerSessionId), ["other"]);
 });
