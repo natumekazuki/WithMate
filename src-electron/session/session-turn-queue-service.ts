@@ -55,10 +55,11 @@ export class SessionTurnQueueService {
 
   constructor(private readonly deps: SessionTurnQueueServiceDeps) {}
 
-  async start(): Promise<void> {
+  async start(refreshRecoveredSessions?: () => Promise<void>): Promise<void> {
     this.requireAccepting();
     await this.track((async () => {
       await this.deps.store.recoverInterrupted();
+      await refreshRecoveredSessions?.();
       const owners = await this.deps.store.listPendingOwners();
       for (const owner of owners) {
         this.adoptOwner(owner);
@@ -255,8 +256,8 @@ export class SessionTurnQueueService {
                 && canonical.inputTurnId === expectedTurnId && canonical.userMessageSeq === null) {
                 // No provider call has begun. Restore only this confirmed input
                 // claim, and resolve a lost restore reply by reading, not retrying.
-                const restored = await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
-                if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+                await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
+                if (this.isCurrentOwner(owner)) {
                   this.blocked.delete(owner.sessionId);
                   this.lastClaim.delete(owner.sessionId);
                   this.wake(owner.sessionId);
@@ -296,8 +297,8 @@ export class SessionTurnQueueService {
           }
           if (error instanceof QueuedInputPreDispatchError) {
             try {
-              const restored = await this.restoreInputClaim(owner, id, expectedTurnId, receipt.requestId);
-              if (restored.state === "queued" && this.isCurrentOwner(owner)) {
+              await this.restoreInputClaim(owner, id, expectedTurnId, receipt.requestId);
+              if (this.isCurrentOwner(owner)) {
                 this.blocked.delete(owner.sessionId);
                 this.lastClaim.delete(owner.sessionId);
                 this.wake(owner.sessionId);
@@ -309,7 +310,11 @@ export class SessionTurnQueueService {
           }
           if (this.isCurrentOwner(owner)) this.blocked.add(owner.sessionId);
           try {
-            await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
+            const saved = await this.deps.store.settle(owner, id, "interrupted", error instanceof Error ? error.message : "The input outcome could not be confirmed.");
+            if (this.isCurrentOwner(owner) && (saved.state === "interrupted" || isConfirmedTerminal(saved))) {
+              this.blocked.delete(owner.sessionId);
+              this.wake(owner.sessionId);
+            }
           } finally {
             this.notify(receipt);
           }
@@ -327,27 +332,10 @@ export class SessionTurnQueueService {
       if (current?.state === "queued") return current;
       if (current?.state === "starting" && current.id === id && current.inputTurnId === expectedTurnId
         && current.userMessageSeq === null) {
-        await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
+        return this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
       }
       throw error;
     }
-  }
-
-  releaseInterrupted(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
-    this.requireAccepting();
-    return this.track(this.withLock(owner.sessionId, async () => {
-      const claimed = this.isCurrentOwner(owner) ? this.lastClaim.get(owner.sessionId) : undefined;
-      const current = claimed?.id === id ? await this.deps.store.getReceipt(owner, claimed.requestId) : null;
-      const receipt = current && isConfirmedTerminal(current)
-        ? current
-        : await this.deps.store.releaseInterrupted(owner, id, { runReleased: !await this.deps.isRunInFlight(owner.sessionId) });
-      if (this.isCurrentOwner(owner)) {
-        this.blocked.delete(owner.sessionId);
-        this.notify(receipt);
-        this.wake(owner.sessionId);
-      }
-      return receipt;
-    }));
   }
 
   wake(sessionId: string): void {

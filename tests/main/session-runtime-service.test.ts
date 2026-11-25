@@ -686,7 +686,7 @@ it("GUI Cancel IPC accepts only the owned starting receipt or current Turn", asy
       },
       getReceipt: unused, getReceiptById: unused, listActive: unused, listReceipts: unused, listPendingOwners: unused,
       claimForInput: unused, restoreQueuedInput: unused, cancelQueued: unused, updateQueued: unused, reorderQueued: unused,
-      recoverInterrupted: unused, releaseInterrupted: unused,
+      recoverInterrupted: unused,
     };
     const queue = new SessionTurnQueueService({
       store,
@@ -1050,17 +1050,17 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
 
 // @test-value v2
 // kind = "invariant"
-// claim = "開始後の次設定とdirectory選択は現在TurnのProvider再試行へ混入せず次queued Turnに適用される"
+// claim = "実行中の設定変更は現在Turnに遡及せず、現在Turnが失敗しても次queued Turnでは新しい設定を適用する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次送信用設定と現在Turnのcapture分離" }
-// fault = "checkpoint ACKの新directoryや設定を現在Turnの内部再試行へ渡すか次queued Turnで旧captureを再利用する"
-// observable = "初回/内部再試行/次queued実行のProvider optionsとadditionalDirectories、各Turnのruntime認可に渡す同一設定"
+// fault = "現在Turnの失敗保存で設定変更を巻き戻すか次queued Turnで旧captureを再利用する"
+// observable = "失敗Turn/次queued Turnの状態、Providerへの設定/追加directory、runtime認可の設定"
 // observation_boundary = "public-boundary"
 // scope = "session runtime current capture and next queued execution"
 // lifecycle = "permanent"
 // impact = "実行中Turnの権限を無断で広げるか次依頼が利用者の選択を使わない"
-// distinction = "selection service testはProvider内部再試行を通らず、adapter testはcheckpoint ACKとの競合を作らない"
+// distinction = "単一Turnのadapter/testでは実行中の設定変更と失敗保存後の次queue入力が交差しない"
 // @end-test-value
-it("次設定とdirs変更は現在provider再試行を変えず次queueへ適用する", async () => {
+it("実行中の次設定とdirs変更は現在Turnの失敗後も次queueへ適用する", async () => {
   const session = createSession({ provider: "copilot", threadId: "stale-thread", approvalMode: "on-request",
     allowedAdditionalDirectories: ["C:/current-context"] });
   let current = session;
@@ -1069,7 +1069,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
   let attempts = 0;
   const runtime = createProgressRuntime(session, async (input) => {
     attempts += 1;
-    if (attempts <= 2) {
+    if (attempts === 1) {
       assert.deepEqual(input.executionOptions, oldOptions);
       assert.deepEqual(input.session.allowedAdditionalDirectories, ["C:/current-context"]);
     } else {
@@ -1094,9 +1094,9 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     appendTerminalSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
   });
   await runtime.runSessionTurn(session.id, { userMessage: "current", executionOptions: oldOptions });
-  assert.equal(current.runState, "idle");
+  assert.equal(current.runState, "error");
   assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(current), async () => undefined), { state: "completed" });
-  assert.equal(attempts, 3);
+  assert.equal(attempts, 2);
   assert.deepEqual(runtimeOptions, [oldOptions, captureSessionExecutionOptions(current)]);
 });
 
@@ -4195,15 +4195,15 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
 
   // @test-value v2
   // kind = "regression"
-  // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
-  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // fault = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
-  // scope = "session-runtime-stale-retry-terminal-notification"
-  // observable = "completed terminal通知の回数と保存済みSession"
+  // claim = "adapter呼出後のstaleエラーはpartialがなくても再実行せず、元の開始入力に一度だけFailedを保存・通知する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
+  // fault = "履歴やpartialが空のstaleエラーで、入力を新しいProvider threadへ自動送信する"
+  // scope = "SessionRuntimeService adapter failure and terminal persistence"
+  // observable = "adapter呼出のthread、保存済みuser/assistant、Turn phaseとterminal通知回数"
   // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
-  it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
+  it("adapter呼出後のstale errorはpartialがなくても再実行しない", async () => {
     const session = createSession({ provider: "copilot", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
@@ -4337,164 +4337,30 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     });
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => turnUpdates.length === 1, "retry成功turnが保存されること");
+    await waitForCondition(() => turnUpdates.length === 1, "元TurnのFailedが保存されること");
 
-    assert.equal(result.runState, "idle");
-    assert.equal(result.threadId, "thread-fresh");
+    assert.equal(result.runState, "error");
+    assert.equal(result.threadId, "");
+    assert.equal(result.messages.at(-1)?.text, "");
+    assert.match(result.messages.at(-1)?.runFailure ?? "", /thread not found/i);
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
-    assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
-    assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
-    assert.deepEqual(seenTurnCapabilities, ["turn-capability-a", "turn-capability-a"]);
+    assert.deepEqual(seenThreadIds, ["thread-stale"]);
+    assert.deepEqual(seenBindingGenerations, ["generation-1"]);
+    assert.deepEqual(seenTurnCapabilities, ["turn-capability-a"]);
     assert.equal(bindingGeneration, 1);
     assert.equal(runtimeTurnHandles.length, 1);
     assert.deepEqual(endedRuntimeTurnHandles, runtimeTurnHandles);
-    assert.deepEqual(reset, [{ providerId: "copilot", sessionId: session.id }]);
-    assert.deepEqual(invalidated, []);
-    assert.equal(storedSessions.length, 3);
+    assert.deepEqual(reset, []);
+    assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: session.id }]);
+    assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "");
     assert.equal(turnUpdates.length, 1);
-    assert.equal(turnUpdates.at(-1)?.phase, "completed");
+    assert.equal(turnUpdates.at(-1)?.phase, "failed");
     assert.equal(notificationCount, 1);
     assert.equal(currentDateCount, 1);
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "stale retry中は旧attemptのlate progressをlive stateへ反映しない"
-  // oracle = { type = "contract", ref = "Session runtime stale attempt isolation contract" }
-  // fault = "旧providerのlate progressが新attemptのUIへ混入する"
-  // observable = "live progressのthreadIdとassistantText"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService stale attempt isolation"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("stale retry 中は旧 attempt の late progress を live state へ反映しない", async () => {
-    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
-    const turnUpdates: UpdateSessionTurnInput[] = [];
-    const liveStates: Array<LiveSessionRunState | null> = [];
-    let attempt = 0;
-    let notifySecondAttemptStarted: (() => void) | null = null;
-    let releaseSecondAttempt: (() => void) | null = null;
-    const secondAttemptStarted = new Promise<void>((resolve) => {
-      notifySecondAttemptStarted = resolve;
-    });
-    const secondAttemptGate = new Promise<void>((resolve) => {
-      releaseSecondAttempt = resolve;
-    });
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        attempt += 1;
-        if (attempt === 1) {
-          await emitTestProgress(onProgress, createLiveRunState({
-            sessionId: input.session.id,
-            threadId: "thread-before-retry",
-            assistantText: "1 回目の progress",
-            steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
-            usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
-          }));
-          setTimeout(() => {
-            void emitTestProgress(onProgress, createLiveRunState({
-              sessionId: input.session.id,
-              threadId: "thread-stale-late",
-              assistantText: "旧 attempt の late progress",
-              steps: [{ id: "step-stale-late", type: "command_execution", summary: "stale step", status: "in_progress" }],
-              usage: { inputTokens: 99, cachedInputTokens: 0, outputTokens: 9 },
-            }));
-          }, 0);
-          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
-        }
-
-        notifySecondAttemptStarted?.();
-        await emitTestProgress(onProgress, createLiveRunState({
-          sessionId: input.session.id,
-          threadId: "thread-fresh-progress",
-          assistantText: "2 回目の progress",
-          steps: [{ id: "step-2", type: "command_execution", summary: "npm run build", status: "in_progress" }],
-          usage: { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 },
-        }));
-        await secondAttemptGate;
-        return createPartialResult({
-          threadId: "thread-fresh",
-          assistantText: "再試行で成功したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      createSessionTurn(input) {
-        return createSessionTurnBase(input);
-      },
-      updateSessionTurn(_id, entry) {
-        turnUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, state) {
-        liveStates.push(state);
-      },
-      getLiveSessionRun() {
-        return liveStates.at(-1) ?? null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await secondAttemptStarted;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-releaseSecondAttempt!();
-    await runPromise;
-
-    assert.equal(liveStates.some((state) => state?.threadId === "thread-stale-late"), false);
-    assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
-  });
 
 
   // @test-value v2

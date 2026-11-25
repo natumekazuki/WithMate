@@ -50,7 +50,7 @@ Turn Queueは次の項目を保持する。
 - 状態
 - 最小turn ID／user seq
 - 追加入力先Turn ID
-- 結果不明後の明示解放時刻
+- 旧形式の明示解放時刻（既存receiptとの互換用。現在は後続実行の条件に使わない）
 
 受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。
 

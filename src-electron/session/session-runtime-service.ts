@@ -357,34 +357,13 @@ export function isRetryableStaleThreadSessionError(error: unknown): boolean {
   );
 }
 
-function isRetryableCodexThreadBootstrapError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalizedMessage = message.trim().toLowerCase();
-  if (!normalizedMessage) {
-    return false;
-  }
-
-  return /codex exec exited with code 1:\s*reading prompt from stdin\.\.\./.test(normalizedMessage);
-}
-
-function shouldRetryUnusableThreadRun(
-  error: unknown,
-  partialResult: RunSessionTurnResult | null | undefined,
-): boolean {
-  if (hasMeaningfulPartialRunResult(partialResult)) {
-    return false;
-  }
-
-  return isRetryableStaleThreadSessionError(error) || isRetryableCodexThreadBootstrapError(error);
-}
-
 function shouldResetFailedSessionThread(
   error: unknown,
   currentThreadId: string,
   partialResult: RunSessionTurnResult | null | undefined,
   canceled: boolean,
 ): boolean {
-  if (canceled || !shouldRetryUnusableThreadRun(error, partialResult)) {
+  if (canceled || hasMeaningfulPartialRunResult(partialResult) || !isRetryableStaleThreadSessionError(error)) {
     return false;
   }
 
@@ -1216,8 +1195,6 @@ export class SessionRuntimeService {
     let providerAgentRuntimeTurnHandle: unknown;
     let releaseSourceDisplays: (() => void) | undefined;
     let terminalPersistenceStarted = false;
-    let runtimePersistenceFailed = false;
-    let liveProgressGeneration = 0;
     let activeRunningSession = runningSession;
     let queuedInputRecoveryError: QueuedInputRuntimeRecoveryError | null = null;
     if (runningSession.provider === "codex" && this.deps.beginRunningInput && this.deps.settleRunningInput) {
@@ -1272,13 +1249,12 @@ export class SessionRuntimeService {
     });
     const runProviderTurn = async (turnSession: Session) => {
       throwIfRunCanceled(runAbortController.signal);
-      const progressGeneration = ++liveProgressGeneration;
       const elicitationResponses: Promise<LiveElicitationResponse>[] = [];
       const pendingQuestionAnswers = new Map<string, { request: LiveElicitationRequest; response: LiveElicitationResponse }>();
       const recordQuestionAnswer = (requestId: string) => {
         const answer = pendingQuestionAnswers.get(requestId);
         pendingQuestionAnswers.delete(requestId);
-        if (!answer || terminalSettled || progressGeneration !== liveProgressGeneration) return;
+        if (!answer || terminalSettled) return;
         const fields = questionAnswerHistory(answer.request, answer.response);
         const live = this.deps.getLiveSessionRun(sessionId);
         if (!fields || !live) return;
@@ -1329,7 +1305,7 @@ export class SessionRuntimeService {
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
         onApprovalRequest: (approvalRequest, requestSignal, nativeReview) => {
           if (executionOptions.approvalMode === "safety-focused") return "deny";
-          if (terminalSettled || progressGeneration !== liveProgressGeneration) return "deny";
+          if (terminalSettled) return "deny";
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const request = {
             ...approvalRequest,
@@ -1348,7 +1324,7 @@ export class SessionRuntimeService {
           return this.deps.waitForApprovalDecision(sessionId, request, signal, review);
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {
-          if (terminalSettled || progressGeneration !== liveProgressGeneration) return { action: "cancel" };
+          if (terminalSettled) return { action: "cancel" };
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const response = Promise.resolve(this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal)).then((value) => {
             if (value.action === "accept") {
@@ -1368,7 +1344,7 @@ export class SessionRuntimeService {
           this.deps.setSessionContextTelemetry(telemetry);
         },
       }, (state, changes) => {
-        if (terminalSettled || progressGeneration !== liveProgressGeneration) {
+        if (terminalSettled) {
           return;
         }
 
@@ -1428,64 +1404,20 @@ export class SessionRuntimeService {
       if (providerAgentRuntimeTurn) {
         agentRuntimeBinding = providerAgentRuntimeTurn.binding;
       }
-      let result: RunSessionTurnResult | null = null;
-      let didInternalRetry = false;
-      while (true) {
-        try {
-          result = await runProviderTurn(activeRunningSession);
-          logSessionRunStuckInvestigation("runtime.provider-turn.done", {
-            sessionId,
-            clientRequestId,
-            elapsedMs: Date.now() - investigationStartedAt,
-            assistantChars: result.assistantText.length,
-            operationCount: result.artifact?.operationTimeline?.length ?? 0,
-            hasThreadId: (result.threadId ?? "").trim().length > 0,
-          });
-          break;
-        } catch (error) {
-          const providerTurnError = error instanceof ProviderTurnError ? error : null;
-          const shouldRetry =
-            activeRunningSession.provider !== "codex" && activeRunningSession.provider !== "opencode" &&
-            !didInternalRetry &&
-            !isCanceledRunError(error) &&
-            !(await this.deps.isAuxiliarySession?.(sessionId)) &&
-            shouldRetryUnusableThreadRun(error, providerTurnError?.partialResult);
-
-          if (!shouldRetry) {
-            throw error;
-          }
-
-          didInternalRetry = true;
-          liveProgressGeneration += 1;
-          if (this.deps.resetProviderSessionThread) {
-            await Promise.resolve(this.deps.resetProviderSessionThread(activeRunningSession.provider, sessionId));
-          } else {
-            await Promise.resolve(this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId));
-          }
-          if (activeRunningSession.threadId) {
-            const resetSession: Session = {
-              ...activeRunningSession,
-              threadId: "",
-              updatedAt: currentTimestampLabel(),
-            };
-            try {
-              activeRunningSession = await this.deps.checkpointRuntimeMetadata(resetSession, activeRunningSession);
-            } catch (error) {
-              runtimePersistenceFailed = true;
-              throw error;
-            }
-          }
-          this.setRuntimeLiveState(sessionId, {
-            ...buildEmptyLiveSessionRunState(sessionId, ""),
-            sessionTurnId: String(runningTurn.id),
-            ...(queueReceipt ? { queueReceipt } : {}),
-            backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
-          });
-        }
-      }
+      // Calling the adapter is the runtime's dispatch boundary. Only the adapter
+      // can prove an error occurred during preparation, before sending input.
+      const result = await runProviderTurn(activeRunningSession);
       if (!result) {
         throw new Error("The provider did not return a completed turn.");
       }
+      logSessionRunStuckInvestigation("runtime.provider-turn.done", {
+        sessionId,
+        clientRequestId,
+        elapsedMs: Date.now() - investigationStartedAt,
+        assistantChars: result.assistantText.length,
+        operationCount: result.artifact?.operationTimeline?.length ?? 0,
+        hasThreadId: (result.threadId ?? "").trim().length > 0,
+      });
       const completedAt = new Date().toISOString();
 
       terminalSettled = true;
@@ -1544,7 +1476,7 @@ export class SessionRuntimeService {
 
       return storedCompletedSession;
     } catch (error: unknown) {
-      if (queuedInputRecoveryError || terminalPersistenceStarted || (queued && (terminalSettled || runtimePersistenceFailed))) {
+      if (queuedInputRecoveryError || terminalPersistenceStarted || (queued && terminalSettled)) {
         throw error;
       }
       const providerTurnError = error instanceof ProviderTurnError ? error : null;

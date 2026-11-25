@@ -293,8 +293,8 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 // @test-value v2
 // kind = "contract"
 // claim = "Main予約入力はclaim時からWithMate Turnと採用入力へ対応し、一度だけ保存し、未送信復元で固定を解除し、不明結果は対象を保持する"
-// oracle = { type = "contract", ref = "Issue #801: selected queued current-turn input, atomic append, pre-provider restore and unknown hold" }
-// fault = "provider turn IDとSQLite turn IDを同一視する、receiptだけcompletedにする、inputを二重appendする、stale ownerを受け入れる、またはinput解放でcurrent turnを中断する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "provider turn IDとSQLite turn IDを同一視する、receiptだけcompletedにする、inputを二重appendする、stale ownerを受け入れる、または追加入力の結果不明でcurrent turnを中断する"
 // observable = "Worker receipt state/inputTurnId、canonical message count/textとturn phase、例外"
 // observation_boundary = "public-boundary"
 // scope = "実Storage WorkerのMain queue claim/restoreとatomic steer append"
@@ -302,7 +302,7 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 // impact = "指示喪失・二重送信と現在turnの誤中断を防ぐ"
 // distinction = "通常steerはqueue receiptを扱わず、実WorkerとSQLite triggerの失敗注入で原子境界を確認する"
 // @end-test-value
-test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent turnを変えない", async () => {
+test("Main queued inputはWorkerで原子的にappendし不明結果でcurrent turnを変えない", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
   try {
@@ -348,7 +348,9 @@ test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent t
     const uncertain = await f.bundle.stores.queue.getReceipt(owner, unknown.requestId);
     assert.equal(uncertain?.turnId, turnId);
     assert.deepEqual(uncertain?.dispatched, uncertain?.captured);
-    await f.bundle.stores.queue.releaseInterrupted(owner, unknown.id, { runReleased: true });
+    assert.equal(uncertain?.state, "interrupted");
+    assert.equal(uncertain?.userMessageSeq, null);
+    assert.equal(uncertain?.inputTurnId, providerTurnId);
     assert.equal((await f.bundle.stores.session.getSessionMetadata(owner.sessionId))?.summary.runState, "running");
     assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(owner.sessionId))?.phase, "running");
   } finally { db.close(); await f.dispose(); }
@@ -356,12 +358,12 @@ test("Main queued inputはWorkerで原子的にappendし不明解放でcurrent t
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary受付はdraft消費・受付・即時claimを一つの保存境界に含めtarget別にdedup、開始/入力/終端を既存履歴に保存し中断回復後に指定Auxだけ解放する"
+// claim = "Auxiliary受付はdraft消費・受付・即時claimを一つの保存境界に含めtarget別にdedup、開始/入力/終端を既存履歴に保存し起動回収は該当Auxの未終端だけをFailedにする"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#turn-queue; docs/design/session-run-lifecycle.md#persistence-expectations" }
-// fault = "別Auxにrequestが衝突、stale draftやclaim失敗でdraftを消費、receiptと履歴が別commit、providerとSQLite turn IDを同一視、または指定Auxの解放で別Auxを変更する"
+// fault = "別Auxにrequestが衝突、stale draftやclaim失敗でdraftを消費、receiptと履歴が別commit、providerとSQLite turn IDを同一視、または起動回収で終端済み別Auxを変更する"
 // observable = "Worker draft text/revision、receipt id/state、Aux message count/text、turn id/phase、再open後owner一覧"
 // observation_boundary = "public-boundary"
-// scope = "実Storage WorkerとSQLiteのAux queue受付・開始・入力・終端・再open・解放"
+// scope = "実Storage WorkerとSQLiteのAux queue受付・開始・入力・終端・起動回収"
 // lifecycle = "permanent"
 // impact = "Auxiliaryの下書きと受付済み指示の喪失、二重実行を防ぐ"
 // distinction = "Main queue testではAux createdAt identity、独立draftと親CASCADEを通らない"
@@ -450,10 +452,12 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
     await reopened.initialize();
     assert.equal(await reopened.stores.queue.recoverInterrupted(), 1);
     const owner2 = { sessionId: aux2.id, incarnationId: aux2.createdAt };
-    assert.deepEqual(await reopened.stores.queue.listPendingOwners(), [owner2]);
-    await reopened.stores.queue.releaseInterrupted(owner2, second.id, { runReleased: false });
-    assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux2.id))?.runState, "running");
-    await reopened.stores.queue.releaseInterrupted(owner2, second.id, { runReleased: true });
+    assert.deepEqual(await reopened.stores.queue.listPendingOwners(), []);
+    assert.equal((await reopened.stores.queue.getReceipt(owner2, second.requestId))?.state, "failed");
+    const failed = await reopened.stores.auxiliary.getAuxiliarySession(aux2.id);
+    assert.deepEqual(failed?.messages.map((m) => m.text), ["queued", ""]);
+    assert.ok(failed?.messages[1]?.runFailure);
+    assert.equal((await reopened.stores.turn.getLatestSessionTurn(aux2.id))?.phase, "failed");
     assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux2.id))?.runState, "error");
     assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.runState, "idle");
     await reopened.stores.session.deleteSession(f.session.id);

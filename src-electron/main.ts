@@ -75,7 +75,7 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "../src-shared/prompt-template.js";
-import { sessionSummaryToSession } from "./session/session-summary-adapter.js";
+import { sessionSummariesToSessions, sessionSummaryToSession } from "./session/session-summary-adapter.js";
 import { AuxiliarySessionService } from "./auxiliary/auxiliary-session-service.js";
 import { AuxiliaryLiveRunParents } from "./auxiliary/auxiliary-live-run-parents.js";
 import { admitSessionTurn } from "./session/session-turn-admission.js";
@@ -1540,7 +1540,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
             },
             initializePersistentStores,
-            recoverInterruptedSessions,
+            recoverInterruptedSessions: () => recoverInterruptedSessions(startAgentRuntimeApiBestEffort),
             broadcastModelCatalog: () => {
               void getModelCatalog().then(broadcastModelCatalog).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.bootstrap-failed", process: "main", message: "Model choices could not be loaded", error: appLogService.errorToLogError(error) }));
             },
@@ -2222,18 +2222,9 @@ function requireMainSessionPersistenceFacade(): MainSessionPersistenceFacade {
   if (!mainSessionPersistenceFacade) {
     const owner = requireActivePersistentStoreOwnerForFactory("Main session persistence facade");
     mainSessionPersistenceFacade = new MainSessionPersistenceFacade({
-      getSessions: () => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade cache read");
-        return mainStoreContext.sessions;
-      },
-      setSessions: (nextSessions) => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade cache write");
-        mainStoreContext.setSessions(nextSessions);
-      },
-      getSessionPersistenceService: () => requireSessionPersistenceService(),
-      getSessionStorage: () => {
-        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade storage read");
-        return owner.sessionStorage;
+      getSessionPersistenceService: () => {
+        assertPersistentStoreOwnerIsActive(owner, "Main session persistence facade");
+        return requireSessionPersistenceService();
       },
     });
   }
@@ -3433,7 +3424,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   await recoverSessionLifecycleOperations();
   mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
-  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
+  await recoverInterruptedSessions();
   if (runtimeToStop) {
     await startAgentRuntimeApiBestEffort();
     if (!agentRuntimeApi) {
@@ -3722,10 +3713,18 @@ async function replaceAllSessions(
   return requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options);
 }
 
-async function recoverInterruptedSessions(): Promise<void> {
-  await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
-  await requireAuxiliarySessionService().recoverInterruptedSessions();
-  if (mainStoreContext.storageWorker) await requireMainSessionTurnQueueService().start();
+async function recoverInterruptedSessions(beforeDispatch?: () => Promise<void>): Promise<void> {
+  const owner = mainStoreContext.activePersistentStoreOwner;
+  if (!owner?.storageWorker) {
+    await beforeDispatch?.();
+    return;
+  }
+  await requireMainSessionTurnQueueService().start(async () => {
+    const summaries = await owner.sessionStorage.listSessionSummaries();
+    assertPersistentStoreOwnerIsActive(owner, "Refresh recovered Session summaries");
+    mainStoreContext.setSessions(sessionSummariesToSessions(summaries));
+    await beforeDispatch?.();
+  });
 }
 
 async function recoverSessionLifecycleOperations(): Promise<void> {
@@ -3993,7 +3992,6 @@ if (!hasSingleInstanceLock) {
       });
       await requireMainBootstrapService().handleReady();
       requireMainObservabilityFacade().configureProviderQuotaPolling(await requireAppSettingsStorage().getSettings());
-      await startAgentRuntimeApiBestEffort();
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(
         app,

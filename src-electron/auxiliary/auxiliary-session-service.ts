@@ -109,22 +109,6 @@ function isCreationContext(value: unknown): value is AuxiliaryCreationContext {
     && typeof (value as AuxiliaryCreationContext).parentIncarnationId === "string";
 }
 
-function buildInterruptedMessages(messages: AuxiliarySession["messages"]): AuxiliarySession["messages"] {
-  const interruptedMessage = "The previous Auxiliary run may have been interrupted when the app quit. Send again if needed.";
-  const lastMessage = messages.at(-1);
-  if (lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage) {
-    return messages;
-  }
-
-  return [
-    ...messages,
-    {
-      role: "assistant",
-      text: interruptedMessage,
-      accent: true,
-    },
-  ];
-}
 
 function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
   if (!(input.model ?? providerCatalog.defaultModelId).trim()) {
@@ -1403,33 +1387,6 @@ export class AuxiliarySessionService {
   async replaceAuxiliarySessions(sessions: AuxiliarySession[]): Promise<AuxiliarySession[]> {
     const storage = this.deps.getStorage();
     return Promise.all(sessions.map((session) => storage.upsertAuxiliarySession(session)));
-  }
-
-  async recoverInterruptedSessions(): Promise<void> {
-    const storage = this.deps.getStorage();
-    const runningSessions = await storage.listRunningAuxiliarySessions();
-    if (runningSessions.length === 0) {
-      return;
-    }
-
-    const now = currentTimestampLabel();
-    for (const summary of runningSessions) {
-      const current = await storage.getAuxiliarySession(summary.id);
-      if (current) this.assertCharacterSnapshotValid(current);
-      if (!current || current.runState !== "running") {
-        continue;
-      }
-
-      await storage.updateAuxiliarySessionIfMatches({
-        session: {
-          ...current,
-          runState: "error",
-          updatedAt: now,
-          messages: buildInterruptedMessages(current.messages),
-        },
-        expectedSession: current,
-      });
-    }
   }
 
   private async toRuntimeSession(auxiliary: AuxiliarySession): Promise<Session> {

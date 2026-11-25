@@ -135,7 +135,6 @@ test("queued開始・終端はmessage・minimum turn・receiptを原子的に保
     assert.equal(settled.state, "completed");
     assert.deepEqual(queue.settle(owner, receipt.id, "completed", "late reply"), settled);
     assert.deepEqual(queue.settle(owner, receipt.id, "interrupted", "reply lost"), settled);
-    assert.deepEqual(queue.releaseInterrupted(owner, receipt.id, { runReleased: true }), settled);
     assert.throws(() => queue.settle(owner, receipt.id, "failed"), /not executing/);
     const reopened = new SessionTurnQueueStorageV6(dbPath);
     try {
@@ -149,89 +148,20 @@ test("queued開始・終端はmessage・minimum turn・receiptを原子的に保
   }
 });
 
-// @test-value v2
-// kind = "contract"
-// claim = "不明queued turnの明示解除は実guard解放までSession runningを保持し、解放後は一致する最新turnだけをidle/interruptedへ収束させ後続を開始できる"
-// oracle = { type = "contract", ref = "GitHub Issue #801: explicit unknown-result release after actual runtime guard release; docs/design/session-run-lifecycle.md: actual cancellation guard" }
-// fault = "早期解除でSessionをidleへ変更、解放後もrunningを残す、古いreceiptが次turnを変更、または更新失敗でreleaseAtだけcommitする"
-// observable = "解除前後・再open後のSession status/runState/thread/title、receipt releasedAt、minimum turn phase、後続claim/start"
-// observation_boundary = "public-boundary"
-// scope = "SessionTurnQueueStorageV6.releaseInterrupted 実SQLiteの明示解除と限定metadata CAS"
-// lifecycle = "permanent"
-// impact = "未終了処理への重複実行、解除後FIFOの永久停止、または新turnの誤った中断表示を防ぐ"
-// distinction = "runtime guard testはDB metadataを観測しない。少量の実SQLiteで解放指示・transaction rollback・最新turn identityを確認する"
-// @end-test-value
-test("不明queued turnの解除は実解放後だけcurrent metadataを収束し過去receiptを再適用しない", async () => {
-  const temporary = await mkdtemp(join(os.tmpdir(), "withmate-queue-release-"));
-  const dbPath = join(temporary, "withmate-v6.db");
-  const sessions = new SessionStorageV6(dbPath);
-  const queue = new SessionTurnQueueStorageV6(dbPath);
-  const turns = new SessionTurnStorageV6(dbPath);
-  const db = new DatabaseSync(dbPath);
-  try {
-    const saved = sessions.insertSession({ ...newSession(), threadId: "keep-thread", taskTitle: "keep-title" });
-    const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
-    const startQueued = (captured: SessionTurnQueueCapturedInput, count: number) => {
-      const receipt = queue.enqueue(owner, captured);
-      assert.equal(queue.claimNext(owner)?.id, receipt.id);
-      const options = captured.request.executionOptions;
-      const result = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: count,
-        userMessage: { role: "user", text: captured.request.userMessage }, updatedAt: "2026-10-10T00:00:00.000Z",
-        queuedTurn: { queueId: receipt.id, turn: { sessionId: saved.id, phase: "running", provider: captured.provider,
-          model: options.model, reasoningEffort: options.reasoningEffort, approvalMode: options.approvalMode,
-          sandboxMode: options.codexSandboxMode, userMessageSeq: count, threadId: saved.threadId,
-          errorMessage: "", createdAt: "2026-10-10T00:00:00.000Z" } } });
-      return { receipt, turn: result.queuedTurn! };
-    };
-    const first = startQueued(input("First unknown"), 0);
-    queue.recoverInterrupted();
-    db.exec("CREATE TRIGGER fail_release BEFORE UPDATE ON sessions_v6 BEGIN SELECT RAISE(ABORT, 'release failed'); END");
-    assert.throws(() => queue.releaseInterrupted(owner, first.receipt.id, { runReleased: true }), /release failed/);
-    db.exec("DROP TRIGGER fail_release");
-    assert.equal(queue.getReceipt(owner, first.receipt.requestId)?.releasedAt, null);
-    assert.equal(sessions.getSession(saved.id)?.runState, "running");
-    const early = queue.releaseInterrupted(owner, first.receipt.id, { runReleased: false });
-    assert.ok(early.releasedAt);
-    assert.equal(sessions.getSession(saved.id)?.runState, "running");
-    const reopened = new SessionTurnQueueStorageV6(dbPath);
-    try {
-      assert.deepEqual(reopened.listPendingOwners(), [owner]);
-      assert.throws(() => reopened.releaseInterrupted({ ...owner, incarnationId: "stale" }, first.receipt.id, { runReleased: true }), /incarnation mismatch/);
-      assert.deepEqual(reopened.releaseInterrupted(owner, first.receipt.id, { runReleased: true }), early);
-    } finally { reopened.close(); }
-    const releasedSession = sessions.getSession(saved.id)!;
-    assert.equal(releasedSession.status, "idle");
-    assert.equal(releasedSession.runState, "interrupted");
-    assert.equal(releasedSession.threadId, saved.threadId);
-    assert.equal(releasedSession.taskTitle, saved.taskTitle);
-    assert.equal(releasedSession.messages.length, 1);
-    assert.equal(turns.getLatestSessionTurn(saved.id)?.phase, "running");
-    assert.deepEqual(queue.listPendingOwners(), []);
-    const second = startQueued(input("Next queued"), 1);
-    assert.notEqual(second.turn.id, first.turn.id);
-    queue.releaseInterrupted(owner, first.receipt.id, { runReleased: true });
-    assert.equal(sessions.getSession(saved.id)?.runState, "running");
-    assert.equal(queue.getReceipt(owner, first.receipt.requestId)?.state, "interrupted");
-    assert.equal(queue.getReceipt(owner, second.receipt.requestId)?.state, "running");
-  } finally {
-    db.close(); turns.close(); queue.close(); sessions.close();
-    await rm(temporary, { recursive: true, force: true });
-  }
-});
 
 // @test-value v2
 // kind = "contract"
-// claim = "受付receiptは再open後もcapture値と同request照合を保持し、FIFO・指定receipt限定取消・開始済み取消の非適用・不明結果保留を維持する"
-// oracle = { type = "contract", ref = "GitHub Issue #801: durable ACK, immutable capture, FIFO, queued cancellation, uncertain outcome hold" }
+// claim = "再open後も受付内容・同request照合・取消を維持し、照合不能なreceipt自体は再実行も後続の保留もしない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
 // fault = "受付をメモリだけに保持、terminal再送を別受付にする、異payloadを許可、または不明な先頭を再実行する"
 // observable = "再open後のreceipt・ページ・claim結果と拒否例外"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueStorageV6の実SQLiteによる受付から終端・再起動回復"
 // lifecycle = "permanent"
-// impact = "ユーザー指示の消失、二重実行、不明結果の後続実行を防ぐ"
+// impact = "ユーザー指示の消失、二重実行、不明結果による待機の固定を防ぐ"
 // distinction = "型・schema checkでは永続ACK、状態遷移と再起動後の照合結果を検証できない。単一DBの短いtestで確認する"
 // @end-test-value
-test("queue receipt はcapture・再送照合・FIFO・中断保留を永続化する", async () => {
+test("queue receiptはcapture・再送照合・FIFOと不明結果を永続化する", async () => {
   const temporary = await mkdtemp(join(os.tmpdir(), "withmate-turn-queue-"));
   const dbPath = join(temporary, "withmate-v6.db");
   const sessions = new SessionStorageV6(dbPath);
@@ -261,14 +191,12 @@ test("queue receipt はcapture・再送照合・FIFO・中断保留を永続化�
     queue.close();
     queue = new SessionTurnQueueStorageV6(dbPath);
     assert.equal(queue.recoverInterrupted(), 1);
-    assert.equal(queue.claimNext(owner), null);
-    assert.equal(queue.getReceipt(owner, original.request.clientRequestId)?.state, "interrupted");
-    const released = queue.releaseInterrupted(owner, first.id);
-    assert.equal(released.state, "interrupted");
-    assert.ok(released.releasedAt);
+    const unresolved = queue.getReceipt(owner, original.request.clientRequestId);
+    assert.equal(unresolved?.state, "interrupted");
+    assert.equal(unresolved?.releasedAt, null);
     queue.close();
     queue = new SessionTurnQueueStorageV6(dbPath);
-    assert.deepEqual(queue.getReceipt(owner, original.request.clientRequestId), released);
+    assert.deepEqual(queue.getReceipt(owner, original.request.clientRequestId), unresolved);
     assert.equal(queue.claimNext(owner)?.id, second.id);
     queue.settle(owner, second.id, "completed");
     assert.equal(queue.claimNext(owner), null);
@@ -327,6 +255,115 @@ test("queue store は実Worker経路で受付とterminal再照会を保持する
     await assert.rejects(bundle.stores.queue.enqueue({ ...owner, incarnationId: "stale" }, captured), /incarnation mismatch/);
   } finally {
     await bundle.client.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+
+// @test-value v2
+// kind = "contract"
+// claim = "起動回収は実開始を既存TurnのFailed一件へ収束し、旧保留のrelease時刻によらず入力・部分本文・Details・確定結果を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
+// fault = "旧保留だけを残す、別のownerまたはuser seqで確定する、成功をfailedへ変更する、通知と同文の実発言を削る、または部分内容を失う"
+// observable = "隔離DB再open後のreceipt状態、Turn phaseと本文・artifact、次回claim順、再回収の件数"
+// observation_boundary = "public-boundary"
+// scope = "実SQLiteの開始・終端・旧保留・起動回収"
+// lifecycle = "permanent"
+// @end-test-value
+test("起動回収は遺失・旧保留・確定成功を照合し、保存結果を書き潰さない", async () => {
+  const temporary = await mkdtemp(join(os.tmpdir(), "withmate-turn-restart-"));
+  const dbPath = join(temporary, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  let queue = new SessionTurnQueueStorageV6(dbPath);
+  const turns = new SessionTurnStorageV6(dbPath);
+  const db = new DatabaseSync(dbPath);
+  const sameWords = "The previous run may have been interrupted when the app quit. Send again if needed.";
+  const detail = { title: "Provider detail", activitySummary: ["Kept"], changedFiles: [], runChecks: [] };
+  try {
+    for (const scenario of ["running", "held", "released", "committed", "wrong-seq", "old-incarnation"] as const) {
+      const session = sessions.insertSession({ ...newSession(), id: scenario, taskTitle: scenario, threadId: "thread",
+        messages: [{ role: "user", text: sameWords }, { role: "assistant", text: sameWords, accent: true }] });
+      const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
+      const captured = input("Original start");
+      const receipt = queue.enqueue(owner, captured);
+      assert.equal(queue.claimNext(owner)?.id, receipt.id);
+      const options = captured.request.executionOptions;
+      const time = "2026-11-24T15:00:00.000Z";
+      const start = sessions.appendRunningTurnStart({ ...owner, expectedMessageCount: 2, updatedAt: time,
+        userMessage: { role: "user", text: "Original start" }, queuedTurn: { queueId: receipt.id, turn: {
+          sessionId: session.id, phase: "running", threadId: "thread", userMessageSeq: 2, createdAt: time,
+          provider: captured.provider, model: options.model, reasoningEffort: options.reasoningEffort,
+          approvalMode: options.approvalMode, sandboxMode: options.codexSandboxMode, errorMessage: "" } } });
+      const turnId = start.queuedTurn!.id;
+      const pending = [queue.enqueue(owner, input("Second")), queue.enqueue(owner, input("Third"))];
+      const markLegacy = (released: string | null) => db.prepare(
+        "UPDATE session_turn_queue_v6 SET state='interrupted', released_at=? WHERE id=?").run(released, receipt.id);
+      if (scenario === "held" || scenario === "released") {
+        markLegacy(scenario === "held" ? null : time);
+        db.prepare("UPDATE sessions_v6 SET runtime_policy_json=json_set(runtime_policy_json,'$.runState','interrupted','$.appStatus','idle') WHERE id=?")
+          .run(session.id);
+        const text = "Partial reply\n\nThe app stopped before this Turn finished.";
+        db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,artifact_body,created_at) VALUES (?,3,'assistant',?,?,?)")
+          .run(session.id, JSON.stringify({ role: "assistant", text, artifact: detail }), JSON.stringify(detail), time);
+        db.prepare("UPDATE session_turns_v6 SET assistant_message_seq=3 WHERE id=?").run(turnId);
+      } else if (scenario === "wrong-seq") {
+        markLegacy(null);
+        db.prepare("UPDATE session_turn_queue_v6 SET user_message_seq=0 WHERE id=?").run(receipt.id);
+      } else if (scenario === "old-incarnation") {
+        markLegacy(null);
+        db.prepare("UPDATE session_turn_queue_v6 SET incarnation_id='retired' WHERE id=?").run(receipt.id);
+        db.prepare("UPDATE sessions_v6 SET runtime_policy_json=json_set(runtime_policy_json,'$.runState','idle','$.appStatus','idle') WHERE id=?")
+          .run(session.id);
+      } else if (scenario === "committed") {
+        sessions.appendSessionTerminal({ ...owner, expectedMessageCount: 3,
+          assistantMessage: { role: "assistant", text: sameWords, artifact: detail, accent: true },
+          metadata: { status: "idle", runState: "idle", threadId: "thread", updatedAt: time },
+          terminalCommit: { turnId, sessionId: session.id, phase: "completed", assistantMessageSeq: 3,
+            threadId: "thread", completedAt: time, errorMessage: "" } });
+        markLegacy(null); // Stale receipt alongside a real saved terminal.
+      }
+      queue.close();
+      queue = new SessionTurnQueueStorageV6(dbPath);
+      queue.recoverInterrupted();
+      const actual = queue.getReceipt(owner, receipt.requestId);
+      const savedTurn = turns.getLatestSessionTurn(session.id);
+      const savedSession = sessions.getSession(session.id)!;
+      assert.equal(savedTurn?.id, turnId);
+      assert.deepEqual(savedSession.messages.slice(0, 3).map((message) => message.text), [sameWords, sameWords, "Original start"]);
+      assert.equal(savedSession.threadId, "thread");
+      assert.equal(savedSession.taskTitle, scenario);
+      if (scenario === "old-incarnation" || scenario === "wrong-seq") {
+        assert.equal(actual?.state ?? null, scenario === "old-incarnation" ? null : "interrupted");
+        assert.equal(savedTurn?.phase, "running");
+        assert.equal(savedTurn?.completedAt, undefined);
+        assert.equal(savedSession.messages.length, 3);
+        if (scenario === "old-incarnation") assert.equal((db.prepare("SELECT state FROM session_turn_queue_v6 WHERE id=?").get(receipt.id) as { state: string }).state, "interrupted");
+      } else {
+        const phase = scenario === "committed" ? "completed" : "failed";
+        assert.equal(actual?.state, phase);
+        assert.equal(savedTurn?.phase, phase);
+        assert.equal(savedTurn?.assistantMessageSeq, 3);
+        assert.ok(savedTurn?.completedAt);
+        assert.equal(savedSession.runState, phase === "completed" ? "idle" : "error");
+        assert.equal(savedSession.messages.length, 4);
+        assert.equal(savedSession.messages[3]?.text,
+          scenario === "running" ? "" : scenario === "committed" ? sameWords : "Partial reply\n\nThe app stopped before this Turn finished.");
+        assert.equal(savedSession.messages[3]?.runFailure, phase === "completed" ? undefined : actual?.reason);
+        if (scenario !== "running") assert.deepEqual(sessions.getSessionMessageArtifact(session.id, 3), {
+          ...detail, detailAvailable: undefined, operationTimeline: undefined,
+        });
+      }
+      assert.equal(queue.recoverInterrupted(), 0);
+      assert.deepEqual(sessions.getSession(session.id)?.messages, savedSession.messages);
+      const additional = queue.enqueue(owner, input("New input"));
+      for (const expected of [...pending, additional]) {
+        assert.equal(queue.claimNext(owner)?.id, expected.id);
+        queue.settle(owner, expected.id, "completed");
+      }
+      assert.equal(queue.claimNext(owner), null);
+    }
+  } finally {
+    db.close(); turns.close(); queue.close(); sessions.close();
     await rm(temporary, { recursive: true, force: true });
   }
 });
