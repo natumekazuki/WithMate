@@ -2682,7 +2682,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
   const store: SessionTurnQueueStore = {
     getReceipt: async () => terminal, getReceiptById: async () => terminal, listActive: async () => [], claimNext: async () => null,
     admit: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
-    settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected,
     claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected, updateQueued: unexpected,
   };
   let listener: ((id: string) => void) | undefined;

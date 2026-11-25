@@ -367,11 +367,6 @@ export class MainSessionTurnQueueFacade {
     return { ...result, receipts: result.receipts.map((receipt) => this.projectSourceRelease(receipt)) };
   }
 
-  async releaseInterruptedSessionTurn(_sessionId: string, _id: string): Promise<never> {
-    // The legacy IPC registration is removed separately; there is no release mutation.
-    throw new Error("Interrupted Turns no longer require manual release.");
-  }
-
   async sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string) {
     this.deps.assertAccepting();
     const owner = this.owner(await this.readSession(sessionId));
