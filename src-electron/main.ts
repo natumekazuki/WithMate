@@ -2177,9 +2177,6 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
       initializeCreatedSession: ensureDefaultAuxiliarySession,
-      openCreatedChildSession: async (session) => {
-        await requireSessionWindowBridge().openSessionWindow(session.id, { presentation: "minimized" });
-      },
       listActiveCharacters: () => requireCharacterService().listCharacters({ includeArchived: false }),
       createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       resolveSessionFilesDirectory: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),

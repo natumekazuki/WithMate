@@ -44,7 +44,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorの分類は通知設定とは独立して入力待ちを反映する。
 - 質問通知はtitleを`WithMate`、bodyを`<Session名>: Codex has a question.`とし、Character icon、通知の識別・置換、クリック時の会話復帰は既存のturn通知を共有する。質問文・選択肢・入力値・会話本文はOS通知へ出さず、`Notification Response Preview`は成功したturnの完了通知だけに適用する。
 - 回答、取消、server側解決、runtime resetで質問通知を撤去する。解決後に設定読込みが完了しても古い通知を表示せず、同じ会話の後続通知を古い質問の解決で撤去しない。通知の作成・配送・撤去失敗は診断として扱い、質問への回答やprovider実行を失敗させない。
-- `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claude／OpenCodeの共通承認要求を対象とし、Main／Auxiliaryとも親Session Windowが開いていて非focusの場合に通知する。閉じたWindowは対象外とし、Auxiliaryでは親Windowのfocusを使う。
+- `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claude／OpenCodeの共通承認要求を対象とし、要求の公開に伴う通知判定で対応するSession Windowが実在し非focusの場合に通知する。閉じたWindowや、親Agentが作成しまだWindowを開いていない通常子は対象外。WindowがなくてもHomeと独立Monitorの`Attention`からSessionを明示openし、承認要求へ進める。Auxiliaryでは所属MainのWindowの有無とfocusを使う。
 - 承認要求をlive stateへ公開した時に`<Session名>: approval required.`を通知する。Session名以外の本文、command、path、details、warningは表示せず、通知から直接approve／denyしない。クリックで対象Main／Auxiliaryへ戻り、対象が失われていた場合はHomeへ戻る。
 - 同一会話・同一requestの重複callbackは通知を増やさず、解決・abort・cancel・resetで通知を撤去する。設定取得中に解決した古い通知は表示しない。通知の識別・後続通知への置換・削除時の撤去は既存の会話単位の基盤を使い、古い要求の解決で後続通知を消さない。通知失敗は承認decisionやproviderの結果を変更しない。
 - 同一会話の承認要求はFIFOで先頭1件だけを既存の承認cardへ表示し、表示した要求だけ通知する。判断後に次へ進み、Monitorは未解決要求がある間も会話単位で数える。要求の識別と取消の契約は[Session Run Lifecycle](session-run-lifecycle.md#sessionapprovalservice)を参照する。

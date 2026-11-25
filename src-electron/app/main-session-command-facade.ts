@@ -58,7 +58,6 @@ type MainSessionCommandFacadeDeps = {
   resolveSessionFilesDirectory?(sessionId: string): string;
   resolveCrewFilesDirectory?(rootSessionId: string): string;
   prepareSessionLifecycleFiles?(input: Parameters<typeof prepareSessionLifecycleFiles>[0], sessionId: string): Promise<string>;
-  openCreatedChildSession?(session: Session): Promise<void> | void;
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
@@ -71,7 +70,7 @@ function childCreationRequest(input: ResolvedChildSessionCreation): CreateChildS
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
 
-  /** New operations use the admitted Turn's permissions; retries and recovery use the accepted lifecycle input. */
+  /** Saves a child without opening a Window. New operations use the admitted Turn's permissions; retries and recovery use the accepted lifecycle input. */
   async createChildSession(actor: { id: string; incarnationId: string }, request: CreateChildSessionRequest, assertCurrent: () => void, actorExecution?: { providerId: string; executionOptions: SessionExecutionOptions }): Promise<Session> {
     if (!request.requestId.trim()) throw new ChildSessionCreationRejectedError("A stable child creation request ID is required.");
     const prepared = await this.deps.runProviderRuntimeOperationExclusive(async () => {
@@ -155,10 +154,8 @@ export class MainSessionCommandFacade {
     if (prepared.complete) return prepared.session;
     await this.deps.initializeCreatedSession(prepared.session);
     const persistence = this.deps.getSessionPersistenceService();
-    const completion = await persistence.advanceSessionLifecycleOperation(prepared.operationId, "complete");
-    const session = await persistence.publishCreatedSession(prepared.session.id);
-    if (completion.transitioned) await this.deps.openCreatedChildSession?.(session);
-    return session;
+    await persistence.advanceSessionLifecycleOperation(prepared.operationId, "complete");
+    return persistence.publishCreatedSession(prepared.session.id);
   }
 
   async createSession(input: MainOwnedCreateSessionInput): Promise<Session> {
@@ -415,9 +412,8 @@ export class MainSessionCommandFacade {
             continue;
           }
           await this.deps.initializeCreatedSession(session);
-          const completion = await persistence.advanceSessionLifecycleOperation(operation.operationId, "complete");
+          await persistence.advanceSessionLifecycleOperation(operation.operationId, "complete");
           await persistence.publishCreatedSession(session.id);
-          if (operation.targets[0].parentSessionId && completion.transitioned) await this.deps.openCreatedChildSession?.(session);
         }
       } catch (error) { failures.push(error); }
     }

@@ -8,7 +8,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、artifact Details、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、診断 |
-| Session Monitor | 開いているSessionと、実行後に保持したSessionの状態をcompactに監視 |
+| Session Monitor | 開いているSessionと、Windowの有無にかかわらず実行を開始して監視保持したSessionの状態をcompactに監視 |
 | Diff | 広い面でGit差分を比較 |
 | File Preview | 対象fileを独立Windowで表示 |
 | Session Graph | 親Mainの共有Graphを独立した閲覧位置で表示 |
@@ -48,6 +48,8 @@ Crewの掲載条件は、配下に実際のMain Session Windowが一つ以上あ
 ## Sessionの起動と継続
 
 HomeのNew Sessionでtitle、起点Role（Standalone／Overall Coordinator）、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。同じ作成試行の再試行は同じclientRequestIdと作成入力を使う。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。
+
+親Agentが作成する通常子は、作成時・作成の復旧時・Turn開始時にSession Windowを生成しない。開いていない未実行の子はMonitorに加えず、実行を開始するとWindowなしでもHomeと独立Monitorで監視する。Recent SessionsやMonitorで利用者が子を開くとSession Windowを生成し、応答可能な既存Windowがあれば再利用する。利用者が選ぶ`Restore Sessions`によるWindowの最小化復元は、子Sessionの作成復旧とは別の操作である。
 
 通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
 

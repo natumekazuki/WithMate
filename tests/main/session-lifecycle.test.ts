@@ -320,7 +320,6 @@ it("retries child creation without redrawing its Character or replacing parent e
   let filesFail = true;
   let auxiliaryFail = true;
   let issued = 0;
-  const openedChildren: string[] = [];
   const coordinator = new ProviderRuntimeOperationCoordinator();
   const catalog = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high" as const, models: [{ id: "model", label: "Model", reasoningEfforts: ["high" as const] }] };
   const persistence = new SessionPersistenceService({
@@ -351,7 +350,6 @@ it("retries child creation without redrawing its Character or replacing parent e
     listActiveCharacters: async () => ["azki", "sora"].map((id) => ({ id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active", createdAt: "now", updatedAt: "now", archivedAt: null })),
     createCharacterRuntimeSnapshot: async (id) => { snapshotCount += 1; return { characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character\nCharacter", definitionSha256: "snapshot", definitionByteSize: 21, snapshotAt: "2026-11-07T00:00:00Z" }; },
     randomCharacter: () => 0,
-    openCreatedChildSession: (session) => { openedChildren.push(session.id); },
   });
   const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
   const actorExecution = { providerId: "codex", executionOptions: { ...captureSessionExecutionOptions(root), codexSandboxMode: "read-only" as const, codexReviewer: "auto-review" as const } };
@@ -366,11 +364,11 @@ it("retries child creation without redrawing its Character or replacing parent e
     assert.equal(child.characterId, "sora");
     assert.equal(child.codexReviewer, "auto-review");
     assert.equal(storage.getSession(child.id)?.codexReviewer, "auto-review");
+    assert.deepEqual(auxiliary.listAuxiliarySessionSummaries([child.id]).map((entry) => entry.id), [`${child.id}-aux`]);
     assert.equal(snapshotCount, 1);
     assert.equal(issued, 1);
     assert.deepEqual([child.provider, child.model, child.reasoningEffort, child.approvalMode, child.codexSandboxMode, child.workspacePath], ["codex", "model", "high", "on-request", "read-only", request.workspacePath]);
     assert.equal((await facade.createChildSession(actor, request, () => {})).id, child.id);
-    assert.deepEqual(openedChildren, [child.id]);
     assert.equal(storage.listSessionSummaries().filter((item) => item.parentSessionId === root.id).length, 1);
     await assert.rejects(facade.createChildSession(actor, { ...request, title: "Different" }, () => {}), /different input/);
   } finally {
