@@ -7,6 +7,7 @@ type PendingApprovalRequest = {
   signals: Set<AbortSignal>;
   handleAbort: () => void;
   notificationController: AbortController;
+  review?: PendingApprovalReview;
   reviewInvalidated: boolean;
   finish: (decision: LiveApprovalDecision) => void;
 };
@@ -21,6 +22,7 @@ type SessionApprovalServiceOptions = {
 
 export class SessionApprovalService {
   private readonly pendingRequests = new Map<string, PendingApprovalRequest[]>();
+  private readonly stoppingReviews = new Map<string, Promise<void>>();
 
   public constructor(private readonly options: SessionApprovalServiceOptions) {}
 
@@ -75,6 +77,7 @@ export class SessionApprovalService {
       signals: new Set([signal]),
       handleAbort: () => this.settle(sessionId, pending, "deny"),
       notificationController: new AbortController(),
+      review,
       reviewInvalidated: false,
       finish: (value) => {
         for (const trackedSignal of pending.signals) trackedSignal.removeEventListener("abort", pending.handleAbort);
@@ -88,18 +91,37 @@ export class SessionApprovalService {
     signal.addEventListener("abort", pending.handleAbort, { once: true });
     if (queue.length === 1) {
       this.publishHead(sessionId, queue);
-      // A second request invalidates this result even if that request is later canceled.
-      const reviewSignal = AbortSignal.any([pending.notificationController.signal, signal]);
-      if (review) void Promise.resolve().then(() => review.decide(reviewSignal)).then((value) => {
-        if (value !== null && !pending.reviewInvalidated && !reviewSignal.aborted
-          && this.pendingRequests.get(sessionId)?.[0] === pending && review.isCurrent()) {
-          this.settle(sessionId, pending, value);
-        }
-      }).catch(() => undefined);
     } else {
+      // A competing arrival invalidates the current head even if the newcomer is later canceled.
       queue[0].reviewInvalidated = true;
     }
     return decision;
+  }
+
+  private reviewHead(sessionId: string, pending: PendingApprovalRequest): void {
+    const review = pending.review;
+    if (!review) return;
+    // An invalid or inconclusive attempt leaves this head manual until it is resolved.
+    pending.review = undefined;
+    const signal = pending.notificationController.signal;
+    const isCurrentHead = () => !signal.aborted && !pending.reviewInvalidated
+      && this.pendingRequests.get(sessionId)?.[0] === pending;
+    const isCurrent = () => isCurrentHead() && review.isCurrent();
+    void Promise.resolve().then(async () => {
+      if (!isCurrent()) return;
+      const value = await review.decide(signal, {
+        isCurrentHead,
+        previousStop: this.stoppingReviews.get(sessionId),
+        onStopping: (stopped) => {
+          // Keep the stop fence even if the source turn and its approval queue are gone.
+          this.stoppingReviews.set(sessionId, stopped);
+          void stopped.then(() => {
+            if (this.stoppingReviews.get(sessionId) === stopped) this.stoppingReviews.delete(sessionId);
+          }, () => { /* A failed close is not confirmation of stop. */ });
+        },
+      });
+      if (value !== null && isCurrent()) this.settle(sessionId, pending, value);
+    }).catch(() => undefined);
   }
 
   private settle(sessionId: string, pending: PendingApprovalRequest, decision: LiveApprovalDecision): void {
@@ -126,14 +148,15 @@ export class SessionApprovalService {
       ...current,
       approvalRequest: pending.request,
     }));
-    try {
-      if (published?.approvalRequest?.requestId === pending.request.requestId
-        && this.pendingRequests.get(sessionId)?.[0] === pending
-        && !pending.notificationController.signal.aborted) {
+    if (published?.approvalRequest?.requestId === pending.request.requestId
+      && this.pendingRequests.get(sessionId)?.[0] === pending
+      && !pending.notificationController.signal.aborted) {
+      try {
         this.options.notifyApproval?.(sessionId, pending.request.requestId, pending.notificationController.signal);
+      } catch {
+        // Attention delivery must not interrupt the pending approval decision.
       }
-    } catch {
-      // Attention delivery must not interrupt the pending approval decision.
+      this.reviewHead(sessionId, pending);
     }
   }
 

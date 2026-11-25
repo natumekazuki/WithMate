@@ -41,10 +41,10 @@ function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeo
       },
     });
     return {
-      wait(id: string, signal = owner.signal) {
+      wait(id: string, signal = owner.signal, automatic = true) {
         const request: LiveApprovalRequest = { requestId: id, kind: "shell", provider: "copilot", title: "Run", summary: "Test operation", decisionMode: "direct-decision" };
         const native = { operation: { command: `echo ${id}`, target: "workspace" }, isCurrent: () => operationCurrent };
-        return approvals.waitForLiveApprovalDecision(source.sessionId, request, signal, turn.pending(request, native));
+        return approvals.waitForLiveApprovalDecision(source.sessionId, request, signal, automatic ? turn.pending(request, native) : undefined);
       },
       cancel: () => owner.abort(), close: () => turn.close(),
       changePolicy: () => { policyCurrent = false; }, supersedeNativeRequest: () => { operationCurrent = false; },
@@ -169,6 +169,217 @@ test("a stale allow cannot overwrite a manual decision or settle an invalidated 
     assert.equal(run.head(), undefined);
     if (race === "cancel") assert.equal(run.stats.closed, 1);
     turn.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Aの審査中にB/Cが到着したらAの判定を適用せず、Aの取消後は保留の先頭だけを到着順に別判定する"
+// oracle = { type = "contract", ref = "https://app.notion.com/4239d4b6f26280419e89e58769ad9d07 (キューだけで行う決定的な再現・受け入れ条件)" }
+// fault = "後続の審査を取りこぼす、先頭解決前に後続を審査する、または失効した結果で要求を解決する"
+// observable = "Providerに渡る要求ID列、live承認の先頭、各承認callbackの決定、審査会話の起動回数"
+// observation_boundary = "consumer"
+// scope = "WithMate仲介審査を使う同一Turnの承認FIFO"
+// lifecycle = "permanent"
+// distinction = "Aの終了後にBを新規追加する検査と異なり、Aの審査中にB/Cの両方をキューへ入れる"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("queued reviews advance in arrival order without applying the invalidated head result", { timeout: 2000 }, async () => {
+  for (const stale of [allow, deny]) {
+    const aResult = Promise.withResolvers<unknown>();
+    const bResult = Promise.withResolvers<unknown>();
+    const calls: string[] = [];
+    const run = fixture((prompt) => {
+      const id = JSON.parse(prompt).pendingOperation.requestId as string;
+      calls.push(id);
+      return id === "a" ? aResult.promise : id === "b" ? bResult.promise : deny;
+    });
+    const turn = run.run("42");
+    const a = new AbortController();
+    try {
+      const first = turn.wait("a", a.signal);
+      await setImmediate();
+      assert.deepEqual(calls, ["a"]);
+      const second = turn.wait("b");
+      const third = turn.wait("c");
+      aResult.resolve(stale);
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls }, { head: "a", calls: ["a"] });
+
+      a.abort();
+      assert.equal(await first, "deny");
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls }, { head: "b", calls: ["a", "b"] });
+      bResult.resolve(allow);
+      assert.equal(await second, "approve");
+      assert.equal(await third, "deny");
+      assert.deepEqual({ head: run.head(), calls, opened: run.stats.opened },
+        { head: undefined, calls: ["a", "b", "c"], opened: 1 });
+    } finally {
+      a.abort();
+      turn.cancel();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "手動必須・入力が古い・ask_userの後続先頭は手動のままになり、未解決中は次の審査を始めない"
+// oracle = { type = "contract", ref = "https://app.notion.com/4239d4b6f26280419e89e58769ad9d07 (原因と改善方針・受け入れ条件)" }
+// fault = "後続に先行の適格性を引き継ぐ、開始時に古い入力を使う、本人確認の結果を再試行する、または手動先頭を追い越す"
+// observable = "審査入力の要求ID列、手動待ちの先頭IDと判断、解決後の最終decision"
+// observation_boundary = "consumer"
+// scope = "WithMate仲介審査キューの昇格時の適格性と手動fallback"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("a manual head blocks later review without retrying its own", { timeout: 2000 }, async () => {
+  for (const blocker of ["ineligible", "stale input", "ask_user"] as const) {
+    const aResult = Promise.withResolvers<unknown>();
+    const calls: string[] = [];
+    const run = fixture((prompt) => {
+      const id = JSON.parse(prompt).pendingOperation.requestId as string;
+      calls.push(id);
+      return id === "a" ? aResult.promise : id === "b" ? { decision: "ask_user", reason: "Uncertain" } : allow;
+    });
+    const turn = run.run("42");
+    try {
+      const first = turn.wait("a");
+      await setImmediate();
+      const second = turn.wait("b", undefined, blocker !== "ineligible");
+      if (blocker === "stale input") run.inputs.invalidate();
+      const third = turn.wait("c");
+      aResult.resolve(deny);
+      await setImmediate();
+      run.manual("a", "deny");
+      assert.equal(await first, "deny");
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls },
+        { head: "b", calls: blocker === "ask_user" ? ["a", "b"] : ["a"] }, blocker);
+      run.manual("b", "deny");
+      assert.equal(await second, "deny");
+      assert.equal(await third, "approve");
+      assert.deepEqual(calls, blocker === "ask_user" ? ["a", "b", "c"] : ["a", "c"], blocker);
+    } finally {
+      turn.cancel();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実審査の失敗・期限切れはその要求だけを手動にし、解決と停止確認の後は同じTurnの次の適格な先頭を審査する"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
+// fault = "失敗や期限切れで審査を重ねるか、Turn全体の審査を止めて残りの適格な要求を手動に固定する"
+// observable = "手動先頭、Providerへの要求ID列、旧会話の停止と後続のdecision"
+// observation_boundary = "consumer"
+// scope = "WithMate仲介審査が失敗した同じTurnでの次の先頭"
+// lifecycle = "permanent"
+// distinction = "停止待ち中ではなく、実行中のProvider審査そのものの期限切れと失敗を検証する"
+// @end-test-value
+test("review timeout and failure do not disable the next head in the same turn", { timeout: 2000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const failure of ["timeout", "provider error"] as const) {
+    const aResult = Promise.withResolvers<unknown>();
+    const stopped = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    const run = fixture((prompt) => {
+      const id = JSON.parse(prompt).pendingOperation.requestId as string;
+      calls.push(id);
+      return id === "a" ? aResult.promise : allow;
+    }, 100, { close: () => stopped.promise });
+    const turn = run.run("42");
+    try {
+      const first = turn.wait("a");
+      await setImmediate();
+      const second = turn.wait("b");
+      if (failure === "timeout") t.mock.timers.tick(100);
+      else aResult.reject(new Error("Provider failed"));
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls, closed: run.stats.closed }, { head: "a", calls: ["a"], closed: 1 }, failure);
+      run.manual("a", "deny");
+      assert.equal(await first, "deny");
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls }, { head: "b", calls: ["a"] }, failure);
+      stopped.resolve();
+      await setImmediate();
+      assert.deepEqual(calls, ["a", "b"], failure);
+      assert.equal(await second, "approve");
+    } finally {
+      turn.cancel();
+      stopped.resolve();
+      aResult.resolve(deny);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ会話の次Turnは旧審査の停止確認まで審査を起動せず、待機を取消または期限切れにしても古い結果を採用しない"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
+// fault = "Turn交代で停止待ちを捨てる、古い審査結果が現審査に干渉する、または待機の取消・期限切れ後に審査を開始する"
+// observable = "旧要求のdecision、審査会話の開閉、Providerに渡る要求ID列、新Turn内の承認先頭とdecision"
+// observation_boundary = "consumer"
+// scope = "同一会話の審査停止確認のTurn境界"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("review shutdown remains a fence across turns in the same session", { timeout: 2000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const action of ["confirm", "timeout", "cancel"] as const) {
+    const aResult = Promise.withResolvers<unknown>();
+    const bResult = Promise.withResolvers<unknown>();
+    const stopped = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    let closes = 0;
+    const run = fixture((prompt) => {
+      const id = JSON.parse(prompt).pendingOperation.requestId as string;
+      calls.push(id);
+      return id === "a" ? aResult.promise : id === "b" ? bResult.promise : deny;
+    }, 100, { close: () => ++closes === 1 ? stopped.promise : Promise.resolve() });
+    const old = run.run("old");
+    const current = run.run("current");
+    const nextRequest = new AbortController();
+    try {
+      const first = old.wait("a");
+      await setImmediate();
+      old.cancel();
+      assert.equal(await first, "deny");
+      const second = current.wait("b", nextRequest.signal);
+      await setImmediate();
+      assert.deepEqual({ head: run.head(), calls, ...run.stats },
+        { head: "b", calls: ["a"], opened: 1, closed: 1 }, action);
+      if (action === "timeout") {
+        t.mock.timers.tick(100);
+        await setImmediate();
+      } else if (action === "cancel") {
+        nextRequest.abort();
+        assert.equal(await second, "deny");
+      }
+      stopped.resolve();
+      await setImmediate();
+      aResult.resolve(allow);
+      await setImmediate();
+      if (action === "confirm") {
+        assert.deepEqual({ head: run.head(), calls }, { head: "b", calls: ["a", "b"] });
+        bResult.resolve(deny);
+        assert.equal(await second, "deny");
+      } else {
+        assert.deepEqual(calls, ["a"]);
+        assert.equal(run.head(), action === "timeout" ? "b" : undefined);
+        if (action === "timeout") run.manual("b", "deny");
+        assert.equal(await second, "deny");
+      }
+      assert.equal(await current.wait("c"), "deny");
+      assert.deepEqual(calls, action === "confirm" ? ["a", "b", "c"] : ["a", "c"]);
+    } finally {
+      old.cancel();
+      current.cancel();
+      nextRequest.abort();
+      stopped.resolve();
+      aResult.resolve(allow);
+      bResult.resolve(deny);
+    }
   }
 });
 
