@@ -10,7 +10,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, retrySourceLabel, projectRetryInputAuthor, retryReceiptInputUnchanged, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, projectRetryInputAuthor, retryReceiptInputUnchanged, type TurnInputReadContext } from "./turn-input-details.js";
 import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
@@ -64,8 +64,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   }, []);
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
-  const retryLabel = retrySourceLabel(receipt.captured.retrySource?.origin);
-  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role="group" title={retryLabel} aria-label={`${position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`}${retryLabel ? ` · ${retryLabel}` : ""}`}>
+  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role="group" aria-label={position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {sourceWaitState === "unknown" ? <span className="session-turn-queue-reason">Source Turn State Unknown</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
@@ -86,15 +85,14 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
   const message = { role: "user" as const, text: props.receipt.captured.request.userMessage };
   const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
   const retry = (props.receipt.dispatched ?? props.receipt.captured).retrySource;
-  const { origin, retryLabel } = projectRetryInputAuthor(read.origin, retry, !!retry && retryReceiptInputUnchanged(props.receipt));
+  const origin = projectRetryInputAuthor(read.origin, retry, !!retry && retryReceiptInputUnchanged(props.receipt));
   const isSessionOrigin = origin?.kind === "session";
   const theme = isSessionOrigin && origin === read.origin ? read.senderTheme : null;
   const role = isSessionOrigin ? "session-origin" : "user";
-  return <><article className={`message-row ${role}`} data-message-source="turn-queue" aria-label={retryLabel} title={retryLabel}>
+  return <><article className={`message-row ${role}`} data-message-source="turn-queue">
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} origin={origin} /> : null}
     <div className={`message-card ${role}${theme ? " has-sender-theme" : ""}`}
       style={theme ? { "--sender-main": theme.main } as CSSProperties : undefined}><div className="message-card-content">
-      {retryLabel ? <div className="message-character-name">{retryLabel}</div> : null}
       {isSessionOrigin ? <SessionOriginRoute origin={origin} onError={read.setReadError} /> : null}
       {props.receipt.captured.request.replyTo && props.inputReadContext ? <ReplyQuote ownerSessionId={props.inputReadContext.ownerSessionId} reference={props.receipt.captured.request.replyTo} /> : null}
       {read.coordination && props.inputReadContext ? <>

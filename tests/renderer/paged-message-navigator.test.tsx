@@ -11,7 +11,7 @@ import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-pr
 async function withNavigator(run: (fixture: {
   dom: JSDOM;
   element: HTMLElement;
-  render: (page: MessageNavigatorPage) => void;
+  render: (page: MessageNavigatorPage | undefined, entries?: SessionContextPaneProps["messageNavigatorEntries"]) => void;
   jumps: string[];
 }) => Promise<void>) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
@@ -45,7 +45,8 @@ async function withNavigator(run: (fixture: {
     messageNavigatorSessionId: "main", onCycleContextPaneTab() {}, onJumpToMessage: (key) => jumps.push(key),
   };
   try {
-    await run({ dom, element, jumps, render: (page) => root.render(React.createElement(SessionContextPane, { ...props, messageNavigatorPage: page })) });
+    await run({ dom, element, jumps, render: (page, entries) => root.render(React.createElement(SessionContextPane, { ...props,
+      messageNavigatorPage: page, messageNavigatorEntries: entries })) });
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -79,6 +80,43 @@ test("paged navigator identifies incoming sender and preserves its jump", async 
   assert.match(rows[1].getAttribute("aria-label")!, /Your message.*reply/);
   await act(async () => rows[0].click());
   assert.deepEqual(jumps, ["sender-message"]);
+}));
+
+// @test-value v2
+// kind = "contract"
+// claim = "local/pagedのMessagesナビで、空要約は代替文や区切りを付けず、話者・Bookmark・Collapsedとジャンプを保持する。実在の本文は残す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Messages navigatorと全履歴query page" }
+// fault = "空要約を見出しに足す、区切りだけ残す、または空行の名前/状態/ジャンプや実在要約を失う"
+// observable = "空行のaria-label/title/実DOMとCollapsed、非空行の名前と実preview、キーボードで渡すkey"
+// observation_boundary = "component-behavior"
+// scope = "SessionContextPaneのlocal/paged各branch、取得済み投影を注入"
+// lifecycle = "permanent"
+// impact = "本文のない結果を実本文に見せたり、有効な一覧行へ移動できなくしたりしない"
+// distinction = "保存projectionは空文字を返しても、一覧の文言・accessible name・操作は保証しない"
+// @end-test-value
+test("Messages navigator keeps empty previews out of names and rows in both layouts", async () => withNavigator(async ({ dom, element, render, jumps }) => {
+  const items: MessageNavigatorPage["items"] = [
+    { key: "literal", sourceKind: "session", role: "user", speaker: { kind: "user" }, preview: "No content", accent: false, isCollapsed: false, isBookmarked: false },
+    { key: "empty", sourceKind: "session", role: "user", speaker: { kind: "user" }, preview: "", accent: false, isCollapsed: true, isBookmarked: true },
+  ];
+  const page: MessageNavigatorPage = { items, offset: 0, totalCount: 2, filter: "all", loading: false, error: "",
+    onFilterChange() {}, onRequestRange() {}, onRetry() {} };
+  for (const mode of ["local", "paged"] as const) {
+    await act(async () => render(mode === "paged" ? page : undefined, items));
+    const [literal, empty] = element.querySelectorAll<HTMLButtonElement>(".messages-navigator-row");
+    assert.ok(literal && empty, mode);
+    assert.equal(empty.getAttribute("aria-label"), "Your message, Bookmark saved", mode);
+    assert.equal(empty.getAttribute("title"), "Your message, Bookmark saved", mode);
+    assert.equal(empty.querySelector(".messages-navigator-preview"), null, mode);
+    assert.equal(empty.querySelector('[aria-label="Collapsed"]')?.textContent, "Collapsed", mode);
+    assert.equal(literal.getAttribute("aria-label"), "Your message: No content", mode);
+    assert.equal(literal.querySelector(".messages-navigator-preview")?.textContent, "No content", mode);
+    await act(async () => literal.focus());
+    await act(async () => literal.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    assert.equal(dom.window.document.activeElement, empty, mode);
+    await act(async () => empty.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  }
+  assert.deepEqual(jumps, ["empty", "empty"]);
 }));
 
 // @test-value v2

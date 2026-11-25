@@ -58,7 +58,7 @@ export function observeSessionResultRead(input: {
   };
   const unsubscribe = api.onSessionTurnUpdated((id) => { if (id === sessionId) refresh(); });
   const mutation = new window.MutationObserver(schedule);
-  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden", "data-index", "data-result-details-ready"] });
+  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden", "data-index", "data-result-details-ready", "data-message-body"] });
   const resize = new window.ResizeObserver(schedule);
   resize.observe(list);
   list.addEventListener("scroll", schedule, { passive: true });

@@ -12,10 +12,10 @@ import type { RetryFailedSessionTurnRequest, SessionTurnQueueReceipt } from "../
 
 // @test-value v2
 // kind = "contract"
-// claim = "確定失敗を履歴またはDockから一操作で再実行し、Detailsで編集差と元送信者を示す。履歴とDockの取得失敗から再取得でき、二重送信を防ぐ"
+// claim = "確定失敗を履歴またはDockから一操作で再実行し、Detailsで編集差と元送信者の項目を示す。再試行の説明文は出さず、履歴とDockの取得失敗から再取得でき、二重送信を防ぐ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock・回復操作; docs/design/session-run-lifecycle.md#gui-turn-queue" }
 // fault = "失敗以外に操作を出す、編集差や取得失敗を伏せる、対象identityを取り違える、受付中に二重送信する"
-// observable = "履歴とDockの操作の出し分け、Detailsの編集差と元送信者、失敗の表示・回復、送信された対象と要求数"
+// observable = "履歴とDockの操作の出し分け、Detailsの編集差・元送信者の項目と説明文の不在、失敗の表示・回復、送信された対象と要求数"
 // observation_boundary = "component-behavior"
 // scope = "保存済み失敗messageの再実行 UI。IPCはfixture"
 // lifecycle = "permanent"
@@ -104,7 +104,9 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     retried = true;
     await act(async () => root.render(<TurnExecutionDetails message={message} context={readContext} />));
     assert.match(dom.window.document.body.textContent!, /Edited before the original Turn started/);
-    assert.match(dom.window.document.body.textContent!, /Retry requested by you · Previous input from Sender/);
+    const originalSender = [...dom.window.document.querySelectorAll("dt")].find((label) => label.textContent === "Original Sender");
+    assert.equal(originalSender?.nextElementSibling?.textContent, "Sender");
+    assert.doesNotMatch(dom.window.document.body.textContent!, /Retry requested by you|Previous input from/);
     retried = false;
     await act(async () => root.render(<></>));
     let failHistoryRead = true;

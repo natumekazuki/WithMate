@@ -486,7 +486,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`と`Coordination`のfilter・操作欄、`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す。Coordinationは詳細から一覧へ戻る時に、選んだ行とスクロール位置へ戻る
-- Messages navigatorと全履歴query pageは総件数に対してrowをvirtualizeし、All／Bookmarkのいずれも未取得pageを含む全履歴を対象にする。native rowのaccessible nameとfocusを保ち、Arrowで全件内を巡回、Home／Endで先頭／末尾、Enterで本文へjumpする。結果pageの到着でscroll位置を初期化しない。Bookmark切替と会話owner変更では一覧を先頭へ戻し、owner変更ではAllへ戻す。loading／error／Retryと成功0件の空本文を区別する
+- Messages navigatorと全履歴query pageは総件数に対してrowをvirtualizeし、All／Bookmarkのいずれも未取得pageを含む全履歴を対象にする。native rowのaccessible nameとfocusを保ち、Arrowで全件内を巡回、Home／Endで先頭／末尾、Enterで本文へjumpする。要約のない行は要約要素と名前・title内の区切りを省き、話者・Bookmark状態と既存の開閉状態表示は残す。結果pageの到着でscroll位置を初期化しない。Bookmark切替と会話owner変更では一覧を先頭へ戻し、owner変更ではAllへ戻す。loading／error／Retryと成功0件の空本文を区別する
 - Coordinationの閲覧・回答中は、commandやstreaming、相談の更新で選択tab・focus・scroll・draftを変更しない
 - right pane の正常empty / idle bodyはblankにし、pane shell・tab・必要な操作・accessible statusだけを残す。実エラー、validation、安全・復旧説明は維持する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
@@ -587,7 +587,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
   - 回復操作は次のとおり
-    - `Resend`: 失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を明示的に再実行する。対応する失敗Turnを持たない旧中断・取消の既存回復では選択会話の前回本文を送信する。受付後の開始入力の編集差と元送信者はDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
+    - `Resend`: 失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を明示的に再実行する。対応する失敗Turnを持たない旧中断・取消の既存回復では選択会話の前回本文を送信する。会話と待機キューのカードの本文・話者表示に再試行の由来説明は付けない。受付後の開始入力の編集差と元送信者名は既存のDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
     - `Edit`: 前回本文を対象会話のdraftへ戻し、Promptを開いてtextareaへfocusする。自動送信はしない
   - 異なる非空draftで`Edit`を押した場合は、`Your current draft is preserved.`を示す確認dialogを開く。`Keep Current Draft`または`Escape`で保持し、`Replace With Previous Request`を明示選択した場合だけ置換する。確認中も背面のDock選択は維持する
   - 最新Turnの取得失敗からの`Retry`と実行受付不明の確認は、それぞれ別の操作とする

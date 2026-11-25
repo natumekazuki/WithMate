@@ -146,17 +146,12 @@ export function projectMessageRenderedSearchText(markdown: string, responseProvi
 }
 
 export const MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH = 160;
-export const MESSAGE_COLLAPSE_EMPTY_PREVIEW = "No content";
 
 function normalizeMessagePlainText(text: string): string {
   const normalized = text
     .replace(/<[^>]*>/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
-  if (!normalized) {
-    return MESSAGE_COLLAPSE_EMPTY_PREVIEW;
-  }
-
   const codePoints = Array.from(normalized);
   if (codePoints.length <= MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH) {
     return normalized;
@@ -165,6 +160,7 @@ function normalizeMessagePlainText(text: string): string {
   return `${codePoints.slice(0, MESSAGE_COLLAPSE_PREVIEW_MAX_LENGTH - 1).join("")}…`;
 }
 
+/** Returns a bounded preview of the rendered text, or an empty string when no text is available. */
 export function projectMessagePlainText(markdown: string, responseProvider?: string): string {
   return normalizeMessagePlainText(projectMessageRenderedSearchText(markdown.replace(/\r\n?|\n/gu, " "), responseProvider));
 }
