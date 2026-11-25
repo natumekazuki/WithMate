@@ -43,6 +43,7 @@ class FakeSession {
   readonly listeners = new Set<(event: SessionEvent) => void>();
   readonly retainedListeners = new Set<(event: SessionEvent) => void>();
   readonly sends: ReturnType<typeof deferred<string>>[] = [];
+  onSend?: (prompt: string) => void;
   readonly abortReply = deferred<void>();
   readonly abortStarted = deferred<void>();
   readonly disconnectStarted = deferred<void>();
@@ -55,9 +56,10 @@ class FakeSession {
     this.retainedListeners.add(listener);
     return () => { this.listeners.delete(listener); };
   }
-  send() {
+  send({ prompt }: { prompt: string }) {
     const reply = deferred<string>();
     this.sends.push(reply);
+    this.onSend?.(prompt);
     return reply.promise;
   }
   abort() {
@@ -123,8 +125,10 @@ class FakeClient {
   stopCalls = 0;
   forceCalls = 0;
   deferRpcClosure = false;
+  onSend?: (prompt: string) => void;
   createSession() {
     const session = new FakeSession();
+    session.onSend = this.onSend;
     this.sessions.push(session);
     return Promise.resolve(session);
   }
@@ -166,7 +170,8 @@ class FakeClient {
   }
 }
 
-function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; realForceStop?: boolean; elicitationResponse?: LiveElicitationResponse } = {}) {
+function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; realForceStop?: boolean; elicitationResponse?: LiveElicitationResponse;
+  configureClient?: (client: FakeClient, index: number) => void } = {}) {
   let stored = buildNewSession({
     provider: "copilot", taskTitle: "cancel lifecycle", workspaceLabel: "fixture", workspacePath: process.cwd(),
     branch: "fixture", characterId: "fixture", character: "Fixture", characterIconPath: "",
@@ -181,8 +186,8 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     models: [{ id: "gpt-4.1", label: "GPT-4.1", reasoningEfforts: ["high"] }] };
   const adapter = new CopilotAdapter({ turnCancelGraceMs: options.cancelGraceMs ?? 0,
     sessionDisconnectTimeoutMs: 0, clientStopTimeoutMs: 0, log: (entry) => { logs.push(entry.message); } });
-  adapter.composePrompt = () => ({ systemBodyText: "", inputBodyText: "input", logicalPrompt: {
-    systemText: "", inputText: "input", composedText: "input" }, imagePaths: [], additionalDirectories: [] });
+  adapter.composePrompt = ({ userMessage }) => ({ systemBodyText: "", inputBodyText: userMessage, logicalPrompt: {
+    systemText: "", inputText: userMessage, composedText: userMessage }, imagePaths: [], additionalDirectories: [] });
   const ports = adapter as unknown as {
     clients: Map<string, CopilotClient>;
     getClient(): { client: CopilotClient; clientKey: string };
@@ -192,6 +197,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     let client = ports.clients.get(clientKey);
     if (!client) {
       const fake = new FakeClient();
+      options.configureClient?.(fake, clients.length);
       clients.push(fake);
       if (options.realForceStop) {
         // Instantiate the SDK without starting a process or contacting Copilot.
@@ -240,6 +246,8 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
   return {
     adapter, ports, service, clients, turns, logs,
     stored: () => stored, live: () => live,
+    runAdapter: (userMessage: string) => adapter.runSessionTurn({ session: stored, userMessage,
+      executionOptions: captureSessionExecutionOptions(stored), providerCatalog: catalog, appSettings: normalizeAppSettings({}), attachments: [] }),
     start: (message = "first") => service.runSessionTurn(stored.id, { userMessage: message, executionOptions: captureSessionExecutionOptions(stored) }),
     cancel: () => service.cancelRun(stored.id),
     current: async () => { await until(() => Boolean(clients.at(-1)?.sessions.at(-1)?.sends.length)); return clients.at(-1)!.sessions.at(-1)!; },
@@ -553,61 +561,103 @@ it("正常turnには取消期限を適用せず、完了後はSessionを再利�
 
 // @test-value v2
 // kind = "contract"
-// claim = "cached Copilot turnの表示/非表示toolの開始・空partial・承認待ちだけのstale失敗は同じthreadをresumeして一度だけ再送できる"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
-// fault = "設定runChecks・未確定操作summary・承認warning/detailsを取得結果と誤認し回復を拒む、または再失敗後も再送する"
-// observable = "SessionRuntimeService.runSessionTurn経由の保存本文/runState、SDK send件数、client数、旧client stop/disconnect件数、新client resumeIds"
+// claim = "Copilotのsend呼出後は、応答ACKや実行結果がない接続失敗でも同じ指示を自動再送しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#error-handling" }
+// fault = "ACK・本文・tool結果の欠落を未実行とみなして、既に送出した同一入力の効果を重複させる"
+// observable = "合成SDKへ渡したprompt列、send側の合成効果回数、ProviderTurnErrorの分類とpartial本文"
 // observation_boundary = "public-boundary"
-// scope = "Copilot cached sessionのproduction retryから同一logical turn終端保存まで"
+// scope = "CopilotAdapterからSDK sendまで。ACK拒否とACK後session.errorの両方"
 // lifecycle = "permanent"
-// impact = "未実行の操作で会話を回復不能にすることとstale失敗の無限再実行を防ぐ"
-// distinction = "shouldRetry単体testは設定・activity summary付きproduction artifactやcache再生成/resume/一回制限を通らない。既存ローカルfixtureを使い外部接続なしで検証する"
+// distinction = "取得済み結果を保存する既存testでは、実行証拠が返らないまま起きた副作用の二重発行を検出しない"
 // @end-test-value
-it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復する", { timeout: 5000 }, async () => {
+it("Copilotはsend呼出後の結果不明を自動再送しない", { timeout: 5000 }, async () => {
   for (const failure of ["Connection is closed.", "SessionNotFound: session not found"]) {
-    for (const mode of ["start", "hidden-start", "empty-partial", "pending", "permission-start", "approved-start"] as const) {
-      for (const recovered of [true, false]) {
-        const f = fixture();
-        const prime = f.start(); const cached = await f.current();
-        cached.emit("assistant.message", { content: "prime answer", messageId: "prime" });
-        cached.emit("session.idle"); cached.sends[0].resolve("prime"); await prime;
-        const run = f.start("recover input");
-        await until(() => cached.sends.length === 2);
-        if (mode === "start" || mode === "hidden-start" || mode === "empty-partial") {
-          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: mode === "start" ? "shell" : "custom_fixture", arguments: { command: "synthetic command" } });
-          if (mode === "empty-partial") {
-            cached.emit("tool.execution_partial_result", { toolCallId: "not-completed", partialOutput: " \n " });
+    for (const acknowledge of [false, true]) {
+      const prompts: string[] = [];
+      const effects: string[] = [];
+      const f = fixture({ configureClient: (client, index) => {
+        client.onSend = (prompt) => {
+          prompts.push(prompt);
+          effects.push("external action accepted");
+          // Settle an unexpected second dispatch so the assertions report the
+          // duplicate rather than waiting for the retry to finish.
+          if (index > 0) {
+            const retried = client.sessions.at(-1)!;
+            retried.sends[0].resolve("retried");
+            retried.emit("session.idle");
           }
-        } else {
-          cached.emit("permission.requested", { requestId: "permission-only", permissionRequest: {
-            kind: "shell", toolCallId: "not-completed", fullCommandText: "synthetic command", warning: "synthetic permission warning",
-          } });
-          if (mode === "approved-start") {
-            cached.emit("permission.completed", { requestId: "permission-only", result: { kind: "approved" } });
-          }
-          if (mode !== "pending") {
-            cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
-          }
-        }
-        cached.sends[1].reject(new Error(failure));
-        await until(() => f.clients.length === 2 && Boolean(f.clients[1].sessions[0]?.sends.length));
-        const fresh = f.clients[1].sessions[0];
-        assert.deepEqual(f.clients[1].resumeIds, ["preserved-thread"]);
-        assert.equal(f.clients[0].stopCalls, 1);
-        assert.equal(cached.disconnectCalls, 1);
-        if (recovered) {
-          fresh.emit("assistant.message", { content: "recovered answer", messageId: "recovered" });
-          fresh.emit("session.idle"); fresh.sends[0].resolve("recovered");
-        } else {
-          fresh.sends[0].reject(new Error(failure));
-        }
-        await run;
-        assert.equal(f.clients.length, 2, "second stale failure must not trigger another retry");
-        assert.equal(cached.sends.length + fresh.sends.length, 3, "one prime send and two attempts");
-        assert.equal(f.turns.length, 2, "retry stays in the same logical turn");
-        assert.equal(f.turns.at(-1)?.phase, recovered ? "completed" : "failed");
-        if (recovered) assert.match(f.stored().messages.at(-1)!.text, /recovered answer/);
+        };
+      } });
+      const run = f.runAdapter("perform one external action");
+      const failureCheck = assert.rejects(run, (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.message, failure);
+        assert.equal(error.canceled, false);
+        assert.equal(error.partialResult.assistantText, "");
+        return true;
+      });
+      const session = await f.current();
+      if (acknowledge) {
+        session.sends[0].resolve("accepted");
+        session.emit("session.error", { message: failure });
+      } else {
+        session.sends[0].reject(new Error(failure));
       }
+      const error = await failureCheck.catch((reason: unknown) => reason);
+      assert.deepEqual(prompts, ["perform one external action"], "same input must be sent only once");
+      assert.deepEqual(effects, ["external action accepted"]);
+      if (error) throw error;
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotはsend未呼出の接続準備に失敗した場合だけ一度回復を試し、接続できた場合に元の指示を一度送る"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#error-handling" }
+// fault = "未送出の接続回復まで失う、または二度目の準備失敗後も無制限にやり直す"
+// observable = "接続したSDK client数・resume先・SDKへのprompt列・回復後の本文または二回目の準備失敗"
+// observation_boundary = "public-boundary"
+// scope = "CopilotAdapterのSession準備とcached Sessionのイベント登録の失敗からsendまで"
+// lifecycle = "permanent"
+// distinction = "接続エラー文字列の分類testでは、キャッシュ接続の入替とSDKへの送信が一回に限定されることを検出しない"
+// @end-test-value
+it("Copilotはsend未呼出の接続準備を一度だけ回復する", { timeout: 5000 }, async () => {
+  for (const stage of ["bootstrap", "event registration"] as const) {
+    for (const recover of [true, false]) {
+      const prompts: string[] = [];
+      const f = fixture({ configureClient: (client, index) => {
+        if (stage === "bootstrap" && (index === 0 || !recover)) {
+          client.createSession = async () => { throw new Error("Connection is closed."); };
+        }
+        if (stage === "event registration" && index > 0 && !recover) {
+          client.resumeSession = async () => { throw new Error("Connection is closed."); };
+        }
+        client.onSend = (prompt) => {
+          prompts.push(prompt);
+          const session = client.sessions.at(-1)!;
+          session.emit("assistant.message", { content: "prepared answer", messageId: "answer" });
+          session.sends.at(-1)!.resolve("sent");
+          session.emit("session.idle");
+        };
+      } });
+      if (stage === "event registration") {
+        // Prime a real adapter cache and persisted thread via the runtime fixture.
+        await f.start("prime");
+        prompts.length = 0;
+        const cached = await f.current();
+        cached.rpc.eventLog.registerInterest = async () => { throw new Error("Connection is closed."); };
+      }
+      const run = f.runAdapter("send after connection setup");
+      if (recover) {
+        assert.equal((await run).assistantText, "prepared answer");
+        assert.deepEqual(prompts, ["send after connection setup"]);
+        if (stage === "event registration") assert.deepEqual(f.clients[1].resumeIds, ["preserved-thread"]);
+      } else {
+        await assert.rejects(run, /Connection is closed\./);
+        assert.deepEqual(prompts, []);
+      }
+      assert.equal(f.clients.length, 2);
     }
   }
 });
