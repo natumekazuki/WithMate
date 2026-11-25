@@ -137,7 +137,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const changed: import("./conversation-query.js").ConversationMutationSink = (table, id) => conversationQueries?.invalidate(table, id);
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
-  const queue = new SessionTurnQueueStorageV6(data.dbPath);
+  const queue = new SessionTurnQueueStorageV6(data.dbPath, changed);
   const sessionGraph = new SessionGraphStorageV6(data.dbPath);
   const execution = new SessionExecutionReadStorage(data.dbPath);
   const coordination = new CoordinationStorageV7(data.dbPath);

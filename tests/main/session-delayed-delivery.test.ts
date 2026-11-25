@@ -163,10 +163,10 @@ test("admission claims an eligible predecessor before the new send", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "同時claimのWorker返信を失っても元request IDの再照会で別claimやdispatchを作らず、再起動と明示解放後に後続だけ実行する"
+// claim = "同時claimのWorker返信を失っても元request IDの再照会で別claimやdispatchを作らず、起動で未開始をFailedに収束し後続だけ実行する"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#turn-queue; docs/design/session-run-lifecycle.md#persistence-expectations" }
-// fault = "Worker返信喪失を未保存扱いして開始確保済みの入力を再実行する、または後続を不明な開始より先に進める"
-// observable = "元request IDのreceipt identityと状態、履歴件数、再open後のinterruptedとdispatchの順番"
+// fault = "返信喪失後に開始確保済みの入力を再実行する、稼働中の照会不明を無視する、または起動回収後も既存後続を止める"
+// observable = "元request IDのreceipt identityと状態、履歴件数、再open後のfailedとdispatchの順番"
 // observation_boundary = "public-boundary"
 // scope = "実Workerの受付・claim commit直後にアダプターで返信喪失を注入し、同一DBを再openする通常queue"
 // lifecycle = "permanent"

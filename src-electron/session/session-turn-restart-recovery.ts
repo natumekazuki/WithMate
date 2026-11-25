@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { SessionTurnQueueOwner } from "../../src-shared/session/session-turn-queue.js";
 import { hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
 import { writeSessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
@@ -28,15 +29,19 @@ type RecoveryReceipt = {
 };
 
 const failureReason = "The app stopped before this Turn finished.";
+const releasedFailureReason = "The Turn stopped before its outcome could be confirmed.";
 const inputUnknownReason = "The input outcome could not be confirmed.";
+const mainWasRunning = `CASE WHEN json_valid(s.runtime_policy_json)
+  THEN COALESCE(json_extract(s.runtime_policy_json, '$.runState') = 'running'
+    OR json_extract(s.runtime_policy_json, '$.appStatus') = 'running', 0) ELSE 0 END`;
+const mainWasInterrupted = `CASE WHEN json_valid(s.runtime_policy_json)
+  THEN COALESCE(json_extract(s.runtime_policy_json, '$.runState') = 'interrupted', 0) ELSE 0 END`;
 
 /** Called in the storage worker's startup transaction, before the queue can claim work. */
 export function recoverSessionTurnsAfterRestart(db: DatabaseSync, now: string): number {
   const owners = db.prepare(`
     SELECT s.id AS sessionId, NULL AS auxiliaryId, s.incarnation_id AS incarnationId,
-      COALESCE(json_extract(s.runtime_policy_json, '$.runState') = 'running'
-        OR json_extract(s.runtime_policy_json, '$.appStatus') = 'running', 0) AS wasRunning,
-      COALESCE(json_extract(s.runtime_policy_json, '$.runState') = 'interrupted', 0) AS wasInterrupted
+      ${mainWasRunning} AS wasRunning, ${mainWasInterrupted} AS wasInterrupted
     FROM sessions_v6 s
     WHERE wasRunning OR wasInterrupted
       OR EXISTS (SELECT 1 FROM session_turn_queue_v6 q WHERE q.session_id = s.id AND q.auxiliary_session_id IS NULL
@@ -55,7 +60,22 @@ export function recoverSessionTurnsAfterRestart(db: DatabaseSync, now: string): 
   return changed;
 }
 
-function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string): number {
+/** Only after the live runtime guard was released. Never reconcile another receipt or Turn. */
+export function recoverReleasedSessionTurn(db: DatabaseSync, owner: SessionTurnQueueOwner, receiptId: string, now: string) {
+  const row = db.prepare(`
+    SELECT s.id AS sessionId, a.id AS auxiliaryId, q.incarnation_id AS incarnationId,
+      CASE WHEN a.id IS NULL THEN ${mainWasRunning} ELSE a.run_state = 'running' END AS wasRunning, 0 AS wasInterrupted
+    FROM session_turn_queue_v6 q JOIN sessions_v6 s ON s.id = q.session_id
+    LEFT JOIN auxiliary_sessions a ON a.id = q.auxiliary_session_id AND a.parent_session_id = s.id
+    WHERE q.id = ? AND q.state = 'interrupted' AND q.input_turn_id IS NULL AND q.incarnation_id = ?
+      AND ((q.auxiliary_session_id IS NULL AND s.incarnation_id = q.incarnation_id AND s.id = ?)
+        OR (a.created_at = q.incarnation_id AND a.id = ?))
+  `).get(receiptId, owner.incarnationId, owner.sessionId, owner.sessionId) as RecoveryOwner | undefined;
+  const changed = row ? recoverOwner(db, row, now, receiptId) : 0;
+  return { changed, auxiliary: row?.auxiliaryId != null };
+}
+
+function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string, receiptId?: string): number {
   const { sessionId, auxiliaryId, incarnationId, wasRunning, wasInterrupted } = owner;
   const auxiliary = auxiliaryId !== null;
   const id = auxiliaryId ?? sessionId;
@@ -72,7 +92,9 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string): numb
   const receipts = db.prepare(`SELECT id, state, turn_id AS turnId, input_turn_id AS inputTurnId, user_message_seq AS userMessageSeq,
       json_extract(COALESCE(dispatched_json, captured_json), '$.coordination.id') AS coordination
     FROM session_turn_queue_v6 WHERE session_id = ? AND auxiliary_session_id IS ? AND incarnation_id = ?
-      AND state IN ('starting', 'running', 'interrupted')`).all(sessionId, auxiliaryId, incarnationId) as RecoveryReceipt[];
+      AND state IN ('starting', 'running', 'interrupted')${receiptId ? " AND id = ?" : ""}`)
+    .all(sessionId, auxiliaryId, incarnationId, ...(receiptId ? [receiptId] : [])) as RecoveryReceipt[];
+  const reasonForAbandonedTurn = receiptId ? releasedFailureReason : failureReason;
 
   const latestOwnsInput = latest && messageExists.get(id, latest.userMessageSeq, "user")
     && !db.prepare(`SELECT 1 FROM ${messageTable} WHERE ${ownerColumn} = ? AND seq > ? AND role = 'user'
@@ -82,7 +104,7 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string): numb
     receipt.inputTurnId === null && receipt.turnId === String(latest.id)) : [];
   const exactStart = latest && (referencingStarts.length
     ? referencingStarts.length === 1 && referencingStarts[0]!.userMessageSeq === latest.userMessageSeq
-    : wasRunning || wasInterrupted);
+    : !receiptId && (wasRunning || wasInterrupted));
   let failedLatest = false;
   if (latest?.phase === "running" && latestOwnsInput && exactStart) {
     // A linked assistant message may contain saved partial text and Details. Never replace it.
@@ -93,23 +115,23 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string): numb
         .get(id) as { seq: number };
       seq = next.seq;
       db.prepare(`INSERT INTO ${messageTable} (${ownerColumn}, seq, role, body, created_at)
-        VALUES (?, ?, 'assistant', ?, ?)`).run(id, seq, JSON.stringify({ role: "assistant", text: "", runFailure: failureReason, accent: true }), now);
+        VALUES (?, ?, 'assistant', ?, ?)`).run(id, seq, JSON.stringify({ role: "assistant", text: "", runFailure: reasonForAbandonedTurn, accent: true }), now);
     } else {
       // An explicit structured reason also bypasses the legacy inline-notice parser:
       // an answer ending in the same words is still the provider's answer.
       db.prepare(`UPDATE ${messageTable} SET body = json_set(body, '$.runFailure', ?)
         WHERE ${ownerColumn} = ? AND seq = ? AND role = 'assistant'
           AND CASE WHEN json_valid(body) THEN json_type(body, '$.runFailure') IS NOT 'text' ELSE 0 END`)
-        .run(failureReason, id, seq);
+        .run(reasonForAbandonedTurn, id, seq);
     }
     writeSessionTurnTerminalCommit(db, {
       turnId: latest.id, sessionId: id, phase: "failed", assistantMessageSeq: seq,
-      threadId: latest.threadId, errorMessage: failureReason, completedAt: now,
+      threadId: latest.threadId, errorMessage: reasonForAbandonedTurn, completedAt: now,
     }, auxiliary ? "auxiliary" : "main");
     failedLatest = true;
   }
 
-  if (wasRunning || wasInterrupted || failedLatest) {
+  if (failedLatest || (!receiptId && (wasRunning || wasInterrupted))) {
     const hasSavedTerminal = latestOwnsInput && latest && latest.completedAt !== null && latest.phase !== "running"
       && isSavedResponse(latest);
     const runState = hasSavedTerminal && latest.phase !== "failed" ? "idle" : "error";
@@ -143,10 +165,10 @@ function recoverOwner(db: DatabaseSync, owner: RecoveryOwner, now: string): numb
     } else if (receipt.turnId === null && receipt.userMessageSeq === null && !receipt.coordination) {
       // Without the atomic start record there is no started Turn to settle or source Turn to release.
       state = "failed";
-      reason = failureReason;
+      reason = reasonForAbandonedTurn;
     }
     if (state === "interrupted" && receipt.state === "interrupted") continue;
-    changed += Number(updateReceipt.run(state, reason ?? (state === "interrupted" ? failureReason : null), state, now, receipt.id).changes);
+    changed += Number(updateReceipt.run(state, reason ?? (state === "interrupted" ? reasonForAbandonedTurn : null), state, now, receipt.id).changes);
   }
   return changed;
 }

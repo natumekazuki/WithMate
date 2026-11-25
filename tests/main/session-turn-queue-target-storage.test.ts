@@ -292,10 +292,10 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main予約入力はclaim時からWithMate Turnと採用入力へ対応し、一度だけ保存し、未送信復元で固定を解除し、不明結果は対象を保持する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
-// fault = "provider turn IDとSQLite turn IDを同一視する、receiptだけcompletedにする、inputを二重appendする、stale ownerを受け入れる、または追加入力の結果不明でcurrent turnを中断する"
-// observable = "Worker receipt state/inputTurnId、canonical message count/textとturn phase、例外"
+// claim = "Main予約入力はWithMate Turnと採用入力へ対応し、未送信だけ復元できる。起動後も確定入力と不明入力の区別を保持し、後続だけをclaimする"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue; docs/design/session-run-lifecycle.md#persistence-expectations" }
+// fault = "native IDをWithMate Turn IDと同一視する、inputを二重保存する、不明結果で生存中Turnを中断する、または再起動で追加入力を再送・混同して後続を止める"
+// observable = "Worker receipt state/inputTurnId、実Turnと本文、再openしたDBの入力来歴と後続claim ID"
 // observation_boundary = "public-boundary"
 // scope = "実Storage WorkerのMain queue claim/restoreとatomic steer append"
 // lifecycle = "permanent"
@@ -305,6 +305,7 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 test("Main queued inputはWorkerで原子的にappendし不明結果でcurrent turnを変えない", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
+  let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
     const owner = { sessionId: f.session.id, incarnationId: f.session.incarnationId! };
     const original = f.captured("original");
@@ -353,7 +354,20 @@ test("Main queued inputはWorkerで原子的にappendし不明結果でcurrent t
     assert.equal(uncertain?.inputTurnId, providerTurnId);
     assert.equal((await f.bundle.stores.session.getSessionMetadata(owner.sessionId))?.summary.runState, "running");
     assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(owner.sessionId))?.phase, "running");
-  } finally { db.close(); await f.dispose(); }
+    const follower = await f.bundle.stores.queue.enqueue(owner, f.captured("next"));
+    await f.bundle.client.close();
+    reopened = createV6StorageWorkerBundle(f.options);
+    await reopened.initialize();
+    assert.equal(await reopened.stores.queue.recoverInterrupted(), 1);
+    assert.equal((await reopened.stores.queue.getReceipt(owner, original.request.clientRequestId))?.state, "failed");
+    assert.deepEqual(await reopened.stores.queue.getReceipt(owner, queued.requestId), completed);
+    assert.deepEqual(await reopened.stores.queue.getReceipt(owner, unknown.requestId), uncertain);
+    const recovered = await reopened.stores.session.getSession(owner.sessionId);
+    assert.deepEqual(recovered?.messages.map((m) => m.text), ["original", "input", ""]);
+    assert.equal(recovered?.messages[1]?.turnInput?.state, "confirmed");
+    assert.ok(recovered?.messages[2]?.runFailure);
+    assert.equal((await reopened.stores.queue.claimNext(owner))?.id, follower.id);
+  } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
 });
 
 // @test-value v2

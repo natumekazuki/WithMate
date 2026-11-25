@@ -1050,9 +1050,9 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
 
 // @test-value v2
 // kind = "invariant"
-// claim = "実行中の設定変更は現在Turnに遡及せず、現在Turnが失敗しても次queued Turnでは新しい設定を適用する"
+// claim = "runtimeは現在Turnに固定設定を渡し、失敗後も次queued Turnには新しい捕捉値を適用する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次送信用設定と現在Turnのcapture分離" }
-// fault = "現在Turnの失敗保存で設定変更を巻き戻すか次queued Turnで旧captureを再利用する"
+// fault = "現在Turnの設定と次queued Turnで既に捕捉した新設定を取り違える"
 // observable = "失敗Turn/次queued Turnの状態、Providerへの設定/追加directory、runtime認可の設定"
 // observation_boundary = "public-boundary"
 // scope = "session runtime current capture and next queued execution"

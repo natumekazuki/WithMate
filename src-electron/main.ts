@@ -2626,6 +2626,28 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
         assertPersistentStoreOwnerIsActive(owner, "Coordination input");
         return turnId;
       },
+      onTurnRecovered: (receipt) => {
+        void (async () => {
+          // The Worker has committed the exact Turn and no runtime guard is left.
+          assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
+          await sessionTurnQueueService?.wakeSourceTurnDependents(receipt.sessionId);
+          const summary = await owner.sessionStorage.getSessionSummary?.(receipt.sessionId);
+          assertPersistentStoreOwnerIsActive(owner, "Recovered Turn publication");
+          if (summary?.incarnationId === receipt.incarnationId) {
+            mainStoreContext.setSessions(mainStoreContext.sessions.map((session) =>
+              session.id === summary.id && getSessionIncarnationId(session) === receipt.incarnationId
+                ? sessionSummaryToSession(summary) : session));
+            broadcastSessions([summary.id]);
+          } else {
+            const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(receipt.sessionId);
+            assertPersistentStoreOwnerIsActive(owner, "Recovered Auxiliary Turn publication");
+            if (auxiliary?.createdAt === receipt.incarnationId) broadcastSessions([auxiliary.parentSessionId]);
+          }
+        })().catch((error) => writeAppLog({
+          level: "warn", kind: "session.queue.recovery-publication-failed", process: "main",
+          message: "Could not publish the recovered Turn", error: appLogService.errorToLogError(error),
+        }));
+      },
       onChanged: ({ sessionId }, origin) => {
         if (mainStoreContext.activePersistentStoreOwner === owner) {
           publishSentInputChanged(origin);

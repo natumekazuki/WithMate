@@ -151,10 +151,10 @@ test("queued開始・終端はmessage・minimum turn・receiptを原子的に保
 
 // @test-value v2
 // kind = "contract"
-// claim = "再open後も受付内容・同request照合・取消を維持し、照合不能なreceipt自体は再実行も後続の保留もしない"
+// claim = "再open後も受付内容・同request照合・取消を維持し、照合不能なreceiptは再実行・FIFO保留せず、Crew削除では不明結果の証拠を残す"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
 // fault = "受付をメモリだけに保持、terminal再送を別受付にする、異payloadを許可、または不明な先頭を再実行する"
-// observable = "再open後のreceipt・ページ・claim結果と拒否例外"
+// observable = "再open後のreceipt・ページ・claim結果、Crew削除と別incarnationの拒否"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueStorageV6の実SQLiteによる受付から終端・再起動回復"
 // lifecycle = "permanent"
@@ -205,12 +205,9 @@ test("queue receiptはcapture・再送照合・FIFOと不明結果を永続化�
     assert.deepEqual(page.receipts.map((receipt) => receipt.id), [first.id, second.id]);
     assert.deepEqual(queue.listReceipts(owner, { cursor: page.nextCursor!, limit: 2 }).receipts.map((receipt) => receipt.state), ["canceled"]);
     assert.deepEqual(queue.listActive(owner).map((receipt) => receipt.id), [first.id]);
-    sessions.deleteSession(session.id);
-    const recreated = sessions.insertSession(newSession());
-    assert.throws(() => queue.enqueue(owner, original), /incarnation mismatch/);
-    const currentOwner = { sessionId: recreated.id, incarnationId: getSessionIncarnationId(recreated) };
-    assert.deepEqual(queue.listReceipts(currentOwner).receipts, []);
-    assert.notEqual(queue.enqueue(currentOwner, original).id, first.id);
+    assert.throws(() => sessions.deleteSession(session.id), /unresolved/);
+    assert.throws(() => queue.enqueue({ ...owner, incarnationId: "stale" }, original), /incarnation mismatch/);
+    assert.equal(queue.getReceipt(owner, original.request.clientRequestId)?.id, first.id);
   } finally {
     queue.close();
     sessions.close();

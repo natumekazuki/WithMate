@@ -36,6 +36,7 @@ export type SessionTurnQueueServiceDeps = {
     onStarted: (input: { turnId: string; userMessageSeq: number }) => Promise<void>,
     control: SessionTurnQueueDispatchControl,
   ): Promise<SessionTurnQueueDispatchResult>;
+  onTurnRecovered?(receipt: SessionTurnQueueReceipt): void;
   onChanged?(owner: SessionTurnQueueOwner, origin?: SessionTurnQueueOrigin): void;
 };
 
@@ -110,9 +111,7 @@ export class SessionTurnQueueService {
 
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
     this.adoptOwner(receipt);
-    if (this.lastClaim.get(receipt.sessionId)?.id === receipt.id && isConfirmedTerminal(receipt)) {
-      this.blocked.delete(receipt.sessionId);
-    }
+    this.rememberCanonicalClaim(receipt);
     // Receipt reads can wake recovered work, but must not invalidate the read
     // itself through another queue-change notification.
     this.wake(receipt.sessionId);
@@ -340,8 +339,11 @@ export class SessionTurnQueueService {
 
   wake(sessionId: string): void {
     const owner = this.owners.get(sessionId);
-    if (!owner || this.claimHeld(owner)) return;
+    if (!owner || (this.claimHeld(owner) && !this.recoverableClaim(owner))) return;
     const claim = this.withLock(sessionId, async () => {
+      if (!this.isCurrentOwner(owner)) return null;
+      const recovery = this.recoverableClaim(owner);
+      if (recovery) await this.recoverReleasedClaim(recovery);
       if (!this.isCurrentOwner(owner) || !await this.canClaim(owner) || !this.isCurrentOwner(owner)) return null;
       const receipt = await this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
       if (!receipt || !this.isCurrentOwner(owner)) return null;
@@ -388,6 +390,37 @@ export class SessionTurnQueueService {
 
   private async canClaim(owner: SessionTurnQueueOwner): Promise<boolean> {
     return !this.claimHeld(owner) && !await this.deps.isRunInFlight(owner.sessionId) && !this.claimHeld(owner);
+  }
+
+  private recoverableClaim(owner: SessionTurnQueueOwner): SessionTurnQueueReceipt | null {
+    if (this.closing || !this.blocked.has(owner.sessionId) || this.dispatching.has(owner.sessionId)) return null;
+    const last = this.lastClaim.get(owner.sessionId);
+    return last?.state === "interrupted" && !last.inputTurnId && last.incarnationId === owner.incarnationId ? last : null;
+  }
+
+  private async recoverReleasedClaim(claim: SessionTurnQueueReceipt): Promise<void> {
+    if (await this.deps.isRunInFlight(claim.sessionId) || this.recoverableClaim(claim)?.id !== claim.id || !this.isCurrentOwner(claim)) return;
+    // This is a new, exact reconciliation of a saved interrupted claim, not a
+    // repeat of either the original terminal write or provider dispatch.
+    await this.deps.store.recoverInterrupted({ sessionId: claim.sessionId, incarnationId: claim.incarnationId, receiptId: claim.id });
+    const canonical = await this.deps.store.getReceipt(claim, claim.requestId);
+    if (!canonical || canonical.id !== claim.id || !this.isCurrentOwner(claim)) return;
+    this.rememberCanonicalClaim(canonical);
+    if (isConfirmedTerminal(canonical)) this.notify(canonical);
+  }
+
+  private rememberCanonicalClaim(receipt: SessionTurnQueueReceipt): void {
+    const last = this.lastClaim.get(receipt.sessionId);
+    if (!last || last.id !== receipt.id || last.incarnationId !== receipt.incarnationId) return;
+    if (isConfirmedTerminal(receipt)) {
+      this.blocked.delete(receipt.sessionId);
+      this.lastClaim.set(receipt.sessionId, receipt);
+      if (last.state === "interrupted" && !last.inputTurnId) {
+        try { this.deps.onTurnRecovered?.(receipt); } catch { /* Observers do not own durable state. */ }
+      }
+    } else if (receipt.state === "interrupted" && !receipt.inputTurnId) {
+      this.lastClaim.set(receipt.sessionId, receipt);
+    }
   }
 
   private reserveDispatch(receipt: SessionTurnQueueReceipt): void {
@@ -437,7 +470,7 @@ export class SessionTurnQueueService {
       const canonical = await this.deps.store.settle(receipt, receipt.id, "interrupted", error instanceof Error ? error.message : "The execution outcome could not be confirmed.");
       if (!this.isCurrentOwner(receipt)) return;
       this.notify(receipt);
-      if (isConfirmedTerminal(canonical)) this.blocked.delete(sessionId);
+      this.rememberCanonicalClaim(canonical);
       return;
     }
     if (!this.isCurrentOwner(receipt)) return;

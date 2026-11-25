@@ -6,7 +6,8 @@ import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
 import { assertSessionLifecycleReady } from "./session-lifecycle-operation.js";
-import { recoverSessionTurnsAfterRestart } from "./session-turn-restart-recovery.js";
+import { recoverReleasedSessionTurn, recoverSessionTurnsAfterRestart } from "./session-turn-restart-recovery.js";
+import type { ConversationMutationSink } from "../storage/conversation-query.js";
 import { assertCoordinationInputTurn, coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
 import type { ConversationThreads } from "../../src-shared/session/conversation-threads.js";
 import { readConversationCoordinationOrigin, readConversationThreads, readMainCoordinationFrame, readMainRetryFrame } from "../storage/conversation-threads.js";
@@ -59,7 +60,7 @@ function capturedJson(captured: SessionTurnQueueCapturedInput): string {
 export class SessionTurnQueueStorageV6 {
   private readonly db: DatabaseSync;
 
-  constructor(dbPath: string | DatabaseSync) {
+  constructor(dbPath: string | DatabaseSync, private readonly onConversationChanged?: ConversationMutationSink) {
     this.db = typeof dbPath === "string" ? openAppDatabase(dbPath) : dbPath;
     if (typeof dbPath === "string") ensureV6Schema(this.db);
   }
@@ -348,8 +349,12 @@ export class SessionTurnQueueStorageV6 {
     });
   }
 
-  recoverInterrupted(): number {
-    return this.transaction(() => recoverSessionTurnsAfterRestart(this.db, new Date().toISOString()));
+  recoverInterrupted(target?: SessionTurnQueueOwner & { receiptId: string }): number {
+    const now = new Date().toISOString();
+    if (!target) return this.transaction(() => recoverSessionTurnsAfterRestart(this.db, now));
+    const result = this.withOwner(target, () => recoverReleasedSessionTurn(this.db, target, target.receiptId, now));
+    if (result.changed) this.onConversationChanged?.(result.auxiliary ? "auxiliary_session_messages" : "session_messages_v6", target.sessionId);
+    return result.changed;
   }
 
   private required(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt {

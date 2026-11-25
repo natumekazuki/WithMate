@@ -904,8 +904,8 @@ export class SessionStorageV6 {
       blockers.push({ kind: "running", id: row.id, sessionId: row.id, message: "An Auxiliary Session is running." });
     }
     for (const row of this.db.prepare(`SELECT id, session_id FROM session_turn_queue_v6 WHERE session_id IN (${placeholders})
-      AND state IN ('queued','starting','running')`).all(...mainIds) as Array<{ id: string; session_id: string }>) {
-      blockers.push({ kind: "queue", id: row.id, sessionId: row.session_id, message: "Accepted work is pending or running." });
+      AND (state IN ('queued','starting','running') OR (state='interrupted' AND released_at IS NULL))`).all(...mainIds) as Array<{ id: string; session_id: string }>) {
+      blockers.push({ kind: "queue", id: row.id, sessionId: row.session_id, message: "Accepted work is pending, running, or unresolved." });
     }
     for (const row of this.db.prepare(`SELECT DISTINCT operation.operation_id FROM session_lifecycle_operations_v6 operation, json_each(operation.targets_json) target
       WHERE operation.kind='create' AND operation.phase<>'complete' AND (json_extract(target.value,'$.id') IN (${placeholders}) OR json_extract(target.value,'$.rootSessionId') IN (${placeholders}))`)
