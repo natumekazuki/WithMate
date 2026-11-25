@@ -2564,8 +2564,10 @@ export default function AgentSessionWindowApp() {
         const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
         if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
         return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
-      }, blocked: (id) => hasUncertainTurnFor(id) || hasPendingSubmitFor(id) || isSelectedSessionReadOnly
-        || (id === selectedSession.id ? selectedSessionRunState === "running" : id !== activeAuxiliarySession?.id || activeAuxiliarySession.runState === "running"),
+      },
+      // A saved failed start is admitted to the normal queue; a running Turn only blocks dispatch.
+      blocked: (id) => hasUncertainTurnFor(id) || hasPendingSubmitFor(id) || isSelectedSessionReadOnly
+        || (id !== selectedSession.id && id !== activeAuxiliarySession?.id),
       onError: (ownerId, message, target) => {
         const owner = ownerId === selectedSession.id ? selectedSession : activeAuxiliarySession;
         if (owner?.id === ownerId && !message.includes("Check Receipt")) setFailedRetryFeedback({ ownerId,
