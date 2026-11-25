@@ -6,8 +6,14 @@ import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-r
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../providers/provider-agent-runtime-binding.js";
 
 export type PendingApprovalReview = {
-  decide(signal: AbortSignal): Promise<LiveApprovalDecision | null>;
+  decide(signal: AbortSignal, queue?: ApprovalReviewQueueContext): Promise<LiveApprovalDecision | null>;
   isCurrent(): boolean;
+};
+
+type ApprovalReviewQueueContext = {
+  isCurrentHead(): boolean;
+  previousStop?: Promise<void>;
+  onStopping(stopped: Promise<void>): void;
 };
 
 /** An in-memory fence, not a history index. An in-flight GUI input may affect an ancestor. */
@@ -42,7 +48,11 @@ export type StartWithMateApprovalReview = (input: {
 /** Reuse a lazy reviewer conversation within the source turn until it is interrupted. */
 export class WithMateApprovalReviewTurn {
   readonly #lifetime = new AbortController();
-  #conversation?: { controller: AbortController; ready: Promise<ApprovalReviewerConversation> };
+  #conversation?: {
+    controller: AbortController;
+    ready: Promise<ApprovalReviewerConversation>;
+    onStopping?: ApprovalReviewQueueContext["onStopping"];
+  };
   #closing?: Promise<void>;
   #active?: AbortSignal;
   readonly #closeOnAbort = () => this.close();
@@ -68,17 +78,15 @@ export class WithMateApprovalReviewTurn {
       && !this.#lifetime.signal.aborted && (nativeReview.isCurrent?.() ?? true);
     return {
       isCurrent,
-      decide: async (signal) => {
-        if (!isCurrent() || signal.aborted || this.#active) return null;
+      decide: async (signal, queue) => {
+        const canReview = () => isCurrent() && (queue?.isCurrentHead() ?? true);
+        if (!canReview() || signal.aborted || this.#active) return null;
+        const previousStop = queue?.previousStop ?? this.#closing;
         const deadline = new AbortController();
         const stop = AbortSignal.any([this.#lifetime.signal, signal, deadline.signal]);
         this.#active = stop;
-        const timer = setTimeout(() => {
-          if (this.#active !== stop) return;
-          // A request can time out waiting for a stop without disabling future reviews.
-          if (this.#closing) deadline.abort();
-          else this.close();
-        }, this.options.timeoutMs ?? 60_000);
+        // Time out this attempt, not the source Turn. A later head still needs confirmation of stop.
+        const timer = setTimeout(() => deadline.abort(), this.options.timeoutMs ?? 60_000);
         let onStop!: () => void;
         const stopped = new Promise<null>((resolve) => {
           onStop = () => {
@@ -91,10 +99,16 @@ export class WithMateApprovalReviewTurn {
         });
         stop.addEventListener("abort", onStop, { once: true });
         try {
-          const outcome = await Promise.race([this.#review(request, nativeReview.operation, stop, isCurrent), stopped]);
-          return !stop.aborted && isCurrent() ? outcome : null;
+          const review = async () => {
+            if (previousStop) await previousStop;
+            if (stop.aborted || !canReview()) return null;
+            this.#closing = undefined;
+            return this.#review(request, nativeReview.operation, stop, canReview, queue?.onStopping);
+          };
+          const outcome = await Promise.race([review(), stopped]);
+          return !stop.aborted && canReview() ? outcome : null;
         } catch {
-          if (this.#active === stop) this.close();
+          if (this.#active === stop) this.#retireConversation();
           return null;
         } finally {
           clearTimeout(timer);
@@ -119,20 +133,21 @@ export class WithMateApprovalReviewTurn {
     // A replacement may start only after this conversation (including an in-progress open) is stopped.
     this.#closing = conversation.ready.then((reviewer) => reviewer.close(), () => undefined);
     void this.#closing.catch(() => undefined);
+    conversation.onStopping?.(this.#closing);
     conversation.controller.abort();
   }
 
-  async #review(request: LiveApprovalRequest, operation: unknown, signal: AbortSignal, isCurrent: () => boolean): Promise<LiveApprovalDecision | null> {
+  async #review(request: LiveApprovalRequest, operation: unknown, signal: AbortSignal, isCurrent: () => boolean,
+    onStopping?: ApprovalReviewQueueContext["onStopping"],
+  ): Promise<LiveApprovalDecision | null> {
     const prompt = JSON.stringify({ source: this.options.source, turnId: this.options.turnId,
       workspacePath: this.options.workspacePath, pendingOperation: { ...request, operation } });
     // Never review a truncated operation. The original manual approval remains available.
     if (Buffer.byteLength(prompt) > 128 * 1024 || prompt.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)) return null;
-    if (this.#closing) await this.#closing;
     if (signal.aborted || !isCurrent()) return null;
-    this.#closing = undefined;
     if (!this.#conversation) {
       const controller = new AbortController();
-      this.#conversation = { controller, ready: Promise.resolve().then(() => this.options.open(controller.signal)) };
+      this.#conversation = { controller, ready: Promise.resolve().then(() => this.options.open(controller.signal)), onStopping };
     }
     const conversation = await this.#conversation.ready;
     if (signal.aborted || !isCurrent()) return null;
