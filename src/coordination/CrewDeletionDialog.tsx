@@ -33,13 +33,18 @@ export function CrewDeletionDialog({
   const [revision, setRevision] = useState(0);
   const generation = useRef(0);
   const pendingDelete = useRef(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const cancel = () => {
+    if (!pendingDelete.current) onClose();
+  };
   const retry = useCallback(() => {
     generation.current += 1;
     setRevision((value) => value + 1);
   }, []);
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open: true,
-    onClose,
+    onClose: cancel,
+    initialFocusRef: cancelRef,
   });
   useEffect(() => {
     const current = ++generation.current;
@@ -99,6 +104,7 @@ export function CrewDeletionDialog({
   const remove = async () => {
     if (pendingDelete.current || loading || !status?.allowed || error) return;
     pendingDelete.current = true;
+    dialogRef.current?.focus();
     setDeleting(true);
     try {
       await api.deleteSession(sessionId);
@@ -115,25 +121,29 @@ export function CrewDeletionDialog({
   };
   return createPortal(
     <LaunchDialogShell
-      onClose={onClose}
+      onClose={cancel}
       dialogRef={dialogRef}
+      dialogTabIndex={-1}
       onKeyDown={handleDialogKeyDown}
       ariaLabel="Delete Crew"
+      className="launch-modal crew-deletion-modal"
+      dialogClassName="crew-deletion-dialog"
       closeOnBackdropClick={false}
       showDismissControl={false}
       footer={
         <>
           <button
+            ref={cancelRef}
             type="button"
-            className="launch-toggle"
+            className="drawer-toggle compact secondary"
             disabled={deleting}
-            onClick={onClose}
+            onClick={cancel}
           >
             Cancel
           </button>
           <button
             type="button"
-            className="launch-toggle danger"
+            className="drawer-toggle compact danger"
             disabled={deleting || loading || !status?.allowed || Boolean(error)}
             aria-busy={deleting}
             onClick={() => void remove()}
@@ -145,21 +155,22 @@ export function CrewDeletionDialog({
         </>
       }
     >
-      <p>
-        Delete the entire Crew rooted at “{title}”? All descendant Sessions,
-        their Auxiliary conversations, Coordination records, and Session Graph
-        will be deleted. Workspaces are kept.
-      </p>
+      <h2>Delete Crew</h2>
+      <p className="crew-deletion-target">{title}</p>
+      <div>
+        <p>All Sessions, Auxiliary conversations, Coordination records, and Session Graph.</p>
+        <p>Workspaces are kept.</p>
+      </div>
       {loading ? <LoadingIndicator label="Checking Crew deletion" /> : null}
       {error ? <LoadError message={error} onRetry={retry} /> : null}
       {status?.blockers.length ? (
-        <ul>
+        <ul className="crew-deletion-blockers">
           {status.blockers.map((blocker) => (
             <li key={`${blocker.kind}:${blocker.id}`}>
               <p>{blocker.message}</p>
               {blocker.kind === "coordination" ? (
                 <button
-                  className="launch-toggle"
+                  className="drawer-toggle compact secondary"
                   type="button"
                   onClick={() => void openBlocker(blocker)}
                 >
@@ -170,9 +181,12 @@ export function CrewDeletionDialog({
           ))}
         </ul>
       ) : null}
-      {!loading && !error ? (
-        <button className="launch-toggle" type="button" onClick={retry}>
-          Refresh Deletion Status
+      {!loading && !error && status && !status.allowed ? (
+        <button className="drawer-toggle compact secondary crew-deletion-refresh" type="button" onClick={() => {
+          cancelRef.current?.focus();
+          retry();
+        }}>
+          Refresh Status
         </button>
       ) : null}
     </LaunchDialogShell>,

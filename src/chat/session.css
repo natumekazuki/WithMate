@@ -4606,3 +4606,67 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   flex-wrap: wrap;
   align-items: center;
 }
+
+.crew-deletion-modal {
+  padding: 16px;
+  backdrop-filter: none;
+}
+
+.crew-deletion-dialog {
+  width: min(480px, 100%);
+  max-height: calc(100vh - 32px);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.crew-deletion-dialog .launch-panel.minimal {
+  display: grid;
+  gap: 10px;
+  padding: 20px 20px 0;
+}
+
+.crew-deletion-dialog :is(h2, p) {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.crew-deletion-dialog h2 {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.crew-deletion-target {
+  font-weight: 700;
+}
+
+.crew-deletion-blockers {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 20px;
+}
+
+.crew-deletion-blockers .drawer-toggle {
+  margin-block-start: 6px;
+}
+
+.crew-deletion-refresh {
+  justify-self: start;
+}
+
+.crew-deletion-dialog .launch-dialog-foot {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.crew-deletion-dialog .drawer-toggle.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.crew-deletion-dialog .drawer-toggle.danger {
+  color: #fecaca;
+}

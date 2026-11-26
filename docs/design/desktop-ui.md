@@ -481,7 +481,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 表示中の最新回答は、回答receiptと保存済み起票元identityに対応する受付配送状態を取得する。受付completedをTurn全体の完了と同一視せず、Turnの失敗・取消・配送の結果不明や回答の利用を区別する。開始入力が一致し、receiptとそのTurnが同じ実行の失敗を表す場合は`Turn Failed`と一度だけ表示する。追加配送自身の失敗はTurnの失敗と別に示す。保存済みTurnの内容は起票元の会話を開いて確認し、右ペインに出力viewerを重ねない。取得失敗は不明として再取得できる
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
-- 通常Sessionの起点headerに`Delete Crew`を置く。確認dialogは起点・全通常子孫・各Mainの全Auxiliaryを対象とし、Workspace保持と削除範囲を示す。保存側のCrew全体の削除可否を取得し、未対応Coordinationの理由と対象への移動を表示する。回答・解決・取り下げ後の更新で可否を再取得し、受理済みqueue等の拒否理由も保持する。削除そのものはtransactionで再検証する
+- 通常Sessionの起点headerに`Delete Crew`を置く。確認dialogは起点のタイトル、Crew全体の削除範囲（起点・全通常子孫・各Mainの全Auxiliary、Coordination、Session Graph）とWorkspaceを残すことだけを示す。footerは左に`Cancel`、右に`Delete Crew`を配置し、初期focusは`Cancel`。確定前は`Cancel`／`Escape`で削除せず閉じ、確定要求の処理中は閉鎖と重複要求を防ぐ。保存側のCrew全体の削除可否を取得し、拒否時には理由・必要なCoordinationへの移動・可否の再取得を残す。Coordinationや実行状態の更新で再取得し、受理済みqueue等の拒否理由も保持する。削除そのものはtransactionで再検証する
 - 自分自身の非実行Standaloneではheaderの`Change Role…`から、アプリ内dialogで対象名と変更先`Overall Coordinator`を短く確認してRoleを変更できる。CancelまたはEscapeでは変更せず、変更中は重複操作を止め、失敗時はdialog内から詳細確認・再試行できる。実際のIPC送信Window・mainFrame・保存identity・非実行条件をMainで検証し、既存会話・Workspace・Provider threadを維持してTurnを起動しない
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
