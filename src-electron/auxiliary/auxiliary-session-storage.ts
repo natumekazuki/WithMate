@@ -446,11 +446,7 @@ export class AuxiliarySessionStorage {
       db.prepare(`UPDATE auxiliary_sessions SET run_state = ?,
         thread_id = ?, preview = ?, updated_at = ? WHERE id = ?`)
         .run(input.runState, input.threadId, input.preview, input.updatedAt, current.id);
-      const result = db.prepare(`UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ?, thread_id = ?,
-        error_summary = ?, completed_at = ?, updated_at = ? WHERE id = ? AND session_id IS NULL
-        AND auxiliary_session_id = ? AND phase = 'running'`).run(commit.phase, commit.assistantMessageSeq,
-        commit.threadId, commit.errorMessage, commit.completedAt, commit.completedAt, commit.turnId, current.id);
-      if (Number(result.changes) !== 1) throw new Error(`Auxiliary turn terminal commit target mismatch: ${commit.turnId}`);
+      writeSessionTurnTerminalCommit(db, commit, "auxiliary");
       const queueResult = db.prepare(`UPDATE session_turn_queue_v6 SET state = ?, reason = ?, updated_at = ?
         WHERE auxiliary_session_id = ? AND session_id = ? AND incarnation_id = ? AND turn_id = ?
           AND state = 'running' AND input_turn_id IS NULL
