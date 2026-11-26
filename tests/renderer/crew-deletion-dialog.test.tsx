@@ -9,10 +9,10 @@ import type { CrewDeletionStatus } from "../../src-shared/session/session-crew-d
 
 // @test-value v2
 // kind = "contract"
-// claim = "Crew削除確認はCancelに初期focusを置き、許可後もCancelでは削除せず、明示Deleteだけで削除する。相談解決後も残ったqueueの拒否は表示する"
+// claim = "Crew削除確認は対象名を含む可視の問いを読み上げ名に使う。初期focusはCancel、Tabはdialog内で循環し、CancelとEscapeは削除せず起点へfocusを戻す。相談解決後もqueueの拒否を示し、許可後の明示Deleteだけで削除する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md 通常Sessionの起点headerのDelete Crew" }
-// fault = "危険側に初期focusを置く、Cancelで削除する、相談表示の消失でqueueの拒否を見落とす、または可否更新だけで自動削除する"
-// observable = "CancelのactiveElement、取消callbackと削除呼出数、各blocker表示とDelete Crewのdisabled、明示削除後の完了callback"
+// fault = "読み上げ名から対象名が落ちる、危険側に初期focusを置く、Tabでdialog外に出る、取消で削除するかfocusが戻らない、相談表示の消失でqueueの拒否を見落とす、または可否更新だけで自動削除する"
+// observable = "可視見出しの対象名とdialogの参照先、初期・Tab循環・取消後のactiveElement、端点でのTab既定動作の抑止、取消callbackと削除呼出数、各blocker表示とDelete Crewのdisabled、明示削除後の完了callback"
 // observation_boundary = "component-behavior"
 // scope = "CrewDeletionDialogの保存statusと削除操作"
 // lifecycle = "permanent"
@@ -44,6 +44,13 @@ test("Crew deletion keeps remaining queue blockers after Coordination resolves",
   }));
   const action = (name: string) => [...dom.window.document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent?.trim() === name)!;
   const deleteButton = () => action("Delete Crew");
+  const pressKey = (key: string, shiftKey = false) => {
+    const event = new dom.window.KeyboardEvent("keydown", {
+      key, shiftKey, bubbles: true, cancelable: true,
+    });
+    dom.window.document.activeElement!.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
   try {
     opener.focus();
     const originalSetTimeout = dom.window.setTimeout;
@@ -75,8 +82,22 @@ test("Crew deletion keeps remaining queue blockers after Coordination resolves",
     await act(async () => changed());
     assert.equal(deleteButton().disabled, false);
     assert.equal(deletes, 0);
-    await act(async () => action("Cancel").click());
+    const dialog = dom.window.document.querySelector("[role=dialog]")!;
+    const question = dialog.querySelector("h1, h2, h3, h4, h5, h6, [role=heading]")!;
+    assert.match(question.textContent ?? "", /\bRoot\b/);
+    assert.equal(dom.window.document.getElementById(dialog.getAttribute("aria-labelledby")!), question);
+    await act(async () => { assert.equal(pressKey("Tab", true), true); });
+    assert.equal(dom.window.document.activeElement, deleteButton());
+    await act(async () => { assert.equal(pressKey("Tab"), true); });
+    assert.equal(dom.window.document.activeElement, action("Cancel"));
+    await act(async () => pressKey("Escape"));
     assert.equal(closes, 1);
+    assert.equal(deletes, 0);
+    assert.equal(dom.window.document.querySelector("[role=dialog]"), null);
+    assert.equal(dom.window.document.activeElement, opener);
+    await act(async () => render());
+    await act(async () => action("Cancel").click());
+    assert.equal(closes, 2);
     assert.equal(deletes, 0);
     assert.equal(dom.window.document.querySelector("[role=dialog]"), null);
     assert.equal(dom.window.document.activeElement, opener);
