@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
+import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
 import type { LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { SessionTurnNotificationService } from "../../src-electron/session/session-turn-notification-service.js";
@@ -155,10 +156,10 @@ test("承認公開から解決までを通知の有効期間とし通知失敗�
 
 // @test-value v2
 // kind = "contract"
-// claim = "未公開要求は通知せず、通知hookの例外でも公開済み承認要求の操作を維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications" }
-// fault = "live stateが存在しない要求を通知するか通知hook例外でdecision待機を壊す"
-// observable = "通知callback回数、live要求とapproveの返却値"
+// claim = "従来nativeの未公開要求は通知せず、observerの有無・障害で戻り値を変えない。公開済み本人応答だけmanualと報告する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#windows-session-notifications; docs/design/session-run-lifecycle.md#sessionapprovalservice" }
+// fault = "未公開を通知・manual扱いするか、observerの有無・通知や観測hookの例外で従来の承認を失う"
+// observable = "通知callback回数、live要求、approveの返却値とmanual／blocked報告"
 // observation_boundary = "public-boundary"
 // scope = "SessionApprovalService notification publication and failure boundary"
 // lifecycle = "permanent"
@@ -166,9 +167,10 @@ test("承認公開から解決までを通知の有効期間とし通知失敗�
 // distinction = "通知service内部の配送失敗とは異なる、公開境界のhook例外を検証する"
 // @end-test-value
 test("未公開の承認を通知せずhook例外でも公開済みの判断を受け付ける", async () => {
-  for (const publish of [false, true]) {
+  for (const [publish, observe] of [[false, false], [false, true], [true, true]] as const) {
     let state = createLiveRunState();
     let notifications = 0;
+    const sources: ApprovalDecisionSource[] = [];
     const service = new SessionApprovalService({
       updateLiveSessionRun: (_id, recipe) => publish ? (state = recipe(state)) : null,
       notifyApproval: () => { notifications += 1; throw new Error("notification hook failed"); },
@@ -176,20 +178,24 @@ test("未公開の承認を通知せずhook例外でも公開済みの判断を�
     const pending = service.waitForLiveApprovalDecision("session-1", {
       requestId: "approval", provider: "codex", kind: "tool", title: "Permission",
       summary: "Request", decisionMode: "direct-decision",
-    }, new AbortController().signal);
+    }, new AbortController().signal, undefined, observe ? (source) => {
+      sources.push(source);
+      throw new Error("decision observer failed");
+    } : undefined);
     assert.equal(notifications, publish ? 1 : 0);
     service.resolveLiveApproval("session-1", "approval", "approve");
     assert.equal(await pending, "approve");
+    assert.deepEqual(sources, observe ? [publish ? "manual" : "blocked"] : []);
     assert.equal(state.approvalRequest, null);
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "会話ごとのFIFO先頭だけを公開・通知し、重複要求は同じdecisionを共有し別会話は独立に解決する"
+// claim = "会話ごとのFIFO先頭だけを公開・通知し、重複要求は同じdecisionとsourceを共有し別会話は独立に解決する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#sessionapprovalservice" }
-// fault = "後続要求が先頭のresolverを上書きするか、重複callbackを取り残すか、別会話の判断を混ぜる"
-// observable = "live request ID、公開・通知列、共有Promise、全callbackのdecisionとstale応答拒否"
+// fault = "後続が先頭を上書きする、同じobserverへのsourceが重複する／別observerが結果を得られない、または別会話の判断を混ぜる"
+// observable = "live request ID、公開・通知列、共有Promise、全callbackのdecision、各observerのsource、stale応答拒否"
 // observation_boundary = "public-boundary"
 // scope = "SessionApprovalServiceの会話別FIFOと重複要求"
 // lifecycle = "permanent"
@@ -210,15 +216,20 @@ test("承認FIFOは重複callbackの判断を共有しMainとAuxを独立に進�
     },
     notifyApproval: (_id, id, signal) => { notified.push({ id, signal }); },
   });
-  const first = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal);
-  const second = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal);
-  const queuedDuplicate = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal);
-  const duplicate = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal);
+  const sources: string[] = [];
+  const firstObserver = async (source: ApprovalDecisionSource) => { sources.push(`first:${source}`); throw new Error("observer rejected"); };
+  const first = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal, undefined, firstObserver);
+  const second = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal, undefined,
+    (source) => { sources.push(`second:${source}`); });
+  const queuedDuplicate = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal, undefined,
+    (source) => { sources.push(`queued-duplicate:${source}`); });
+  const duplicate = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal, undefined, firstObserver);
   const auxiliary = service.waitForLiveApprovalDecision("aux", approval("auxiliary"), new AbortController().signal);
   assert.equal(first, duplicate);
   assert.equal(second, queuedDuplicate);
   assert.deepEqual(published, ["main:first", "aux:auxiliary"]);
   assert.deepEqual(notified.map((item) => item.id), ["first", "auxiliary"]);
+  assert.deepEqual(sources, []);
   assert.throws(() => service.resolveLiveApproval("main", "second", "approve"), /no longer exists/);
   service.resolveLiveApproval("main", "first", "approve");
   assert.equal(states.get("main")!.approvalRequest?.requestId, "second");
@@ -230,6 +241,7 @@ test("承認FIFOは重複callbackの判断を共有しMainとAuxを独立に進�
   assert.equal(states.get("main")!.approvalRequest?.requestId, "second");
   service.resolveLiveApproval("main", "second", "deny");
   assert.deepEqual(await Promise.all([first, duplicate, second, queuedDuplicate, auxiliary]), ["approve", "approve", "deny", "deny", "deny"]);
+  assert.deepEqual(sources, ["first:manual", "second:manual", "queued-duplicate:manual"]);
   assert.ok([...states.values()].every((state) => state.approvalRequest === null));
   assert.ok(notified.every((item) => item.signal.aborted));
 });

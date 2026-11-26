@@ -4,14 +4,17 @@ import { test } from "node:test";
 import type { LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
 
 const source = { kind: "main", sessionId: "source", incarnationId: "source-generation" } as const;
 const allow = { decision: "allow_once", reason: "The saved request authorizes this operation." };
 const deny = { decision: "deny", reason: "The saved request prohibits this operation." };
+const ask = { decision: "ask_user", reason: "The user must choose between two authorized options." };
 
 function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeoutMs?: number, provider: {
   open?(signal: AbortSignal): Promise<void>;
   close?(): Promise<void>;
+  publish?: boolean;
 } = {}) {
   const inputs = new ApprovalReviewInputFence();
   const stats = { opened: 0, closed: 0 };
@@ -19,8 +22,10 @@ function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeo
     usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
   const publications: string[] = [];
   const notifications: string[] = [];
+  const sources: Array<[string, ApprovalDecisionSource]> = [];
   const approvals = new SessionApprovalService({
     updateLiveSessionRun(_id, update) {
+      if (provider.publish === false) return null;
       const next = update(state);
       if (next.approvalRequest && next.approvalRequest !== state.approvalRequest) {
         publications.push(next.approvalRequest.requestId);
@@ -52,17 +57,19 @@ function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeo
       },
     });
     return {
-      wait(id: string, signal?: AbortSignal, automatic = true) {
+      wait(id: string, signal?: AbortSignal, automatic: boolean | null = true, operation: unknown = { command: `echo ${id}`, target: "workspace" }) {
         const request: LiveApprovalRequest = { requestId: id, kind: "shell", provider: "copilot", title: "Run", summary: "Test operation", decisionMode: "direct-decision" };
-        const native = { operation: { command: `echo ${id}`, target: "workspace" }, isCurrent: () => operationCurrent };
+        const native = { operation, isCurrent: () => operationCurrent };
         return approvals.waitForLiveApprovalDecision(source.sessionId, request,
-          signal ? AbortSignal.any([owner.signal, signal]) : owner.signal, automatic ? turn.pending(request, native) : undefined);
+          signal ? AbortSignal.any([owner.signal, signal]) : owner.signal,
+          automatic ? turn.pending(request, native) : automatic === null ? null : undefined,
+          (kind) => { sources.push([id, kind]); });
       },
       cancel: () => owner.abort(), close: () => turn.close(),
       changePolicy: () => { policyCurrent = false; }, supersedeNativeRequest: () => { operationCurrent = false; },
     };
   }
-  return { run, stats, inputs, publications, notifications, head: () => state.approvalRequest?.requestId,
+  return { run, stats, inputs, publications, notifications, sources, head: () => state.approvalRequest?.requestId,
     manual: (id: string, decision: "approve" | "deny") => approvals.resolveLiveApproval(source.sessionId, id, decision) };
 }
 
@@ -100,23 +107,22 @@ test("approval review reuses only conversation context inside a source turn", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "本人確認・不正結果・Provider利用不能・失敗・timeoutまで手動操作を受け付けず、同じ先頭のみ一度公開・通知する"
+// claim = "Provider利用不能・失敗・不正結果・根拠不足・期限切れでは公開せずblockedのdenyとなり、公開できないask_userにも手動応答の権限はない"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
-// fault = "審査中に手動解決する、自然文等で自動許可する、またはfallbackの公開・通知を欠落・重複する"
-// observable = "判定前の手動応答拒否と公開・通知履歴、fallback後の同じ手動先頭とdecision、期限切れでのclose呼出"
+// fault = "審査中や失敗を手動経路に落とす、失敗を審査役の判定と識別しない、または根拠が欠けても審査役へ渡す"
+// observable = "手動応答拒否、公開・通知履歴、decisionとsource、根拠不足時のreviewer起動不在、期限切れでのclose呼出"
 // observation_boundary = "consumer"
-// scope = "WithMate審査結果の検証と手動承認への復帰"
+// scope = "WithMate審査不能時と公開不成立時のfail-closed境界"
 // lifecycle = "permanent"
 // distinction = "結果schemaや終端のdecisionだけでは公開・通知を開始するタイミングと手動認可境界を確認できない"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("unusable review outcomes publish and notify only the original head", { timeout: 2000 }, async (t) => {
+test("unusable review outcomes block without publishing the request", { timeout: 2000 }, async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const cases = [
     () => "allow_once",
     () => ({ ...allow, extra: "not in contract" }),
-    () => ({ ...allow, reason: " " }),
-    () => ({ decision: "ask_user", reason: "Uncertain" }),
+    () => ({ ...ask, reason: " " }),
     () => { throw new Error("Provider failed"); },
   ];
   for (const review of cases) {
@@ -128,11 +134,8 @@ test("unusable review outcomes publish and notify only the original head", { tim
     assert.deepEqual([run.publications, run.notifications], [[], []]);
     assert.throws(() => run.manual("pending", "approve"), /no longer exists/);
     finish.resolve();
-    await setImmediate();
-    assert.equal(run.head(), "pending");
-    assert.deepEqual([run.publications, run.notifications], [["pending"], ["pending"]]);
-    run.manual("pending", "deny");
     assert.equal(await decision, "deny");
+    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["pending", "blocked"]]]);
     turn.close();
   }
   const unavailable = fixture(() => assert.fail("Unavailable reviewer cannot review"), undefined, {
@@ -140,11 +143,20 @@ test("unusable review outcomes publish and notify only the original head", { tim
   });
   const unavailableTurn = unavailable.run("42");
   const unavailableDecision = unavailableTurn.wait("unavailable");
-  await setImmediate();
-  assert.deepEqual([unavailable.publications, unavailable.notifications], [["unavailable"], ["unavailable"]]);
-  unavailable.manual("unavailable", "deny");
   assert.equal(await unavailableDecision, "deny");
+  assert.deepEqual([unavailable.publications, unavailable.notifications, unavailable.sources], [[], [], [["unavailable", "blocked"]]]);
   unavailableTurn.close();
+  const missing = fixture(() => assert.fail("Missing operation cannot be reviewed"));
+  const missingTurn = missing.run("42");
+  assert.equal(await missingTurn.wait("missing", undefined, true, null), "deny");
+  assert.equal(missing.stats.opened, 0);
+  assert.deepEqual([missing.publications, missing.notifications, missing.sources], [[], [], [["missing", "blocked"]]]);
+  missingTurn.close();
+  const unpublishable = fixture(() => ask, undefined, { publish: false });
+  const unpublishableTurn = unpublishable.run("42");
+  assert.equal(await unpublishableTurn.wait("unpublishable"), "deny");
+  assert.deepEqual([unpublishable.publications, unpublishable.notifications, unpublishable.sources], [[], [], [["unpublishable", "blocked"]]]);
+  unpublishableTurn.close();
   const closed = Promise.withResolvers<void>();
   const run = fixture(() => closed.promise, 100);
   const turn = run.run("42");
@@ -152,28 +164,25 @@ test("unusable review outcomes publish and notify only the original head", { tim
   await setImmediate();
   assert.deepEqual([run.publications, run.notifications], [[], []]);
   t.mock.timers.tick(100);
-  await setImmediate();
-  assert.equal(run.head(), "timeout");
-  assert.deepEqual([run.publications, run.notifications], [["timeout"], ["timeout"]]);
-  assert.equal(run.stats.closed, 1);
-  run.manual("timeout", "deny");
   assert.equal(await decision, "deny");
+  assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["timeout", "blocked"]]]);
+  assert.equal(run.stats.closed, 1);
   closed.resolve();
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "元Turn取消で審査中と待機中の要求を公開せず全て拒否し、追加入力・設定変更・native要求の鮮度喪失後の許可も適用しない"
+// claim = "元Turn取消で審査中と待機中の要求を公開せず全て拒否し、追加入力・設定変更・native要求の鮮度喪失後の許可とask_userも適用しない"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
 // fault = "進行中に対象や根拠が変化した判定を適用する、または別のpendingに付け替える"
-// observable = "競合後の手動先頭と公開・通知履歴、元と待機中の決定、元Turn取消での会話終了"
+// observable = "競合後の公開・通知履歴、元と待機中の決定とsource、元Turn取消での会話終了"
 // observation_boundary = "consumer"
 // scope = "WithMate審査と承認キューの競合"
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // distinction = "承認キューの手動FIFO検査では審査結果が非同期で解決する順序を観測できない"
 // @end-test-value
-test("a stale allow cannot settle an invalidated pending", { timeout: 2000 }, async () => {
+test("stale verdicts block without exposing an invalidated request", { timeout: 2000 }, async () => {
   for (const race of ["cancel", "input", "settings", "native"] as const) {
     const result = Promise.withResolvers<unknown>();
     const started = Promise.withResolvers<void>();
@@ -195,18 +204,11 @@ test("a stale allow cannot settle an invalidated pending", { timeout: 2000 }, as
     if (race === "input") await run.inputs.during(() => undefined);
     if (race === "settings") turn.changePolicy();
     if (race === "native") turn.supersedeNativeRequest();
-    result.resolve(allow);
-    await setImmediate();
-    if (race !== "cancel") {
-      assert.equal(run.head(), "a");
-      assert.deepEqual([run.publications, run.notifications], [["a"], ["a"]]);
-      run.manual("a", "deny");
-    } else {
-      assert.deepEqual([run.publications, run.notifications], [[], []]);
-      assert.deepEqual(reviewed, ["a"]);
-    }
+    result.resolve(race === "input" || race === "cancel" ? ask : allow);
     assert.equal(await first, "deny");
-    assert.equal(run.head(), undefined);
+    await setImmediate();
+    assert.deepEqual([run.publications, run.notifications, reviewed], [[], [], ["a"]]);
+    assert.deepEqual(run.sources, race === "cancel" ? [["a", "blocked"], ["b", "blocked"], ["c", "blocked"]] : [["a", "blocked"]]);
     if (race === "cancel") assert.equal(run.stats.closed, 1);
     turn.close();
   }
@@ -217,7 +219,7 @@ test("a stale allow cannot settle an invalidated pending", { timeout: 2000 }, as
 // claim = "Aの審査中のB/C到着やBの取消だけではAの有効な許可・拒否を失効させず、手動公開・通知なしに保留先頭を順に審査する"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認; docs/design/withmate-auto-review.md#審査会話と履歴の境界" }
 // fault = "後着でAの判定を捨てる、後続取消がAを停止する、後続を追い越す、または自動判断だけで公開・通知する"
-// observable = "審査要求ID列、各承認callbackの決定、審査会話の開閉回数、live承認公開と通知の履歴"
+// observable = "審査要求ID列、各承認callbackの決定とsource、審査会話の開閉回数、live承認公開と通知の履歴"
 // observation_boundary = "consumer"
 // scope = "WithMate仲介審査を使う同一Turnの承認FIFO"
 // lifecycle = "permanent"
@@ -263,6 +265,9 @@ test("queued reviews retain the current decision despite later arrivals and queu
       assert.equal(await second, cancelB ? "deny" : "approve");
       assert.equal(await third, "deny");
       assert.deepEqual(calls, cancelB ? ["a", "c"] : ["a", "b", "c"]);
+      assert.deepEqual(run.sources, cancelB
+        ? [["b", "blocked"], ["a", "reviewer"], ["c", "reviewer"]]
+        : [["a", "reviewer"], ["b", "reviewer"], ["c", "reviewer"]]);
       assert.deepEqual(run.stats, { opened: 1, closed: 0 });
       assert.deepEqual(run.publications, []);
       assert.deepEqual(run.notifications, []);
@@ -275,47 +280,56 @@ test("queued reviews retain the current decision despite later arrivals and queu
 
 // @test-value v2
 // kind = "contract"
-// claim = "手動必須・入力が古い・ask_userの後続先頭は手動のままになり、未解決中は次の審査を始めない"
+// claim = "経路不成立・古い入力の先頭は公開せず拒否し、有効なask_userの先頭だけを一度公開する。その解決まで後続を審査しない"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
 // fault = "後続に先行の適格性を引き継ぐ、開始時に古い入力を使う、本人確認の結果を再試行する、または手動先頭を追い越す"
-// observable = "審査入力の要求ID列、手動先頭の公開・通知履歴と判断、解決後の最終decision"
+// observable = "審査入力の要求ID列、手動先頭の公開・通知履歴、各要求のdecisionとsource"
 // observation_boundary = "consumer"
-// scope = "WithMate仲介審査キューの昇格時の適格性と手動fallback"
+// scope = "WithMate仲介審査キューの昇格時の鮮度と有効なask_userの保留"
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("a manual head blocks later review without retrying its own", { timeout: 2000 }, async () => {
-  for (const blocker of ["ineligible", "stale input", "ask_user"] as const) {
+test("only a valid ask_user holds the head for a human decision", { timeout: 2000 }, async () => {
+  for (const blocker of ["ineligible", "stale input", "ask_user", "ask_user canceled"] as const) {
     const aResult = Promise.withResolvers<unknown>();
     const calls: string[] = [];
+    const asks = blocker.startsWith("ask_user");
+    const b = new AbortController();
     const run = fixture((prompt) => {
       const id = JSON.parse(prompt).pendingOperation.requestId as string;
       calls.push(id);
-      return id === "a" ? aResult.promise : id === "b" ? { decision: "ask_user", reason: "Uncertain" } : allow;
+      return id === "a" ? aResult.promise : id === "b" ? ask : allow;
     });
     const turn = run.run("42");
     try {
       const manualPredecessor = blocker === "stale input";
       const first = turn.wait("a", undefined, !manualPredecessor);
       await setImmediate();
-      const second = turn.wait("b", undefined, blocker !== "ineligible");
+      const second = turn.wait("b", b.signal, blocker === "ineligible" ? null : true);
       if (blocker === "stale input") run.inputs.invalidate();
       const third = turn.wait("c");
       if (manualPredecessor) run.manual("a", "deny");
       else aResult.resolve(deny);
       assert.equal(await first, "deny");
       await setImmediate();
-      const expectedCalls = blocker === "ask_user" ? ["a", "b"] : manualPredecessor ? [] : ["a"];
-      const expectedPublications = manualPredecessor ? ["a", "b"] : ["b"];
-      assert.deepEqual({ head: run.head(), calls },
-        { head: "b", calls: expectedCalls }, blocker);
-      assert.deepEqual([run.publications, run.notifications], [expectedPublications, expectedPublications]);
-      assert.throws(() => run.manual("c", "approve"), /no longer exists/);
-      run.manual("b", "deny");
-      assert.equal(await second, "deny");
+      const expectedCalls = asks ? ["a", "b"] : manualPredecessor ? [] : ["a"];
+      const expectedPublications = asks ? ["b"] : manualPredecessor ? ["a"] : [];
+      if (asks) {
+        assert.deepEqual({ head: run.head(), calls }, { head: "b", calls: expectedCalls }, blocker);
+        assert.deepEqual([run.publications, run.notifications], [["b"], ["b"]]);
+        assert.deepEqual(run.sources, [["a", "reviewer"]]);
+        assert.throws(() => run.manual("c", "approve"), /no longer exists/);
+        if (blocker === "ask_user canceled") b.abort();
+        else run.manual("b", "approve");
+      }
+      assert.equal(await second, blocker === "ask_user" ? "approve" : "deny");
       assert.equal(await third, "approve");
       assert.deepEqual(calls, [...expectedCalls, "c"], blocker);
       assert.deepEqual([run.publications, run.notifications], [expectedPublications, expectedPublications]);
+      assert.deepEqual(run.sources, [
+        ["a", manualPredecessor ? "manual" : "reviewer"],
+        ["b", blocker === "ask_user" ? "manual" : "blocked"], ["c", "reviewer"],
+      ]);
     } finally {
       turn.cancel();
     }
@@ -324,10 +338,10 @@ test("a manual head blocks later review without retrying its own", { timeout: 20
 
 // @test-value v2
 // kind = "contract"
-// claim = "実審査の失敗・期限切れはその要求だけを手動にし、解決と停止確認の後は同じTurnの次の適格な先頭を審査する"
+// claim = "実審査の失敗・期限切れはその要求を公開せず拒否し、停止確認の後は同じTurnの次の適格な先頭を審査する"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
-// fault = "失敗や期限切れで審査を重ねるか、Turn全体の審査を止めて残りの適格な要求を手動に固定する"
-// observable = "手動先頭、Providerへの要求ID列、旧会話の停止と後続のdecision"
+// fault = "失敗や期限切れを手動に落とす、旧停止未確認で審査を重ねる、または残りの適格な要求を審査しない"
+// observable = "公開・通知、Providerへの要求ID列、旧会話の停止と決定・source"
 // observation_boundary = "consumer"
 // scope = "WithMate仲介審査が失敗した同じTurnでの次の先頭"
 // lifecycle = "permanent"
@@ -352,11 +366,9 @@ test("review timeout and failure do not disable the next head in the same turn",
       if (failure === "timeout") t.mock.timers.tick(100);
       else aResult.reject(new Error("Provider failed"));
       await setImmediate();
-      assert.deepEqual({ head: run.head(), calls, closed: run.stats.closed }, { head: "a", calls: ["a"], closed: 1 }, failure);
-      run.manual("a", "deny");
       assert.equal(await first, "deny");
-      await setImmediate();
-      assert.deepEqual({ head: run.head(), calls }, { head: undefined, calls: ["a"] }, failure);
+      assert.deepEqual({ head: run.head(), calls, closed: run.stats.closed }, { head: undefined, calls: ["a"], closed: 1 }, failure);
+      assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"]]]);
       stopped.resolve();
       await setImmediate();
       assert.deepEqual(calls, ["a", "b"], failure);
@@ -374,7 +386,7 @@ test("review timeout and failure do not disable the next head in the same turn",
 // claim = "同じ会話の次Turnは旧審査の停止確認まで審査を起動せず、待機を取消または期限切れにしても古い結果を採用しない"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
 // fault = "Turn交代で停止待ちを捨てる、古い審査結果が現審査に干渉する、または待機の取消・期限切れ後に審査を開始する"
-// observable = "旧要求のdecision、審査会話の開閉、Providerに渡る要求ID列、新Turn内の承認先頭とdecision"
+// observable = "旧要求のdecision、審査会話の開閉、Providerに渡る要求ID列、新Turnの公開・通知と決定・source"
 // observation_boundary = "consumer"
 // scope = "同一会話の審査停止確認のTurn境界"
 // lifecycle = "permanent"
@@ -409,7 +421,8 @@ test("review shutdown remains a fence across turns in the same session", { timeo
         { head: undefined, calls: ["a"], opened: 1, closed: 1 }, action);
       if (action === "timeout") {
         t.mock.timers.tick(100);
-        await setImmediate();
+        assert.equal(await second, "deny");
+        assert.deepEqual([run.publications, run.notifications], [[], []]);
       } else if (action === "cancel") {
         nextRequest.abort();
         assert.equal(await second, "deny");
@@ -425,12 +438,13 @@ test("review shutdown remains a fence across turns in the same session", { timeo
         assert.equal(await second, "deny");
       } else {
         assert.deepEqual(calls, ["a"]);
-        assert.equal(run.head(), action === "timeout" ? "b" : undefined);
-        if (action === "timeout") run.manual("b", "deny");
+        assert.equal(run.head(), undefined);
         assert.equal(await second, "deny");
       }
       assert.equal(await current.wait("c"), "deny");
       assert.deepEqual(calls, action === "confirm" ? ["a", "b", "c"] : ["a", "c"]);
+      assert.deepEqual([run.publications, run.notifications], [[], []]);
+      assert.deepEqual(run.sources, [["a", "blocked"], ["b", action === "confirm" ? "reviewer" : "blocked"], ["c", "reviewer"]]);
     } finally {
       old.cancel();
       current.cancel();
@@ -559,16 +573,16 @@ test("cancellation during reviewer startup cannot leak the stale conversation in
 
 // @test-value v2
 // kind = "contract"
-// claim = "停止確認待ちの期限が過ぎた要求は手動のまま、停止確認後に来た要求の審査は再開できる"
+// claim = "停止確認待ちが期限切れの要求は公開なしの拒否で決着し、停止確認後に来た要求の審査は再開できる"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認" }
 // fault = "未停止の審査と重ねて判定する、または停止待ちの期限切れで元Turnの残りの審査を無効にする"
-// observable = "停止待ちの期限前後の審査入力、保留要求の決定、停止確認後の審査入力"
+// observable = "停止待ちの期限前後の審査入力、公開・通知、保留要求の決定とsource、停止確認後の審査入力"
 // observation_boundary = "consumer"
-// scope = "WithMate仲介審査の停止未確認時の手動承認"
+// scope = "WithMate仲介審査の停止未確認時のfail-closed"
 // lifecycle = "permanent"
-// distinction = "停止が期限内に確認される場合だけでは、未確認時の手動承認と後続の回復を観測できない"
+// distinction = "停止が期限内に確認される場合だけでは、未確認時の拒否と後続の回復を観測できない"
 // @end-test-value
-test("unconfirmed reviewer shutdown leaves approval manual without disabling later reviews", { timeout: 2000 }, async (t) => {
+test("unconfirmed reviewer shutdown blocks the expired request but not later reviews", { timeout: 2000 }, async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const oldResult = Promise.withResolvers<unknown>();
   const oldStopped = Promise.withResolvers<void>();
@@ -586,19 +600,21 @@ test("unconfirmed reviewer shutdown leaves approval manual without disabling lat
     request.abort();
     assert.equal(await first, "deny");
     const next = turn.wait("b");
+    const decisions: string[] = [];
+    void next.then((decision) => { decisions.push(decision); });
     await setImmediate();
+    assert.deepEqual([decisions, calls, run.publications, run.notifications, run.sources],
+      [[], ["a"], [], [], [["a", "blocked"]]]);
     t.mock.timers.tick(100);
-    await setImmediate();
-    assert.equal(run.head(), "b");
+    assert.equal(await next, "deny");
+    assert.equal(run.head(), undefined);
     assert.deepEqual(calls, ["a"]);
-    assert.deepEqual([run.publications, run.notifications], [["b"], ["b"]]);
+    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"], ["b", "blocked"]]]);
     oldStopped.resolve();
     await setImmediate();
     assert.deepEqual(calls, ["a"]);
-    assert.equal(run.head(), "b");
-    assert.deepEqual([run.publications, run.notifications], [["b"], ["b"]]);
-    run.manual("b", "deny");
-    assert.equal(await next, "deny");
+    assert.equal(run.head(), undefined);
+    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"], ["b", "blocked"]]]);
 
     const later = turn.wait("c");
     await setImmediate();

@@ -8,8 +8,11 @@ import type { OpenCodeTransportOptions } from "../../src-electron/providers/open
 import { OpenCodeAdapter, buildOpenCodePermissions } from "../../src-electron/providers/opencode/opencode-adapter.js";
 import { resolveOpenCodeModelRef } from "../../src-electron/providers/opencode/opencode-model.js";
 import { buildOpenCodeElicitation } from "../../src-electron/providers/opencode/opencode-interactions.js";
-import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type ApprovalDecisionSource, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
+import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
@@ -99,29 +102,66 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
 
 // @test-value v2
 // kind = "contract"
-// claim = "OpenCodeの後着と別IDの解決は先頭の審査を失効させず、native応答は同じIDへ一回限りFIFOで返す"
+// claim = "OpenCodeの後着と別IDの解決は先頭審査を失効させず、実要求を仲介で別々に判定して同じnative IDへFIFOで返す。ask_userだけを手動公開する"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認; docs/design/provider-adapter.md#current-runtime (OpenCodeAdapterのnative承認)" }
-// fault = "別IDの到着・解決で審査中のAを無効にする、取消済みBに返答する、または決定を別IDへ返す"
-// observable = "審査callbackが受け取るnative IDと鮮度、native replyのID・会話・decision列"
+// fault = "別IDでAを失効させる、取消済みBを審査・応答する、別IDへ結果を適用する、または審査例外を手動へ回す"
+// observable = "審査役へ渡るnative ID・read対象列、公開・通知とsource、native replyのID・会話・decision列"
 // observation_boundary = "consumer"
-// scope = "OpenCodeAdapterのnative permission eventと仲介callbackの境界"
+// scope = "OpenCodeAdapter、WithMate仲介と承認キューの接続（native通信と審査先を合成）"
 // lifecycle = "permanent"
 // distinction = "共通FIFOのtestを通っても、OpenCode独自の全要求共通revisionでAを誤って失効できる"
 // risk_tags = ["authorization"]
 // @end-test-value
-it("OpenCode permission freshness belongs to the pending native request", { timeout: 2000 }, async () => {
+it("OpenCode read decisions from the broker reach only their native request", { timeout: 3000 }, async () => {
   const turn = input();
   const started = Promise.withResolvers<void>();
   const arrivals = Promise.withResolvers<void>();
   const lastReply = Promise.withResolvers<void>();
-  const checks: Array<[string, boolean]> = [];
+  const reviewed: Array<[string, string, string[]]> = [];
   const replies: Array<[string, string, string]> = [];
+  const sources: Array<[string, ApprovalDecisionSource]> = [];
+  const published: string[] = [];
+  const notified: string[] = [];
+  const manual = Promise.withResolvers<string>();
+  const owner = new AbortController();
+  turn.signal = owner.signal;
+  let state: LiveSessionRunState = { sessionId: turn.session.id, threadId: "", assistantText: "", steps: [],
+    backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+  const approval = new SessionApprovalService({
+    updateLiveSessionRun(_id, update) {
+      const next = update(state);
+      if (next.approvalRequest && next.approvalRequest !== state.approvalRequest) published.push(next.approvalRequest.summary);
+      return state = next;
+    },
+    notifyApproval(_id, requestId) {
+      notified.push(state.approvalRequest!.summary);
+      manual.resolve(requestId);
+    },
+  });
+  const reviewer = new WithMateApprovalReviewTurn({
+    turnId: "source-turn", source: { kind: "main", sessionId: turn.session.id, incarnationId: "incarnation" },
+    workspacePath: turn.session.workspacePath, signal: owner.signal, inputs: new ApprovalReviewInputFence(), policyCurrent: () => true,
+    open: async () => ({
+      close() {},
+      async review(prompt) {
+        const { pendingOperation } = JSON.parse(prompt);
+        const { id, action, resources } = pendingOperation.operation;
+        reviewed.push([id, action, resources]);
+        if (id === "a") { started.resolve(); await arrivals.promise; return { decision: "allow_once", reason: "Authorized read." }; }
+        if (id === "c") return { decision: "deny", reason: "Not authorized." };
+        if (id === "d") return { decision: "ask_user", reason: "The user must choose this input." };
+        throw new Error("Synthetic reviewer failure");
+      },
+    }),
+  });
   const run = fixture(turn, {
     async *permissionBurst() {
       yield event("permission.asked", { id: "a", sessionID: "child", action: "read", resources: ["a.txt"] });
       await started.promise;
       yield event("permission.asked", { id: "b", sessionID: "child", action: "read", resources: ["b.txt"] });
       yield event("permission.asked", { id: "c", sessionID: "child", action: "read", resources: ["c.txt"] });
+      yield event("permission.asked", { id: "d", sessionID: "child", action: "read", resources: ["d.txt"] });
+      yield event("permission.asked", { id: "e", sessionID: "child", action: "read", resources: ["e.txt"] });
       yield {
         id: crypto.randomUUID(),
         created: 1,
@@ -134,21 +174,35 @@ it("OpenCode permission freshness belongs to the pending native request", { time
   });
   run.client.permission.reply = async ({ sessionID, requestID, decision }) => {
     replies.push([sessionID, requestID, decision]);
-    if (requestID === "c") lastReply.resolve();
+    if (requestID === "e") lastReply.resolve();
   };
-  turn.onApprovalRequest = async (_request, _signal, review) => {
-    const { id } = review?.operation as { id: string };
-    if (id === "a") {
-      started.resolve();
-      await arrivals.promise;
-    }
-    const current = review?.isCurrent?.() === true;
-    checks.push([id, current]);
-    return id === "a" && current ? "approve" : "deny";
+  turn.onApprovalRequest = (request, signal, native) => {
+    assert.ok(signal && native);
+    const { id } = native.operation as { id: string };
+    return approval.waitForLiveApprovalDecision(turn.session.id, request, signal, reviewer.pending(request, native),
+      (source) => { sources.push([id, source]); });
   };
-  await run.adapter.runSessionTurn(turn, () => {});
-  assert.deepEqual(checks, [["a", true], ["c", true]]);
-  assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"]]);
+  const result = run.adapter.runSessionTurn(turn, () => {});
+  try {
+    const requestId = await Promise.race([manual.promise, result.then(() => assert.fail("Turn ended without asking for the current read"))]);
+    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]], ["d", "read", ["d.txt"]]]);
+    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"]]);
+    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"]]);
+    approval.resolveLiveApproval(turn.session.id, requestId, "approve");
+    await result;
+    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]],
+      ["d", "read", ["d.txt"]], ["e", "read", ["e.txt"]]]);
+    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"], ["d", "manual"], ["e", "blocked"]]);
+    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"], ["child", "d", "once"], ["child", "e", "reject"]]);
+  } finally {
+    owner.abort();
+    started.resolve();
+    arrivals.resolve();
+    lastReply.resolve();
+    await result.catch(() => undefined);
+  }
 });
 
 async function migrationFixture(turn: RunSessionTurnInput) {

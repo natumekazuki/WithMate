@@ -71,7 +71,9 @@ providerごとの差は次。
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
-  - `on-request` で承認を要する permission request は、Main Process の `onApprovalRequest` bridge を通して[WithMate Auto Review](withmate-auto-review.md)または手動承認で判断し、`approve / deny` を SDK `PermissionHandler` へ返す
+  - `on-request` の承認は Main Process の `onApprovalRequest` bridge を通す。実 `promptRequest` に対する SDK Assisted Permissions の `completed: requireApproval` は明示判断要求であり、それだけで本人専用にはならない。通常の分類 Read（実 prompt・本人必須・明示判断要求なし）はこの仲介を通らない
+  - [WithMate Auto Review](withmate-auto-review.md)に渡すのは、操作対象を特定できる完全な native 要求と実行 workspace、SDK から届いた prompt・判定文脈（仲介の認証情報は除去済み）。raw／prompt の `managedApprovalRequired`、sandbox 昇格、SDK 除外・失敗、判断根拠が不足する要求は審査に渡さない。Auto Review 中は本人必須の要求を実行せず、通常手動では人が実際に決着した場合だけ人間の応答とする。審査結果 `ask_user` の後の実回答も手動に属する
+  - SDK に返す一回限りの許可は `approve-once`。人間の許可・拒否だけを `human_response` として、拒否には `reject` を返す。WithMate の審査結果は SDK 内蔵 Assisted Permissions の判定ではなく `host_policy`。自動の拒否・応答不能は `user-not-available` で、人間が拒否したと扱わない。取消や出所不明も許可しない
   - turn送信前に`user_input.requested`と`elicitation.requested`のconsumer interestを登録し、通常終了時に解放する。取消時は専用CLI processの停止で破棄する。SDKのhandler callbackは併用せず、eventのrequest IDを回答まで保持する
   - `user_input.requested`は`kind: "question"`として共通質問UIへ中継する。選択肢は単一選択、`allowFreeform`省略時は自由回答可、選択肢なしはtext入力とし、`handlePendingUserInput`へ回答と`wasFreeform`を返す。Close／UI不在は空の回答で質問を終了し、turn自体は中断しない
   - `elicitation.requested`は同じ`onElicitationRequest` bridgeからform / URL UIへ中継し、`handlePendingElicitation`へ`accept / decline / cancel`を返す。変換できないfieldが1つでもあれば全体を`decline`し診断を残す。UI不在は`cancel`とし、不完全なformを受理しない。質問・elicitationの回答RPCの拒否・失敗はturn失敗として扱うが、取消cleanup開始後の切断は新たな回答失敗へ昇格させない。取消より先に発生した回答失敗は維持する
@@ -230,7 +232,7 @@ GUI・MCP・CLIでは `Auto Run / Auto Review / User / Safety Focused` の同じ
 
 Safety Focusedは承認不要の読取・nativeで既に許可された操作を止めず、実際に承認を求められれば読取／書込／shell等の種類にかかわらず拒否する。手動確認や自動審査は起動しない。一般の質問やその他の入力は承認と区別する。Copilot SDKの通常のpermission分類と、`promptRequest` や本人必須を示すmanaged／Assisted判定を区別する。Assisted通知の存在だけでは実確認ではなく、MCPの自己申告で実確認を許可しない。
 
-Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介が構成されていない／使用できない場合は共通UIで手動確認する。選択は書き換えない。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
+Copilot／OpenCodeのAuto Reviewでは、委譲可能な承認要求を設定した審査Providerへ渡す。有効な `ask_user` の先頭だけを共通UIに公開して本人に確認する。委譲できない、審査先が未構成または利用不能、審査結果が得られない場合は手動に切り替えず不許可にする。選択は書き換えない。Codex／Claudeのネイティブ審査と通常の手動モードはこの扱いの対象外。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
 
 既存の `untrusted` は従来の制限のまま（Codexのnative untrusted、Copilotのread-only分類）。新しい `safety-focused` に自動変換しない。Claudeの保存済み `accept-edits / dont-ask / plan` は対応する `acceptEdits / dontAsk / plan` を維持し、新規選択肢には出さない。旧 `allow-all / safety / provider-controlled` の読取時正規化と、保存履歴・捕捉済み受付、新規の初期値は変更しない。Claudeで使用中のnative permission modeが要求と異なる場合は失敗を通知する。
 
@@ -241,7 +243,7 @@ Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介�
 | 呼出元Turnの設定・条件 | 新規の異種子 |
 | --- | --- |
 | Auto Run／Safety Focused | それぞれ同じ方針を保存する。通常の実行や実承認は宛先のnativeルールに従い、権限を追加しない。 |
-| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。審査不能時の手動復帰は保存値を変えない。 |
+| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。仲介で審査できない場合は不許可にし、保存値は変えない。 |
 | 旧Copilot・OpenCodeの `on-request` でReviewer未指定 | 共通SettingsのOn/Offにかかわらず、Codex・Claudeの子は従来どおりnative User、仲介対応の子は未指定のまま。親を明示Userに変換しない。 |
 | Codex Sandbox | `danger-full-access` の親は異種に4択を渡せる。制限付きSandboxは非Codexに表せないので拒否。非CodexからCodexへは、親に保存された非適用の値を無視して `read-only` で開始する。 |
 | Copilotの選択済みCustom Agent | 捕捉した `customAgentName` が空白以外を含む場合、ツール制限を宛先で維持できるか確認できないため拒否する。名前から制限を推定せず、作成時の再探索・同名Agentへの置換はしない。 |
