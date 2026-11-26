@@ -53,6 +53,19 @@ stateDiagram-v2
 window は上の状態機械とは分離する。  
 `Running` 中に `Session Window` が閉じても、session state は Main Process 内で継続する。
 
+### 入力から読み返しまでの所有境界
+
+同じ会話の表示は、受付・実行・保存を一つの状態に置き換えず、各正本を同じ入力または応答に対応付ける。MainとAuxiliaryはこの境界を共有する。Mainの相手枠やALLは閲覧範囲であり、実行順や対象ownerにはしない。
+
+| 段階 | 正本・判断と引継ぎ |
+| --- | --- |
+| 入力・準備 | GUIはComposerのownerと編集revisionを捕捉する。通常Sendと直接Steerは同じ会話内で同時に草稿を消費しない。送信準備で捕捉が失効したら受付せず、受付開始後は画面選択と独立して元の要求を解決する。通常request IDの再照会は元入力に限り、後続の草稿は消さない。 |
+| 受付・予約 | Storage Workerのreceiptが受理の正本。GUIと通常Session間送信、明示再送は同じキューを使う。受付時入力・現在の予約編集・claimされた実行入力を区別する。未開始の取消・並べ替えは同一receiptを対象にし、表示順ではなく保存済み実行順を使う。配送元の解放待ちは宛先の別の実行可能な予約と区別する。 |
+| 開始・追加入力 | Main runtimeは会話identityとWithMate Turn、Provider adapterはその実行先を照合する。通常開始のreceipt、開始入力seq、Turnを同時保存する。予約をSteerした場合は同じreceiptの入力となり、直接Steerには別の通常receiptを作らない。質問・承認は実行中の対象要求へ回答し、通常送信としない。 |
+| ライブ・停止 | 本文・操作・要求・取消の一時状態はMain runtimeが通知し、rendererの会話列と操作面は必要部分だけ購読する。停止の受付や終端保存と、Provider等の実guard解放は別である。旧操作を次Turnに付け替えない。 |
+| 終端・再接続 | Storage Workerの終端transactionが本文・詳細とTurn/receipt状態を確定する。保存通知は再取得の契機であり、通知やライブ消失を本文保存の証明にしない。再openのスナップショット・保存履歴・起動回収は同じownerを照合し、送信や実行を再生しない。 |
+| 表示引継ぎ・読み返し | 会話列は受付と保存入力を正確なID/seqで、応答と実行詳細を同じTurnで結合する。表示用keyはフォーカス・開閉・スクロールを保持し、返信・検索・詳細の参照は保存seq/Turnで行う。保存が遅い間は認識済みの内容を残し、別Turnへ付け替えず、正本が届いたらその内容へ更新する。詳細は[Session History](session-history.md)と[Desktop UI](desktop-ui.md#session-window)を参照。 |
+
 ## GUI Turn Queue
 
 失敗が確定したTurnの開始入力は、直近か過去かにかかわらず、対応する会話の失敗レスポンスカードの`Resend`から明示的に選択して新しいTurnとして再実行できる。Mainは対象Sessionとincarnation、失敗Turn、開始receipt、固定された入力と元の送信来歴を照合し、欠落や不一致、結果不明、取消済みを拒否する。受付後に編集された場合は実際に固定された入力を用い、追加入力や元の配送・付随操作は再演しない。新しい受付のactorはGUIユーザーであり、元のreceipt・Turn・送信者は別の来歴として保存する。現在の実行設定と権限、添付の現在のアクセス範囲を使い、添付内容の同一性は保証しない。履歴やdraftは変更しない。受付応答が不明な場合は元のrequest IDで照会する。
@@ -102,6 +115,8 @@ actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvide
 `applied`はProviderの受理と追加入力保存の確定、`not-applied`はProvider未呼出を表す。終了・交代・非対応・送信準備中の失効では送信せず、別Turnや通常キューへ自動転送しない。Provider呼出後に受理または保存が確認できない場合は`SESSION_STEER_UNKNOWN`／`effect: unknown`と既知なら`result.messageSeq`を返す。自動再送せず、同じTurnの`list_execution_inputs`（不明分は`state: unresolved`）と`get_execution_input`で本文・配送状態・`inputOrigin`を照会する。`inputOrigin`はその補足を送った実親であり、開始入力の`origin`とは別に保持する。
 
 受付の`failed`は通常の実行失敗と再起動で確定した実行失敗で使う。失敗した受付を自動実行し直さない。受付・実行状態と追加入力の配送結果は別であり、対象Turnへclaimした追加入力の保存済み入力seqがない場合、処理中の`starting`は`pending`、結果未確認の`interrupted`は`unknown`として`get_execution`と`list_execution_inputs`で照会できる。未呼出が確定して予約に戻った入力や保存で確定した入力は未確定receiptに含めず、`failed`だけで送付の有無を推定しない。
+
+Main／Auxiliaryの通常終端または当該Turnの回収を確定するとき、そのTurnの直接Steerに結果未確定の保存証跡が残っていれば、同じ終端transactionで`pending`を`unknown`にする。受理や未送信とは推定しない。本文、対象、確定済みの入力は保持し、自動再送しない。
 
 `enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。送信元の終端・実解放を待つ予約は応答待機の対象にせず、配送可能な別の予約は応答面へ進める。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
 
