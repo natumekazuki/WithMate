@@ -1382,21 +1382,30 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   margin-block-start: var(--message-action-band-size);
 }
 
-.message-action-slot[data-pinned] {
-  min-block-size: var(--message-action-slot-size);
+.message-text-wrapper[data-pinned]:not(:has(> .message-collapse-control > :not(button)))::before {
+  content: "";
+  display: block;
+  block-size: var(--message-action-slot-size);
 }
 
 /* Only plain paragraphs share the first lines. Blocks and interactive inline
    content keep a separate action row so their controls are never under a float. */
-.message-text-wrapper:has(> [data-message-body] > div.rich-text:only-child > .message-paragraph, > [data-message-body] > .message-collapsed-preview:only-child):not(:has(
+.message-text-wrapper.has-message-collapse-control:has(
+  > [data-message-body] > div.rich-text:only-child > .message-paragraph,
+  > [data-message-body] > .message-collapsed-preview:only-child
+):not(:has(
   > [data-message-body] > .rich-text > :not(.message-paragraph),
   > [data-message-body] > .rich-text > .message-paragraph :not(br),
-  > .message-action-slot > .message-collapse-control > :not(button)
+  > .message-collapse-control > :not(button)
 )) {
-  > .message-action-slot {
+  > .message-collapse-control,
+  &[data-pinned]::before {
     float: inline-end;
-    min-inline-size: var(--message-action-slot-width, 0px);
     max-inline-size: 100%;
+  }
+
+  &[data-pinned]::before {
+    inline-size: var(--message-action-slot-width);
   }
 
   > [data-message-body] > .rich-text {
@@ -1422,8 +1431,9 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   transition: opacity 140ms ease;
 }
 
-.message-action-slot[data-pinned] > .message-collapse-control:not(:has(> :not(button))) {
+.message-text-wrapper[data-pinned] > .message-collapse-control:not(:has(> :not(button))) {
   position: fixed;
+  float: none;
   top: var(--message-action-band-top);
   right: var(--message-action-band-right);
   z-index: 1;
@@ -1458,18 +1468,18 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   pointer-events: none;
 }
 
-.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-action-slot > .message-collapse-control,
+.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-collapse-control,
 .message-collapse-control:has(> .reply-toggle) {
   opacity: 1;
 }
 
 @media (hover: hover) {
-  .message-text-wrapper:not(:hover, :focus-within) > .message-action-slot > .message-collapse-control:has(> .reply-toggle) > :not(.reply-toggle) {
+  .message-text-wrapper:not(:hover, :focus-within) > .message-collapse-control:has(> .reply-toggle) > :not(.reply-toggle) {
     opacity: 0;
   }
 }
 
-.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-action-slot > .message-collapse-control > button,
+.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-collapse-control > button,
 .message-collapse-control > .reply-toggle {
   pointer-events: auto;
 }
