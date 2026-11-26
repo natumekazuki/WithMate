@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type {
@@ -33,6 +33,7 @@ export function CrewDeletionDialog({
   const [revision, setRevision] = useState(0);
   const generation = useRef(0);
   const pendingDelete = useRef(false);
+  const headingId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cancel = () => {
     if (!pendingDelete.current) onClose();
@@ -125,7 +126,7 @@ export function CrewDeletionDialog({
       dialogRef={dialogRef}
       dialogTabIndex={-1}
       onKeyDown={handleDialogKeyDown}
-      ariaLabel="Delete Crew"
+      ariaLabelledBy={headingId}
       className="launch-modal crew-deletion-modal"
       dialogClassName="crew-deletion-dialog"
       closeOnBackdropClick={false}
@@ -155,12 +156,7 @@ export function CrewDeletionDialog({
         </>
       }
     >
-      <h2>Delete Crew</h2>
-      <p className="crew-deletion-target">{title}</p>
-      <div>
-        <p>All Sessions, Auxiliary conversations, Coordination records, and Session Graph.</p>
-        <p>Workspaces are kept.</p>
-      </div>
+      <h2 id={headingId}>Delete “{title}”?</h2>
       {loading ? <LoadingIndicator label="Checking Crew deletion" /> : null}
       {error ? <LoadError message={error} onRetry={retry} /> : null}
       {status?.blockers.length ? (

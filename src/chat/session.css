@@ -4599,7 +4599,8 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 }
 
 .crew-deletion-dialog {
-  width: min(480px, 100%);
+  width: fit-content;
+  max-width: min(480px, 100%);
   max-height: calc(100vh - 32px);
   border-radius: 12px;
   overflow-wrap: anywhere;
@@ -4622,10 +4623,6 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   font-weight: 500;
 }
 
-.crew-deletion-target {
-  font-weight: 700;
-}
-
 .crew-deletion-blockers {
   display: grid;
   gap: 8px;
@@ -4642,10 +4639,10 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 }
 
 .crew-deletion-dialog .launch-dialog-foot {
-  justify-content: space-between;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px 20px 20px;
+  gap: 8px;
+  padding: 12px 20px 20px;
 }
 
 .crew-deletion-dialog .drawer-toggle.secondary {

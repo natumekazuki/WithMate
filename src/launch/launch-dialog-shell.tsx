@@ -6,6 +6,8 @@ type LaunchDialogShellProps = {
   dialogRef: RefObject<HTMLElement | null>;
   onKeyDown: KeyboardEventHandler<HTMLElement>;
   ariaLabel?: string;
+  /** ID of the visible heading used as the dialog name. */
+  ariaLabelledBy?: string;
   showDismissControl?: boolean;
   closeOnBackdropClick?: boolean;
   className?: string;
@@ -95,6 +97,7 @@ export function LaunchDialogShell({
   dialogRef,
   onKeyDown,
   ariaLabel,
+  ariaLabelledBy,
   showDismissControl = true,
   closeOnBackdropClick = true,
   className = "launch-modal",
@@ -111,7 +114,7 @@ export function LaunchDialogShell({
   ].filter(Boolean).join(" ");
 
   return (
-    <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} onClick={closeOnBackdropClick ? onClose : undefined}>
+    <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} aria-labelledby={ariaLabelledBy} onClick={closeOnBackdropClick ? onClose : undefined}>
       <section
         ref={dialogRef}
         className={dialogClassNameValue}
