@@ -32,6 +32,20 @@
   font-weight: 400;
 }
 
+.message-file-preview[data-format="pdf"] .message-file-preview-header > a {
+  flex-basis: 0;
+}
+
+.message-file-preview-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: inherit;
+  /* Keep preview controls on the leading side, away from floating message actions. */
+  max-inline-size: 50%;
+  flex: none;
+}
+
 .message-file-preview-controls { flex: none; }
 
 .message-file-preview-auxiliary { user-select: none; }
