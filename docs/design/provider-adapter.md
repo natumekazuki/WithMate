@@ -71,7 +71,9 @@ providerごとの差は次。
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
-  - `on-request` で承認を要する permission request は、Main Process の `onApprovalRequest` bridge を通して[WithMate Auto Review](withmate-auto-review.md)または手動承認で判断し、`approve / deny` を SDK `PermissionHandler` へ返す
+  - `on-request` の承認は Main Process の `onApprovalRequest` bridge を通す。実 `promptRequest` に対する SDK Assisted Permissions の `completed: requireApproval` は明示判断要求であり、それだけで本人専用にはならない。通常の分類 Read（実 prompt・本人必須・明示判断要求なし）はこの仲介を通らない
+  - [WithMate Auto Review](withmate-auto-review.md)に渡すのは、操作対象を特定できる完全な native 要求と実行 workspace、SDK から届いた prompt・判定文脈（仲介の認証情報は除去済み）。raw／prompt の `managedApprovalRequired`、sandbox 昇格、SDK 除外・失敗、判断根拠が不足する要求は審査に渡さない。Auto Review 中は本人必須の要求を実行せず、通常手動では人が実際に決着した場合だけ人間の応答とする。審査結果 `ask_user` の後の実回答も手動に属する
+  - SDK に返す一回限りの許可は `approve-once`。人間の許可・拒否だけを `human_response` として、拒否には `reject` を返す。WithMate の審査結果は SDK 内蔵 Assisted Permissions の判定ではなく `host_policy`。自動の拒否・応答不能は `user-not-available` で、人間が拒否したと扱わない。取消や出所不明も許可しない
   - turn送信前に`user_input.requested`と`elicitation.requested`のconsumer interestを登録し、通常終了時に解放する。取消時は専用CLI processの停止で破棄する。SDKのhandler callbackは併用せず、eventのrequest IDを回答まで保持する
   - `user_input.requested`は`kind: "question"`として共通質問UIへ中継する。選択肢は単一選択、`allowFreeform`省略時は自由回答可、選択肢なしはtext入力とし、`handlePendingUserInput`へ回答と`wasFreeform`を返す。Close／UI不在は空の回答で質問を終了し、turn自体は中断しない
   - `elicitation.requested`は同じ`onElicitationRequest` bridgeからform / URL UIへ中継し、`handlePendingElicitation`へ`accept / decline / cancel`を返す。変換できないfieldが1つでもあれば全体を`decline`し診断を残す。UI不在は`cancel`とし、不完全なformを受理しない。質問・elicitationの回答RPCの拒否・失敗はturn失敗として扱うが、取消cleanup開始後の切断は新たな回答失敗へ昇格させない。取消より先に発生した回答失敗は維持する

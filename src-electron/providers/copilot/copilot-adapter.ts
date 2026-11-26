@@ -4,7 +4,7 @@ import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { CopilotClient, createAttributedPermissionResult, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
+import { CopilotClient, createAttributedPermissionResult, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type PermissionPromptRequest, type MessageOptions, type PermissionRequest, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
 
 import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
@@ -22,7 +22,7 @@ import {
   WORKSPACE_DIFF_CAPTURE_ENABLED,
 } from "../../files/workspace-diff-policy.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
-import { ProviderTurnError, resolveRunWorkspacePath, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type ApprovalDecisionSource, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import {
   captureWorkspaceSnapshot,
   type SnapshotCaptureStats,
@@ -68,6 +68,7 @@ export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort):
 type CachedCopilotSession = {
   session: CopilotSession;
   settingsKey: string;
+  permissionHandler: { current: PermissionHandler };
   backgroundTasks: Map<string, LiveBackgroundTask>;
   unsubscribeBackgroundObserver?: () => void;
 };
@@ -111,7 +112,7 @@ type CopilotTurnStreamState = {
 };
 
 export type CopilotSessionSettings = {
-  config: SessionConfig;
+  config: SessionConfig & { onPermissionRequest: PermissionHandler };
   selection: ResolvedModelSelection;
   settingsKey: string;
 };
@@ -810,42 +811,10 @@ function toMessageOperations(steps: Map<string, LiveRunStep>): MessageOperation[
     .map((step) => ({ ...step }));
 }
 
-type PermissionDecisionKind =
-  | "approved"
-  | "denied-by-rules"
-  | "denied-no-approval-rule-and-could-not-request-from-user"
-  | "denied-interactively-by-user"
-  | "denied-by-content-exclusion-policy";
-
-type CopilotRuntimePermissionResult =
-  | { kind: "approve-once" }
-  | { kind: "reject"; feedback?: string }
-  | { kind: "user-not-available" };
-
-function toPermissionDecision(kind: PermissionDecisionKind): PermissionRequestResult {
-  let result: CopilotRuntimePermissionResult;
-  switch (kind) {
-    case "approved":
-      result = { kind: "approve-once" };
-      break;
-    case "denied-interactively-by-user":
-    case "denied-by-rules":
-    case "denied-by-content-exclusion-policy":
-      result = { kind: "reject" };
-      break;
-    case "denied-no-approval-rule-and-could-not-request-from-user":
-    default:
-      result = { kind: "user-not-available" };
-      break;
-  }
-
-  // `@github/copilot-sdk` public types advertise v2 `PermissionRequestResult`,
-  // but the bundled `@github/copilot` runtime still validates legacy user
-  // permission response kinds (`approve-once`, `reject`, `user-not-available`).
-  // Returning v2 kinds like `approved` trips the runtime validator with
-  // `unexpected user permission response`, so we intentionally bridge to the
-  // legacy wire contract here.
-  return result as unknown as PermissionRequestResult;
+function blockedCopilotPermission() {
+  return createAttributedPermissionResult({ kind: "user-not-available" }, {
+    source: "unattended_fallback", surface: "sdk", outcome: "autopilot_denied",
+  });
 }
 
 function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
@@ -859,32 +828,91 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
   }
 }
 
+function hasCopilotPermissionTarget(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isCopilotSandboxEscalation(request: PermissionRequest | PermissionPromptRequest): boolean {
+  return ("requestSandboxBypass" in request && request.requestSandboxBypass === true)
+    || ("requestSandboxPermissive" in request && request.requestSandboxPermissive === true)
+    || ("sandboxPathGrant" in request && request.sandboxPathGrant !== undefined);
+}
+
+function hasCopilotReviewEvidence(request: PermissionRequest, prompt: PermissionPromptRequest | undefined): boolean {
+  if (prompt !== undefined && !isRecord(prompt)) return false;
+  if (prompt?.toolCallId && request.toolCallId && prompt.toolCallId !== request.toolCallId) return false;
+  if (prompt?.kind === "path") {
+    if (prompt.accessKind !== request.kind || !Array.isArray(prompt.paths) || !prompt.paths.length
+      || !prompt.paths.every(hasCopilotPermissionTarget)) return false;
+  }
+  const operationPrompt = prompt?.kind === "path" ? undefined : prompt;
+  switch (request.kind) {
+    case "read":
+      return prompt !== undefined && hasCopilotPermissionTarget(request.path)
+        && (!operationPrompt || (operationPrompt.kind === "read" && operationPrompt.path === request.path));
+    case "shell":
+      return hasCopilotPermissionTarget(request.fullCommandText)
+        && (!operationPrompt || (operationPrompt.kind === "commands" && operationPrompt.fullCommandText === request.fullCommandText));
+    case "write":
+      return hasCopilotPermissionTarget(request.fileName)
+        && (hasCopilotPermissionTarget(request.diff) || typeof request.newFileContents === "string"
+          || (Array.isArray(request.fileEdits) && request.fileEdits.length > 0
+            && request.fileEdits.every((edit) => isRecord(edit) && (edit.before !== undefined || edit.after !== undefined)
+              && [edit.before, edit.after].every((side) => side === undefined
+                || (isRecord(side) && hasCopilotPermissionTarget(side.path) && typeof side.content === "string")))))
+        && (!operationPrompt || (operationPrompt.kind === "write" && operationPrompt.fileName === request.fileName));
+    case "url":
+      return hasCopilotPermissionTarget(request.url)
+        && (!operationPrompt || (operationPrompt.kind === "url" && operationPrompt.url === request.url));
+    case "mcp":
+      return hasCopilotPermissionTarget(request.serverName) && hasCopilotPermissionTarget(request.toolName)
+        && (!operationPrompt || (operationPrompt.kind === "mcp" && operationPrompt.serverName === request.serverName
+          && operationPrompt.toolName === request.toolName));
+    case "custom-tool":
+      return hasCopilotPermissionTarget(request.toolName) && hasCopilotPermissionTarget(request.toolDescription)
+        && (!operationPrompt || (operationPrompt.kind === "custom-tool" && operationPrompt.toolName === request.toolName));
+    default:
+      // A specialized consent prompt or an unknown operation is not proof that
+      // the host has enough evidence or authority to approve on the user's behalf.
+      return false;
+  }
+}
+
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
   const requestIds = new WeakMap<PermissionRequest, string>();
   const approvalMode = normalizeApprovalMode(input.executionOptions.approvalMode);
   return async (request, invocation) => {
+    if (input.signal?.aborted) return blockedCopilotPermission();
     const promptRequest = invocation?.promptRequest;
     const assessment = invocation?.assistedApprovalAssessment;
-    const providerRequiresManual = request.managedApprovalRequired
+    const promptAssessment = promptRequest?.assistedApproval;
+    const providerRequiresHuman = request.managedApprovalRequired
       || (promptRequest && "managedApprovalRequired" in promptRequest && promptRequest.managedApprovalRequired)
-      || (assessment?.status === "excluded" && assessment.reason === "managed-approval-required")
-      || (assessment?.status === "completed" && assessment.recommendation === "requireApproval");
+      || isCopilotSandboxEscalation(request)
+      || (promptRequest && isCopilotSandboxEscalation(promptRequest))
+      || (assessment?.status === "excluded"
+        && (assessment.reason === "managed-approval-required" || assessment.reason === "sandbox-bypass"));
+    const requiresExplicitDecision = assessment?.status === "completed" && assessment.recommendation === "requireApproval";
+    const unassessed = assessment === undefined || assessment?.status === "not-run" || assessment?.status === "unavailable";
+    const classified = promptRequest === undefined
+      && (unassessed || (assessment?.status === "completed" && assessment.recommendation === "approve"));
     const readOnly = isReadOnlyPermissionRequest(request);
     if (approvalMode === "safety-focused") {
       // A classified read without a pending user prompt is the routine SDK
       // path; managed asks and MCP readOnly hints are not that evidence.
-      return toPermissionDecision(request.kind === "read" && promptRequest === undefined && !providerRequiresManual
-        ? "approved" : "denied-by-rules");
+      return { kind: request.kind === "read" && classified && !providerRequiresHuman
+        ? "approve-once" : "reject" };
     }
     if (approvalMode === "untrusted") {
-      return toPermissionDecision(readOnly ? "approved" : "denied-by-rules");
+      return { kind: readOnly && !providerRequiresHuman ? "approve-once" : "reject" };
     }
-    if (!providerRequiresManual && (approvalMode === "never" || (readOnly && promptRequest === undefined))) {
-      return toPermissionDecision("approved");
+    if (!providerRequiresHuman && !requiresExplicitDecision && promptAssessment?.recommendation !== "requireApproval"
+      && (approvalMode === "never" || (readOnly && classified))) {
+      return { kind: "approve-once" };
     }
     if (!input.onApprovalRequest) {
-      return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
+      return { kind: "user-not-available" };
     }
 
     let requestId = requestIds.get(request);
@@ -893,16 +921,38 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
       requestIds.set(request, requestId);
     }
     const workspacePath = resolveRunWorkspacePath(input);
+    const review = !providerRequiresHuman && (unassessed || (requiresExplicitDecision && promptRequest !== undefined))
+      && (!promptAssessment || promptAssessment.recommendation === "requireApproval")
+      && hasCopilotPermissionTarget(workspacePath)
+      && hasCopilotReviewEvidence(request, promptRequest)
+      ? { operation: redactor.sanitize({ request, workspacePath,
+        ...(promptRequest ? { promptRequest } : {}),
+        ...(assessment ? { assistedApprovalAssessment: assessment } : {}),
+        ...(invocation?.programToolCallId ? { programToolCallId: invocation.programToolCallId } : {}),
+      }) }
+      : undefined;
+    let source: ApprovalDecisionSource | undefined;
     const decision = await input.onApprovalRequest(
       redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, workspacePath)),
-      undefined,
-      providerRequiresManual || (assessment && assessment.status !== "not-run" && assessment.status !== "unavailable")
-        ? undefined : { operation: redactor.sanitize({ request, workspacePath }) },
+      input.signal,
+      review,
+      (settledBy) => { source = settledBy; },
     );
-    const result = toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
-    return providerRequiresManual && decision === "approve"
-      ? createAttributedPermissionResult(result, { source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user" })
-      : result;
+    if (input.signal?.aborted) return blockedCopilotPermission();
+    if (source === "manual") {
+      return createAttributedPermissionResult({ kind: decision === "approve" ? "approve-once" : "reject" }, {
+        source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user",
+      });
+    }
+    if (source === "reviewer" && review) {
+      // Keep the legacy CLI wire decisions. `reject` is a user's rejection on
+      // this path; without a person's answer use the non-interactive denial.
+      // WithMate is the SDK host, not Copilot's own Assisted Permissions judge.
+      return createAttributedPermissionResult({ kind: decision === "approve" ? "approve-once" : "user-not-available" }, {
+        source: "host_policy", surface: "sdk", outcome: decision === "approve" ? "auto_approved" : "autopilot_denied",
+      });
+    }
+    return blockedCopilotPermission();
   };
 }
 
@@ -1025,7 +1075,7 @@ export function buildCopilotSessionSettings(
     input.executionOptions.customAgentName,
   );
   const systemMessage = buildCopilotSystemMessage(prompt);
-  const config: SessionConfig = {
+  const config: CopilotSessionSettings["config"] = {
     model: selection.resolvedModel,
     ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
     workingDirectory: workspacePath,
@@ -1572,14 +1622,22 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     this.clientKeysBySession.set(input.session.id, clientKey);
     const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
+    const cached = this.sessions.get(input.session.id);
+    const permissionHandler = { current: nextSettings.config.onPermissionRequest };
     const resolved = await resolveCopilotSessionForSettings({
-      cached: this.sessions.get(input.session.id),
+      cached,
       nextSettingsKey: nextSettings.settingsKey,
       threadId: input.session.threadId,
-      config: nextSettings.config,
+      config: { ...nextSettings.config, onPermissionRequest: async (request, invocation) => {
+        const owner = permissionHandler.current;
+        const result = await owner(request, invocation);
+        return owner === permissionHandler.current ? result : blockedCopilotPermission();
+      } },
       client,
     });
-    if (resolved.reusedCached) {
+    if (resolved.reusedCached && cached) {
+      // An SDK session can outlive a Turn; its callback must use this Turn's bridge.
+      cached.permissionHandler.current = permissionHandler.current;
       this.clientKeysBySession.set(input.session.id, clientKey);
       return {
         session: resolved.session,
@@ -1596,6 +1654,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     this.sessions.set(input.session.id, {
       session: resolved.session,
       settingsKey: nextSettings.settingsKey,
+      permissionHandler,
       backgroundTasks: new Map<string, LiveBackgroundTask>(),
     });
     this.clientKeysBySession.set(input.session.id, clientKey);
