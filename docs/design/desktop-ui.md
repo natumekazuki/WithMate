@@ -499,7 +499,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない
-- 応答内のdot bubbleは受付済みのTurnの応答待機を示し、`assistantText`の出力開始後もrun中は同じ位置に静止した三点を表示する。応答枠での受付・保存済み応答の読込待ちでは点を短周期で動かし、reduced motionでは動かさない。保存上の`running`やCancel可否は実run状態から判断する
+- 応答内のdot bubbleは受付済みのTurnの応答待機を示す。実行開始前・実行中・保存応答の読込待ちでは、モーション設定によらず静止した三点を表示する。Composerの短時間の受付spinnerや会話の新規行の入場演出とは独立させる。保存上の`running`やCancel可否は実run状態から判断する
 - 次に実行できる予約は、閲覧枠を絞る前のSession全体の実行状態とキュー順で判定する。別枠に実行や先行予約があれば、後続予約には応答待機を表示しない
 - 送信カードの挿入位置が未確定なら、送信元Turnの応答末尾に置く。宛先枠の参照カードは、その枠の待機入力や別Turnの応答に付けない
 - Main / Auxiliaryのtarget切替buttonは左右paneのiconと選択状態で送信・操作対象を表し、実行状態によらずtooltipとaccessible nameを維持する。実行状態は主にHomeのMonitorで確認し、会話内の処理中表示、会話切替の選択中ボタンと一覧の静止したprocessingリング、選択対象のCancelは維持する。片側の会話欄が非表示の場合やPreview表示中も、target切替内に実行状態の表示や通知を追加しない
