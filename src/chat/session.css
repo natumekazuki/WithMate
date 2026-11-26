@@ -1428,7 +1428,7 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 ) > .message-collapse-control:has(> .failed-turn-resend) {
   opacity: 1;
 
-  > .failed-turn-resend {
+  > button {
     pointer-events: auto;
   }
 }
