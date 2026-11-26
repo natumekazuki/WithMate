@@ -114,6 +114,74 @@ test("issued chat notices align with their source response and preserve exact re
 
 // @test-value v2
 // kind = "contract"
+// claim = "表示済みの起票入口はlive終了と正本取得の間も同じ応答に一度だけ残り、別Turnへ移らない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: receiptなし起票の実行中/保存の配置; docs/design/session-run-lifecycle.md#入力から読み返しまでの所有境界" }
+// fault = "目録のscope変更・空の中間snapshot・追加ページが残った時点で起票入口を落とすか、次のlive応答へ付け替える"
+// observable = "対話列の同一応答内にある起票buttonの件数・DOM・focus、保存済み本文、後続ページ取得後に更新される起票本文、openCoordinationの既存IDとtarget"
+// observation_boundary = "consumer"
+// scope = "receiptなし起票のliveから保存への表示継続。read APIは固定入力"
+// lifecycle = "permanent"
+// impact = "表示済みの相談が再表示まで操作不能になったり、次Turnの相談と見間違えたりする"
+// distinction = "通常の一時点の起票表示や受信本文と異なり、live・保存seq・目録更新の独立した到着を検証する"
+// @end-test-value
+test("an issued notice stays actionable in the same response until its saved scope is read", async () => {
+  const opened: unknown[] = [];
+  const notice = { id: "issued", sourceTurnId: "42", consultation: "Which approach?" };
+  let completeSavedRead!: () => void;
+  const savedRead = new Promise<void>((resolve) => { completeSavedRead = resolve; });
+  const h = domHarness({
+    openCoordination: async (request: unknown) => { opened.push(request); },
+    readSessionExecution: async (_owner: string, operation: string, req: { liveTurnIds: string[]; messageSeqs: number[]; cursor?: string }) => {
+      if (operation === "list_issued_coordinations") {
+        if (req.messageSeqs.includes(1)) {
+          await savedRead;
+          if (req.cursor) return { ok: true, items: [{ ...notice, consultation: "Which approach after refresh?", sourceMessageSeq: 1 }], nextCursor: null };
+          const items = Array.from({ length: 20 }, (_, index) => ({ id: `before-${String(index).padStart(2, "0")}`,
+            consultation: `Consultation in B ${index}`, sourceTurnId: "43", sourceMessageSeq: null }));
+          return { ok: true, items, nextCursor: items.at(-1)!.id };
+        }
+        return { ok: true, items: req.liveTurnIds.includes("42") ? [{ ...notice, sourceMessageSeq: null }] : [], nextCursor: null };
+      }
+      return operation === "list_sent_instruction_cards" ? { ok: true, items: [], cursors: { receipts: null, steers: null } }
+        : { ok: false, message: "No other detail" };
+    },
+  });
+  const again = (saved: boolean, next: boolean) => <SessionMessageColumn {...props()}
+    messages={[{ role: "assistant", text: saved ? "Saved A" : "Partial A", ...(saved ? { historyIndex: 1 } : {}) },
+      ...(next ? [{ role: "assistant" as const, text: "Live B" }] : [])]}
+    messageKeys={next ? ["response", "other"] : ["response"]} isRunning liveWithMateTurnId={next ? "43" : "42"}
+    savedReplySourceIndexes={next ? [saved ? 1 : undefined, undefined] : [undefined]}
+    responseExecutionTurnIds={next ? ["42", "43"] : ["42"]} />;
+  const locate = () => Array.from(h.document.querySelectorAll<HTMLButtonElement>('.issued-coordination-notice[data-source-turn-id="42"] button[aria-label^="Open Consultation"]'));
+  try {
+    await act(async () => h.root.render(again(false, false)));
+    const [link] = locate();
+    assert.ok(link);
+    link.focus();
+    await act(async () => h.root.render(again(false, true)));
+    assert.deepEqual(locate(), [link], "a sweep restricted to the next Turn must not remove A's known notice");
+    assert.ok(link.closest(".message-card")?.textContent?.includes("Partial A"));
+    assert.equal(h.document.activeElement, link);
+    await act(async () => h.root.render(again(true, true)));
+    assert.deepEqual(locate(), [link], "the saved answer is visible while its Coordination read is still pending");
+    assert.ok(link.closest(".message-card")?.textContent?.includes("Saved A"));
+    assert.equal(h.document.activeElement, link);
+    await act(async () => completeSavedRead());
+    assert.deepEqual(locate(), [link], "the first saved page only covers B and must not evict A's already-visible notice");
+    assert.equal(h.document.activeElement, link);
+    assert.equal(link.getAttribute("aria-label"), "Open Consultation: Which approach?");
+    const loadMore = Array.from(h.document.querySelectorAll("button")).find((button) => button.textContent === "Load More Coordination");
+    assert.ok(loadMore);
+    await act(async () => loadMore.click());
+    assert.deepEqual(locate(), [link]);
+    assert.equal(link.getAttribute("aria-label"), "Open Consultation: Which approach after refresh?");
+    await act(async () => link.click());
+    assert.deepEqual(opened, [{ id: "issued", ...target }]);
+  } finally { await h.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "同一起票者の通知だけを直列に集約し、閲覧範囲、取得失敗時の内容と再試行、消去、旧owner応答の排除を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 起票と消去済み; docs/design/ui-design-guidelines.md#読込空失敗" }
 // fault = "別起票者で再取得する、取得中の通知ごとに要求を増やすか最後の変更を捨てる、失敗で内容を消す、または旧ownerの遅延応答を適用する"

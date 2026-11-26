@@ -11,18 +11,20 @@ import type { Message } from "../../src-shared/session/session-state.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
+import { sentInstructionReaderFixture } from "./sent-instruction-reader-fixture.js";
+import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxの終了をまたいで表示済み本文と開いた同一TurnのDetailsを保ち、後着の追加入力で保存seqがずれても同じ応答行を一度だけ確定し、その行のfocusを奪わない"
-// oracle = { type = "contract", ref = "https://app.notion.com/4239d4b6f26280dab3ecd276c7f3c3c4; docs/design/desktop-ui.md: 実run終了後の確定応答の取得待ち" }
-// fault = "live終了・後続開始でDetailsが消える、または追加保存入力により既読の仮行と保存行を二重に表示するか、開閉・focusを失う"
-// observable = "応答行の本文・件数・DOM identity、Details操作のDOM identity・focus・aria-expanded・内容、および保存行からのReply対象seq"
+// claim = "Main/Auxの終了をまたいで同一Turnの本文、送信カード、開いたDetailsを保ち、追加入力で保存seqがずれても同じ行を一度だけ確定する。確定した目録の変更は反映する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 実run終了後の確定応答の取得待ち; docs/design/desktop-ui.md: Turn Input Details; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "live終了・後続開始でDetailsや送信カードが消える、別Turnへ移る、現在の目録範囲に含まれない既読のカードで本文エラーを出す、保存応答と二重表示する、または開閉・focusを失う"
+// observable = "同じ応答行のDOM・本文・送信カード順と件数、DetailsのDOM・focus・aria-expanded・内容、保存行のReply対象seq、目録から削除されたカードの不在"
 // observation_boundary = "component-behavior"
-// scope = "Main/Auxの通常Send受付以降、成功/失敗・後続live先着・追加入力と保存応答の同時到着。親snapshotとIPCの通知/readはfixtureで制御する"
+// scope = "Main/Auxの通常Send受付以降、成功/失敗・後続live先着・追加保存入力と応答・送信目録の遅延および確定更新。親snapshotとIPCの通知/readはfixtureで制御する"
 // lifecycle = "permanent"
 // impact = "読んでいた応答と実行情報が途切れるか、偽の重複応答を読むことになり、その場の操作と返信対象を見失う"
-// distinction = "既存テストは件数・本文・安定行を確認するが、開いたDetailsの実内容とフォーカスを保持しながら保存seqが後から変わる条件を通らない"
+// distinction = "別mountでのlive・保存描画では、同じ応答行を読みながら送信目録と保存seqが前後して到着する境界を通らない"
 // @end-test-value
 test("opened response Details and focus survive turn handoff and late saved sequences", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -40,11 +42,11 @@ test("opened response Details and focus survive turn handoff and late saved sequ
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     for (const scenario of [
-      { kind: "session", terminal: "completed", lateInput: true, nextStarts: false },
-      { kind: "auxiliary", terminal: "failed", lateInput: true, nextStarts: false },
-      { kind: "auxiliary", terminal: "completed", lateInput: false, nextStarts: true },
+      { kind: "session", terminal: "completed", lateInput: true, nextStarts: false, promptLag: false },
+      { kind: "auxiliary", terminal: "failed", lateInput: true, nextStarts: false, promptLag: false },
+      { kind: "auxiliary", terminal: "completed", lateInput: false, nextStarts: true, promptLag: true },
     ] as const) {
-      const { kind, terminal, lateInput, nextStarts } = scenario;
+      const { kind, terminal, lateInput, nextStarts, promptLag } = scenario;
       const incarnationId = "inc";
       const target: SessionTarget = kind === "session" ? { kind: "main", sessionId: kind, incarnationId }
         : { kind: "auxiliary", sessionId: kind, incarnationId, mainSessionId: "main", mainIncarnationId: "main-inc" };
@@ -54,19 +56,34 @@ test("opened response Details and focus survive turn handoff and late saved sequ
       const receipt: SessionTurnQueueReceipt = { sessionId: kind, incarnationId, id: "receipt-a", requestId: "request-a", sequence: 1, queuePosition: 1,
         state: "queued", userMessageSeq: null, turnId: null, reason: null, releasedAt: null, createdAt: "created", updatedAt: "accepted",
         captured: { request: { clientRequestId: "request-a", userMessage: "prompt A", executionOptions }, provider: "codex", workspacePath: "fixture", attachments: [] } };
-      const started = { ...receipt, state: "running" as const, userMessageSeq: 0, turnId: "41" };
-      const next = { ...started, id: "receipt-b", requestId: "request-b", sequence: 2, queuePosition: 2, userMessageSeq: 2, turnId: "42",
+      const userSeq = promptLag ? 1 : 0;
+      const savedSeq = userSeq + (lateInput ? 2 : 1);
+      const started = { ...receipt, state: "running" as const, userMessageSeq: userSeq, turnId: "41" };
+      const next = { ...started, id: "receipt-b", requestId: "request-b", sequence: 2, queuePosition: 2, userMessageSeq: savedSeq + 1, turnId: "42",
         captured: { ...receipt.captured, request: { ...receipt.captured.request, userMessage: "prompt B", executionOptions: { ...executionOptions, model: "Selected model B" } } } };
-      const partial = "Partial answer A";
-      const final = terminal === "failed" ? partial : "Saved answer A";
+      const partial = "Before card\n\nPartial answer A";
+      const final = terminal === "failed" ? partial : "Before card\n\nSaved answer A";
       const run = (r: typeof started, assistantText: string): LiveSessionRunState => ({
         sessionId: kind, sessionTurnId: r.turnId, turnId: "native-" + r.turnId, threadId: "provider", runState: "running",
         queueReceipt: { id: r.id, incarnationId, userMessageSeq: r.userMessageSeq }, assistantText,
         backgroundTasks: [], steps: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
       });
-      let history: Message[] = [];
+      const prior: Message[] = promptLag ? [{ role: "user", text: "Unrelated saved prompt", historyIndex: 0 }] : [];
+      const prompt: Message = { role: "user", text: "prompt A", historyIndex: userSeq };
+      let history: Message[] = prior;
       let live: LiveSessionRunState | null = null;
       let observed = receipt;
+      let saved = false;
+      let holdCatalogue = false;
+      let includeCard = true;
+      const pendingCatalogues: (() => void)[] = [];
+      let completedUnrelatedRead = false;
+      const recipient = { kind: "main", sessionId: "recipient", incarnationId: "recipient-inc" } as const;
+      const delivery: SentDelivery = { receiptId: "out-a", sequence: 1, sourceTurnId: started.turnId, sourceMessageSeq: null,
+        target: recipient, state: "queued", sourceDisplayPosition: "Before card".length, text: "Outgoing from A",
+        origin: { kind: "session", operation: "send", actorKind: target.kind, actorSessionId: kind, actorIncarnationId: incarnationId,
+          actorTurnId: started.turnId, targetSessionId: recipient.sessionId, targetIncarnationId: recipient.incarnationId,
+          ...(kind === "auxiliary" ? { actorMainSessionId: "main", actorMainIncarnationId: "main-inc" } : {}) } };
       const active = () => [observed, ...(live?.sessionTurnId === next.turnId ? [next] : [])]
         .filter((r) => r.state === "queued" || r.state === "running");
       const queues = new Set<(id: string) => void>();
@@ -79,9 +96,20 @@ test("opened response Details and focus survive turn handoff and late saved sequ
       Object.defineProperty(dom.window, "withmate", { configurable: true, value: {
         ...api,
         onSessionTurnUpdated(listener: (id: string) => void) { turns.add(listener); return () => { turns.delete(listener); }; },
-        async readSessionExecution(_id: string, operation: string, input: { turnId?: string; receiptId?: string }) {
+        async readSessionExecution(_id: string, operation: string, input: { turnId?: string; receiptId?: string; messageSeqs?: number[]; liveTurnIds?: string[] }) {
           if (operation === "read_turn_input_display") return { ok: true };
-          if (operation === "list_sent_instruction_cards") return { ok: true, items: [], cursors: { receipts: null, steers: null } };
+          const seqs = input.messageSeqs ?? [];
+          const knownSaved = saved && seqs.includes(savedSeq);
+          const sourceMessageSeq = !knownSaved ? seqs.includes(userSeq) ? userSeq : null : savedSeq;
+          const cards = includeCard && (sourceMessageSeq !== null || input.liveTurnIds?.includes(started.turnId)) ? [{ ...delivery, sourceMessageSeq }] : [];
+          const sentResult = sentInstructionReaderFixture(cards, operation, input);
+          if (sentResult) {
+            if (holdCatalogue && operation === "list_sent_instruction_cards") await new Promise<void>((resolve) => pendingCatalogues.push(resolve));
+            if (operation === "list_sent_instruction_cards" && seqs.includes(0) && sourceMessageSeq === null && !input.liveTurnIds?.includes(started.turnId)) {
+              completedUnrelatedRead = true;
+            }
+            return sentResult;
+          }
           if (operation !== "get_execution") return { ok: true, items: [], nextCursor: null };
           // A new message-seq read cannot replace the already available execution until it arrives.
           if (!input.turnId && !input.receiptId) return new Promise(() => {});
@@ -112,7 +140,8 @@ test("opened response Details and focus survive turn handoff and late saved sequ
       }
       const document = dom.window.document;
       const rows = () => [...document.querySelectorAll<HTMLElement>(".message-row.assistant")];
-      const bodies = () => rows().map((row) => row.querySelector('[data-message-body="true"]')?.textContent);
+      const bodies = () => rows().map((row) => [...row.querySelectorAll('[data-message-body="true"] p')]
+        .filter((paragraph) => !paragraph.closest(".session-outbound-inline")).map((paragraph) => paragraph.textContent).join("\n\n"));
       const render = () => root.render(<View key={kind + terminal} />);
       const update = () => act(async () => {
         [...queues, ...turns].forEach((listener) => listener(kind));
@@ -121,13 +150,13 @@ test("opened response Details and focus survive turn handoff and late saved sequ
       await act(async () => {
         render();
         submissions.start({ sessionId: kind, incarnationId, requestId: receipt.requestId, userMessage: "prompt A",
-          historyMessageCount: 0, queuedBehindRun: false, error: "" });
+          historyMessageCount: prior.length, queuedBehindRun: false, error: "" });
         submissions.accept(receipt);
       });
       const initial = rows()[0];
       assert.ok(initial);
       observed = started;
-      history = [{ role: "user", text: "prompt A", historyIndex: 0 }];
+      if (!promptLag) history = [prompt];
       live = run(started, partial);
       await update();
       await act(async () => t.mock.timers.tick(100));
@@ -144,7 +173,16 @@ test("opened response Details and focus survive turn handoff and late saved sequ
         assert.match(initial.querySelector(".artifact-block")?.textContent ?? "", /Selected model A/);
         assert.doesNotMatch(initial.querySelector(".artifact-block")?.textContent ?? "", /Selected model B/);
       };
+      const verifyCard = () => {
+        const cards = document.querySelectorAll("article.session-outbound, .session-outbound-inline");
+        assert.equal(cards.length, 1, "the outgoing card stays visible without duplication");
+        assert.ok(initial.contains(cards[0]), "the card is owned by A, never a prompt or the next Turn");
+        assert.match(initial.textContent ?? "", /Before card[\s\S]*Outgoing from A[\s\S]*(Partial|Saved) answer A/);
+        assert.equal(cards[0].querySelector('[role="alert"]'), null, "only the card's verified scope can read its body");
+      };
       verifyDetails();
+      verifyCard();
+      holdCatalogue = !promptLag;
 
       if (nextStarts) {
         observed = { ...started, state: terminal };
@@ -159,23 +197,36 @@ test("opened response Details and focus survive turn handoff and late saved sequ
       await act(async () => t.mock.timers.tick(100));
       assert.deepEqual(bodies(), nextStarts ? [partial, "Live answer B"] : [partial]);
       verifyDetails();
+      verifyCard();
+      if (promptLag) {
+        assert.ok(completedUnrelatedRead, "a complete catalogue for the unrelated scope arrived during A's bridge");
+        holdCatalogue = true;
+      }
       if (!nextStarts) {
         observed = { ...started, state: terminal, reason: terminal === "failed" ? "fixture failure" : null, updatedAt: "terminal" };
         await update();
         assert.deepEqual(bodies(), [partial]);
         verifyDetails();
       }
-      const savedSeq = lateInput ? 2 : 1;
-      history = [...history, ...(lateInput ? [{ role: "user" as const, text: "late input A", historyIndex: 1,
+      saved = true;
+      history = [...prior, prompt, ...(lateInput ? [{ role: "user" as const, text: "late input A", historyIndex: userSeq + 1,
         turnInput: { turnId: started.turnId, nativeTurnId: "native-41", state: "confirmed" as const, attachments: [] } }] : []),
       { role: "assistant", text: final, historyIndex: savedSeq, ...(terminal === "failed" ? { runFailure: "fixture failure" } : {}) }];
       await update();
       assert.deepEqual(bodies(), nextStarts ? [final, "Live answer B"] : [final]);
       verifyDetails();
+      verifyCard();
+      assert.ok(pendingCatalogues.length > 0);
+      holdCatalogue = false;
+      await act(async () => pendingCatalogues.splice(0).forEach((resolve) => resolve()));
+      verifyCard();
       const reply = initial.querySelector<HTMLButtonElement>('button[aria-label="Reply to message"]');
       assert.ok(reply);
       await act(async () => reply.click());
       assert.deepEqual(replies, [savedSeq]);
+      includeCard = false;
+      await update();
+      assert.ok(!document.querySelector("article.session-outbound, .session-outbound-inline"), "a complete current-scope read can remove the card");
     }
   } finally {
     await act(async () => root.unmount());

@@ -1,22 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import type { TurnInputReadContext } from "./turn-input-details.js";
 
 type Page = Extract<SessionExecutionReadResult<"list_issued_coordinations">, { ok: true }>;
 export type IssuedCoordination = Page["items"][number];
+type Snapshot = { owner: string; key: string; page: Page; retained: IssuedCoordination[] };
 
 /** Keep the viewed prefix across refreshes; the persisted record remains the source of truth. */
-export function useIssuedCoordinations(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | undefined, enabled: boolean) {
-  const messageSeqs = [...new Set(messages.flatMap((message) => message.historyIndex === undefined ? [] : [message.historyIndex]))].slice(0, 180);
+export function useIssuedCoordinations(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | undefined, enabled: boolean,
+  savedSeqs?: readonly (number | undefined)[], responseTurnIds?: readonly (string | undefined)[]) {
+  const messageSeqs = [...new Set((savedSeqs ?? messages.map((message) => message.historyIndex)).filter((seq) => seq !== undefined))].slice(0, 180);
   const liveTurnIds = liveTurnId ? [liveTurnId] : [];
-  const key = JSON.stringify([context, messageSeqs, liveTurnIds]);
-  const [snapshot, setSnapshot] = useState<{ key: string; page: Page } | null>(null);
+  const owner = JSON.stringify([context?.ownerSessionId, context?.target && conversationPeerKey(context.target)]);
+  const key = JSON.stringify([owner, messageSeqs, liveTurnIds]);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const saved = useRef(snapshot);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const commands = useRef<{ key: string; load(cursor?: string): Promise<void> } | null>(null);
+  // Reading authority comes from canonical sequences or the active Turn. A
+  // previously read record can still have a visible row on a retained response.
+  const visibleTurns = new Set([...(responseTurnIds ?? []), ...liveTurnIds]);
+  const hasPlacement = (item: IssuedCoordination) => visibleTurns.has(item.sourceTurnId)
+    || item.sourceMessageSeq !== null && messageSeqs.includes(item.sourceMessageSeq);
+  const placement = useRef(hasPlacement);
+  placement.current = hasPlacement;
+  const bridgedTurns = useRef(new Set<string>());
+  bridgedTurns.current = new Set(responseTurnIds?.flatMap((turn, index) => turn && savedSeqs?.[index] === undefined ? [turn] : []));
   useEffect(() => {
     setError("");
     setBusy(false);
@@ -44,7 +57,17 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
         items.push(...page.items);
         nextCursor = page.nextCursor ?? undefined;
       } while (nextCursor !== undefined && items.length < requestedCount);
-      const next = { key, page: { ...page, items: cursor && previous ? [...previous.items, ...items.filter((item) => !previous.items.some((entry) => entry.id === item.id))] : items } };
+      const observed = new Map((cursor && previous ? previous.items : []).map((item) => [item.id, item]));
+      for (const item of items) observed.set(item.id, item);
+      // The keyset is ordered by record ID. A missing item after the last
+      // fetched ID is not a deletion, even when its source seq is now saved.
+      const known = saved.current?.owner === owner ? saved.current : null;
+      const retained = known ? [...known.page.items, ...known.retained].filter((item) =>
+        !observed.has(item.id) && placement.current(item)
+        && (nextCursor !== undefined && item.id > nextCursor
+          || bridgedTurns.current.has(item.sourceTurnId) && !liveTurnIds.includes(item.sourceTurnId)
+            && (item.sourceMessageSeq === null || !messageSeqs.includes(item.sourceMessageSeq)))) : [];
+      const next = { owner, key, page: { ...page, items: [...observed.values()] }, retained };
       saved.current = next; setSnapshot(next);
     }
     async function load(cursor?: string) {
@@ -77,8 +100,9 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
     return () => { active = false; commands.current = null; unsubscribe?.(); };
   }, [key, enabled]);
   const page = snapshot?.key === key ? snapshot.page : null;
+  const items = snapshot?.owner === owner && (page || enabled) ? [...snapshot.page.items, ...snapshot.retained].filter(hasPlacement) : [];
   const load = (cursor?: string) => {
     if (enabled && commands.current?.key === key) void commands.current.load(cursor);
   };
-  return { items: page?.items ?? [], nextCursor: page?.nextCursor ?? null, error, busy, retry: () => load(), loadMore: () => { if (page?.nextCursor && !busy) load(page.nextCursor); } };
+  return { items, nextCursor: page?.nextCursor ?? null, error, busy, retry: () => load(), loadMore: () => { if (page?.nextCursor && !busy) load(page.nextCursor); } };
 }

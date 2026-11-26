@@ -346,6 +346,7 @@ export function useMainSessionRuntime({
       setSessionProjection((sessions) => sessions.map((session) => session.id === sessionId ? patch(session) : session));
     },
     hasPendingSubmitFor: (sessionId: string | null) => sessionId ? submitCoordinatorRef.current.isClaimed(sessionId) : false,
+    submitCoordinator: submitCoordinatorRef.current,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
     toggleSessionPin,

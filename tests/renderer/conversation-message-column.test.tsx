@@ -55,12 +55,17 @@ function peerColumnFixture() {
   const submissions = new SessionTurnSubmissions();
   const replies: unknown[] = [];
   const state = { live: null as LiveSessionRunState | null, saved: [] as SessionMessageColumnProps["messages"], receipts: [] as SessionTurnQueueReceipt[],
-    sent: [] as SentDelivery[], holdSeq: undefined as number | undefined };
+    sent: [] as SentDelivery[], holdSeq: undefined as number | undefined, holdQueue: false,
+    tail: undefined as SessionMessageColumnProps["messages"] | undefined };
   const onQueue = new Set<(id: string) => void>();
   const onTurn = new Set<(id: string) => void>();
   const heldPages: (() => void)[] = [];
+  const heldQueues: (() => void)[] = [];
   const api: ConversationMessageColumnApi = {
-    listSessionTurnQueue: async () => state.receipts.filter((receipt) => receipt.state !== "completed"),
+    listSessionTurnQueue: async () => {
+      if (state.holdQueue) await new Promise<void>((resolve) => heldQueues.push(resolve));
+      return state.receipts.filter((receipt) => receipt.state !== "completed");
+    },
     getSessionTurnQueueReceipt: async (_id, requestId) => state.receipts.find((receipt) => receipt.requestId === requestId) ?? null,
     onSessionTurnQueueChanged: (listener) => { onQueue.add(listener); return () => { onQueue.delete(listener); }; },
     async getConversationPage(id, request) {
@@ -90,7 +95,7 @@ function peerColumnFixture() {
   function View() {
     threads = useMainConversationThreads(readContext, true, "", () => {});
     column = useConversationMessageColumn({
-      session: { id: main.sessionId, incarnationId: main.incarnationId, provider: "codex", messageCount: state.saved.length, messages: state.saved },
+      session: { id: main.sessionId, incarnationId: main.incarnationId, provider: "codex", messageCount: state.saved.length, messages: state.tail ?? state.saved },
       baseProps: { ...createBaseProps(main.sessionId), turnSubmissions: submissions, inputReadContext: readContext, onSelectReply: (_key, reply) => replies.push(reply) },
       api, enabled: true, liveRun: state.live, frame: threads.frame, mainThreads: threads.projection, showAllThreads: threads.showAllThreads,
     });
@@ -113,7 +118,7 @@ function peerColumnFixture() {
       assistantText: text, steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
   }
   return {
-    main, peers, replies, state, document, receipt, live, submissions, heldPages,
+    main, peers, replies, state, document, receipt, live, submissions, heldPages, heldQueues,
     column: () => { assert.ok(column); return column; },
     render: () => act(async () => root.render(<View />)),
     select: (peer?: typeof peers[number]) => act(async () => threads.select(peer ? conversationPeerKey(peer.target) : ALL_MAIN_THREADS_ID)),
@@ -281,6 +286,114 @@ test("peer response survives delayed index and page and can be replied to on the
     assert.ok(button);
     await act(async () => button.click());
     assert.deepEqual(f.replies, [{ target: f.main, seq: 1 }]);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mainの相手枠で保存pageだけが受付の対応より先に届いても、同じ送信を二重表示しない。別Turnからこの相手への送信カードはその間も表示し、対応確定時に同じ入力行を返信可能な保存本文へ更新する"
+// oracle = { type = "contract", ref = "docs/design/session-history.md: Main列の初期枠・子Session枠／明示返信" }
+// fault = "相手枠のpageと受付を別々に表示して同じ発言を二重化する、別Turnの送信カードまで保留する、仮行に返信を許す、または保存行へ確定しても操作を有効にしない"
+// observable = "相手枠の入力本文の件数・DOM identity、独立した送信カードだけの表示、保存前後の返信ボタン、確定後の返信先seq"
+// observation_boundary = "component-behavior"
+// scope = "Mainの通常Send受付と相手枠の正本page・全体tail・queue通知の到着順。通知とreadは合成"
+// lifecycle = "permanent"
+// impact = "同じ発言が二度送信されたと誤認するか、まだ確定していない座標に返信する"
+// distinction = "終端の応答引継ぎやALLのtail先着テストと異なり、相手枠の独立pageだけが開始入力を先に観測する"
+// @end-test-value
+test("a peer page that arrives before the receipt joins does not duplicate the accepted prompt", async () => {
+  const f = peerColumnFixture();
+  const [peer] = f.peers;
+  const accepted = f.receipt(peer, 1);
+  const rows = () => [...f.document.querySelectorAll(".message-row.user")].filter((row) =>
+    row.textContent?.includes(accepted.captured.request.userMessage));
+  const reply = (row: Element) => row.querySelector<HTMLButtonElement>('button[aria-label="Reply to message"]');
+  try {
+    await f.render();
+    await f.select(peer);
+    f.state.holdQueue = true;
+    await act(async () => {
+      f.submissions.start({ sessionId: f.main.sessionId, incarnationId: f.main.incarnationId, requestId: accepted.requestId,
+        userMessage: accepted.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: false, mainConversationFrame: peer.target, error: "" });
+      f.submissions.accept(accepted);
+    });
+    assert.equal(rows().length, 1);
+    const [original] = rows();
+    assert.ok(!reply(original));
+    f.state.tail = [];
+    f.state.saved = [{ role: "user", text: accepted.captured.request.userMessage, historyIndex: 0 },
+      { role: "user", text: "Foreign source input", historyIndex: 1 }];
+    peer.messageIndexes = [0];
+    peer.inboundTurnIds = ["42"];
+    peer.sentMessageIndexes = [1];
+    f.state.sent = [{ receiptId: "foreign-outgoing", sequence: 4, sourceTurnId: "43", sourceMessageSeq: 1, sourceDisplayPosition: null,
+      text: "Outgoing from a separate Turn", state: "queued", target: peer.target,
+      origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: f.main.sessionId, actorIncarnationId: f.main.incarnationId,
+        actorTurnId: "43", targetSessionId: peer.target.sessionId, targetIncarnationId: peer.target.incarnationId } }];
+    f.state.holdSeq = 0;
+    await act(async () => f.indexChanged());
+    assert.equal(f.heldPages.length, 1);
+    await act(async () => f.heldPages.splice(0).forEach((release) => release()));
+    assert.equal(rows().length, 1, "receipt and scoped saved input are not shown twice");
+    assert.equal(rows()[0], original);
+    assert.ok(!reply(original));
+    assert.match(f.document.querySelector("article.session-outbound")?.textContent ?? "", /Outgoing from a separate Turn/);
+    assert.doesNotMatch(f.document.body.textContent ?? "", /Foreign source input/);
+
+    f.state.receipts = [{ ...accepted, state: "running", turnId: "42", userMessageSeq: 0 }];
+    f.state.holdQueue = false;
+    await act(async () => f.heldQueues.splice(0).forEach((release) => release()));
+    assert.equal(rows().length, 1);
+    assert.equal(rows()[0], original);
+    const button = reply(original);
+    assert.ok(button, "the same row becomes replyable after the canonical handoff");
+    await act(async () => button.click());
+    assert.deepEqual(f.replies, [{ target: f.main, seq: 0 }]);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "他窓で受け付けた同じSessionの入力は、相手枠だけに保存発言が先着しても全体の保存tailが届くまでALLで読み続けられる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher; docs/design/session-history.md: Main列の初期枠・子Session枠" }
+// fault = "相手枠の正本pageを見ただけでSession全体から端境期のreceiptを除き、ALLに移ると確定入力が消える"
+// observable = "相手枠とALLでの入力表示件数、ALLの正本tail到着後に同じ行が返信可能になること"
+// observation_boundary = "component-behavior"
+// scope = "Mainの相手枠scoped page・終端receipt・ALL canonical tailが独立して到着する、ローカル送信記録のない受付"
+// lifecycle = "permanent"
+// impact = "別窓で行われた送信が枠の往復だけで消失したように見える"
+// distinction = "ローカル送信記録のある引継ぎでは既知receiptを延命するため、外部受付の廃棄時点を確認できない"
+// @end-test-value
+test("a peer saved page does not retire an external receipt needed in All", async () => {
+  const f = peerColumnFixture();
+  const [peer] = f.peers;
+  const accepted = f.receipt(peer, 1);
+  const started = { ...accepted, state: "running" as const, turnId: "42", userMessageSeq: 0 };
+  const inputs = () => [...f.document.querySelectorAll(".message-row.user")].filter((row) => row.textContent?.includes("Prompt A"));
+  const reply = (row: Element) => row.querySelector('button[aria-label="Reply to message"]');
+  try {
+    f.state.tail = [];
+    f.state.receipts = [started];
+    await f.render();
+    await f.select(peer);
+    assert.equal(inputs().length, 1);
+    f.state.saved = [{ role: "user", text: "Prompt A", historyIndex: 0 }];
+    peer.messageIndexes = [0];
+    peer.inboundTurnIds = [started.turnId];
+    await act(async () => f.indexChanged());
+    assert.equal(inputs().length, 1);
+    assert.ok(reply(inputs()[0]), "the peer can read the saved input before the global tail updates");
+    f.state.receipts = [{ ...started, state: "completed" }];
+    await act(async () => f.queueChanged());
+    await f.select();
+    assert.equal(inputs().length, 1, "the separate peer read cannot erase the input from All");
+    assert.ok(!reply(inputs()[0]), "the All receipt bridge is not itself a saved Reply target");
+    const [original] = inputs();
+    f.state.tail = f.state.saved;
+    await f.render();
+    assert.equal(inputs().length, 1);
+    assert.equal(inputs()[0], original);
+    assert.ok(reply(original));
   } finally { await f.close(); }
 });
 

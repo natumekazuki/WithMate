@@ -913,7 +913,8 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
-  const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence });
+  const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence,
+    submitCoordinator: mainSessionRuntime.submitCoordinator });
   const hasUncertainTurnFor = (id: string | null) => id === activeAuxiliarySession?.id
     ? mainSessionRuntime.hasUncertainTurnFor(id, activeAuxiliarySession.createdAt)
     : id === selectedSession?.id && mainSessionRuntime.hasUncertainTurnFor(id, getSessionIncarnationId(selectedSession));

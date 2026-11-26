@@ -125,21 +125,26 @@ test("sent delivery reads accept an explicit WithMate live Turn and discard obso
   let resolveOld!: (value: Page) => void;
   let resolveHidden!: (value: Page) => void;
   let waitForHidden = false;
+  const livePage = (sequence: number, owner: string, turn: string) => {
+    const card = delivery(sequence);
+    return page([{ ...card, sourceTurnId: turn, sourceMessageSeq: null,
+      origin: { ...card.origin, actorSessionId: owner, actorIncarnationId: `${owner}-inc`, actorTurnId: turn } }]);
+  };
   await harness(async (request) => {
     requests.push(request);
     if (request.target.sessionId === "old") return new Promise((resolve) => { resolveOld = resolve; });
     if (waitForHidden) return new Promise((resolve) => { resolveHidden = resolve; });
-    return page([delivery(2)]);
+    return livePage(2, "current", "48");
   }, async (h) => {
     await h.render("old", "47", true, []);
     await h.render("current", "48", true, []);
     assert.deepEqual(requests.map((request) => [request.target.sessionId, request.messageSeqs, request.liveTurnIds]), [["old", [], ["47"]], ["current", [], ["48"]]]);
-    await act(async () => resolveOld(page([delivery(1)])));
+    await act(async () => resolveOld(livePage(1, "old", "47")));
     assert.deepEqual(h.current().items.map(sentInstructionKey), ["receipt-2"]);
     waitForHidden = true;
     await act(async () => h.current().retry());
     await h.render("current", "48", false, []);
-    await act(async () => resolveHidden(page([delivery(3)])));
+    await act(async () => resolveHidden(livePage(3, "current", "48")));
     assert.ok(!h.current().items.map(sentInstructionKey).includes("receipt-3"));
   });
 });

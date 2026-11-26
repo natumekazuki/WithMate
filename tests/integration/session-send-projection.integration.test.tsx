@@ -363,15 +363,15 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、Auxiliaryの受付待機中に本文や回復UIを増やさない。不明・拒否では理由を示し、canonical失敗は送信済みuser・partialと理由を一度表示する"
+// claim = "同じ会話の直接Steerと通常Sendは同じ草稿を二重送信しない。Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、未確定とcanonical失敗を区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復; docs/design/auxiliary-session.md#送信受付の共通反映" }
-// fault = "Appが旧受付rejectで新入力を上書きする、受付待機中に送信済みの本文や受付不明を示す、不明・拒否で理由を示さない、またはcanonical失敗更新を未受付と混同する"
-// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文数と内容、応答側のエラー理由と出現数、不明時の診断、reject後の会話側理由とmodal alertが発生しないこと"
+// fault = "直前のSteerのbusy描画前に同じ草稿を通常queueへ送る、旧受付rejectで新入力を上書きする、受付待機中に送信済み本文や受付不明を示す、またはcanonical失敗を未受付と混同する"
+// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、同じ描画間隔で直接Steerと通常Sendを操作したときの各IPC呼出、要求待機中とsettle後の対象会話の本文数、応答側の理由、不明時の診断、modal alertの不在"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp common durable admission and canonical Provider failure"
 // lifecycle = "permanent"
 // impact = "送信失敗時の後続入力消失、送信済み本文・途中応答の消失、旧入力の復活による再送を防ぐ"
-// distinction = "実AppのMain/Auxiliary両Sendからdurable ACKとcanonical通知、および同一owner編集後の旧rejectをtextareaと会話まで接続する。Provider実通信・永続化・OS操作は対象にしない"
+// distinction = "実AppでReactの描画を挟まないSteer→Sendの競合、Main/Auxiliary両Sendのdurable ACKとcanonical通知、同一owner編集後の旧rejectを検証。Provider実通信・永続化・OS操作は対象にしない"
 // @end-test-value
 test("Session Windowはdurable受付の旧rejectから新入力を保護し、canonical Provider失敗の本文を保持する", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", {
@@ -476,6 +476,45 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
       .map((element) => element.textContent ?? "");
   try {
     await act(async () => { root.render(<App />); });
+    // The direct-input shortcut and the ordinary Send button can run before
+    // React has committed the busy state from the first operation.
+    main = { ...main, status: "running", runState: "running" };
+    const directResult = deferred<{ turnId: string }>();
+    const directCalls: string[] = [];
+    const normalCalls: string[] = [];
+    api.steerSessionTurn = async (id, request) => {
+      assert.equal(id, main.id);
+      assert.equal(request.expectedTurnId, "native-current");
+      directCalls.push(request.userMessage);
+      return directResult.promise;
+    };
+    api.enqueueSessionTurn = async (_id, request) => {
+      normalCalls.push(request.userMessage);
+      return { state: "rejected", reason: "Fixture: duplicate send." };
+    };
+    await act(async () => {
+      notifyMain();
+      for (const listener of liveListeners) listener(main.id, {
+        sessionId: main.id, threadId: "native-thread", runState: "running", sessionTurnId: "withmate-current",
+        turnId: "native-current", inputAvailable: true, assistantText: "Current answer",
+        steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+      });
+    });
+    await input("one direct instruction");
+    await act(async () => {
+      textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", code: "Enter", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+      send();
+    });
+    assert.deepEqual(directCalls, ["one direct instruction"]);
+    assert.deepEqual(normalCalls, [], "a busy DOM commit must not be the only guard against queuing the same captured draft");
+    assert.equal(textarea().value, "one direct instruction");
+    await act(async () => { directResult.resolve({ turnId: "native-current" }); });
+    assert.equal(textarea().value, "");
+    await act(async () => {
+      main = { ...main, status: "saved", runState: "idle" };
+      emitTerminal(main.id);
+      notifyMain();
+    });
     for (const target of ["Main", "Auxiliary"] as const) {
       if (target === "Auxiliary") {
         const opener = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Open Auxiliary"]');
