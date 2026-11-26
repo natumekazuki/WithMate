@@ -7,6 +7,7 @@ import type { TurnInputReadContext } from "./turn-input-details.js";
 
 type Page = Extract<SessionExecutionReadResult<"list_issued_coordinations">, { ok: true }>;
 export type IssuedCoordination = Page["items"][number];
+type Snapshot = { owner: string; key: string; page: Page; retained: IssuedCoordination[] };
 
 /** Keep the viewed prefix across refreshes; the persisted record remains the source of truth. */
 export function useIssuedCoordinations(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | undefined, enabled: boolean,
@@ -15,7 +16,7 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
   const liveTurnIds = liveTurnId ? [liveTurnId] : [];
   const owner = JSON.stringify([context?.ownerSessionId, context?.target && conversationPeerKey(context.target)]);
   const key = JSON.stringify([owner, messageSeqs, liveTurnIds]);
-  const [snapshot, setSnapshot] = useState<{ owner: string; key: string; page: Page } | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const saved = useRef(snapshot);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -25,6 +26,8 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
   const visibleTurns = new Set([...(responseTurnIds ?? []), ...liveTurnIds]);
   const hasPlacement = (item: IssuedCoordination) => visibleTurns.has(item.sourceTurnId)
     || item.sourceMessageSeq !== null && messageSeqs.includes(item.sourceMessageSeq);
+  const placement = useRef(hasPlacement);
+  placement.current = hasPlacement;
   const bridgedTurns = useRef(new Set<string>());
   bridgedTurns.current = new Set(responseTurnIds?.flatMap((turn, index) => turn && savedSeqs?.[index] === undefined ? [turn] : []));
   useEffect(() => {
@@ -54,15 +57,17 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
         items.push(...page.items);
         nextCursor = page.nextCursor ?? undefined;
       } while (nextCursor !== undefined && items.length < requestedCount);
-      const visible = new Map((cursor && previous ? previous.items : []).map((item) => [item.id, item]));
-      for (const item of items) visible.set(item.id, item);
-      // Only preserve a notice that this read could not cover and whose exact
-      // response still exists. A canonical read can clear a missing notice.
-      if (saved.current?.owner === owner) for (const item of saved.current.page.items) {
-        if (!visible.has(item.id) && bridgedTurns.current.has(item.sourceTurnId) && !liveTurnIds.includes(item.sourceTurnId)
-          && (item.sourceMessageSeq === null || !messageSeqs.includes(item.sourceMessageSeq))) visible.set(item.id, item);
-      }
-      const next = { owner, key, page: { ...page, items: [...visible.values()] } };
+      const observed = new Map((cursor && previous ? previous.items : []).map((item) => [item.id, item]));
+      for (const item of items) observed.set(item.id, item);
+      // The keyset is ordered by record ID. A missing item after the last
+      // fetched ID is not a deletion, even when its source seq is now saved.
+      const known = saved.current?.owner === owner ? saved.current : null;
+      const retained = known ? [...known.page.items, ...known.retained].filter((item) =>
+        !observed.has(item.id) && placement.current(item)
+        && (nextCursor !== undefined && item.id > nextCursor
+          || bridgedTurns.current.has(item.sourceTurnId) && !liveTurnIds.includes(item.sourceTurnId)
+            && (item.sourceMessageSeq === null || !messageSeqs.includes(item.sourceMessageSeq)))) : [];
+      const next = { owner, key, page: { ...page, items: [...observed.values()] }, retained };
       saved.current = next; setSnapshot(next);
     }
     async function load(cursor?: string) {
@@ -95,7 +100,7 @@ export function useIssuedCoordinations(context: TurnInputReadContext | undefined
     return () => { active = false; commands.current = null; unsubscribe?.(); };
   }, [key, enabled]);
   const page = snapshot?.key === key ? snapshot.page : null;
-  const items = snapshot?.owner === owner && (page || enabled) ? snapshot.page.items.filter(hasPlacement) : [];
+  const items = snapshot?.owner === owner && (page || enabled) ? [...snapshot.page.items, ...snapshot.retained].filter(hasPlacement) : [];
   const load = (cursor?: string) => {
     if (enabled && commands.current?.key === key) void commands.current.load(cursor);
   };
