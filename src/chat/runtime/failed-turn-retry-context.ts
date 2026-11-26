@@ -5,7 +5,6 @@ export type FailedTurnRetryContext = {
   submit(request: Omit<RetryFailedSessionTurnRequest, "executionOptions">): Promise<SessionTurnQueueReceipt>;
   blocked(sessionId: string): boolean;
   onError?(sessionId: string, message: string, target: string): void;
-  dockTurn?: { sessionId: string; turnId: string };
 };
 
 export const FailedTurnRetryContext = createContext<FailedTurnRetryContext | null>(null);

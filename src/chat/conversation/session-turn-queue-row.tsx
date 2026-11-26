@@ -10,7 +10,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, projectRetryInputAuthor, retryReceiptInputUnchanged, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
@@ -84,10 +84,9 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
 export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext; inputReadContext?: TurnInputReadContext }) {
   const message = { role: "user" as const, text: props.receipt.captured.request.userMessage };
   const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
-  const retry = (props.receipt.dispatched ?? props.receipt.captured).retrySource;
-  const origin = projectRetryInputAuthor(read.origin, retry, !!retry && retryReceiptInputUnchanged(props.receipt));
+  const origin = read.displayOrigin;
   const isSessionOrigin = origin?.kind === "session";
-  const theme = isSessionOrigin && origin === read.origin ? read.senderTheme : null;
+  const theme = isSessionOrigin ? read.senderTheme : null;
   const role = isSessionOrigin ? "session-origin" : "user";
   return <><article className={`message-row ${role}`} data-message-source="turn-queue">
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} origin={origin} /> : null}

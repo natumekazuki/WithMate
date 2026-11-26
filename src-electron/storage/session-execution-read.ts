@@ -4,7 +4,7 @@ import type { ExecutionReadInput, SentInstructionBodyRequest, SentInstructionCar
 import { executionOperationRequestSchemas, executionWindowRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
-import type { SessionSteerOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
+import { projectRetryInputAuthor, type SessionSteerOrigin, type SessionTurnQueueCapturedInput, type SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
 import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";
 import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
@@ -155,15 +155,16 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
   const origin = directOrigin ?? (receipt?.origin_json ? JSON.parse(receipt.origin_json) as SessionTurnQueueOrigin : null);
   const themeOrigin = directOrigin ?? (receipt?.theme_origin_json ? JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin : null);
   const coordinationInput = captured(receipt?.coordination_input_json ?? null);
-  const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) : null;
+  const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) as SessionTurnQueueCapturedInput["retrySource"] : null;
   // Only this already-resolved Retry receipt needs complete snapshots for comparison.
   // The receipt and snapshots are read in the same transaction.
   const retryInput = receipt && retrySource ? db.prepare(`
     SELECT accepted_json, COALESCE(dispatched_json, captured_json) AS comparison_json
     FROM session_turn_queue_v6 WHERE id = ?`).get(receipt.id) as
     { accepted_json: string | null; comparison_json: string | null } | undefined : undefined;
-  return { ok: true, origin, senderTheme: senderTheme(db, themeOrigin),
-    retrySource, retryInputUnchanged: retryInput ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json) : null,
+  const retryInputUnchanged = retryInput ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json) : null;
+  return { ok: true, origin, senderTheme: senderTheme(db, projectRetryInputAuthor(themeOrigin, retrySource, retryInputUnchanged)),
+    retrySource, retryInputUnchanged,
     ...(coordinationInput?.coordination ? { coordination: { id: coordinationInput.coordination.id, text: coordinationDeliveryText(coordinationInput), consultation: readCoordinationNotification(coordinationInput)?.consultation } } : {}),
     receiptId: receipt?.id ?? null, receiptState: receipt?.state ?? null, turnId: turn ? String(turn.id) : null, turnState: turn?.phase ?? null,
     isFixedStart: !!receipt?.fixed && receipt.input_turn_id === null,

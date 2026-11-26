@@ -2,12 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { LoadError } from "../../ui/load-error.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { ComposerIcon } from "../composer/composer-icon.js";
-import { FailedTurnRetry } from "../conversation/failed-turn-retry.js";
-import type { TurnInputReadContext } from "../conversation/turn-input-details.js";
 
 export type SessionRecoveryActionsProps = {
   retryState: {
-    kind: "interrupted" | "failed" | "canceled";
+    kind: "interrupted" | "canceled";
     lastRequestText: string;
   } | null;
   requestKey: string;
@@ -22,7 +20,6 @@ export type SessionRecoveryActionsProps = {
   latestTurnLoading?: boolean;
   latestTurnError?: string | null;
   onRetryLatestTurn?: () => void;
-  failedRetry?: { context: TurnInputReadContext; turnId: string };
 };
 
 export function SessionRecoveryAnnouncement({ recovery }: { recovery?: SessionRecoveryActionsProps }) {
@@ -43,7 +40,7 @@ export function SessionRecoveryAnnouncement({ recovery }: { recovery?: SessionRe
     if (pending && previousConflict.current !== key) {
       setAnnouncement(`${targetLabel}: Your current draft is preserved. Choose whether to replace it.`);
     } else if (!announced.current.has(key)) {
-      setAnnouncement(state.kind === "failed" ? `${targetLabel}: Edit is available for the previous request.` : `${targetLabel}: Resend and Edit are available for the previous request.`);
+      setAnnouncement(`${targetLabel}: Resend and Edit are available for the previous request.`);
     } else {
       setAnnouncement("");
     }
@@ -66,7 +63,6 @@ export function SessionRecoveryActions({
   latestTurnLoading = false,
   latestTurnError = null,
   onRetryLatestTurn,
-  failedRetry,
 }: SessionRecoveryActionsProps) {
   const editRef = useRef<HTMLButtonElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
@@ -83,10 +79,10 @@ export function SessionRecoveryActions({
   return (
     <div className="session-recovery-actions" role="group" aria-label={`${targetLabel}: Previous Request Actions`} aria-busy={latestTurnLoading || undefined}>
       {retryState ? <>
-        {retryState.kind === "failed" && failedRetry ? <FailedTurnRetry key={JSON.stringify([failedRetry.context.target, failedRetry.turnId])} dock message={{ role: "assistant", text: "" }} context={failedRetry.context} turnId={failedRetry.turnId} targetLabel={targetLabel} disabled={isRetryActionDisabled} /> : retryState.kind !== "failed" ? <button className="drawer-toggle compact secondary composer-icon-button" type="button" title={`${targetLabel}: Resend Previous Request`} aria-label={`${targetLabel}: Resend Previous Request`} onClick={() => { if (!isRetryActionDisabled) onResendLastMessage(); }} disabled={isRetryActionDisabled}>
+        <button className="drawer-toggle compact secondary composer-icon-button" type="button" title={`${targetLabel}: Resend Previous Request`} aria-label={`${targetLabel}: Resend Previous Request`} onClick={() => { if (!isRetryActionDisabled) onResendLastMessage(); }} disabled={isRetryActionDisabled}>
           <ComposerIcon name="resend" />
           <span className="visually-hidden">Resend</span>
-        </button> : null}
+        </button>
         <button ref={editRef} className="drawer-toggle compact secondary composer-icon-button" type="button" title={`${targetLabel}: Edit Previous Request`} aria-label={`${targetLabel}: Edit Previous Request`} onClick={() => { if (!isRetryEditDisabled) onEditLastMessage(); }} disabled={isRetryEditDisabled}>
           <ComposerIcon name="edit" />
           <span className="visually-hidden">Edit</span>

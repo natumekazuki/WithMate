@@ -581,13 +581,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 選択会話に再試行・編集可能な前回要求があれば回復操作を出す。失敗の事実・理由は応答側の共通failure rowで示し、操作列で重複させない。旧`runState === "interrupted"`も確定済み成功を回復対象にしない
   - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら回復操作を出す。取消状態は既存のchat本文で示す
   - `lastUserMessage` がない session では retry 不能のため surface を出さない
-  - 共通 `ChatWindow` が回復操作を所有し、Action Dockの既存上段操作列へ配置する。Prompt展開・compact・Terminal・中央file previewのいずれでも到達でき、activeな列だけに描画する。通常時は回復用の空領域を予約せず、既存Cancelの予約領域を維持する
+  - 旧中断と取消の前回依頼の回復操作は、共通 `ChatWindow` のAction Dock上段へ配置する。Prompt展開・compact・Terminal・中央file previewのいずれでも到達でき、activeな列だけに描画する。通常時は回復用の空領域を予約せず、既存Cancelの予約領域を維持する
   - Mainと選択中Auxiliaryは同じ操作を使う。対象会話、前回依頼、最新turn、編集先draftを同じownerへ束縛し、会話・incarnation・依頼の切替で古い置換確認を無効にする
   - 回復表示の`Edit`と`Resend`はicon-only操作とする。操作対象は既存のMain / Auxiliary切替、前回依頼・停止状態・失敗理由はtranscriptから確認する。tooltipとaccessible nameには対象会話と操作名を含める
   - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
   - 回復操作は次のとおり
-    - `Resend`: 失敗確定Turnは直近ならDock、過去なら対象messageの既存操作欄から保存済みの開始入力を明示的に再実行する。対応する失敗Turnを持たない旧中断・取消の既存回復では選択会話の前回本文を送信する。会話と待機キューのカードの本文・話者表示に再試行の由来説明は付けない。受付後の開始入力の編集差と元送信者名は既存のDetailsで確認できる。現在のdraftは送信・消去・書換えしない。受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
+    - `Resend`: 確定した失敗は最新・過去とも対象の失敗レスポンスカードだけで、保存済みの開始入力を再実行できる。失敗の回復には`Edit`を出さず、指示を変えるときは通常の新規入力を使う。対応する失敗Turnを持たない旧中断・取消でのみDockから前回本文を送信する。会話と待機キューのカードに再試行の由来説明は付けず、受付後の開始入力の編集差と元送信者名は既存のDetailsで確認できる。現在のdraftは消費せず、受付不明時は既存の`Check Receipt` / `Retry Original Turn`を使う
     - `Edit`: 前回本文を対象会話のdraftへ戻し、Promptを開いてtextareaへfocusする。自動送信はしない
   - 異なる非空draftで`Edit`を押した場合は、`Your current draft is preserved.`を示す確認dialogを開く。`Keep Current Draft`または`Escape`で保持し、`Replace With Previous Request`を明示選択した場合だけ置換する。確認中も背面のDock選択は維持する
   - 最新Turnの取得失敗からの`Retry`と実行受付不明の確認は、それぞれ別の操作とする

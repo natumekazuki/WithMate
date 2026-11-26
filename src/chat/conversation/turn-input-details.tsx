@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { coordinationDeliveryText, readCoordinationNotification } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
+import { projectRetryInputAuthor, type SessionTurnQueueCapturedInput, type SessionTurnQueueReceipt, type SessionTurnQueueOrigin, type SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
@@ -25,15 +25,7 @@ export function inputDetailStateLabel(value: string | null | undefined, fallback
   return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
 }
 
-/** A card can display the previous author without changing the recorded actor. */
-export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
-  source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean) {
-  const previous = origin?.kind === "gui" && source && source.origin.targetSessionId === origin.targetSessionId
-    && source.origin.targetIncarnationId === origin.targetIncarnationId ? source : null;
-  return previous?.changedSinceAcceptance === false && unchanged ? previous.origin : origin;
-}
-
-export function retryReceiptInputUnchanged(receipt: SessionTurnQueueReceipt) {
+function retryReceiptInputUnchanged(receipt: SessionTurnQueueReceipt) {
   const comparison = (input: SessionTurnQueueCapturedInput) => JSON.stringify([input.request.userMessage,
     input.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]);
   return !!receipt.accepted && comparison(receipt.accepted) === comparison(receipt.dispatched ?? receipt.captured);
@@ -59,10 +51,11 @@ function ExecutionSettings({ settings }: { settings: NonNullable<Execution["exec
 }
 
 type TurnInputProps = { message: Message; receipt?: SessionTurnQueueReceipt; context?: TurnInputReadContext; turnId?: string; active?: boolean };
+type LoadedTurnInput = { key: string; display?: InputDisplay; execution?: Execution; error?: string; retryUserSeq?: number };
 
 export function useTurnInputRead({ message, receipt, context, turnId, active = true }: TurnInputProps, mode: "display" | "details" = "display") {
   const input = message.turnInput;
-  const [loaded, setLoaded] = useState<{ key: string; display?: InputDisplay; execution?: Execution; error?: string } | null>(null);
+  const [loaded, setLoaded] = useState<LoadedTurnInput | null>(null);
   const [routeError, setRouteError] = useState<{ key: string; message: string }>();
   const [revision, setRevision] = useState(0);
   const receiptId = receipt?.id ?? input?.queueId;
@@ -70,13 +63,27 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const statusReference = input && !receiptId && message.historyIndex !== undefined
     ? { messageSeq: message.historyIndex } : reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
   const referenceIdentity = JSON.stringify([context, statusReference, mode]);
-  const currentRead = active && loaded?.key === referenceIdentity ? loaded : null;
+  // The rendered retry input can outlive its active receipt. Reuse only a display read already
+  // bound to this owner's exact saved user sequence, while the saved-sequence read catches up.
+  const retainsRetryDisplay = mode === "display" && message.role === "user" && !receiptId
+    && message.historyIndex !== undefined && loaded?.retryUserSeq === message.historyIndex
+    && loaded.display?.receiptId && loaded.key === JSON.stringify([context, { receiptId: loaded.display.receiptId }, mode]);
+  const currentRead = active && (loaded?.key === referenceIdentity || retainsRetryDisplay) ? loaded : null;
   const observed = currentRead?.display ?? null;
   const execution = currentRead?.execution ?? null;
+  const captured = receipt?.dispatched ?? receipt?.captured;
   // A direct additional input belongs to its own sender, not the Turn's start input.
   const origin = input && !receiptId ? input.origin : observed?.origin ?? execution?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
-  const sourceSessionId = origin?.kind === "session" ? origin.actorSessionId : undefined;
-  const sourceMainId = origin?.kind === "session" && origin.actorKind === "auxiliary" ? origin.actorMainSessionId : undefined;
+  const displayOrigin = projectRetryInputAuthor(origin, captured ? captured.retrySource : observed?.retrySource,
+    receipt ? !!captured?.retrySource && retryReceiptInputUnchanged(receipt) : observed?.retryInputUnchanged);
+  const observedAuthor = projectRetryInputAuthor(origin, observed?.retrySource, observed?.retryInputUnchanged);
+  // The local queue may reflect a newer edit than the last read. Never paint it with the earlier author's color.
+  const senderTheme = displayOrigin?.kind === "session" && observedAuthor?.kind === "session"
+    && displayOrigin.actorSessionId === observedAuthor.actorSessionId && displayOrigin.actorIncarnationId === observedAuthor.actorIncarnationId
+    && displayOrigin.actorKind === observedAuthor.actorKind
+    && displayOrigin.actorSnapshot?.character.id === observedAuthor.actorSnapshot?.character.id ? observed?.senderTheme ?? null : null;
+  const sourceSessionId = displayOrigin?.kind === "session" ? displayOrigin.actorSessionId : undefined;
+  const sourceMainId = displayOrigin?.kind === "session" && displayOrigin.actorKind === "auxiliary" ? displayOrigin.actorMainSessionId : undefined;
   useEffect(() => {
     const api = getWithMateApi();
     if (!active || !context) return;
@@ -111,7 +118,11 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
       if (mode === "display") {
         const result = await api.readSessionExecution(context.ownerSessionId, "read_turn_input_display", request);
         if (!current) return;
-        if (result.ok) setLoaded({ key: referenceIdentity, display: result }); else fail(result.message);
+        if (result.ok) {
+          const retryUserSeq = message.role === "user" && result.retrySource && receipt?.id === result.receiptId
+            ? receipt.userMessageSeq ?? undefined : undefined;
+          setLoaded({ key: referenceIdentity, display: result, retryUserSeq });
+        } else fail(result.message);
       } else {
         let result = await api.readSessionExecution(context.ownerSessionId, "get_execution", request);
         if (current && result.ok && message.role === "assistant" && !result.receiptId && result.userMessageSeq !== null) {
@@ -127,13 +138,12 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
     return () => { current = false; };
   }, [identity, active]);
   const text = message.role === "user" ? receipt?.captured.coordination ? coordinationDeliveryText(receipt.dispatched ?? receipt.captured) : observed?.coordination?.text ?? message.text : message.text;
-  const captured = receipt?.dispatched ?? receipt?.captured;
   const coordination = message.role !== "user" ? null : captured?.coordination
     ? { id: captured.coordination.id, consultation: readCoordinationNotification(captured)?.consultation ?? text }
     : observed?.coordination ?? null;
   const readError = currentRead?.error ?? (routeError?.key === referenceIdentity ? routeError.message : "");
   const setReadError = (message: string) => setRouteError({ key: referenceIdentity, message });
-  return { input, text, coordination, execution, observed, origin, senderTheme: observed?.senderTheme ?? null, statusReference, receiptId, identity, readError, setReadError, setRevision };
+  return { input, text, coordination, execution, observed, origin, displayOrigin, senderTheme, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
 type TurnExecutionDetailsProps = TurnInputProps & { hasRunChecks?: boolean; displayReadError?: string; onRetryDisplay?: () => void };

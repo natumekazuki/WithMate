@@ -21,8 +21,8 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
-import { FailedTurnRetryWithRead } from "./failed-turn-retry.js";
-import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, projectRetryInputAuthor, type TurnInputReadContext } from "./turn-input-details.js";
+import { FailedTurnRetry } from "./failed-turn-retry.js";
+import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { ReplyQuote } from "./reply-quote.js";
@@ -1604,11 +1604,10 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
-                const author = message.role === "user"
-                  ? projectRetryInputAuthor(read.origin, read.observed?.retrySource, read.observed?.retryInputUnchanged === true) : undefined;
+                const author = message.role === "user" ? read.displayOrigin : undefined;
                 const displayOrigin = author?.kind === "session" ? author : undefined;
                 const isSessionOrigin = displayOrigin !== undefined;
-                const senderTheme = displayOrigin && displayOrigin === read.origin ? read.senderTheme : null;
+                const senderTheme = displayOrigin ? read.senderTheme : null;
                 const messageSent = isAssistant ? sent.filter((item) => item.sourceMessageSeq === message.historyIndex || (absoluteIndex === pendingResponseMessageIndex && item.sourceTurnId === liveWithMateTurnId)) : [];
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
@@ -1669,7 +1668,7 @@ export function SessionMessageColumn({
                     <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
                       {hasMessageActions ? (
                         <div className="message-collapse-control">
-                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetryWithRead message={message} context={inputReadContext} read={read} /> : null}
+                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} read={read} /> : null}
                           {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
                             aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
                             onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}

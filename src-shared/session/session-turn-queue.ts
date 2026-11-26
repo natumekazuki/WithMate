@@ -69,6 +69,14 @@ export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | 
   operation: "steer";
 };
 
+/** The displayed author of a confirmed exact replay is distinct from the GUI receipt actor. */
+export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
+  source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean | null | undefined) {
+  return origin?.kind === "gui" && source?.changedSinceAcceptance === false && unchanged === true
+    && source.origin.targetSessionId === origin.targetSessionId
+    && source.origin.targetIncarnationId === origin.targetIncarnationId ? source.origin : origin;
+}
+
 export type SessionSteerResult = {
   outcome: "applied" | "not-applied" | "unknown";
   turnId: string;
