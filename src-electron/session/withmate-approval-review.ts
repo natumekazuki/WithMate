@@ -5,8 +5,10 @@ import { approvalReviewDecisionSchema, type ApprovalReviewerConversation } from 
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../providers/provider-agent-runtime-binding.js";
 
+/** A request-scoped attempt. No verdict (null) leaves a live head for manual approval. */
 export type PendingApprovalReview = {
   decide(signal: AbortSignal, queue?: ApprovalReviewQueueContext): Promise<LiveApprovalDecision | null>;
+  /** Check at admission and again before accepting the verdict; the queue checks head identity. */
   isCurrent(): boolean;
 };
 
