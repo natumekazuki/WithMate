@@ -1,17 +1,17 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { AuxiliaryDraftPersistence } from "../auxiliary/use-auxiliary-draft-persistence.js";
 import type { ComposerControllerRegistry, ComposerOwner } from "../composer-controller.js";
-import { createSessionTurnClientRequestId } from "./session-submit-coordinator.js";
+import { createSessionTurnClientRequestId, type SessionSubmitCoordinator } from "./session-submit-coordinator.js";
 import { resolveSessionRunErrorMessage } from "./session-live-run-state.js";
 
 export function useSessionTurnInput(input: {
   api: Pick<WithMateWindowApi, "previewComposerInput" | "steerSessionTurn" | "steerAuxiliarySessionTurn"> | null;
   composerRegistry: ComposerControllerRegistry;
   drafts: AuxiliaryDraftPersistence;
+  submitCoordinator: SessionSubmitCoordinator;
 }) {
-  const inFlight = useRef(new Set<string>());
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, { revision: number; message: string }>>({});
 
@@ -31,8 +31,7 @@ export function useSessionTurnInput(input: {
   }) => {
     const { api, composerRegistry: registry } = input;
     const { owner, turnId } = target;
-    if (!api || !target.canSendInput || !turnId || registry.isFrozen || target.blockedReason
-      || target.isReadOnly || inFlight.current.has(owner.id)) return;
+    if (!api || !target.canSendInput || !turnId || registry.isFrozen || target.blockedReason || target.isReadOnly) return;
     if (owner.kind === "auxiliary" && !target.auxiliarySession) return;
     const captured = registry.capture(owner);
     const current = registry.get(owner);
@@ -40,8 +39,11 @@ export function useSessionTurnInput(input: {
       target.onBlocked();
       return;
     }
-    inFlight.current.add(owner.id);
-    setPendingIds(new Set(inFlight.current));
+    // Send and direct Steer can run before React commits their disabled states.
+    // Both submit the same composer revision, so share the synchronous owner lease.
+    const lease = input.submitCoordinator.tryAcquire(owner.id);
+    if (!lease) return;
+    setPendingIds((previous) => new Set(previous).add(owner.id));
     setErrors((previous) => { const next = { ...previous }; delete next[owner.id]; return next; });
     const releaseDetail = target.retainDetail();
     const operation = async () => {
@@ -80,8 +82,12 @@ export function useSessionTurnInput(input: {
         } }));
       } finally {
         releaseDetail();
-        inFlight.current.delete(owner.id);
-        setPendingIds(new Set(inFlight.current));
+        lease.release();
+        setPendingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(owner.id);
+          return next;
+        });
       }
     };
     await (owner.kind === "auxiliary" ? input.drafts.trackSend(operation()) : operation());
