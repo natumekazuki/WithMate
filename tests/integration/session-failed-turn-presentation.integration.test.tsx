@@ -115,7 +115,7 @@ test("latest and older failures use only the exact response Resend in Main and A
       assert.equal(composer().value, draft);
       const failedCard = (text: string) => [...pane.querySelectorAll("article")]
         .find((card) => card.querySelector("[data-message-body]")?.textContent === text);
-      const prior = f.requests.length;
+      const prior: number = f.requests.length;
       for (const [text, receiptId, turnId] of [["B: Latest failed response", "B", "70"], ["A: Partial response", "A", "42"]] as const) {
         await click(failedCard(text)?.querySelector(retry) ?? null);
         assert.deepEqual(f.requests.at(-1)?.request.target, f.targets[session.id]);
