@@ -16,7 +16,7 @@ import { subscribeSessionLiveSelection } from "./runtime/session-window-live-ing
 import { useConversationQueryPages } from "./conversation/use-conversation-query-pages.js";
 import type { MessageNavigatorPage } from "./shell/session-context-pane.js";
 import { useSessionTurnQueue } from "./conversation/use-session-turn-queue.js";
-import { projectSessionTurnQueue } from "./conversation/session-turn-queue-projection.js";
+import { projectSessionTurnQueue, savedQueuedInputSeqs } from "./conversation/session-turn-queue-projection.js";
 import { SessionTurnQueueRow, SessionTurnSubmissionRow } from "./conversation/session-turn-queue-row.js";
 import { SessionTurnSubmissions } from "./runtime/session-turn-submissions.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
@@ -34,14 +34,14 @@ type ConversationPageDirection = "earlier" | "later";
 type ResponseBridge = LiveAssistantProjection & { userMessageSeq?: number };
 type StableMessageKey = { role: Message["role"]; key: string; withMateTurnId?: string };
 
-function turnResponsePosition(history: readonly Message[], userMessageSeq: number, withMateTurnId: string): number {
+function turnResponsePosition(history: readonly Message[], userMessageSeq: number, withMateTurnId: string, confirmedInputs?: ReadonlyMap<number, string>): number {
   let seq = userMessageSeq + 1;
   // Only consecutive inputs of this exact Turn can move its response position.
   // Another starting prompt or a gap is not evidence that its next assistant belongs here.
   for (const [index, message] of history.entries()) {
     const messageSeq = getMessageHistoryIndex(message, index);
     if (messageSeq < seq) continue;
-    if (messageSeq !== seq || message.role !== "user" || message.turnInput?.turnId !== withMateTurnId) break;
+    if (messageSeq !== seq || message.role !== "user" || (message.turnInput?.turnId ?? confirmedInputs?.get(seq)) !== withMateTurnId) break;
     seq++;
   }
   return seq;
@@ -186,6 +186,8 @@ export function useConversationMessageColumn({
   currentThreadIndexes.current = threadIndexes;
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
   const canonicalUserSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
+  const canonicalStartSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) =>
+    message.role === "user" && !message.turnInput ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
   const emptySubmissions = useRef(new SessionTurnSubmissions());
   const submissionStore = baseProps.turnSubmissions ?? emptySubmissions.current;
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
@@ -254,7 +256,7 @@ export function useConversationMessageColumn({
     return (!submission.error || submission.uncertain) && receipt?.userMessageSeq == null
       ? Math.min(boundary, submission.historyMessageCount) : boundary;
   }, Infinity);
-  const unjoinedUser = canonicalUserSeqs.find((seq) => seq >= unboundBoundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq));
+  const unjoinedUser = canonicalStartSeqs.find((seq) => seq >= unboundBoundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq));
   // Canonical history and its receipt are one display handoff, not two independent inserts.
   // A post-history receipt read also confirms unrelated inputs, such as answers to live questions.
   const isHistoryHandoffPending = unjoinedUser !== undefined && !queue.historyReconciled;
@@ -514,7 +516,14 @@ export function useConversationMessageColumn({
   const responseKeys = stableMessageKeys.current.responses;
   const previousPresentation = responsePresentation.current;
   if (enabled && previousPresentation?.owner === pageOwner && previousPresentation.requestId) responseKeys.set(previousPresentation.requestId, previousPresentation.key);
-  for (const receipt of queue.receipts) if (receipt.userMessageSeq !== null) stableKeys.set(receipt.userMessageSeq, { role: "user", key: `turn-submission-${receipt.incarnationId}-${receipt.requestId}` });
+  const savedInputs = useMemo(() => savedQueuedInputSeqs(tailMessages), [tailMessages]);
+  const confirmedInputs = useMemo(() => new Map(queue.receipts.flatMap((receipt) =>
+    receipt.state === "completed" && receipt.inputTurnId && receipt.turnId && receipt.userMessageSeq !== null
+      ? [[receipt.userMessageSeq, receipt.turnId] as const] : [])), [queue.receipts]);
+  for (const receipt of queue.receipts) {
+    const seq = receipt.userMessageSeq ?? savedInputs.get(receipt.id);
+    if (seq !== undefined) stableKeys.set(seq, { role: "user", key: `turn-submission-${receipt.incarnationId}-${receipt.requestId}` });
+  }
   for (const candidate of [...positionedRetained, ...(bridge && enabled ? [bridge] : [])]) {
     const key = responseBridgeKey(candidate);
     for (const [index, value] of stableKeys) {
@@ -525,14 +534,14 @@ export function useConversationMessageColumn({
   // Keep each observed response identity until its saved body arrives, even if the next turn starts first.
   for (const receipt of queue.receipts) {
     const key = responseKeys.get(receipt.requestId);
-    if (!key || receipt.state !== "completed" || receipt.inputTurnId || receipt.userMessageSeq === null) continue;
-    const nextUserSeq = queue.receipts.reduce((boundary, next) => !next.inputTurnId && next.userMessageSeq !== null && next.userMessageSeq > receipt.userMessageSeq!
-      ? Math.min(boundary, next.userMessageSeq) : boundary, Infinity);
+    if (!key || receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running" || receipt.inputTurnId
+      || receipt.userMessageSeq === null || !receipt.turnId) continue;
+    const responseSeq = turnResponsePosition(tailMessages, receipt.userMessageSeq, receipt.turnId, confirmedInputs);
     const savedResponseIndex = messages.findIndex((message, index) => message.role === "assistant"
-      && getMessageHistoryIndex(message, index) > receipt.userMessageSeq! && getMessageHistoryIndex(message, index) < nextUserSeq);
+      && getMessageHistoryIndex(message, index) === responseSeq);
     if (savedResponseIndex >= 0) {
       const historyIndex = getMessageHistoryIndex(messages[savedResponseIndex], savedResponseIndex);
-      if (!stableKeys.has(historyIndex)) stableKeys.set(historyIndex, { role: "assistant", key });
+      if (!stableKeys.has(historyIndex)) stableKeys.set(historyIndex, { role: "assistant", key, withMateTurnId: receipt.turnId });
     }
   }
   for (const requestId of responseKeys.keys()) if (!queue.receipts.some((receipt) => receipt.requestId === requestId)) responseKeys.delete(requestId);
@@ -590,6 +599,7 @@ export function useConversationMessageColumn({
     source.kind === "session" || source.kind === "auxiliary" ? source.messageIndex : undefined), [projection.sources]);
   const responseExecutionTurnIds = useMemo(() => projection.sources.map((source, index) => {
     if (source.kind === "live-assistant") return source.withMateTurnId;
+    if (source.kind === "turn-queue" && projection.messages[index].role === "assistant" && !source.receipt.inputTurnId) return source.receipt.turnId ?? undefined;
     if ((source.kind === "session" || source.kind === "auxiliary") && projection.messages[index].role === "assistant") {
       const recorded = stableKeys.get(source.messageIndex);
       if (recorded?.key === projection.keys[index]) return recorded.withMateTurnId;
@@ -613,14 +623,14 @@ export function useConversationMessageColumn({
     });
   }, [tailMessages, bridgeKey, bridge?.messageIndex, bridge?.text, retainedSignature, sessionId, messageSourceKind, queue.receipts, queueIncarnationId, threadFullIndexes]);
   const searchMessageIndexes = useMemo(() => projection.sources.map((source, index) => source.kind === "live-assistant" && bridge
-    ? projection.messages[index].historyIndex ?? bridge.messageIndex : source.kind === "turn-queue" && source.receipt.userMessageSeq !== null
-    ? source.receipt.userMessageSeq : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
+    ? projection.messages[index].historyIndex ?? bridge.messageIndex : source.kind === "turn-queue"
+    ? source.receipt.userMessageSeq ?? -1 : source.kind === "turn-submission" ? -1 : getMessageHistoryIndex(projection.messages[index], index)), [projection, bridgeKey]);
   // 受付済みuserも含めた表示順で、現在のprompt後の応答だけを待機表示の所有先にする。
   const responseIndex = bridgeKey ? projection.keys.indexOf(bridgeKey) : -1;
   const pendingResponseMessageKey = responseIndex >= 0
     && (bridge?.withMateTurnId && liveRun?.sessionTurnId ? bridge.withMateTurnId === liveRun.sessionTurnId
       : liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
-    && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
+    && !projection.messages.slice(responseIndex + 1, queuedProjection.waitingStart).some((message) => message.role === "user")
     ? bridgeKey : null;
   const responseSessionTurnId = hasActiveRun && !isResponseBindingPending ? liveRun?.sessionTurnId : undefined;
   const responseTurnId = hasActiveRun && !isResponseBindingPending ? liveRun?.turnId : undefined;
@@ -642,17 +652,17 @@ export function useConversationMessageColumn({
     ? responsePresentation.current.key : !isBrowsing && hasActiveRun
       ? `response-${pageOwner}-${pendingResponseMessageKey && bridge ? bridge.messageIndex : tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1}` : undefined;
   const presentationReceipt = queue.receipts.find((receipt) => receipt.requestId === responsePresentation.current?.requestId);
+  const presentationResponseSeq = presentationReceipt?.userMessageSeq != null && presentationReceipt.turnId
+    ? turnResponsePosition(tailMessages, presentationReceipt.userMessageSeq, presentationReceipt.turnId, confirmedInputs) : undefined;
   const presentationResponseIndex = pendingResponseMessageKey ? responseIndex : projection.sources.findIndex((source, index) => projection.messages[index].role === "assistant"
     && (source.kind === "turn-queue" && source.receipt.requestId === responsePresentation.current?.requestId
-      || presentationReceipt?.userMessageSeq != null && (source.kind === "session" || source.kind === "auxiliary") && source.messageIndex > presentationReceipt.userMessageSeq));
+      || presentationResponseSeq !== undefined && (source.kind === "session" || source.kind === "auxiliary") && source.messageIndex === presentationResponseSeq));
   const presentationResponseKey = presentationResponseIndex >= 0 ? projection.keys[presentationResponseIndex] : null;
-  const historyScrollSignature = useMemo(
-    () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
-    [keyedHistory],
+  const projectionScrollSignature = useMemo(
+    () => `${projection.keys.join("\u001f")}:${projection.messages.map((message) => message.text.length).join(",")}`,
+    [projection],
   );
-  const messageScrollSignature = (projection.messages.length === keyedHistory.messages.length
-    ? historyScrollSignature
-    : `${historyScrollSignature}\u001f${bridgeKey}:${bridge?.text.length ?? 0}`)
+  const messageScrollSignature = projectionScrollSignature
     + `:queue:${queue.receipts.map((receipt) => `${receipt.id}:${receipt.state}`).join(",")}`
     + `:submissions:${submissions.map((submission) => `${submission.requestId}:${submission.error}`).join(",")}`;
   const previousTargets = useRef<SessionMessageColumnProps["messageCollapseTargets"]>([]);
@@ -708,9 +718,9 @@ export function useConversationMessageColumn({
     for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
       const rect = row.getBoundingClientRect();
       if (rect.bottom <= listTop || rect.top >= listBottom) continue;
-      const rowIndex = Number(row.dataset.index);
-      const key = projection.keys[rowIndex];
+      const key = row.dataset.conversationRowKey ?? projection.keys[Number(row.dataset.index)];
       if (key) {
+        const rowIndex = projection.keys.indexOf(key);
         const source = projection.sources[rowIndex];
         const messageIndex = source?.kind === "session" || source?.kind === "auxiliary" ? source.messageIndex
           : source?.kind === "turn-queue" ? source.receipt.userMessageSeq ?? undefined : undefined;
@@ -1046,7 +1056,7 @@ export function useConversationMessageColumn({
     if (!enabled || pending.owner !== pageOwner || !list || pending.element.isConnected) return;
     const active = list.ownerDocument.activeElement;
     if (active !== list && active !== list.ownerDocument.body) return;
-    // The queued head and tail have different component owners; restore by receipt after remount.
+    // A queued control can disappear or become disabled while the input row stays mounted.
     const status = Array.from(list.querySelectorAll<HTMLElement>("[data-queue-receipt-id]")).find((element) => element.dataset.queueReceiptId === pending.id);
     const button = status?.querySelector<HTMLButtonElement>(`button[data-queue-move="${pending.direction}"]`);
     (button && !button.disabled ? button : status ?? list).focus({ preventScroll: true });
@@ -1078,6 +1088,7 @@ export function useConversationMessageColumn({
     messageKeys: projection.keys,
     turnQueueMetadata: queuedProjection.metadata,
     onCancelQueuedTurn: queue.cancel,
+    onSendQueuedTurnInput: inputAction,
     onMoveQueuedTurn: moveAction,
     queuedTurnIds,
     queueReorderDisabled,
@@ -1085,6 +1096,7 @@ export function useConversationMessageColumn({
     queueBusyKind: queue.busyKind,
     renderQueueTail,
     pendingResponseMessageKey: pendingResponseMessageKey ?? presentationResponseKey,
+    pendingResponseInsertIndex: queuedProjection.waitingStart,
     responsePresentationKey,
     responseExecutionTurnIds,
     streamingResponseMessageKey: hasActiveRun && !hasSavedBridge && !isCancelRequested && !liveRun?.cancellationState && !liveRun?.errorMessage

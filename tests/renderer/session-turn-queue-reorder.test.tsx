@@ -67,9 +67,9 @@ async function mount() {
 // @test-value v2
 // kind = "contract"
 // claim = "待機列の投影は受付順ではなく保存済み実行順を使い、Main/Auxiliaryの確定履歴と現在応答の位置は維持する"
-// oracle = { type = "contract", ref = "Issue #912: 表示・保存・実行順の一致" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 予約は通常のuser bubbleとして現在Turnの応答より後へ保存済み実行順に置く" }
 // fault = "Rendererがreceiptをsequenceで再sortして保存した並べ替えを無効に見せる"
-// observable = "投影された履歴・live本文とqueued tailのID順、開始候補のID"
+// observable = "同じ投影内の履歴・live本文・待機本文の順序と開始候補のID"
 // observation_boundary = "consumer"
 // scope = "queue reorder projection"
 // lifecycle = "permanent"
@@ -83,8 +83,7 @@ test("queue projection follows persisted execution order without moving history"
       primaryMessageSourceKind: kind, liveAssistant: { sessionId: "session", threadId: "thread", messageIndex: 1, text: "live" },
     });
     const projected = projectSessionTurnQueue(history, receipts, { sessionId: "session", incarnationId: "inc" }, { submissions: [], hasActiveRun: true });
-    assert.deepEqual(projected.projection.messages.map((item) => item.text), ["saved", "live"]);
-    assert.deepEqual(projected.tail.map((item) => item.id), ["B", "C", "A"]);
+    assert.deepEqual(projected.projection.messages.map((item) => item.text), ["saved", "live", "Message B", "Message C", "Message A"]);
     assert.equal(projectSessionTurnQueue(history, receipts, { sessionId: "session", incarnationId: "inc" }, { submissions: [], hasActiveRun: false }).activeReceipt?.id, "B");
   }
 });

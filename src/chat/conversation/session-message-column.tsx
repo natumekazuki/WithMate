@@ -111,6 +111,7 @@ export type SessionMessageColumnProps = {
   submissionUncertain?: boolean;
   turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  onSendQueuedTurnInput?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onMoveQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./use-session-turn-queue.js").SessionTurnQueueMoveDirection) => void;
   queuedTurnIds?: readonly string[];
   queueReorderDisabled?: boolean;
@@ -125,6 +126,7 @@ export type SessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: string[];
   pendingResponseMessageKey?: string | null;
+  pendingResponseInsertIndex?: number;
   responsePresentationKey?: string;
   responseExecutionTurnIds?: readonly (string | undefined)[];
   streamingResponseMessageKey?: string | null;
@@ -473,6 +475,10 @@ export function SelectionTextActionSurface({
   );
 }
 
+function insertPendingRowValue<T>(values: readonly T[] | undefined, index: number, empty: T): readonly T[] | undefined {
+  return values && index >= 0 ? [...values.slice(0, index), empty, ...values.slice(index)] : values;
+}
+
 export function SessionMessageColumn({
   selectedReplyKey,
   onSelectReply,
@@ -482,6 +488,7 @@ export function SessionMessageColumn({
   sentReadLiveTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
+  onSendQueuedTurnInput,
   onMoveQueuedTurn,
   queuedTurnIds,
   queueReorderDisabled,
@@ -499,22 +506,23 @@ export function SessionMessageColumn({
   messages: suppliedMessages,
   messageKeys: suppliedMessageKeys,
   pendingResponseMessageKey: suppliedPendingResponseKey = null,
+  pendingResponseInsertIndex,
   responsePresentationKey,
-  responseExecutionTurnIds,
+  responseExecutionTurnIds: suppliedResponseExecutionTurnIds,
   streamingResponseMessageKey,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
-  savedReplySourceIndexes,
+  savedReplySourceIndexes: suppliedSavedReplySourceIndexes,
   conversationPaging,
   searchConversation,
   cancelConversationQuery,
   conversationQueryOwner = sessionId,
   conversationQueryRevision = 0,
   searchTailMessages,
-  searchMessageIndexes,
+  searchMessageIndexes: suppliedSearchMessageIndexes,
   onLoadMessagePage,
-  messageGroups,
+  messageGroups: suppliedMessageGroups,
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -567,13 +575,29 @@ export function SessionMessageColumn({
     && !sent.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
   const renderIssued = (record: typeof issued.items[number]) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${record.sourceMessageSeq === null ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
-  const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
-  const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
-  const messageKeys = useMemo(() => sharedPending ? [...suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`), responsePresentationKey!] : suppliedMessageKeys, [suppliedMessages, suppliedMessageKeys, sharedPending, responsePresentationKey, sessionId]);
-  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : suppliedPendingResponseKey;
   const responseRowKeys = useRef({ owner: conversationQueryOwner, keys: new Map<string, string>() });
   if (responseRowKeys.current.owner !== conversationQueryOwner) responseRowKeys.current = { owner: conversationQueryOwner, keys: new Map() };
   const rowKeys = responseRowKeys.current.keys;
+  const existingResponseKey = suppliedPendingResponseKey && suppliedMessageKeys?.includes(suppliedPendingResponseKey)
+    ? suppliedPendingResponseKey
+    : suppliedMessageKeys?.find((key) => key === responsePresentationKey || rowKeys.get(key) === responsePresentationKey && rowKeys.has(key));
+  const sharedPending = !!responsePresentationKey && hasResponseStatus && !existingResponseKey;
+  const sharedPendingIndex = sharedPending ? pendingResponseInsertIndex ?? suppliedMessages.length : -1;
+  const rawMessages = useMemo(() => sharedPendingIndex < 0 ? suppliedMessages : [
+    ...suppliedMessages.slice(0, sharedPendingIndex), { role: "assistant" as const, text: "" }, ...suppliedMessages.slice(sharedPendingIndex),
+  ], [suppliedMessages, sharedPendingIndex]);
+  const messageKeys = useMemo(() => {
+    if (sharedPendingIndex < 0) return suppliedMessageKeys;
+    const keys = suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`);
+    keys.splice(sharedPendingIndex, 0, responsePresentationKey!);
+    return keys;
+  }, [suppliedMessages, suppliedMessageKeys, sharedPendingIndex, responsePresentationKey, sessionId]);
+  // The inserted surface has no saved seq, search ordinal, or message group.
+  const savedReplySourceIndexes = useMemo(() => insertPendingRowValue(suppliedSavedReplySourceIndexes, sharedPendingIndex, undefined), [suppliedSavedReplySourceIndexes, sharedPendingIndex]);
+  const responseExecutionTurnIds = useMemo(() => insertPendingRowValue(suppliedResponseExecutionTurnIds, sharedPendingIndex, undefined), [suppliedResponseExecutionTurnIds, sharedPendingIndex]);
+  const searchMessageIndexes = useMemo(() => insertPendingRowValue(suppliedSearchMessageIndexes, sharedPendingIndex, -1), [suppliedSearchMessageIndexes, sharedPendingIndex]);
+  const messageGroups = useMemo(() => insertPendingRowValue(suppliedMessageGroups, sharedPendingIndex, null), [suppliedMessageGroups, sharedPendingIndex]);
+  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : existingResponseKey ?? suppliedPendingResponseKey;
   for (const key of rowKeys.keys()) if (!messageKeys?.includes(key)) rowKeys.delete(key);
   if (responsePresentationKey && pendingResponseMessageKey && !rowKeys.has(pendingResponseMessageKey)) rowKeys.set(pendingResponseMessageKey, responsePresentationKey);
   const streamingIndex = streamingResponseMessageKey ? suppliedMessageKeys?.indexOf(streamingResponseMessageKey) ?? -1 : -1;
@@ -1552,7 +1576,9 @@ export function SessionMessageColumn({
             const executionTurnId = isAssistant ? responseExecutionTurnIds?.[absoluteIndex]
               ?? ((sharedPending || !responseExecutionTurnIds) && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined) : undefined;
             const hasExecutionDetails = isAssistant && inputReadContext && (savedSeq !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
-            const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
+            const queueReceipt = turnQueueMetadata?.get(messageKey);
+            const queuedState = queueReceipt?.state;
+            const isAwaitingSavedResponse = isAssistant && (queuedState === "completed" || queuedState === "canceled");
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
@@ -1593,6 +1619,7 @@ export function SessionMessageColumn({
                   messageJumpHighlight?.key === messageKey ? " message-jump-highlight" : ""
                 }`}
                 data-index={absoluteIndex}
+                data-conversation-row-key={messageKey}
               >
                 {isMessageGroupStart && messageGroup ? (
                   <div
@@ -1612,7 +1639,7 @@ export function SessionMessageColumn({
                 const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
-                className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
+                className={`message-row ${displayedRole}${isAwaitingSavedResponse || absoluteIndex === sharedPendingIndex ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
@@ -1878,7 +1905,7 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
-                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
+                    {queueReceipt && message.turnInput?.queueId !== queueReceipt.id ? <SessionTurnQueueStatus receipt={queueReceipt} position={queuedTurnIds?.includes(queueReceipt.id) ? queuedTurnIds.indexOf(queueReceipt.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === queueReceipt.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onSendInput={onSendQueuedTurnInput} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
                     {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator phase="waiting" announcement="Loading response" /></div>
                       : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>

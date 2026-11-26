@@ -344,8 +344,10 @@ test("conversation column keeps source-blocked deliveries queued until dispatch"
       active = [blocked, immediate];
       await act(async () => changed?.(kind));
       assert.equal(column().responsePending, true, `${kind}: immediate work can pass the blocked delivery`);
-      assert.equal(column().messages.at(-1)?.text, "immediate prompt");
-      assert.ok(dom.window.document.body.textContent?.includes("delayed prompt"));
+      assert.deepEqual([...dom.window.document.querySelectorAll(".message-row")].map((row) => {
+        if (row.classList.contains("pending-row")) return "response";
+        return row.querySelector("[data-message-body]")?.textContent;
+      }), ["immediate prompt", "response", "delayed prompt"]);
       active = [blocked, { ...immediate, state: "starting" }];
       await act(async () => changed?.(kind));
       assert.equal(column().responsePending, true, `${kind}: starting owns the response`);
@@ -679,7 +681,7 @@ test("conversation column shows question answers independently of queued submiss
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxは受付順と実行順が一致・逆転のどちらでも、次予約のstarting/runningと旧履歴の到着順によらず旧応答と次応答のDOMを保持する。Steerを挟んでも保存応答・本文・質問・承認を正しい面へ接続し、未確定のliveはreceiptで所属が確定するまで待つ"
+// claim = "Main/Auxは本文が未着の成功・失敗・取消をまたいで次予約が開始しても、旧応答と次応答のDOMを保持する。受付順と実行順が逆転してSteerを挟んでも保存応答・本文・質問・承認を正しい面へ接続し、未確定のliveはreceiptで所属が確定するまで待つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 通常応答のrequest/turn表示identity、確定応答の取得待ち" }
 // fault = "受付sequenceを実行境界とみなして旧待機DOMを捨てる、後着旧履歴を次応答へ結合する、または同じ保存応答を重複表示する"
 // observable = "実Columnのassistant DOM・avatar・card identity、取得待ちstatus、保存本文と行順、質問・承認の所属、key一意性、submission消費"
@@ -703,7 +705,12 @@ test("conversation column retains empty responses when the next turn starts befo
   });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    for (const kind of ["session", "auxiliary"] as const) for (const reversed of [false, true]) for (const [nextState, liveFirst, withInput] of [["starting", false, false], ["starting", true, false], ["running", false, false], ["running", true, false], ["running", true, true]] as const) {
+    const scenarios = [
+      ["starting", false, false, "completed"], ["starting", true, false, "completed"],
+      ["running", false, false, "completed"], ["running", true, false, "completed"], ["running", true, true, "completed"],
+      ["running", true, false, "failed"], ["running", true, false, "canceled"],
+    ] as const;
+    for (const kind of ["session", "auxiliary"] as const) for (const reversed of [false, true]) for (const [nextState, liveFirst, withInput, terminalState] of scenarios) {
       const store = new SessionTurnSubmissions();
       const receipt = (sequence: number): SessionTurnQueueReceipt => ({
         sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`,
@@ -732,7 +739,7 @@ test("conversation column retains empty responses when the next turn starts befo
         if (props) assert.equal(new Set(props.messageKeys).size, props.messageKeys?.length, "projected row keys stay unique");
         return props ? <SessionMessageColumn {...props} /> : null;
       }
-      const viewKey = `${kind}-${reversed}-${nextState}-${liveFirst}-${withInput}`;
+      const viewKey = `${kind}-${reversed}-${nextState}-${liveFirst}-${withInput}-${terminalState}`;
       const nextUserSeq = withInput ? 3 : 2;
       const thirdUserSeq = nextUserSeq + 2;
       const render = () => act(async () => root.render(<View key={viewKey} />));
@@ -742,7 +749,8 @@ test("conversation column retains empty responses when the next turn starts befo
       assert.ok(first);
       const firstAvatar = first.querySelector(".message-avatar");
       const firstCard = first.querySelector(".message-card");
-      terminals.set("request-1", { ...receipt(1), state: "completed", turnId: "turn-1", userMessageSeq: 0 });
+      const failure = terminalState === "failed" ? "fixture terminal failure" : undefined;
+      terminals.set("request-1", { ...receipt(1), state: terminalState, turnId: "turn-1", userMessageSeq: 0, reason: failure ?? null });
       active = [{ ...receipt(2), state: nextState, turnId: nextState === "running" ? "turn-2" : null, userMessageSeq: nextState === "running" ? nextUserSeq : null }];
       const nextLive: LiveSessionRunState = { sessionId: kind, threadId: "thread", sessionTurnId: "turn-2", turnId: "native-turn-2", runState: "running", assistantText: "response-2", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
       if (nextState === "starting" && liveFirst) {
@@ -761,7 +769,7 @@ test("conversation column retains empty responses when the next turn starts befo
       });
       assert.ok(first.isConnected && responses()[0] === first, `${kind}/${nextState}: the old waiting surface survives the next start`);
       assert.equal(responses().length, 2);
-      assert.match(first.textContent ?? "", /Loading response/);
+      assert.match(first.textContent ?? "", failure ? /fixture terminal failure/ : /Loading response/);
       const second = responses()[1];
       const secondAvatar = second.querySelector(".message-avatar");
       const secondCard = second.querySelector(".message-card");
@@ -772,12 +780,13 @@ test("conversation column retains empty responses when the next turn starts befo
       }
       saved = [{ role: "user", text: "prompt-1", historyIndex: 0 }];
       if (withInput) saved.push({ role: "user", text: "prompt-3", historyIndex: 1 });
-      saved.push({ role: "assistant", text: "final-1", historyIndex: nextUserSeq - 1 });
+      const savedFirstBody = terminalState === "canceled" ? "Run canceled." : "final-1";
+      saved.push({ role: "assistant", text: savedFirstBody, historyIndex: nextUserSeq - 1, ...(failure ? { runFailure: failure } : {}) });
       await render();
       assert.ok(responses()[0] === first && responses()[1] === second, "old canonical arrival cannot replace either response surface");
       assert.ok(first.querySelector(".message-avatar") === firstAvatar && first.querySelector(".message-card") === firstCard);
-      assert.match(first.textContent ?? "", /final-1/);
-      assert.doesNotMatch(second.textContent ?? "", /final-1/);
+      assert.ok(first.textContent?.includes(savedFirstBody));
+      assert.ok(!second.textContent?.includes(savedFirstBody));
       assert.deepEqual(store.getSnapshot().map((item) => item.requestId), ["request-2"]);
       if (nextState === "starting" && liveFirst) {
         assert.equal((latest as unknown as SessionMessageColumnProps).isRunning, true, "binding wait does not fake an idle runtime");
@@ -797,7 +806,7 @@ test("conversation column retains empty responses when the next turn starts befo
       assert.ok(responses()[0] === first && responses()[1] === second);
       assert.ok(first.querySelector(".message-avatar") === firstAvatar && first.querySelector(".message-card") === firstCard);
       assert.ok(second.querySelector(".message-avatar") === secondAvatar && second.querySelector(".message-card") === secondCard);
-      assert.deepEqual([...dom.window.document.querySelectorAll(".message-row .rich-text")].map((node) => node.textContent), ["prompt-1", ...(withInput ? ["prompt-3"] : []), "final-1", "prompt-2", "final-2"]);
+      assert.deepEqual([...dom.window.document.querySelectorAll(".message-row .rich-text")].map((node) => node.textContent), ["prompt-1", ...(withInput ? ["prompt-3"] : []), savedFirstBody, "prompt-2", "final-2"]);
       assert.equal(store.getSnapshot().length, 0);
       active = [receipt(4)];
       await act(async () => {
@@ -1040,6 +1049,9 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { value(this: HTMLElement, name: string, listener: EventListener) { this.removeEventListener(name.replace(/^on/, ""), listener); } });
   dom.window.HTMLElement.prototype.scrollTo = function () {};
   dom.window.HTMLElement.prototype.scrollIntoView = function () {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 },
+  });
   const saved = [
     { role: "user" as const, text: "old request", historyIndex: 60 },
     { role: "assistant" as const, text: "old response", historyIndex: 61 },
@@ -1112,6 +1124,103 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
     dom.window.close();
     globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = actEnvironment;
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存済みSteerが受付応答・queueの再取得より先に届いても、同じ入力行を応答前の保存位置に移し、古い予約操作は表示しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付済みの入力を待機から開始・保存まで同じ会話行で更新" }
+// fault = "保存済みSteerを未解決の次Turn入力扱いで隠す、同じ本文を二重表示する、予約操作を残す、または行と操作中のfocusを無関係な場所へ飛ばす"
+// observable = "Main/Aux実会話列の入力・応答の順と件数、Steerされた行のDOM identity、取消buttonの撤去と退避focus、投影に渡す元receipt状態"
+// observation_boundary = "component-behavior"
+// scope = "Main/Auxの予約Steer、完了ACKを保留したまま同じreceiptの保存入力を親snapshotで更新"
+// lifecycle = "permanent"
+// distinction = "既存のSteer検索テストはACK→保存の順。このテストは保存→ACKの順で同一行と操作の意味を観測する"
+// @end-test-value
+test("saved Steer keeps its queued row and retires stale controls before ACK", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      const makeReceipt = (id: string, order: number, userMessage: string): SessionTurnQueueReceipt => ({
+        sessionId: kind, incarnationId: "inc", id, requestId: `request-${id}`, sequence: order, queuePosition: order,
+        state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+        captured: { request: { clientRequestId: `request-${id}`, userMessage,
+          executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } },
+          provider: "codex", workspacePath: "fixture", attachments: [] },
+      });
+      const steer = makeReceipt("steer", 2, "extra instruction");
+      const behind = makeReceipt("behind", 3, "next independent prompt");
+      const started = { ...makeReceipt("initial", 1, "start prompt"), state: "running" as const, turnId: "active", userMessageSeq: 0 };
+      const accepted = { ...steer, state: "completed" as const, turnId: "active", inputTurnId: "native-active", userMessageSeq: 1 };
+      let receipts = [started, steer, behind];
+      let readReceipt = steer;
+      let finish!: (value: SessionTurnQueueReceipt) => void;
+      const api: ConversationMessageColumnApi = {
+        listSessionTurnQueue: async () => receipts,
+        getSessionTurnQueueReceipt: async (_id, requestId) => requestId === steer.requestId ? readReceipt : null,
+        sendQueuedSessionInput: (id, receiptId, turnId) => {
+          assert.deepEqual([id, receiptId, turnId], [kind, steer.id, "native-active"]);
+          return new Promise((resolve) => { finish = resolve; });
+        },
+      };
+      const store = new SessionTurnSubmissions();
+      for (const r of [steer, behind]) {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: r.requestId, userMessage: r.captured.request.userMessage,
+          historyMessageCount: 1, queuedBehindRun: true, error: "" });
+        store.accept(r);
+      }
+      let history: SessionMessageColumnProps["messages"] = [{ role: "user", text: "start prompt", historyIndex: 0 }];
+      const live: LiveSessionRunState = { sessionId: kind, sessionTurnId: "active", turnId: "native-active", threadId: "fixture",
+        queueReceipt: { id: started.id, incarnationId: "inc", userMessageSeq: 0 }, runState: "running", inputAvailable: true,
+        assistantText: "", backgroundTasks: [], steps: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      let projectedReceiptState: SessionTurnQueueReceipt["state"] | undefined;
+      function View() {
+        const column = useConversationMessageColumn({ session: { id: kind, messages: history, incarnationId: "inc", runState: "running" },
+          baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled: true, api, liveRun: live });
+        projectedReceiptState = column?.turnQueueMetadata && [...column.turnQueueMetadata.values()].find((r) => r.id === steer.id)?.state;
+        return column ? <SessionMessageColumn {...column} /> : null;
+      }
+      const render = () => act(async () => root.render(<View key={kind} />));
+      const document = dom.window.document;
+      const inputRows = () => [...document.querySelectorAll("article.message-row.user")].filter((row) => row.textContent?.includes("extra instruction"));
+      await render();
+      const [before] = inputRows();
+      const steerButton = [...before.querySelectorAll("button")].find((button) => button.textContent === "Steer")!;
+      assert.ok(steerButton);
+      steerButton.focus();
+      await act(async () => steerButton.click());
+      history = [...history, { role: "user", text: "extra instruction", historyIndex: 1,
+        turnInput: { queueId: steer.id, turnId: "active", nativeTurnId: "native-active", state: "confirmed", attachments: [] } }];
+      await render();
+      assert.ok(inputRows().length === 1 && inputRows()[0] === before);
+      assert.equal(before.querySelector("[data-queue-receipt-id]"), null);
+      assert.equal(projectedReceiptState, "queued");
+      assert.ok(document.activeElement === document.querySelector(".session-message-list"), "the removed Steer control hands focus back to the list");
+      const articles = [...document.querySelectorAll("article.message-row")];
+      assert.ok(articles[1] === before, "the same input now precedes the response");
+      assert.ok(articles[2].classList.contains("assistant"));
+      assert.match(articles[3].textContent ?? "", /next independent prompt/);
+      receipts = [started, behind];
+      readReceipt = accepted;
+      await act(async () => finish(accepted));
+      assert.ok(inputRows().length === 1 && inputRows()[0] === before);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
   }
 });
 
@@ -1191,6 +1300,10 @@ test("queued images load through their Main or Auxiliary conversation context", 
     const previous = new Map(Object.keys(values).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
     for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, value });
     dom.window.HTMLElement.prototype.scrollIntoView = function () {};
+    dom.window.HTMLElement.prototype.scrollTo = function () {};
+    Object.defineProperties(dom.window.HTMLElement.prototype, {
+      offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 },
+    });
     const intersection = installIntersectionObserver();
     const bytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>');
     const inspected: SessionImageResourceRequest[] = [];
@@ -1237,7 +1350,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
     try {
       await act(async () => root.render(<View />));
       assert.deepEqual(inspected, [{ sessionId, target: "./queued.svg" }]);
-      const image = dom.window.document.querySelector<HTMLImageElement>(`[data-message-source="${source}"] img`);
+      const image = dom.window.document.querySelector<HTMLImageElement>('.message-row.user img[alt="queued image"]');
       assert.ok(image);
       assert.equal(image.alt, "queued image");
       assert.match(image.src, /^blob:/);
@@ -1679,15 +1792,15 @@ test("conversation column はMain/Auxの取消終了待ちで応答面を保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryの先頭queuedとtail間の移動は対象focusを維持し、開始競合の遅延再取得でcontrolが消えた場合は会話一覧へ退避する。別controlへ移したfocusは奪わない"
-// oracle = { type = "contract", ref = "Issue #912: 上下操作後も対象focusを保持する採用方針" }
-// fault = "本文とtailの再mountや開始競合後のcontrol消失でfocusを失う、または遅い応答が利用者の次操作からfocusを奪う"
-// observable = "実columnのreceipt本文順、移動前buttonの切断、activeElementのreceipt所属と方向"
+// claim = "Main/Auxiliaryの予約が先頭と後続を行き来しても同じ操作面にfocusを保ち、再取得で開始が確定して操作が消えた場合だけ会話一覧へ退避する。別controlへ移したfocusは奪わない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 上下操作はTabで到達しEnter／Spaceで実行" }
+// fault = "先頭への移動時に同じ予約行の操作を作り直す、開始で操作が消える時にfocusを落とす、または遅い応答が別controlからfocusを奪う"
+// observable = "実columnでの移動前のbuttonと開始前の本文行のDOM接続状態、activeElementのreceipt所属・方向・退避先"
 // observation_boundary = "consumer"
-// scope = "queue reorder across virtualized head and queue tail"
+// scope = "Main/Auxの同じ会話列内の先頭と後続予約の移動"
 // lifecycle = "permanent"
 // impact = "待機中の会話でもkeyboardで対象を見失わず並べ替えを継続できる"
-// distinction = "全tail row fixtureでは別subtree間の再mountと同じ先頭receiptのcontrolのみ消失を再現できない。実columnの2件でACKと再取得を分けて確認する"
+// distinction = "操作の単体fixtureでは表示順で先頭が交代する時の操作面と、別の再取得で操作だけが消える時のfocus先を区別できない。実columnでACKと再取得を分けて確認する"
 // @end-test-value
 test("queue move retains focus across the active queued head and tail", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
@@ -1736,7 +1849,7 @@ test("queue move retains focus across the active queued head and tail", async ()
       original.focus();
       await act(async () => original.click());
       await act(async () => finish());
-      assert.equal(original.isConnected, false, "the head and tail are different component subtrees");
+      assert.equal(original.isConnected, true, "the same control is retained when the reservation becomes the head");
       assert.equal(active()?.getAttribute("aria-label"), "Queued turn 1 of 2");
       assert.match(active()?.closest("article")?.textContent ?? "", /Queued B/);
       const down = button(1, "down");
@@ -2748,10 +2861,10 @@ test("completed receipt reads converge even when queue notifications arrive befo
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendは受付を確認してからcanonical到着まで同じ応答DOMを保持し、集約した本文を終端で最新rawへ接続する。旧interruptedもFailedを一度表示し、後続は専用解除なしで順に待機・開始し、個別に取消せる"
+// claim = "Main/AuxのSendは受付を確認してからcanonical到着まで同じ応答DOMを保持し、集約した本文を終端で最新rawへ接続する。先行Turnの保存を待つ予約も先頭への昇格で同じ入力行を保ち、待機中は個別に取消せる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付応答・自動照会・回復; docs/design/auxiliary-session.md#送信受付の共通反映" }
 // fault = "受付前に仮行が出る、ACK/保存到着でpromptや枠を消す・二重化する、旧失敗に解除を要求する、後続順と取消対象を誤る、または失敗をspinnerに隠す"
-// observable = "実Columnのprompt件数・応答DOM identity・制御clockごとの本文・Failed件数、後続の順とCancel対象、isRunning/responsePendingと所有request"
+// observable = "実Columnのprompt件数・応答と予約入力のDOM identity・制御clockごとの本文・Failed件数、後続の順とCancel対象、isRunning/responsePendingと所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
 // lifecycle = "permanent"
@@ -2878,14 +2991,18 @@ test("conversation column shows accepted sends and preserves the canonical respo
         store.accept(nextReceipt);
         changed?.(kind);
       });
-      assert.deepEqual(column().messages.map((message) => message.text), ["captured prompt", "additional input in this turn", "streamed answer"]);
+      assert.deepEqual(column().messages.map((message) => message.text), ["captured prompt", "additional input in this turn", "streamed answer", "next reserved prompt"]);
       const textWhileSaving = dom.window.document.body.textContent!;
       assert.ok(textWhileSaving.indexOf("streamed answer") < textWhileSaving.indexOf("next reserved prompt"), "the next reserved prompt stays after the prior response");
+      const nextPrompt = () => [...dom.window.document.querySelectorAll(".message-row.user")].find((row) => row.textContent?.includes("next reserved prompt"));
+      const queuedPromptRow = nextPrompt();
+      assert.ok(queuedPromptRow);
       assert.equal(pendingCount(), 0);
       assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
       saved = [...saved, { role: "assistant", text: "final answer" }];
       await render();
       assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseRow, "canonical saving updates the same virtualized response row");
+      assert.ok(nextPrompt() === queuedPromptRow, "promotion to the queue head keeps the same input DOM");
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 1, "the next turn gets its own response surface only after the prior canonical response arrives");
       assert.equal(column().isRunning, false);
@@ -2895,6 +3012,7 @@ test("conversation column shows accepted sends and preserves the canonical respo
       active = [];
       await act(async () => { store.accept(resolved!); changed?.(kind); });
       assert.equal(pendingCount(), 0);
+      assert.equal(nextPrompt(), undefined, "a confirmed pre-start cancellation removes only that reservation");
       assert.equal(store.getSnapshot().length, 0);
 
       // A turn can reach terminal before this column has ever observed an active receipt.
