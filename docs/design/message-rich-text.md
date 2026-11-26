@@ -42,7 +42,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - HTMLはDOM内のwebviewとして既存のclipと重なり順へ参加する。Jump to latest、選択action、tooltip、通知、dialog、非対象会話のdimを覆わず、浮動操作のための専用領域や余白を追加しない。一時surfaceを表示するためにHTML全体を隠したり再実行したりしない。権限要求・子Window・外部protocolのhost確認ではHTMLを背後に残してdimを重ね、明示選択またはCancel／Escapeで回答する。
 - Codex固有構文は`src-shared/text/codex-file-references.ts`へ分離する。`src-shared/text/provider-response-markdown.ts`が応答元providerに応じたparser extensionを選び、本文描画・検索・plain summaryで共有する。providerは対象会話の所有元から渡し、User本文・通常のMarkdown・未対応providerには固有解析を適用しない。Markdownとfile linkの描画・操作はprovider共通とする。
 
-- HTML本文の初回取得中は、プレビュー領域に共通LoadingIndicatorの名前付き待機状態を表示し、Reloadは無効にするがbusyやspinnerには切り替えない。利用者がReloadを実行したときはボタンにもbusyと共通ButtonContentのspinnerを表示する。取得に失敗した場合は理由を表示し、Reloadから再試行できる。
+- 会話内HTMLのReloadは既存ヘッダー内でfile linkの手前に置き、本文右上に重なる会話操作とは別の位置で直接押せるようにする。HTML本文の初回取得中は、プレビュー領域に共通LoadingIndicatorの名前付き待機状態を表示し、Reloadは無効にするがbusyやspinnerには切り替えない。利用者がReloadを実行したときはボタンにもbusyと共通ButtonContentのspinnerを表示する。取得に失敗した場合は理由を表示し、Reloadから再試行できる。
 
 ## Image Handling
 

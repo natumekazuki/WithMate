@@ -25,20 +25,23 @@ export function MarkdownFilePreviewFrame({
   headerActions?: ReactNode;
 }) {
   const reloadLabel = `Reload ${format} Preview`;
+  const reload = onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
+    <button type="button" onClick={onReload} disabled={loading}
+      aria-busy={reloading || undefined} aria-label={reloadLabel} title={reloadLabel}>
+      <ButtonContent busy={reloading} busyLabel={`Reloading ${format} Preview`}>
+        <span aria-hidden="true">↻</span>
+      </ButtonContent>
+    </button>
+  </span> : null;
   return (
     <span ref={shellRef} className="message-file-preview" data-format={format.toLowerCase()}
       aria-label={title || `${format} Preview`}>
       <span {...sourceAttributes} className="message-file-preview-header">
+        {/* Leave the right edge to the conversation's floating message actions. */}
+        {format === "HTML" ? reload : null}
         <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
         {headerActions}
-        {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
-          <button type="button" onClick={onReload} disabled={loading}
-            aria-busy={reloading || undefined} aria-label={reloadLabel} title={reloadLabel}>
-            <ButtonContent busy={reloading} busyLabel={`Reloading ${format} Preview`}>
-              <span aria-hidden="true">↻</span>
-            </ButtonContent>
-          </button>
-        </span> : null}
+        {format === "PDF" ? reload : null}
       </span>
       <span className="message-file-preview-auxiliary message-file-preview-content"
         aria-label={`Embedded ${format}`} aria-busy={loading}>
