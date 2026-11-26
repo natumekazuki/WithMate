@@ -1401,26 +1401,8 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   pointer-events: none;
 }
 
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control,
-.message-collapse-control:has(> .reply-toggle) {
-  opacity: 1;
-}
-
-@media (hover: hover) {
-  .message-text-wrapper:not(:hover, :focus-within) > .message-collapse-control:has(> .reply-toggle) > :not(.reply-toggle) {
-    opacity: 0;
-  }
-}
-
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle,
-.message-collapse-control > .reply-toggle {
-  pointer-events: auto;
-}
-
+.message-text-wrapper:is(:hover, :focus-within) > .message-collapse-control,
+.message-collapse-control:has(> .reply-toggle[aria-pressed="true"]),
 /* A saved failure can have neither body lines to hover nor a Reply button. */
 .message-card:is(:hover, :focus-within) .message-text-wrapper:has(
   > [data-message-body]:empty,
@@ -1944,8 +1926,7 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
     opacity: 1;
   }
 
-  .message-collapse-control > .message-collapse-toggle,
-  .message-collapse-control > .message-bookmark-toggle,
+  .message-collapse-control > button,
   .message-code-block-actions > .message-code-copy-button {
     pointer-events: auto;
   }
