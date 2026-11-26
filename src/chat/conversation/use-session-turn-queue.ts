@@ -14,7 +14,9 @@ export type SessionTurnQueueActionKind = "cancel" | "input" | "move-up" | "move-
 export type SessionTurnQueueMoveDirection = "up" | "down";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
-export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = [], liveRun?: LiveSessionRunState | null) {
+export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean,
+  canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = [], liveRun?: LiveSessionRunState | null,
+  reconciliationUserSeqs: readonly number[] = canonicalUserSeqs) {
   const owner = `${sessionId}:${incarnationId}`;
   const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true, ready: false });
   const stateRef = useRef(state);
@@ -22,6 +24,9 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const canonicalRef = useRef(new Set(canonicalUserSeqs));
   canonicalRef.current = new Set(canonicalUserSeqs);
   const canonicalSignature = canonicalUserSeqs.join(",");
+  // A peer's page can ask for reconciliation but cannot retire a receipt
+  // needed while the Session-wide tail is still catching up.
+  const reconciliationSignature = reconciliationUserSeqs.join(",");
   const submissionsRef = useRef(submissions);
   submissionsRef.current = submissions;
   const submissionSignature = submissions.map((submission) => `${submission.requestId}:${submission.receipt?.updatedAt ?? ""}`).join(",");
@@ -53,17 +58,17 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     });
     reload();
   }, [enabled, owner, startedId, startedSeq, startedTurnId, reload]);
-  const observedCanonical = useRef({ owner, signature: canonicalSignature });
+  const observedCanonical = useRef({ owner, signature: reconciliationSignature });
   useEffect(() => { setPendingAction(null); }, [owner]);
   useEffect(() => {
     const previous = observedCanonical.current;
-    observedCanonical.current = { owner, signature: canonicalSignature };
-    if (!enabled || previous.owner !== owner || previous.signature === canonicalSignature) return;
+    observedCanonical.current = { owner, signature: reconciliationSignature };
+    if (!enabled || previous.owner !== owner || previous.signature === reconciliationSignature) return;
     const known = stateRef.current.owner === owner ? [...stateRef.current.active, ...stateRef.current.bridges] : [];
     // Canonical-first delivery must still resolve a local request whose receipt has not bound its user seq.
-    if (submissionsRef.current.some((submission) => canonicalUserSeqs.some((seq) => seq >= submission.historyMessageCount)
+    if (submissionsRef.current.some((submission) => reconciliationUserSeqs.some((seq) => seq >= submission.historyMessageCount)
       && submission.receipt?.userMessageSeq == null && !known.some((receipt) => receipt.requestId === submission.requestId && receipt.userMessageSeq !== null))) reload();
-  }, [owner, enabled, canonicalSignature, reload]);
+  }, [owner, enabled, reconciliationSignature, reload]);
   useEffect(() => {
     setState((current) => {
       if (current.owner !== owner) return current;
@@ -77,7 +82,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     const request = ++generation.current;
     const previous = stateRef.current.owner === owner ? stateRef.current : null;
     // A receipt read can reconcile only the history/submissions observed before it began.
-    const reconciledHistory = { canonicalSignature, submissionSignature };
+    const reconciledHistory = { canonicalSignature: reconciliationSignature, submissionSignature };
     const requestedSubmissions = submissionsRef.current;
     setState((current) => current.owner === owner ? { ...current, error: "", loading: !current.ready }
       : { owner, active: [], bridges: [], error: "", loading: true, ready: false });
@@ -188,7 +193,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     void act(receipt, direction === "up" ? "move-up" : "move-down", undefined, { expectedQueuedIds, queuedIds });
   }, [act, queuedReceipts]);
   return {
-    historyReconciled: state.owner === owner && state.reconciledHistory?.canonicalSignature === canonicalSignature
+    historyReconciled: state.owner === owner && state.reconciledHistory?.canonicalSignature === reconciliationSignature
       && state.reconciledHistory.submissionSignature === submissionSignature,
     receipts, queuedReceipts, announcement: enabled && announcement?.owner === owner ? announcement.message : "",
     error: enabled ? [actionError?.owner === owner ? actionError.message : "",

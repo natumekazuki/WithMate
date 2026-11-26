@@ -184,8 +184,17 @@ export function useConversationMessageColumn({
   const pageIndexes = useMemo(() => threadIndexes && new Set(threadIndexes), [threadIndexes]);
   const currentThreadIndexes = useRef(threadIndexes);
   currentThreadIndexes.current = threadIndexes;
+  const currentPage = browsePage?.owner === pageOwner ? browsePage.page : null;
+  const isBrowsing = conversation.pageStart !== undefined;
+  const scopedMessages = useMemo(() => pageIndexes
+    ? currentPage?.messages.filter((message, index) => pageIndexes.has(getMessageHistoryIndex(message, index))) ?? EMPTY_MESSAGES
+    : EMPTY_MESSAGES, [currentPage, pageIndexes]);
   const queueIncarnationId = session ? getSessionIncarnationId(session) : "";
   const canonicalUserSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) => message.role === "user" ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
+  const observedUserSeqs = useMemo(() => !isBrowsing && scopedMessages.length
+    ? [...new Set([...canonicalUserSeqs, ...scopedMessages.flatMap((message, index) =>
+      message.role === "user" && threadFullIndexes?.has(getMessageHistoryIndex(message, index)) ? [getMessageHistoryIndex(message, index)] : [])])].sort((a, b) => a - b)
+    : canonicalUserSeqs, [canonicalUserSeqs, scopedMessages, threadFullIndexes, isBrowsing]);
   const canonicalStartSeqs = useMemo(() => incomingTailMessages.flatMap((message, index) =>
     message.role === "user" && !message.turnInput ? [getMessageHistoryIndex(message, index)] : []), [incomingTailMessages]);
   const emptySubmissions = useRef(new SessionTurnSubmissions());
@@ -193,7 +202,7 @@ export function useConversationMessageColumn({
   const submissionSnapshot = useSyncExternalStore(submissionStore.subscribe, submissionStore.getSnapshot, submissionStore.getSnapshot);
   const submissions = useMemo(() => submissionSnapshot.filter((submission) => submission.sessionId === sessionId && submission.incarnationId === queueIncarnationId), [submissionSnapshot, sessionId, queueIncarnationId]);
   const rawLiveRun = liveRunOverride !== undefined ? liveRunOverride : liveState.liveRun;
-  const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun);
+  const allQueue = useSessionTurnQueue(api, sessionId, queueIncarnationId, enabled, canonicalUserSeqs, submissions, rawLiveRun, observedUserSeqs);
   const observeTurnReceipts = baseProps.onTurnReceiptsObserved;
   useEffect(() => {
     if (enabled && queueIncarnationId) observeTurnReceipts?.(allQueue.receipts, {
@@ -201,6 +210,10 @@ export function useConversationMessageColumn({
     });
   }, [observeTurnReceipts, allQueue.receipts, enabled, sessionId, queueIncarnationId, messageSourceKind]);
   const children = mainThreads?.children ?? frame?.children;
+  const visibleSubmissions = useMemo(() => !frame ? submissions : submissions.filter(({ mainConversationFrame }) => {
+    const target = mainConversationFrame && children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(mainConversationFrame));
+    return (target || undefined) === child;
+  }), [submissions, frame, children, child]);
   const receiptFrame = useCallback((receipt: SessionTurnQueueReceipt) => {
     const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
     const { origin } = input;
@@ -251,12 +264,14 @@ export function useConversationMessageColumn({
   }), [allQueue.receipts, threadFullIndexes, receiptFrame, children, child, currentTurnId, entry]);
   const queue = frame ? { ...allQueue, receipts: threadReceipts } : allQueue;
   const presentedHistory = useRef<{ owner: string; messages: typeof incomingTailMessages }>({ owner: "", messages: [] });
-  const unboundBoundary = submissions.reduce((boundary, submission) => {
+  const firstUnboundSeq = (candidates: typeof submissions) => candidates.reduce((boundary, submission) => {
     const receipt = allQueue.receipts.find((receipt) => receipt.requestId === submission.requestId);
     return (!submission.error || submission.uncertain) && receipt?.userMessageSeq == null
       ? Math.min(boundary, submission.historyMessageCount) : boundary;
   }, Infinity);
-  const unjoinedUser = canonicalStartSeqs.find((seq) => seq >= unboundBoundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq));
+  const unboundBoundary = firstUnboundSeq(submissions);
+  const isUnjoined = (seq: number, boundary: number) => seq >= boundary && !allQueue.receipts.some((receipt) => receipt.userMessageSeq === seq);
+  const unjoinedUser = canonicalStartSeqs.find((seq) => isUnjoined(seq, unboundBoundary));
   // Canonical history and its receipt are one display handoff, not two independent inserts.
   // A post-history receipt read also confirms unrelated inputs, such as answers to live questions.
   const isHistoryHandoffPending = unjoinedUser !== undefined && !queue.historyReconciled;
@@ -279,14 +294,24 @@ export function useConversationMessageColumn({
   const subscribeFreeze = useCallback((listener: () => void) => composerRegistry.subscribe(queueComposerOwner, listener), [composerRegistry, queueComposerOwner]);
   const readFreeze = useCallback(() => composerRegistry.isFrozen, [composerRegistry]);
   const queueActionsFrozen = useSyncExternalStore(subscribeFreeze, readFreeze, readFreeze);
-  const currentPage = browsePage?.owner === pageOwner ? browsePage.page : null;
-  const isBrowsing = conversation.pageStart !== undefined;
+  const scopedBoundary = firstUnboundSeq(visibleSubmissions);
+  // The scoped page and the parent tail arrive independently. Keep the existing
+  // reservation until a read can join the exact saved input to its receipt.
+  const pendingScopedSeq = !frame || isBrowsing || queue.historyReconciled ? undefined : scopedMessages.find((message, index) => {
+    const seq = getMessageHistoryIndex(message, index);
+    return message.role === "user" && !message.turnInput && threadFullIndexes?.has(seq) && isUnjoined(seq, scopedBoundary);
+  })?.historyIndex;
   const messages = useMemo(() => {
-    if (pageIndexes) return currentPage?.messages.filter((message, index) => pageIndexes.has(getMessageHistoryIndex(message, index))) ?? EMPTY_MESSAGES;
+    if (pageIndexes) return pendingScopedSeq === undefined ? scopedMessages
+      : scopedMessages.filter((message, index) => {
+        const seq = getMessageHistoryIndex(message, index);
+        // A foreign source coordinate supplies only a sent card, not a second input.
+        return seq < pendingScopedSeq || !threadFullIndexes?.has(seq);
+      });
     // While restoring the All view's old page, its tail is not a valid reading anchor.
     if (isBrowsing) return currentPage?.messages ?? (showAllThreads ? EMPTY_MESSAGES : tailMessages);
     return tailMessages;
-  }, [pageIndexes, currentPage, isBrowsing, showAllThreads, tailMessages]);
+  }, [pageIndexes, currentPage, isBrowsing, showAllThreads, tailMessages, pendingScopedSeq, scopedMessages, threadFullIndexes]);
   const displayedHistory = useRef(messages);
   displayedHistory.current = messages;
   useEffect(() => {
@@ -580,10 +605,6 @@ export function useConversationMessageColumn({
     }).sort((left, right) => left.index - right.index);
     return { messages: rows.map((row) => row.message), sources: rows.map((row) => row.source), keys: rows.map((row) => row.key), groups: rows.map((row) => row.group) };
   }, [currentLiveProjection, retainedSignature, messages, sessionId, bridgeKey, bridge?.text, isBrowsing]);
-  const visibleSubmissions = useMemo(() => !frame ? submissions : submissions.filter(({ mainConversationFrame }) => {
-    const target = mainConversationFrame && children?.find((candidate) => conversationPeerKey(candidate.target) === conversationPeerKey(mainConversationFrame));
-    return (target || undefined) === child;
-  }), [submissions, frame, children, child]);
   const bindingRequestId = isResponseBindingPending ? previousResponse?.requestId : undefined;
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
