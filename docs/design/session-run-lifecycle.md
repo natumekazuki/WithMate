@@ -162,6 +162,7 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 - approve／denyまたは先頭の取消で次の要求へ進む。後続の到着や取消だけでは現在の先頭を失効させない。個別signalのabortは該当要求だけをdenyで解決する。同一要求の重複callbackに属するsignalのabortは共有要求を失効させ、既にabort済みのsignalで届いた重複も同じdeny判断を共有する
 - turn取消・終端cleanup・resetは対象会話の全要求をdenyで解決し、途中の後続要求を公開・通知しない。全体resetは全会話へ適用する。承認待機は永続化しない
 - 対象Providerの実要求は[WithMate Auto Review](withmate-auto-review.md)を利用できる。構造化された判定も、同じ保留要求が先頭にあり失効していない場合だけ、このキューで解決する
+- 仲介審査中は公開せず、有効な`ask_user`だけを手動の先頭として公開する。仲介経路の不成立・結果不正・失効・取消は手動へ回さず拒否で解決する。既存のapprove／denyは出所を受け取るobserverの有無では変わらない。公開済み先頭への本人の応答を`manual`、審査の許可・拒否を`reviewer`、失敗・取消・拒否境界を`blocked`として実際の決着と一緒に伝える。未公開の従来要求を直接解決した場合も本人への帰属はせず、`blocked`として扱う
 
 ### SessionObservabilityService
 

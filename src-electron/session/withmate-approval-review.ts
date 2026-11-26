@@ -1,13 +1,13 @@
-import type { LiveApprovalDecision, LiveApprovalRequest } from "../../src-shared/session/runtime-state.js";
+import type { LiveApprovalRequest } from "../../src-shared/session/runtime-state.js";
 import type { WithMateAutoReviewSettings } from "../../src-shared/settings/withmate-auto-review.js";
 import type { SessionTarget } from "../../src-shared/session/session-management-contract.js";
-import { approvalReviewDecisionSchema, type ApprovalReviewerConversation } from "../providers/approval-reviewer.js";
+import { approvalReviewDecisionSchema, type ApprovalReviewDecision, type ApprovalReviewerConversation } from "../providers/approval-reviewer.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../providers/provider-agent-runtime-binding.js";
 
-/** A request-scoped attempt. No verdict (null) leaves a live head for manual approval. */
+/** A request-scoped attempt. Null means no valid verdict and cannot authorize or request manual approval. */
 export type PendingApprovalReview = {
-  decide(signal: AbortSignal, queue?: ApprovalReviewQueueContext): Promise<LiveApprovalDecision | null>;
+  decide(signal: AbortSignal, queue?: ApprovalReviewQueueContext): Promise<ApprovalReviewDecision["decision"] | null>;
   /** Check at admission and again before accepting the verdict; the queue checks head identity. */
   isCurrent(): boolean;
 };
@@ -141,10 +141,11 @@ export class WithMateApprovalReviewTurn {
 
   async #review(request: LiveApprovalRequest, operation: unknown, signal: AbortSignal, isCurrent: () => boolean,
     onStopping?: ApprovalReviewQueueContext["onStopping"],
-  ): Promise<LiveApprovalDecision | null> {
+  ): Promise<ApprovalReviewDecision["decision"] | null> {
+    if (operation === null || typeof operation !== "object" || Object.keys(operation).length === 0) return null;
     const prompt = JSON.stringify({ source: this.options.source, turnId: this.options.turnId,
       workspacePath: this.options.workspacePath, pendingOperation: { ...request, operation } });
-    // Never review a truncated operation. The original manual approval remains available.
+    // Never delegate an incomplete or redacted operation.
     if (Buffer.byteLength(prompt) > 128 * 1024 || prompt.includes(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)) return null;
     if (signal.aborted || !isCurrent()) return null;
     if (!this.#conversation) {
@@ -155,6 +156,6 @@ export class WithMateApprovalReviewTurn {
     if (signal.aborted || !isCurrent()) return null;
     const response = approvalReviewDecisionSchema.safeParse(await conversation.review(prompt));
     if (!response.success || signal.aborted || !isCurrent()) return null;
-    return response.data.decision === "allow_once" ? "approve" : response.data.decision === "deny" ? "deny" : null;
+    return response.data.decision;
   }
 }

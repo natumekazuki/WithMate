@@ -848,10 +848,10 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 
 // @test-value v2
 // kind = "contract"
-// claim = "Codex審査は指定ModelとDepth、組み込み指示、通常Session接続、ネイティブAuto Reviewを使い、同じthreadの入力ごとに構造化結果を返す"
-// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界" }
-// fault = "Auto Review以外で起動するか、設定の代替・別thread・古い最終結果・途中出力を採用するか、審査役の手動要求を元の操作の許可にする"
-// observable = "App Serverへのthreadとturnの要求、Managed MCP接続設定、２件の結果、非auto起動・モデル代替・手動要求時の失敗"
+// claim = "Codex審査は指定ModelとDepth、根拠不足を拒否する組み込み指示、通常Session接続、ネイティブAuto Reviewを使い、同じthreadの入力ごとに構造化結果を返す"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界; docs/design/withmate-auto-review.md#一件の判定と手動承認" }
+// fault = "Auto Review以外で起動する、根拠の欠落をask_userへ回す指示を送る、設定の代替・別thread・古い出力を採用する、または審査役の手動要求を元の操作の許可にする"
+// observable = "App Serverへのthreadの指示とturnの要求、Managed MCP接続設定、２件の結果、非auto起動・モデル代替・手動要求時の失敗"
 // observation_boundary = "public-boundary"
 // scope = "Codex審査アダプターの通常App Serverとのプロトコル境界、App Serverはfixture"
 // lifecycle = "permanent"
@@ -916,6 +916,8 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
     assert.equal(start.ephemeral, true);
     assert.equal(start.allowProviderModelFallback, false);
     assert.match(start.developerInstructions, /do not execute it.*Skip routine development steps.*Session Graph.*WithMate history/s);
+    assert.match(start.developerInstructions, /Return deny if [^.]*missing or cannot be retrieved/);
+    assert.match(start.developerInstructions, /Return ask_user only when the evidence is available and the remaining choice requires the user's judgment/);
     assert.match(JSON.stringify(start.config.mcp_servers), /withmate-session-http.*127\.0\.0\.1\/session/);
     assert.doesNotMatch(JSON.stringify(start), /session-secret/);
     assert.deepEqual(await reviewer.review("first operation"), results[0]);

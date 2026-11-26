@@ -21,6 +21,8 @@ import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-share
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
   ProviderTurnError,
+  reportApprovalDecisionSource,
+  type ApprovalDecisionSourceObserver,
   type ProviderCodingAdapter,
   type RunSessionTurnResult,
   type RunSessionTurnInput,
@@ -95,7 +97,8 @@ export type SessionRuntimeServiceDeps = {
     sessionId: string,
     request: LiveApprovalRequest,
     signal: AbortSignal,
-    review?: PendingApprovalReview,
+    review?: PendingApprovalReview | null,
+    onDecisionSource?: ApprovalDecisionSourceObserver,
   ): Promise<LiveApprovalDecision> | LiveApprovalDecision;
   startWithMateApprovalReview?: StartWithMateApprovalReview;
   waitForElicitationResponse(
@@ -1303,25 +1306,34 @@ export class SessionRuntimeService {
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
-        onApprovalRequest: (approvalRequest, requestSignal, nativeReview) => {
-          if (executionOptions.approvalMode === "safety-focused") return "deny";
-          if (terminalSettled) return "deny";
+        onApprovalRequest: (approvalRequest, requestSignal, nativeReview, onDecisionSource) => {
+          if (executionOptions.approvalMode === "safety-focused" || terminalSettled) {
+            reportApprovalDecisionSource(onDecisionSource, "blocked");
+            return "deny";
+          }
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
           const request = {
             ...approvalRequest,
             textPosition: this.deps.getLiveSessionRun(sessionId)?.assistantText.length ?? 0,
           };
-          let review: PendingApprovalReview | undefined;
-          if (!signal.aborted && executionOptions.approvalMode === "on-request" && appSettings.withMateAutoReview
-            && (!executionOptions.withMateReviewerExplicit || executionOptions.codexReviewer === "auto-review")
-            && approvalRequest.provider === effectiveTurnSession.provider && supportsWithMateAutoReview(effectiveTurnSession.provider)
+          const selection = appSettings.withMateAutoReview;
+          const useReview = executionOptions.approvalMode === "on-request" && supportsWithMateAutoReview(effectiveTurnSession.provider)
+            && (executionOptions.withMateReviewerExplicit ? executionOptions.codexReviewer === "auto-review" : !!selection);
+          if (!useReview) return this.deps.waitForApprovalDecision(sessionId, request, signal, undefined, onDecisionSource);
+
+          let review: PendingApprovalReview | null = null;
+          if (!signal.aborted && selection && approvalRequest.provider === effectiveTurnSession.provider
             && approvalRequest.decisionMode === "direct-decision" && nativeReview) {
-            approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection: appSettings.withMateAutoReview,
-              turnId: String(runningTurn.id), workspacePath: effectiveTurnSession.workspacePath,
-              binding: agentRuntimeBinding, signal: runAbortController.signal });
-            review = approvalReview?.pending(request, nativeReview);
+            try {
+              approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection,
+                turnId: String(runningTurn.id), workspacePath: effectiveTurnSession.workspacePath,
+                binding: agentRuntimeBinding, signal: runAbortController.signal });
+              review = approvalReview?.pending(request, nativeReview) ?? null;
+            } catch {
+              // A review route that cannot be constructed is not a manual route.
+            }
           }
-          return this.deps.waitForApprovalDecision(sessionId, request, signal, review);
+          return this.deps.waitForApprovalDecision(sessionId, request, signal, review, onDecisionSource);
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {
           if (terminalSettled) return { action: "cancel" };

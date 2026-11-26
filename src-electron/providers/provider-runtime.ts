@@ -62,11 +62,26 @@ export type RunSessionTurnProgressHandler = (
   changes: RunSessionTurnProgressChanges,
 ) => void | Promise<void>;
 
+export type ApprovalDecisionSource = "manual" | "reviewer" | "blocked";
+export type ApprovalDecisionSourceObserver = (source: ApprovalDecisionSource) => void;
+
+/** Decision reporting must not change the approval outcome. */
+export function reportApprovalDecisionSource(observer: ApprovalDecisionSourceObserver | undefined, source: ApprovalDecisionSource): void {
+  if (!observer) return;
+  try {
+    void Promise.resolve(observer(source)).catch(() => undefined);
+  } catch {
+    // An observer cannot approve or veto the decision.
+  }
+}
+
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
   signal?: AbortSignal,
   /** Complete redacted native operation and any native freshness check; never a display preview. */
   review?: { operation: unknown; isCurrent?: () => boolean },
+  /** Called once with the source of this decision, before the returned result is consumed. */
+  onDecisionSource?: ApprovalDecisionSourceObserver,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 
 export type RunSessionTurnElicitationRequestHandler = (

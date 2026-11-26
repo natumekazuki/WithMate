@@ -45,6 +45,7 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
 import { registerSessionRuntimeHandlers } from "../../src-electron/ipc/session-runtime.js";
 import { registerAuxiliaryHandlers } from "../../src-electron/ipc/auxiliary.js";
 import type { IpcHandleRegistrar, MainIpcAuxiliaryDeps, MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts.js";
@@ -316,41 +317,56 @@ it("GUI Cancel IPC leaves the next Main and Auxiliary turns and their requests i
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilot/OpenCodeの未指定は共通設定に従い、明示Userは手動、Auto Reviewの適格要求だけを仲介し、対象外・審査不能は手動に戻す"
+// claim = "Copilot/OpenCodeの明示Userと既定Off、ネイティブは従来の手動要求を維持し、仲介選択時は適格な実要求だけを設定先へ渡し、経路不成立は公開せず不許可とする"
 // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
-// fault = "旧Userを明示Userと誤る、対象外で仲介を起動する、審査失敗時に保留を残さず自動決定する"
-// observable = "Provider callbackに返った個別決定、通常binding、審査会話の開閉、資格を含まない元Turnと実引数"
+// fault = "旧Userを明示Userと誤る、明示Auto ReviewのOff・設定先不成立を手動に落とす、または実際の判断元をProviderへ渡さない"
+// observable = "Provider callbackに返った決定とsource、公開・通知、設定先に渡すbinding、審査会話の開閉と元Turn・実引数"
 // observation_boundary = "consumer"
 // scope = "SessionRuntimeServiceから審査Turnと既存承認キューを経由するProvider callbackの戻り値"
 // lifecycle = "permanent"
 // risk_tags = ["authorization", "privacy"]
 // distinction = "アダプター単体と審査単体では実効設定によるSession runtimeの振り分けを観測しない"
 // @end-test-value
-it("routes only configured Copilot and OpenCode approval requests through WithMate review", async () => {
+it("routes configured broker reviews without falling back to manual on an unavailable route", { timeout: 4000 }, async () => {
   const selection = { providerId: "codex", model: "reviewer", reasoningEffort: "high" } as const;
   const cases = (["copilot", "opencode"] as const).flatMap((provider) => [
-    [provider, "legacy", true, true, "pass"], [provider, "legacy", false, true, "skip"],
-    [provider, "user", true, true, "skip"], [provider, "auto-review", true, true, "pass"],
-    [provider, "auto-review", false, true, "skip"], [provider, "auto-review", true, false, "skip"],
-    [provider, "auto-review", true, true, "fail"],
+    [provider, "legacy", true, true, "pass", "reviewer"], [provider, "legacy", false, true, "pass", "manual"],
+    [provider, "user", true, true, "pass", "manual"], [provider, "auto-review", true, true, "pass", "reviewer"],
+    [provider, "auto-review", false, true, "pass", "blocked"], [provider, "auto-review", true, false, "pass", "blocked"],
+    [provider, "auto-review", true, true, "fail", "blocked"], [provider, "auto-review", true, true, "absent", "blocked"],
+    [provider, "auto-review", true, true, "throws", "blocked"],
   ] as const);
-  for (const [provider, preference, enabled, hasEvidence, expectedReview] of [...cases,
-    ["codex", "legacy", true, true, "skip"], ["claude", "legacy", true, true, "skip"]] as const) {
+  for (const [provider, preference, enabled, hasEvidence, route, source] of [...cases,
+    ["codex", "legacy", true, true, "pass", "manual"], ["claude", "legacy", true, true, "pass", "manual"]] as const) {
     const session = createSession({ provider, approvalMode: "on-request", codexReviewer: preference === "legacy" ? "user" : preference,
       withMateReviewerExplicit: preference === "legacy" ? undefined : true });
     const catalog = createProviderCatalog(provider);
+    const sources: ApprovalDecisionSource[] = [];
     const decisions: Array<LiveApprovalDecision | undefined> = [];
+    const publications: string[] = [];
+    const notifications: string[] = [];
     let opened = 0;
     let closed = 0;
-    let manualAfterFailure = 0;
     const binding = { bindingId: "source", bindingReference: "source-reference", providerId: provider,
       executionGeneration: "source-generation", transport: "env", expiresAt: null, turnCapability: "source-turn",
       managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "", sessionGraphUrl: "", token: "source-token" } } as const;
     let live = createLiveRunState({ sessionId: session.id });
-    const approvals = new SessionApprovalService({ updateLiveSessionRun: (_id, update) => live = update(live) });
+    const approvals = new SessionApprovalService({
+      updateLiveSessionRun: (_id, update) => {
+        const next = update(live);
+        if (next.approvalRequest && next.approvalRequest !== live.approvalRequest) publications.push(next.approvalRequest.requestId);
+        return live = next;
+      },
+      notifyApproval: (id, requestId) => {
+        notifications.push(requestId);
+        queueMicrotask(() => approvals.resolveLiveApproval(id, requestId, "approve"));
+      },
+    });
     const runtime = createProgressRuntime(session, async (input) => {
-      const request: LiveApprovalRequest = { requestId: "request", provider, kind: "shell", title: "Operation", summary: "Echo", decisionMode: "direct-decision" };
-      decisions.push(await input.onApprovalRequest?.(request, undefined, hasEvidence ? { operation: { command: "echo test", cwd: session.workspacePath } } : undefined));
+      const request: LiveApprovalRequest = { requestId: "request", provider, kind: "read", title: "Operation", summary: "Read fixture", decisionMode: "direct-decision" };
+      decisions.push(await input.onApprovalRequest?.(request, undefined, hasEvidence ? { operation: { file: "fixture.txt", cwd: session.workspacePath } } : undefined,
+        (decisionSource) => { sources.push(decisionSource); }));
+      assert.deepEqual(sources, [source], `${provider}/${preference}/${enabled}/${hasEvidence}/${route}`);
       return createPartialResult({ assistantText: "done" });
     }, {
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } }, withMateAutoReview: enabled ? selection : null }),
@@ -359,41 +375,30 @@ it("routes only configured Copilot and OpenCode approval requests through WithMa
       startWithMateApprovalReview: (args) => {
         assert.equal(args.binding, binding);
         assert.deepEqual(args.selection, selection);
+        if (route === "absent") return undefined;
+        if (route === "throws") throw new Error("Review route failed to initialize");
         return new WithMateApprovalReviewTurn({ ...args, policyCurrent: () => true, inputs: new ApprovalReviewInputFence(),
           source: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
           open: async () => {
             opened++;
-            if (expectedReview === "fail") throw new Error("Reviewer unavailable");
+            if (route === "fail") throw new Error("Reviewer unavailable");
             return { close() { closed++; }, review: async (prompt) => {
               const evidence = JSON.parse(prompt);
               assert.equal(evidence.turnId, "1");
-              assert.equal(evidence.pendingOperation.operation.command, "echo test");
+              assert.equal(evidence.pendingOperation.operation.file, "fixture.txt");
               assert.doesNotMatch(prompt, /source-token|source-reference|source-turn/);
               return { decision: "allow_once", reason: "Explicitly authorized." };
             } };
           } });
       },
-      waitForApprovalDecision: (sessionId, request, signal, review) => {
-        const decision = approvals.waitForLiveApprovalDecision(sessionId, request, signal, review && expectedReview === "fail"
-          ? { ...review, decide: async (reviewSignal) => {
-            const result = await review.decide(reviewSignal);
-            setImmediate(() => {
-              if (live.approvalRequest?.requestId === request.requestId) {
-                manualAfterFailure++;
-                approvals.resolveLiveApproval(sessionId, request.requestId, "approve");
-              }
-            });
-            return result;
-          } } : review);
-        if (!review) approvals.resolveLiveApproval(sessionId, request.requestId, "deny");
-        return decision;
-      },
+      waitForApprovalDecision: (sessionId, request, signal, review, observer) =>
+        approvals.waitForLiveApprovalDecision(sessionId, request, signal, review, observer),
     });
-    const result = await runtime.runSessionTurn(session.id, { userMessage: "Run the specified echo", executionOptions: captureSessionExecutionOptions(session) });
+    const result = await runtime.runSessionTurn(session.id, { userMessage: "Read fixture.txt", executionOptions: captureSessionExecutionOptions(session) });
     assert.equal(result.runState, "idle");
-    assert.deepEqual(decisions, [expectedReview === "skip" ? "deny" : "approve"]);
-    assert.deepEqual([opened, closed], expectedReview === "pass" ? [1, 1] : expectedReview === "fail" ? [1, 0] : [0, 0]);
-    assert.equal(manualAfterFailure, expectedReview === "fail" ? 1 : 0);
+    assert.deepEqual(decisions, [source === "blocked" ? "deny" : "approve"]);
+    assert.deepEqual([opened, closed], source === "reviewer" ? [1, 1] : route === "fail" ? [1, 0] : [0, 0]);
+    assert.deepEqual([publications, notifications], source === "manual" ? [["request"], ["request"]] : [[], []]);
     assert.deepEqual([result.codexReviewer, result.withMateReviewerExplicit], [session.codexReviewer, session.withMateReviewerExplicit]);
   }
 });
@@ -403,7 +408,7 @@ it("routes only configured Copilot and OpenCode approval requests through WithMa
 // claim = "新しいSafety FocusedではProviderから届いた実承認をread/write問わず拒否し、手動UIや審査役を起動しない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
 // fault = "実承認を許可するかUserまたはAuto Reviewへ流してSafety Focusedを変質させる"
-// observable = "Providerの実承認callbackに返るread/writeの判断と、会話結果"
+// observable = "Providerの実承認callbackに返るread/writeの判断とsource、会話結果"
 // observation_boundary = "consumer"
 // scope = "4 Providerの実承認callbackから共通SessionRuntimeServiceへの判断境界（Provider fixture）"
 // lifecycle = "permanent"
@@ -416,10 +421,11 @@ it("Safety Focused rejects real approval callbacks without manual or automatic r
     const session = createSession({ provider, approvalMode: "safety-focused", codexReviewer: "auto-review" });
     const catalog = createProviderCatalog(provider);
     const results: Array<LiveApprovalDecision | undefined> = [];
+    const sources: ApprovalDecisionSource[] = [];
     const runtime = createProgressRuntime(session, async (input) => {
       for (const kind of ["read", "write"]) {
         results.push(await input.onApprovalRequest?.({ requestId: kind, provider, kind, title: kind, summary: kind, decisionMode: "direct-decision" },
-          undefined, { operation: { kind } }));
+          undefined, { operation: { kind } }, (source) => { sources.push(source); }));
       }
       return createPartialResult({ assistantText: "done" });
     }, {
@@ -431,6 +437,7 @@ it("Safety Focused rejects real approval callbacks without manual or automatic r
     });
     const result = await runtime.runSessionTurn(session.id, { userMessage: "Safety boundary", executionOptions: captureSessionExecutionOptions(session) });
     assert.deepEqual(results, ["deny", "deny"]);
+    assert.deepEqual(sources, ["blocked", "blocked"]);
     assert.equal(result.messages.at(-1)?.text, "done");
   }
 });

@@ -191,6 +191,7 @@ import { MainProviderFacade } from "./app/main-provider-facade.js";
 import { ProviderModelDiscoveryService } from "./settings/provider-model-discovery-service.js";
 import { MainSessionCommandFacade } from "./app/main-session-command-facade.js";
 import { ProviderRuntimeOperationCoordinator } from "./providers/provider-runtime-operation-coordinator.js";
+import type { ApprovalDecisionSourceObserver } from "./providers/provider-runtime.js";
 import { runWithStorageOperationCorrelation, startEventLoopDelayMonitoring, type StorageOperationDiagnostic } from "./storage/storage-operation-diagnostics.js";
 import { MainSessionPersistenceFacade } from "./app/main-session-persistence-facade.js";
 import { SessionLaunchSelectionService } from "./session/session-launch-selection-service.js";
@@ -3707,9 +3708,10 @@ function waitForLiveApprovalDecision(
   sessionId: string,
   request: LiveApprovalRequest,
   signal: AbortSignal,
-  review?: PendingApprovalReview,
+  review?: PendingApprovalReview | null,
+  onDecisionSource?: ApprovalDecisionSourceObserver,
 ): Promise<LiveApprovalDecision> {
-  return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal, review);
+  return requireSessionApprovalService().waitForLiveApprovalDecision(sessionId, request, signal, review, onDecisionSource);
 }
 
 function resolveLiveElicitation(
