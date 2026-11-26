@@ -230,7 +230,7 @@ GUI・MCP・CLIでは `Auto Run / Auto Review / User / Safety Focused` の同じ
 
 Safety Focusedは承認不要の読取・nativeで既に許可された操作を止めず、実際に承認を求められれば読取／書込／shell等の種類にかかわらず拒否する。手動確認や自動審査は起動しない。一般の質問やその他の入力は承認と区別する。Copilot SDKの通常のpermission分類と、`promptRequest` や本人必須を示すmanaged／Assisted判定を区別する。Assisted通知の存在だけでは実確認ではなく、MCPの自己申告で実確認を許可しない。
 
-Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介が構成されていない／使用できない場合は共通UIで手動確認する。選択は書き換えない。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
+Copilot／OpenCodeのAuto Reviewでは、委譲可能な承認要求を設定した審査Providerへ渡す。有効な `ask_user` の先頭だけを共通UIに公開して本人に確認する。委譲できない、審査先が未構成または利用不能、審査結果が得られない場合は手動に切り替えず不許可にする。選択は書き換えない。Codex／Claudeのネイティブ審査と通常の手動モードはこの扱いの対象外。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
 
 既存の `untrusted` は従来の制限のまま（Codexのnative untrusted、Copilotのread-only分類）。新しい `safety-focused` に自動変換しない。Claudeの保存済み `accept-edits / dont-ask / plan` は対応する `acceptEdits / dontAsk / plan` を維持し、新規選択肢には出さない。旧 `allow-all / safety / provider-controlled` の読取時正規化と、保存履歴・捕捉済み受付、新規の初期値は変更しない。Claudeで使用中のnative permission modeが要求と異なる場合は失敗を通知する。
 
@@ -241,7 +241,7 @@ Auto ReviewでProviderが人の確認を要求する場合や、WithMate仲介�
 | 呼出元Turnの設定・条件 | 新規の異種子 |
 | --- | --- |
 | Auto Run／Safety Focused | それぞれ同じ方針を保存する。通常の実行や実承認は宛先のnativeルールに従い、権限を追加しない。 |
-| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。審査不能時の手動復帰は保存値を変えない。 |
+| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。仲介で審査できない場合は不許可にし、保存値は変えない。 |
 | 旧Copilot・OpenCodeの `on-request` でReviewer未指定 | 共通SettingsのOn/Offにかかわらず、Codex・Claudeの子は従来どおりnative User、仲介対応の子は未指定のまま。親を明示Userに変換しない。 |
 | Codex Sandbox | `danger-full-access` の親は異種に4択を渡せる。制限付きSandboxは非Codexに表せないので拒否。非CodexからCodexへは、親に保存された非適用の値を無視して `read-only` で開始する。 |
 | Copilotの選択済みCustom Agent | 捕捉した `customAgentName` が空白以外を含む場合、ツール制限を宛先で維持できるか確認できないため拒否する。名前から制限を推定せず、作成時の再探索・同名Agentへの置換はしない。 |
