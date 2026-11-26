@@ -47,6 +47,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   const editableInput = !receipt.captured.coordination;
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
+  const steerFocus = useRef(false);
   useLayoutEffect(() => {
     const button = moveFocus.current;
     if (!button || busy) return;
@@ -58,10 +59,16 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   }, [busy, position]);
   useLayoutEffect(() => {
     const status = statusRef.current;
+    const list = status?.closest<HTMLElement>(".session-message-list");
     return () => {
-      if (status?.contains(status.ownerDocument.activeElement)) status.closest<HTMLElement>(".session-message-list")?.focus({ preventScroll: true });
+      if (!status || !list?.isConnected) return;
+      const { activeElement, body } = status.ownerDocument;
+      if (status.contains(activeElement) || steerFocus.current && activeElement === body) list.focus({ preventScroll: true });
     };
   }, []);
+  useLayoutEffect(() => {
+    if (busyKind !== "input") steerFocus.current = false;
+  }, [busyKind]);
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role="group" aria-label={position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`}>
@@ -75,7 +82,10 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
         <ButtonContent busy={busyKind === `move-${direction}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={direction === "up" ? "M12 20V4m-6 6 6-6 6 6" : "M12 4v16m-6-6 6 6 6-6"} /></svg></ButtonContent>
       </button>)}
     </span> : null}
-    {receipt.state === "queued" && editableInput && !receipt.captured.retrySource && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
+    {receipt.state === "queued" && editableInput && !receipt.captured.retrySource && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={(event) => {
+      steerFocus.current = event.currentTarget === event.currentTarget.ownerDocument.activeElement;
+      onSendInput(receipt);
+    }}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
     {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
   </div>;

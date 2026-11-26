@@ -26,6 +26,10 @@ async function mount(withPeers = false) {
   for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollTo", { value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true, get(this: HTMLElement) { return this.classList.contains("session-message-list") ? 720 : 0; },
+  });
   dom.window.alert = (message) => { throw new Error(String(message)); };
   let api!: WithMateWindowApi;
   runInNewContext(readFileSync(new URL("../../scripts/benchmarks/benchmark-composer-input-preload.cjs", import.meta.url), "utf8"), {
@@ -68,11 +72,13 @@ async function mount(withPeers = false) {
   const ordinaryAux = { ...structuredClone(retry), id: "aux-ordinary", requestId: "aux-ordinary-request", sequence: 12, queuePosition: 12 };
   ordinaryAux.captured.request.clientRequestId = ordinaryAux.requestId;
   delete ordinaryAux.captured.retrySource;
+  for (const row of [...rows, ordinaryAux]) row.accepted = structuredClone(row.captured);
   const queueListeners = new Set<(id: string) => void>();
   api.onSessionTurnQueueChanged = (listener) => { queueListeners.add(listener); return () => { queueListeners.delete(listener); }; };
   const submitted: SessionTurnQueueReceipt[] = [];
   api.listSessionTurnQueue = async (id) => [...rows, ordinaryAux, ...submitted].filter((row) => row.sessionId === id).map((row) => structuredClone(row));
-  api.getSessionTurnQueueReceipt = async (id, requestId) => rows.find((row) => row.sessionId === id && row.requestId === requestId) ?? null;
+  api.getSessionTurnQueueReceipt = async (id, requestId) => [...rows, ordinaryAux, ...submitted]
+    .find((row) => row.sessionId === id && row.requestId === requestId) ?? null;
   const paused = new Set<string>();
   const updates: Array<{ sessionId: string; id: string; userMessage: string }> = [];
   let failUpdate = false;
@@ -108,6 +114,7 @@ async function mount(withPeers = false) {
     assert.equal(incarnationId, rows[0].incarnationId);
     const row: SessionTurnQueueReceipt = { ...structuredClone(rows[0]), id: clientRequestId, requestId: clientRequestId,
       sequence: 20, queuePosition: 20, captured: { ...structuredClone(rows[0].captured), request: { ...turnRequest, clientRequestId } } };
+    row.accepted = structuredClone(row.captured);
     submitted.push(row);
     queueListeners.forEach((listener) => listener(id));
     return structuredClone(row);
@@ -161,8 +168,8 @@ async function mount(withPeers = false) {
 // kind = "contract"
 // claim = "通常予約と失敗Turnの再実行はMain/Auxiliaryの既存textareaから編集し、通常下書きを保持する。失敗時は編集入力と保留を残し、更新待機中の重複操作と通常送信・Steerへの誤配送を防ぐ。再実行の予約はCancelを提示しSteerは提示しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Queued Message Edit; docs/design/session-run-lifecycle.md: Queue Editing" }
-// fault = "再実行の予約を編集・取消不能にするかSteerを提示する、通常下書きを編集本文で上書きする、編集を新規受付やSteerへ送る、失敗で本文を消す、または保存待ちの重複更新を送る"
-// observable = "対象予約のCancel/Steer表示、実SessionWindowのEdit/Submit/Cancel Edit操作、textarea値、ボタンdisabled、更新API要求と呼出数、通常下書き復帰、失敗時の保留とエラー表示"
+// fault = "再実行の予約を編集・取消不能にするかSteerを提示する、通常下書きを編集本文で上書きする、編集を新規受付やSteerへ送る、失敗で本文を消す、または保存済みの編集後に受付時の古い本文をカードへ表示する"
+// observable = "対象予約のCancel/Steer表示、実SessionWindowのEdit/Submit/Cancel Edit操作、textarea値、ボタンdisabled、更新API要求、同じカードの保存後の本文と変更前のaccepted snapshot、通常下書き復帰、失敗時の保留とエラー表示"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp queue edit wiring across Main and Auxiliary"
 // lifecycle = "permanent"
@@ -177,6 +184,7 @@ test("Session Windowのキュー編集は通常下書きと送信経路を分離
       await view.fill(`Normal draft ${index}`);
       assert.ok(view.editButton(row), `Missing ${row.id}: ${view.dom.window.document.body.textContent}`);
       const actions = view.dom.window.document.querySelector(`[data-queue-receipt-id="${row.id}"]`)!;
+      const card = actions.closest("article")!;
       assert.ok(actions.querySelector('button[aria-label^="Cancel queued turn"]'));
       assert.equal(!!actions.querySelector('button[title="Send this message to the current turn"]'), index === 0);
       if (index === 1) assert.ok(view.dom.window.document.querySelector(`[data-queue-receipt-id="${view.ordinaryAux.id}"] button[title="Send this message to the current turn"]`));
@@ -210,6 +218,10 @@ test("Session Windowのキュー編集は通常下書きと送信経路を分離
         assert.equal(row.captured.request.userMessage, "Original queued message 0");
       } else {
         assert.equal(row.captured.request.userMessage, "Edited message 1");
+        assert.equal(row.accepted?.request.userMessage, "Original queued message 1");
+        assert.ok(view.editButton(row).closest("article") === card, "the committed edit updates the existing row");
+        assert.match(card.querySelector("[data-message-body]")?.textContent ?? "", /Edited message 1/);
+        assert.doesNotMatch(card.querySelector("[data-message-body]")?.textContent ?? "", /Original queued message 1/);
       }
       assert.equal(view.textarea().value, `Normal draft ${index}`);
       assert.equal(view.paused.has(row.sessionId), false);
@@ -251,6 +263,7 @@ test("Mainの予約Editは起点枠でだけ再開し、消失確定後はALLで
     assert.equal(view.paused.has(row.sessionId), true);
     await view.switchFrame("ALL");
     assert.equal(view.textarea().value, "A edited from ALL");
+    assert.equal(view.submit().disabled, false, view.submit().title);
     await view.click(view.submit());
     await view.resolveUpdate();
     assert.deepEqual(view.updates, [{ sessionId: row.sessionId, id: row.id, userMessage: "A edited from ALL" }]);

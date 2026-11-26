@@ -36,7 +36,8 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const waiting: SessionTurnQueueReceipt[] = [];
   const addInput = (receipt: SessionTurnQueueReceipt, index: number) => {
     const key = `turn-submission-${receipt.incarnationId}-${receipt.requestId}`;
-    const input = receipt.dispatched ?? receipt.accepted ?? receipt.captured;
+    // Before dispatch, captured contains any committed queue edits; accepted is immutable provenance.
+    const input = receipt.dispatched ?? receipt.captured;
     projection.messages.splice(index, 0, { role: "user", text: coordinationDeliveryText(input), ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}) });
     projection.keys.splice(index, 0, key);
     projection.sources.splice(index, 0, { kind: "turn-queue", receipt });

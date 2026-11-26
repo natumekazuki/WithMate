@@ -11,10 +11,10 @@ import { installFailedTurnRetryFixture } from "./failed-turn-retry-fixture.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxの最新と過去の確定失敗はそれぞれの応答からだけ再送し、Dockで前回本文を誤再送・草稿へ転記しない。各操作は指定された元受付を送り、現在の草稿を消費しない"
+// claim = "Main/Auxの最新と過去の確定失敗はそれぞれの応答からだけ再送し、Dockで前回本文を誤再送・草稿へ転記しない。各操作は指定された元受付を送り、現在の草稿を消費しない。最新実行記録の取得失敗は再送せず再取得できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線; docs/design/session-run-lifecycle.md#failed-turn-retry" }
-// fault = "最新だけをDockへ移す、Dockから旧本文を操作できるままにする、同じボタン名から別の失敗を再送する、草稿を消す"
-// observable = "実SessionWindowAppの失敗レスポンスごとのResend、Dockの重複操作・旧Resend/Editと告知の不在、window.withmateに渡すMain/Aux・元Turn・元receipt、入力欄の値"
+// fault = "最新だけをDockへ移す、Dockから旧本文を操作できるままにする、別の失敗を再送する、草稿を消す、または最新記録の取得エラーと再取得を隠す"
+// observable = "実SessionWindowAppの失敗カードごとのResend、Dockの再取得エラーとRetry（再送なし）、Dockの旧Resend/Edit・告知の不在、受付に渡すMain/Aux・元Turn・元receipt、入力欄の値"
 // observation_boundary = "consumer"
 // scope = "最新も以前も確定失敗のMain/Aux。読み取り・受付IPCをfixtureに差し替える"
 // lifecycle = "permanent"
@@ -54,7 +54,13 @@ test("latest and older failures use only the exact response Resend in Main and A
   }
   api.getLiveSessionRun = async () => null;
   const getLatest = api.getLatestSessionTurn;
+  let latestUnavailable = true;
+  let mainLatestReads = 0;
   api.getLatestSessionTurn = async (id) => {
+    if (id === f.main.id) {
+      mainLatestReads++;
+      if (latestUnavailable) throw new Error("Latest execution read unavailable");
+    }
     const turn = await getLatest(id);
     return turn && { ...turn, phase: "failed", assistantMessageSeq: 5, errorMessage: "Fixture failure" };
   };
@@ -85,6 +91,16 @@ test("latest and older failures use only the exact response Resend in Main and A
       Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(composer(), "Keep Main draft");
       composer().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
+    const readRetry = container.querySelector<HTMLButtonElement>(".session-recovery-actions .load-error button");
+    assert.ok(readRetry, "the read error has its own Retry, even after a failed turn");
+    assert.equal(readRetry.textContent, "Retry");
+    assert.match(container.querySelector(".session-recovery-actions")?.textContent ?? "", /Latest execution read unavailable/);
+    const latestReadsBeforeRetry = mainLatestReads;
+    latestUnavailable = false;
+    await click(readRetry);
+    assert.ok(mainLatestReads > latestReadsBeforeRetry);
+    assert.doesNotMatch(container.textContent ?? "", /Latest execution read unavailable/);
+    assert.equal(f.requests.length, 0, "retrying the read must not resend a turn");
     for (const [label, session, draft] of [["Main", f.main, "Keep Main draft"], ["Auxiliary", f.aux, "Keep Auxiliary draft"]] as const) {
       if (label === "Auxiliary") {
         await click(container.querySelector('button.concurrent-chat-splitter[aria-label="Open Auxiliary"]'));

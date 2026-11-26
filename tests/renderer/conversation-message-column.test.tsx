@@ -1129,7 +1129,7 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存済みSteerが受付応答・queueの再取得より先に届いても、同じ入力行を応答前の保存位置に移し、古い予約操作は表示しない"
+// claim = "保存済みSteerが受付応答・queueの再取得より先に届いても、同じ入力行を応答前の保存位置に移し、古い予約操作は表示しない。待機中に無効化でfocusを失ったSteer操作からは、保存後に会話列へ戻す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window: 受付済みの入力を待機から開始・保存まで同じ会話行で更新" }
 // fault = "保存済みSteerを未解決の次Turn入力扱いで隠す、同じ本文を二重表示する、予約操作を残す、または行と操作中のfocusを無関係な場所へ飛ばす"
 // observable = "Main/Aux実会話列の入力・応答の順と件数、Steerされた行のDOM identity、取消buttonの撤去と退避focus、投影に渡す元receipt状態"
@@ -1199,6 +1199,10 @@ test("saved Steer keeps its queued row and retires stale controls before ACK", a
       assert.ok(steerButton);
       steerButton.focus();
       await act(async () => steerButton.click());
+      assert.equal(steerButton.disabled, true);
+      // Chromium can drop focus when this pending control becomes disabled; JSDOM can retain it.
+      steerButton.blur();
+      assert.equal(document.activeElement, document.body);
       history = [...history, { role: "user", text: "extra instruction", historyIndex: 1,
         turnInput: { queueId: steer.id, turnId: "active", nativeTurnId: "native-active", state: "confirmed", attachments: [] } }];
       await render();
