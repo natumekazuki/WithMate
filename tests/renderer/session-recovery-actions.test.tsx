@@ -51,18 +51,18 @@ test("recovery actions は対象付き操作名とdraft保護操作を提供す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "既知の編集操作とinterrupted/canceledの再送操作は最新実行記録の再読込と取得失敗でも保持し、failedに旧本文再送を出さない"
+// claim = "既知のinterrupted/canceledの編集・再送操作は、最新実行記録の再読込と取得失敗でも無効状態を保って表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
-// fault = "再取得中や取得失敗で回復操作を消す、disabled guardを失う、failedを旧GUI本文再送へ流す"
-// observable = "対象状態のdisabled Resend/Edit、failedの旧Resend非表示、Loading latest execution、取得errorとRetryの描画"
+// fault = "再取得中や取得失敗で旧中断・取消の回復操作を消す、disabled guardを失う"
+// observable = "旧中断・取消のdisabled Resend/Edit、Loading latest execution、取得errorとRetryの描画"
 // observation_boundary = "component-behavior"
 // scope = "session-recovery-loading-and-error"
 // lifecycle = "permanent"
-// impact = "一時的な最新turn取得障害で回復操作を見失う、元Session指示をGUI指示として送る"
+// impact = "一時的な最新turn取得障害で回復操作を見失う"
 // distinction = "実行状態と取得状態の直交分岐を小さい描画fixtureで検証する"
 // @end-test-value
 test("recovery actions はlatest turn再取得中とerrorでも既知の操作を保持する", () => {
-  for (const kind of ["failed", "interrupted", "canceled"] as const) {
+  for (const kind of ["interrupted", "canceled"] as const) {
     const html = renderToStaticMarkup(<SessionRecoveryActions
       retryState={{ kind, lastRequestText: "Fix it" }}
       requestKey={`main:incarnation:0:${kind}`} targetLabel="Main"
@@ -73,12 +73,11 @@ test("recovery actions はlatest turn再取得中とerrorでも既知の操作�
     />);
     assert.match(html, /aria-busy="true"/);
     const document = new JSDOM(html).window.document;
-    for (const action of kind === "failed" ? ["Edit"] : ["Resend", "Edit"]) {
+    for (const action of ["Resend", "Edit"]) {
       const button = document.querySelector<HTMLButtonElement>(`button[aria-label="Main: ${action} Previous Request"]`);
       assert.ok(button);
       assert.equal(button.disabled, true);
     }
-    if (kind === "failed") assert.equal(document.querySelector('button[aria-label="Main: Resend Previous Request"]'), null);
     assert.match(html, /Loading latest execution/);
     assert.match(html, /Could not load the latest execution: Read failed/);
     const retryButton = document.querySelector<HTMLButtonElement>('[role="alert"] button');
@@ -90,7 +89,7 @@ test("recovery actions はlatest turn再取得中とerrorでも既知の操作�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "旧interruptedでも一致する確定済み成功を回復対象にせず、失敗時は保存済み追加入力ではなく元の開始入力を再送・編集元にする"
+// claim = "旧interruptedでも一致する確定済み成功を回復対象にせず、失敗判定では保存済み追加入力ではなく元の開始入力を対応付ける"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
 // fault = "完了済み依頼を再送対象にする、または末尾のSteer本文をTurnの開始入力に使う"
 // observable = "Rendererが選ぶ回復元の有無、種別、本文、開始seqと確定Turn"

@@ -3,19 +3,18 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { FailedTurnRetry, FailedTurnRetryWithRead } from "../../src/chat/conversation/failed-turn-retry.js";
+import { FailedTurnRetry } from "../../src/chat/conversation/failed-turn-retry.js";
 import { FailedTurnRetryContext } from "../../src/chat/runtime/failed-turn-retry-context.js";
-import { SessionRecoveryActions } from "../../src/chat/runtime/session-recovery-actions.js";
 import { TurnExecutionDetails, TurnInputReadBoundary } from "../../src/chat/conversation/turn-input-details.js";
 import { executionOperationResultSchemas, executionWindowResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { RetryFailedSessionTurnRequest, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "確定失敗を履歴またはDockから一操作で再実行し、Detailsで編集差と元送信者の項目を示す。再試行の説明文は出さず、履歴とDockの取得失敗から再取得でき、二重送信を防ぐ"
+// claim = "失敗レスポンスから保存済みの確定失敗を再実行し、Detailsで編集差と元送信者を示す。取得失敗から再取得でき、二重送信を防ぐ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock・回復操作; docs/design/session-run-lifecycle.md#gui-turn-queue" }
 // fault = "失敗以外に操作を出す、編集差や取得失敗を伏せる、対象identityを取り違える、受付中に二重送信する"
-// observable = "履歴とDockの操作の出し分け、Detailsの編集差・元送信者の項目と説明文の不在、失敗の表示・回復、送信された対象と要求数"
+// observable = "失敗レスポンスの操作、Detailsの編集差・元送信者の項目と説明文の不在、失敗の表示・回復、送信された対象と要求数"
 // observation_boundary = "component-behavior"
 // scope = "保存済み失敗messageの再実行 UI。IPCはfixture"
 // lifecycle = "permanent"
@@ -41,19 +40,22 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     ok: true, origin, receiptId: "source", receiptState: turnState, turnId: id, turnState, isFixedStart: true, senderTheme: null, retryInputUnchanged: null,
   });
   const reads: unknown[] = [];
-  let dockReadFails = false;
   Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: { turnId?: string }) => {
     reads.push(request);
     if (operation === "get_execution") return execution();
     assert.equal(operation, "read_turn_input_display");
-    if (dockReadFails && request.turnId) throw new Error("Fixture read unavailable");
     return display(request.turnId);
   } } });
   const sent: Array<Omit<RetryFailedSessionTurnRequest, "executionOptions">> = [];
   let finish: (() => void) | undefined;
   let submissionError = "";
   const context = { submit: async (request: Omit<RetryFailedSessionTurnRequest, "executionOptions">) => { sent.push(request); if (submissionError) throw new Error(submissionError); await new Promise<void>((resolve) => { finish = resolve; }); return {} as SessionTurnQueueReceipt; }, blocked: () => false };
-  const render = () => <FailedTurnRetryContext.Provider value={context}><FailedTurnRetry message={{ role: "assistant", text: "failure", runFailure: "failed", historyIndex: 5 }} context={{ ownerSessionId: "recipient", target }} /></FailedTurnRetryContext.Provider>;
+  const message = { role: "assistant" as const, text: "failure", runFailure: "failed", historyIndex: 5 };
+  const readContext = { ownerSessionId: "recipient", target };
+  const render = () => <FailedTurnRetryContext.Provider value={context}>
+    <TurnInputReadBoundary message={message} context={readContext}>{(read) =>
+      <FailedTurnRetry message={message} context={readContext} read={read} />}</TurnInputReadBoundary>
+  </FailedTurnRetryContext.Provider>;
   try {
     await act(async () => root.render(render()));
     const button = dom.window.document.querySelector<HTMLButtonElement>("button")!;
@@ -67,40 +69,9 @@ test("failed message resends its saved Turn once and reports edited input", asyn
     assert.equal(sent[0]?.turnId, "42");
     assert.deepEqual(sent[0]?.target, target);
     await act(async () => finish?.());
-    const message = { role: "assistant" as const, text: "failure", runFailure: "failed", historyIndex: 5 };
-    const readContext = { ownerSessionId: "recipient", target };
-    await act(async () => root.render(<FailedTurnRetryContext.Provider value={{ ...context, dockTurn: { sessionId: "recipient", turnId: "42" } }}>
-      <FailedTurnRetry message={message} context={readContext} />
-      <SessionRecoveryActions retryState={{ kind: "failed", lastRequestText: "A later input" }} requestKey="recipient:42" targetLabel="Main" isRetryActionDisabled={false} isRetryEditDisabled={false} isRetryDraftReplacePending={false}
-        onResendLastMessage={() => { throw new Error("must not send latest message text"); }} onEditLastMessage={() => {}} onConfirmRetryDraftReplace={() => {}} onCancelRetryDraftReplace={() => {}}
-        failedRetry={{ context: readContext, turnId: "42" }} />
-    </FailedTurnRetryContext.Provider>));
-    const dockButton = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Main: Resend Previous Request"]');
-    assert.ok(dockButton);
-    assert.equal(dom.window.document.querySelector('button[aria-label="Main: Resend Failed Turn"]'), null);
-    assert.ok(reads.some((request) => JSON.stringify(request) === JSON.stringify({ target, turnId: "42" })));
-    await act(async () => dockButton.click());
-    assert.equal(sent.length, 2);
-    assert.equal(sent[1]?.turnId, "42");
-    await act(async () => finish?.());
-    await act(async () => root.render(<></>));
-    dockReadFails = true;
-    const dockView = (turnId: string) => <FailedTurnRetryContext.Provider value={{ ...context, dockTurn: { sessionId: "recipient", turnId } }}>
-      <SessionRecoveryActions retryState={{ kind: "failed", lastRequestText: "A later input" }} requestKey="recipient" targetLabel="Main" isRetryActionDisabled={false} isRetryEditDisabled={false} isRetryDraftReplacePending={false}
-        onResendLastMessage={() => { throw new Error("must not send latest message text"); }} onEditLastMessage={() => {}} onConfirmRetryDraftReplace={() => {}} onCancelRetryDraftReplace={() => {}}
-        failedRetry={{ context: readContext, turnId }} />
-    </FailedTurnRetryContext.Provider>;
-    await act(async () => root.render(dockView("42")));
-    assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /Fixture read unavailable/);
-    dockReadFails = false;
-    const retryRead = [...dom.window.document.querySelectorAll("button")].find((item) => item.textContent === "Retry")!;
-    await act(async () => retryRead.click());
     submissionError = "Path not found: fixture.txt";
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Main: Resend Previous Request"]')!.click());
+    await act(async () => button.click());
     assert.match(dom.window.document.querySelector('[role="alert"]')!.textContent!, /Path not found: fixture.txt/);
-    await act(async () => root.render(dockView("43")));
-    assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
-    assert.ok(dom.window.document.querySelector('button[aria-label="Main: Resend Previous Request"]'));
     retried = true;
     await act(async () => root.render(<TurnExecutionDetails message={message} context={readContext} />));
     assert.match(dom.window.document.body.textContent!, /Edited before the original Turn started/);
@@ -118,7 +89,7 @@ test("failed message resends its saved Turn once and reports edited input", asyn
       return execution();
     } } });
     await act(async () => root.render(<FailedTurnRetryContext.Provider value={context}><TurnInputReadBoundary message={message} context={readContext}>{(read) => <>
-      <FailedTurnRetryWithRead message={message} context={readContext} read={read} />
+      <FailedTurnRetry message={message} context={readContext} read={read} />
       <TurnExecutionDetails message={message} context={readContext} displayReadError={read.readError} onRetryDisplay={() => read.setRevision((value) => value + 1)} />
     </>}</TurnInputReadBoundary></FailedTurnRetryContext.Provider>));
     assert.equal(dom.window.document.querySelector('button[aria-label="Main: Resend Failed Turn"]'), null);
