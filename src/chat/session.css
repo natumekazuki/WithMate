@@ -1421,6 +1421,18 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   pointer-events: auto;
 }
 
+/* A saved failure can have neither body lines to hover nor a Reply button. */
+.message-card:is(:hover, :focus-within) .message-text-wrapper:has(
+  > [data-message-body]:empty,
+  > [data-message-body] > .rich-text:only-child:empty
+) > .message-collapse-control:has(> .failed-turn-resend) {
+  opacity: 1;
+
+  > .failed-turn-resend {
+    pointer-events: auto;
+  }
+}
+
 .message-collapse-control > .failed-turn-retry-feedback {
   clear: right;
   inline-size: fit-content;
