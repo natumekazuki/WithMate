@@ -1300,14 +1300,12 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 }
 
 .message-bookmark-toggle {
-  position: sticky;
-  top: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 4px;
+  width: var(--message-action-button-size, 28px);
+  height: var(--message-action-button-size, 28px);
+  margin: var(--message-action-button-margin, 4px);
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1371,37 +1369,84 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 }
 
 .message-text-wrapper.has-message-collapse-control {
-  display: flex;
+  display: flow-root;
 }
 
-.message-text-wrapper.has-message-collapse-control > [data-message-body] {
-  order: 0;
-  flex: 1 1 auto;
-  min-width: 0;
+.session-message-column.has-message-action-band {
+  --message-action-button-size: 28px;
+  --message-action-button-margin: 4px;
+  --message-action-band-size: calc(var(--message-action-button-size) + 2 * var(--message-action-button-margin));
+}
+
+.session-message-column.has-message-action-band > .session-message-list {
+  margin-block-start: var(--message-action-band-size);
+}
+
+.message-action-slot[data-pinned] {
+  min-block-size: var(--message-action-slot-size);
+}
+
+/* Only plain paragraphs share the first lines. Blocks and interactive inline
+   content keep a separate action row so their controls are never under a float. */
+.message-text-wrapper:has(> [data-message-body] > div.rich-text:only-child > .message-paragraph, > [data-message-body] > .message-collapsed-preview:only-child):not(:has(
+  > [data-message-body] > .rich-text > :not(.message-paragraph),
+  > [data-message-body] > .rich-text > .message-paragraph :not(br),
+  > .message-action-slot > .message-collapse-control > :not(button)
+)) {
+  > .message-action-slot {
+    float: inline-end;
+    min-inline-size: var(--message-action-slot-width, 0px);
+    max-inline-size: 100%;
+  }
+
+  > [data-message-body] > .rich-text {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
+  .message-paragraph + .message-paragraph {
+    margin-block-start: 8px;
+  }
 }
 
 .message-collapse-control {
-  position: relative;
   display: flex;
-  order: 1;
-  flex: 0 0 auto;
   flex-direction: row-reverse;
+  flex-wrap: wrap;
   align-items: flex-start;
-  z-index: 1;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin-inline-start: auto;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
 }
 
+.message-action-slot[data-pinned] > .message-collapse-control:not(:has(> :not(button))) {
+  position: fixed;
+  top: var(--message-action-band-top);
+  right: var(--message-action-band-right);
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.message-collapse-control > button {
+  flex: none;
+}
+
+.message-collapse-control > .failed-turn-retry-feedback {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .message-collapse-toggle {
-  position: sticky;
-  top: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: 4px;
+  width: var(--message-action-button-size, 28px);
+  height: var(--message-action-button-size, 28px);
+  margin: var(--message-action-button-margin, 4px);
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1413,22 +1458,18 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   pointer-events: none;
 }
 
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control,
+.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-action-slot > .message-collapse-control,
 .message-collapse-control:has(> .reply-toggle) {
   opacity: 1;
 }
 
 @media (hover: hover) {
-  .message-text-wrapper:not(:hover, :focus-within) > .message-collapse-control:has(> .reply-toggle) > :not(.reply-toggle) {
+  .message-text-wrapper:not(:hover, :focus-within) > .message-action-slot > .message-collapse-control:has(> .reply-toggle) > :not(.reply-toggle) {
     opacity: 0;
   }
 }
 
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle,
+.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-action-slot > .message-collapse-control > button,
 .message-collapse-control > .reply-toggle {
   pointer-events: auto;
 }

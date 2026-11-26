@@ -776,6 +776,76 @@ export function SessionMessageColumn({
     return true;
   };
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  const hasMessageActionBand = messages.length > 0
+    && !!(onSelectReply || onToggleMessageCollapse || onToggleMessageBookmark || inputReadContext);
+  const refreshMessageActionBand = useRef<() => void>(undefined);
+  useLayoutEffect(() => {
+    const list = messageListRef.current;
+    const view = list?.ownerDocument.defaultView;
+    if (!list || !view || !hasMessageActionBand) return;
+    let frame = 0;
+    let pinned: HTMLElement | undefined;
+    const release = () => {
+      if (!pinned) return;
+      pinned.removeAttribute("data-pinned");
+      for (const property of ["slot-size", "slot-width", "band-top", "band-right"]) {
+        pinned.style.removeProperty(`--message-action-${property}`);
+      }
+      pinned = undefined;
+    };
+    const update = () => {
+      frame = 0;
+      const listBounds = list.getBoundingClientRect();
+      const bandSize = parseFloat(view.getComputedStyle(list).marginBlockStart);
+      const viewportTop = listBounds.top + list.clientTop;
+      let slot: HTMLElement | undefined;
+      // Only the message cut by the top of the viewport can lend its controls to the band.
+      // The body boundary excludes Details and the rest of the virtual row.
+      if (bandSize > 0 && listBounds.height > 0 && list.scrollTop > 0) {
+        for (const candidate of list.querySelectorAll<HTMLElement>(".message-action-slot")) {
+          const content = candidate.nextElementSibling;
+          const bounds = candidate.getBoundingClientRect();
+          if (bounds.top >= viewportTop) break;
+          if (content && content.getBoundingClientRect().bottom > viewportTop
+            && bounds.height > 0 && bounds.height <= bandSize
+            && candidate.querySelector(".message-collapse-control > button")
+            && !candidate.querySelector(".failed-turn-retry-feedback")) {
+            slot = candidate;
+            break;
+          }
+        }
+      }
+      if (slot !== pinned) release();
+      if (!slot) return;
+      const bounds = slot.getBoundingClientRect();
+      if (!pinned) {
+        // The original buttons stay in DOM and tab order. Their slot keeps the
+        // same dimensions when the control group leaves normal layout.
+        slot.style.setProperty("--message-action-slot-size", `${bounds.height}px`);
+        slot.style.setProperty("--message-action-slot-width", `${bounds.width}px`);
+        pinned = slot;
+        slot.setAttribute("data-pinned", "");
+      }
+      slot.style.setProperty("--message-action-band-top", `${listBounds.top - bandSize}px`);
+      slot.style.setProperty("--message-action-band-right", `${view.innerWidth - bounds.right}px`);
+    };
+    const schedule = () => { if (!frame) frame = view.requestAnimationFrame(update); };
+    refreshMessageActionBand.current = schedule;
+    list.addEventListener("scroll", schedule, { passive: true });
+    view.addEventListener("resize", schedule);
+    const resize = typeof view.ResizeObserver === "undefined" ? undefined : new view.ResizeObserver(schedule);
+    resize?.observe(list);
+    schedule();
+    return () => {
+      list.removeEventListener("scroll", schedule);
+      view.removeEventListener("resize", schedule);
+      resize?.disconnect();
+      if (frame) view.cancelAnimationFrame(frame);
+      refreshMessageActionBand.current = undefined;
+      release();
+    };
+  }, [conversationQueryOwner, hasMessageActionBand, messageListRef]);
+  useLayoutEffect(() => { refreshMessageActionBand.current?.(); });
   useLayoutEffect(() => {
     onMessageListLayout?.();
   }, [virtualMessages, onMessageListLayout]);
@@ -1536,7 +1606,7 @@ export function SessionMessageColumn({
   );
 
   return (
-    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}`}>
+    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}${hasMessageActionBand ? " has-message-action-band" : ""}`}>
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
@@ -1737,40 +1807,42 @@ export function SessionMessageColumn({
                     {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} navigable /> : null}
                     <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
                       {hasMessageActions ? (
-                        <div className="message-collapse-control">
-                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} read={read} /> : null}
-                          {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
-                            aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
-                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}
-                          {messageCollapseTarget && onToggleMessageCollapse ? (
-                            <button
-                              className="message-collapse-toggle"
-                              type="button"
-                              onClick={() => onToggleMessageCollapse(messageKey)}
-                              aria-expanded={!isMessageCollapsed}
-                              aria-controls={messageBodyId}
-                              aria-label={collapsedPreview ? `${messageCollapseLabel}: ${collapsedPreview}` : messageCollapseLabel}
-                              title={messageCollapseLabel}
-                            >
-                              <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                              <span className="visually-hidden">{messageCollapseLabel}</span>
-                            </button>
-                          ) : null}
-                          {messageCollapseTarget && onToggleMessageBookmark ? (
-                            <button
-                              className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
-                              type="button"
-                              aria-pressed={isMessageBookmarked}
-                              aria-label={messageBookmarkLabel}
-                              title={messageBookmarkLabel}
-                              onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
-                            >
-                              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                                <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
-                              </svg>
-                              <span className="visually-hidden">{messageBookmarkLabel}</span>
-                            </button>
-                          ) : null}
+                        <div className="message-action-slot">
+                          <div className="message-collapse-control">
+                            {canRetryFailedTurn && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} read={read} /> : null}
+                            {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
+                              aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
+                              onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}
+                            {messageCollapseTarget && onToggleMessageCollapse ? (
+                              <button
+                                className="message-collapse-toggle"
+                                type="button"
+                                onClick={() => onToggleMessageCollapse(messageKey)}
+                                aria-expanded={!isMessageCollapsed}
+                                aria-controls={messageBodyId}
+                                aria-label={collapsedPreview ? `${messageCollapseLabel}: ${collapsedPreview}` : messageCollapseLabel}
+                                title={messageCollapseLabel}
+                              >
+                                <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                                <span className="visually-hidden">{messageCollapseLabel}</span>
+                              </button>
+                            ) : null}
+                            {messageCollapseTarget && onToggleMessageBookmark ? (
+                              <button
+                                className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
+                                type="button"
+                                aria-pressed={isMessageBookmarked}
+                                aria-label={messageBookmarkLabel}
+                                title={messageBookmarkLabel}
+                                onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
+                              >
+                                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                                  <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
+                                </svg>
+                                <span className="visually-hidden">{messageBookmarkLabel}</span>
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                       {/* Keep the disclosure target without treating a collapsed empty body as a visible result. */}
