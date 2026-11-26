@@ -776,76 +776,6 @@ export function SessionMessageColumn({
     return true;
   };
   const virtualMessages = messageVirtualizer.getVirtualItems();
-  const hasMessageActionBand = messages.length > 0
-    && !!(onSelectReply || onToggleMessageCollapse || onToggleMessageBookmark || inputReadContext);
-  const refreshMessageActionBand = useRef<() => void>(undefined);
-  useLayoutEffect(() => {
-    const list = messageListRef.current;
-    const view = list?.ownerDocument.defaultView;
-    if (!list || !view || !hasMessageActionBand) return;
-    let frame = 0;
-    let pinned: HTMLElement | undefined;
-    const release = () => {
-      if (!pinned) return;
-      pinned.removeAttribute("data-pinned");
-      for (const property of ["slot-size", "slot-width", "band-top", "band-right"]) {
-        pinned.style.removeProperty(`--message-action-${property}`);
-      }
-      pinned = undefined;
-    };
-    const update = () => {
-      frame = 0;
-      const listBounds = list.getBoundingClientRect();
-      const bandSize = parseFloat(view.getComputedStyle(list).marginBlockStart);
-      const viewportTop = listBounds.top + list.clientTop;
-      let slot: HTMLElement | undefined;
-      // Only the message cut by the top of the viewport can lend its controls to the band.
-      // The body boundary excludes Details and the rest of the virtual row.
-      if (bandSize > 0 && listBounds.height > 0 && list.scrollTop > 0) {
-        for (const candidate of list.querySelectorAll<HTMLElement>(".message-text-wrapper.has-message-collapse-control")) {
-          if (candidate.getBoundingClientRect().top >= viewportTop) break;
-          const content = candidate.querySelector(":scope > [data-message-body]");
-          const actions = candidate.querySelector(":scope > .message-collapse-control");
-          const height = actions?.getBoundingClientRect().height ?? 0;
-          if (content && content.getBoundingClientRect().bottom > viewportTop
-            && height > 0 && height <= bandSize
-            && actions?.querySelector("button") && !actions.querySelector(".failed-turn-retry-feedback")) {
-            slot = candidate;
-            break;
-          }
-        }
-      }
-      if (slot !== pinned) release();
-      if (!slot) return;
-      if (!pinned) {
-        // The original buttons stay in DOM and tab order. Their slot keeps the
-        // same dimensions when the control group leaves normal layout.
-        const bounds = slot.querySelector(":scope > .message-collapse-control")!.getBoundingClientRect();
-        slot.style.setProperty("--message-action-slot-size", `${bounds.height}px`);
-        slot.style.setProperty("--message-action-slot-width", `${bounds.width}px`);
-        pinned = slot;
-        slot.setAttribute("data-pinned", "");
-      }
-      slot.style.setProperty("--message-action-band-top", `${listBounds.top - bandSize}px`);
-      slot.style.setProperty("--message-action-band-right", `${view.innerWidth - slot.getBoundingClientRect().right}px`);
-    };
-    const schedule = () => { if (!frame) frame = view.requestAnimationFrame(update); };
-    refreshMessageActionBand.current = schedule;
-    list.addEventListener("scroll", schedule, { passive: true });
-    view.addEventListener("resize", schedule);
-    const resize = typeof view.ResizeObserver === "undefined" ? undefined : new view.ResizeObserver(schedule);
-    resize?.observe(list);
-    schedule();
-    return () => {
-      list.removeEventListener("scroll", schedule);
-      view.removeEventListener("resize", schedule);
-      resize?.disconnect();
-      if (frame) view.cancelAnimationFrame(frame);
-      refreshMessageActionBand.current = undefined;
-      release();
-    };
-  }, [conversationQueryOwner, hasMessageActionBand, messageListRef]);
-  useLayoutEffect(() => { refreshMessageActionBand.current?.(); });
   useLayoutEffect(() => {
     onMessageListLayout?.();
   }, [virtualMessages, onMessageListLayout]);
@@ -1606,7 +1536,7 @@ export function SessionMessageColumn({
   );
 
   return (
-    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}${hasMessageActionBand ? " has-message-action-band" : ""}`}>
+    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}`}>
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}

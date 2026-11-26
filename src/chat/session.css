@@ -1300,12 +1300,15 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
 }
 
 .message-bookmark-toggle {
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--message-action-button-size, 28px);
-  height: var(--message-action-button-size, 28px);
-  margin: var(--message-action-button-margin, 4px);
+  width: 28px;
+  height: 28px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1368,95 +1371,25 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   min-width: 0;
 }
 
-.message-text-wrapper.has-message-collapse-control {
-  display: flow-root;
-}
-
-.session-message-column.has-message-action-band {
-  --message-action-button-size: 28px;
-  --message-action-button-margin: 4px;
-  --message-action-band-size: calc(var(--message-action-button-size) + 2 * var(--message-action-button-margin));
-}
-
-.session-message-column.has-message-action-band > .session-message-list {
-  margin-block-start: var(--message-action-band-size);
-}
-
-.message-text-wrapper[data-pinned]:not(:has(> .message-collapse-control > :not(button)))::before {
-  content: "";
-  display: block;
-  block-size: var(--message-action-slot-size);
-}
-
-/* Only plain paragraphs share the first lines. Blocks and interactive inline
-   content keep a separate action row so their controls are never under a float. */
-.message-text-wrapper.has-message-collapse-control:has(
-  > [data-message-body] > div.rich-text:only-child > .message-paragraph,
-  > [data-message-body] > .message-collapsed-preview:only-child
-):not(:has(
-  > [data-message-body] > .rich-text > :not(.message-paragraph),
-  > [data-message-body] > .rich-text > .message-paragraph :not(br),
-  > .message-collapse-control > :not(button)
-)) {
-  > .message-collapse-control,
-  &[data-pinned]::before {
-    float: inline-end;
-    max-inline-size: 100%;
-  }
-
-  &[data-pinned]::before {
-    inline-size: var(--message-action-slot-width);
-  }
-
-  > [data-message-body] > .rich-text {
-    display: block;
-    overflow-wrap: anywhere;
-  }
-
-  .message-paragraph + .message-paragraph {
-    margin-block-start: 8px;
-  }
-}
-
 .message-collapse-control {
-  display: flex;
-  flex-direction: row-reverse;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  inline-size: fit-content;
-  max-inline-size: 100%;
-  margin-inline-start: auto;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
 }
 
-.message-text-wrapper[data-pinned] > .message-collapse-control:not(:has(> :not(button))) {
-  position: fixed;
-  float: none;
-  top: var(--message-action-band-top);
-  right: var(--message-action-band-right);
-  z-index: 1;
-  pointer-events: auto;
-}
-
-.message-collapse-control > button {
-  flex: none;
-}
-
-.message-collapse-control > .failed-turn-retry-feedback {
-  flex-basis: 100%;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .message-collapse-toggle {
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--message-action-button-size, 28px);
-  height: var(--message-action-button-size, 28px);
-  margin: var(--message-action-button-margin, 4px);
+  width: 28px;
+  height: 28px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1468,7 +1401,8 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   pointer-events: none;
 }
 
-.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-collapse-control,
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control,
 .message-collapse-control:has(> .reply-toggle) {
   opacity: 1;
 }
@@ -1479,9 +1413,20 @@ button.session-message-mention:focus-visible { outline: 2px solid currentColor; 
   }
 }
 
-.message-text-wrapper.has-message-collapse-control:is(:hover, :focus-within) > .message-collapse-control > button,
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
+.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
+.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle,
 .message-collapse-control > .reply-toggle {
   pointer-events: auto;
+}
+
+.message-collapse-control > .failed-turn-retry-feedback {
+  clear: right;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin-inline-start: auto;
+  overflow-wrap: anywhere;
 }
 
 .message-collapse-toggle:hover {
