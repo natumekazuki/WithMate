@@ -24,7 +24,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; permissionAction?: string; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; permissionAction?: string; permissionBurst?: () => AsyncIterable<OpenCodeEvent>; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -65,6 +65,7 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       calls.push("connected"); yield event("server.connected", {});
       assert.ok(prompt, "event connection must be established before prompt admission");
       yield event("session.inbox.delivered", { sessionID: "root", inboxID: prompt.id });
+      if (options.permissionBurst) yield* options.permissionBurst();
       if (options.interactions) {
         yield event("permission.asked", { id: "permission", sessionID: "child", action: options.permissionAction ?? "bash", resources: ["echo test"] });
         await permissionReply;
@@ -95,6 +96,60 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   }) });
   return { adapter, client, calls, getPrompt: () => prompt, mcpRegistrations, release };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの後着と別IDの解決は先頭の審査を失効させず、native応答は同じIDへ一回限りFIFOで返す"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認; docs/design/provider-adapter.md#current-runtime (OpenCodeAdapterのnative承認)" }
+// fault = "別IDの到着・解決で審査中のAを無効にする、取消済みBに返答する、または決定を別IDへ返す"
+// observable = "審査callbackが受け取るnative IDと鮮度、native replyのID・会話・decision列"
+// observation_boundary = "consumer"
+// scope = "OpenCodeAdapterのnative permission eventと仲介callbackの境界"
+// lifecycle = "permanent"
+// distinction = "共通FIFOのtestを通っても、OpenCode独自の全要求共通revisionでAを誤って失効できる"
+// risk_tags = ["authorization"]
+// @end-test-value
+it("OpenCode permission freshness belongs to the pending native request", { timeout: 2000 }, async () => {
+  const turn = input();
+  const started = Promise.withResolvers<void>();
+  const arrivals = Promise.withResolvers<void>();
+  const lastReply = Promise.withResolvers<void>();
+  const checks: Array<[string, boolean]> = [];
+  const replies: Array<[string, string, string]> = [];
+  const run = fixture(turn, {
+    async *permissionBurst() {
+      yield event("permission.asked", { id: "a", sessionID: "child", action: "read", resources: ["a.txt"] });
+      await started.promise;
+      yield event("permission.asked", { id: "b", sessionID: "child", action: "read", resources: ["b.txt"] });
+      yield event("permission.asked", { id: "c", sessionID: "child", action: "read", resources: ["c.txt"] });
+      yield {
+        id: crypto.randomUUID(),
+        created: 1,
+        type: "permission.replied",
+        data: { requestID: "b", sessionID: "child", reply: "reject" },
+      } satisfies Extract<OpenCodeEvent, { type: "permission.replied" }>;
+      arrivals.resolve();
+      await lastReply.promise;
+    },
+  });
+  run.client.permission.reply = async ({ sessionID, requestID, decision }) => {
+    replies.push([sessionID, requestID, decision]);
+    if (requestID === "c") lastReply.resolve();
+  };
+  turn.onApprovalRequest = async (_request, _signal, review) => {
+    const { id } = review?.operation as { id: string };
+    if (id === "a") {
+      started.resolve();
+      await arrivals.promise;
+    }
+    const current = review?.isCurrent?.() === true;
+    checks.push([id, current]);
+    return id === "a" && current ? "approve" : "deny";
+  };
+  await run.adapter.runSessionTurn(turn, () => {});
+  assert.deepEqual(checks, [["a", true], ["c", true]]);
+  assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"]]);
+});
 
 async function migrationFixture(turn: RunSessionTurnInput) {
   const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "withmate-opencode-migration-"));

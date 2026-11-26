@@ -328,7 +328,6 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       const admitted = await withSignal(admission, signal);
       if (admitted.id !== requestID || admitted.sessionID !== rootID) throw new Error("OpenCode prompt admission identity does not match this request");
       let delivered = false;
-      let permissionRevision = 0;
       while (!terminal) {
         const next = await withSignal(iterator.next(), signal);
         if (next.done) throw new Error("OpenCode event stream disconnected before root completion");
@@ -344,21 +343,24 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
           const request = event.data;
           const key = `permission:${request.id}`;
           if (interactionControllers.has(key)) continue;
-          const revision = ++permissionRevision;
           if (!await belongs(request.sessionID)) {
             await native.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject" }, { signal });
             throw new Error("OpenCode permission request ownership is unknown");
           }
           enqueue(key, async (pendingSignal) => {
+            // The interaction tail orders native replies, but only this request's
+            // reply or the interaction lifetime can invalidate its review.
+            const isPending = () => interactionControllers.get(key)?.signal === pendingSignal
+              && !pendingSignal.aborted && !interactionsClosed;
             const decision = deniedSessionActions.has(request.action) || input.executionOptions.approvalMode === "safety-focused" ? "deny"
               : input.executionOptions.approvalMode === "never" ? "approve"
               : await withSignal(Promise.resolve(input.onApprovalRequest?.(redactor.sanitize({
                 requestId: randomUUID(), provider: "opencode", kind: request.action, title: "OpenCode permission",
                 summary: request.message ?? request.resources.join("\n"), details: JSON.stringify(request.metadata), decisionMode: "direct-decision",
               }), pendingSignal, { operation: redactor.sanitize(request),
-                isCurrent: () => permissionRevision === revision && !pendingSignal.aborted && !interactionsClosed,
+                isCurrent: isPending,
               }) ?? "deny"), pendingSignal);
-            if (!pendingSignal.aborted && !interactionsClosed) await native.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: decision === "approve" ? "once" : "reject" }, { signal: pendingSignal });
+            if (isPending()) await native.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: decision === "approve" ? "once" : "reject" }, { signal: pendingSignal });
           });
           continue;
         }

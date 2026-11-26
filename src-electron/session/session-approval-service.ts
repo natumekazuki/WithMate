@@ -6,9 +6,9 @@ type PendingApprovalRequest = {
   decision: Promise<LiveApprovalDecision>;
   signals: Set<AbortSignal>;
   handleAbort: () => void;
-  notificationController: AbortController;
+  lifetime: AbortController;
+  /** If present, manual resolution is unavailable until this head's attempt falls back. */
   review?: PendingApprovalReview;
-  reviewInvalidated: boolean;
   finish: (decision: LiveApprovalDecision) => void;
 };
 
@@ -40,7 +40,8 @@ export class SessionApprovalService {
 
   public resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
     const pendingRequest = this.pendingRequests.get(sessionId)?.[0];
-    if (!pendingRequest || pendingRequest.request.requestId !== requestId) {
+    if (!pendingRequest || pendingRequest.request.requestId !== requestId || pendingRequest.review
+      || [...pendingRequest.signals].some((signal) => signal.aborted)) {
       throw new Error("The approval request no longer exists.");
     }
 
@@ -76,13 +77,12 @@ export class SessionApprovalService {
       decision,
       signals: new Set([signal]),
       handleAbort: () => this.settle(sessionId, pending, "deny"),
-      notificationController: new AbortController(),
+      lifetime: new AbortController(),
       review,
-      reviewInvalidated: false,
       finish: (value) => {
         for (const trackedSignal of pending.signals) trackedSignal.removeEventListener("abort", pending.handleAbort);
         pending.signals.clear();
-        pending.notificationController.abort();
+        pending.lifetime.abort();
         resolveDecision(value);
       },
     };
@@ -90,38 +90,44 @@ export class SessionApprovalService {
     this.pendingRequests.set(sessionId, queue);
     signal.addEventListener("abort", pending.handleAbort, { once: true });
     if (queue.length === 1) {
-      this.publishHead(sessionId, queue);
-    } else {
-      // A competing arrival invalidates the current head even if the newcomer is later canceled.
-      queue[0].reviewInvalidated = true;
+      this.advanceHead(sessionId, queue);
     }
     return decision;
   }
 
-  private reviewHead(sessionId: string, pending: PendingApprovalRequest): void {
-    const review = pending.review;
-    if (!review) return;
-    // An invalid or inconclusive attempt leaves this head manual until it is resolved.
-    pending.review = undefined;
-    const signal = pending.notificationController.signal;
-    const isCurrentHead = () => !signal.aborted && !pending.reviewInvalidated
-      && this.pendingRequests.get(sessionId)?.[0] === pending;
+  private async reviewHead(sessionId: string, pending: PendingApprovalRequest, review: PendingApprovalReview): Promise<void> {
+    const signal = pending.lifetime.signal;
+    const isCurrentHead = () => this.isCurrentHead(sessionId, pending);
     const isCurrent = () => isCurrentHead() && review.isCurrent();
-    void Promise.resolve().then(async () => {
-      if (!isCurrent()) return;
-      const value = await review.decide(signal, {
-        isCurrentHead,
-        previousStop: this.stoppingReviews.get(sessionId),
-        onStopping: (stopped) => {
-          // Keep the stop fence even if the source turn and its approval queue are gone.
-          this.stoppingReviews.set(sessionId, stopped);
-          void stopped.then(() => {
-            if (this.stoppingReviews.get(sessionId) === stopped) this.stoppingReviews.delete(sessionId);
-          }, () => { /* A failed close is not confirmation of stop. */ });
-        },
-      });
-      if (value !== null && isCurrent()) this.settle(sessionId, pending, value);
-    }).catch(() => undefined);
+    // Defer the reviewer, while keeping the head unavailable for manual resolution.
+    await Promise.resolve();
+    let decision: LiveApprovalDecision | null = null;
+    try {
+      if (isCurrent()) {
+        const value = await review.decide(signal, {
+          isCurrentHead,
+          previousStop: this.stoppingReviews.get(sessionId),
+          onStopping: (stopped) => {
+            // Keep the stop fence even if the source turn and its approval queue are gone.
+            this.stoppingReviews.set(sessionId, stopped);
+            void stopped.then(() => {
+              if (this.stoppingReviews.get(sessionId) === stopped) this.stoppingReviews.delete(sessionId);
+            }, () => { /* A failed close is not confirmation of stop. */ });
+          },
+        });
+        if ((value === "approve" || value === "deny") && isCurrent()) decision = value;
+      }
+    } catch {
+      // An unavailable or failed review has no authority to decide.
+    }
+    if (!isCurrentHead()) return;
+    if (decision !== null) {
+      this.settle(sessionId, pending, decision);
+    } else {
+      // A failed, stale or inconclusive attempt never retries this head.
+      pending.review = undefined;
+      this.publishManualHead(sessionId, pending);
+    }
   }
 
   private settle(sessionId: string, pending: PendingApprovalRequest, decision: LiveApprovalDecision): void {
@@ -130,10 +136,10 @@ export class SessionApprovalService {
     if (!queue || index < 0) return;
     queue.splice(index, 1);
     pending.finish(decision);
-    if (index === 0) this.publishHead(sessionId, queue, pending.request.requestId);
+    if (index === 0) this.advanceHead(sessionId, queue, pending.request.requestId);
   }
 
-  private publishHead(sessionId: string, queue: PendingApprovalRequest[], previousRequestId?: string): void {
+  private advanceHead(sessionId: string, queue: PendingApprovalRequest[], previousRequestId?: string): void {
     // A shared turn signal is already aborted before its individual listeners run.
     while (queue[0] && [...queue[0].signals].some((signal) => signal.aborted)) {
       queue.shift()!.finish("deny");
@@ -144,23 +150,37 @@ export class SessionApprovalService {
       this.clearPublishedRequest(sessionId, previousRequestId);
       return;
     }
+    if (pending.review) {
+      this.clearPublishedRequest(sessionId, previousRequestId);
+      void this.reviewHead(sessionId, pending, pending.review);
+    } else {
+      this.publishManualHead(sessionId, pending);
+    }
+  }
+
+  private isCurrentHead(sessionId: string, pending: PendingApprovalRequest): boolean {
+    return this.pendingRequests.get(sessionId)?.[0] === pending && !pending.lifetime.signal.aborted
+      && ![...pending.signals].some((signal) => signal.aborted);
+  }
+
+  private publishManualHead(sessionId: string, pending: PendingApprovalRequest): void {
+    if (!this.isCurrentHead(sessionId, pending)) return;
     const published = this.options.updateLiveSessionRun(sessionId, (current) => ({
       ...current,
       approvalRequest: pending.request,
     }));
     if (published?.approvalRequest?.requestId === pending.request.requestId
-      && this.pendingRequests.get(sessionId)?.[0] === pending
-      && !pending.notificationController.signal.aborted) {
+      && this.isCurrentHead(sessionId, pending)) {
       try {
-        this.options.notifyApproval?.(sessionId, pending.request.requestId, pending.notificationController.signal);
+        this.options.notifyApproval?.(sessionId, pending.request.requestId, pending.lifetime.signal);
       } catch {
         // Attention delivery must not interrupt the pending approval decision.
       }
-      this.reviewHead(sessionId, pending);
     }
   }
 
   private clearPublishedRequest(sessionId: string, requestId?: string): void {
+    if (requestId === undefined) return;
     this.options.updateLiveSessionRun(sessionId, (current) =>
       current.approvalRequest?.requestId === requestId
         ? { ...current, approvalRequest: null }

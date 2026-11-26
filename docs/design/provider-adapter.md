@@ -71,7 +71,7 @@ providerごとの差は次。
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
-  - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
+  - `on-request` で承認を要する permission request は、Main Process の `onApprovalRequest` bridge を通して[WithMate Auto Review](withmate-auto-review.md)または手動承認で判断し、`approve / deny` を SDK `PermissionHandler` へ返す
   - turn送信前に`user_input.requested`と`elicitation.requested`のconsumer interestを登録し、通常終了時に解放する。取消時は専用CLI processの停止で破棄する。SDKのhandler callbackは併用せず、eventのrequest IDを回答まで保持する
   - `user_input.requested`は`kind: "question"`として共通質問UIへ中継する。選択肢は単一選択、`allowFreeform`省略時は自由回答可、選択肢なしはtext入力とし、`handlePendingUserInput`へ回答と`wasFreeform`を返す。Close／UI不在は空の回答で質問を終了し、turn自体は中断しない
   - `elicitation.requested`は同じ`onElicitationRequest` bridgeからform / URL UIへ中継し、`handlePendingElicitation`へ`accept / decline / cancel`を返す。変換できないfieldが1つでもあれば全体を`decline`し診断を残す。UI不在は`cancel`とし、不完全なformを受理しない。質問・elicitationの回答RPCの拒否・失敗はturn失敗として扱うが、取消cleanup開始後の切断は新たな回答失敗へ昇格させない。取消より先に発生した回答失敗は維持する
@@ -101,7 +101,8 @@ providerごとの差は次。
   - 共通promptの`logicalPrompt.composedText`を毎turn送る。保存済みの明示thread IDを取得し、root・workspace・既存incarnation由来のownerを照合する。未配送inboxは同ownerとrequest IDを確認できる旧入力だけをcancelし、未知ownerや取消未確認はエラーにする。入力の自動再送やstale threadの自動resetはしない
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
   - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする。WithMateのOpenCode実行ではnativeの`subagent`による新規起動・継続を禁止する。新規Sessionの作成時と、既存threadを含む各Turnのprompt送信前にSession単位の拒否を適用する。OpenCodeのglobal／project設定や、WithMateの通常子Sessionの作成には影響しない
-  - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、選択肢の説明をlabelへ併記する。string／multiselectの`custom`は自由入力として扱い、単一回答は文字列、複数回答は選択値と自由入力を含む文字列配列で返す。`metadata.kind = question`で`required`が未指定のfieldは必須とし、その他はnativeの指定を維持する。`external`／`hidden`／`when`／`pattern`の未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
+  - `on-request`は[WithMate Auto Review](withmate-auto-review.md)または手動承認で判断し、approveを`once`、denyを`reject`へ変換する。native承認応答は到着順で、解決先は同じnative要求IDとSessionに限る。別要求の到着・解決では先頭を失効させず、対象IDの`permission.replied`またはTurn終端・取消で未回答の要求を失効させる。`never`はnative askへ`once`を返し、永続許可`always`は発行しない
+  - formは共通質問UIへ変換し、選択肢の説明をlabelへ併記する。string／multiselectの`custom`は自由入力として扱い、単一回答は文字列、複数回答は選択値と自由入力を含む文字列配列で返す。`metadata.kind = question`で`required`が未指定のfieldは必須とし、その他はnativeの指定を維持する。`external`／`hidden`／`when`／`pattern`の未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
   - stringの選択肢と自由入力でも`minLength`／`maxLength`／`format`を共通fieldへ保持し、送信値をSubmit前に検証する。文字数はnativeと同じ未加工文字列のUTF-16長で判定する。optionalの未回答は送信しない。選択肢外の既定値の表示・変更は[Question Forms](desktop-ui.md#question-forms)に従い、nativeへ返す既定値と文字列配列を失わない
   - token／contextは実取得値を投影する。quotaは公式`experimental.usage.limits`のGo枠だけを取得し、Mainの非永続cacheへ保持する。Go枠なしの正常応答は`null`から`unsupported`へ投影し、取得失敗とは区別する。独自Go HTTP APIやcredential読出しは行わない。詳細は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
 
@@ -151,7 +152,7 @@ provider adapterは共通のnative実行を所有し、用途別の背景SDK eng
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時は診断ログに必要なerror metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
-   - `OpenCodeAdapter`: 共通promptとfile URI、検証済みmodel／variantをnative Sessionへ渡す。明示threadと所有metadataを照合し、承認・formを共通pending UIへ返す
+   - `OpenCodeAdapter`: 共通promptとfile URI、検証済みmodel／variantをnative Sessionへ渡す。明示threadと所有metadataを照合し、承認を共通の承認キュー、formを共通質問UIへ渡す
 8. provider ownerがstream eventからsanitized live stateとprovider telemetryを組み立て、Main ProcessがIPCでSession Windowへ中継する。Codexのprojectionは共有Workerが所有し、transportと制御requestはMain Processに残す
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
