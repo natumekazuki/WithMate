@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createServer } from "vite";
+import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
 
 /** Each window refreshes independently and retains its selected PR on a read failure. */
 test("changed notification refreshes both windows without discarding failed reads", async () => {
@@ -59,10 +60,10 @@ test("changed notification refreshes both windows without discarding failed read
       },
     ],
   };
-  const listeners = new Set();
+  const listeners = new Set<() => void>();
   let fail = false;
   let reads = 0;
-  const execute = async (operation) => {
+  const execute = async (operation: string) => {
     if (operation === "pr_get") reads += 1;
     if (operation === "pr_get" && fail)
       return {
@@ -78,8 +79,8 @@ test("changed notification refreshes both windows without discarding failed read
       return { ok: true, data: { branches: [], head: null, headBranch: null } };
     return { ok: true, data: { sessions: [], hasMore: false } };
   };
-  const api = {
-    execute,
+  const api: LocalPrWindowApi = {
+    execute: execute as unknown as LocalPrWindowApi["execute"],
     subscribeChanged(callback) {
       listeners.add(callback);
       return () => {
@@ -89,6 +90,8 @@ test("changed notification refreshes both windows without discarding failed read
   };
   const first = dom.window.document.getElementById("first");
   const second = dom.window.document.getElementById("second");
+  assert.ok(first);
+  assert.ok(second);
   const roots = [createRoot(first), createRoot(second)];
   try {
     const { default: App } = await vite.ssrLoadModule(

@@ -236,7 +236,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             Reload
           </ButtonContent>
         </button>
-        <ReadState state={list} retry={refresh} />
+        <div className="local-pr-list-feedback">
+          <ReadState state={list} retry={refresh} />
+        </div>
         {list.data?.entries.map((item) => (
           <button
             className="local-pr-list-item"
@@ -261,14 +263,17 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
         ))}
       </aside>
       <main className="local-pr-main">
-        {failure && (
-          <div className="local-pr-error" role="alert">
-            {failure.message}
-            {failure.effect === "unknown" &&
-              " The result is unknown; refresh before retrying."}{" "}
-            <button onClick={() => setFailure(null)}>Dismiss</button>
-          </div>
-        )}
+        <div className="local-pr-main-feedback">
+          {failure && (
+            <div className="local-pr-error" role="alert">
+              {failure.message}
+              {failure.effect === "unknown" &&
+                " The result is unknown; refresh before retrying."}{" "}
+              <button onClick={() => setFailure(null)}>Dismiss</button>
+            </div>
+          )}
+          {!creating && selected && <ReadState state={detail} retry={refresh} />}
+        </div>
         {creating ? (
           <CreatePr
             api={api}
@@ -282,7 +287,6 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
           />
         ) : selected ? (
           <>
-            <ReadState state={detail} retry={refresh} />
             {pr && currentVersion && (
               <>
                 <header className="local-pr-header">
