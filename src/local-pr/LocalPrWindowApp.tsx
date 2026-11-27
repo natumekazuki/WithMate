@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   LocalPrComment,
@@ -12,6 +12,7 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import { parseUnifiedDiff } from "../file-explorer/unified-diff.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
+import { ErrorDetailsButton } from "../ui/error-details.js";
 import "./local-pr.css";
 
 type Mode = "full" | "previous";
@@ -128,21 +129,46 @@ function useRead<T>(
 function ReadState({
   state,
   retry,
+  loadingLabel = "Loading Pull Request Data",
 }: {
   state: { data?: unknown; loading: boolean; error: Failure | null };
   retry: () => void;
+  loadingLabel?: string;
 }) {
   return (
     <>
       {state.loading && state.data == null && (
-        <LoadingIndicator inline label="Loading Pull Request Data" />
+        <LoadingIndicator inline label={loadingLabel} />
       )}
       {state.error && (
-        <div className="local-pr-error" role="alert">
-          {state.error.message} <button onClick={retry}>Retry</button>
+        <div className="local-pr-read-error" role="alert">
+          <ErrorDetailsButton message={state.error.message} label="Read Error Details" />
+          <button onClick={retry}>Retry</button>
         </div>
       )}
     </>
+  );
+}
+
+/** Keeps the action label's dimensions and identifies the button that started the mutation. */
+function ActionButton({
+  children, disabled, onAction, ...props
+}: Omit<ComponentPropsWithRef<"button">, "onClick" | "aria-busy"> & {
+  onAction: () => Promise<unknown> | undefined;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <button {...props} type="button" disabled={disabled || pending} aria-busy={pending}
+      onClick={() => {
+        const result = onAction();
+        if (result) {
+          setPending(true);
+          void result.finally(() => setPending(false));
+        }
+      }}
+    >
+      <ButtonContent busy={pending}>{children}</ButtonContent>
+    </button>
   );
 }
 
@@ -260,72 +286,77 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     [api, refresh],
   );
 
+  /** Both the full list and the compact selector open the same PR at its latest version. */
+  function selectPr(id: string) {
+    setCreating(false);
+    setSelected(id);
+    setVersion(null);
+    setAnchorComment(null);
+    setTab("overview");
+  }
+
   return (
-    <div className="local-pr-app">
+    <div className="page-shell session-page local-pr-app">
       <aside className="local-pr-list" aria-label="Pull Requests">
-        <header>
+        <header className="local-pr-list-toolbar">
           <h1>Pull Requests</h1>
-          <button
-            onClick={() => {
-              setCreating(true);
-              setSelected(null);
-            }}
+          <div className="session-file-preview-actions">
+            <button className="local-pr-primary"
+              onClick={() => {
+                setCreating(true);
+                setSelected(null);
+              }}
+            >
+              New PR
+            </button>
+            <button aria-label="Reload Pull Requests" title="Reload Pull Requests"
+            aria-busy={list.loading || detail.loading}
+            disabled={list.loading || detail.loading}
+            onClick={refresh}
           >
-            New PR
-          </button>
+            <ButtonContent
+              busy={list.loading || detail.loading}
+              busyLabel="Refreshing Pull Requests"
+            >
+              ↻
+            </ButtonContent>
+            </button>
+          </div>
         </header>
-        <button
-          aria-busy={list.loading || detail.loading}
-          disabled={list.loading || detail.loading}
-          onClick={refresh}
-        >
-          <ButtonContent
-            busy={list.loading || detail.loading}
-            busyLabel="Refreshing Pull Requests"
-          >
-            Reload
-          </ButtonContent>
-        </button>
+        {!!list.data?.entries.length && (
+          <div className="local-pr-compact-list">
+            <select aria-label="Select Pull Request" value={selected ?? ""} onChange={(event) => selectPr(event.target.value)}>
+              <option disabled value="">Select Pull Request</option>
+              {list.data.entries.map((item) => (
+                <option key={item.id} value={item.id}>{item.title} · {prStateLabels[item.state]} · v{item.latestVersion} · {item.targetBranch}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="local-pr-list-items">
+          {list.data?.entries.map((item) => (
+            <button
+              className="local-pr-list-item"
+              aria-current={selected === item.id ? "true" : undefined}
+              key={item.id}
+              onClick={() => selectPr(item.id)}
+            >
+              <strong>{item.title}</strong>
+              <span>
+                {prStateLabels[item.state]} · v{item.latestVersion}
+              </span>
+              <small>
+                {item.sourceBranch ?? "Detached Head"} →{" "}
+                {item.targetBranch}
+              </small>
+            </button>
+          ))}
+        </div>
         <div className="local-pr-list-feedback">
           <ReadState state={list} retry={refresh} />
         </div>
-        {list.data?.entries.map((item) => (
-          <button
-            className="local-pr-list-item"
-            aria-current={selected === item.id ? "true" : undefined}
-            key={item.id}
-            onClick={() => {
-              setCreating(false);
-              setSelected(item.id);
-              setVersion(null);
-              setTab("overview");
-            }}
-          >
-            <strong>{item.title}</strong>
-            <span>
-              {prStateLabels[item.state]} · v{item.latestVersion}
-            </span>
-            <small>
-              {item.sourceBranch ?? item.createdBy.sessionId} →{" "}
-              {item.targetBranch}
-            </small>
-          </button>
-        ))}
       </aside>
       <main className="local-pr-main">
-        <div className="local-pr-main-feedback">
-          {failure && (
-            <div className="local-pr-error" role="alert">
-              {failure.message}
-              {failure.effect === "unknown" &&
-                " The result is unknown; refresh before retrying."}{" "}
-              <button onClick={() => setFailure(null)}>Dismiss</button>
-            </div>
-          )}
-          {!creating && selected && (
-            <ReadState state={detail} retry={refresh} />
-          )}
-        </div>
         {creating ? (
           <CreatePr
             api={api}
@@ -342,20 +373,21 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             {pr && currentVersion && (
               <>
                 <header className="local-pr-header">
-                  <div>
+                  <div className="local-pr-heading">
                     <h2>{pr.title}</h2>
-                    <span>
-                      {prStateLabels[pr.state]} ·{" "}
-                      {pr.sourceBranch ?? "Detached Head"} → {pr.targetBranch}
-                    </span>
+                    <p className="local-pr-pr-meta">
+                      <span className="local-pr-status" data-state={pr.state}>{prStateLabels[pr.state]}</span>
+                      <code>{pr.sourceBranch ?? "Detached Head"} → {pr.targetBranch}</code>
+                    </p>
                   </div>
                   <label>
                     Version{" "}
                     <select
                       value={currentVersion.version}
-                      onChange={(event) =>
-                        setVersion(Number(event.target.value))
-                      }
+                      onChange={(event) => {
+                        setAnchorComment(null);
+                        setVersion(Number(event.target.value));
+                      }}
                     >
                       {pr.versions.map((item) => (
                         <option key={item.version} value={item.version}>
@@ -366,12 +398,16 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     </select>
                   </label>
                 </header>
-                <nav className="local-pr-tabs" aria-label="PR Sections">
+                <nav className="local-pr-tabs session-file-preview-segmented" aria-label="PR Sections">
                   {(["overview", "changes", "checks"] as const).map((name) => (
                     <button
                       key={name}
+                      className={tab === name ? "is-active" : undefined}
                       aria-current={tab === name ? "page" : undefined}
-                      onClick={() => setTab(name)}
+                      onClick={() => {
+                        if (name !== tab) setAnchorComment(null);
+                        setTab(name);
+                      }}
                     >
                       {name[0].toUpperCase() + name.slice(1)}
                     </button>
@@ -428,6 +464,19 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             )}
           </>
         ) : null}
+        <div className="local-pr-main-feedback">
+          {failure && (
+            <div className="app-notification error local-pr-error" role="alert">
+              {failure.message}
+              {failure.effect === "unknown" &&
+                " The result is unknown; refresh before retrying."}{" "}
+              <button onClick={() => setFailure(null)}>Dismiss</button>
+            </div>
+          )}
+          {!creating && selected && (
+            <ReadState state={detail} retry={refresh} />
+          )}
+        </div>
       </main>
     </div>
   );
@@ -456,7 +505,7 @@ function Changes({
   const [mode, setMode] = useState<Mode>(
     initialComment?.anchor?.mode ?? "full",
   );
-  const [path, setPath] = useState(initialComment?.anchor?.path ?? "");
+  const [selectedPath, setPath] = useState(initialComment?.anchor?.path ?? "");
   const [side, setSide] = useState<"before" | "after">(
     initialComment?.anchor?.side ?? "after",
   );
@@ -475,6 +524,7 @@ function Changes({
     [api, pr.id, version, mode],
   );
   const files = useRead(`${pr.id}:${version}:${mode}`, filesLoad, revision);
+  const path = selectedPath || files.data?.files[0]?.path || "";
   const patchLoad = useCallback(
     () =>
       path
@@ -529,10 +579,11 @@ function Changes({
     Number.isSafeInteger(endNumber) &&
     endNumber >= startNumber;
   return (
-    <div className="local-pr-changes">
-      <aside className="local-pr-files">
-        <div className="local-pr-actions">
+    <div className="local-pr-changes local-pr-reader">
+      <header className="local-pr-reader-toolbar">
+        <div className="session-file-preview-segmented" role="group" aria-label="Diff Comparison">
           <button
+            className={mode === "full" ? "is-active" : undefined}
             aria-pressed={mode === "full"}
             onClick={() => {
               setMode("full");
@@ -542,6 +593,7 @@ function Changes({
             Full Diff
           </button>
           <button
+            className={mode === "previous" ? "is-active" : undefined}
             disabled={version === 1}
             aria-pressed={mode === "previous"}
             onClick={() => {
@@ -552,15 +604,15 @@ function Changes({
             Since Previous
           </button>
         </div>
-        <ReadState state={files} retry={refresh} />
         {files.data && (
-          <p>
-            <code>
+          <code className="local-pr-revision-range">
               {files.data.beforeCommit.slice(0, 12)} →{" "}
               {files.data.afterCommit.slice(0, 12)}
-            </code>
-          </p>
+          </code>
         )}
+      </header>
+      <aside className="local-pr-files" aria-label="Changed Files">
+        <ReadState state={files} retry={refresh} />
         {files.data?.files.map((file) => (
           <button
             key={file.path}
@@ -576,11 +628,11 @@ function Changes({
           </button>
         ))}
       </aside>
-      <section className="local-pr-diff">
-        <ReadState state={patch} retry={refresh} />
+      <section className="local-pr-diff local-pr-reader-content">
         {path ? (
           <>
             <h3>{path}</h3>
+            <ReadState state={patch} retry={refresh} />
             <div
               ref={codeRef}
               className="local-pr-code"
@@ -709,12 +761,12 @@ function Changes({
                   onChange={(e) => setBody(e.target.value)}
                 />
               </label>
-              <button
+              <ActionButton className="local-pr-primary"
                 disabled={
                   busy || !body.trim() || (scope === "lines" && !validRange)
                 }
-                onClick={() =>
-                  void run("save_draft", {
+                onAction={() =>
+                  run("save_draft", {
                     prId: pr.id,
                     version,
                     body,
@@ -731,7 +783,7 @@ function Changes({
                 }
               >
                 Save Draft
-              </button>
+              </ActionButton>
             </section>
             {pr.comments
               .filter(
@@ -777,11 +829,7 @@ function Checks({
   run: Run;
   busy: boolean;
 }) {
-  const [runId, setRunId] = useState<string | null>(null);
-  const [log, setLog] = useState("");
-  const [logError, setLogError] = useState<Failure | null>(null);
-  const [logLoading, setLogLoading] = useState(false);
-  const logGeneration = useRef(0);
+  const [selectedRunId, setRunId] = useState<string | null>(null);
   const definitionLoad = useCallback(
     () => api.execute("pr_ci_validate", { prId, version }),
     [api, prId, version],
@@ -796,85 +844,55 @@ function Checks({
     revision,
   );
   const runs = useRead(`${prId}:${version}:runs`, runsLoad, revision);
-  useEffect(() => {
-    const generation = ++logGeneration.current;
-    if (!runId) {
-      setLog("");
-      return;
+  const runId = selectedRunId ?? runs.data?.runs[0]?.id;
+  const loadLog = useCallback(async () => {
+    if (!runId) return { ok: true as const, data: "" };
+    let offset = 0;
+    let content = "";
+    for (;;) {
+      const result = await api.execute("pr_ci_log", { prId, version, runId, offset });
+      if (!result.ok) return result;
+      content += result.data.log;
+      if (!result.data.hasMore) return { ok: true as const, data: content };
+      if (result.data.nextOffset <= offset) throw new Error("Log cursor did not advance.");
+      offset = result.data.nextOffset;
     }
-    setLogLoading(true);
-    setLogError(null);
-    void (async () => {
-      let offset = 0;
-      let resultLog = "";
-      try {
-        do {
-          const result = await api.execute("pr_ci_log", {
-            prId,
-            version,
-            runId,
-            offset,
-          });
-          if (!result.ok) {
-            if (generation === logGeneration.current) setLogError(result);
-            return;
-          }
-          resultLog += result.data.log;
-          if (!result.data.hasMore) break;
-          if (result.data.nextOffset <= offset)
-            throw new Error("Log cursor did not advance.");
-          offset = result.data.nextOffset;
-        } while (true);
-        if (generation === logGeneration.current) setLog(resultLog);
-      } catch (error) {
-        if (generation === logGeneration.current)
-          setLogError({ message: String(error), effect: "unknown" });
-      } finally {
-        if (generation === logGeneration.current) setLogLoading(false);
-      }
-    })();
-    return () => {
-      logGeneration.current += 1;
-    };
-  }, [api, prId, version, runId, revision]);
+  }, [api, prId, version, runId]);
+  const log = useRead(runId ?? "none", loadLog, revision);
   const chosen = runs.data?.runs.find((item) => item.id === runId);
   return (
-    <div className="local-pr-checks">
-      <aside>
-        <h3>Checks · v{version}</h3>
+    <div className="local-pr-checks local-pr-reader">
+      <header className="local-pr-reader-toolbar local-pr-checks-toolbar">
         <ReadState state={definition} retry={refresh} />
         {definition.data && (
           <>
-            <p>Definition: {ciDefinitionLabels[definition.data.state]}</p>
-            <p>
+            <div className="local-pr-check-definition">
+              <strong>Definition: {ciDefinitionLabels[definition.data.state]}</strong>
               <code>{definition.data.headCommit}</code>
-            </p>
-            {definition.data.error && (
-              <p role="alert">{definition.data.error}</p>
-            )}
-            <details>
+              {definition.data.error && <p role="alert">{definition.data.error}</p>}
+            </div>
+            <details className="local-pr-definition-file">
               <summary>.withmate/ci.yml</summary>
               <pre>{definition.data.source ?? "Not Configured"}</pre>
             </details>
-            <button
+            <ActionButton className="local-pr-primary"
               disabled={busy || definition.data.state !== "valid"}
-              onClick={() => void run("pr_ci_start", { prId, version })}
+              onAction={() => run("pr_ci_start", { prId, version })}
             >
               Run Checks
-            </button>
+            </ActionButton>
           </>
         )}
-        <ReadState state={runs} retry={refresh} />
+      </header>
+      <aside className="local-pr-files" aria-label="Check Runs">
         <h4>Runs</h4>
+        <ReadState state={runs} retry={refresh} />
         {runs.data?.runs.map((item) => (
           <button
             key={item.id}
             className="local-pr-file"
             aria-current={runId === item.id ? "true" : undefined}
-            onClick={() => {
-              setRunId(item.id);
-              setLog("");
-            }}
+            onClick={() => setRunId(item.id)}
           >
             <strong>{ciRunLabels[item.state]}</strong>
             <small>
@@ -884,42 +902,38 @@ function Checks({
         ))}
         {runs.data && runs.data.runs.length === 0 && <p>Not Run</p>}
       </aside>
-      <section className="local-pr-log">
+      <section className="local-pr-log local-pr-reader-content">
         {chosen ? (
           <>
-            <h3>{ciRunLabels[chosen.state]}</h3>
-            <p>
-              Head <code>{chosen.headCommit}</code>
-              <br />
-              Target <code>{chosen.targetCommit}</code>
-            </p>
-            {chosen.error && <p role="alert">{chosen.error}</p>}
-            <div className="local-pr-actions">
-              <button
-                disabled={busy || chosen.state !== "running"}
-                onClick={() =>
-                  void run("pr_ci_cancel", { prId, version, runId: chosen.id })
-                }
-              >
-                Cancel Run
-              </button>
-              <button
-                disabled={busy || chosen.state === "running"}
-                onClick={() =>
-                  void run("pr_ci_rerun", { prId, version, runId: chosen.id })
-                }
-              >
-                Rerun
-              </button>
-            </div>
-            {logLoading && <LoadingIndicator inline label="Loading CI Log" />}
-            {logError && (
-              <div role="alert" className="local-pr-error">
-                {logError.message} <button onClick={refresh}>Retry</button>
+            <header className="local-pr-log-heading">
+              <h3 className="local-pr-status" data-state={chosen.state}>{ciRunLabels[chosen.state]}</h3>
+              <div className="local-pr-actions">
+                <ActionButton
+                  disabled={busy || chosen.state !== "running"}
+                  onAction={() =>
+                    run("pr_ci_cancel", { prId, version, runId: chosen.id })
+                  }
+                >
+                  Cancel Run
+                </ActionButton>
+                <ActionButton
+                  disabled={busy || chosen.state === "running"}
+                  onAction={() =>
+                    run("pr_ci_rerun", { prId, version, runId: chosen.id })
+                  }
+                >
+                  Rerun
+                </ActionButton>
               </div>
-            )}
-            <pre tabIndex={0} aria-label="CI Log">
-              {log}
+            </header>
+            <dl className="local-pr-commit-list">
+              <dt>Head</dt><dd><code>{chosen.headCommit}</code></dd>
+              <dt>Target</dt><dd><code>{chosen.targetCommit}</code></dd>
+            </dl>
+            {chosen.error && <p role="alert">{chosen.error}</p>}
+            <ReadState state={log} retry={refresh} loadingLabel="Loading CI Log" />
+            <pre tabIndex={0} aria-label="CI Log" aria-busy={log.loading}>
+              {log.data}
             </pre>
           </>
         ) : null}
@@ -999,11 +1013,10 @@ function CreatePr({
           ))}
         </select>
       </label>
-      <button
+      <ActionButton className="local-pr-primary"
         disabled={busy || !title.trim() || !sourceRef || !targetRef}
-        onClick={() => {
-          if (sourceRef && targetRef)
-            void run("pr_create", {
+        onAction={() => sourceRef && targetRef
+          ? run("pr_create", {
               title,
               description,
               headCommit: sourceRef.commit,
@@ -1012,11 +1025,10 @@ function CreatePr({
               expectedTargetCommit: targetRef.commit,
             }).then((result) => {
               if (result) onCreated(result.id);
-            });
-        }}
+            }) : undefined}
       >
         Create PR
-      </button>
+      </ActionButton>
     </section>
   );
 }
@@ -1092,11 +1104,10 @@ function Overview({
   return (
     <div className="local-pr-scroll">
       <div className="local-pr-overview-grid">
-        <section>
-          <h3>Overview</h3>
-          <p className="local-pr-description">{pr.description}</p>
+        <section className="local-pr-submission">
+          <h3>Submission</h3>
           {selectedVersion && (
-            <dl>
+            <dl className="local-pr-commit-list">
               <dt>Head</dt>
               <dd>
                 <code>{selectedVersion.headCommit}</code>
@@ -1111,14 +1122,16 @@ function Overview({
               </dd>
             </dl>
           )}
-          <p>
-            {isApproved ? `Approved v${pr.approval?.version}` : "Not Approved"}
-            {targetChanged ? " · Target Branch Has Changed" : ""}
+          <p className="local-pr-submission-status">
+            <span className="local-pr-status" data-state={isApproved ? "approved" : undefined}>
+              {isApproved ? `Approved v${pr.approval?.version}` : "Not Approved"}
+            </span>
+            {targetChanged && <span className="local-pr-warning">Target Branch Has Changed</span>}
           </p>
           {pr.state === "open" && pr.currentTargetCommit === null && <p>Current Target Unavailable</p>}
           {pr.state === "open" && (
-            <div className="local-pr-actions">
-              <button
+            <div className="local-pr-actions local-pr-review-actions">
+              <ActionButton className={!isApproved ? "local-pr-primary" : undefined}
                 disabled={
                   busy ||
                   !approvalTarget ||
@@ -1126,21 +1139,13 @@ function Overview({
                   targetChanged ||
                   pr.currentTargetCommit === null
                 }
-                onClick={() =>
-                  approvalTarget && void run("approve", approvalTarget)
+                onAction={() =>
+                  approvalTarget ? run("approve", approvalTarget) : undefined
                 }
               >
                 Approve
-              </button>
-              <button
-                disabled={busy || !isApproved || !approvalTarget}
-                onClick={() =>
-                  approvalTarget && void run("revoke", approvalTarget)
-                }
-              >
-                Revoke Approval
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton className={isApproved ? "local-pr-primary" : undefined}
                 disabled={
                   busy ||
                   !approvalTarget ||
@@ -1149,12 +1154,18 @@ function Overview({
                   pr.currentTargetCommit === null ||
                   targetChanged
                 }
-                onClick={() =>
-                  approvalTarget && void run("pr_merge", approvalTarget)
-                }
+                onAction={() => approvalTarget ? run("pr_merge", approvalTarget) : undefined}
               >
                 Merge
-              </button>
+              </ActionButton>
+              <ActionButton
+                disabled={busy || !isApproved || !approvalTarget}
+                onAction={() =>
+                  approvalTarget ? run("revoke", approvalTarget) : undefined
+                }
+              >
+                Revoke Approval
+              </ActionButton>
               <button
                 disabled={busy}
                 onClick={(event) => {
@@ -1172,28 +1183,32 @@ function Overview({
               role="group"
               aria-label="Confirm Action"
               onKeyDown={(event) => {
-                if (event.key === "Escape") {
+                if (event.key === "Escape" && !busy) {
                   setConfirmClose(false);
                   triggerButton.current?.focus();
                 }
               }}
             >
               <p>Close {pr.title} without merging?</p>
-              <button
+              <ActionButton
                 ref={confirmationButton}
                 disabled={busy}
-                onClick={() => {
-                  setConfirmClose(false);
-                  void run("pr_close", {
+                onAction={() =>
+                  run("pr_close", {
                     prId: pr.id,
                     version: pr.latestVersion,
-                  });
-                  triggerButton.current?.focus();
-                }}
+                  }).then((result) => {
+                    if (result) {
+                      setConfirmClose(false);
+                      triggerButton.current?.focus();
+                    }
+                  })
+                }
               >
                 Confirm Close
-              </button>{" "}
+              </ActionButton>{" "}
               <button
+                disabled={busy}
                 onClick={() => {
                   setConfirmClose(false);
                   triggerButton.current?.focus();
@@ -1204,20 +1219,20 @@ function Overview({
             </div>
           )}
           {pr.state === "open" && (
-            <>
+            <div className="local-pr-submit-version">
               <h3>Submit Version</h3>
               <ReadState
                 state={branches}
                 retry={() => setBranchRevision((n) => n + 1)}
               />
-              <p>
-                Source Head: <code>{source?.commit ?? "Unavailable"}</code>
-              </p>
-              <p>
-                Target: <code>{target?.commit ?? "Unavailable"}</code>
-              </p>
+              <dl className="local-pr-commit-list">
+                <dt>Source Head</dt>
+                <dd><code>{source?.commit ?? "Unavailable"}</code></dd>
+                <dt>Target</dt>
+                <dd><code>{target?.commit ?? "Unavailable"}</code></dd>
+              </dl>
               <div className="local-pr-actions">
-                <button
+                <ActionButton
                   disabled={
                     busy ||
                     branches.loading ||
@@ -1226,22 +1241,20 @@ function Overview({
                     !target ||
                     !source
                   }
-                  onClick={() =>
-                    latest &&
-                    target &&
-                    source &&
-                    void run("pr_submit", {
+                  onAction={() =>
+                    latest && target && source
+                    ? run("pr_submit", {
                       prId: pr.id,
                       expectedVersion: latest.version,
                       headCommit: source.commit,
                       expectedTargetCommit: target.commit,
-                    })
+                    }) : undefined
                   }
                 >
                   Submit Source Head
-                </button>
+                </ActionButton>
                 {targetChanged && (
-                  <button
+                  <ActionButton
                     disabled={
                       busy ||
                       branches.loading ||
@@ -1250,25 +1263,25 @@ function Overview({
                       !target ||
                       target.commit !== pr.currentTargetCommit
                     }
-                    onClick={() =>
-                      latest &&
-                      target &&
-                      void run("pr_submit", {
+                    onAction={() =>
+                      latest && target
+                      ? run("pr_submit", {
                         prId: pr.id,
                         expectedVersion: latest.version,
                         headCommit: latest.headCommit,
                         expectedTargetCommit: target.commit,
-                      })
+                      }) : undefined
                     }
                   >
                     Re-submit Reviewed Head for New Target
-                  </button>
+                  </ActionButton>
                 )}
               </div>
-            </>
+            </div>
           )}
         </section>
-        <section>
+        <section className="local-pr-conversation">
+          {pr.description && <p className="local-pr-description">{pr.description}</p>}
           <h3>Conversation</h3>
           {pr.comments.map((comment) => (
             <article
@@ -1346,28 +1359,28 @@ function Overview({
                     >
                       Edit
                     </button>
-                    <button
+                    <ActionButton
                       disabled={busy}
-                      onClick={() =>
-                        void run("publish_drafts", {
+                      onAction={() =>
+                        run("publish_drafts", {
                           prId: pr.id,
                           commentIds: [comment.id],
                         })
                       }
                     >
                       Publish
-                    </button>
-                    <button
+                    </ActionButton>
+                    <ActionButton
                       disabled={busy}
-                      onClick={() =>
-                        void run("discard_draft", {
+                      onAction={() =>
+                        run("discard_draft", {
                           prId: pr.id,
                           commentId: comment.id,
                         })
                       }
                     >
                       Discard
-                    </button>
+                    </ActionButton>
                   </>
                 )}
               </div>
@@ -1376,10 +1389,10 @@ function Overview({
           {selectedComments.some((id) =>
             pr.comments.some((comment) => comment.id === id && comment.draft),
           ) && (
-            <button
+            <ActionButton
               disabled={busy}
-              onClick={() =>
-                void run("publish_drafts", {
+              onAction={() =>
+                run("publish_drafts", {
                   prId: pr.id,
                   commentIds: selectedComments.filter((id) =>
                     pr.comments.some(
@@ -1390,7 +1403,7 @@ function Overview({
               }
             >
               Publish Selected Drafts
-            </button>
+            </ActionButton>
           )}
           {editing ? (
             <>
@@ -1401,10 +1414,10 @@ function Overview({
                   onChange={(e) => setBody(e.target.value)}
                 />
               </label>
-              <button
+              <ActionButton className="local-pr-primary"
                 disabled={busy || !body.trim()}
-                onClick={() =>
-                  void run("save_draft", {
+                onAction={() =>
+                  run("save_draft", {
                     prId: pr.id,
                     version: editing.version,
                     body,
@@ -1420,7 +1433,7 @@ function Overview({
                 }
               >
                 Save Draft
-              </button>{" "}
+              </ActionButton>{" "}
               <button
                 onClick={() => {
                   setEditing(null);
@@ -1442,10 +1455,10 @@ function Overview({
                 />
               </label>
               <div className="local-pr-actions">
-                <button
+                <ActionButton className="local-pr-primary"
                   disabled={busy || !body.trim()}
-                  onClick={() =>
-                    void run("pr_comment", {
+                  onAction={() =>
+                    run("pr_comment", {
                       prId: pr.id,
                       version: reply?.version ?? version,
                       body,
@@ -1459,98 +1472,100 @@ function Overview({
                   }
                 >
                   Post Comment
-                </button>
+                </ActionButton>
                 {reply && (
                   <button onClick={() => setReply(null)}>Cancel Reply</button>
                 )}
               </div>
             </>
           )}
-          <h3>Discuss in Session</h3>
-          <label>
-            Find Session
-            <input
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setChoice(null);
-              }}
+          <details className="local-pr-discuss" open={pendingDiscussion || selectedComments.length ? true : undefined}>
+            <summary>Discuss in Session</summary>
+            <label>
+              Find Session
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setChoice(null);
+                }}
+              />
+            </label>
+            <ReadState
+              state={choices}
+              retry={() => setBranchRevision((n) => n + 1)}
             />
-          </label>
-          <ReadState
-            state={choices}
-            retry={() => setBranchRevision((n) => n + 1)}
-          />
-          <label>
-            Session
-            <select
-              value={choice ? JSON.stringify(choice) : ""}
-              onChange={(e) =>
-                setChoice(
-                  e.target.value
-                    ? (JSON.parse(e.target.value) as SessionTarget)
-                    : null,
-                )
+            <label>
+              Session
+              <select
+                value={choice ? JSON.stringify(choice) : ""}
+                onChange={(e) =>
+                  setChoice(
+                    e.target.value
+                      ? (JSON.parse(e.target.value) as SessionTarget)
+                      : null,
+                  )
+                }
+              >
+                <option value="">Select Session</option>
+                {choices.data?.sessions.map((item) => (
+                  <option
+                    key={JSON.stringify(item.target)}
+                    value={JSON.stringify(item.target)}
+                  >
+                    {item.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {choices.data?.hasMore && (
+              <p>Refine the search to find more Sessions.</p>
+            )}
+            <label>
+              Message
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </label>
+            <p>{selectedComments.length} Comments Selected</p>
+            {pendingDiscussion && (
+              <p role="alert">
+                Delivery is unknown. Retry the same request before sending another
+                message.
+              </p>
+            )}
+            <ActionButton className="local-pr-primary"
+              disabled={
+                busy || (!pendingDiscussion && (!choice || !message.trim()))
               }
+              onAction={() => {
+                const input =
+                  pendingDiscussion ??
+                  (choice
+                    ? {
+                        prId: pr.id,
+                        version,
+                        target: choice,
+                        commentIds: selectedComments,
+                        message,
+                        requestId,
+                      }
+                    : null);
+                if (input)
+                  return discuss(input).then((success) => {
+                    if (success) {
+                      setMessage("");
+                      setSelectedComments([]);
+                      setRequestId(crypto.randomUUID());
+                    } else if (!pendingDiscussion)
+                      setRequestId(crypto.randomUUID());
+                  });
+              }}
             >
-              <option value="">Select Session</option>
-              {choices.data?.sessions.map((item) => (
-                <option
-                  key={JSON.stringify(item.target)}
-                  value={JSON.stringify(item.target)}
-                >
-                  {item.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          {choices.data?.hasMore && (
-            <p>Refine the search to find more Sessions.</p>
-          )}
-          <label>
-            Message
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-          </label>
-          <p>{selectedComments.length} Comments Selected</p>
-          {pendingDiscussion && (
-            <p role="alert">
-              Delivery is unknown. Retry the same request before sending another
-              message.
-            </p>
-          )}
-          <button
-            disabled={
-              busy || (!pendingDiscussion && (!choice || !message.trim()))
-            }
-            onClick={() => {
-              const input =
-                pendingDiscussion ??
-                (choice
-                  ? {
-                      prId: pr.id,
-                      version,
-                      target: choice,
-                      commentIds: selectedComments,
-                      message,
-                      requestId,
-                    }
-                  : null);
-              if (input)
-                void discuss(input).then((success) => {
-                  if (success) {
-                    setMessage("");
-                    setSelectedComments([]);
-                    setRequestId(crypto.randomUUID());
-                  } else if (!pendingDiscussion)
-                    setRequestId(crypto.randomUUID());
-                });
-            }}
-          >
-            {pendingDiscussion ? "Retry Same Request" : "Send to Session"}
-          </button>
+              {pendingDiscussion ? "Retry Same Request" : "Send to Session"}
+            </ActionButton>
+          </details>
         </section>
       </div>
     </div>

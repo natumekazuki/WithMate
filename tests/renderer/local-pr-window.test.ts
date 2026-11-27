@@ -64,9 +64,12 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   let fail = false;
   let reads = 0;
   const merges: unknown[] = [];
+  let finishMerge: (() => void) | undefined;
+  let finishLog: (() => void) | undefined;
   const execute = async (operation: string, input: unknown) => {
     if (operation === "pr_merge") {
       merges.push(input);
+      await new Promise<void>((resolve) => { finishMerge = resolve; });
       return { ok: true, data: detail };
     }
     if (operation === "pr_get") reads += 1;
@@ -126,11 +129,16 @@ test("local PR labels, dates, and independent window refreshes retain their boun
           })),
         },
       };
-    if (operation === "pr_ci_log")
+    if (operation === "pr_ci_log") {
+      if ((input as { runId?: string }).runId === "failed") {
+        await new Promise<void>((resolve) => { finishLog = resolve; });
+        return { ok: true, data: { log: "failed run log", nextOffset: 14, hasMore: false } };
+      }
       return {
         ok: true,
         data: { log: "mixed CASE log", nextOffset: 14, hasMore: false },
       };
+    }
     if (operation === "pr_branches")
       return { ok: true, data: { branches: [], head: null, headBranch: null } };
     return { ok: true, data: { sessions: [], hasMore: false } };
@@ -164,7 +172,8 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       items.forEach((item) => item.click());
     });
     assert.equal(reads, 2);
-    assert.match(first.textContent ?? "", /Open · refs\/heads\/my-feature/);
+    assert.equal(first.querySelector(".local-pr-pr-meta .local-pr-status")?.textContent, "Open");
+    assert.equal(first.querySelector(".local-pr-pr-meta code")?.textContent, "refs/heads/my-feature → refs/heads/main");
     assert.match(first.textContent ?? "", /lowercase USER text/);
     const button = (name: string) => {
       const found = Array.from(first.querySelectorAll("button")).find(
@@ -211,6 +220,16 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       first.querySelector("pre[aria-label='CI Log']")?.textContent?.trim(),
       "mixed CASE log",
     );
+    const failedRun = Array.from(first.querySelectorAll("button")).find((item) => item.textContent?.includes("Failed"));
+    assert.ok(failedRun);
+    await act(async () => failedRun.click());
+    const log = first.querySelector("pre[aria-label='CI Log']");
+    assert.equal(log?.textContent, "");
+    assert.equal(log?.getAttribute("aria-busy"), "true");
+    assert.ok(finishLog);
+    await act(async () => finishLog?.());
+    assert.equal(log?.textContent, "failed run log");
+    assert.equal(log?.getAttribute("aria-busy"), "false");
     fail = true;
     await act(async () => {
       listeners.forEach((listener) => listener());
@@ -220,17 +239,25 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       assert.ok(
         container.querySelector("h2")?.textContent?.includes("Review me"),
       );
-      assert.match(container.textContent ?? "", /Read failed/);
+      assert.ok(container.querySelector("button[aria-label='Read Error Details']"));
+      assert.ok(Array.from(container.querySelectorAll("button")).some((item) => item.textContent === "Retry"));
     }
+    await act(async () => first.querySelector<HTMLButtonElement>("button[aria-label='Read Error Details']")?.click());
+    assert.match(dom.window.document.querySelector("[role='dialog']")?.textContent ?? "", /Read failed/);
+    await act(async () => {
+      dom.window.document.querySelector("[role='dialog']")?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    assert.equal(dom.window.document.querySelector("[role='dialog']"), null);
+    assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Read Error Details");
     fail = false;
     await act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
     });
     assert.equal(reads, 6);
     assert.doesNotMatch(first.textContent ?? "", /Read failed/);
-    const reload = Array.from(first.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Reload"),
-    );
+    const reload = first.querySelector<HTMLButtonElement>("button[aria-label='Reload Pull Requests']");
     assert.ok(reload);
     await act(async () => {
       reload.click();
@@ -250,7 +277,15 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       listeners.forEach((listener) => listener());
     });
     assert.equal(button("Merge").disabled, false);
-    await act(async () => button("Merge").click());
+    const merge = button("Merge");
+    await act(async () => merge.click());
+    assert.equal(merge.getAttribute("aria-busy"), "true");
+    assert.ok(merge.disabled);
+    assert.ok(merge.querySelector(".button-content-spinner"));
+    assert.equal(button("Approve").getAttribute("aria-busy"), "false");
+    assert.ok(finishMerge);
+    await act(async () => finishMerge?.());
+    assert.equal(merge.getAttribute("aria-busy"), "false");
     assert.deepEqual(merges, [{ prId: detail.id, version: 1, headCommit: sha, targetCommit: sha }]);
     assert.doesNotMatch(first.textContent ?? "", /Confirm Merge/);
     detail.state = "merged";

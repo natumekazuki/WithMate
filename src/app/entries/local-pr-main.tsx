@@ -12,8 +12,14 @@ declare global {
 const api = window.withmateLocalPr;
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <WindowErrorBoundary pageClassName="local-pr-window" windowLabel="Pull Requests">
-      {api ? <LocalPrWindowApp api={api} /> : <p role="alert">The Pull Requests Window Is Unavailable</p>}
+    <WindowErrorBoundary pageClassName="session-page" windowLabel="Pull Requests">
+      {api ? <LocalPrWindowApp api={api} /> : (
+        <div className="page-shell session-page">
+          <section className="panel empty-session-card" role="alert">
+            <p>The Pull Requests Window Is Unavailable</p>
+          </section>
+        </div>
+      )}
     </WindowErrorBoundary>
   </React.StrictMode>,
 );
