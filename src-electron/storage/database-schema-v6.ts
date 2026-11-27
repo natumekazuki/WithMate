@@ -4,6 +4,7 @@ import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 import { migrateLegacySessionTurnsV6 } from "./migrations/migrate-session-turn-storage-v6.js";
 import { removeRetiredMemoryAffectDatabaseData, RETIRED_MEMORY_AFFECT_TABLES } from "./migrations/memory-affect-removal.js";
 import { CREATE_V7_COORDINATION_RECORDS_SQL } from "../coordination/coordination-schema-v7.js";
+import { CREATE_LOCAL_PR_SCHEMA_SQL } from "../local-pr/local-pr-schema.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -687,6 +688,8 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL,
   CREATE_V7_COORDINATION_RECORDS_SQL,
+  // Additive feature tables must not make an older V6 file eligible for replacement by a legacy import.
+  CREATE_LOCAL_PR_SCHEMA_SQL,
   CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   CREATE_V6_SESSION_GRAPH_TABLES_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,

@@ -333,6 +333,7 @@ describe("database-schema-v6", () => {
     }
   });
 
+  /** Fresh DBs install Local PR tables without making their absence in older V6 DBs a migration trigger. */
   it("withmate-v6.db 用の schema constants、fresh path、required tables を固定する", () => {
     assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
     assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
@@ -342,7 +343,7 @@ describe("database-schema-v6", () => {
     const db = createV6Schema();
     try {
       const names = tableNames(db).sort();
-      assert.deepEqual(names, [...REQUIRED_V6_TABLES].sort());
+      assert.deepEqual(names, [...REQUIRED_V6_TABLES, "local_prs_v7", "local_pr_versions_v7", "local_pr_comments_v7"].sort());
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
     } finally {
