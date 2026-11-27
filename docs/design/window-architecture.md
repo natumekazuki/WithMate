@@ -15,6 +15,12 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 
 Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編集面を持たない。Auxiliaryは専用Windowを作らず、親Session Windowの同じchat shell内でMainと切り替える。親配下の複数Auxiliaryはstable IDで保存し、表示中でないrunも継続・terminal保存する。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
+## Pull Requestsのレビュー
+
+OverviewはMarkdownのDescriptionと版番号つきの会話を表示する。PR作成時はMarkdownを入力・プレビューでき、画像の挿入は既存ファイルへの絶対パス参照を本文に加える。表示は所有Sessionに紐づくPR Windowから既存の画像読み込みを使う。画像をコピー・永続化しないため、移動・削除した画像は表示されない。
+
+Changesでファイルまたは差分上の行（Shiftで同じ側の範囲）を選び、指摘を固定版の下書きにする。Send Reviewは送信対象の指摘と既存Sessionを明示して通常のTurn queueへ渡す。受付は返答や変更完了とは区別し、配送結果が不明な場合は同じ要求IDで照会する。Sessionからの返信は同じPRのスレッドに表示し、修正版は同じPRの新しい提出版として確認・承認する。Checksの結果、Approvalの対象、Mergeの判断は固定版を基準とする。
+
 ## PDF readerの隔離境界
 
 中央・独立File Previewの`SessionFilePreview`と、Codexの`visualize` PDFを表示する本文の`MarkdownPdfPreview`は、認可済みのPDF bytesを共通の`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。本文用の読込はPDF専用の`inspectSessionPdf`／`readSessionPdfChunk`を使い、local画像と同じlink解決・Session／base resource認可を維持してPDF headerとrevisionを検査する。

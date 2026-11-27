@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
+import { commentThreads, isSameSession, unifiedReviewRows } from "./local-pr-review.js";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   LocalPrComment,
@@ -9,15 +10,16 @@ import type {
   LocalPrWindowApi,
 } from "../../src-shared/local-pr/local-pr-contract.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
-import { parseUnifiedDiff } from "../file-explorer/unified-diff.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { ErrorDetailsButton } from "../ui/error-details.js";
+import { LocalPrDescription, LocalPrDescriptionEditor } from "./LocalPrDescription.js";
 import "./local-pr.css";
 
 type Mode = "full" | "previous";
 type Tab = "overview" | "changes" | "checks";
 type Failure = { message: string; effect: "none" | "unknown" };
+type OpenReview = { commentIds: string[]; version: number };
 
 const prStateLabels: Record<LocalPrDetail["state"], string> = {
   open: "Open",
@@ -67,6 +69,10 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en", {
 function formatDateTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date);
+}
+
+function branchName(ref: string | null): string {
+  return ref?.replace(/^refs\/heads\//, "") ?? "Detached Head";
 }
 
 /** Reads retain the last successful value on refresh errors, but never across a changed key. */
@@ -185,6 +191,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   const [creating, setCreating] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState<OpenReview | null>(null);
+  const [delivery, setDelivery] = useState<{ prId: string; title: string } | null>(null);
   const [uncertainDiscussions, setUncertainDiscussions] = useState<
     Record<string, LocalPrInput<"discuss">>
   >({});
@@ -212,6 +220,13 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   );
   const detail = useRead(selected ?? "none", detailLoad, revision);
   const pr = detail.data;
+  const pendingReview = pr ? uncertainDiscussions[pr.id] : undefined;
+  const agentNamesLoad = useCallback(() => selected
+    ? api.execute("session_choices", {})
+    : Promise.resolve({ ok: true as const, data: { sessions: [], hasMore: false } }), [api, selected]);
+  const agentNames = useRead(selected ?? "none", agentNamesLoad, revision);
+  const nameAgent = (target: SessionTarget) =>
+    agentNames.data?.sessions.find((item) => isSameSession(item.target, target))?.title ?? "Agent";
   const currentVersion =
     pr?.versions.find((item) => item.version === version) ??
     pr?.versions.find((item) => item.version === pr.latestVersion) ??
@@ -292,7 +307,13 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     setSelected(id);
     setVersion(null);
     setAnchorComment(null);
+    setReview(null);
     setTab("overview");
+  }
+
+  function startReview(commentIds: string[], reviewVersion: number) {
+    setFailure(null);
+    setReview({ commentIds: pendingReview?.commentIds ?? commentIds, version: pendingReview?.version ?? reviewVersion });
   }
 
   return (
@@ -305,6 +326,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               onClick={() => {
                 setCreating(true);
                 setSelected(null);
+                setReview(null);
+                setTab("overview");
               }}
             >
               New PR
@@ -345,9 +368,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               <span>
                 {prStateLabels[item.state]} · v{item.latestVersion}
               </span>
-              <small>
-                {item.sourceBranch ?? "Detached Head"} →{" "}
-                {item.targetBranch}
+              <small title={`${item.sourceBranch ?? "Detached Head"} → ${item.targetBranch}`}>
+                {branchName(item.sourceBranch)} → {branchName(item.targetBranch)}
               </small>
             </button>
           ))}
@@ -366,6 +388,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               setCreating(false);
               setSelected(id);
               setVersion(null);
+              setAnchorComment(null);
+              setTab("overview");
             }}
           />
         ) : selected ? (
@@ -377,7 +401,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     <h2>{pr.title}</h2>
                     <p className="local-pr-pr-meta">
                       <span className="local-pr-status" data-state={pr.state}>{prStateLabels[pr.state]}</span>
-                      <code>{pr.sourceBranch ?? "Detached Head"} → {pr.targetBranch}</code>
+                      <span title={`${pr.sourceBranch ?? "Detached Head"} → ${pr.targetBranch}`}>
+                        <code>{branchName(pr.sourceBranch)} → {branchName(pr.targetBranch)}</code>
+                      </span>
                     </p>
                   </div>
                   <label>
@@ -413,17 +439,52 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     </button>
                   ))}
                 </nav>
+                {delivery?.prId === pr.id && (
+                  <div className="local-pr-delivery" role="status">
+                    <span>Review queued for {delivery.title}.</span>
+                    <button onClick={() => setDelivery(null)}>Dismiss</button>
+                  </div>
+                )}
+                {pendingReview && !review && (
+                  <div className="local-pr-delivery" role="status">
+                    <span>Review delivery not confirmed.</span>
+                    <button disabled={busy} onClick={() => startReview(pendingReview.commentIds, pendingReview.version)}>Review Pending Send</button>
+                  </div>
+                )}
+                {review && (
+                  <SendReview
+                    key={`review:${pr.id}:${review.version}`}
+                    api={api}
+                    pr={pr}
+                    selection={review}
+                    pending={pendingReview}
+                    failure={failure}
+                    busy={busy || detail.loading || !!detail.error}
+                    nameAgent={nameAgent}
+                    send={discuss}
+                    onCancel={() => setReview(null)}
+                    onSent={(title) => {
+                      setReview(null);
+                      setDelivery({ prId: pr.id, title });
+                    }}
+                  />
+                )}
                 {tab === "overview" && (
                   <Overview
-                    key={pr.id}
+                    key={`overview:${pr.id}`}
                     api={api}
                     pr={pr}
                     version={currentVersion.version}
                     revision={revision}
                     run={run}
-                    discuss={discuss}
-                    pendingDiscussion={uncertainDiscussions[pr.id]}
                     busy={busy || detail.loading || !!detail.error}
+                    openChanges={() => {
+                      setAnchorComment(null);
+                      setTab("changes");
+                    }}
+                    openReview={startReview}
+                    nameAgent={nameAgent}
+                    onSubmitted={() => setVersion(null)}
                     openAnchor={(comment) => {
                       setAnchorComment(comment);
                       setVersion(comment.version);
@@ -433,14 +494,16 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                 )}
                 {tab === "changes" && (
                   <Changes
-                    key={`${pr.id}:${currentVersion.version}`}
+                    key={`changes:${pr.id}:${currentVersion.version}`}
                     api={api}
                     pr={pr}
                     version={currentVersion.version}
                     revision={revision}
                     refresh={refresh}
                     run={run}
-                    busy={busy}
+                    busy={busy || detail.loading || !!detail.error}
+                    openReview={(commentIds) => startReview(commentIds, currentVersion.version)}
+                    nameAgent={nameAgent}
                     initialComment={
                       anchorComment?.version === currentVersion.version
                         ? anchorComment
@@ -450,7 +513,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                 )}
                 {tab === "checks" && (
                   <Checks
-                    key={`${pr.id}:${currentVersion.version}`}
+                    key={`checks:${pr.id}:${currentVersion.version}`}
                     api={api}
                     prId={pr.id}
                     version={currentVersion.version}
@@ -463,9 +526,13 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               </>
             )}
           </>
-        ) : null}
+        ) : list.data && (
+          <div className="local-pr-scroll local-pr-empty">
+            <p>{list.data.entries.length ? "Select a pull request." : "No pull requests yet."}</p>
+          </div>
+        )}
         <div className="local-pr-main-feedback">
-          {failure && (
+          {failure && !review && (
             <div className="app-notification error local-pr-error" role="alert">
               {failure.message}
               {failure.effect === "unknown" &&
@@ -492,6 +559,8 @@ function Changes({
   run,
   busy,
   initialComment,
+  openReview,
+  nameAgent,
 }: {
   api: LocalPrWindowApi;
   pr: LocalPrDetail;
@@ -501,23 +570,16 @@ function Changes({
   run: Run;
   busy: boolean;
   initialComment: LocalPrComment | null;
+  openReview: (ids: string[]) => void;
+  nameAgent: (target: SessionTarget) => string;
 }) {
   const [mode, setMode] = useState<Mode>(
     initialComment?.anchor?.mode ?? "full",
   );
   const [selectedPath, setPath] = useState(initialComment?.anchor?.path ?? "");
-  const [side, setSide] = useState<"before" | "after">(
-    initialComment?.anchor?.side ?? "after",
-  );
-  const [scope, setScope] = useState<"file" | "lines">(
-    initialComment?.anchor?.startLine === null ? "file" : "lines",
-  );
-  const [start, setStart] = useState(
-    initialComment?.anchor?.startLine?.toString() ?? "",
-  );
-  const [end, setEnd] = useState(
-    initialComment?.anchor?.endLine?.toString() ?? "",
-  );
+  const [draftAnchor, setDraftAnchor] = useState<NonNullable<LocalPrComment["anchor"]> | null>(null);
+  const [rangeOrigin, setRangeOrigin] = useState<number | null>(null);
+  const [rangeError, setRangeError] = useState(false);
   const [body, setBody] = useState("");
   const filesLoad = useCallback(
     () => api.execute("pr_diff", { prId: pr.id, version, mode }),
@@ -525,6 +587,7 @@ function Changes({
   );
   const files = useRead(`${pr.id}:${version}:${mode}`, filesLoad, revision);
   const path = selectedPath || files.data?.files[0]?.path || "";
+  const selectedFile = files.data?.files.find((file) => file.path === path);
   const patchLoad = useCallback(
     () =>
       path
@@ -538,15 +601,25 @@ function Changes({
     revision,
   );
   const rows = useMemo(
-    () => (patch.data?.patch ? parseUnifiedDiff(patch.data.patch).rows : []),
+    () => (patch.data?.patch ? unifiedReviewRows(patch.data.patch) : []),
     [patch.data],
   );
+  const lineNumbers = useMemo(() => {
+    const before = new Set<number>();
+    const after = new Set<number>();
+    for (const row of rows) {
+      if ("text" in row) continue;
+      if (row.leftNumber != null) before.add(row.leftNumber);
+      if (row.rightNumber != null) after.add(row.rightNumber);
+    }
+    return { before, after };
+  }, [rows]);
   const codeRef = useRef<HTMLDivElement>(null);
   const anchorMoved = useRef(false);
   const virtualRows = useVirtualizer({
     count: rows.length,
     getScrollElement: () => codeRef.current,
-    estimateSize: (index) => (rows[index]?.kind === "modify" ? 38 : 19),
+    estimateSize: () => 19,
     overscan: 20,
   });
   useEffect(() => {
@@ -571,13 +644,32 @@ function Changes({
     codeRef.current?.focus();
     anchorMoved.current = true;
   }, [rows, initialComment, mode, path, patch.data, virtualRows]);
-  const startNumber = Number(start);
-  const endNumber = Number(end);
-  const validRange =
-    Number.isSafeInteger(startNumber) &&
-    startNumber > 0 &&
-    Number.isSafeInteger(endNumber) &&
-    endNumber >= startNumber;
+  const fileComments = pr.comments.filter((comment) => comment.version === version
+    && comment.anchor?.path === path && comment.anchor.mode === mode);
+  const drafts = pr.comments.filter((comment) => comment.version === version && comment.draft);
+  const authorComments = new Map<string, number>();
+  for (const comment of fileComments) {
+    const anchor = comment.anchor;
+    if (!anchor || anchor.startLine === null) continue;
+    const key = `${anchor.side}:${anchor.startLine}`;
+    authorComments.set(key, (authorComments.get(key) ?? 0) + 1);
+  }
+
+  function selectLine(side: "before" | "after", line: number, extend: boolean) {
+    const first = extend && draftAnchor?.path === path && draftAnchor.mode === mode && draftAnchor.side === side
+      ? rangeOrigin ?? line : line;
+    const startLine = Math.min(first, line);
+    const endLine = Math.max(first, line);
+    for (let number = startLine; number <= endLine; number += 1) {
+      if (!lineNumbers[side].has(number)) {
+        setRangeError(true);
+        return;
+      }
+    }
+    setRangeError(false);
+    setRangeOrigin(first);
+    setDraftAnchor({ mode, path, side, startLine, endLine });
+  }
   return (
     <div className="local-pr-changes local-pr-reader">
       <header className="local-pr-reader-toolbar">
@@ -604,12 +696,15 @@ function Changes({
             Since Previous
           </button>
         </div>
-        {files.data && (
-          <code className="local-pr-revision-range">
+        <div className="local-pr-actions local-pr-diff-actions">
+          {files.data && <code className="local-pr-revision-range">
               {files.data.beforeCommit.slice(0, 12)} →{" "}
               {files.data.afterCommit.slice(0, 12)}
-          </code>
-        )}
+          </code>}
+          <button className={drafts.length ? "local-pr-primary" : undefined} disabled={busy} onClick={() => openReview(drafts.slice(0, 50).map((comment) => comment.id))}>
+            {drafts.length ? `Send Review (${drafts.length})` : "Send to Agent"}
+          </button>
+        </div>
       </header>
       <aside className="local-pr-files" aria-label="Changed Files">
         <ReadState state={files} retry={refresh} />
@@ -618,6 +713,7 @@ function Changes({
             key={file.path}
             className="local-pr-file"
             aria-current={path === file.path ? "true" : undefined}
+            title={file.path}
             onClick={() => setPath(file.path)}
           >
             <span>{file.path}</span>
@@ -631,7 +727,13 @@ function Changes({
       <section className="local-pr-diff local-pr-reader-content">
         {path ? (
           <>
-            <h3>{path}</h3>
+            <div className="local-pr-file-toolbar">
+              <h3>{path}</h3>
+              <button disabled={busy || !selectedFile} onClick={() => {
+                setRangeError(false);
+                setDraftAnchor({ mode, path, side: selectedFile?.kind === "deleted" ? "before" : "after", startLine: null, endLine: null });
+              }}>Comment on File</button>
+            </div>
             <ReadState state={patch} retry={refresh} />
             <div
               ref={codeRef}
@@ -662,7 +764,7 @@ function Changes({
                         </span>
                       </div>
                     );
-                  const anchor = initialComment?.anchor;
+                  const anchor = draftAnchor ?? initialComment?.anchor;
                   const line =
                     anchor?.side === "before"
                       ? row.leftNumber
@@ -689,12 +791,26 @@ function Changes({
                       className={`local-pr-code-row local-pr-row-${row.kind}${matched ? " local-pr-row-anchor" : ""}`}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <span>{row.leftNumber ?? ""}</span>
-                      <span>{row.rightNumber ?? ""}</span>
+                      {(["before", "after"] as const).map((side) => {
+                        const number = side === "before" ? row.leftNumber : row.rightNumber;
+                        if (number == null) return <span key={side} />;
+                        const notes = authorComments.get(`${side}:${number}`) ?? 0;
+                        const label = `Comment on ${side} line ${number}`;
+                        return <button
+                          type="button"
+                          className="local-pr-line-number"
+                          key={side}
+                          aria-label={label}
+                          title={`${label} (Shift to extend selection)`}
+                          data-has-comment={notes ? "true" : undefined}
+                            aria-pressed={draftAnchor?.path === path && draftAnchor.mode === mode
+                              && draftAnchor.side === side && matched === true}
+                            disabled={busy}
+                          onClick={(event) => selectLine(side, number, event.shiftKey)}
+                        >{number}</button>;
+                      })}
                       <pre>
-                        {row.kind === "modify"
-                          ? `− ${row.leftText ?? ""}\n+ ${row.rightText ?? ""}`
-                          : `${row.kind === "add" ? "+" : row.kind === "delete" ? "−" : " "} ${row.rightText ?? row.leftText ?? ""}`}
+                        {`${row.kind === "add" ? "+" : row.kind === "delete" ? "−" : " "} ${row.rightText ?? row.leftText ?? ""}`}
                       </pre>
                     </div>
                   );
@@ -704,108 +820,44 @@ function Changes({
                 <p>Patch unavailable for this file.</p>
               )}
             </div>
-            <section className="local-pr-draft">
-              <h4>Draft Comment · v{version}</h4>
-              <div className="local-pr-actions">
-                <label>
-                  Side{" "}
-                  <select
-                    value={side}
-                    onChange={(e) =>
-                      setSide(e.target.value as "before" | "after")
-                    }
-                  >
-                    <option value="before">Before</option>
-                    <option value="after">After</option>
-                  </select>
-                </label>
-                <label>
-                  Scope{" "}
-                  <select
-                    value={scope}
-                    onChange={(e) =>
-                      setScope(e.target.value as "file" | "lines")
-                    }
-                  >
-                    <option value="file">Whole File</option>
-                    <option value="lines">Lines</option>
-                  </select>
-                </label>
-                {scope === "lines" && (
-                  <>
-                    <label>
-                      Start Line{" "}
-                      <input
-                        type="number"
-                        min="1"
-                        value={start}
-                        onChange={(e) => setStart(e.target.value)}
-                      />
-                    </label>
-                    <label>
-                      End Line{" "}
-                      <input
-                        type="number"
-                        min="1"
-                        value={end}
-                        onChange={(e) => setEnd(e.target.value)}
-                      />
-                    </label>
-                  </>
-                )}
-              </div>
+            {draftAnchor && <section className="local-pr-draft">
+              <h4>New Comment · v{version}</h4>
+              <p className="local-pr-anchor-label">{formatAnchor(draftAnchor)}</p>
+              {rangeError && <p role="status" className="local-pr-warning">Select a range without gaps in the diff.</p>}
               <label>
                 Comment
                 <textarea
                   value={body}
+                  disabled={busy}
                   onChange={(e) => setBody(e.target.value)}
                 />
               </label>
-              <ActionButton className="local-pr-primary"
-                disabled={
-                  busy || !body.trim() || (scope === "lines" && !validRange)
-                }
-                onAction={() =>
-                  run("save_draft", {
-                    prId: pr.id,
-                    version,
-                    body,
-                    anchor: {
-                      mode,
-                      path,
-                      side,
-                      startLine: scope === "file" ? null : startNumber,
-                      endLine: scope === "file" ? null : endNumber,
-                    },
-                  }).then((result) => {
-                    if (result) setBody("");
-                  })
-                }
-              >
-                Save Draft
-              </ActionButton>
-            </section>
-            {pr.comments
-              .filter(
-                (c) =>
-                  c.version === version &&
-                  c.anchor?.path === path &&
-                  c.anchor.mode === mode,
-              )
-              .map((comment) => (
-                <article className="local-pr-comment" key={comment.id}>
-                  <strong>
-                    {comment.draft ? "Draft" : "Comment"} ·{" "}
-                    {comment.anchor ? sideLabels[comment.anchor.side] : ""}{" "}
-                    {comment.anchor?.startLine === null
-                      ? "Whole File"
-                      : `${comment.anchor?.startLine}–${comment.anchor?.endLine}`}
-                  </strong>
-                  <p>{comment.body}</p>
-                </article>
-              ))}
+              <div className="local-pr-actions">
+                <ActionButton className="local-pr-primary"
+                  disabled={busy || !body.trim() || rangeError}
+                  onAction={() =>
+                    run("save_draft", { prId: pr.id, version, body, anchor: draftAnchor }).then((result) => {
+                      if (result) {
+                        setBody("");
+                        setDraftAnchor(null);
+                      }
+                    })
+                  }
+                >Save Draft</ActionButton>
+                <button disabled={busy} onClick={() => { setDraftAnchor(null); setRangeError(false); setBody(""); }}>Cancel</button>
+              </div>
+            </section>}
+            <Conversation
+              pr={pr}
+              version={version}
+              threads={commentThreads(pr.comments).filter(({ comment }) => fileComments.some((entry) => entry.id === comment.id))}
+              run={run}
+              busy={busy}
+              openReview={(ids) => openReview(ids)}
+              nameAgent={nameAgent}
+            />
           </>
-        ) : null}
+        ) : files.data ? <p>No changed files.</p> : null}
       </section>
     </div>
   );
@@ -984,13 +1036,7 @@ function CreatePr({
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
-      <label>
-        Description
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </label>
+      <LocalPrDescriptionEditor api={api} text={description} onChange={setDescription} disabled={busy} />
       <label>
         Source Branch
         <select value={source} onChange={(e) => setSource(e.target.value)}>
@@ -1040,29 +1086,25 @@ function Overview({
   version,
   revision,
   run,
-  discuss,
-  pendingDiscussion,
   busy,
+  openChanges,
+  openReview,
   openAnchor,
+  nameAgent,
+  onSubmitted,
 }: {
   api: LocalPrWindowApi;
   pr: LocalPrDetail;
   version: number;
   revision: number;
   run: Run;
-  discuss: (input: LocalPrInput<"discuss">) => Promise<boolean>;
-  pendingDiscussion?: LocalPrInput<"discuss">;
   busy: boolean;
+  openChanges: () => void;
+  openReview: (ids: string[], version: number) => void;
   openAnchor: (comment: LocalPrComment) => void;
+  nameAgent: (target: SessionTarget) => string;
+  onSubmitted: () => void;
 }) {
-  const [body, setBody] = useState("");
-  const [reply, setReply] = useState<LocalPrComment | null>(null);
-  const [editing, setEditing] = useState<LocalPrComment | null>(null);
-  const [selectedComments, setSelectedComments] = useState<string[]>([]);
-  const [message, setMessage] = useState("");
-  const [query, setQuery] = useState("");
-  const [choice, setChoice] = useState<SessionTarget | null>(null);
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [confirmClose, setConfirmClose] = useState(false);
   const confirmationButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement | null>(null);
@@ -1076,11 +1118,6 @@ function Overview({
     branchesLoad,
     branchRevision + revision,
   );
-  const choicesLoad = useCallback(
-    () => api.execute("session_choices", { query }),
-    [api, query],
-  );
-  const choices = useRead(`sessions:${query}`, choicesLoad, branchRevision);
   const latest = pr.versions.find((v) => v.version === pr.latestVersion);
   const selectedVersion = pr.versions.find((v) => v.version === version);
   const source = branches.data?.branches.find((b) => b.ref === pr.sourceBranch);
@@ -1101,30 +1138,37 @@ function Overview({
     !!latest &&
     pr.currentTargetCommit !== null &&
     latest.targetCommit !== pr.currentTargetCommit;
+  const sourceChanged = !!source && !!latest && source.commit !== latest.headCommit;
   return (
     <div className="local-pr-scroll">
       <div className="local-pr-overview-grid">
-        <section className="local-pr-submission">
-          <h3>Submission</h3>
-          {selectedVersion && (
-            <dl className="local-pr-commit-list">
-              <dt>Head</dt>
-              <dd>
-                <code>{selectedVersion.headCommit}</code>
-              </dd>
-              <dt>Target</dt>
-              <dd>
-                <code>{selectedVersion.targetCommit}</code>
-              </dd>
-              <dt>Merge Base</dt>
-              <dd>
-                <code>{selectedVersion.mergeBaseCommit}</code>
-              </dd>
-            </dl>
-          )}
+        <div className="local-pr-overview-content">
+          <section aria-labelledby="local-pr-description-title">
+            <div className="local-pr-section-heading">
+              <h3 id="local-pr-description-title">Description</h3>
+              <button onClick={openChanges}>Review Changes</button>
+            </div>
+            {pr.description.trim()
+              ? <LocalPrDescription api={api} text={pr.description} revision={revision} />
+              : <p>No description.</p>}
+          </section>
+          <Conversation
+            pr={pr}
+            version={version}
+            threads={commentThreads(pr.comments)}
+            run={run}
+            busy={busy}
+            openReview={openReview}
+            openAnchor={openAnchor}
+            nameAgent={nameAgent}
+            general
+          />
+        </div>
+        <aside className="local-pr-submission" aria-label="Review and Merge">
+          <h3>Review and Merge</h3>
           <p className="local-pr-submission-status">
             <span className="local-pr-status" data-state={isApproved ? "approved" : undefined}>
-              {isApproved ? `Approved v${pr.approval?.version}` : "Not Approved"}
+              {isApproved ? `Approved v${pr.approval?.version}` : `v${version} · ${version === pr.latestVersion ? "Not Approved" : "Previous Submission"}`}
             </span>
             {targetChanged && <span className="local-pr-warning">Target Branch Has Changed</span>}
           </p>
@@ -1158,6 +1202,12 @@ function Overview({
               >
                 Merge
               </ActionButton>
+            </div>
+          )}
+          {pr.state === "open" && (
+            <details className="local-pr-more-actions" open={confirmClose || undefined}>
+              <summary>More Actions</summary>
+              <div className="local-pr-actions">
               <ActionButton
                 disabled={busy || !isApproved || !approvalTarget}
                 onAction={() =>
@@ -1175,7 +1225,8 @@ function Overview({
               >
                 Close PR
               </button>
-            </div>
+              </div>
+            </details>
           )}
           {confirmClose && pr.state === "open" && (
             <div
@@ -1218,19 +1269,10 @@ function Overview({
               </button>
             </div>
           )}
-          {pr.state === "open" && (
+          {pr.state === "open" && (sourceChanged || targetChanged) && (
             <div className="local-pr-submit-version">
               <h3>Submit Version</h3>
-              <ReadState
-                state={branches}
-                retry={() => setBranchRevision((n) => n + 1)}
-              />
-              <dl className="local-pr-commit-list">
-                <dt>Source Head</dt>
-                <dd><code>{source?.commit ?? "Unavailable"}</code></dd>
-                <dt>Target</dt>
-                <dd><code>{target?.commit ?? "Unavailable"}</code></dd>
-              </dl>
+              {sourceChanged && <p>New commits on the source branch.</p>}
               <div className="local-pr-actions">
                 <ActionButton
                   disabled={
@@ -1239,7 +1281,7 @@ function Overview({
                     !!branches.error ||
                     !latest ||
                     !target ||
-                    !source
+                    !source || !sourceChanged
                   }
                   onAction={() =>
                     latest && target && source
@@ -1248,10 +1290,10 @@ function Overview({
                       expectedVersion: latest.version,
                       headCommit: source.commit,
                       expectedTargetCommit: target.commit,
-                    }) : undefined
+                    }).then((saved) => { if (saved) onSubmitted(); }) : undefined
                   }
                 >
-                  Submit Source Head
+                  Submit New Version
                 </ActionButton>
                 {targetChanged && (
                   <ActionButton
@@ -1270,7 +1312,7 @@ function Overview({
                         expectedVersion: latest.version,
                         headCommit: latest.headCommit,
                         expectedTargetCommit: target.commit,
-                      }) : undefined
+                      }).then((saved) => { if (saved) onSubmitted(); }) : undefined
                     }
                   >
                     Re-submit Reviewed Head for New Target
@@ -1279,295 +1321,235 @@ function Overview({
               </div>
             </div>
           )}
-        </section>
-        <section className="local-pr-conversation">
-          {pr.description && <p className="local-pr-description">{pr.description}</p>}
-          <h3>Conversation</h3>
-          {pr.comments.map((comment) => (
-            <article
-              className="local-pr-comment"
-              id={`local-pr-comment-${comment.id}`}
-              key={comment.id}
-            >
-              <div className="local-pr-comment-head">
-                <strong>
-                  {comment.author.kind === "user"
-                    ? "You"
-                    : comment.author.sessionId}
-                </strong>
-                <span>
-                  v{comment.version}
-                  {comment.draft ? " · Draft" : ""}
-                </span>
-              </div>
-              {comment.replyTo && (
-                <small>
-                  <a href={`#local-pr-comment-${comment.replyTo}`}>
-                    View Parent Comment
-                  </a>
-                </small>
-              )}
-              {comment.anchor && (
-                <button
-                  className="local-pr-anchor"
-                  onClick={() => openAnchor(comment)}
-                >
-                  {comment.anchor.path} ·{" "}
-                  {comparisonLabels[comment.anchor.mode]} ·{" "}
-                  {sideLabels[comment.anchor.side]}{" "}
-                  {comment.anchor.startLine === null
-                    ? "Whole File"
-                    : `${comment.anchor.startLine}–${comment.anchor.endLine}`}
-                </button>
-              )}
-              <p>{comment.body}</p>
-              <div className="local-pr-actions">
-                <button
-                  onClick={() => {
-                    setReply(comment);
-                    setEditing(null);
-                  }}
-                >
-                  Reply
-                </button>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selectedComments.includes(comment.id)}
-                    disabled={
-                      !selectedComments.includes(comment.id) &&
-                      selectedComments.length >= 50
-                    }
-                    onChange={(e) =>
-                      setSelectedComments((ids) =>
-                        e.target.checked
-                          ? [...ids, comment.id]
-                          : ids.filter((id) => id !== comment.id),
-                      )
-                    }
-                  />{" "}
-                  Select for Session
-                </label>
-                {comment.draft && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setEditing(comment);
-                        setReply(null);
-                        setBody(comment.body);
-                      }}
-                    >
-                      Edit
-                    </button>
-                    <ActionButton
-                      disabled={busy}
-                      onAction={() =>
-                        run("publish_drafts", {
-                          prId: pr.id,
-                          commentIds: [comment.id],
-                        })
-                      }
-                    >
-                      Publish
-                    </ActionButton>
-                    <ActionButton
-                      disabled={busy}
-                      onAction={() =>
-                        run("discard_draft", {
-                          prId: pr.id,
-                          commentId: comment.id,
-                        })
-                      }
-                    >
-                      Discard
-                    </ActionButton>
-                  </>
-                )}
-              </div>
-            </article>
-          ))}
-          {selectedComments.some((id) =>
-            pr.comments.some((comment) => comment.id === id && comment.draft),
-          ) && (
-            <ActionButton
-              disabled={busy}
-              onAction={() =>
-                run("publish_drafts", {
-                  prId: pr.id,
-                  commentIds: selectedComments.filter((id) =>
-                    pr.comments.some(
-                      (comment) => comment.id === id && comment.draft,
-                    ),
-                  ),
-                })
-              }
-            >
-              Publish Selected Drafts
-            </ActionButton>
+          {pr.state === "open" && <ReadState state={branches} retry={() => setBranchRevision((n) => n + 1)} />}
+          {selectedVersion && (
+            <details className="local-pr-version-details">
+              <summary>Submission Details</summary>
+              <dl className="local-pr-commit-list">
+                <dt>Submitted</dt><dd>{formatDateTime(selectedVersion.submittedAt)}</dd>
+                <dt>Head</dt><dd><code>{selectedVersion.headCommit}</code></dd>
+                <dt>Target</dt><dd><code>{selectedVersion.targetCommit}</code></dd>
+                <dt>Merge Base</dt><dd><code>{selectedVersion.mergeBaseCommit}</code></dd>
+              </dl>
+            </details>
           )}
-          {editing ? (
-            <>
-              <label>
-                Edit Draft
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                />
-              </label>
-              <ActionButton className="local-pr-primary"
-                disabled={busy || !body.trim()}
-                onAction={() =>
-                  run("save_draft", {
-                    prId: pr.id,
-                    version: editing.version,
-                    body,
-                    commentId: editing.id,
-                    ...(editing.anchor ? { anchor: editing.anchor } : {}),
-                    ...(editing.replyTo ? { replyTo: editing.replyTo } : {}),
-                  }).then((result) => {
-                    if (result) {
-                      setBody("");
-                      setEditing(null);
-                    }
-                  })
-                }
-              >
-                Save Draft
-              </ActionButton>{" "}
-              <button
-                onClick={() => {
-                  setEditing(null);
-                  setBody("");
-                }}
-              >
-                Cancel Edit
-              </button>
-            </>
-          ) : (
-            <>
-              <label>
-                {reply
-                  ? `Reply to v${reply.version}`
-                  : `Comment on v${version}`}
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                />
-              </label>
-              <div className="local-pr-actions">
-                <ActionButton className="local-pr-primary"
-                  disabled={busy || !body.trim()}
-                  onAction={() =>
-                    run("pr_comment", {
-                      prId: pr.id,
-                      version: reply?.version ?? version,
-                      body,
-                      ...(reply ? { replyTo: reply.id } : {}),
-                    }).then((result) => {
-                      if (result) {
-                        setBody("");
-                        setReply(null);
-                      }
-                    })
-                  }
-                >
-                  Post Comment
-                </ActionButton>
-                {reply && (
-                  <button onClick={() => setReply(null)}>Cancel Reply</button>
-                )}
-              </div>
-            </>
-          )}
-          <details className="local-pr-discuss" open={pendingDiscussion || selectedComments.length ? true : undefined}>
-            <summary>Discuss in Session</summary>
-            <label>
-              Find Session
-              <input
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setChoice(null);
-                }}
-              />
-            </label>
-            <ReadState
-              state={choices}
-              retry={() => setBranchRevision((n) => n + 1)}
-            />
-            <label>
-              Session
-              <select
-                value={choice ? JSON.stringify(choice) : ""}
-                onChange={(e) =>
-                  setChoice(
-                    e.target.value
-                      ? (JSON.parse(e.target.value) as SessionTarget)
-                      : null,
-                  )
-                }
-              >
-                <option value="">Select Session</option>
-                {choices.data?.sessions.map((item) => (
-                  <option
-                    key={JSON.stringify(item.target)}
-                    value={JSON.stringify(item.target)}
-                  >
-                    {item.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {choices.data?.hasMore && (
-              <p>Refine the search to find more Sessions.</p>
-            )}
-            <label>
-              Message
-              <textarea
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-              />
-            </label>
-            <p>{selectedComments.length} Comments Selected</p>
-            {pendingDiscussion && (
-              <p role="alert">
-                Delivery is unknown. Retry the same request before sending another
-                message.
-              </p>
-            )}
-            <ActionButton className="local-pr-primary"
-              disabled={
-                busy || (!pendingDiscussion && (!choice || !message.trim()))
-              }
-              onAction={() => {
-                const input =
-                  pendingDiscussion ??
-                  (choice
-                    ? {
-                        prId: pr.id,
-                        version,
-                        target: choice,
-                        commentIds: selectedComments,
-                        message,
-                        requestId,
-                      }
-                    : null);
-                if (input)
-                  return discuss(input).then((success) => {
-                    if (success) {
-                      setMessage("");
-                      setSelectedComments([]);
-                      setRequestId(crypto.randomUUID());
-                    } else if (!pendingDiscussion)
-                      setRequestId(crypto.randomUUID());
-                  });
-              }}
-            >
-              {pendingDiscussion ? "Retry Same Request" : "Send to Session"}
-            </ActionButton>
-          </details>
-        </section>
+        </aside>
       </div>
     </div>
+  );
+}
+
+function formatAnchor(anchor: NonNullable<LocalPrComment["anchor"]>): string {
+  const lines = anchor.startLine === null ? "Whole File"
+    : anchor.startLine === anchor.endLine ? `Line ${anchor.startLine}`
+    : `Lines ${anchor.startLine}–${anchor.endLine}`;
+  return anchor.startLine === null ? `${anchor.path} · ${lines}`
+    : `${anchor.path} · ${sideLabels[anchor.side]} · ${lines}`;
+}
+
+type CommentEditor = { kind: "new" } | { kind: "reply" | "edit"; comment: LocalPrComment };
+
+function Conversation({ pr, version, threads, run, busy, openReview, openAnchor, general = false, nameAgent }: {
+  pr: LocalPrDetail;
+  version: number;
+  threads: ReturnType<typeof commentThreads>;
+  run: Run;
+  busy: boolean;
+  openReview: (ids: string[], version: number) => void;
+  openAnchor?: (comment: LocalPrComment) => void;
+  general?: boolean;
+  nameAgent?: (target: SessionTarget) => string;
+}) {
+  const [editor, setEditor] = useState<CommentEditor | null>(null);
+  const [body, setBody] = useState("");
+  const field = useRef<HTMLTextAreaElement>(null);
+  const editorComment = editor?.kind === "reply" || editor?.kind === "edit" ? editor.comment : null;
+  const editorInThread = !!editorComment && threads.some(({ comment, replies }) =>
+    comment.id === editorComment.id || replies.some((reply) => reply.id === editorComment.id));
+  useEffect(() => { if (editor) field.current?.focus(); }, [editor, editorInThread]);
+
+  function begin(next: CommentEditor) {
+    setBody(next.kind === "edit" ? next.comment.body : "");
+    setEditor(next);
+  }
+  function dismiss() { setEditor(null); setBody(""); }
+  function compose(): ReactNode {
+    if (!editor) return null;
+    const item = editor.kind === "new" ? null : editor.comment;
+    const edit = editor.kind === "edit" && item;
+    return (
+      <div className="local-pr-comment-composer">
+        {item?.anchor && !editorInThread && <p className="local-pr-anchor-label">{formatAnchor(item.anchor)}</p>}
+        <label>
+          {edit ? "Edit Draft" : item ? `Reply · v${item.version}` : `New Comment · v${version}`}
+          <textarea ref={field} value={body} disabled={busy} onChange={(event) => setBody(event.target.value)} />
+        </label>
+        <div className="local-pr-actions">
+          <ActionButton className="local-pr-primary" disabled={busy || !body.trim()} onAction={() => {
+            const result = edit ? run("save_draft", {
+              prId: pr.id, version: edit.version, body, commentId: edit.id,
+              ...(edit.anchor ? { anchor: edit.anchor } : {}),
+              ...(edit.replyTo ? { replyTo: edit.replyTo } : {}),
+            }) : run("pr_comment", {
+              prId: pr.id, version: item?.version ?? version, body, ...(item ? { replyTo: item.id } : {}),
+            });
+            return result.then((saved) => { if (saved) dismiss(); });
+          }}>{edit ? "Save Draft" : item ? "Post Reply" : "Post Comment"}</ActionButton>
+          <button disabled={busy} onClick={dismiss}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  function commentBody(comment: LocalPrComment, root?: LocalPrComment) {
+    const author = comment.author;
+    return (
+      <article className="local-pr-comment" key={comment.id} id={`local-pr-comment-${comment.id}`}>
+        <div className="local-pr-comment-head">
+          <strong title={author.kind !== "user" ? author.sessionId : undefined}>
+            {author.kind === "user" ? "You" : (nameAgent?.(author) ?? "Agent")}
+          </strong>
+          <span>v{comment.version}{comment.draft ? " · Draft" : ""}</span>
+        </div>
+        {root && comment.replyTo && comment.replyTo !== root.id && (
+          <small><a href={`#local-pr-comment-${comment.replyTo}`}>View Parent Comment</a></small>
+        )}
+        {comment.anchor && (openAnchor
+          ? <button className="local-pr-anchor" title={comparisonLabels[comment.anchor.mode]} onClick={() => openAnchor(comment)}>{formatAnchor(comment.anchor)}</button>
+          : <p className="local-pr-anchor-label">{formatAnchor(comment.anchor)}</p>)}
+        <p>{comment.body}</p>
+        <div className="local-pr-comment-actions">
+          {!comment.draft && <button disabled={busy || !!editor} onClick={() => begin({ kind: "reply", comment })}>Reply</button>}
+          <button disabled={busy} onClick={() => openReview([comment.id], comment.version)}>Send to Agent</button>
+          {comment.draft && (
+            <details className="local-pr-draft-menu">
+              <summary>Draft Actions</summary>
+              <div className="local-pr-actions">
+                <button disabled={busy || !!editor} onClick={() => begin({ kind: "edit", comment })}>Edit</button>
+                <ActionButton disabled={busy} onAction={() => run("publish_drafts", { prId: pr.id, commentIds: [comment.id] })}>Publish</ActionButton>
+                <ActionButton disabled={busy} onAction={() => run("discard_draft", { prId: pr.id, commentId: comment.id })}>Discard</ActionButton>
+              </div>
+            </details>
+          )}
+        </div>
+        {editor?.kind !== "new" && editor?.comment.id === comment.id ? compose() : null}
+      </article>
+    );
+  }
+
+  if (!general && threads.length === 0 && !editor) return null;
+  return (
+    <section className="local-pr-conversation" aria-label={general ? "Conversation" : "File Conversation"}>
+      <div className="local-pr-section-heading">
+        <h3>{general ? "Conversation" : "File Conversation"}</h3>
+        {general && (
+          <div className="local-pr-actions">
+            <button disabled={busy || !!editor} onClick={() => begin({ kind: "new" })}>Comment</button>
+            <button disabled={busy} onClick={() => openReview([], version)}>Send to Agent</button>
+          </div>
+        )}
+      </div>
+      {editor && !editorInThread && compose()}
+      {threads.length === 0 && !editor && <p>No comments yet.</p>}
+      {threads.map(({ comment, replies }) => (
+        <div className="local-pr-thread" key={comment.id}>
+          {commentBody(comment)}
+          {replies.length > 0 && <div className="local-pr-replies">{replies.map((reply) => commentBody(reply, comment))}</div>}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** A send is separate from posting a comment, and never guesses its recipient. */
+function SendReview({ api, pr, selection, pending, failure, busy, nameAgent, send, onCancel, onSent }: {
+  api: LocalPrWindowApi;
+  pr: LocalPrDetail;
+  selection: OpenReview;
+  pending?: LocalPrInput<"discuss">;
+  failure: Failure | null;
+  busy: boolean;
+  nameAgent: (target: SessionTarget) => string;
+  send: (input: LocalPrInput<"discuss">) => Promise<boolean>;
+  onCancel: () => void;
+  onSent: (title: string) => void;
+}) {
+  const [preferences, setPreferences] = useState<{ selection: OpenReview; ids: string[] } | null>(null);
+  const selected = pending?.commentIds ?? (preferences?.selection === selection ? preferences.ids : selection.commentIds);
+  const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [choice, setChoice] = useState<{ target: SessionTarget; title: string } | null>(null);
+  const [retry, setRetry] = useState(0);
+  const choicesLoad = useCallback(() => api.execute("session_choices", { query }), [api, query]);
+  const choices = useRead(`sessions:${query}`, choicesLoad, retry);
+  const candidate = pr.versions.find((item) => item.version === selection.version)?.submittedBy;
+  const pendingChoice = pending && choices.data?.sessions.find((item) => isSameSession(item.target, pending.target));
+  const recipient = pending ? pendingChoice : choice;
+  const comments = [...pr.comments].sort((a, b) => b.version - a.version);
+  const panel = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = panel.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog className="local-pr-send-review" aria-labelledby="local-pr-send-heading" ref={panel} onCancel={(event) => {
+      event.preventDefault();
+      if (!busy) onCancel();
+    }}>
+      <div className="local-pr-section-heading">
+        <h3 id="local-pr-send-heading">Send Review · v{selection.version}</h3>
+        <button disabled={busy} onClick={onCancel}>{pending ? "Close" : "Cancel"}</button>
+      </div>
+      <div className="local-pr-review-recipient">
+        <label>Find Session <input value={query} maxLength={300} disabled={!!pending || busy} onChange={(event) => { setQuery(event.target.value); setChoice(null); }} /></label>
+        <label>Send to Session
+          <select value={recipient ? JSON.stringify(recipient.target) : ""} disabled={!!pending || busy || choices.loading || !!choices.error} onChange={(event) => {
+            setChoice(choices.data?.sessions.find((item) => JSON.stringify(item.target) === event.target.value) ?? null);
+          }}>
+            <option value="">{pending ? pending.target.sessionId : "Select Session"}</option>
+            {choices.data?.sessions.map((item) => (
+              <option key={JSON.stringify(item.target)} value={JSON.stringify(item.target)}>
+                {item.title}{candidate && isSameSession(candidate, item.target) ? " · Submitted This Version" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <ReadState state={choices} retry={() => setRetry((n) => n + 1)} />
+      {choices.data?.hasMore && <p>Refine the search to find more Sessions.</p>}
+      {comments.length > 0 && <details className="local-pr-review-selection" open={!!selection.commentIds.length || !!pending || undefined}>
+        <summary>{selected.length} {selected.length === 1 ? "Comment" : "Comments"} Selected</summary>
+        <div className="local-pr-selected-comments">
+          {comments.map((comment) => <label key={comment.id} title={comment.body}>
+            <input type="checkbox" checked={selected.includes(comment.id)} disabled={!!pending || busy || (!selected.includes(comment.id) && selected.length >= 50)} onChange={(event) => {
+              setPreferences({
+                selection,
+                ids: event.target.checked ? [...selected, comment.id] : selected.filter((id) => id !== comment.id),
+              });
+            }} />
+            <span>
+              <small>v{comment.version}{comment.anchor ? ` · ${formatAnchor(comment.anchor)}` : ""}</small>
+              <span>{comment.body}</span>
+            </span>
+            {comment.draft && <small>Draft</small>}
+          </label>)}
+        </div>
+      </details>}
+      <label>Message
+        <textarea disabled={!!pending || busy} value={pending?.message ?? message} maxLength={20000} onChange={(event) => setMessage(event.target.value)} />
+      </label>
+      {(pending || failure) && <div className="app-notification error" role="alert">
+        {failure && <p>{failure.message}</p>}
+        {pending && <p>Delivery is unknown. Retry the same request before sending another message.</p>}
+      </div>}
+      <ActionButton className="local-pr-primary"
+        disabled={busy || (!pending && (!choice || !message.trim() || choices.loading || !!choices.error))}
+        onAction={() => {
+          const input = pending ?? (choice ? { prId: pr.id, version: selection.version, target: choice.target, commentIds: selected, message, requestId: crypto.randomUUID() } : null);
+          if (input) return send(input).then((success) => { if (success) onSent(recipient?.title ?? choice?.title ?? nameAgent(input.target)); });
+        }}
+      >{pending ? "Retry Same Request" : "Send Review"}</ActionButton>
+    </dialog>
   );
 }

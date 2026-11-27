@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SessionFileChunkResult, SessionFileDescriptor, SessionImageChunkRequest } from "../file-explorer/file-explorer-contract.js";
 import { sessionTargetSchema } from "../session/session-target.js";
 
 const id = z.uuid();
@@ -196,5 +197,8 @@ export type LocalPrCiRun = z.infer<typeof localPrCiRunSchema>;
 /** Renderer calls have a fixed repository/source Session on the Main-owned Window. */
 export type LocalPrWindowApi = {
   execute<T extends LocalPrOperation>(operation: T, input: LocalPrInput<T>): Promise<LocalPrResult<T>>;
+  pickImage(): Promise<string | null>;
+  inspectImage(target: string): Promise<SessionFileDescriptor>;
+  readImageChunk(request: Omit<SessionImageChunkRequest, "sessionId" | "baseResource">): Promise<SessionFileChunkResult>;
   subscribeChanged(listener: () => void): () => void;
 };

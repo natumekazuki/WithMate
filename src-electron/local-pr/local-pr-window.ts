@@ -1,9 +1,11 @@
 import { BrowserWindow, dialog, type IpcMainInvokeEvent } from "electron";
 import { isDeepStrictEqual } from "node:util";
+import path from "node:path";
 import { localPrGuiInput, type LocalPrData, type LocalPrInput, type LocalPrOperation, type LocalPrResult } from "../../src-shared/local-pr/local-pr-contract.js";
-import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_OPEN_WINDOW, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
+import { LOCAL_PR_CHANGED, LOCAL_PR_EXECUTE, LOCAL_PR_INSPECT_IMAGE, LOCAL_PR_OPEN_WINDOW, LOCAL_PR_PICK_IMAGE, LOCAL_PR_READ_IMAGE_CHUNK, localPrImageChunkInput, localPrImageInput, openLocalPrWindowInput } from "../../src-shared/local-pr/local-pr-ipc.js";
 import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import { assertNotHtmlPreviewSender } from "../files/html-preview-isolation.js";
+import type { SessionFileExplorerService } from "../files/session-file-explorer-service.js";
 import type { IpcHandleRegistrar } from "../ipc/contracts.js";
 import { failure, type LocalPrApplication } from "./local-pr-application.js";
 
@@ -21,30 +23,44 @@ export class LocalPrWindowService<Repo extends Repository> {
     createWindow(): BrowserWindow;
     loadWindow(window: BrowserWindow): Promise<void>;
     application: Pick<LocalPrApplication<Repo>, "execute">;
+    pickImage(window: BrowserWindow, workspacePath: string): Promise<string | null>;
+    imageReader(): Pick<SessionFileExplorerService, "inspectImage" | "readImageChunk">;
   }) {}
 
   /** Register only narrow IPC with a separate renderer and explicit main-frame checks. */
   register(ipc: IpcHandleRegistrar): void {
     ipc.handle(LOCAL_PR_OPEN_WINDOW, (event, raw) => this.open(event, openLocalPrWindowInput.parse(raw)));
+    ipc.handle(LOCAL_PR_PICK_IMAGE, async (event) => {
+      const { entry, assertCurrent } = this.requirePrWindow(event);
+      await assertCurrent();
+      const result = await this.deps.pickImage(entry.window, entry.source.repository.workspacePath);
+      await assertCurrent();
+      return result;
+    });
+    ipc.handle(LOCAL_PR_INSPECT_IMAGE, async (event, raw) => {
+      const { entry, assertCurrent } = this.requirePrWindow(event);
+      const { target } = localPrImageInput.parse(raw);
+      this.assertAbsoluteImage(target);
+      await assertCurrent();
+      const result = await this.deps.imageReader().inspectImage({ target, sessionId: entry.source.actor.sessionId });
+      await assertCurrent();
+      return result;
+    });
+    ipc.handle(LOCAL_PR_READ_IMAGE_CHUNK, async (event, raw) => {
+      const { entry, assertCurrent } = this.requirePrWindow(event);
+      const input = localPrImageChunkInput.parse(raw);
+      this.assertAbsoluteImage(input.target);
+      await assertCurrent();
+      const result = await this.deps.imageReader().readImageChunk({ ...input, sessionId: entry.source.actor.sessionId });
+      await assertCurrent();
+      return result;
+    });
     ipc.handle(LOCAL_PR_EXECUTE, async (event, operation: unknown, input: unknown) => {
       if (typeof operation !== "string" || !Object.hasOwn(localPrGuiInput, operation)) return failure("PR_INVALID_REQUEST", "Unknown Pull Request operation.");
-      const frame = event.senderFrame;
-      const window = this.mainFrameWindow(event);
-      const entry = this.entries.get(window.id);
-      if (!entry || entry.window !== window || !frame || !this.isPrDocument(frame.url)) return failure("PR_FORBIDDEN", "Use the owning Pull Requests window.");
-      const assertCurrent = async () => {
-        const checkWindow = () => {
-          if (window.isDestroyed() || this.entries.get(window.id) !== entry || event.sender.isDestroyed()
-            || event.sender.mainFrame !== frame || !this.isPrDocument(frame.url)) throw new Error("The Pull Requests window is no longer current.");
-        };
-        checkWindow();
-        const current = await this.deps.resolveOwner(entry.source.actor);
-        checkWindow();
-        if (!current || current.generation !== entry.source.generation || !isDeepStrictEqual(current.actor, entry.source.actor)
-          || current.repository.repositoryId !== entry.source.repository.repositoryId || current.repository.workspacePath !== entry.source.repository.workspacePath) {
-          throw new Error("The Pull Requests window's Session or repository changed. Reopen it from the Session.");
-        }
-      };
+      let owner: ReturnType<LocalPrWindowService<Repo>["requirePrWindow"]>;
+      try { owner = this.requirePrWindow(event); }
+      catch { return failure("PR_FORBIDDEN", "Use the owning Pull Requests window."); }
+      const { entry, assertCurrent } = owner;
 
       // Approval is made in an app-owned native confirmation, and rechecked in the common PR service.
       if (operation === "approve") return this.approve(entry, input, assertCurrent);
@@ -54,6 +70,33 @@ export class LocalPrWindowService<Repo extends Repository> {
         return failure("PR_OPERATION_FAILED", error instanceof Error ? error.message : String(error), "unknown");
       }
     });
+  }
+
+  private assertAbsoluteImage(target: string): void {
+    if (!/^file:/i.test(target) && !path.isAbsolute(target)) {
+      throw new Error("Pull Request images require an absolute path.");
+    }
+  }
+
+  private requirePrWindow(event: IpcMainInvokeEvent) {
+    const frame = event.senderFrame;
+    const window = this.mainFrameWindow(event);
+    const entry = this.entries.get(window.id);
+    if (!entry || entry.window !== window || !frame || !this.isPrDocument(frame.url)) throw new Error("Use the owning Pull Requests window.");
+    const assertCurrent = async () => {
+      const checkWindow = () => {
+        if (window.isDestroyed() || this.entries.get(window.id) !== entry || event.sender.isDestroyed()
+          || event.sender.mainFrame !== frame || !this.isPrDocument(frame.url)) throw new Error("The Pull Requests window is no longer current.");
+      };
+      checkWindow();
+      const current = await this.deps.resolveOwner(entry.source.actor);
+      checkWindow();
+      if (!current || current.generation !== entry.source.generation || !isDeepStrictEqual(current.actor, entry.source.actor)
+        || current.repository.repositoryId !== entry.source.repository.repositoryId || current.repository.workspacePath !== entry.source.repository.workspacePath) {
+        throw new Error("The Pull Requests window's Session or repository changed. Reopen it from the Session.");
+      }
+    };
+    return { entry, assertCurrent };
   }
 
   /** Broadcast invalidation only; each open Window still reads its authorized repository. */

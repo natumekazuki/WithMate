@@ -863,6 +863,8 @@ const localPrWindowService: LocalPrWindowService<LocalPrRepository> = new LocalP
   }),
   loadWindow: (window) => requireWindowEntryLoader().loadLocalPrEntry(window),
   application: localPrApplication,
+  pickImage: (window, workspacePath) => requireWindowDialogService().pickImageFile(window, workspacePath),
+  imageReader: createSessionFileExplorerService,
 });
 
 const sessionManagementRuntimeService = new SessionManagementRuntimeService({

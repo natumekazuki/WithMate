@@ -4,8 +4,15 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import type { LocalPrInput, LocalPrResult, LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
+import type { LocalPrInput, LocalPrOperation, LocalPrResult, LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
+import { formatMarkdownImageReference } from "../../src-shared/files/composer-image-reference.js";
+import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-turn-queue-facade.js";
+import { LocalPrApplication } from "../../src-electron/local-pr/local-pr-application.js";
+import { enqueueLocalPrDiscussion } from "../../src-electron/local-pr/local-pr-session-bridge.js";
 import { LocalPrService, resolveLocalPrRepository, type LocalPrCoreOperation, type LocalPrStore } from "../../src-electron/local-pr/local-pr-service.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { APP_DATABASE_V6_FILENAME } from "../../src-electron/storage/database-schema-v6.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 
@@ -90,13 +97,114 @@ async function fixture(t: TestContext, options: { conflict?: boolean; detachedTa
   const create = async (title = "Review fixture") => value<"pr_create">(await execute("pr_create", {
     title, headCommit: head, targetBranch: "refs/heads/main", sourceBranch: "refs/heads/topic",
   }));
-  return { root, source, base, head, repository, service, changed, execute, create, restart, override: (fn: typeof storeOverride) => { storeOverride = fn; } };
+  return { root, source, base, head, repository, service, changed, execute, create, restart,
+    get stores() { return worker!.stores; },
+    override: (fn: typeof storeOverride) => { storeOverride = fn; } };
 }
 
 /** Constructs a request for the exact tips shown to the approver. */
 function tuple(prId: string, { version, headCommit, targetCommit }: LocalPrVersion) {
   return { prId, version, headCommit, targetCommit };
 }
+
+test("Local PR review exposes the selected fixed range, reply, and resubmission on the same PR", async (t) => {
+  const f = await fixture(t);
+  const { repository } = f;
+  const receivingSession = await f.stores.session.insertSession({
+    ...buildNewSession({
+      id: "fixer",
+      taskTitle: "Review Agent", workspaceLabel: "Review Fixture", workspacePath: f.source, branch: "topic",
+      characterId: "fixture", character: "Fixture", characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
+    }),
+    model: "fixture-model", reasoningEffort: "high",
+  });
+  const recipient = { kind: "main", sessionId: receivingSession.id, incarnationId: getSessionIncarnationId(receivingSession) } as const;
+  const store = f.stores.queue;
+  const queueService = new SessionTurnQueueService({
+    store, isRunInFlight: () => true,
+    dispatch: async () => { throw new Error("The fixture verifies queue acceptance without making a provider request."); },
+  });
+  t.after(() => queueService.close());
+  const queue = new MainSessionTurnQueueFacade({
+    store, service: queueService, assertActive() {}, assertAccepting() {},
+    getSession: (id) => f.stores.session.getSession(id),
+    getAppSettings: async () => createDefaultAppSettings(),
+    validateWorkspace: async (session) => { assert.equal(session.workspacePath, f.source); },
+    validateProvider: async () => ({
+      provider: {
+        id: "codex", label: "Codex", defaultModelId: receivingSession.model, defaultReasoningEffort: receivingSession.reasoningEffort,
+        models: [{ id: receivingSession.model, label: "Fixture Model", reasoningEfforts: [receivingSession.reasoningEffort] }],
+      },
+    }),
+    preview: async () => ({ errors: [], attachments: [] }),
+  });
+  const app = new LocalPrApplication<typeof repository>({
+    core: (repo, caller, origin, operation, input) => f.service.execute(repo, caller, origin, operation, input),
+    ci: async () => { throw new Error("This review does not run CI."); },
+    sessionChoices: async () => ({ ok: true, data: { sessions: [{ target: recipient, title: "Review Agent" }], hasMore: false } }),
+    assertDiscussionTarget: async (target, ownerRepository) => {
+      assert.deepEqual(target, recipient);
+      assert.equal(ownerRepository.repositoryId, repository.repositoryId);
+    },
+    sendDiscussion: (request, message, assertCurrent) =>
+      enqueueLocalPrDiscussion(queue, request, message, (target) => f.stores.session.getSession(target.sessionId), assertCurrent),
+  });
+  const execute = <T extends LocalPrOperation>(session: typeof actor | typeof recipient, origin: "gui" | "agent", operation: T, input: LocalPrInput<T>) =>
+    app.execute(repository, session, origin, operation, input, () => undefined);
+  const description = `## What changed\n\n${formatMarkdownImageReference(path.join(f.root, "Design Notes.png"))}`;
+  const created = await execute(recipient, "agent", "pr_create", {
+    title: "Review with screenshots", description, targetBranch: "refs/heads/main", sourceBranch: "refs/heads/topic", headCommit: f.head,
+  });
+  assert.ok(created.ok);
+  const { id: prId } = created.data;
+  const anchor = { mode: "full", path: "new name.txt", side: "before", startLine: 4, endLine: 5 } as const;
+  const saved = await execute(actor, "gui", "save_draft", { prId, version: 1, anchor, body: "Cover this failure case." });
+  assert.ok(saved.ok);
+  assert.equal(saved.data.draft, true);
+  const request = {
+    prId, version: 1, target: recipient, commentIds: [saved.data.id], message: "Please fix and resubmit.",
+    requestId: "131cd4f2-3be4-4151-a256-c80df17145f0",
+  };
+  const sent = await execute(actor, "gui", "discuss", request);
+  assert.ok(sent.ok, JSON.stringify(sent));
+  const owner = { sessionId: recipient.sessionId, incarnationId: recipient.incarnationId };
+  const receipt = await store.getReceipt(owner, request.requestId);
+  assert.equal(receipt?.id, sent.data.receiptId);
+  assert.equal(receipt?.state, "queued");
+  assert.equal(receipt?.accepted?.origin?.kind, "gui");
+  assert.deepEqual(await execute(actor, "gui", "discuss", request), sent);
+  assert.equal((await store.listActive(owner)).length, 1);
+  const message = receipt?.accepted?.request.userMessage ?? "";
+  const context = JSON.parse(message.split("~~~json\n")[1].split("\n~~~")[0]);
+  assert.equal(context.headCommit, f.head);
+  assert.deepEqual(context.comments[0].review.anchor, anchor);
+  assert.deepEqual(context.comments[0].review.lines, [2, 3, 4, 5, 6, 7].map((line) => ({ line, text: `line ${line}` })));
+  const reply = await execute(recipient, "agent", "pr_comment", {
+    prId, version: 1, replyTo: saved.data.id, body: "Test added; submitting a new version.",
+  });
+  assert.ok(reply.ok);
+  assert.deepEqual(reply.data.author, recipient);
+  assert.deepEqual(reply.data.anchor, anchor);
+  await writeFile(path.join(f.source, "l.txt"), "Regression test on retry\n");
+  git(f.source, "commit", "-qam", "Cover failure and retry");
+  const newHead = git(f.source, "rev-parse", "HEAD");
+  const submitted = await execute(recipient, "agent", "pr_submit", { prId, expectedVersion: 1, headCommit: newHead, expectedTargetCommit: f.base });
+  assert.ok(submitted.ok);
+  const pins = tuple(prId, submitted.data.versions.find((v) => v.version === 2)!);
+  assert.deepEqual(pins, { prId, version: 2, headCommit: newHead, targetCommit: f.base });
+  assert.equal(submitted.data.approval, null);
+  rejected(await execute(recipient, "agent", "approve", pins), "PR_FORBIDDEN");
+  assert.ok((await execute(actor, "gui", "approve", pins)).ok);
+  await queueService.close();
+  await f.restart();
+  assert.equal((await f.stores.queue.getReceipt(owner, request.requestId))?.id, sent.data.receiptId);
+  const result = value<"pr_get">(await f.execute("pr_get", { prId }, "gui"));
+  assert.equal(result.description, description);
+  assert.equal(result.approval?.headCommit, newHead);
+  assert.equal(result.comments.find((comment) => comment.id === saved.data.id)?.draft, false);
+  assert.equal(result.comments.find((comment) => comment.id === reply.data.id)?.replyTo, saved.data.id);
+});
 
 /** Renames, literal metacharacters, missing sides, replies and GUI drafts stay bound to the original pinned version. */
 test("Local PR persists fixed comparisons and private drafts across storage restart and Git GC", async (t) => {

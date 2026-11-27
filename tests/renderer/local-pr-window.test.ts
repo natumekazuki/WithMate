@@ -14,8 +14,12 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     server: { middlewareMode: true },
     appType: "custom",
   });
-  const dom = new JSDOM("<div id='first'></div><div id='second'></div>", {
+  const dom = new JSDOM("<!doctype html><div id='first'></div><div id='second'></div>", {
     url: "http://localhost",
+  });
+  Object.assign(dom.window.HTMLDialogElement.prototype, {
+    showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); },
+    close(this: HTMLDialogElement) { this.removeAttribute("open"); },
   });
   const previous = {
     window: globalThis.window,
@@ -37,7 +41,7 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   const detail: LocalPrDetail = {
     id: "pr",
     title: "Review me",
-    description: "lowercase USER text",
+    description: "### Review notes\n\n**lowercase USER text**",
     targetBranch: "refs/heads/main",
     sourceBranch: "refs/heads/my-feature",
     createdBy: author,
@@ -145,6 +149,9 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   };
   const api: LocalPrWindowApi = {
     execute: execute as unknown as LocalPrWindowApi["execute"],
+    pickImage: async () => null,
+    inspectImage: async () => { throw new Error("No image in this fixture."); },
+    readImageChunk: async () => { throw new Error("No image in this fixture."); },
     subscribeChanged(callback) {
       listeners.add(callback);
       return () => {
@@ -173,7 +180,10 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     });
     assert.equal(reads, 2);
     assert.equal(first.querySelector(".local-pr-pr-meta .local-pr-status")?.textContent, "Open");
-    assert.equal(first.querySelector(".local-pr-pr-meta code")?.textContent, "refs/heads/my-feature → refs/heads/main");
+    assert.equal(first.querySelector(".local-pr-pr-meta code")?.textContent, "my-feature → main");
+    assert.ok(first.querySelector("[title='refs/heads/my-feature → refs/heads/main']"));
+    assert.equal(first.querySelector(".local-pr-description h3")?.textContent, "Review notes");
+    assert.equal(first.querySelector(".local-pr-description strong")?.textContent, "lowercase USER text");
     assert.match(first.textContent ?? "", /lowercase USER text/);
     const button = (name: string) => {
       const found = Array.from(first.querySelectorAll("button")).find(
@@ -186,6 +196,10 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       button("Changes").click();
     });
     assert.match(first.textContent ?? "", /src\/my-file\.ts\s*Modified/);
+    await act(async () => button("Send to Agent").click());
+    assert.equal(first.querySelectorAll("dialog[open]").length, 1);
+    await act(async () => button("Cancel").click());
+    assert.equal(first.querySelectorAll("dialog").length, 0);
     await act(async () => {
       button("Checks").click();
     });
