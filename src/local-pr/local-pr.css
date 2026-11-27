@@ -1,0 +1,313 @@
+.local-pr-app {
+  --pr-bg: var(--surface-deep, #12161e);
+  --pr-panel: var(--surface, #1c212b);
+  --pr-raised: var(--surface-strong, #263243);
+  --pr-ink: var(--ink, #e5eaf1);
+  --pr-muted: var(--muted, #acb8c8);
+  --pr-line: var(--line, #455163);
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  background: var(--pr-bg);
+  color: var(--pr-ink);
+  font:
+    13px/1.5 "Segoe UI",
+    system-ui,
+    sans-serif;
+}
+.local-pr-app * {
+  box-sizing: border-box;
+}
+.local-pr-app button,
+.local-pr-app input,
+.local-pr-app select,
+.local-pr-app textarea {
+  color: inherit;
+  font: inherit;
+}
+.local-pr-app button,
+.local-pr-app select,
+.local-pr-app input:not([type="checkbox"]),
+.local-pr-app textarea {
+  border: 1px solid var(--pr-line);
+  border-radius: 5px;
+  background: var(--pr-raised);
+  padding: 5px 8px;
+}
+.local-pr-app button {
+  cursor: pointer;
+}
+.local-pr-app button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.local-pr-app :focus-visible {
+  outline: 2px solid #79b8ff;
+  outline-offset: 2px;
+}
+.local-pr-app h1,
+.local-pr-app h2,
+.local-pr-app h3,
+.local-pr-app h4,
+.local-pr-app p {
+  margin: 0 0 10px;
+}
+.local-pr-app h1,
+.local-pr-app h2 {
+  font-size: 17px;
+}
+.local-pr-app h3 {
+  font-size: 15px;
+}
+.local-pr-app label {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+.local-pr-app textarea {
+  min-height: 80px;
+  width: 100%;
+  resize: vertical;
+}
+.local-pr-app code,
+.local-pr-app pre {
+  font-family: Consolas, monospace;
+}
+.local-pr-app code {
+  overflow-wrap: anywhere;
+}
+.local-pr-list {
+  flex: 0 0 240px;
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid var(--pr-line);
+  background: var(--pr-panel);
+  padding: 14px 10px;
+}
+.local-pr-list header,
+.local-pr-header,
+.local-pr-comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.local-pr-list-item,
+.local-pr-file {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  text-align: left;
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.local-pr-list-item span,
+.local-pr-list-item small,
+.local-pr-file small {
+  color: var(--pr-muted);
+}
+.local-pr-app [aria-current="true"],
+.local-pr-tabs [aria-current="page"],
+.local-pr-app [aria-pressed="true"] {
+  border-color: #79b8ff;
+  background: color-mix(in srgb, #79b8ff 18%, var(--pr-raised));
+}
+.local-pr-main {
+  display: flex;
+  position: relative;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.local-pr-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--pr-line);
+}
+.local-pr-header h2 {
+  margin-bottom: 2px;
+}
+.local-pr-header span {
+  color: var(--pr-muted);
+}
+.local-pr-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--pr-line);
+}
+.local-pr-scroll {
+  overflow: auto;
+  flex: 1;
+  padding: 20px;
+}
+.local-pr-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 32px;
+}
+.local-pr-overview-grid section {
+  min-width: 0;
+}
+.local-pr-description,
+.local-pr-comment p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.local-pr-app dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+}
+.local-pr-app dd {
+  margin: 0;
+  min-width: 0;
+}
+.local-pr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.local-pr-actions label {
+  display: flex;
+  align-items: center;
+}
+.local-pr-comment {
+  border-top: 1px solid var(--pr-line);
+  padding: 12px 0;
+}
+.local-pr-comment-head span,
+.local-pr-comment small {
+  color: var(--pr-muted);
+}
+.local-pr-anchor {
+  display: block;
+  margin: 6px 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.local-pr-form {
+  overflow: auto;
+  max-width: 680px;
+  padding: 22px;
+}
+.local-pr-error {
+  padding: 10px 16px;
+  background: #552932;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.local-pr-confirm {
+  border: 1px solid #dfa64a;
+  padding: 12px;
+  margin: 12px 0;
+}
+.local-pr-changes,
+.local-pr-checks {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.local-pr-files,
+.local-pr-checks > aside {
+  flex: 0 0 260px;
+  overflow: auto;
+  min-width: 0;
+  padding: 12px;
+  border-right: 1px solid var(--pr-line);
+}
+.local-pr-diff,
+.local-pr-log {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px 18px;
+}
+.local-pr-code {
+  overflow: auto;
+  border: 1px solid var(--pr-line);
+  background: var(--pr-bg);
+  font:
+    12px/19px Consolas,
+    monospace;
+}
+.local-pr-code-body {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+.local-pr-code-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: 60px 60px 1fr;
+  min-width: 100%;
+  width: max-content;
+  white-space: pre;
+}
+.local-pr-code-row > span:not(.local-pr-code-metadata) {
+  color: var(--pr-muted);
+  padding: 0 8px;
+  text-align: right;
+  user-select: none;
+}
+.local-pr-code-row pre {
+  margin: 0;
+  padding: 0 8px;
+  white-space: pre;
+  font: inherit;
+}
+.local-pr-code-metadata {
+  grid-column: 1 / -1;
+  padding: 0 8px;
+}
+.local-pr-row-add {
+  background: color-mix(in srgb, #26865b 25%, var(--pr-bg));
+}
+.local-pr-row-delete {
+  background: color-mix(in srgb, #bf4656 25%, var(--pr-bg));
+}
+.local-pr-row-modify {
+  background: color-mix(in srgb, #a98632 22%, var(--pr-bg));
+}
+.local-pr-row-hunk {
+  color: var(--pr-ink);
+  background: color-mix(in srgb, #488ac0 20%, var(--pr-bg));
+}
+.local-pr-code .local-pr-row-anchor {
+  box-shadow: inset 3px 0 #79b8ff;
+  outline: 1px solid #79b8ff;
+  outline-offset: -1px;
+}
+.local-pr-draft {
+  padding: 14px 0;
+}
+.local-pr-draft input[type="number"] {
+  width: 100px;
+}
+.local-pr-log pre,
+.local-pr-checks details pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--pr-bg);
+  padding: 12px;
+}
+@media (max-width: 1100px) {
+  .local-pr-overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 850px) {
+  .local-pr-list {
+    flex-basis: 185px;
+  }
+  .local-pr-files,
+  .local-pr-checks > aside {
+    flex-basis: 200px;
+  }
+}
