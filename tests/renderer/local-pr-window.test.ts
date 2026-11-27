@@ -6,8 +6,8 @@ import { createRoot } from "react-dom/client";
 import { createServer } from "vite";
 import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
 
-/** Each window refreshes independently and retains its selected PR on a read failure. */
-test("changed notification refreshes both windows without discarding failed reads", async () => {
+/** Both windows preserve reads on failure; owned labels and local dates do not rewrite source content. */
+test("local PR labels, dates, and independent window refreshes retain their boundaries", async () => {
   const vite = await createServer({
     configFile: false,
     optimizeDeps: { noDiscovery: true },
@@ -37,9 +37,9 @@ test("changed notification refreshes both windows without discarding failed read
   const detail = {
     id: "pr",
     title: "Review me",
-    description: "",
+    description: "lowercase USER text",
     targetBranch: "refs/heads/main",
-    sourceBranch: null,
+    sourceBranch: "refs/heads/my-feature",
     createdBy: author,
     createdAt: "",
     updatedAt: "",
@@ -75,6 +75,57 @@ test("changed notification refreshes both windows without discarding failed read
     if (operation === "pr_list")
       return { ok: true, data: { entries: [detail], hasMore: false } };
     if (operation === "pr_get") return { ok: true, data: detail };
+    if (operation === "pr_diff")
+      return {
+        ok: true,
+        data: {
+          beforeCommit: sha,
+          afterCommit: sha,
+          patch: null,
+          files: [
+            { path: "src/my-file.ts", previousPath: null, kind: "modified" },
+          ],
+        },
+      };
+    if (operation === "pr_ci_validate")
+      return {
+        ok: true,
+        data: {
+          headCommit: sha,
+          path: ".withmate/ci.yml",
+          state: "not_configured",
+          source: null,
+          error: null,
+        },
+      };
+    if (operation === "pr_ci_list")
+      return {
+        ok: true,
+        data: {
+          runs: [
+            "running",
+            "succeeded",
+            "failed",
+            "canceled",
+            "interrupted",
+          ].map((state) => ({
+            id: state,
+            version: 1,
+            headCommit: sha,
+            targetCommit: sha,
+            state,
+            startedAt: "2026-11-27T19:00:00.000Z",
+            finishedAt: null,
+            exitCode: null,
+            error: null,
+          })),
+        },
+      };
+    if (operation === "pr_ci_log")
+      return {
+        ok: true,
+        data: { log: "mixed CASE log", nextOffset: 14, hasMore: false },
+      };
     if (operation === "pr_branches")
       return { ok: true, data: { branches: [], head: null, headBranch: null } };
     return { ok: true, data: { sessions: [], hasMore: false } };
@@ -108,6 +159,53 @@ test("changed notification refreshes both windows without discarding failed read
       items.forEach((item) => item.click());
     });
     assert.equal(reads, 2);
+    assert.match(first.textContent ?? "", /Open · refs\/heads\/my-feature/);
+    assert.match(first.textContent ?? "", /lowercase USER text/);
+    const button = (name: string) => {
+      const found = Array.from(first.querySelectorAll("button")).find(
+        (item) => item.textContent?.trim() === name,
+      );
+      assert.ok(found, name);
+      return found;
+    };
+    await act(async () => {
+      button("Changes").click();
+    });
+    assert.match(first.textContent ?? "", /src\/my-file\.ts\s*Modified/);
+    await act(async () => {
+      button("Checks").click();
+    });
+    assert.match(first.textContent ?? "", /Definition: Not Configured/);
+    const formatted = new Intl.DateTimeFormat("en", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date("2026-11-27T19:00:00.000Z"));
+    const runButton = Array.from(first.querySelectorAll("button")).find(
+      (item) => item.textContent?.includes("Succeeded"),
+    );
+    assert.ok(runButton);
+    for (const status of [
+      "Running",
+      "Succeeded",
+      "Failed",
+      "Canceled",
+      "Interrupted",
+    ]) {
+      assert.ok(
+        Array.from(first.querySelectorAll("button")).some((item) =>
+          item.textContent?.includes(status),
+        ),
+        status,
+      );
+    }
+    assert.ok(runButton.textContent?.includes(formatted));
+    await act(async () => {
+      runButton.click();
+    });
+    assert.equal(
+      first.querySelector("pre[aria-label='CI Log']")?.textContent?.trim(),
+      "mixed CASE log",
+    );
     fail = true;
     await act(async () => {
       listeners.forEach((listener) => listener());

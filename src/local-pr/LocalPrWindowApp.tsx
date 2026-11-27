@@ -18,6 +18,56 @@ type Mode = "full" | "previous";
 type Tab = "overview" | "changes" | "checks";
 type Failure = { message: string; effect: "none" | "unknown" };
 
+const prStateLabels: Record<LocalPrDetail["state"], string> = {
+  open: "Open",
+  closed: "Closed",
+  merged: "Merged",
+};
+const fileKindLabels: Record<
+  LocalPrData<"pr_diff">["files"][number]["kind"],
+  string
+> = {
+  added: "Added",
+  modified: "Modified",
+  deleted: "Deleted",
+  renamed: "Renamed",
+  copied: "Copied",
+  "type-changed": "Type-Changed",
+};
+const ciDefinitionLabels: Record<
+  LocalPrData<"pr_ci_validate">["state"],
+  string
+> = {
+  not_configured: "Not Configured",
+  invalid: "Invalid",
+  valid: "Valid",
+};
+const ciRunLabels: Record<
+  LocalPrData<"pr_ci_list">["runs"][number]["state"],
+  string
+> = {
+  running: "Running",
+  succeeded: "Succeeded",
+  failed: "Failed",
+  canceled: "Canceled",
+  interrupted: "Interrupted",
+};
+const comparisonLabels: Record<Mode, string> = {
+  full: "Full",
+  previous: "Previous",
+};
+const sideLabels = { before: "Before", after: "After" } as const;
+const dateTimeFormatter = new Intl.DateTimeFormat("en", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+/** Formats saved timestamps for display without altering their underlying values. */
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date);
+}
+
 /** Reads retain the last successful value on refresh errors, but never across a changed key. */
 function useRead<T>(
   key: string,
@@ -85,7 +135,7 @@ function ReadState({
   return (
     <>
       {state.loading && state.data == null && (
-        <LoadingIndicator inline label="Loading pull request data" />
+        <LoadingIndicator inline label="Loading Pull Request Data" />
       )}
       {state.error && (
         <div className="local-pr-error" role="alert">
@@ -212,7 +262,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
 
   return (
     <div className="local-pr-app">
-      <aside className="local-pr-list" aria-label="Pull requests">
+      <aside className="local-pr-list" aria-label="Pull Requests">
         <header>
           <h1>Pull Requests</h1>
           <button
@@ -231,7 +281,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
         >
           <ButtonContent
             busy={list.loading || detail.loading}
-            busyLabel="Refreshing pull requests"
+            busyLabel="Refreshing Pull Requests"
           >
             Reload
           </ButtonContent>
@@ -253,7 +303,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
           >
             <strong>{item.title}</strong>
             <span>
-              {item.state} · v{item.latestVersion}
+              {prStateLabels[item.state]} · v{item.latestVersion}
             </span>
             <small>
               {item.sourceBranch ?? item.createdBy.sessionId} →{" "}
@@ -272,7 +322,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               <button onClick={() => setFailure(null)}>Dismiss</button>
             </div>
           )}
-          {!creating && selected && <ReadState state={detail} retry={refresh} />}
+          {!creating && selected && (
+            <ReadState state={detail} retry={refresh} />
+          )}
         </div>
         {creating ? (
           <CreatePr
@@ -293,8 +345,8 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                   <div>
                     <h2>{pr.title}</h2>
                     <span>
-                      {pr.state} · {pr.sourceBranch ?? "Detached head"} →{" "}
-                      {pr.targetBranch}
+                      {prStateLabels[pr.state]} ·{" "}
+                      {pr.sourceBranch ?? "Detached Head"} → {pr.targetBranch}
                     </span>
                   </div>
                   <label>
@@ -308,13 +360,13 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                       {pr.versions.map((item) => (
                         <option key={item.version} value={item.version}>
                           v{item.version}
-                          {item.version === pr.latestVersion ? " (latest)" : ""}
+                          {item.version === pr.latestVersion ? " (Latest)" : ""}
                         </option>
                       ))}
                     </select>
                   </label>
                 </header>
-                <nav className="local-pr-tabs" aria-label="PR sections">
+                <nav className="local-pr-tabs" aria-label="PR Sections">
                   {(["overview", "changes", "checks"] as const).map((name) => (
                     <button
                       key={name}
@@ -487,7 +539,7 @@ function Changes({
               setPath("");
             }}
           >
-            Full diff
+            Full Diff
           </button>
           <button
             disabled={version === 1}
@@ -497,7 +549,7 @@ function Changes({
               setPath("");
             }}
           >
-            Since previous
+            Since Previous
           </button>
         </div>
         <ReadState state={files} retry={refresh} />
@@ -518,7 +570,7 @@ function Changes({
           >
             <span>{file.path}</span>
             <small>
-              {file.kind}
+              {fileKindLabels[file.kind]}
               {file.previousPath ? ` · ${file.previousPath}` : ""}
             </small>
           </button>
@@ -601,7 +653,7 @@ function Changes({
               )}
             </div>
             <section className="local-pr-draft">
-              <h4>Draft comment · v{version}</h4>
+              <h4>Draft Comment · v{version}</h4>
               <div className="local-pr-actions">
                 <label>
                   Side{" "}
@@ -623,14 +675,14 @@ function Changes({
                       setScope(e.target.value as "file" | "lines")
                     }
                   >
-                    <option value="file">Whole file</option>
+                    <option value="file">Whole File</option>
                     <option value="lines">Lines</option>
                   </select>
                 </label>
                 {scope === "lines" && (
                   <>
                     <label>
-                      Start line{" "}
+                      Start Line{" "}
                       <input
                         type="number"
                         min="1"
@@ -639,7 +691,7 @@ function Changes({
                       />
                     </label>
                     <label>
-                      End line{" "}
+                      End Line{" "}
                       <input
                         type="number"
                         min="1"
@@ -678,7 +730,7 @@ function Changes({
                   })
                 }
               >
-                Save draft
+                Save Draft
               </button>
             </section>
             {pr.comments
@@ -692,9 +744,9 @@ function Changes({
                 <article className="local-pr-comment" key={comment.id}>
                   <strong>
                     {comment.draft ? "Draft" : "Comment"} ·{" "}
-                    {comment.anchor?.side}{" "}
+                    {comment.anchor ? sideLabels[comment.anchor.side] : ""}{" "}
                     {comment.anchor?.startLine === null
-                      ? "whole file"
+                      ? "Whole File"
                       : `${comment.anchor?.startLine}–${comment.anchor?.endLine}`}
                   </strong>
                   <p>{comment.body}</p>
@@ -793,7 +845,7 @@ function Checks({
         <ReadState state={definition} retry={refresh} />
         {definition.data && (
           <>
-            <p>Definition: {definition.data.state.replaceAll("_", " ")}</p>
+            <p>Definition: {ciDefinitionLabels[definition.data.state]}</p>
             <p>
               <code>{definition.data.headCommit}</code>
             </p>
@@ -802,13 +854,13 @@ function Checks({
             )}
             <details>
               <summary>.withmate/ci.yml</summary>
-              <pre>{definition.data.source ?? "Not configured"}</pre>
+              <pre>{definition.data.source ?? "Not Configured"}</pre>
             </details>
             <button
               disabled={busy || definition.data.state !== "valid"}
               onClick={() => void run("pr_ci_start", { prId, version })}
             >
-              Run checks
+              Run Checks
             </button>
           </>
         )}
@@ -824,18 +876,18 @@ function Checks({
               setLog("");
             }}
           >
-            <strong>{item.state}</strong>
+            <strong>{ciRunLabels[item.state]}</strong>
             <small>
-              {item.startedAt} · v{item.version}
+              {formatDateTime(item.startedAt)} · v{item.version}
             </small>
           </button>
         ))}
-        {runs.data && runs.data.runs.length === 0 && <p>Not run</p>}
+        {runs.data && runs.data.runs.length === 0 && <p>Not Run</p>}
       </aside>
       <section className="local-pr-log">
         {chosen ? (
           <>
-            <h3>{chosen.state}</h3>
+            <h3>{ciRunLabels[chosen.state]}</h3>
             <p>
               Head <code>{chosen.headCommit}</code>
               <br />
@@ -849,7 +901,7 @@ function Checks({
                   void run("pr_ci_cancel", { prId, version, runId: chosen.id })
                 }
               >
-                Cancel run
+                Cancel Run
               </button>
               <button
                 disabled={busy || chosen.state === "running"}
@@ -860,13 +912,13 @@ function Checks({
                 Rerun
               </button>
             </div>
-            {logLoading && <LoadingIndicator inline label="Loading CI log" />}
+            {logLoading && <LoadingIndicator inline label="Loading CI Log" />}
             {logError && (
               <div role="alert" className="local-pr-error">
                 {logError.message} <button onClick={refresh}>Retry</button>
               </div>
             )}
-            <pre tabIndex={0} aria-label="CI log">
+            <pre tabIndex={0} aria-label="CI Log">
               {log}
             </pre>
           </>
@@ -926,9 +978,9 @@ function CreatePr({
         />
       </label>
       <label>
-        Source branch
+        Source Branch
         <select value={source} onChange={(e) => setSource(e.target.value)}>
-          <option value="">Select branch</option>
+          <option value="">Select Branch</option>
           {branches.data?.branches.map((b) => (
             <option key={b.ref} value={b.ref}>
               {b.ref}
@@ -937,9 +989,9 @@ function CreatePr({
         </select>
       </label>
       <label>
-        Target branch
+        Target Branch
         <select value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">Select branch</option>
+          <option value="">Select Branch</option>
           {branches.data?.branches.map((b) => (
             <option key={b.ref} value={b.ref}>
               {b.ref}
@@ -1052,17 +1104,17 @@ function Overview({
               <dd>
                 <code>{selectedVersion.targetCommit}</code>
               </dd>
-              <dt>Merge base</dt>
+              <dt>Merge Base</dt>
               <dd>
                 <code>{selectedVersion.mergeBaseCommit}</code>
               </dd>
             </dl>
           )}
           <p>
-            {isApproved ? `Approved v${pr.approval?.version}` : "Not approved"}
-            {targetChanged ? " · Target branch has changed" : ""}
+            {isApproved ? `Approved v${pr.approval?.version}` : "Not Approved"}
+            {targetChanged ? " · Target Branch Has Changed" : ""}
           </p>
-          {pr.currentTargetCommit === null && <p>Current target unavailable</p>}
+          {pr.currentTargetCommit === null && <p>Current Target Unavailable</p>}
           {pr.state === "open" && (
             <div className="local-pr-actions">
               <button
@@ -1085,7 +1137,7 @@ function Overview({
                   approvalTarget && void run("revoke", approvalTarget)
                 }
               >
-                Revoke approval
+                Revoke Approval
               </button>
               <button
                 disabled={
@@ -1116,7 +1168,7 @@ function Overview({
             <div
               className="local-pr-confirm"
               role="group"
-              aria-label="Confirm action"
+              aria-label="Confirm Action"
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   setConfirm(null);
@@ -1143,7 +1195,7 @@ function Overview({
                   triggerButton.current?.focus();
                 }}
               >
-                {confirm === "merge" ? "Confirm merge" : "Confirm close"}
+                {confirm === "merge" ? "Confirm Merge" : "Confirm Close"}
               </button>{" "}
               <button
                 onClick={() => {
@@ -1157,13 +1209,13 @@ function Overview({
           )}
           {pr.state === "open" && (
             <>
-              <h3>Submit version</h3>
+              <h3>Submit Version</h3>
               <ReadState
                 state={branches}
                 retry={() => setBranchRevision((n) => n + 1)}
               />
               <p>
-                Source head: <code>{source?.commit ?? "Unavailable"}</code>
+                Source Head: <code>{source?.commit ?? "Unavailable"}</code>
               </p>
               <p>
                 Target: <code>{target?.commit ?? "Unavailable"}</code>
@@ -1190,7 +1242,7 @@ function Overview({
                     })
                   }
                 >
-                  Submit source head
+                  Submit Source Head
                 </button>
                 {targetChanged && (
                   <button
@@ -1213,7 +1265,7 @@ function Overview({
                       })
                     }
                   >
-                    Re-submit reviewed head for new target
+                    Re-submit Reviewed Head for New Target
                   </button>
                 )}
               </div>
@@ -1242,7 +1294,7 @@ function Overview({
               {comment.replyTo && (
                 <small>
                   <a href={`#local-pr-comment-${comment.replyTo}`}>
-                    View parent comment
+                    View Parent Comment
                   </a>
                 </small>
               )}
@@ -1251,10 +1303,11 @@ function Overview({
                   className="local-pr-anchor"
                   onClick={() => openAnchor(comment)}
                 >
-                  {comment.anchor.path} · {comment.anchor.mode} ·{" "}
-                  {comment.anchor.side}{" "}
+                  {comment.anchor.path} ·{" "}
+                  {comparisonLabels[comment.anchor.mode]} ·{" "}
+                  {sideLabels[comment.anchor.side]}{" "}
                   {comment.anchor.startLine === null
-                    ? "whole file"
+                    ? "Whole File"
                     : `${comment.anchor.startLine}–${comment.anchor.endLine}`}
                 </button>
               )}
@@ -1340,13 +1393,13 @@ function Overview({
                 })
               }
             >
-              Publish selected drafts
+              Publish Selected Drafts
             </button>
           )}
           {editing ? (
             <>
               <label>
-                Edit draft
+                Edit Draft
                 <textarea
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
@@ -1370,7 +1423,7 @@ function Overview({
                   })
                 }
               >
-                Save draft
+                Save Draft
               </button>{" "}
               <button
                 onClick={() => {
@@ -1378,7 +1431,7 @@ function Overview({
                   setBody("");
                 }}
               >
-                Cancel edit
+                Cancel Edit
               </button>
             </>
           ) : (
@@ -1409,10 +1462,10 @@ function Overview({
                     })
                   }
                 >
-                  Post comment
+                  Post Comment
                 </button>
                 {reply && (
-                  <button onClick={() => setReply(null)}>Cancel reply</button>
+                  <button onClick={() => setReply(null)}>Cancel Reply</button>
                 )}
               </div>
             </>
@@ -1465,7 +1518,7 @@ function Overview({
               onChange={(e) => setMessage(e.target.value)}
             />
           </label>
-          <p>{selectedComments.length} comments selected</p>
+          <p>{selectedComments.length} Comments Selected</p>
           {pendingDiscussion && (
             <p role="alert">
               Delivery is unknown. Retry the same request before sending another
@@ -1500,7 +1553,7 @@ function Overview({
                 });
             }}
           >
-            {pendingDiscussion ? "Retry same request" : "Send to Session"}
+            {pendingDiscussion ? "Retry Same Request" : "Send to Session"}
           </button>
         </section>
       </div>
