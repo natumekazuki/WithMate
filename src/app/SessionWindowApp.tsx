@@ -7,10 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
-import { SessionGraphPreview, defaultSessionGraphViewState, type SessionGraphPreviewMemory } from "../session-graph/SessionGraphPreview.js";
-import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { ButtonContent } from "../ui/button-content.js";
-import "../session-graph/session-graph.css";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -62,7 +59,6 @@ import {
 import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
 import { FailedTurnRetryContext } from "../chat/runtime/failed-turn-retry-context.js";
 import { resolveConversationAttentionEntries, type ConversationAttention } from "../chat/conversation-attention.js";
-import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { readReplyQuote } from "../chat/conversation/reply-quote.js";
 import type { SessionReply } from "../../src-shared/session/session-reply.js";
 import { conversationPeerKey, savedReplyConversationFrame } from "../../src-shared/session/conversation-threads.js";
@@ -644,25 +640,12 @@ export default function AgentSessionWindowApp() {
   const [filesPaneHost, setFilesPaneHost] = useState<HTMLDivElement | null>(null);
   const [filesPreviewHost, setFilesPreviewHost] = useState<HTMLDivElement | null>(null);
   const [isFilePreviewActive, setIsFilePreviewActive] = useState(false);
-  // `split` shows the send target beside the Graph; `full` gives the central area to the Graph.
-  const [graphLayout, setGraphLayout] = useState<"closed" | "split" | "full">("closed");
-  const [graphWidthRatio, setGraphWidthRatio] = useState(0.55);
-  const [graphSplitFits, setGraphSplitFits] = useState(true);
-  const isSessionGraphOpen = graphLayout !== "closed";
-  const graphDisplayMode: "split" | "full" = graphLayout === "full" || !graphSplitFits ? "full" : "split";
-  const graphStateRef = useRef<SessionGraphViewState>(defaultSessionGraphViewState);
-  const graphMemoryRef = useRef<SessionGraphPreviewMemory | null>(null);
-  const [graphWindowOpening, setGraphWindowOpening] = useState(false);
-  const [graphWindowError, setGraphWindowError] = useState("");
   const [localPrOpening, setLocalPrOpening] = useState(false);
   const [localPrError, setLocalPrError] = useState("");
-  const graphTriggerRef = useRef<HTMLButtonElement>(null);
   const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
-  const isConversationHidden = isFilePreviewActive
-    || isPromptTemplateWorkspaceOpen || (isSessionGraphOpen && graphDisplayMode === "full");
+  const isConversationHidden = isFilePreviewActive || isPromptTemplateWorkspaceOpen;
   const closeCentralPreview = useCallback(() => {
     closeFilePreviews();
-    setGraphLayout("closed");
     setIsPromptTemplateWorkspaceOpen(false);
     closeSkillPicker();
     setPreviewChatActivity(endPreviewChatActivity());
@@ -677,7 +660,6 @@ export default function AgentSessionWindowApp() {
       isPromptTemplateWorkspaceOpen,
       canClosePromptTemplate,
       closeCentralSurface: () => {
-        setGraphLayout("closed");
         setIsPromptTemplateWorkspaceOpen(false);
         closeSkillPicker();
       },
@@ -698,14 +680,6 @@ export default function AgentSessionWindowApp() {
     isPromptTemplateWorkspaceOpen,
   ]);
   prepareCentralSurfaceOpenRef.current = prepareCentralSurfaceOpen;
-  const openGraphWindow = async (state = graphStateRef.current) => {
-    if (!withmateApi || !selectedSession || graphWindowOpening) return;
-    setGraphWindowOpening(true);
-    setGraphWindowError("");
-    try { await withmateApi.openSessionGraphWindow({ sessionId: selectedSession.id, state }); }
-    catch (cause) { setGraphWindowError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setGraphWindowOpening(false); }
-  };
   const requestCentralSurfaceClose = useCallback(
     () => applyCentralSurfaceOpenCommand({
       isPromptTemplateWorkspaceOpen,
@@ -2146,41 +2120,8 @@ export default function AgentSessionWindowApp() {
       hasUnreadMessages: previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId,
     }),
     isConversationHidden,
-    onShowConversation: () => {
-      if (isSessionGraphOpen && graphLayout === "full" && graphSplitFits) setGraphLayout("split");
-      else requestCentralSurfaceClose();
-    },
+    onShowConversation: () => { requestCentralSurfaceClose(); },
   };
-  const closeSessionGraph = () => {
-    setGraphLayout("closed");
-    requestAnimationFrame(() => {
-      const trigger = graphTriggerRef.current;
-      if (trigger && !trigger.closest("[inert]")) trigger.focus();
-      else document.querySelector<HTMLButtonElement>('[aria-controls="session-header-dock"]')?.focus();
-    });
-  };
-  const graphLayoutLabel = graphDisplayMode === "split" ? "Expand Graph" : "Show Chat Beside Graph";
-  const sessionGraphSurface = isSessionGraphOpen && withmateApi ? {
-    label: "Graph",
-    mode: graphDisplayMode,
-    widthRatio: graphWidthRatio,
-    onWidthRatioChange: setGraphWidthRatio,
-    onFitChange: setGraphSplitFits,
-    content: <SessionGraphPreview key={selectedSession.id} api={withmateApi} sessionId={selectedSession.id}
-      initialState={graphStateRef.current} onStateChange={(state) => { graphStateRef.current = state; }}
-      initialMemory={graphMemoryRef.current} onMemoryChange={(memory) => { graphMemoryRef.current = memory; }}
-      onOpenWindow={(state) => void openGraphWindow(state)}
-      toolbarActions={<span className="session-graph-layout-actions">
-        {graphSplitFits ? <button type="button" className="session-graph-layout-button" aria-label={graphLayoutLabel} title={graphLayoutLabel}
-          onClick={() => setGraphLayout(graphDisplayMode === "split" ? "full" : "split")}>
-          <ComposerIcon name={graphDisplayMode === "split" ? "expand" : "restore"} />
-        </button> : null}
-        <button type="button" className="session-graph-layout-button" aria-label="Close Graph" title="Close Graph" onClick={closeSessionGraph}>
-          <ComposerIcon name="close" />
-        </button>
-      </span>}
-      onOpenPath={(target) => void handleOpenInlinePath(target, selectedSession.id)} />,
-  } : undefined;
   const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
@@ -2193,19 +2134,8 @@ export default function AgentSessionWindowApp() {
     />
   ) : isFilePreviewActive ? <div ref={setFilesPreviewHost} className="session-feature-host" /> : undefined;
 
-  const graphHeaderActions = <div className="session-window-control-group session-graph-entry" role="group" aria-label="Session Graph">
-    <button ref={graphTriggerRef} type="button" className="drawer-toggle compact secondary" onClick={(event) => {
-      if (event.ctrlKey || event.metaKey) { void openGraphWindow(); return; }
-      if (!isSessionGraphOpen && prepareCentralSurfaceOpen()) {
-        closeFilePreviews();
-        setGraphLayout("split");
-      }
-    }}>Graph</button>
-    <button type="button" className="drawer-toggle compact secondary session-header-icon-button" title="Open Graph In New Window" aria-label="Open Graph In New Window" disabled={graphWindowOpening} aria-busy={graphWindowOpening || undefined} onClick={() => void openGraphWindow()}><ButtonContent busy={graphWindowOpening}>↗</ButtonContent></button>
-    {graphWindowError ? <span role="alert" className="session-graph-entry-error">{graphWindowError}</span> : null}
-  </div>;
   const localPrHeaderAction = !isSelectedSessionReadOnly && isSelectedWorkspaceAvailable && selectedSession.sessionKind === "default" && withmateApi ? (
-    <div className="session-window-control-group session-graph-entry">
+    <div className="session-window-control-group session-local-pr-entry">
       <button type="button" className="drawer-toggle compact secondary" aria-label="Pull Requests" disabled={localPrOpening} aria-busy={localPrOpening || undefined}
         onClick={() => {
           setLocalPrError("");
@@ -2214,11 +2144,11 @@ export default function AgentSessionWindowApp() {
             .catch((cause: unknown) => setLocalPrError(cause instanceof Error ? cause.message : String(cause)))
             .finally(() => setLocalPrOpening(false));
         }}><ButtonContent busy={localPrOpening}>Pull Requests</ButtonContent></button>
-      {localPrError ? <span role="alert" className="session-graph-entry-error">{localPrError}</span> : null}
+      {localPrError ? <span role="alert" className="session-local-pr-entry-error">{localPrError}</span> : null}
     </div>
   ) : null;
   const chatHeaderFeature = sessionHeader.buildChatHeader({
-    actions: <>{graphHeaderActions}{localPrHeaderAction}</>,
+    actions: localPrHeaderAction,
     isRunning: isSelectedSessionRunning,
     isReadOnly: isSelectedSessionReadOnly,
     isPinned: selectedSession.isPinned === true,
@@ -2426,7 +2356,6 @@ export default function AgentSessionWindowApp() {
     glossaryAnnotationMatcher,
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
-  const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
   const feedbackLastUserSeq = resolveRetrySource({ sessionId: renderedSession.id, messages: renderedSession.messages,
     latestUserMessage: activeAuxiliarySession ? null : selectedSession.latestUserMessage, latestTurn: null, runState: "error" })?.userMessageSeq ?? null;
   const feedbackIncarnation = activeAuxiliarySession?.createdAt ?? getSessionIncarnationId(selectedSession);
@@ -2459,12 +2388,12 @@ export default function AgentSessionWindowApp() {
     onRecheckWorkspaceAvailability: () => {
       setWorkspaceAvailabilityCheckRevision((current) => current + 1);
     },
-    inlinePathFeedback: inlinePathError?.ownerSessionId === inlinePathFeedbackOwnerSessionId
+    inlinePathFeedback: inlinePathError?.ownerSessionId === renderedSession.id
       ? inlinePathError.message
       : "",
     onDismissInlinePathFeedback: () => {
       inlinePathOperationRevisionRef.current.advance();
-      setInlinePathError((current) => current?.ownerSessionId === inlinePathFeedbackOwnerSessionId ? null : current);
+      setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
     },
     executionOptionsFeedback: executionOptionsFeedback?.ownerId === renderedSession.id
       ? executionOptionsFeedback.message : "",
@@ -2613,7 +2542,6 @@ export default function AgentSessionWindowApp() {
           showDeleteButton: true,
         }}
         concurrentChats={concurrentChats}
-        sideSurface={sessionGraphSurface}
         conversationAttention={conversationAttention}
         providerQuota={isAuxiliaryTargetUnavailable ? null : <ProviderQuota key={renderedSession.provider} api={withmateApi} providerId={renderedSession.provider} />}
       />

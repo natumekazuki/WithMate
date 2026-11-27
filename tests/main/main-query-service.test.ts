@@ -57,7 +57,7 @@ function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSumma
 // @test-value v2
 // kind = "contract"
 // claim = "Skills、Custom Agents、添付preview、Terminalは準備完了した対象Sessionのworkspaceだけを使い、全一覧を取得しない"
-// oracle = { type = "contract", ref = "Session Graph v7-0-1-issue-coordination / v701-notion-567-main-query-exact" }
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts" }
 // fault = "単体操作で全件取得するか、未準備・不在のSessionのworkspaceを使う"
 // observable = "実SQLiteを使う操作の対象引数、未準備・不在時の拒否、全件およびdetail取得回数"
 // observation_boundary = "public-boundary"
@@ -197,7 +197,7 @@ test("MainQueryService は bounded summary page と Character usage を clone �
 // @test-value v2
 // kind = "contract"
 // claim = "添付参照のないdraftのpreviewは空の正常previewで追加discoveryを要求しない"
-// oracle = { type = "contract", ref = "Session Graph v7-0-1-issue-coordination / v701-notion-567-main-query-exact" }
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts" }
 // fault = "添付参照のないdraftをdiscoveryへ流して不要な失敗を引き起こす"
 // observable = "空previewとSession summary取得回数"
 // observation_boundary = "public-boundary"

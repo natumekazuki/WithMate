@@ -181,7 +181,6 @@ export type WithMateWindowCatalogApi = {
 
 export type WithMateWindowSessionApi = {
   readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
-  readSessionGraph<K extends import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadOperation>(sessionId: string, operation: K, request: import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadRequest<K>): Promise<import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadResult<K>>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;
@@ -370,7 +369,6 @@ export type WithMateWindowSubscriptionApi = {
   subscribeAuxiliarySessionSelection(listener: (payload: AuxiliarySessionSelectionPayload) => void): () => void;
   subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
   subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;
-  subscribeSessionGraph(listener: (sessionId: string) => void): () => void;
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
@@ -400,7 +398,6 @@ export type WithMateWindowCharacterApi = {
 export type WithMateWindowApi =
   & { isClipboardFileBacked(file: unknown): boolean }
   & WithMateHtmlPreviewApi
-  & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
   & import("../coordination/coordination-window-contract.js").CoordinationWindowApi
   & import("../session/session-execution-window-contract.js").SessionExecutionWindowApi
   & WithMateWindowNavigationApi

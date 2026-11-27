@@ -19,13 +19,14 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | Main Session | `sessions_v6`、`session_messages_v6` |
 | Turn Queue | `session_turn_queue_v6` |
 | Files Pin | `session_file_pins_v6` |
-| Session Graph | `session_graphs_v6`、`session_graph_topics_v6`、`session_graph_records_v6`、`session_graph_relations_v6` |
 | Coordination | `coordination_records_v7` |
 | Local Pull Requests | `local_prs_v7`、`local_pr_versions_v7`、`local_pr_comments_v7` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn | `session_turns_v6` |
 
 Mainの`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存行限定の更新はIDだけでなくincarnationを照合する。Auxiliaryは親Sessionに従属し、metadataと順序付きmessage行、artifact詳細を分離する。独立draftの正本は`auxiliary_session_drafts`であり、一覧の最終使用順には会話更新時刻とdraft更新時刻の新しい方を使う。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
+
+Copilot／OpenCodeの明示Reviewerは、Mainでは `sessions_v6.runtime_policy_json.withMateReviewerExplicit`、Auxiliaryでは `auxiliary_sessions.withmate_reviewer_explicit` に保持する。旧データのマークなし／0は未指定であり、保存済みReviewerを明示したものと解釈しない。受付時に捕捉した値は後から書き換えない。
 
 turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設定、message位置、thread、時刻、error summaryを`session_turns_v6`へ保存する。会話本文と操作結果の正本は通常履歴と`MessageArtifact.operationTimeline`であり、軽量messageと重いartifact detailを分け、detailは対象を開いたときに取得する。開始と終端の最小turn保存、取消・失敗判定、Timingとの関連付けは[Session Run Lifecycle](session-run-lifecycle.md)を参照する。
 
@@ -105,14 +106,6 @@ Agent担当が未取得の回答をユーザーへ引き継ぐ場合は、その
 
 詳細取得は起票元の保存identityから共通execution read用の`initiatorTarget`を投影する。Auxiliaryでは現在の親Main identityも同じ読取transactionで解決し、記録自身へ重複保存しない。存在しない記録・明示指定された削除済みCrew／Mainの照会は`COORDINATION_DELETED`としてGUIへ返す。通信失敗や認可失敗をこの終端結果へ変換せず、一時取得失敗と削除済み表示を区別する。
 
-## Session Graph
-
-Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Auxiliaryが共有する。親削除で全記録をcascade削除し、AuxiliaryのCloseでは消さない。構造・競合・MCP・表示の契約は[Session Graph](session-graph.md)を参照する。
-
-起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
-
-Copilot／OpenCodeの明示Reviewerは、Mainでは `sessions_v6.runtime_policy_json.withMateReviewerExplicit`、Auxiliaryでは `auxiliary_sessions.withmate_reviewer_explicit` に保持する。旧データのマークなし／0は未指定であり、保存済みReviewerを明示したものと解釈しない。受付時に捕捉した値は後から書き換えない。
-
 ## Local Pull Requests
 
 PR・提出版・コメント（GUI下書きを含む）・ApprovalはGit common directory単位でStorage Workerが保存する。作成元／投稿者のSession識別は履歴であり、Sessionの削除ではPRをcascade削除しない。既存V6 DBには専用テーブルを追加し、会話・設定・既存データの再作成は要求しない。
@@ -162,7 +155,7 @@ Memory／Affectの専用データは、起動時のstorage更新で退避せず�
 - `memory_recording_frequencies_json`
 - `background_execution_settings_json`
 
-通常Main／Auxiliary、会話・artifact・最小turn、Session Graph、Coordination、Character catalog・定義・snapshot、`project_scopes_v6`、Prompt Templateと共有file／blobは専用破棄の対象外である。元取込file、利用者export（SessionFolder内の`memory-exports/`も含む）、V4 sourceは保持し、破棄済み専用データの再取込元にはしない。製品外のルール・設定・既設CLI登録は清掃しない。再実行では削除済みの専用table・設定・fileを再作成しない。
+通常Main／Auxiliary、会話・artifact・最小turn、Coordination、Character catalog・定義・snapshot、`project_scopes_v6`、Prompt Templateと共有file／blobは専用破棄の対象外である。元取込file、利用者export（SessionFolder内の`memory-exports/`も含む）、V4 sourceは保持し、破棄済み専用データの再取込元にはしない。製品外のルール・設定・既設CLI登録は清掃しない。再実行では削除済みの専用table・設定・fileを再作成しない。
 
 ### 専用データ破棄のfilesystem境界
 

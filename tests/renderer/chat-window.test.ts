@@ -1460,7 +1460,7 @@ test("SessionChatScreen は左右ペインを mounted のまま非表示・操�
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.match(html, /id="session-left-pane" class="session-left-pane-slot is-hidden" aria-hidden="true" inert=""/);
   assert.match(html, /id="session-right-pane" class="session-right-pane-slot is-hidden" aria-hidden="true" inert=""/);
-  assert.match(html, /class="session-central-surface" hidden=""><div class="session-conversation-region"><div>Messages<\/div><\/div><\/div>/);
+  assert.match(html, /class="session-central-surface" hidden=""><div>Messages<\/div><\/div>/);
   assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
   assert.match(html, /<div>Composer<\/div>/);
   assert.match(html, /Latest Command/);

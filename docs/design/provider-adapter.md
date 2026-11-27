@@ -112,19 +112,19 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
-Coding planeのGlossary、[Session Graph](session-graph.md)、[Session操作](session-run-lifecycle.md#bound-session-api)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。通常Turnのendpointは`/mcp/glossary`、`/mcp/session-graph`、`/mcp/session`である。tool schemaは`src-electron/platform/mcp/`、runtime clientは`src-electron/platform/agent-runtime/`に置き、対応するbound CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
+Coding planeのGlossary、[Session操作](session-run-lifecycle.md#bound-session-api)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。通常Turnのendpointは`/mcp/glossary`、`/mcp/session`である。tool schemaは`src-electron/platform/mcp/`、runtime clientは`src-electron/platform/agent-runtime/`に置き、対応するbound CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
-共有runtimeの正本は`src-electron/platform/agent-runtime/`の`runtime-api.ts`、`runtime-client.ts`、`runtime-exchange.ts`、`runtime-turn-admission.ts`、`managed-http-mcp-host.ts`である。既存registryの`runtimeKind: agent-runtime`と`runtimeOwner: RuntimeOwnerSelector`を使い、application instance／generationは`WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID`／`WITHMATE_AGENT_RUNTIME_GENERATION_ID`で渡す。Memory legacy discoveryやfallback admissionは使わず、通常Session／Graph／Glossaryで同じexact owner・短命binding・失効確認を維持する。
+共有runtimeの正本は`src-electron/platform/agent-runtime/`の`runtime-api.ts`、`runtime-client.ts`、`runtime-exchange.ts`、`runtime-turn-admission.ts`、`managed-http-mcp-host.ts`である。既存registryの`runtimeKind: agent-runtime`と`runtimeOwner: RuntimeOwnerSelector`を使い、application instance／generationは`WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID`／`WITHMATE_AGENT_RUNTIME_GENERATION_ID`で渡す。Memory legacy discoveryやfallback admissionは使わず、通常Session／Glossaryで同じexact owner・短命binding・失効確認を維持する。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
-- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認したmanaged名だけを当threadで無効化し、通常Turnでは`withmate-glossary-http`／`withmate-session-graph-http`／`withmate-session-http`を登録する。第三者MCPと永続configは変更しない。
+- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認したmanaged名だけを当threadで無効化し、通常Turnでは`withmate-glossary-http`／`withmate-session-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
 - OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用できる。
 
-内側のextension exchangeはContent-Lengthが通常body上限以内なら共通枠（既定8件・各256KiB）、大きい／長さ不明なら既存34MiB・1件枠で受信する。宣言が小さくても実byte上限は拡張しない。小さいGlossaryも認証後に大要求と同じ1件枠を取得してからdispatchする。Session／Graphの小さい通常readは並列に実行でき、既存総受信容量とGlossary同時数は増やさない。Content-Lengthだけを先送りし、credentialと本文は103によるexact owner確認後に送る。
+内側のextension exchangeはContent-Lengthが通常body上限以内なら共通枠（既定8件・各256KiB）、大きい／長さ不明なら既存34MiB・1件枠で受信する。宣言が小さくても実byte上限は拡張しない。小さいGlossaryも認証後に大要求と同じ1件枠を取得してからdispatchする。Sessionの小さい通常readは並列に実行でき、既存総受信容量とGlossary同時数は増やさない。Content-Lengthだけを先送りし、credentialと本文は103によるexact owner確認後に送る。
 
 provider adapterは共通のnative実行を所有し、用途別の背景SDK engineは持たない。Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 

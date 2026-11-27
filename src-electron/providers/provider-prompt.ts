@@ -16,7 +16,7 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
 
   return [
     "# Output Boundary", "",
-    "会話・他Sessionへのmessage・Session Graph・非公開メモには自身のCharacter表現を使う。コード・文書・提出用草案などの成果物は、明示指定がなければrepository・提出先の文体と形式を優先し、Character表現を混ぜない。",
+    "会話・他Sessionへのmessage・非公開メモには自身のCharacter表現を使う。コード・文書・提出用草案などの成果物は、明示指定がなければrepository・提出先の文体と形式を優先し、Character表現を混ぜない。",
   ].join("\n");
 }
 

@@ -4,7 +4,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   BUNDLED_GLOSSARY_CLI_FILE_NAME,
-  BUNDLED_SESSION_GRAPH_CLI_FILE_NAME,
   BUNDLED_SESSION_CLI_FILE_NAME,
 } from "../../src-shared/cli/cli-artifacts.js";
 
@@ -63,20 +62,10 @@ export async function buildWithMateGlossaryCli(
   });
 }
 
-export async function buildWithMateSessionGraphCli(
-  outputDirectoryPath = defaultOutputDirectoryPath,
-): Promise<string> {
-  return buildManagedCli({
-    entryPath: path.join(repositoryRootPath, "src-cli", "session-graph", "withmate-session-graph.ts"),
-    outputDirectoryPath,
-    outputFileName: BUNDLED_SESSION_GRAPH_CLI_FILE_NAME,
-  });
-}
-
 export async function buildWithMateSessionCli(outputDirectoryPath = defaultOutputDirectoryPath): Promise<string> {
   return buildManagedCli({ entryPath: path.join(repositoryRootPath, "src-cli", "session", "withmate-session.ts"), outputDirectoryPath, outputFileName: BUNDLED_SESSION_CLI_FILE_NAME });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await Promise.all([buildWithMateGlossaryCli(), buildWithMateSessionGraphCli(), buildWithMateSessionCli()]);
+  await Promise.all([buildWithMateGlossaryCli(), buildWithMateSessionCli()]);
 }

@@ -10,7 +10,6 @@ import { normalizeSessionSidePane, type SessionSidePane } from "../../src-shared
 import { normalizeModelAvailability } from "../../src-shared/settings/model-availability.js";
 import { normalizeWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
-import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { selectionPolicySchema, worktreePolicySchema, worktreeRepositoryRuleSchema, type SelectionPolicy, type WorktreePolicy, type WorktreeRepositoryRule } from "../../src-shared/session/session-operating-policy.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
@@ -608,7 +607,7 @@ export class AppSettingsStorage {
   resetSettings(): AppSettings {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db.prepare("DELETE FROM app_settings WHERE setting_key <> ?").run(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY);
+      this.db.exec("DELETE FROM app_settings");
       this.ensureSessionSidePaneDefault();
       this.ensureDefaults();
       this.db.exec("COMMIT");

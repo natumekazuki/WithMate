@@ -27,7 +27,7 @@ ADR 020・021・024・027のCLI専用operator権限、一般Memoryの一律bindi
 
 runtime credential、binding registry、generation、grant、captured turn、共有HTTP MCPの接続認証は維持する。application boundary、保存済みデータとmutationの整合契約も維持する。旧CLI explicit identity入力の互換経路は設けず、両入口の公開schemaへ統一する。
 
-現行の操作契約は[Memory／Affect](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/runbooks/memory-affect-mcp.md)、[Glossary](../runbooks/repository-glossary.md)、[Session Graph](../design/session-graph.md)、継続的な変更規約は[Development Workflow](../runbooks/development-workflow.md)を正本とする。
+現行の操作契約は[Memory／Affect](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/runbooks/memory-affect-mcp.md)、[Glossary](../runbooks/repository-glossary.md)、[Session Graph](https://github.com/natumekazuki/WithMate/blob/daad8431658b7d3fbfbd06ba5e3deca1b5f3d334/docs/design/session-graph.md)、継続的な変更規約は[Development Workflow](../runbooks/development-workflow.md)を正本とする。
 
 ## Alternatives
 

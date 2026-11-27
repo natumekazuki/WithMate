@@ -3,12 +3,9 @@ import type { WorkerOptions } from "node:worker_threads";
 import { existsSync } from "node:fs";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
-import { SessionGraphStorageV6 } from "../session-graph/session-graph-storage-v6.js";
 import { SessionExecutionReadStorage } from "./session-execution-read.js";
 import { CoordinationStorageV7 } from "../coordination/coordination-storage-v7.js";
 import { LocalPrStorage, type LocalPrStore } from "../local-pr/local-pr-store.js";
-import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphStorageAuthority } from "../../src-shared/session-graph/session-graph-contract.js";
-import type { SessionGraphStorageOperation, SessionGraphStorageRequest, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -44,7 +41,6 @@ type AsyncStore<T extends object> = {
 const STORE_METHODS = {
   localPr: ["listLocalPrs", "readLocalPr", "createLocalPr", "saveLocalPr"],
   coordination: ["execute", "deliveryTarget", "readStatus"],
-  sessionGraph: ["execute"],
   execution: ["execute"],
   session: [
     "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
@@ -141,7 +137,6 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
   const queue = new SessionTurnQueueStorageV6(data.dbPath, changed);
-  const sessionGraph = new SessionGraphStorageV6(data.dbPath);
   const execution = new SessionExecutionReadStorage(data.dbPath);
   const coordination = new CoordinationStorageV7(data.dbPath);
   const localPr = new LocalPrStorage(data.dbPath);
@@ -153,7 +148,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const catalog = new ModelCatalogStorage(data.dbPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
-  instances = { session, turn, queue, sessionGraph, execution, coordination, localPr, auxiliary, character, settings, catalog, mate, prompt };
+  instances = { session, turn, queue, execution, coordination, localPr, auxiliary, character, settings, catalog, mate, prompt };
   const currentInstances = instances;
 
   return {
@@ -187,7 +182,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "settings" || input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -242,18 +237,17 @@ export function createV6StorageWorkerBundle(options: {
       get: (_target, property: string) => {
         if (!methods.includes(property as never)) return undefined;
         return (...args: unknown[]) => {
-          const graphMutation = store === "sessionGraph" && args[1] === "apply";
           const coordinationInput = store === "coordination" && property === "execute"
             ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
           const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
             && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
-          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || graphMutation || store === "coordination" || store === "execution" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || store === "coordination" || store === "execution" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
             property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
-            mutation: store === "coordination" ? coordinationMutation : store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
+            mutation: store === "coordination" ? coordinationMutation : MUTATIONS.has(property),
             operation: `${store}.${property}`,
           });
         };
@@ -276,9 +270,6 @@ export type V6StorageWorkerBundle = {
     localPr: LocalPrStore;
     coordination: AsyncStore<CoordinationStorageV7>;
     execution: AsyncStore<SessionExecutionReadStorage>;
-    sessionGraph: {
-      execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[], authority?: SessionGraphStorageAuthority): Promise<SessionGraphStorageResult<K>>;
-    };
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
     queue: AsyncStore<SessionTurnQueueStorageV6>;

@@ -39,7 +39,6 @@ async function fixture(t: TestContext) {
       user_message TEXT NOT NULL, assistant_message TEXT NOT NULL
     );
     INSERT INTO character_affect_turn_settlements VALUES ('pending','char','session','pending','discard user','discard assistant');
-    INSERT INTO app_settings VALUES ('session_graph_agent_origin_contract_initialized_at','now','now');
     INSERT INTO app_settings VALUES ('v4_to_v6_release_data_migrated_at','now','now');
     INSERT INTO app_settings VALUES ('session_selection_policy_json','{}','now');
     INSERT INTO app_settings VALUES ('memory_generation_enabled','true','now');
@@ -58,9 +57,6 @@ async function fixture(t: TestContext) {
     INSERT INTO session_messages_v6 (session_id,seq,role,body,created_at) VALUES ('session',0,'user','{"text":"kept history"}','now');
     INSERT INTO auxiliary_sessions (id,parent_session_id,created_at,updated_at,title) VALUES ('aux','session','now','now','Keep auxiliary');
     INSERT INTO auxiliary_session_messages VALUES ('aux',0,'user','{"text":"kept auxiliary"}',NULL,'now');
-    INSERT INTO session_graphs_v6 VALUES ('session',4);
-    INSERT INTO session_graph_topics_v6 VALUES ('session','topic','Keep topic','now','now');
-    INSERT INTO session_graph_records_v6 VALUES ('session','record','topic','requirement','{}','now');
     INSERT INTO coordination_records_v7 VALUES ('coordination','session','session','main','incarnation',NULL,'user','open','{}');
     INSERT INTO prompt_templates VALUES ('prompt','Keep prompt','Keep body','now','now');
     INSERT INTO memory_entries_v6 (id,owner_type,owner_id,scope_type,scope_id,kind,title,body,body_sha256,preview,state,source_type,created_at,updated_at)
@@ -81,7 +77,7 @@ async function fixture(t: TestContext) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "更新起動は廃止専用データだけを退避せず破棄し、通常履歴・Character・Graph・Coordination・Projectを保持して再起動できる"
+// claim = "更新起動は廃止専用データだけを退避せず破棄し、通常履歴・Character・Coordination・Projectを保持して再起動できる"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md: Memory/Affect廃止と共有保存データの継続" }
 // fault = "起動更新が専用table/設定/暗号添付を残す、再作成する、または共有データを削除する"
 // observable = "廃止tableの不在、本番bootstrap後と再実行後の共有列の値と追加Reviewer列の既定値、設定とfileの存否/内容"
@@ -115,7 +111,7 @@ test("released data retirement preserves shared storage across repeated bootstra
       const names = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name);
       assert.deepEqual(EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)), [], "retired private tables must not survive");
       assert.deepEqual(db.prepare("SELECT setting_key FROM app_settings ORDER BY setting_key").all().map((row) => row.setting_key),
-        ["companion_removal_completed_at", "session_graph_agent_origin_contract_initialized_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
+        ["companion_removal_completed_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
       for (const [table, rows] of Object.entries(f.shared)) {
         const actual = db.prepare(`SELECT * FROM ${table}`).all();
         assert.deepEqual(actual, table === "auxiliary_sessions"

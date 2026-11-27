@@ -234,16 +234,11 @@ import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossary-operation-schema.js";
-import { getSessionGraphAgentRuntimeOperations } from "../src-shared/session-graph/session-graph-operation-schema.js";
-import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from "./session-graph/session-graph-application-service.js";
-import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { SessionManagementApplication, SessionManagementError } from "./session/session-management-application.js";
 import { SessionOperatingPolicyService } from "./session/session-operating-policy-service.js";
 import { createSessionManagementScopeReader, SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
 import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
 import { getModelDisabledReason } from "../src-shared/settings/model-availability.js";
-import { notifySessionGraphWindows, SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
-import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
 import { registerSessionRoleHandlers } from "./ipc/session-role.js";
 import { registerSessionExecutionHandlers } from "./ipc/session-execution.js";
 import { executionOperationResultSchemas } from "../src-shared/session/session-execution-read.js";
@@ -259,7 +254,6 @@ import { enqueueLocalPrDiscussion } from "./local-pr/local-pr-session-bridge.js"
 import type { LocalPrInput, LocalPrResult } from "../src-shared/local-pr/local-pr-contract.js";
 import type { SessionTarget } from "../src-shared/session/session-target.js";
 import { ChildSessionCreationRejectedError } from "./session/session-storage-errors.js";
-import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { MainStoreContext } from "./app/main-store-context.js";
 import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -267,7 +261,6 @@ import {
   WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT,
   WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
-  WITHMATE_SESSION_GRAPH_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_TERMINAL_EVENT,
 } from "../src-shared/ipc/withmate-ipc-channels.js";
@@ -709,88 +702,6 @@ async function ensureSessionGlossarySubscription(sessionId: string): Promise<voi
 }
 
 const providerAgentRuntimeTurns = new ProviderAgentRuntimeTurnCoordinator();
-async function resolveSessionGraphSession(sessionId: string, source?: { kind: "main" | "auxiliary"; incarnationId?: string }): Promise<ResolvedSessionGraphSession | null> {
-  const generation = mainStoreContext.storageWorker;
-  const sessions = requireSessionStorage();
-  if (!generation || databaseMaintenanceRequested || !sessions.getSessionMetadata) return null;
-  const main = source?.kind === "auxiliary" ? null : await sessions.getSessionMetadata(sessionId);
-  const auxiliary = source?.kind === "main" ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
-  if (main && auxiliary) return null;
-  const parentMetadata = main ?? (auxiliary ? await sessions.getSessionMetadata(auxiliary.parentSessionId) : null);
-  if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !parentMetadata) return null;
-  const parent = parentMetadata.summary;
-  const root = await sessions.getSessionSummary?.(parent.rootSessionId ?? parent.id);
-  if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !root) return null;
-  const subject = auxiliary ?? parent;
-  const subjectSource = { kind: auxiliary ? "auxiliary" as const : "main" as const, incarnationId: auxiliary?.createdAt ?? getSessionIncarnationId(parent) };
-  if (source?.incarnationId && source.incarnationId !== subjectSource.incarnationId) return null;
-  const snapshot = auxiliary?.characterRuntimeSnapshot ?? parentMetadata.characterRuntimeSnapshot;
-  return {
-    owner: { sessionId: root.id, incarnationId: getSessionIncarnationId(root) },
-    source: subjectSource,
-    identity: {
-      sessionId: subject.id,
-      sessionTitle: auxiliary ? auxiliary.title : parent.taskTitle,
-      role: auxiliary ? "auxiliary" : "main",
-      character: {
-        id: subject.characterId ?? parent.characterId,
-        name: snapshot?.name ?? parent.character,
-        icon: subject.characterIconPath ?? snapshot?.iconFilePath ?? parent.characterIconPath,
-        theme: snapshot?.theme ? { main: snapshot.theme.main, sub: snapshot.theme.sub } : auxiliary ? undefined : parent.characterThemeColors,
-      },
-    },
-    providerId: mainStoreContext.executionSelections.apply(subject).provider,
-    generation,
-  };
-}
-const sessionGraphApplicationService = new SessionGraphApplicationService({
-  getStore: () => {
-    if (!mainStoreContext.storageWorker || databaseMaintenanceRequested) throw new Error("Session Graph storage is unavailable.");
-    return mainStoreContext.storageWorker.stores.sessionGraph;
-  },
-  resolveSession: resolveSessionGraphSession,
-});
-const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
-  application: sessionGraphApplicationService,
-  createWindow: () => mainWindowComposition.createCursorPlacedWindow({ width: 1100, height: 780, minWidth: 600, minHeight: 480, title: "Session Graph" }),
-  load: (window, token) => requireWindowEntryLoader().loadSessionGraphEntry(window, token),
-  token: () => crypto.randomUUID(),
-  title: (window, title) => window.setTitle(title),
-  changed: () => {
-    const home = mainWindowRuntime.getAuxWindowService().getHomeWindow();
-    if (home && !home.isDestroyed() && !home.webContents.isDestroyed() && !home.webContents.isCrashed()) home.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT);
-  },
-  notify: sendSessionGraphChanged,
-});
-function logSessionGraphNotificationFailure(error: unknown): void {
-  writeAppLog({ level: "warn", kind: "session-graph.notification-failed", process: "main", message: "Crew Session Graph notification failed", error: appLogService.errorToLogError(error) });
-}
-function sendSessionGraphChanged(window: BrowserWindow, sessionId: string): void {
-  if (window.isDestroyed() || window.webContents.isDestroyed() || window.webContents.isCrashed()) return;
-  try {
-    window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
-  } catch (error) {
-    logSessionGraphNotificationFailure(error);
-  }
-}
-sessionGraphApplicationService.subscribe((change) => {
-  const generation = mainStoreContext.storageWorker;
-  const storeOwner = mainStoreContext.activePersistentStoreOwner;
-  if (!generation || !storeOwner || generation !== change.generation || databaseMaintenanceRequested) return;
-  void notifySessionGraphWindows(change, {
-    sessionStorage: generation.stores.session,
-    sessionWindows: requireSessionWindowBridge(),
-    graphWindows: sessionGraphWindowService,
-    isCurrent: () => mainStoreContext.storageWorker === generation
-      && mainStoreContext.activePersistentStoreOwner === storeOwner && !databaseMaintenanceRequested,
-    send: sendSessionGraphChanged,
-  }).catch(logSessionGraphNotificationFailure);
-});
-const sessionGraphRuntimeService = new SessionGraphRuntimeService({
-  applicationService: sessionGraphApplicationService,
-  bindingRegistry: agentRuntimeBindingRegistry,
-  providerAgentRuntimeTurns,
-});
 const pendingSourceDisplays = new Map<string, Map<string, string>>();
 function sourceDisplayTurnKey(sessionId: string, incarnationId: string, turnId: string): string {
   return JSON.stringify([sessionId, incarnationId, turnId]);
@@ -1064,15 +975,6 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
   }),
 });
 
-function listPreviewWindowsIncludingGraphs() {
-  const groups = requireMainWindowFacade().listFilePreviewWindows();
-  for (const graph of sessionGraphWindowService.list()) {
-    let group = groups.find((candidate) => candidate.ownerSessionId === graph.ownerSessionId);
-    if (!group) { group = { ownerSessionId: graph.ownerSessionId, previews: [] }; groups.push(group); }
-    group.previews.push({ token: graph.token, kind: "session-graph", title: graph.title, state: graph.state });
-  }
-  return groups;
-}
 const glossaryRuntimeService = new GlossaryRuntimeService({
   applicationService: glossaryApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
@@ -1156,12 +1058,13 @@ const startWithMateApprovalReview: StartWithMateApprovalReview = ({ selection, b
 };
 
 
+/** Issues tool authority only for the saved identity of the running Main or Auxiliary. */
 async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "incarnationId" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
   actorSource: AgentRuntimeSourceRef = { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
 ) {
-  const sourceKind = actorSource.kind;
+  const owner = requireActivePersistentStoreOwnerForFactory("Provider runtime binding");
   let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
   try {
     glossaryAuthority = projectGlossaryCheckoutAuthority(
@@ -1170,15 +1073,23 @@ async function issueProviderAgentRuntimeBinding(
   } catch {
     // Non-Git workspaces do not receive glossary authority.
   }
-  const auxiliary = sourceKind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id) : null;
-  if (sourceKind === "auxiliary" && !auxiliary) throw new Error("Provider runtime binding requires a saved Auxiliary Session identity.");
-  const main = await requireSessionStorage().getSessionSummary?.(auxiliary?.parentSessionId ?? session.id);
+  // Resolve the saved source after checkout inspection and reject replaced Sessions.
+  assertPersistentStoreOwnerIsActive(owner, "Provider runtime binding");
+  const auxiliary = actorSource.kind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id) : null;
+  if (actorSource.kind === "auxiliary" && (!auxiliary || auxiliary.createdAt !== actorSource.incarnationId || auxiliary.parentSessionId !== actorSource.parent.sessionId)) {
+    throw new Error("Provider runtime binding requires the current saved Auxiliary Session identity.");
+  }
+  const main = await owner.sessionStorage.getSessionSummary?.(auxiliary?.parentSessionId ?? session.id);
+  assertPersistentStoreOwnerIsActive(owner, "Provider runtime binding");
+  if (databaseMaintenanceRequested) throw new Error("Provider runtime binding is unavailable during database maintenance.");
   if (!main) throw new Error("Provider runtime binding requires a saved Main Session identity.");
+  const mainIncarnationId = getSessionIncarnationId(main);
+  if (mainIncarnationId !== (actorSource.kind === "main" ? actorSource.incarnationId : actorSource.parent.incarnationId)) {
+    throw new Error("Provider runtime binding requires the current saved Main Session incarnation.");
+  }
   const sessionIdentity = auxiliary
-    ? { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, mainSessionId: main.id, mainIncarnationId: getSessionIncarnationId(main) }
-    : { kind: "main" as const, sessionId: main.id, incarnationId: getSessionIncarnationId(main) };
-  const graphSession = await resolveSessionGraphSession(session.id, { kind: sourceKind, incarnationId: sessionIdentity.incarnationId });
-  if (!graphSession) throw new Error("Provider runtime binding requires a current Session Graph owner.");
+    ? { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, mainSessionId: main.id, mainIncarnationId }
+    : { kind: "main" as const, sessionId: main.id, incarnationId: mainIncarnationId };
   const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
     actorSource,
@@ -1189,12 +1100,9 @@ async function issueProviderAgentRuntimeBinding(
       sessionKind: session.sessionKind,
       sessionIdentity,
       sessionWorkspacePath: session.workspacePath,
-      sessionGraphOwner: graphSession.owner,
-      sessionGraphSource: graphSession.source,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
     operationGrants: [
-      ...getSessionGraphAgentRuntimeOperations(),
       ...getSessionAgentRuntimeOperations(),
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
@@ -1217,7 +1125,7 @@ async function startAgentRuntimeApiBestEffort(): Promise<void> {
       applicationInstanceId, buildChannel: runtimeBuildChannel, processStartedAt,
       agentRuntimeBindingRegistry, providerAgentRuntimeTurns,
       routeAgentRuntimeExtension: async (request) => await sessionManagementRuntimeService.route(request)
-        ?? await sessionGraphRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
+        ?? glossaryRuntimeService.route(request),
     });
   } catch (error) {
     writeAppLog({ level: "warn", kind: "agent-runtime.start-failed", process: "main",
@@ -1640,12 +1548,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   return openSessionWindow(parent.id, auxiliary.id);
                 },
               });
-              registerSessionGraphWindowHandlers(ipc, {
-                service: sessionGraphWindowService,
-                resolveWindow: (sender) => BrowserWindow.fromWebContents(sender),
-                sessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
-                openReference: (sessionId, target, guard) => sessionFileExplorerRuntime.getPreview().open({ kind: "link", sessionId, target }, guard),
-              });
               if (!terminalService) throw new Error("Terminal service is unavailable.");
               registerTerminalHandlers(ipc, terminalService);
               registerHtmlPreviewHandlers(ipc, {
@@ -1709,7 +1611,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openCharacterEditorWindow,
                 openDiffWindow,
                 listSessionFilePreviewWindows: async () => Promise.all(
-                  listPreviewWindowsIncludingGraphs().map(async (group) => ({
+                  requireMainWindowFacade().listFilePreviewWindows().map(async (group) => ({
                     ...group,
                     session: await getDisplaySessionSummary(group.ownerSessionId),
                   })),
@@ -1718,9 +1620,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   BrowserWindow.fromWebContents(event.sender) ?? null,
                   request,
                 ),
-                focusSessionFilePreviewWindow: (token) => { requireMainWindowFacade().focusFilePreviewWindow(token); sessionGraphWindowService.focus(token); },
-                closeSessionFilePreviewWindow: (token) => { requireMainWindowFacade().closeFilePreviewWindow(token); sessionGraphWindowService.close(token); },
-                closeSessionFilePreviewWindows: (ownerSessionId) => { requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId); sessionGraphWindowService.closeOwner(ownerSessionId); },
+                focusSessionFilePreviewWindow: (token) => requireMainWindowFacade().focusFilePreviewWindow(token),
+                closeSessionFilePreviewWindow: (token) => requireMainWindowFacade().closeFilePreviewWindow(token),
+                closeSessionFilePreviewWindows: (ownerSessionId) => requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId),
                 isFilePreviewWindow: (window, sessionId) =>
                   requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
                 getFilePreviewWindowResource: (window, sessionId, representation) =>
@@ -1866,7 +1768,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 searchSessionGlossary: (sessionId, request) =>
                   glossarySessionProjectionService.search(sessionId, request),
                 ensureSessionGlossarySubscription,
-                readSessionGraph: (sessionId, operation, request) => sessionGraphApplicationService.read(sessionId, operation, request),
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionFilePins: (sessionId) => createSessionFileExplorerService().listSessionFilePins(sessionId),
@@ -3137,13 +3038,11 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         },
         closeSessionWindow: (sessionId) => {
           requireSessionWindowBridge().forgetSessionForMonitor(sessionId);
-          sessionGraphWindowService.closeOwner(sessionId);
           localPrWindowService.close(sessionId);
           requireSessionWindowBridge().closeSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },
         discardSessionWindow: (sessionId) => {
-          sessionGraphWindowService.closeOwner(sessionId);
           localPrWindowService.close(sessionId);
           requireSessionWindowBridge().discardSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
@@ -3799,7 +3698,6 @@ function hasRunningSessions(): boolean {
 }
 
 function closeResetTargetWindows(): void {
-  sessionGraphWindowService.closeAll();
   localPrWindowService.close();
   requireMainWindowFacade().closeResetTargetWindows();
 }
@@ -4223,7 +4121,6 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
-    sessionGraphWindowService.closeAll();
     localPrWindowService.close();
     sessionObservabilityService?.dispose();
     terminalService?.releaseAll();

@@ -36,10 +36,6 @@ export class WindowEntryLoader {
     await this.load(window, "file-preview.html", search);
   }
 
-  async loadSessionGraphEntry(window: WindowLike, token: string): Promise<void> {
-    await this.load(window, "session-graph.html", `?token=${encodeURIComponent(token)}`);
-  }
-
   /** Load the isolated PR renderer without passing repository or actor identity in its URL. */
   async loadLocalPrEntry(window: WindowLike): Promise<void> {
     await this.load(window, "local-pr.html", "");

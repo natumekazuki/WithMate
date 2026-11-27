@@ -349,7 +349,7 @@ it("routes configured broker reviews without falling back to manual on an unavai
     let closed = 0;
     const binding = { bindingId: "source", bindingReference: "source-reference", providerId: provider,
       executionGeneration: "source-generation", transport: "env", expiresAt: null, turnCapability: "source-turn",
-      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "", sessionGraphUrl: "", token: "source-token" } } as const;
+      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "", token: "source-token" } } as const;
     let live = createLiveRunState({ sessionId: session.id });
     const approvals = new SessionApprovalService({
       updateLiveSessionRun: (_id, update) => {

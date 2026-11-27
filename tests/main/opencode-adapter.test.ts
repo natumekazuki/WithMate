@@ -674,12 +674,12 @@ it("OpenCode ignores interaction answers resolved after root completion", async 
 it("OpenCode keeps per-turn managed MCP tokens at an explicit native location", async () => {
   const turns = [input(), input()];
   turns.forEach((turn, index) => { turn.agentRuntimeBinding = { providerId: "opencode", bindingId: `binding-${index}`, bindingReference: `secret-binding-${index}`, executionGeneration: `generation-${index}`, transport: "env", expiresAt: null,
-    managedMcp: { token: `secret-token-${index}`,  glossaryUrl: "http://localhost/glossary", sessionGraphUrl: "http://localhost/session-graph" } }; });
+    managedMcp: { token: `secret-token-${index}`, glossaryUrl: "http://localhost/glossary", sessionUrl: "http://localhost/session" } }; });
   const fixtures = turns.map((turn) => fixture(turn));
   await Promise.all(fixtures.map((run, index) => run.adapter.runSessionTurn(turns[index])));
   fixtures.forEach((run, index) => {
     const expectedUrls: Record<string, string> = {
-      "withmate-glossary": "http://localhost/glossary", "withmate-session-graph": "http://localhost/session-graph",
+      "withmate-glossary": "http://localhost/glossary", "withmate-session": "http://localhost/session",
     };
     assert.deepEqual(run.mcpRegistrations.map((registration) => registration.server).sort(), Object.keys(expectedUrls).sort());
     for (const registration of run.mcpRegistrations) {

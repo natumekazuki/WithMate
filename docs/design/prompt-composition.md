@@ -14,7 +14,7 @@ system側は次の順序とする。
 4. `WithMate Local PR`
 5. `Session Role`
 
-`Output Boundary`は、会話・他Sessionへのmessage・Session Graph・非公開メモで自身のCharacter表現を使い、コード・文書・提出用草案等では明示指定がなければrepository・提出先の文体と形式を優先する2文とする。Character設定OFFでもsnapshotのある通常Sessionには残す。folder用途は共有資料とSession固有の添付・一時物の保存先を1文で示す。path表示はfilesystem grantを追加せず、認可は既存allowlistとadapterが所有する。
+`Output Boundary`は、会話・他Sessionへのmessage・非公開メモで自身のCharacter表現を使い、コード・文書・提出用草案等では明示指定がなければrepository・提出先の文体と形式を優先する2文とする。Character設定OFFでもsnapshotのある通常Sessionには残す。folder用途は共有資料とSession固有の添付・一時物の保存先を1文で示す。path表示はfilesystem grantを追加せず、認可は既存allowlistとadapterが所有する。
 
 Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerから`auxiliary`を渡す。Role名以外の分担・報告方針やユーザー管理ルールを注入・同期しない。
 

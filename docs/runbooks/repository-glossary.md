@@ -33,7 +33,7 @@ fileが`invalid`、`unsupported`、`watch-error`、`missing`になった場合�
 
 WithMateから起動したprovider Sessionではmanaged `withmate-glossary` Skillを利用できる。公開operationは`list-targets`、`list`、`search`、`get`、`create`、`create-batch`、`update`、`delete`、`validate`の9操作である。MCPは`glossary.list_targets`、`glossary.create_batch`のように名前を対応させ、CLIと同じ入力意味・結果・エラー・保存契約を使う。operation schemaは`src-shared/glossary/glossary-operation-schema.ts`、利用上の判断はmanaged Skillの`SKILL.md`を参照する。
 
-MCPはMainの共有localhost HTTP listenerの`/mcp/glossary`へ当turnの短命tokenで接続する。providerの一時設定へ注入し、永続設定やpromptへtokenを保存しない。Session／Session Graphとlistenerを共有するが、protocol stateとapplication boundaryは独立している。手動stdio MCPも同じcanonical tool定義を利用する。
+MCPはMainの共有localhost HTTP listenerの`/mcp/glossary`へ当turnの短命tokenで接続する。providerの一時設定へ注入し、永続設定やpromptへtokenを保存しない。Sessionとlistenerを共有するが、protocol stateとapplication boundaryは独立している。手動stdio MCPも同じcanonical tool定義を利用する。
 
 CLIと手動stdio MCPも起動中のWithMate runtimeへ接続し、既存のlocal runtime認証・instance/generation照合を通る。CLIがfileへ直接書き込む経路はなく、MCPと同じapplication serviceを使用する。
 

@@ -13,6 +13,7 @@ import {
 } from "./database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
+  RETIRED_SESSION_GRAPH_TABLES,
   ensureV6Schema,
   isValidV6Database,
   readV6DatabaseUserVersion,
@@ -40,7 +41,9 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   assertRetiredMemoryAffectDatabasePath(dbPath);
   const db = openAppDatabase(dbPath);
   const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name));
-  const mustPreserveExisting = tables.has("audit_events_v6") || RETIRED_MEMORY_AFFECT_TABLES.some((name) => tables.has(name));
+  const mustPreserveExisting = tables.has("audit_events_v6")
+    || RETIRED_MEMORY_AFFECT_TABLES.some((name) => tables.has(name))
+    || RETIRED_SESSION_GRAPH_TABLES.some((name) => tables.has(name));
   try {
     ensureV6Schema(db);
   } catch (error) {

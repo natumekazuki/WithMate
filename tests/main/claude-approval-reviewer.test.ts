@@ -18,7 +18,7 @@ function input() {
     binding: { bindingId: "binding", bindingReference: "source-secret", providerId: "opencode", executionGeneration: "generation",
       transport: "env", expiresAt: null, turnCapability: "turn-secret",
       managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "http://127.0.0.1/glossary",
-        sessionGraphUrl: "http://127.0.0.1/graph", token: "managed-secret" } } as const };
+        token: "managed-secret" } } as const };
 }
 
 const unusedSpawn = () => { throw new Error("SDK fixture does not spawn a process"); };
@@ -54,7 +54,7 @@ test("Claude review uses native Auto Review and correlates structured output wit
       assert.equal(options.canUseTool, undefined);
       assert.equal(options.mcpServersDelivery, "initialize");
       assert.deepEqual(options.mcpServers?.["withmate-session"], { type: "http", url: "http://127.0.0.1/session", headers: { "x-withmate-mcp-token": "managed-secret" } });
-      assert.match(JSON.stringify(options.systemPrompt), /do not execute it.*Skip routine development steps.*Session Graph.*WithMate history/s);
+      assert.match(JSON.stringify(options.systemPrompt), /do not execute it.*Skip routine development steps.*WithMate history/s);
       assert.doesNotMatch(JSON.stringify(options.systemPrompt), /-secret/);
       assert.equal(options.outputFormat?.type, "json_schema");
       assert.equal(options.outputFormat.schema.$schema, "http://json-schema.org/draft-07/schema#");

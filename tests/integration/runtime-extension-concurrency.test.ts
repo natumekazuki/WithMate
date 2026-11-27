@@ -118,7 +118,7 @@ function rawCall(
 
 // @test-value v2
 // kind = "contract"
-// claim = "小さいSession/Graph読取の5並列exchangeは同時受理され共通の小要求上限枠を共有する"
+// claim = "小さいSession読取の5並列exchangeは同時受理され共通の小要求上限枠を共有する"
 // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md#V7共有extensionの容量分類" }
 // fault = "小要求をglobal1件で拒否するか共通枠を迂回して上限を超える"
 // observable = "実HTTPの5同時dispatchと全成功、6件目のAgentRuntimeExchangeError(dispatched=false)、解放後の成功"
@@ -126,7 +126,7 @@ function rawCall(
 // scope = "HTTP runtime clientとextension admission（application routeは待機を制御するfixture）"
 // lifecycle = "permanent"
 // @end-test-value
-test("five small Session and Graph calls share the existing normal request pool", async () => {
+test("five small Session calls share the existing normal request pool", async () => {
   const gate = deferred(),
     arrived = deferred();
   let active = 0,
@@ -145,9 +145,9 @@ test("five small Session and Graph calls share the existing normal request pool"
   const paths = [
     "/v1/session/get",
     "/v1/session/get-catalog",
-    "/v1/session-graph/context",
-    "/v1/session-graph/list-topics",
-    "/v1/session-graph/recent",
+    "/v1/session/get-selection-policy",
+    "/v1/session/get-provider-quota",
+    "/v1/session/get-worktree-policy",
   ];
   const calls = paths.map((path) => runtime.call(path));
   const results = Promise.all(calls);

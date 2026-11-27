@@ -276,7 +276,7 @@ provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同
 ## Background Continuation
 
 current 実装では tray 常駐までは行わない。
-全 window が閉じても app process は終了せず、通常Session／Graph／Glossaryの共有runtime API / CLI discovery を維持する。Windows では single instance lock と `second-instance` handler により、Start Menu などから再起動されたときに既存 process の `Home Window` を再表示・focus する。
+全 window が閉じても app process は終了せず、通常Session／Glossaryの共有runtime API / CLI discovery を維持する。Windows では single instance lock と `second-instance` handler により、Start Menu などから再起動されたときに既存 process の `Home Window` を再表示・focus する。
 実行中 session がある場合は `window-all-closed` 時点でも `Home Window` を再表示し、処理の継続を優先する。
 
 ## Persistence Expectations

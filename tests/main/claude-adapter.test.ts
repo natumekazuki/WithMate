@@ -368,7 +368,7 @@ it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", as
       const request = input("", controller.signal);
       request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secrets[0], turnCapability: secrets[1],
         providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
-        managedMcp: {  glossaryUrl: "http://localhost/mcp/glossary", sessionGraphUrl: "http://localhost/mcp/session-graph", token: secrets[2] } };
+        managedMcp: { glossaryUrl: "http://localhost/mcp/glossary", token: secrets[2] } };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
       const prefix = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1);
       const expected = `${(prefix + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
@@ -908,7 +908,7 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   request.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "claude",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
   };
   let seen: Options | undefined;
   let submittedPrompt: unknown;
@@ -920,7 +920,7 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   const output = await adapter.runSessionTurn(request);
   assert.deepEqual(seen?.mcpServers, {
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
-    "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-session": { type: "http", url: "http://127.0.0.1:47891/session", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
   assert.deepEqual(seen?.settingSources, ["user", "project", "local"]);
   assert.notEqual(seen?.strictMcpConfig, true);
@@ -1657,7 +1657,7 @@ it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async 
       request.agentRuntimeBinding = {
         bindingId: "binding", bindingReference: secrets[0], turnCapability: secrets[1], providerId: "claude",
         executionGeneration: "generation", transport: "env", expiresAt: null,
-        managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: secrets[2] },
+        managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", token: secrets[2] },
       };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
       const expected = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10)

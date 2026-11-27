@@ -21,8 +21,8 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - output: `release/` 配下の installer
 - Start Menu shortcut: `WithMate`
 - installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
-- Glossary／Session Graph／Session CLI は install root の `withmate-glossary.cmd`、`withmate-session-graph.cmd`、`withmate-session.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
-- repositoryのartifactはSession Graph・Sessionが`resources/cli/`配下の同名`.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。Glossary以外はSkill catalogへ置かない
+- Glossary／Session CLI は install root の `withmate-glossary.cmd`、`withmate-session.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
+- repositoryのartifactはSessionが`resources/cli/`配下の同名`.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。Glossary以外はSkill catalogへ置かない
 
 ### macOS
 
@@ -30,14 +30,14 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - command: `npm run dist:mac`
 - output: `release/` 配下の `.dmg`
 
-全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Session Graph／Sessionを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSession Graphのhelpは次で確認できる。
+全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Sessionを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSessionのhelpは次で確認できる。
 
 ```sh
 ELECTRON_RUN_AS_NODE=1 /Applications/WithMate.app/Contents/MacOS/WithMate \
-  /Applications/WithMate.app/Contents/Resources/resources/cli/withmate-session-graph.mjs help
+  /Applications/WithMate.app/Contents/Resources/resources/cli/withmate-session.mjs help
 ```
 
-既設の製品外POSIX shim・Windows aliasは撤去時にも清掃しない。installer／uninstallerや起動処理に、廃止した入口の外部登録清掃を追加しない。
+配布するCLI launcherとWindowsAppsへの登録はinstallerが管理する。アプリ起動時に利用者のPOSIX shimやWindows aliasを走査・清掃しない。
 
 ## Script Policy
 

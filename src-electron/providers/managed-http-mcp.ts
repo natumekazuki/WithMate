@@ -3,7 +3,6 @@ import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-bind
 export const WITHMATE_MANAGED_MCP_TOKEN_ENV = "WITHMATE_MANAGED_MCP_TOKEN";
 export const WITHMATE_MANAGED_MCP_TOKEN_HEADER = "x-withmate-mcp-token";
 export const WITHMATE_MANAGED_GLOSSARY_MCP_NAME = "withmate-glossary";
-export const WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME = "withmate-session-graph";
 export const WITHMATE_MANAGED_SESSION_MCP_NAME = "withmate-session";
 
 function managedServerUrls(binding: ProviderAgentRuntimeBindingProjection): [string, string][] {
@@ -11,7 +10,6 @@ function managedServerUrls(binding: ProviderAgentRuntimeBindingProjection): [str
   if (!connection) return [];
   return [
     [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, connection.glossaryUrl],
-    [WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, connection.sessionGraphUrl],
     ...(connection.sessionUrl ? [[WITHMATE_MANAGED_SESSION_MCP_NAME, connection.sessionUrl] as [string, string]] : []),
   ];
 }
@@ -31,7 +29,7 @@ export function buildCodexManagedMcpDisableConfig(effectiveConfig: Record<string
   const configured = effectiveConfig.mcp_servers;
   if (!configured || typeof configured !== "object" || Array.isArray(configured)) return {};
   return Object.fromEntries(
-    [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, WITHMATE_MANAGED_SESSION_MCP_NAME]
+    [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, WITHMATE_MANAGED_SESSION_MCP_NAME]
       .filter((name) => Object.hasOwn(configured, name))
       .map((name) => [name, { enabled: false as const }]),
   );

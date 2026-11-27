@@ -12,15 +12,15 @@ import { buildNewSession, getSessionIncarnationId } from "../../src-shared/sessi
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Worker到着前に失効したturnのSession・履歴・設定・Graph・Coordination操作を拒否し、次turnの正当な操作は通す"
+// claim = "実Worker到着前に失効したturnのSession・履歴・設定・Coordination操作を拒否し、次turnの正当な操作は通す"
 // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
 // fault = "Mainの受付時だけで確認を終えて取消済み要求をWorkerへ適用する、または次turnまで誤拒否する"
-// observable = "各公開storage proxyの失効例外とeffect、保存設定/Directory/Graph revision/Coordination一覧/履歴の状態と次turn結果"
+// observable = "各公開storage proxyの失効例外とeffect、保存設定/Directory/Coordination一覧/履歴の状態と次turn結果"
 // observation_boundary = "public-boundary"
 // scope = "通常storageのtyped proxy・実Worker transport・共有失効状態・実SQLite"
 // lifecycle = "permanent"
 // impact = "取消済みProviderの遅延保存と権限失効後の会話/相談読取を防ぎ、次turnの利用を維持する"
-// distinction = "型検査やadmission単体testではstructured clone後のworker側検査と実DB副作用を確認できないため、5経路を一fixtureで確認する"
+// distinction = "型検査やadmission単体testではstructured clone後のworker側検査と実DB副作用を確認できないため、4経路を一fixtureで確認する"
 // risk_tags = ["authorization", "privacy"]
 // @end-test-value
 test("shared storage checks captured turn admission on arrival without blocking the next turn", async () => {
@@ -48,8 +48,6 @@ test("shared storage checks captured turn admission on arrival without blocking 
       () => worker.stores.session.setSessionAdditionalDirectories(saved.id, incarnationId, [directory]),
       () => worker.stores.session.readSessionHistory(history),
       () => worker.stores.settings.setWorktreeRoot(directory),
-      () => worker.stores.sessionGraph.execute(owner, "apply", { expectedRevision: 0, topics: [{ id: "topic", title: "Work" }] },
-        { sessionId: saved.id, sessionTitle: saved.taskTitle, role: "main" }),
       () => worker.stores.coordination.execute({ actor: { kind: "user" }, request: { operation: "list", crewRootSessionId: saved.id, offset: 0, limit: 10 } }),
     ];
     // Queue all calls before the ready event is handled, then revoke their shared states.
@@ -63,7 +61,6 @@ test("shared storage checks captured turn admission on arrival without blocking 
     await worker.initialize();
     assert.equal((await worker.stores.settings.getWorktreePolicy()).rootPath, null);
     assert.deepEqual((await worker.stores.session.getSessionSummary(saved.id))?.allowedAdditionalDirectories, []);
-    assert.equal((await worker.stores.sessionGraph.execute(owner, "context", {})).revision, 0);
     const beforeCoordination = await worker.stores.coordination.execute({ actor: { kind: "user" }, request: { operation: "list", crewRootSessionId: saved.id, offset: 0, limit: 10 } });
     assert.equal((await worker.stores.session.readSessionHistory(history)).ok, true);
 
@@ -71,7 +68,6 @@ test("shared storage checks captured turn admission on arrival without blocking 
     for (const operation of operations) await runWithRuntimeTurnAdmission({ state: next }, operation);
     assert.equal((await worker.stores.settings.getWorktreePolicy())?.rootPath, directory);
     assert.deepEqual((await worker.stores.session.getSessionSummary(saved.id))?.allowedAdditionalDirectories, [directory]);
-    assert.equal((await worker.stores.sessionGraph.execute(owner, "context", {})).revision, 1);
     assert.equal((await worker.stores.session.readSessionHistory(history)).ok, true);
     assert.deepEqual(await worker.stores.coordination.execute({ actor: { kind: "user" }, request: { operation: "list", crewRootSessionId: saved.id, offset: 0, limit: 10 } }), beforeCoordination);
   } finally {

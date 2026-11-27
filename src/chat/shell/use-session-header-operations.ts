@@ -117,7 +117,7 @@ export function useSessionHeaderOperations(input: {
     const session = input.selectedSession;
     if (!input.api || !session || input.runState === "running") return;
     if (session.sessionKind === "default") { setCrewDeletionOpen(true); return; }
-    if (!window.confirm(`Delete session "${session.taskTitle}"?\n\nIts Aux conversations and Session Graph will also be deleted.`)) return;
+    if (!window.confirm(`Delete session "${session.taskTitle}"?\n\nIts Aux conversations will also be deleted.`)) return;
     await input.api.deleteSession(session.id);
     input.closeWindow();
   }, [input]);

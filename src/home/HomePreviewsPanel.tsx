@@ -76,19 +76,17 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
             </div>
             <div id={childrenId} className="home-monitor-auxiliary-list home-previews-children" aria-label={`Previews for ${title}`} hidden={!isExpanded}>
               {group.previews.map((preview) => {
-                const isGraph = preview.kind === "session-graph";
-                const previewTitle = isGraph ? `Graph · ${preview.title}` : preview.title;
-                const previewDescription = isGraph ? previewTitle : `${preview.title}, ${preview.path}`;
+                const previewDescription = `${preview.title}, ${preview.path}`;
                 const focusPending = pending.has(`focus:${preview.token}`);
                 const closePending = pending.has(`close:${preview.token}`);
                 const openPreviewMenu = (event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) => {
                   if (!closePending && !groupPending) showContextMenu(event, (point) => showPreviewMenu(preview.token, point));
                 };
                 return <button key={preview.token} className="home-monitor-auxiliary-row home-previews-file" type="button"
-                  title={isGraph ? previewTitle : preview.path} aria-label={`Focus preview: ${previewDescription}`} aria-haspopup="menu"
+                  title={preview.path} aria-label={`Focus preview: ${previewDescription}`} aria-haspopup="menu"
                   disabled={focusPending || closePending || groupPending} aria-busy={focusPending || closePending}
                   onClick={() => focus(preview.token)} onContextMenu={openPreviewMenu} onKeyDown={openPreviewMenu}>
-                  <ButtonContent busy={focusPending || closePending}><span className="home-monitor-auxiliary-preview">{previewTitle}</span></ButtonContent>
+                  <ButtonContent busy={focusPending || closePending}><span className="home-monitor-auxiliary-preview">{preview.title}</span></ButtonContent>
                 </button>;
               })}
             </div>

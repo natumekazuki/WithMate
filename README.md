@@ -69,7 +69,7 @@ Viteが`http://localhost:4173`で起動したら、別のターミナルでElect
 npm run electron:dev
 ```
 
-`electron:dev`はElectron main、Glossary／Session Graph／Session CLI、PDF readerをbuildしてから、開発用Electronを起動します。PDF readerの変更には専用buildが必要です。[開発時の更新方法](docs/design/window-architecture.md#pdf-readerの隔離境界)を参照してください。
+`electron:dev`はElectron main、Glossary／Session CLI、PDF readerをbuildしてから、開発用Electronを起動します。PDF readerの変更には専用buildが必要です。[開発時の更新方法](docs/design/window-architecture.md#pdf-readerの隔離境界)を参照してください。
 
 ## 開発と検証
 
@@ -77,7 +77,7 @@ npm run electron:dev
 | --- | --- |
 | `npm run typecheck` | production・開発script・testの型検査と依存境界のcheck |
 | `npm test` | test全体の実行 |
-| `npm run build` | renderer、PDF reader、Electron main、Glossary／Session Graph／Session CLIのbuild |
+| `npm run build` | renderer、PDF reader、Electron main、Glossary／Session CLIのbuild |
 | `npm run electron:start` | 本番向けbuildとローカル起動 |
 
 Windowsで作業branchのsmoke・目視確認を行う場合は、インストール版とデータを分離する[visual check手順](docs/runbooks/development-workflow.md#分離したvisual-check)を使用してください。testの絞り込み、shard、PowerShellの引数指定などは[Development Workflowの検証手順](docs/runbooks/development-workflow.md#検証)を参照してください。
@@ -100,7 +100,7 @@ macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です�
 - `src/`: React renderer、UI state
 - `src-shared/`: Main、preload、renderer、CLIで共有する契約・正規化・定数
 - `src-electron/`: Electron main、preload、IPC、永続化、provider連携
-- `src-cli/`: 配布物に含めるGlossary／Session Graph／Session CLIの入力ソース
+- `src-cli/`: 配布物に含めるGlossary／Session CLIの入力ソース
 - `scripts/`: build、生成、migration、検証用script
 - `tests/`: Node test runner用test
 - `docs/`: 機能ガイド、現行設計、運用手順、ADR、リリースノート

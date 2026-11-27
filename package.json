@@ -104,6 +104,11 @@
     "files": [
       "dist/**",
       "dist-electron/**",
+      "!dist-electron/src-electron/session-graph/**",
+      "!dist-electron/src-shared/session-graph/**",
+      "!dist-electron/src-electron/ipc/session-graph-window.js{,.map}",
+      "!dist-electron/src-electron/preload/session-graph-window-api.js{,.map}",
+      "!dist-electron/src-electron/platform/mcp/withmate-session-graph-{mcp,runtime-client}.js{,.map}",
       "build/icon.ico",
       "LICENSE",
       "package.json",
@@ -136,10 +141,6 @@
       {
         "from": "build/cli/withmate-glossary.cmd",
         "to": "withmate-glossary.cmd"
-      },
-      {
-        "from": "build/cli/withmate-session-graph.cmd",
-        "to": "withmate-session-graph.cmd"
       },
       {
         "from": "build/cli/withmate-session.cmd",

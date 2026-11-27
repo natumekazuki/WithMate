@@ -236,7 +236,7 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
 // @test-value v2
 // kind = "contract"
 // claim = "起票元と記録された回答を識別でき、補助操作からEscapeで戻れ、正確なAuxiliaryへ移動する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination; Session Graph v7-ui-v64-authority" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination" }
 // fault = "起票者や記録された回答を取り違える、icon操作の名前を落とす、補助操作からkeyboardで戻れない、またはAuxiliaryの親を誤って開く"
 // observable = "起票者名/role iconのaccessible name/回答表示、avatar画像、送信iconの操作名、補助操作のEscape後focus・選択値、openSession引数とfilter request"
 // observation_boundary = "component-behavior"

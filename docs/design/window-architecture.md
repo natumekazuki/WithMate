@@ -1,6 +1,6 @@
 # Window Architecture
 
-WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff、File Preview、Session Graphの各Windowを用途ごとに分ける。Windowの生成・再利用・配置はMain Processが所有し、rendererはpreloadの公開APIを通して必要な状態と操作を受け取る。実装境界は[Electron Window Runtime](electron-window-runtime.md)、画面ごとの表示は[Desktop UI](desktop-ui.md)を参照する。
+WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff、File Previewの各Windowを用途ごとに分ける。Windowの生成・再利用・配置はMain Processが所有し、rendererはpreloadの公開APIを通して必要な状態と操作を受け取る。実装境界は[Electron Window Runtime](electron-window-runtime.md)、画面ごとの表示は[Desktop UI](desktop-ui.md)を参照する。
 
 | Window | 責務 |
 | --- | --- |
@@ -11,7 +11,6 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Session Monitor | 開いているSessionと、Windowの有無にかかわらず実行を開始して監視保持したSessionの状態をcompactに監視 |
 | Diff | 広い面でGit差分を比較 |
 | File Preview | 対象fileを独立Windowで表示 |
-| Session Graph | 親Mainの共有Graphを独立した閲覧位置で表示 |
 | Pull Requests | SessionのGitリポジトリで固定版のレビュー、Checks、GUI承認・merge |
 
 Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編集面を持たない。Auxiliaryは専用Windowを作らず、親Session Windowの同じchat shell内でMainと切り替える。親配下の複数Auxiliaryはstable IDで保存し、表示中でないrunも継続・terminal保存する。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
@@ -38,7 +37,7 @@ Home関連の追加・修正では、`HomeApp`への責務集中を抑えるた�
 
 ## Home CrewのデータとWindow操作
 
-Crewの掲載条件は、配下に実際のMain Session Windowが一つ以上あること。Recent Sessions、実行後にMonitorが保持するID、Auxiliary、PreviewやGraph Windowは起点にしない。MainはWindow registryの開いているIDと、SQLite storage Workerの保存済みroot／parent・incarnationを照合する。掲載されたCrewは閉じたroot・中間親・葉を含む。ページは軽量summaryと対応するAuxiliary summaryに限定し、会話本文を読まない。Window一覧・Session要約の無効化またはstorage世代変更で古いcursorを拒否する。Rendererは同じ取得世代の全ページが揃ってから一覧を差し替える。
+Crewの掲載条件は、配下に実際のMain Session Windowが一つ以上あること。Recent Sessions、実行後にMonitorが保持するID、Auxiliary、Preview Windowは起点にしない。MainはWindow registryの開いているIDと、SQLite storage Workerの保存済みroot／parent・incarnationを照合する。掲載されたCrewは閉じたroot・中間親・葉を含む。ページは軽量summaryと対応するAuxiliary summaryに限定し、会話本文を読まない。Window一覧・Session要約の無効化またはstorage世代変更で古いcursorを拒否する。Rendererは同じ取得世代の全ページが揃ってから一覧を差し替える。
 
 一覧とネイティブメニューのIPCはHomeのmain frameに限定する。メニューを選ぶときも、閉じたメンバーを含め現在のSession incarnationを照合する。`Copy Session Title`はその時点の保存タイトル全文を使う。単体の`Close`は既存の個別確認・draft flushを通る。
 
@@ -64,10 +63,8 @@ Homeはapp起動時の管理Windowとして扱う。Sessionは同じSession ID�
 
 共有するSession metadata、Character catalogとWindow registryはMain側の正本から投影し、各Windowの入力途中状態はそのWindowが保持する。Character metadataと定義file、runtime snapshotの境界は[Character Storage](character-storage.md)を参照する。
 
-HomeのPreviewsはMainのSession Window mapとFile Preview／Session GraphのWindow registryを親Session単位に投影する。Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Mainの投影は開いているSessionをWindow map順に置き、previewが0件でも残す。
+HomeのPreviewsはMainのSession Window mapとFile PreviewのWindow registryを親Session単位に投影する。Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Mainの投影は開いているSessionをWindow map順に置き、previewが0件でも残す。
 
 その後ろへSession Windowが閉じていてpreviewが残る親を加える。Home専用hookはこの投影を現在のPreview Window数の降順に並べ、同数では投影の順序を維持する。previewの開閉通知による再取得でも件数と表示順を更新する。Recent Sessionsの取得範囲では一覧を制限しない。
 
 Homeからの前面化は既存Windowの表示内容を変更せず、個別Closeと親単位Closeはpreviewだけを閉じる。通常のCloseでSessionを終了済みにせず、後から同じresourceを再度開ける。Session削除等によるpreviewの終了・再open拒否とは区別する。
-
-独立Graphは閲覧ビューごとに生成し、同じ親・話題の複数Windowを許可する。`SessionGraphWindowService`がtokenと親Mainのincarnation・storage generationを保持し、read-only IPCを認可する。親Windowの通常Closeでは残し、Main削除・reset・app終了で失効する。中央と独立ビューは正本の更新通知を共有し、閲覧位置を同期しない。詳細は[Session Graph](session-graph.md#閲覧ui)を参照する。

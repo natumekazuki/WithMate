@@ -6,7 +6,7 @@ WithMateは、CodexとGitHub Copilotのcoding agentを、選択したCharacter�
 
 1. workspace、session、実行状態、承認、差分、失敗と回復を正しく扱い、coding agentとして成立させる。
 2. Characterの話し方や反応を作業体験へ反映しつつ、ファイル操作、検証結果、権限、repository instructionの正確さを損なわない。
-3. Character定義、通常Sessionの保存履歴、Session GraphとRepository Glossaryをそれぞれの責務で使い、対話と作業の継続性を支える。
+3. Character定義、通常Sessionの保存履歴、Repository Glossaryをそれぞれの責務で使い、対話と作業の継続性を支える。
 
 Characterの表現は、情報を読む・判断する・操作するための視認性と到達性を犠牲にしない。作業結果とCharacterらしい応答の役割は[Prompt Composition](prompt-composition.md)の境界に従う。
 

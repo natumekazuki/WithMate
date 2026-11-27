@@ -431,13 +431,13 @@ it("Copilot foregroundの当turn HTTP MCP設定をpromptから分離する", () 
   const input = createRunSessionInput();
   input.agentRuntimeBinding = {
     ...input.agentRuntimeBinding!,
-    managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
   };
   const prompt = new CopilotAdapter().composePrompt(input);
   const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
   assert.deepEqual(config.mcpServers, {
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
-    "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-session": { type: "http", url: "http://127.0.0.1:47891/session", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
   assert.notEqual(config.enableConfigDiscovery, false);
   assert.equal(config.disabledMcpServers, undefined);

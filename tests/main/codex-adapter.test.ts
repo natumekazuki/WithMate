@@ -508,7 +508,7 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexはGlossary・Graph・SessionのHTTP設定を渡しcredentialをprocess envだけへ置き、既存の既知managed3設定だけへ無効化overrideを渡して第三者設定を上書きせずWorker出力からtokenを除去する"
+// claim = "CodexはGlossary・SessionのHTTP設定を渡しcredentialをprocess envだけへ置き、既存の既知managed設定だけへ無効化overrideを渡して第三者設定を上書きせずWorker出力からtokenを除去する"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
 // fault = "tokenをargvやthread設定へ埋める、既存managed設定の無効化を欠落させる、第三者serverを上書きする、またはWorker投影からtokenを漏らす"
 // observable = "transport作成envとargv、config/readとthread/startの送信params、runSessionTurnの確定結果"
@@ -524,7 +524,7 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   input.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "codex",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
+    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
   };
   const transport = new FakeTransport();
   const request = transport.request.bind(transport);
@@ -533,7 +533,6 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
       transport.calls.push({ method, params });
       return { config: { mcp_servers: {
         "withmate-glossary": { command: "glossary-fixture" },
-        "withmate-session-graph": { command: "graph-fixture" },
         "withmate-session": { command: "session-fixture" },
         "third-party": { command: "third-party-fixture" },
       } } } as T;
@@ -547,16 +546,14 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   assert.equal(options?.env?.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
   const argumentsText = options!.arguments!.join("\n");
   assert.match(argumentsText, /mcp_servers.withmate-glossary-http=.*env_http_headers/);
-  assert.match(argumentsText, /mcp_servers.withmate-session-graph-http=.*env_http_headers/);
+  assert.match(argumentsText, /mcp_servers.withmate-session-http=.*env_http_headers/);
   assert.doesNotMatch(argumentsText, /opaque-http-token/);
   assert.deepEqual(transport.calls.find((call) => call.method === "config/read")?.params, { cwd: directory, includeLayers: false });
   const thread = transport.calls.find((call) => call.method === "thread/start")!.params as { config: { mcp_servers: unknown } };
   assert.deepEqual(thread.config.mcp_servers, {
     "withmate-glossary": { enabled: false },
-    "withmate-session-graph": { enabled: false },
     "withmate-session": { enabled: false },
     "withmate-glossary-http": { url: "http://127.0.0.1:47891/glossary", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
-    "withmate-session-graph-http": { url: "http://127.0.0.1:47891/session-graph", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
     "withmate-session-http": { url: "http://127.0.0.1:47891/session", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
   });
   assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
@@ -900,7 +897,7 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
     selection: { providerId: "codex", model: "chosen-codex", reasoningEffort: "high" },
     workspacePath: process.cwd(), appSettings: createDefaultAppSettings(), signal: controller.signal,
     binding: { bindingId: "id", bindingReference: "ref", transport: "env", providerId: "copilot", executionGeneration: "gen", expiresAt: null,
-      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "http://127.0.0.1/glossary", sessionGraphUrl: "http://127.0.0.1/graph", token: "session-secret" } },
+      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "http://127.0.0.1/glossary", token: "session-secret" } },
   } as const;
   const inactiveNativeReview = new ReviewTransport("user");
   await assert.rejects(new CodexAdapter(undefined, { createTransport: () => inactiveNativeReview }).openApprovalReviewer(input), /native Auto Review conversation/);
@@ -915,7 +912,7 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
       ["chosen-codex", "on-request", "auto_review", "high"]);
     assert.equal(start.ephemeral, true);
     assert.equal(start.allowProviderModelFallback, false);
-    assert.match(start.developerInstructions, /do not execute it.*Skip routine development steps.*Session Graph.*WithMate history/s);
+    assert.match(start.developerInstructions, /do not execute it.*Skip routine development steps.*WithMate history/s);
     assert.match(start.developerInstructions, /Return deny if [^.]*missing or cannot be retrieved/);
     assert.match(start.developerInstructions, /Return ask_user only when the evidence is available and the remaining choice requires the user's judgment/);
     assert.match(JSON.stringify(start.config.mcp_servers), /withmate-session-http.*127\.0\.0\.1\/session/);

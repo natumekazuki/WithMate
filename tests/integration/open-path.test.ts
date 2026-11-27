@@ -140,10 +140,12 @@ it("directory linkの不正・消失・差替・sender失効はOSで開かない
 });
 
 describe("resolveOpenPathTarget", () => {
-  it("http url はそのまま外部 URL として扱う", () => {
-    assert.deepEqual(resolveOpenPathTarget("https://example.com/docs#intro"), {
+  /** URL の query・fragment・percent encoding を変えずに外部操作へ渡す。 */
+  it("http url は query と fragment を保った外部 URL として扱う", () => {
+    const target = "https://example.com/docs?q=a%2Fb&name=%E8%A8%AD%E8%A8%88#part%202";
+    assert.deepEqual(resolveOpenPathTarget(target), {
       type: "external-url",
-      target: "https://example.com/docs#intro",
+      target,
     });
   });
 
@@ -308,8 +310,9 @@ describe("resolveOpenPathTarget", () => {
     });
   });
 
-  it("file url の encoded local path は fragment を外してから decode する", () => {
-    assert.deepEqual(resolveOpenPathTarget("file:///C:/workspace/docs/a%23b.txt#intro"), {
+  /** file URL の query と fragment を外し、encoded path 自体は正確に decode する。 */
+  it("file url の encoded local path は query と fragment を外してから decode する", () => {
+    assert.deepEqual(resolveOpenPathTarget("file:///C:/workspace/docs/a%23b.txt?view=1#intro"), {
       type: "local-path",
       targetPath: "C:\\workspace\\docs\\a#b.txt",
     });

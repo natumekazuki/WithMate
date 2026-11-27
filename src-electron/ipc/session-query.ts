@@ -1,8 +1,6 @@
 import path from "node:path";
 import { READ_SESSION_HTML_PREVIEW } from "../../src-shared/window/html-preview.js";
 import type { SessionHtmlPreviewRequest } from "../../src-shared/file-explorer/session-html-preview-contract.js";
-import { sessionGraphUiReadRequestSchemas } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
-import { WITHMATE_READ_SESSION_GRAPH_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import type { SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
@@ -151,19 +149,6 @@ export function registerSessionQueryHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionQueryDeps,
 ): void {
-  ipcMain.handle(WITHMATE_READ_SESSION_GRAPH_CHANNEL, async (event, sessionId, operation, request) => {
-    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
-    assertOwningSessionWindowSender(event, sessionId, deps);
-    if (typeof operation !== "string" || !Object.hasOwn(sessionGraphUiReadRequestSchemas, operation)) {
-      throw new TypeError("Session Graph read operation is invalid.");
-    }
-    const readOperation = operation as keyof typeof sessionGraphUiReadRequestSchemas;
-    const input = sessionGraphUiReadRequestSchemas[readOperation].parse(request);
-    if (!deps.readSessionGraph) throw new Error("Session Graph reads are unavailable.");
-    const result = await deps.readSessionGraph(sessionId, readOperation, input);
-    assertOwningSessionWindowSender(event, sessionId, deps);
-    return result;
-  });
   ipcMain.handle(
     WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL,
     (_event, request: SessionMonitorPageRequest | null | undefined) =>

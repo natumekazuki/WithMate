@@ -9,7 +9,6 @@ import type { ProviderAgentRuntimeTurnCoordinator, ProviderAgentRuntimeTurnHandl
 import { WITHMATE_MANAGED_MCP_TOKEN_HEADER } from "../../providers/managed-http-mcp.js";
 import { buildProviderAgentRuntimeBindingEnv } from "../../providers/provider-agent-runtime-binding.js";
 import { createWithMateGlossaryMcpServer } from "../mcp/withmate-glossary-mcp.js";
-import { createWithMateSessionGraphMcpServer } from "../mcp/withmate-session-graph-mcp.js";
 import { createWithMateSessionMcpServer } from "../mcp/withmate-session-mcp.js";
 import { callAgentRuntime, type AgentRuntimeConnection } from "./runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "./runtime-exchange.js";
@@ -132,7 +131,7 @@ export class ManagedHttpMcpHost {
       context.removeAbortListener = () => signal.removeEventListener("abort", abort);
     }
     const baseUrl = `http://127.0.0.1:${this.#address.port}`;
-    return { glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`, sessionUrl: `${baseUrl}/mcp/session`, token: context.token };
+    return { glossaryUrl: `${baseUrl}/mcp/glossary`, sessionUrl: `${baseUrl}/mcp/session`, token: context.token };
   }
 
   release(handle: ProviderAgentRuntimeTurnHandle): void {
@@ -196,7 +195,6 @@ export class ManagedHttpMcpHost {
         }),
     };
     const server = pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
-      : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps)
       : createWithMateSessionMcpServer(deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
@@ -211,7 +209,7 @@ export class ManagedHttpMcpHost {
 
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const pathname = request.url;
-    if (pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph" && pathname !== "/mcp/session") {
+    if (pathname !== "/mcp/glossary" && pathname !== "/mcp/session") {
       reply(response, 404, "Unknown MCP endpoint."); return;
     }
     if (request.socket.remoteAddress !== "127.0.0.1"
