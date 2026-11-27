@@ -68,7 +68,7 @@ export function buildResetDatabaseConfirmMessage(targets: readonly ResetAppDatab
   ];
 
   if (areAllResetAppDatabaseTargetsSelected(normalized)) {
-    lines.splice(1, 0, "All targets are selected. The database file, character file bodies, and schema will be recreated.");
+    lines.splice(1, 0, "All targets are selected. The database file, including local pull requests, will be recreated along with character file bodies and schema.");
   } else {
     lines.splice(1, 0, "Character file bodies will be preserved.");
   }

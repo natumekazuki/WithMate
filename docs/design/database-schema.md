@@ -21,6 +21,7 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | Files Pin | `session_file_pins_v6` |
 | Session Graph | `session_graphs_v6`、`session_graph_topics_v6`、`session_graph_records_v6`、`session_graph_relations_v6` |
 | Coordination | `coordination_records_v7` |
+| Local Pull Requests | `local_prs_v7`、`local_pr_versions_v7`、`local_pr_comments_v7` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn | `session_turns_v6` |
 
@@ -111,6 +112,12 @@ Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Aux
 起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
 
 Copilot／OpenCodeの明示Reviewerは、Mainでは `sessions_v6.runtime_policy_json.withMateReviewerExplicit`、Auxiliaryでは `auxiliary_sessions.withmate_reviewer_explicit` に保持する。旧データのマークなし／0は未指定であり、保存済みReviewerを明示したものと解釈しない。受付時に捕捉した値は後から書き換えない。
+
+## Local Pull Requests
+
+PR・提出版・コメント（GUI下書きを含む）・ApprovalはGit common directory単位でStorage Workerが保存する。作成元／投稿者のSession識別は履歴であり、Sessionの削除ではPRをcascade削除しない。既存V6 DBには専用テーブルを追加し、会話・設定・既存データの再作成は要求しない。
+
+提出版の前後commitをGitオブジェクトとして維持し、branchの移動から独立させる。CI定義は提出commitの `.withmate/ci.yml` を正本とし、実行・ログは `<userData>/local-pr-ci/` で管理する。Session WindowやPR Windowの開閉だけで実行結果を変更しない。意図的にDBファイルを再作成する全対象ResetではDB上のPRも消えるが、GitオブジェクトやCI実行ファイルを同時に削除しない。
 
 ## Additional Directory
 
