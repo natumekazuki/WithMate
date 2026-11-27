@@ -7,6 +7,7 @@ import {
   type SessionOperation,
 } from "../../../src-shared/session/session-management-contract.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../agent-runtime/runtime-exchange.js";
+import { isLocalPrAgentOperation } from "../../../src-shared/local-pr/local-pr-agent-operations.js";
 import {
   callAgentRuntime,
   mapAgentRuntimeDiscoveryCode,
@@ -34,8 +35,9 @@ export function createSessionTransportError(
   return {
     ok: false,
     code: "SESSION_TRANSPORT_ERROR",
-    message:
-      "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
+    message: operation && isLocalPrAgentOperation(operation)
+      ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation."
+      : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
     effect:
       operation && !SESSION_READ_OPERATIONS.includes(operation)
         ? "unknown"

@@ -37,6 +37,7 @@ import { getSessionApprovalChoices } from "../../src-shared/settings/session-app
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSteerResult } from "../../src-shared/session/session-turn-queue.js";
 import { isSessionOperatingPolicyOperation, type SessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
+import type { LocalPrAgentOperation } from "../../src-shared/local-pr/local-pr-contract.js";
 
 export type SessionCurrentTurn = {
   turnId: string | null;
@@ -134,7 +135,7 @@ export class SessionManagementApplication {
   constructor(readonly deps: SessionManagementApplicationDeps) {}
 
   async execute(
-    operation: SessionOperation,
+    operation: Exclude<SessionOperation, LocalPrAgentOperation>,
     body: unknown,
     context: SessionManagementContext,
   ): Promise<SessionOperationResult> {

@@ -71,6 +71,8 @@ it("4Providerで新規/継続の共通prompt境界を保つ", () => {
     const prompt = adapter.composePrompt(base);
     assert.match(prompt.systemBodyText, /# Kernel\n人格の正本文。/);
     assert.match(prompt.systemBodyText, /# Session Role\n\nexecutor$/);
+    assert.match(prompt.systemBodyText, /submit a WithMate local PR, wait for user approval in the WithMate GUI, and merge through that PR/);
+    assert.match(prompt.systemBodyText, /application's OS permissions, not in the Provider sandbox/);
     assert.match(prompt.systemBodyText, /成果物は、明示指定がなければrepository・提出先の文体と形式を優先/);
     assert.equal(prompt.inputBodyText, "# Current Date\n\n2026-11-01T12:00:00.000+09:00\n\n# User Input\n\n依頼本文");
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
@@ -107,6 +109,7 @@ it("Session種別・owner・toggleを適用し作業境界を保つ", () => {
   assert.match(authoring.systemBodyText, /# Kernel\n人格の正本文。/);
   assert.equal(authoring.inputBodyText, "# User Input\n\n依頼本文");
   assert.ok(!authoring.systemBodyText.includes("# Session Role"));
+  assert.ok(!authoring.systemBodyText.includes("# WithMate Local PR"));
   const neutral = composeProviderPrompt({ ...base, session: { ...base.session, characterRuntimeSnapshot: null } });
   assert.match(neutral.systemBodyText, /# Workspace/);
   assert.match(neutral.systemBodyText, /# Session Role\n\nexecutor$/);

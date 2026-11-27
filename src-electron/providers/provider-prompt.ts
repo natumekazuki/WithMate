@@ -7,6 +7,7 @@ import { normalizeAllowedAdditionalDirectories } from "../files/additional-direc
 import { buildCharacterRuntimePromptSection } from "../../src-shared/character/character-runtime-snapshot.js";
 import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 import { projectSessionInputSender } from "../../src-shared/session/session-turn-queue.js";
+import { LOCAL_PR_AGENT_WORKFLOW, LOCAL_PR_CI_EXECUTION_NOTICE } from "../../src-shared/local-pr/local-pr-agent-operations.js";
 
 function buildCharacterOutputBoundarySection(enabled: boolean): string {
   if (!enabled) {
@@ -118,6 +119,11 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     characterPromptBody,
     outputBoundaryBody,
     folderContextBody,
+    !isCharacterAuthoringSession ? [
+      "# WithMate Local PR", "", LOCAL_PR_AGENT_WORKFLOW,
+      "Use session.pr_* tools or withmate-session pr-* commands. Missing tools or approval do not authorize a direct merge.",
+      LOCAL_PR_CI_EXECUTION_NOTICE,
+    ].join("\n") : "",
     !isCharacterAuthoringSession ? "# Session Role\n\n" + (input.runtimeOwner?.kind === "auxiliary" ? "auxiliary" : input.session.sessionRole ?? "standalone") : "",
   ]
     .filter((section) => section.trim().length > 0)

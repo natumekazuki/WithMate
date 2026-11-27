@@ -1,5 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import { SESSION_OPERATING_POLICY_READ_NOTICE } from "../../../src-shared/session/session-operating-policy.js";
+import { isLocalPrAgentOperation, LOCAL_PR_AGENT_WORKFLOW, LOCAL_PR_CI_EXECUTION_NOTICE } from "../../../src-shared/local-pr/local-pr-agent-operations.js";
 import {
   sessionOperationRequestSchemas,
   sessionOperationOutputSchema,
@@ -19,26 +21,34 @@ export function createWithMateSessionMcpServer(
 ): McpServer {
   const server = new McpServer(
     { name: "withmate-session", version: "1.0.0" },
-    { instructions: SESSION_MCP_SERVER_INSTRUCTIONS },
+    { instructions: `${SESSION_MCP_SERVER_INSTRUCTIONS} ${LOCAL_PR_AGENT_WORKFLOW} ${LOCAL_PR_CI_EXECUTION_NOTICE}` },
   );
   for (const operation of Object.keys(
     sessionOperationRequestSchemas,
   ) as SessionOperation[]) {
     const read = SESSION_READ_OPERATIONS.includes(operation);
+    const runsCi = operation === "pr_ci_start" || operation === "pr_ci_rerun";
+    const requestSchema = sessionOperationRequestSchemas[operation];
+    // Advertise the strict PR schema but let the shared client validate arguments, so the SDK
+    // does not replace the common SESSION_INVALID_REQUEST/effect envelope with a text-only error.
+    const inputSchema = isLocalPrAgentOperation(operation)
+      ? z.looseObject({}).meta(z.toJSONSchema(requestSchema, { unrepresentable: "any" }))
+      : requestSchema;
     server.registerTool(
       `session.${operation}`,
       {
         description: SESSION_OPERATION_DESCRIPTIONS[operation],
-        inputSchema: sessionOperationRequestSchemas[operation],
+        inputSchema,
         outputSchema: sessionOperationOutputSchema(operation),
         annotations: {
           readOnlyHint: read,
           destructiveHint:
             operation === "cancel_receipt" || operation === "stop_turn" ||
             operation === "set_selection_policy" || operation === "set_worktree_root" ||
-            operation === "set_worktree_repository",
+            operation === "set_worktree_repository" || operation === "pr_close" ||
+            operation === "pr_merge" || operation === "pr_ci_cancel" || runsCi,
           idempotentHint: read || operation === "enqueue" || operation === "coordination_get",
-          openWorldHint: false,
+          openWorldHint: runsCi,
         },
       },
       async (input: Record<string, unknown>) => {

@@ -108,6 +108,10 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 通常Agentの`session.*` MCPと`withmate-session` CLIは同じSession applicationとdurable queueを使う。公開入力の正本は`src-shared/session/session-management-contract.ts`で、自己情報、Crew内既定／全Crew明示のmetadata探索、自己Title／Description更新、直属親子へのenqueue、元request keyによる受付回復、親から直属子の指定受付取消・指定Turn停止を扱う。保存済み受付／Turnの一覧、入力原文・比較対象・追加入力、出力境界とartifact詳細は同じ公開入口から`session-execution-read.ts`のbounded readへ接続し、指定実行を最新結果へ置き換えない。CLIは起動中applicationへのbound clientであり、actor指定や独立Runtimeを持たない。
 
+ローカルPRの`session.pr_*` MCPと`withmate-session pr-*` CLIも同じbound runtimeを使う。操作対象は資格情報が指す実行中TurnのSessionと、その保存済みWorkspaceから解決したrepositoryに限る。呼出側からSession・cwd・GUIで選択中のrepositoryを指定できない。AgentはPRを提出し、GUIのユーザー承認を待ってから、承認対象の版をWithMate PR経由でmergeする。承認・取消、下書き操作、GUIからの議論送信はAgent APIに公開しない。WithMate以外のGit操作は技術的に遮断しない。
+
+CIの起動・再実行もWithMateが注入する既存資格情報、有効なbindingとTurnに従う。提出版の`.withmate/ci.yml`のコマンドはWithMateアプリのOS権限で実行され、Provider sandbox内の実行とは異なる。CIの起動はPRのGUI Approvalを作成せず、CI成功もmergeの必須条件ではない。
+
 通常の保存会話は`list_messages`／`get_message`、保存artifactは`list_operations`／`get_operation_detail`で取得し、Turnに未対応の過去messageも対象にする。既存保存history helperのpaging／欠落契約を使い、背景実行の限定scopeやgrantを流用しない。実行参照には保存receipt、WithMate Turn、保存message sequenceのいずれか一つを指定し、messageから確定した対応がない場合は欠落として返す。
 
 actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止・Steerの権限を与えない。通常送信は実際の直属親子だけ、取消・停止・Steerは親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、ユーザー回答・承認はこのAPIから公開しない。

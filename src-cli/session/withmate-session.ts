@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { SESSION_OPERATING_POLICY_READ_NOTICE } from "../../src-shared/session/session-operating-policy.js";
+import { LOCAL_PR_AGENT_WORKFLOW, LOCAL_PR_CI_EXECUTION_NOTICE } from "../../src-shared/local-pr/local-pr-agent-operations.js";
 import {
   sessionOperationRequestSchemas,
   sessionOperationSuccessSchemas,
@@ -47,6 +48,8 @@ create-child: ${SESSION_OPERATION_DESCRIPTIONS.create_child}
 ${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
+${LOCAL_PR_AGENT_WORKFLOW}
+${LOCAL_PR_CI_EXECUTION_NOTICE}
 Use schema for exact shared input schemas and operation descriptions.
 `;
 export async function parseWithMateSessionCliArgs(

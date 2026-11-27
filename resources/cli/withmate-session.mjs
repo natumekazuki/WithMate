@@ -986,7 +986,7 @@ var guid = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
 /** Returns a regex for validating an RFC 9562/4122 UUID.
 *
 * @param version Optionally specify a version 1-8. If no version is specified, all versions are supported. */
-var uuid = (version) => {
+var uuid$1 = (version) => {
 	if (!version) return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
 	return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 };
@@ -1364,7 +1364,7 @@ var Doc = class {
 	}
 };
 // node_modules/zod/v4/core/versions.js
-var version = {
+var version$1 = {
 	major: 4,
 	minor: 6,
 	patch: 7
@@ -1375,7 +1375,7 @@ var $ZodType = /*@__PURE__*/ $constructor("$ZodType", (inst, def) => {
 	inst ?? (inst = {});
 	inst._zod.def = def;
 	inst._zod.bag = inst._zod.bag || {};
-	inst._zod.version = version;
+	inst._zod.version = version$1;
 	const defChecks = inst._zod.def.checks;
 	const checks = inst._zod.traits.has("$ZodCheck") ? [inst, ...defChecks ?? []] : defChecks?.length ? [...defChecks] : [];
 	for (const ch of checks) for (const fn of ch._zod.onattach) fn(inst);
@@ -1521,8 +1521,8 @@ var $ZodUUID = /*@__PURE__*/ $constructor("$ZodUUID", (inst, def) => {
 			v8: 8
 		}[def.version];
 		if (v === void 0) throw new Error(`Invalid UUID version: "${def.version}"`);
-		def.pattern ?? (def.pattern = uuid(v));
-	} else def.pattern ?? (def.pattern = uuid());
+		def.pattern ?? (def.pattern = uuid$1(v));
+	} else def.pattern ?? (def.pattern = uuid$1());
 	$ZodStringFormat.init(inst, def);
 });
 var $ZodEmail = /*@__PURE__*/ $constructor("$ZodEmail", (inst, def) => {
@@ -5236,6 +5236,9 @@ var ZodUUID = /*@__PURE__*/ $constructor("ZodUUID", (inst, def) => {
 	$ZodUUID.init(inst, def);
 	ZodStringFormat.init(inst, def);
 });
+function uuid(params) {
+	return /* @__PURE__ */ _uuid(ZodUUID, params);
+}
 var ZodURL = /*@__PURE__*/ $constructor("ZodURL", (inst, def) => {
 	$ZodURL.init(inst, def);
 	ZodStringFormat.init(inst, def);
@@ -5485,6 +5488,14 @@ function object(shape, params) {
 	return new ZodObject({
 		type: "object",
 		shape: shape ?? {},
+		...normalizeParams(params)
+	});
+}
+function strictObject(shape, params) {
+	return new ZodObject({
+		type: "object",
+		shape,
+		catchall: never(),
 		...normalizeParams(params)
 	});
 }
@@ -5771,19 +5782,19 @@ var provider$1 = _enum([
 	"claude",
 	"opencode"
 ]);
-var text$1 = string().trim().min(1).max(2e4);
-var path$1 = string().min(1).max(32768);
-var workspace = { workspacePath: path$1.optional() };
+var text$2 = string().trim().min(1).max(2e4);
+var path$2 = string().min(1).max(32768);
+var workspace = { workspacePath: path$2.optional() };
 /** Human-authored guidance, not execution defaults or provider credentials. Array order is priority. */
 var selectionPolicySchema = object({
-	selectionCriteria: text$1.describe("Task/output/judgment criteria for choosing Provider and Model; not a fixed Role mapping."),
-	executionGuidelines: text$1.describe("Depth, Approval and Sandbox guidelines; these never grant permissions."),
+	selectionCriteria: text$2.describe("Task/output/judgment criteria for choosing Provider and Model; not a fixed Role mapping."),
+	executionGuidelines: text$2.describe("Depth, Approval and Sandbox guidelines; these never grant permissions."),
 	contractRoutes: array(object({
 		name: string().trim().min(1).max(300),
 		provider: provider$1,
 		nativeProviderId: string().trim().min(1).max(300).optional(),
 		modelId: string().trim().min(1).max(500).optional().describe("Native model ID; for OpenCode compare nativeProviderId/modelId against get_catalog."),
-		conditions: text$1.describe("Usage conditions, plan/billing evidence and limitations. No API keys or authentication data.")
+		conditions: text$2.describe("Usage conditions, plan/billing evidence and limitations. No API keys or authentication data.")
 	}).strict()).max(100).describe("Contract routes in preferred order. OpenCode nativeProviderId/modelId identify the actual route when specified.")
 }).strict();
 var worktreeRepositoryRuleSchema = object({
@@ -5792,7 +5803,7 @@ var worktreeRepositoryRuleSchema = object({
 	layout: string().min(1).max(2e3).describe("Relative layout below root/categoryPath, containing {repository} and {branch}, e.g. {repository}/{branch}. Branch slashes form nested directories.")
 }).strict();
 object({
-	rootPath: path$1.nullable(),
+	rootPath: path$2.nullable(),
 	repositories: record$1(string(), worktreeRepositoryRuleSchema)
 }).strict();
 var sessionOperatingPolicyRequestSchemas = {
@@ -5800,7 +5811,7 @@ var sessionOperatingPolicyRequestSchemas = {
 	set_selection_policy: object({ policy: selectionPolicySchema.nullable() }).strict(),
 	get_provider_quota: object({ provider: provider$1.optional() }).strict(),
 	get_worktree_policy: object(workspace).strict(),
-	set_worktree_root: object({ rootPath: path$1.nullable() }).strict(),
+	set_worktree_root: object({ rootPath: path$2.nullable() }).strict(),
 	set_worktree_repository: object({
 		...workspace,
 		rule: worktreeRepositoryRuleSchema.nullable()
@@ -5808,7 +5819,7 @@ var sessionOperatingPolicyRequestSchemas = {
 	resolve_worktree: object({
 		...workspace,
 		branch: string().min(1).max(1e3),
-		destinationPath: path$1.optional()
+		destinationPath: path$2.optional()
 	}).strict()
 };
 var SESSION_OPERATING_POLICY_READS = [
@@ -5823,8 +5834,8 @@ var selectionResult = object({
 }).strict();
 var repositoryResult = object({
 	ok: literal(true),
-	repositoryId: path$1,
-	rootPath: path$1.nullable(),
+	repositoryId: path$2,
+	rootPath: path$2.nullable(),
 	rule: worktreeRepositoryRuleSchema.nullable()
 }).strict();
 var quotaTelemetry = object({
@@ -5866,12 +5877,12 @@ var sessionOperatingPolicySuccessSchemas = {
 	get_worktree_policy: repositoryResult,
 	set_worktree_root: object({
 		ok: literal(true),
-		rootPath: path$1.nullable()
+		rootPath: path$2.nullable()
 	}).strict(),
 	set_worktree_repository: repositoryResult,
 	resolve_worktree: object({
 		ok: literal(true),
-		repositoryId: path$1,
+		repositoryId: path$2,
 		branch: string(),
 		status: _enum([
 			"existing",
@@ -5883,7 +5894,7 @@ var sessionOperatingPolicySuccessSchemas = {
 			"policy",
 			"override"
 		]).nullable(),
-		destinationPath: path$1.nullable(),
+		destinationPath: path$2.nullable(),
 		missing: array(_enum(["rootPath", "repositoryRule"]))
 	}).strict()
 };
@@ -5896,6 +5907,295 @@ var SESSION_OPERATING_POLICY_DESCRIPTIONS = {
 	set_worktree_root: "Register/replace this device's absolute Worktree root, or clear with rootPath:null. Only on an explicit user request for persistent configuration. Does not create/move/delete directories or Worktrees, and preserves all repository rules.",
 	set_worktree_repository: "Register/replace this repository's complete categoryPath/repositoryName/layout rule, or remove it with rule:null. Only on explicit user request for persistent configuration. Omitted workspacePath uses the bound actor's Workspace. Applies across its linked Worktrees, not unrelated clones. Does not change the root or perform Git/filesystem mutations.",
 	resolve_worktree: "Read the applicable Worktree destination for a literal branch name. Existing registered Worktrees take precedence and return status:existing/source:git. Otherwise return status:planned from saved policy or an explicit one-off absolute destinationPath, never saving the override. Missing settings return status:unconfigured/missing with no Folder fallback. Planned is not created or guaranteed unoccupied; the caller checks Git/base/Workspace and obtains any required authority before creation. No configuration or Git mutations."
+};
+// src-shared/session/session-target.ts
+var id$3 = string().trim().min(1).max(256);
+var mainSessionTargetSchema = object({
+	kind: literal("main"),
+	sessionId: id$3,
+	incarnationId: id$3
+}).strict();
+var sessionTargetSchema = discriminatedUnion("kind", [mainSessionTargetSchema, object({
+	kind: literal("auxiliary"),
+	sessionId: id$3,
+	incarnationId: id$3,
+	mainSessionId: id$3,
+	mainIncarnationId: id$3
+}).strict()]);
+// src-shared/local-pr/local-pr-contract.ts
+var id$2 = uuid();
+var text$1 = (max) => string().min(1).max(max).refine((value) => !!value.trim());
+var stamp = string();
+var version = number().int().positive();
+var path$1 = string().min(1).max(32768).refine((value) => !value.includes("\0"));
+var branch = string().regex(/^refs\/heads\/.+$/u).max(1024);
+var localPrCommitSchema = string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
+var prId = { prId: id$2 };
+var prVersion = {
+	...prId,
+	version
+};
+/** A version pins both repository tips and the merge base used for the reviewed diff. */
+var localPrVersionSchema = strictObject({
+	version,
+	headCommit: localPrCommitSchema,
+	targetCommit: localPrCommitSchema,
+	mergeBaseCommit: localPrCommitSchema,
+	submittedAt: stamp,
+	submittedBy: sessionTargetSchema
+});
+/** An anchor addresses lines on one side of a single file in one immutable comparison. */
+var localPrAnchorSchema = strictObject({
+	mode: _enum(["full", "previous"]),
+	path: path$1,
+	side: _enum(["before", "after"]),
+	startLine: number().int().positive().max(Number.MAX_SAFE_INTEGER),
+	endLine: number().int().positive().max(Number.MAX_SAFE_INTEGER)
+}).refine((input) => input.startLine <= input.endLine, "The end line precedes the start line.");
+/** Public comments and GUI-only drafts retain their original version and anchor. */
+var localPrCommentSchema = strictObject({
+	id: id$2,
+	version,
+	anchor: localPrAnchorSchema.nullable(),
+	replyTo: id$2.nullable(),
+	body: string(),
+	author: union([strictObject({ kind: literal("user") }), sessionTargetSchema]),
+	draft: boolean(),
+	createdAt: stamp,
+	updatedAt: stamp
+});
+var prSummary = strictObject({
+	id: id$2,
+	targetBranch: branch,
+	sourceBranch: branch.nullable(),
+	title: string(),
+	description: string(),
+	createdBy: sessionTargetSchema,
+	createdAt: stamp,
+	updatedAt: stamp,
+	state: _enum([
+		"open",
+		"closed",
+		"merged"
+	]),
+	latestVersion: version,
+	mergedCommit: localPrCommitSchema.nullable()
+});
+/** The approval tuple includes the exact tips the GUI reviewed. */
+var localPrApprovalTargetSchema = strictObject({
+	...prVersion,
+	headCommit: localPrCommitSchema,
+	targetCommit: localPrCommitSchema
+});
+var localPrDetailSchema = prSummary.extend({
+	versions: array(localPrVersionSchema),
+	comments: array(localPrCommentSchema),
+	approval: localPrApprovalTargetSchema.extend({ approvedAt: stamp }).nullable(),
+	currentTargetCommit: localPrCommitSchema.nullable()
+});
+/** Captured comparison endpoints and either a change list or one file's patch. */
+var localPrDiffSchema = strictObject({
+	beforeCommit: localPrCommitSchema,
+	afterCommit: localPrCommitSchema,
+	files: array(strictObject({
+		path: path$1,
+		previousPath: path$1.nullable(),
+		kind: _enum([
+			"added",
+			"modified",
+			"deleted",
+			"renamed",
+			"copied",
+			"type-changed"
+		])
+	})),
+	patch: string().nullable()
+});
+var localPrCiDefinitionSchema = strictObject({
+	headCommit: localPrCommitSchema,
+	path: literal(".withmate/ci.yml"),
+	state: _enum([
+		"not_configured",
+		"invalid",
+		"valid"
+	]),
+	source: string().nullable(),
+	error: string().nullable()
+});
+var localPrCiRunSchema = strictObject({
+	id: id$2,
+	version,
+	headCommit: localPrCommitSchema,
+	targetCommit: localPrCommitSchema,
+	state: _enum([
+		"running",
+		"succeeded",
+		"failed",
+		"canceled",
+		"interrupted"
+	]),
+	startedAt: stamp,
+	finishedAt: stamp.nullable(),
+	exitCode: number().int().nullable(),
+	error: string().nullable()
+});
+var commentInput = strictObject({
+	...prId,
+	version,
+	body: text$1(2e4),
+	anchor: localPrAnchorSchema.optional(),
+	replyTo: id$2.optional()
+});
+var submitInput = {
+	headCommit: localPrCommitSchema,
+	expectedTargetCommit: localPrCommitSchema.optional()
+};
+/** The complete Agent surface; GUI-only actions deliberately have no public schema here. */
+var localPrAgentInput = {
+	pr_list: strictObject({
+		offset: number().int().nonnegative().optional(),
+		limit: number().int().min(1).max(100).optional()
+	}),
+	pr_branches: strictObject({}),
+	pr_get: strictObject(prId),
+	pr_create: strictObject({
+		...submitInput,
+		targetBranch: branch,
+		sourceBranch: branch.optional(),
+		title: text$1(200),
+		description: string().max(2e4).optional()
+	}),
+	pr_submit: strictObject({
+		...prId,
+		...submitInput,
+		expectedVersion: version
+	}),
+	pr_close: strictObject({ ...prVersion }),
+	pr_diff: strictObject({
+		...prVersion,
+		mode: _enum(["full", "previous"]),
+		path: path$1.optional()
+	}),
+	pr_comment: commentInput,
+	pr_merge: localPrApprovalTargetSchema,
+	pr_ci_validate: strictObject(prVersion),
+	pr_ci_list: strictObject(prVersion),
+	pr_ci_start: strictObject(prVersion),
+	pr_ci_cancel: strictObject({
+		...prVersion,
+		runId: id$2
+	}),
+	pr_ci_rerun: strictObject({
+		...prVersion,
+		runId: id$2
+	}),
+	pr_ci_log: strictObject({
+		...prVersion,
+		runId: id$2,
+		offset: number().int().nonnegative().optional()
+	})
+};
+var localPrAgentData = {
+	pr_list: strictObject({
+		entries: array(prSummary),
+		hasMore: boolean()
+	}),
+	pr_branches: strictObject({
+		branches: array(strictObject({
+			ref: branch,
+			commit: localPrCommitSchema
+		})),
+		head: localPrCommitSchema.nullable(),
+		headBranch: branch.nullable()
+	}),
+	pr_get: localPrDetailSchema,
+	pr_create: localPrDetailSchema,
+	pr_submit: localPrDetailSchema,
+	pr_close: localPrDetailSchema,
+	pr_diff: localPrDiffSchema,
+	pr_comment: localPrCommentSchema,
+	pr_merge: localPrDetailSchema,
+	pr_ci_validate: localPrCiDefinitionSchema,
+	pr_ci_list: strictObject({ runs: array(localPrCiRunSchema) }),
+	pr_ci_start: localPrCiRunSchema,
+	pr_ci_cancel: localPrCiRunSchema,
+	pr_ci_rerun: localPrCiRunSchema,
+	pr_ci_log: strictObject({
+		log: string(),
+		nextOffset: number().int().nonnegative(),
+		hasMore: boolean()
+	})
+};
+({ ...localPrAgentInput }), commentInput.extend({ commentId: id$2.optional() }), strictObject({
+	...prId,
+	commentId: id$2
+}), strictObject({
+	...prId,
+	commentIds: array(id$2).min(1).max(50)
+}), strictObject({
+	query: string().max(300).optional(),
+	offset: number().int().nonnegative().optional()
+}), strictObject({
+	...prVersion,
+	target: sessionTargetSchema,
+	commentIds: array(id$2).max(50),
+	message: text$1(2e4),
+	requestId: id$2
+});
+({ ...localPrAgentData }), strictObject({ commentId: id$2 }), strictObject({ comments: array(localPrCommentSchema) }), strictObject({
+	sessions: array(strictObject({
+		target: sessionTargetSchema,
+		title: string()
+	})),
+	hasMore: boolean()
+}), strictObject({ receiptId: string() });
+strictObject({
+	ok: literal(false),
+	code: string(),
+	message: string(),
+	effect: _enum(["none", "unknown"])
+});
+// src-shared/local-pr/local-pr-agent-operations.ts
+/** Recognizes only the Agent operations, never inherited keys or GUI actions. */
+function isLocalPrAgentOperation(operation) {
+	return Object.hasOwn(localPrAgentInput, operation);
+}
+/** Session MCP and CLI share the PR success envelope and data shape. */
+var localPrAgentSuccessSchemas = Object.fromEntries(Object.entries(localPrAgentData).map(([operation, data]) => [operation, strictObject({
+	ok: literal(true),
+	data
+})]));
+/** Read classification drives transport effect reporting and MCP tool annotations. */
+var LOCAL_PR_AGENT_READS = [
+	"pr_list",
+	"pr_branches",
+	"pr_get",
+	"pr_diff",
+	"pr_ci_validate",
+	"pr_ci_list",
+	"pr_ci_log"
+];
+/** CI runs in WithMate, outside the Provider's command execution boundary. */
+var LOCAL_PR_CI_EXECUTION_NOTICE = "Local PR CI commands run with the WithMate application's OS permissions, not in the Provider sandbox.";
+/** Common Agent workflow; applies to the bound repository and only to merges. */
+var LOCAL_PR_AGENT_WORKFLOW = "To merge work from a WithMate Session, submit a WithMate local PR, wait for user approval in the WithMate GUI, and merge through that PR. Do not use direct Git merge as a substitute. WithMate does not block external Git commands. Local PR tools act on the repository of the bound Session workspace.";
+/** The CLI help/schema and MCP tool list describe the same public operations. */
+var LOCAL_PR_AGENT_DESCRIPTIONS = {
+	pr_list: "List local PRs in the bound Session repository.",
+	pr_branches: "List local branches and the bound checkout's HEAD for preparing a submission.",
+	pr_get: "Read a PR, submitted versions, published comments and the recorded GUI approval.",
+	pr_create: "Create a local PR from an exact committed head against the selected local target branch.",
+	pr_submit: "Submit a new version of a PR from an exact committed head. Compare and review the new version separately.",
+	pr_close: "Close an open PR at its expected version without merging it.",
+	pr_diff: "Read a submitted version's fixed full or previous-version diff. Specify a path to read that file's patch.",
+	pr_comment: "Publish a PR comment, a line-range comment or a reply on a specific submitted version. This does not start a Session Turn.",
+	pr_merge: "Merge the exact version and commit pair only if it has a current user approval recorded in the WithMate GUI.",
+	pr_ci_validate: "Read and validate .withmate/ci.yml from the exact submitted head without running commands.",
+	pr_ci_list: "List CI runs for the exact submitted version.",
+	pr_ci_start: `Start CI using .withmate/ci.yml from the submitted head. ${LOCAL_PR_CI_EXECUTION_NOTICE}`,
+	pr_ci_cancel: "Cancel an active CI run for the specified PR and version.",
+	pr_ci_rerun: `Run CI again for the specified run's submitted version. ${LOCAL_PR_CI_EXECUTION_NOTICE}`,
+	pr_ci_log: "Read a page of log output from a specific CI run and submitted version."
 };
 // src-shared/character/character-owner.ts
 var UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
@@ -5920,20 +6220,6 @@ var characterPublicProfileSchema = object({
 }).strict();
 // src-shared/session/runtime-state.ts
 var SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// src-shared/session/session-target.ts
-var id$2 = string().trim().min(1).max(256);
-var mainSessionTargetSchema = object({
-	kind: literal("main"),
-	sessionId: id$2,
-	incarnationId: id$2
-}).strict();
-var sessionTargetSchema = discriminatedUnion("kind", [mainSessionTargetSchema, object({
-	kind: literal("auxiliary"),
-	sessionId: id$2,
-	incarnationId: id$2,
-	mainSessionId: id$2,
-	mainIncarnationId: id$2
-}).strict()]);
 // src-shared/session-history/session-history-contract.ts
 var seq = number().int().nonnegative();
 var offset = number().int().nonnegative().optional();
@@ -6749,6 +7035,7 @@ var child = object({
 	description: string().max(1e4).optional()
 }).strict();
 var sessionOperationRequestSchemas = {
+	...localPrAgentInput,
 	...executionOperationRequestSchemas,
 	...sessionCoordinationRequestSchemas,
 	...sessionOperatingPolicyRequestSchemas,
@@ -6887,6 +7174,7 @@ var receiptSchema = object({
 	sourceTurnPendingRelease: boolean().optional()
 }).passthrough();
 var sessionOperationSuccessSchemas = {
+	...localPrAgentSuccessSchemas,
 	...executionOperationResultSchemas,
 	...sessionCoordinationSuccessSchemas,
 	...sessionOperatingPolicySuccessSchemas,
@@ -7017,6 +7305,7 @@ new Map(Object.entries(SESSION_RUNTIME_OPERATION_PATHS).map(([operation, path]) 
 var sessionAgentRuntimeOperation = (operation) => `session.route.${operation}`;
 Object.fromEntries(Object.keys(sessionOperationRequestSchemas).map((operation) => [`session.${operation}`, sessionAgentRuntimeOperation(operation)]));
 var SESSION_READ_OPERATIONS = [
+	...LOCAL_PR_AGENT_READS,
 	...SESSION_OPERATING_POLICY_READS,
 	"self",
 	"list",
@@ -7031,6 +7320,7 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	...Object.fromEntries(Object.entries(EXECUTION_OPERATION_DESCRIPTIONS).map(([operation, description]) => [operation, `${description} ${SESSION_HISTORY_USAGE_NOTICE}`])),
 	...SESSION_COORDINATION_DESCRIPTIONS,
 	...SESSION_OPERATING_POLICY_DESCRIPTIONS,
+	...LOCAL_PR_AGENT_DESCRIPTIONS,
 	create_child: "Create a saved normal direct child without opening a Session Window: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Specify Provider, model, reasoningEffort and a prepared workspacePath. The child inherits the calling Turn's Auto Run, Auto Review, User or Safety Focused choice across all four Providers. This controls responses to approval requests; it does not copy native policy or grant OS access. Restricted Codex Sandbox and legacy provider-specific modes cannot transfer. A selected Copilot custom agent also prevents cross-Provider creation because its tool restrictions cannot be verified. A new Codex child from another Provider starts read-only. A legacy unset Copilot/OpenCode reviewer remains unset on a mediated child, and becomes native User on Codex/Claude. Approval, Sandbox, Reviewer and inheritance switches are not request inputs. Character selection is automatic, never caller-selected. For a new selection, exclude the direct parent's Character if another active candidate exists, then choose uniformly among the remaining active candidates with the lowest usage by normal Mains in this Crew. Use the parent's Character if it is the only active candidate; fail if there are no active candidates. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
 	get_catalog: "Read available Provider/model/depth catalog and the same Approval choices as the GUI. options[].approvalModes lists Auto Run, Auto Review, User and Safety Focused on all four Providers. For inheritance exceptions see create_child. disabled identifies an unavailable choice. Sandbox choices are separate and only listed for Codex. Permission options are not create_child or enqueue inputs. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\". Use exact available values; no silent Model/Depth substitution.",
 	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
@@ -8992,7 +9282,7 @@ function createSessionTransportError(operation, body) {
 	return {
 		ok: false,
 		code: "SESSION_TRANSPORT_ERROR",
-		message: "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
+		message: operation && isLocalPrAgentOperation(operation) ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation." : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
 		effect: operation && !SESSION_READ_OPERATIONS.includes(operation) ? "unknown" : "none",
 		...request?.success ? { recovery: {
 			operation: "get_receipt",
@@ -9091,6 +9381,8 @@ create-child: ${SESSION_OPERATION_DESCRIPTIONS.create_child}
 ${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
+${LOCAL_PR_AGENT_WORKFLOW}
+${LOCAL_PR_CI_EXECUTION_NOTICE}
 Use schema for exact shared input schemas and operation descriptions.
 `;
 async function parseWithMateSessionCliArgs(args, deps = {}) {

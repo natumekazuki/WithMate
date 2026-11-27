@@ -11,11 +11,14 @@ system側は次の順序とする。
 1. `Character Definition Snapshot`（設定が有効でsnapshotがある場合）
 2. `Output Boundary`（通常Sessionにsnapshotがある場合）
 3. `Workspace`、`SessionFolder`、`Crew Folder`、実効`Additional Directories`
-4. `Session Role`
+4. `WithMate Local PR`
+5. `Session Role`
 
 `Output Boundary`は、会話・他Sessionへのmessage・Session Graph・非公開メモで自身のCharacter表現を使い、コード・文書・提出用草案等では明示指定がなければrepository・提出先の文体と形式を優先する2文とする。Character設定OFFでもsnapshotのある通常Sessionには残す。folder用途は共有資料とSession固有の添付・一時物の保存先を1文で示す。path表示はfilesystem grantを追加せず、認可は既存allowlistとadapterが所有する。
 
 Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerから`auxiliary`を渡す。Role名以外の分担・報告方針やユーザー管理ルールを注入・同期しない。
+
+`WithMate Local PR`は、mergeする変更をローカルPRに提出し、GUIでのユーザー承認を待ってから同じPR経由でmergeするルールを示す。通常SessionのMCP／CLI操作と、CIがProvider sandboxではなくWithMateアプリのOS権限で動くことを案内する。Git操作を技術的には遮断しない。
 
 input側は次の順序とする。
 
@@ -56,7 +59,7 @@ Title／Descriptionの現在値や自動保守指示は常設promptへ入れな�
 
 `characterDefinitionEnabled`と`currentDateEnabled`は個別に切り替え、既定は有効、保存後の次Turnから反映する。現在日時の保存キーは既存の`conversation_timing_enabled`を使い、保存済みのON/OFFを維持する。Tool Call Presenceの指示と設定は持たない。provider自身の指示は切り替えない。
 
-`character-authoring`は定義自体を成果物として扱い、毎Turn canonical定義からsnapshotを作る。通常向けOutput Boundary／Role／Current Dateを注入しない。authoring workspaceと管理Skillは別経路で保持する。
+`character-authoring`は定義自体を成果物として扱い、毎Turn canonical定義からsnapshotを作る。通常向けOutput Boundary／WithMate Local PR／Role／Current Dateを注入しない。authoring workspaceと管理Skillは別経路で保持する。
 
 ## 添付とtransport
 

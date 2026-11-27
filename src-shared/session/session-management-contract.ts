@@ -16,6 +16,8 @@ import { APPROVAL_MODE_VALUES } from "../settings/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../settings/codex-sandbox-mode.js";
 import { CODEX_REVIEWER_VALUES } from "../settings/codex-reviewer.js";
 import { SESSION_HISTORY_USAGE_NOTICE } from "../session-history/session-history-contract.js";
+import { localPrAgentInput } from "../local-pr/local-pr-contract.js";
+import { LOCAL_PR_AGENT_DESCRIPTIONS, LOCAL_PR_AGENT_READS, localPrAgentSuccessSchemas } from "../local-pr/local-pr-agent-operations.js";
 import { sessionOperatingPolicyRequestSchemas, sessionOperatingPolicySuccessSchemas, SESSION_OPERATING_POLICY_READS, SESSION_OPERATING_POLICY_DESCRIPTIONS } from "./session-operating-policy.js";
 export { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 
@@ -39,6 +41,7 @@ const child = z
   })
   .strict();
 export const sessionOperationRequestSchemas = {
+  ...localPrAgentInput,
   ...executionOperationRequestSchemas,
   ...sessionCoordinationRequestSchemas,
   ...sessionOperatingPolicyRequestSchemas,
@@ -189,6 +192,7 @@ const receiptSchema = z
   })
   .passthrough();
 export const sessionOperationSuccessSchemas = {
+  ...localPrAgentSuccessSchemas,
   ...executionOperationResultSchemas,
   ...sessionCoordinationSuccessSchemas,
   ...sessionOperatingPolicySuccessSchemas,
@@ -364,6 +368,7 @@ export const SESSION_TOOL_OPERATIONS = Object.fromEntries(
   ]),
 );
 export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
+  ...LOCAL_PR_AGENT_READS,
   ...SESSION_OPERATING_POLICY_READS,
   "self",
   "list",
@@ -388,6 +393,7 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     ) as Record<keyof typeof EXECUTION_OPERATION_DESCRIPTIONS, string>),
     ...SESSION_COORDINATION_DESCRIPTIONS,
     ...SESSION_OPERATING_POLICY_DESCRIPTIONS,
+    ...LOCAL_PR_AGENT_DESCRIPTIONS,
     create_child:
       "Create a saved normal direct child without opening a Session Window: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Specify Provider, model, reasoningEffort and a prepared workspacePath. The child inherits the calling Turn's Auto Run, Auto Review, User or Safety Focused choice across all four Providers. This controls responses to approval requests; it does not copy native policy or grant OS access. Restricted Codex Sandbox and legacy provider-specific modes cannot transfer. A selected Copilot custom agent also prevents cross-Provider creation because its tool restrictions cannot be verified. A new Codex child from another Provider starts read-only. A legacy unset Copilot/OpenCode reviewer remains unset on a mediated child, and becomes native User on Codex/Claude. Approval, Sandbox, Reviewer and inheritance switches are not request inputs. Character selection is automatic, never caller-selected. For a new selection, exclude the direct parent's Character if another active candidate exists, then choose uniformly among the remaining active candidates with the lowest usage by normal Mains in this Crew. Use the parent's Character if it is the only active candidate; fail if there are no active candidates. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
     get_catalog:

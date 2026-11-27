@@ -308,7 +308,20 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     const exact = { target, turnId: "1" };
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
+    const prId = requestId;
+    const runId = "22222222-2222-4222-8222-222222222222";
+    const pr = { prId, version: 1 };
+    const ci = { ...pr, runId };
+    const headCommit = "a".repeat(40), targetCommit = "b".repeat(40);
+    const targetBranch = "refs/heads/main";
     const inputs: Record<SessionOperation, Record<string, unknown>> = {
+      pr_list: {}, pr_branches: {}, pr_get: { prId },
+      pr_create: { headCommit, targetBranch, title: "Review" },
+      pr_submit: { prId, headCommit, expectedVersion: 1 },
+      pr_close: pr, pr_diff: { ...pr, mode: "full" }, pr_comment: { ...pr, body: "Review" },
+      pr_merge: { ...pr, headCommit, targetCommit },
+      pr_ci_validate: pr, pr_ci_list: pr, pr_ci_start: pr,
+      pr_ci_cancel: ci, pr_ci_rerun: ci, pr_ci_log: { ...ci, offset: 0 },
       get_selection_policy: {}, set_selection_policy: { policy: null }, get_provider_quota: {},
       get_worktree_policy: {}, set_worktree_root: { rootPath: null }, set_worktree_repository: { rule: null },
       resolve_worktree: { branch: "feat/task" },
@@ -450,7 +463,25 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       state: "open",
       answerRevision: 0,
     };
+    const submission = { id: prId, targetBranch, sourceBranch: null, title: "Review", description: "", createdBy: target,
+      createdAt: "t", updatedAt: "t", state: "open", latestVersion: 1, mergedCommit: null };
+    const comment = { id: prId, version: 1, anchor: null, replyTo: null, body: "Review", author: target, draft: false, createdAt: "t", updatedAt: "t" };
+    const detail = { ...submission,
+      versions: [{ version: 1, headCommit, targetCommit, mergeBaseCommit: targetCommit, submittedAt: "t", submittedBy: target }],
+      comments: [comment], approval: null, currentTargetCommit: targetCommit };
+    const run = { id: runId, version: 1, headCommit, targetCommit, state: "running", startedAt: "t", finishedAt: null, exitCode: null, error: null };
     const values: Record<SessionOperation, Record<string, unknown>> = {
+      pr_list: { data: { entries: [submission], hasMore: false } },
+      pr_branches: { data: { branches: [{ ref: targetBranch, commit: targetCommit }], head: headCommit, headBranch: null } },
+      pr_get: { data: detail }, pr_create: { data: detail }, pr_submit: { data: detail },
+      pr_close: { data: { ...detail, state: "closed" } },
+      pr_diff: { data: { beforeCommit: targetCommit, afterCommit: headCommit, files: [], patch: null } },
+      pr_comment: { data: comment },
+      pr_merge: { data: { ...detail, state: "merged", mergedCommit: headCommit } },
+      pr_ci_validate: { data: { headCommit, path: ".withmate/ci.yml", state: "not_configured", source: null, error: null } },
+      pr_ci_list: { data: { runs: [run] } }, pr_ci_start: { data: run },
+      pr_ci_cancel: { data: { ...run, state: "canceled", finishedAt: "t" } },
+      pr_ci_rerun: { data: run }, pr_ci_log: { data: { log: "output", nextOffset: 6, hasMore: false } },
       get_selection_policy: { policy: null }, set_selection_policy: { policy: null }, get_provider_quota: { providers: [] },
       get_worktree_policy: { repositoryId: "C:/repo/.git", rootPath: null, rule: null }, set_worktree_root: { rootPath: null },
       set_worktree_repository: { repositoryId: "C:/repo/.git", rootPath: null, rule: null },
@@ -670,6 +701,14 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     );
     assert.equal(invalid.exit, 2);
     assert.equal(calls.length, Object.keys(inputs).length * 4 + 2);
+    for (const [operation, effect] of [["pr_diff", "none"], ["pr_ci_start", "unknown"], ["pr_merge", "unknown"]] as const) {
+      const command = await cli(operation.replaceAll("_", "-"), inputs[operation], runtimeCall);
+      const tool = await client.callTool({ name: `session.${operation}`, arguments: inputs[operation] });
+      assert.equal(command.exit, 3);
+      assert.equal(command.value.effect, effect);
+      assert.match(String(command.value.message), /Read the PR or CI state/);
+      assert.deepEqual(tool.structuredContent, command.value);
+    }
   } finally {
     await client.close();
     await server.close();

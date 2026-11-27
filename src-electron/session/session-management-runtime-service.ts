@@ -18,6 +18,8 @@ import {
 import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { capturePersistentStoreOwner } from "../storage/persistent-store-owner-guard.js";
 import { isSessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
+import { isLocalPrAgentOperation } from "../../src-shared/local-pr/local-pr-agent-operations.js";
+import { executeLocalPrAgentOperation, type LocalPrAgentRuntimeDeps } from "../local-pr/local-pr-agent-runtime.js";
 
 type ScopeReader = SessionManagementApplicationDeps["readSessionScope"];
 type ScopeReaderOwner = {
@@ -41,6 +43,7 @@ export class SessionManagementRuntimeService {
       application: SessionManagementApplication;
       bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve">;
       providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
+      localPr?: LocalPrAgentRuntimeDeps;
     },
   ) {}
 
@@ -119,8 +122,22 @@ export class SessionManagementRuntimeService {
         );
     };
     try {
+      const isLocalPr = isLocalPrAgentOperation(operation);
       const execute = () =>
-        this.deps.application.execute(operation, request.body, {
+        // Both public adapters enter the PR application only after standard binding and Turn admission.
+        isLocalPr ? executeLocalPrAgentOperation({
+          deps: this.deps.localPr,
+          operation,
+          body: request.body,
+          binding: {
+            actor: actor.data,
+            workspacePath: binding.authoritySnapshot.sessionWorkspacePath,
+            providerId: admission.handle.providerId,
+            executionOptions: admission.handle.executionOptions,
+            assertCurrent,
+          },
+          readSavedScope: (target) => this.deps.application.deps.readSessionScope(target, null),
+        }) : this.deps.application.execute(operation, request.body, {
           actor: actor.data,
           assertCurrent,
           actorExecution: admission.handle.executionOptions && {
@@ -128,9 +145,9 @@ export class SessionManagementRuntimeService {
             executionOptions: admission.handle.executionOptions,
           },
         });
-      // Reads, Coordination, policy and directory changes carry admission into Worker.
+      // Reads, PR, Coordination, policy and directory changes carry admission into Worker.
       // Coordination detaches its postcommit queue wake from this sender scope.
-      const result = await (SESSION_READ_OPERATIONS.includes(operation) ||
+      const result = await (isLocalPr || SESSION_READ_OPERATIONS.includes(operation) ||
       isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory"
         ? runWithRuntimeTurnAdmission(
             {
@@ -149,6 +166,8 @@ export class SessionManagementRuntimeService {
         : execute());
       // A committed mutation remains applied even when the initiating provider Turn ends.
       if (SESSION_READ_OPERATIONS.includes(operation)) assertCurrent();
+      // Workspace/identity mismatches are authentication failures before application dispatch.
+      if (!result.ok && isLocalPr && result.code === "SESSION_BINDING_INVALID") return { status: 401, value: result };
       return { status: result.ok ? 200 : 400, value: result };
     } catch (error) {
       if (error instanceof RuntimeTurnInactiveError) return failure(401, "SESSION_BINDING_INVALID", "The captured provider Turn ended before the operation was applied.");
