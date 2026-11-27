@@ -1085,6 +1085,7 @@ function Overview({
     pr.approval.headCommit === approvalTarget.headCommit &&
     pr.approval.targetCommit === approvalTarget.targetCommit;
   const targetChanged =
+    pr.state === "open" &&
     !!latest &&
     pr.currentTargetCommit !== null &&
     latest.targetCommit !== pr.currentTargetCommit;
@@ -1114,7 +1115,7 @@ function Overview({
             {isApproved ? `Approved v${pr.approval?.version}` : "Not Approved"}
             {targetChanged ? " · Target Branch Has Changed" : ""}
           </p>
-          {pr.currentTargetCommit === null && <p>Current Target Unavailable</p>}
+          {pr.state === "open" && pr.currentTargetCommit === null && <p>Current Target Unavailable</p>}
           {pr.state === "open" && (
             <div className="local-pr-actions">
               <button

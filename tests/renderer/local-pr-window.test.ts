@@ -253,6 +253,13 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     await act(async () => button("Merge").click());
     assert.deepEqual(merges, [{ prId: detail.id, version: 1, headCommit: sha, targetCommit: sha }]);
     assert.doesNotMatch(first.textContent ?? "", /Confirm Merge/);
+    detail.state = "merged";
+    detail.currentTargetCommit = detail.mergedCommit = "b".repeat(40);
+    await act(async () => {
+      listeners.forEach((listener) => listener());
+    });
+    assert.match(first.textContent ?? "", /Merged/);
+    assert.doesNotMatch(first.textContent ?? "", /Target Branch Has Changed/);
   } finally {
     await act(async () => roots.forEach((root) => root.unmount()));
     await vite.close();
