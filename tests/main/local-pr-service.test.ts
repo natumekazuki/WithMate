@@ -215,6 +215,17 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   rejected(await f.execute("pr_merge", v2), "UNSUPPORTED_MERGE");
   git(f.root, "config", "--unset", "merge.fixture.driver");
 
+  // Let Git reject a colliding untracked file but preserve unrelated untracked work.
+  const untracked = path.join(f.root, "l.txt");
+  await writeFile(untracked, "untracked user content\n");
+  rejected(await f.execute("pr_merge", v2), "GIT_FAILED");
+  assert.equal(await readFile(untracked, "utf8"), "untracked user content\n");
+  assert.equal(git(f.root, "rev-parse", "HEAD"), target);
+  await rm(untracked);
+  await writeFile(path.join(f.root, "scratch.txt"), "unrelated draft\n");
+  // Otherwise Git tries this strategy before the explicitly requested ort strategy.
+  git(f.root, "config", "branch.main.mergeOptions", "-s ours");
+
   // An updated source branch must not replace the commit the user reviewed.
   await writeFile(path.join(f.source, "not-submitted.txt"), "moving branch\n");
   git(f.source, "add", "not-submitted.txt");
@@ -223,7 +234,8 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(merged.state, "merged");
   assert.equal(git(f.root, "rev-parse", "HEAD"), merged.mergedCommit);
   assert.equal(git(f.root, "show", "-s", "--format=%P", "HEAD"), `${target} ${f.head}`);
-  assert.equal(git(f.root, "status", "--porcelain"), "");
+  assert.equal(git(f.root, "status", "--porcelain"), "?? scratch.txt");
+  assert.equal(await readFile(path.join(f.root, "scratch.txt"), "utf8"), "unrelated draft\n");
   assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
   await assert.rejects(readFile(path.join(f.root, "not-submitted.txt")), { code: "ENOENT" });
   await f.restart();

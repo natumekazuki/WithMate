@@ -7,7 +7,7 @@ import {
 } from "./local-pr-git.js";
 
 const operationPaths = ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"];
-const statusArgs = ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=dirty"];
+const statusArgs = ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=dirty"];
 
 /** Uses the existing checkout of the exact target ref; never switches or creates one. */
 async function targetWorktree(repository: LocalPrRepository, branch: string): Promise<string> {
@@ -180,8 +180,10 @@ export async function mergeLocalPr(
     // --no-overwrite-ignore is not a protection guarantee for this Git path.
     result = await runLocalPrGit(root, [
       ...filterArgs, "-c", "merge.renormalize=false", "-c", "submodule.recurse=false",
+      // Git appends strategies from branch.mergeOptions even with an explicit -s.
+      "-c", `branch.${branch.slice("refs/heads/".length)}.mergeOptions=`,
       "merge", "-s", "ort", "--no-ff", "--no-squash", "--commit", "--no-edit", "--no-autostash",
-      "--no-gpg-sign", "--no-stat", "--no-overwrite-ignore", source,
+      "--no-gpg-sign", "--no-stat", "--no-overwrite-ignore", "--", source,
     ]);
     reason = result.code === 0 ? "Git did not confirm the expected merge." : (result.stderr || result.stdout.toString("utf8").trimEnd() || `Git merge exited with code ${result.code}.`);
   } catch (error) {

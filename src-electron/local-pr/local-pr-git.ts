@@ -1,6 +1,5 @@
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import { localPrCommitSchema, type LocalPrFailure } from "../../src-shared/local-pr/local-pr-contract.js";
 import { getDefaultGitExecutablePath } from "../platform/git-executable.js";
 
@@ -126,56 +125,5 @@ export async function verifyLocalPrCommit(root: string, oid: string): Promise<vo
   const result = await runLocalPrGit(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${gitObjectId(oid)}^{commit}`]);
   if (result.code !== 0 || gitLine(result.stdout) !== oid) {
     throw new LocalPrError("COMMIT_NOT_FOUND", "The selected object is not an available commit.");
-  }
-}
-
-/**
- * Holds ordinary Git ref locks across pre-commit worktree checks.
- * A lost acknowledgement for commit is not evidence that the ref stayed unchanged.
- */
-export async function withPreparedLocalPrRefs<T>(
-  root: string, commands: string[], operation: (commit: () => Promise<void>, assertHeld: () => void) => Promise<T>,
-): Promise<T> {
-  const child = spawn(await gitExecutable(), [...gitArgs, "update-ref", "-m", "WithMate Local PR", "--stdin"], {
-    cwd: root, windowsHide: true, env: gitEnvironment(), stdio: ["pipe", "pipe", "pipe"],
-  });
-  child.stdin.on("error", () => {});
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 64 * 1024) stderr += chunk.toString("utf8"); });
-  const closed = new Promise<number | null>((resolve) => {
-    child.once("error", () => resolve(null));
-    child.once("close", resolve);
-  });
-  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-  let commitRequested = false;
-  // Bound protocol replies, but never drop the ref locks mid-checkout because of a protocol timer.
-  let timer = setTimeout(() => child.kill(), timeout);
-  const assertHeld = () => {
-    if (child.killed || child.exitCode !== null || child.signalCode !== null) {
-      throw new LocalPrError("GIT_REF_CHANGED", "Git released the prepared ref locks.");
-    }
-  };
-  try {
-    child.stdin.write(["start", ...commands, "prepare", ""].join("\n"));
-    if ((await lines.next()).value !== "start: ok" || (await lines.next()).value !== "prepare: ok") {
-      await closed;
-      throw new LocalPrError("GIT_REF_CHANGED", stderr.trim() || "Git could not lock the expected refs. Refresh the PR and try again.");
-    }
-    clearTimeout(timer);
-    return await operation(async () => {
-      assertHeld();
-      commitRequested = true;
-      timer = setTimeout(() => child.kill(), timeout);
-      child.stdin.end("commit\n");
-      const reply = await lines.next();
-      if (await closed !== 0 || reply.value !== "commit: ok") {
-        throw new LocalPrError("MERGE_EFFECT_UNKNOWN", stderr.trim() || "Git did not confirm the ref update.", "unknown");
-      }
-    }, assertHeld);
-  } finally {
-    // Never send commit implicitly; an operation returning or throwing before it leaves refs unchanged.
-    if (!commitRequested) child.stdin.end();
-    await closed;
-    clearTimeout(timer);
   }
 }
