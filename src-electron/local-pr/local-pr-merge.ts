@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import type { LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
+import { RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import {
   gitLine, gitObjectId, gitUtf8, LocalPrError, localPrEmptyGitConfigEnv, localPrGit, readLocalPrBranch, resolveLocalPrRepository,
   runLocalPrGit, verifyLocalPrCommit, type LocalPrRepository,
@@ -124,6 +125,23 @@ export async function mergeLocalPr(
   }
   // Git may run a configured clean filter while checking the approved checkout.
   guard();
+  try {
+    return await mergeCheckedOutVersion(root, branch, old, source, guard);
+  } catch (error) {
+    // A refusal can follow a Git status or merge that already ran configured programs.
+    if (error instanceof LocalPrError && error.effect === "unknown") throw error;
+    const code = error instanceof LocalPrError ? error.code : error instanceof RuntimeTurnInactiveError
+      ? "RUNTIME_TURN_INACTIVE" : "MERGE_EFFECT_UNKNOWN";
+    const message = error instanceof LocalPrError || error instanceof RuntimeTurnInactiveError
+      ? error.message : "Git could not complete the merge checks.";
+    throw new LocalPrError(code, `${message} Inspect the checkout for effects of configured Git programs.`, "unknown");
+  }
+}
+
+/** Checks the approved checkout and runs Git, both with the checkout's configured filters. */
+async function mergeCheckedOutVersion(
+  root: string, branch: string, old: string, source: string, guard: () => void,
+): Promise<string> {
   if ((await localPrGit(root, statusArgs)).length) {
     throw new LocalPrError("WORKTREE_DIRTY", "Commit or move work in the target checkout, then retry the merge.");
   }

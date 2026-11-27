@@ -181,10 +181,10 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
 
   const dirty = path.join(f.root, "base.txt");
   await writeFile(dirty, "unsaved edit\n");
-  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
+  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY", "unknown");
   assert.equal(await readFile(dirty, "utf8"), "unsaved edit\n");
   git(f.root, "add", "base.txt");
-  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
+  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY", "unknown");
   assert.equal(git(f.root, "show", ":base.txt"), "unsaved edit");
   await writeFile(dirty, "base\n");
   git(f.root, "add", "base.txt");
@@ -192,14 +192,14 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   const contents = await readFile(missing);
   const index = await readFile(path.join(f.root, ".git", "index"));
   await rm(missing);
-  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
+  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY", "unknown");
   await assert.rejects(readFile(missing), { code: "ENOENT" });
   assert.deepEqual(await readFile(path.join(f.root, ".git", "index")), index);
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await writeFile(missing, contents);
   const indexLock = path.join(f.root, ".git", "index.lock");
   await writeFile(indexLock, "another Git command");
-  rejected(await f.execute("pr_merge", v2), "GIT_FAILED");
+  rejected(await f.execute("pr_merge", v2), "GIT_FAILED", "unknown");
   assert.equal(await readFile(indexLock, "utf8"), "another Git command");
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(indexLock);
@@ -207,7 +207,7 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   // Let Git reject a colliding untracked file but preserve unrelated untracked work.
   const untracked = path.join(f.root, "l.txt");
   await writeFile(untracked, "untracked user content\n");
-  rejected(await f.execute("pr_merge", v2), "GIT_FAILED");
+  rejected(await f.execute("pr_merge", v2), "GIT_FAILED", "unknown");
   assert.equal(await readFile(untracked, "utf8"), "untracked user content\n");
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(untracked);
@@ -267,6 +267,26 @@ test("Local PR uses the checkout's Git driver and filter only after approval", a
   await assert.rejects(readFile(unusedLog), { code: "ENOENT" });
   await f.restart();
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
+});
+
+/** A clean filter can run during the worktree check even when Git never starts the merge. */
+test("Local PR reports possible filter effects when the target checkout is dirty", async (t) => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.root, ".git", "info", "attributes"), "base.txt filter=fixture\n");
+  git(f.root, "config", "filter.fixture.clean", "echo filter-ran > deleted.txt; cat");
+  await writeFile(path.join(f.root, "base.txt"), "edit\n");
+  const pr = await f.create();
+  const approved = tuple(pr.id, pr.versions[0]);
+  rejected(await f.execute("pr_merge", approved), "APPROVAL_REQUIRED");
+  assert.equal(await readFile(path.join(f.root, "deleted.txt"), "utf8"), "remove me\n");
+
+  value(await f.execute("approve", approved, "gui"));
+  rejected(await f.execute("pr_merge", approved), "WORKTREE_DIRTY", "unknown");
+  assert.equal(git(f.root, "rev-parse", "HEAD"), f.base);
+  assert.equal(git(f.root, "show", ":deleted.txt"), "remove me");
+  assert.equal(await readFile(path.join(f.root, "base.txt"), "utf8"), "edit\n");
+  assert.match(await readFile(path.join(f.root, "deleted.txt"), "utf8"), /^filter-ran\r?\n$/u);
+  assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
 /** The app requests checkout when needed, then uses the selected linked worktree without touching other work. */
@@ -331,7 +351,7 @@ test("Local PR reports that an already-included submission did not produce a mer
   const pr = await f.create();
   const approved = tuple(pr.id, pr.versions[0]);
   value(await f.execute("approve", approved, "gui"));
-  rejected(await f.execute("pr_merge", approved), "ALREADY_UP_TO_DATE");
+  rejected(await f.execute("pr_merge", approved), "ALREADY_UP_TO_DATE", "unknown");
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
