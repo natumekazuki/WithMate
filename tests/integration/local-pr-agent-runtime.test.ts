@@ -17,7 +17,7 @@ import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/provider
 import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
 import type { RelatedSession } from "../../src-electron/session/session-relationship-resolver.js";
-import { localPrAgentData, type LocalPrData } from "../../src-shared/local-pr/local-pr-contract.js";
+import { localPrAgentData, localPrAgentInput, type LocalPrData } from "../../src-shared/local-pr/local-pr-contract.js";
 import { getSessionAgentRuntimeOperations } from "../../src-shared/session/session-management-contract.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { fixtureSessionManagementScope } from "../main/fixtures/session-management-scope.js";
@@ -27,7 +27,7 @@ const prId = "11111111-1111-4111-8111-111111111111";
 const runId = "22222222-2222-4222-8222-222222222222";
 const headCommit = "a".repeat(40), targetCommit = "b".repeat(40);
 
-/** The real public transports must not bypass exact workspace/Turn authentication or the common merge gate. */
+/** Real public transports preserve comment targets and must not bypass exact workspace/Turn authentication or the common merge gate. */
 test("bundled Local PR CLI and managed HTTP MCP share the bound application and reject forged authority", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-pr-transport-"));
   const workspacePath = join(directory, "session-workspace");
@@ -62,7 +62,15 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
       // Only the common application owns the Approval and CI effects. This fixture supplies its contract, not shell or Git execution.
       if (operation === "pr_merge") return { ok: false, code: "LOCAL_PR_APPROVAL_REQUIRED", message: "GUI approval is required.", effect: "none" };
       if (operation === "pr_ci_start" || operation === "pr_ci_rerun") assert.equal((input as { prId: string }).prId, prId);
-      const value = operation === "pr_list" ? { entries: [], hasMore: false } : expectedRun;
+      let value: unknown = expectedRun;
+      // Project the submitted anchor as the application would, so both clients must preserve the round trip.
+      if (operation === "pr_comment") {
+        const { anchor, version, body, replyTo } = localPrAgentInput.pr_comment.parse(input);
+        value = { id: runId, version, anchor: anchor ?? null, body, replyTo: replyTo ?? null, author: actor, draft: false,
+          createdAt: "t", updatedAt: "t" };
+      } else if (operation === "pr_list") {
+        value = { entries: [], hasMore: false };
+      }
       return { ok: true, data: localPrAgentData[operation].parse(value) as LocalPrData<typeof operation> };
     },
   };
@@ -123,6 +131,23 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
       assert.deepEqual(tool.structuredContent, expected);
       assert.equal(tool.isError, expected.ok ? undefined : true);
     }
+
+    const file = { mode: "full", path: "src/file.ts", side: "after" };
+    const comment = { prId, version: 1, body: "Review comment" };
+    for (const anchor of [undefined, { ...file, startLine: null, endLine: null }, { ...file, startLine: 2, endLine: 4 }]) {
+      const arguments_ = { ...comment, ...(anchor ? { anchor } : {}) };
+      const command = await cli("pr-comment", arguments_);
+      const tool = await client.callTool({ name: "session.pr_comment", arguments: arguments_ });
+      assert.equal(command.exit, 0);
+      assert.deepEqual(command.value.data.anchor, anchor ?? null);
+      assert.deepEqual(tool.structuredContent, command.value);
+    }
+    const invalidComment = { ...comment, anchor: { ...file, startLine: null, endLine: 2 } };
+    const badComment = await cli("pr-comment", invalidComment);
+    assert.equal(badComment.exit, 2);
+    assert.equal(badComment.value.effect, "none");
+    assert.deepEqual((await client.callTool({ name: "session.pr_comment", arguments: invalidComment })).structuredContent, badComment.value);
+
     const start = { prId, version: 1 };
     const override = { ...start, repoPath: directory, workspacePath: directory, actor };
     const invalid = await cli("pr-ci-start", override);
@@ -163,7 +188,8 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
     const inactive = await pending;
     assert.equal(inactive.value.code, "SESSION_BINDING_INVALID");
     assert.equal(inactive.value.effect, "none");
-    assert.deepEqual(operations, ["pr_list", "pr_list", "pr_merge", "pr_merge", "pr_ci_start", "pr_ci_start", "pr_ci_rerun", "pr_ci_rerun"]);
+    assert.deepEqual(operations, ["pr_list", "pr_list", "pr_merge", "pr_merge", "pr_ci_start", "pr_ci_start", "pr_ci_rerun", "pr_ci_rerun",
+      ...Array<string>(6).fill("pr_comment")]);
   } finally {
     await client.close();
     turns.end(turn);

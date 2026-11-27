@@ -6188,7 +6188,7 @@ var LOCAL_PR_AGENT_DESCRIPTIONS = {
 	pr_submit: "Submit a new version of a PR from an exact committed head. Compare and review the new version separately.",
 	pr_close: "Close an open PR at its expected version without merging it.",
 	pr_diff: "Read a submitted version's fixed full or previous-version diff. Specify a path to read that file's patch.",
-	pr_comment: "Publish a PR comment, a line-range comment or a reply on a specific submitted version. This does not start a Session Turn.",
+	pr_comment: "Publish a comment or reply on an exact submitted version. Omit the anchor for a PR-wide comment, use null for both line values for a file comment, or use an ordered pair of positive line numbers for a line range. This does not start a Session Turn.",
 	pr_merge: "Merge the exact version and commit pair only if it has a current user approval recorded in the WithMate GUI.",
 	pr_ci_validate: "Read and validate .withmate/ci.yml from the exact submitted head without running commands.",
 	pr_ci_list: "List CI runs for the exact submitted version.",

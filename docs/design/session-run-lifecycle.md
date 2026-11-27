@@ -110,6 +110,8 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 ローカルPRの`session.pr_*` MCPと`withmate-session pr-*` CLIも同じbound runtimeを使う。操作対象は資格情報が指す実行中TurnのSessionと、その保存済みWorkspaceから解決したrepositoryに限る。呼出側からSession・cwd・GUIで選択中のrepositoryを指定できない。AgentはPRを提出し、GUIのユーザー承認を待ってから、承認対象の版をWithMate PR経由でmergeする。承認・取消、下書き操作、GUIからの議論送信はAgent APIに公開しない。WithMate以外のGit操作は技術的に遮断しない。
 
+コメントは提出版を指定し、PR全体なら`anchor`を省略する。ファイルへの指摘では比較mode・path・sideを指定し、`startLine`と`endLine`を両方`null`にする。行・行範囲への指摘では両方を正の行番号にする。
+
 CIの起動・再実行もWithMateが注入する既存資格情報、有効なbindingとTurnに従う。提出版の`.withmate/ci.yml`のコマンドはWithMateアプリのOS権限で実行され、Provider sandbox内の実行とは異なる。CIの起動はPRのGUI Approvalを作成せず、CI成功もmergeの必須条件ではない。
 
 通常の保存会話は`list_messages`／`get_message`、保存artifactは`list_operations`／`get_operation_detail`で取得し、Turnに未対応の過去messageも対象にする。既存保存history helperのpaging／欠落契約を使い、背景実行の限定scopeやgrantを流用しない。実行参照には保存receipt、WithMate Turn、保存message sequenceのいずれか一つを指定し、messageから確定した対応がない場合は欠落として返す。
