@@ -9,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test, { type TestContext } from "node:test";
 
 import { LocalPrCiService, type LocalPrCiOperation } from "../../src-electron/local-pr/local-pr-ci-service.js";
+import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../../src-electron/platform/agent-runtime/runtime-turn-admission.js";
 import type { LocalPrInput, LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
 
 const definition = (commands: string[]) => `version: 1\ncommands:\n${commands.map((command) => `  - ${JSON.stringify(command)}`).join("\n")}\n`;
@@ -179,6 +180,41 @@ test("cancel and application shutdown stop the running command; reset reopens CI
   assert.equal(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs.find(({ id }) => id === next.id)?.state, "interrupted");
   await restarted.reset();
   assert.deepEqual(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs, []);
+});
+
+/** A delayed mutation must reject expired bindings without reserving or stopping CI; accepted work outlives its creating Turn. */
+test("CI rechecks captured runtime Turn admission only before start, rerun and cancellation effects", async (t) => {
+  const f = await fixture(t);
+  const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid);setInterval(()=>{},1000)"`]));
+  const inactive = (error: unknown) => error instanceof RuntimeTurnInactiveError && error.effect === "none";
+  const state = () => new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const deactivate = (captured: SharedArrayBuffer) => Atomics.store(new Int32Array(captured), 0, 1);
+
+  // initialize() is already resolved; let the operation resume and start its awaited Git lookup first.
+  const staleStart = state();
+  const pendingStart = runWithRuntimeTurnAdmission({ state: staleStart }, () => f.run(v, "pr_ci_start"));
+  queueMicrotask(() => deactivate(staleStart));
+  await assert.rejects(pendingStart, inactive);
+  assert.deepEqual(unwrap(await f.run(v, "pr_ci_list")).runs, []);
+
+  const creator = state();
+  const accepted = unwrap(await runWithRuntimeTurnAdmission({ state: creator }, () => f.run(v, "pr_ci_start")));
+  deactivate(creator);
+  const pid = await runningPid(f, v, accepted.id);
+  const staleCancel = state();
+  const pendingCancel = runWithRuntimeTurnAdmission({ state: staleCancel }, () => f.run(v, "pr_ci_cancel", { runId: accepted.id }));
+  deactivate(staleCancel);
+  await assert.rejects(pendingCancel, inactive);
+  assert.equal(unwrap(await f.run(v, "pr_ci_list")).runs[0]?.state, "running");
+  assert.equal(process.kill(pid, 0), true);
+
+  const canceled = unwrap(await runWithRuntimeTurnAdmission({ state: state() }, () => f.run(v, "pr_ci_cancel", { runId: accepted.id })));
+  assert.equal(canceled.state, "canceled");
+  const staleRerun = state();
+  const pendingRerun = runWithRuntimeTurnAdmission({ state: staleRerun }, () => f.run(v, "pr_ci_rerun", { runId: accepted.id }));
+  queueMicrotask(() => deactivate(staleRerun));
+  await assert.rejects(pendingRerun, inactive);
+  assert.deepEqual(unwrap(await f.run(v, "pr_ci_list")).runs, [canceled]);
 });
 
 /** A successful exit that bypasses later commands is not a successful CI run. */

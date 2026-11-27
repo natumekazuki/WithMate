@@ -11,6 +11,7 @@ import {
   type LocalPrData, type LocalPrFailure, type LocalPrInput, type LocalPrOperation, type LocalPrResult,
   type LocalPrVersion, type LocalPrCiRun,
 } from "../../src-shared/local-pr/local-pr-contract.js";
+import { assertRuntimeTurnAdmission, runWithoutRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { prepareLocalPrCiCheckout, readLocalPrCiDefinition } from "./local-pr-ci-definition.js";
 import { runLocalPrCiShell } from "./local-pr-ci-process.js";
 
@@ -113,6 +114,8 @@ export class LocalPrCiService {
       if (operation === "pr_ci_cancel" && previous) {
         const task = this.active.get(previous.run.id);
         if (!task || previous.run.state !== "running") return failure("ci_not_running", "This CI run is not running.");
+        // Startup recovery can outlive the caller's captured Turn; check before sending the stop request.
+        assertRuntimeTurnAdmission();
         effect = "unknown";
         this.requestStop(task, "canceled");
         if (!await Promise.race([task.done.then(() => true), delay(10_000, false, { ref: false })])) {
@@ -133,11 +136,14 @@ export class LocalPrCiService {
         id: randomUUID(), version: version.version, headCommit: version.headCommit, targetCommit: version.targetCommit,
         state: "running", startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, error: null,
       } };
+      // Git reads can outlive the captured Turn. Once reserved, CI is an app-owned job.
+      assertRuntimeTurnAdmission();
       effect = "unknown";
-      const { saved, run } = this.start(record, repository.workspacePath, commands);
+      const { saved, run } = runWithoutRuntimeTurnAdmission(() => this.start(record, repository.workspacePath, commands));
       await saved;
       return ok(run);
     } catch (error) {
+      if (error instanceof RuntimeTurnInactiveError) throw error;
       return failure("ci_error", errorMessage(error), effect);
     }
   }
