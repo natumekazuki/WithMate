@@ -6,7 +6,6 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import type { LocalPrInput, LocalPrResult, LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
 import { LocalPrService, resolveLocalPrRepository, type LocalPrCoreOperation, type LocalPrStore } from "../../src-electron/local-pr/local-pr-service.js";
-import { withPreparedLocalPrRefs } from "../../src-electron/local-pr/local-pr-git.js";
 import { APP_DATABASE_V6_FILENAME } from "../../src-electron/storage/database-schema-v6.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 
@@ -151,7 +150,7 @@ test("Local PR persists fixed comparisons and private drafts across storage rest
   assert.ok(f.changed.every((id) => id === f.repository.repositoryId));
 });
 
-/** Fresh GUI approval is required even for a target-only resubmission; checked-out merges update real files as well as refs. */
+/** Approval binds the exact source and target, and native Git is not launched while tracked edits exist. */
 test("Local PR rejects stale approval, dirty or locked checkout, and merges cleanly without CI", async (t) => {
   const f = await fixture(t);
   const pr = await f.create();
@@ -184,13 +183,20 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   await writeFile(dirty, "unsaved edit\n");
   rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
   assert.equal(await readFile(dirty, "utf8"), "unsaved edit\n");
-  await writeFile(dirty, "base\n");
-  const ignored = path.join(f.root, "l.txt");
-  await writeFile(path.join(f.root, ".git", "info", "exclude"), "l.txt\n");
-  await writeFile(ignored, "ignored user content\n");
+  git(f.root, "add", "base.txt");
   rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
-  assert.equal(await readFile(ignored, "utf8"), "ignored user content\n");
-  await rm(ignored);
+  assert.equal(git(f.root, "show", ":base.txt"), "unsaved edit");
+  await writeFile(dirty, "base\n");
+  git(f.root, "add", "base.txt");
+  const missing = path.join(f.root, "old name.txt");
+  const contents = await readFile(missing);
+  const index = await readFile(path.join(f.root, ".git", "index"));
+  await rm(missing);
+  rejected(await f.execute("pr_merge", v2), "WORKTREE_DIRTY");
+  await assert.rejects(readFile(missing), { code: "ENOENT" });
+  assert.deepEqual(await readFile(path.join(f.root, ".git", "index")), index);
+  assert.equal(git(f.root, "rev-parse", "HEAD"), target);
+  await writeFile(missing, contents);
   const indexLock = path.join(f.root, ".git", "index.lock");
   await writeFile(indexLock, "another Git command");
   rejected(await f.execute("pr_merge", v2), "GIT_FAILED");
@@ -205,57 +211,72 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   rejected(await f.execute("pr_merge", v2), "UNSUPPORTED_WORKTREE");
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(attributes);
+  git(f.root, "config", "merge.fixture.driver", "false");
+  rejected(await f.execute("pr_merge", v2), "UNSUPPORTED_MERGE");
+  git(f.root, "config", "--unset", "merge.fixture.driver");
 
+  // An updated source branch must not replace the commit the user reviewed.
+  await writeFile(path.join(f.source, "not-submitted.txt"), "moving branch\n");
+  git(f.source, "add", "not-submitted.txt");
+  git(f.source, "commit", "-qm", "not part of this PR version");
   const merged = value<"pr_merge">(await f.execute("pr_merge", v2));
   assert.equal(merged.state, "merged");
   assert.equal(git(f.root, "rev-parse", "HEAD"), merged.mergedCommit);
   assert.equal(git(f.root, "show", "-s", "--format=%P", "HEAD"), `${target} ${f.head}`);
   assert.equal(git(f.root, "status", "--porcelain"), "");
   assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
+  await assert.rejects(readFile(path.join(f.root, "not-submitted.txt")), { code: "ENOENT" });
   await f.restart();
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
 });
 
-/** Unattached branches are advanced under worktree HEAD checks, without modifying unrelated user work. */
-test("Local PR merges an unattached target without changing an unrelated checkout", async (t) => {
+/** The app requests checkout when needed, then uses the selected linked worktree without touching other work. */
+test("Local PR requires a manual checkout, then merges in the linked worktree", async (t) => {
   const f = await fixture(t, { detachedTarget: true });
   const pr = await f.create();
-  git(f.source, "switch", "--detach", f.head);
   await writeFile(path.join(f.root, "base.txt"), "unrelated work\n");
   const approved = tuple(pr.id, pr.versions[0]);
   value(await f.execute("approve", approved, "gui"));
-  const merged = value<"pr_merge">(await f.execute("pr_merge", approved));
+  rejected(await f.execute("pr_merge", approved), "TARGET_NOT_CHECKED_OUT");
+  assert.equal(git(f.root, "rev-parse", "refs/heads/main"), f.base);
+  git(f.source, "switch", "main");
+  const workspace = await resolveLocalPrRepository(f.root);
+  const merged = value<"pr_merge">(await f.service.execute(workspace, actor, "agent", "pr_merge", approved));
   assert.equal(git(f.root, "rev-parse", "refs/heads/main"), merged.mergedCommit);
+  assert.equal(git(f.source, "rev-parse", "HEAD"), merged.mergedCommit);
+  assert.equal(await readFile(path.join(f.source, "l.txt"), "utf8"), "other file\n");
   assert.equal(git(f.root, "symbolic-ref", "HEAD"), "refs/heads/parking");
   assert.equal(git(f.root, "rev-parse", "HEAD"), f.base);
   assert.equal(await readFile(path.join(f.root, "base.txt"), "utf8"), "unrelated work\n");
 });
 
-/** Conflict detection produces no ref, index or worktree update. */
+/** Git's conflict remains for the user to resolve, without marking the PR merged. */
 test("Local PR does not treat a Git merge conflict as a merged PR", async (t) => {
   const f = await fixture(t, { conflict: true });
   const pr = await f.create();
   const approved = tuple(pr.id, pr.versions[0]);
   value(await f.execute("approve", approved, "gui"));
-  rejected(await f.execute("pr_merge", approved), "MERGE_CONFLICT");
+  rejected(await f.execute("pr_merge", approved), "MERGE_CONFLICT", "unknown");
   assert.equal(git(f.root, "rev-parse", "HEAD"), approved.targetCommit);
-  assert.equal(git(f.root, "status", "--porcelain"), "");
-  assert.equal(await readFile(path.join(f.root, "base.txt"), "utf8"), "target\n");
+  assert.equal(git(f.root, "rev-parse", "MERGE_HEAD"), f.head);
+  assert.match(git(f.root, "status", "--porcelain"), /UU base\.txt/u);
+  assert.match(await readFile(path.join(f.root, "base.txt"), "utf8"), /<<<<<<< HEAD\ntarget\n=======\nsource\n>>>>>>>/u);
+  rejected(await f.execute("pr_merge", approved), "WORKTREE_BUSY");
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
-/** The production ref transaction acquires both locks and aborts without updating Git on guard failure. */
-test("a prepared Git HEAD update holds both locks and aborts if the guarded operation rejects", async (t) => {
+/** A native no-op does not count as creating the required merge commit. */
+test("Local PR reports that an already-included submission did not produce a merge commit", async (t) => {
   const f = await fixture(t);
-  await assert.rejects(withPreparedLocalPrRefs(f.root, [`update HEAD ${f.head} ${f.base}`], async (_commit, assertHeld) => {
-    assertHeld();
-    assert.equal(git(f.root, "symbolic-ref", "HEAD"), "refs/heads/main");
-    assert.throws(() => git(f.root, "symbolic-ref", "HEAD", "refs/heads/topic"), /lock/u);
-    assert.throws(() => git(f.source, "update-ref", "refs/heads/main", f.head, f.base), /lock/u);
-    throw new Error("reject operation");
-  }), /reject operation/u);
-  assert.equal(git(f.root, "rev-parse", "HEAD"), f.base);
-  git(f.root, "branch", "abort-released", f.base);
+  git(f.root, "merge", "--no-ff", "--no-edit", f.head);
+  const target = git(f.root, "rev-parse", "HEAD");
+  assert.notEqual(target, f.head);
+  const pr = await f.create();
+  const approved = tuple(pr.id, pr.versions[0]);
+  value(await f.execute("approve", approved, "gui"));
+  rejected(await f.execute("pr_merge", approved), "ALREADY_UP_TO_DATE");
+  assert.equal(git(f.root, "rev-parse", "HEAD"), target);
+  assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
 });
 
 /** If a real Git failure interrupts ref commit after checkout, never report success or run an unguarded rollback. */
@@ -270,6 +291,8 @@ test("Local PR preserves the observed worktree and reports unknown when Git cann
   await writeFile(path.join(reflog, "blocker"), "occupied\n");
   rejected(await f.execute("pr_merge", approved), "MERGE_EFFECT_UNKNOWN", "unknown");
   assert.equal(git(f.root, "rev-parse", "HEAD"), f.base);
+  assert.equal(git(f.root, "rev-parse", "MERGE_HEAD"), f.head);
+  assert.match(git(f.root, "diff", "--cached", "--name-only"), /^l\.txt$/mu);
   assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
   assert.equal(await readFile(path.join(reflog, "blocker"), "utf8"), "occupied\n");
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).state, "open");
