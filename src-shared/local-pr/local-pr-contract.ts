@@ -21,14 +21,15 @@ export const localPrVersionSchema = z.strictObject({
   submittedBy: sessionTargetSchema,
 });
 
-/** An anchor addresses lines on one side of a single file in one immutable comparison. */
+/** An anchor addresses a file or its line range on one side of an immutable comparison. */
 export const localPrAnchorSchema = z.strictObject({
   mode: z.enum(["full", "previous"]),
   path,
   side: z.enum(["before", "after"]),
-  startLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  endLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-}).refine((input) => input.startLine <= input.endLine, "The end line precedes the start line.");
+  startLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+  endLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+}).refine((input) => input.startLine === null ? input.endLine === null : input.endLine !== null && input.startLine <= input.endLine,
+  "Use two null line values for a file comment or an ordered pair of line numbers.");
 
 /** Public comments and GUI-only drafts retain their original version and anchor. */
 export const localPrCommentSchema = z.strictObject({
