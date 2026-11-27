@@ -1,0 +1,25 @@
+import { realpath, stat } from "node:fs/promises";
+import path from "node:path";
+
+let gitExecutablePath: Promise<string> | undefined;
+
+/** Resolve from the application's PATH, never from the repository working directory. */
+export function getDefaultGitExecutablePath(): Promise<string> {
+  return gitExecutablePath ??= resolveGitExecutablePath();
+}
+
+async function resolveGitExecutablePath(): Promise<string> {
+  const pathValue = Object.entries(process.env).find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
+  const executableName = process.platform === "win32" ? "git.exe" : "git";
+  for (const directoryPath of pathValue.split(path.delimiter)) {
+    const directory = directoryPath.trim().replace(/^"|"$/gu, "");
+    if (!path.isAbsolute(directory)) continue;
+    try {
+      const candidate = await realpath(path.join(directory, executableName));
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {
+      // Continue searching the application PATH.
+    }
+  }
+  throw new Error("Git executable could not be resolved from an absolute PATH entry.");
+}

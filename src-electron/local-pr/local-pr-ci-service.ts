@@ -36,7 +36,6 @@ export class LocalPrCiService {
   private readonly active = new Map<string, Active>();
   private initialization?: Promise<void>;
   private accepting = true;
-  private lifecycle = 0;
   private stopUnconfirmed = false;
 
   constructor(private readonly options: Options) {
@@ -54,7 +53,6 @@ export class LocalPrCiService {
   /** Refuse new work, interrupt active runs, and await confirmed completion before app cleanup. */
   async shutdown(): Promise<void> {
     this.accepting = false;
-    this.lifecycle++;
     await this.initialize();
     const current = [...this.active.values()];
     for (const task of current) this.requestStop(task, "interrupted");
@@ -65,17 +63,6 @@ export class LocalPrCiService {
     if (!completed || this.stopUnconfirmed || completed.some((result) => result.status === "rejected")) {
       throw new Error("Local PR CI shutdown could not confirm or persist every active run's termination.");
     }
-  }
-
-  /** Reset history and log after active CI stops; retain any prior-crash checkout with unknown ownership. */
-  async reset(): Promise<void> {
-    await this.shutdown();
-    await directory(this.root);
-    await directory(this.history);
-    await rm(this.history, { recursive: true });
-    this.records.clear();
-    await directory(this.history);
-    this.accepting = true;
   }
 
   /** Execute a CI operation for an already-resolved version and repository; never resolve a mutable ref. */
@@ -94,8 +81,7 @@ export class LocalPrCiService {
         return failure("invalid_input", "The CI operation does not match the resolved PR version.");
       }
       await this.initialize();
-      if (!this.accepting) return failure("ci_unavailable", "Local PR CI is shutting down or resetting.");
-      const lifecycle = this.lifecycle;
+      if (!this.accepting) return failure("ci_unavailable", "Local PR CI is shutting down.");
       const matches = (entry: RecordEntry) => entry.repositoryId === repository.repositoryId && entry.prId === prId &&
         entry.run.version === version.version && entry.run.headCommit === version.headCommit &&
         entry.run.targetCommit === version.targetCommit && entry.mergeBaseCommit === version.mergeBaseCommit;
@@ -126,7 +112,7 @@ export class LocalPrCiService {
 
       const { definition, commands } = await readLocalPrCiDefinition(repository.workspacePath, version.headCommit);
       if (!commands) return failure(definition.state === "invalid" ? "ci_definition_invalid" : "ci_not_configured", definition.error ?? "No .withmate/ci.yml in this submission.");
-      if (!this.accepting || lifecycle !== this.lifecycle) return failure("ci_unavailable", "Local PR CI was shut down or reset during this request.");
+      if (!this.accepting) return failure("ci_unavailable", "Local PR CI shut down during this request.");
       if ([...this.records.values()].some((entry) => matches(entry) && entry.run.state === "running")) {
         return failure("ci_already_running", "CI is already running for this PR version.");
       }

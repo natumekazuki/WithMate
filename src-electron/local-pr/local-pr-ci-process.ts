@@ -1,14 +1,13 @@
 import { lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import koffi from "koffi";
 
 import {
   OwnedProviderProcessAcquisitionError,
   spawnOwnedProviderProcess,
   type OwnedProviderProcess,
 } from "../providers/owned-process.js";
-import type { WindowsJobObject } from "../providers/windows-job-object.js";
+import { createWindowsJobObject, type WindowsJobObject } from "../providers/windows-job-object.js";
 
 /** A stop request is independent of any Window and can arrive before or during launch. */
 export type LocalPrCiStop = { signal: AbortSignal; reason: () => "canceled" | "interrupted" | undefined };
@@ -42,14 +41,14 @@ export async function runLocalPrCiShell(
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(git_|withmate_|errorlevel$|electron_run_as_node$)/iu.test(name)));
   env.WITHMATE_CI_COMPLETION = completion;
   env.WITHMATE_CI_WORK = work;
-  let job: CiWindowsJob | undefined;
+  let job: WindowsJobObject | undefined;
   let owned: OwnedProviderProcess;
   try {
     owned = spawnOwnedProviderProcess({
       executable: windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe") : "/bin/sh",
       arguments: windows ? ["/d", "/q", "/s", "/c", "..\\ci.cmd"] : ["../ci.sh"],
       cwd: checkout, env,
-    }, windows ? { createJobObject: () => (job = createCiWindowsJob()) } : {});
+    }, windows ? { createJobObject: () => (job = createWindowsJobObject()) } : {});
   } catch (error) {
     // Partial acquisition must never launch commands or silently lose a native owner.
     if (error instanceof OwnedProviderProcessAcquisitionError) {
@@ -118,61 +117,4 @@ function posixGroupExists(pid: number | undefined): boolean {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
     throw error;
   }
-}
-
-type CiWindowsJob = WindowsJobObject & { hasProcesses(): boolean };
-let cachedJobApi: ReturnType<typeof loadWindowsJobApi> | undefined;
-
-/** Supply the existing Windows supervisor with a job that also exposes a process-count barrier. */
-function createCiWindowsJob(): CiWindowsJob {
-  const api = cachedJobApi ??= loadWindowsJobApi();
-  const job = api.create(null, null);
-  if (!job) throw new Error("Could not create a CI Job Object.");
-  // A zeroed extended-limit structure has only KILL_ON_JOB_CLOSE set. LimitFlags follows two int64 fields.
-  const limits = Buffer.alloc(api.limitsSize);
-  limits.writeUInt32LE(0x2000, 16);
-  if (!api.set(job, 9, limits, limits.length)) {
-    api.close(job);
-    throw new Error("Could not configure a CI Job Object.");
-  }
-  return {
-    assignProcess(pid) {
-      const handle = api.open(0x0101, 0, pid); // PROCESS_SET_QUOTA | PROCESS_TERMINATE
-      if (!handle) throw new Error("Could not open the CI supervisor.");
-      try {
-        if (!api.assign(job, handle)) throw new Error("Could not assign the CI supervisor to its job.");
-      } finally {
-        if (!api.close(handle)) throw new Error("Could not close the CI supervisor handle.");
-      }
-    },
-    hasProcesses() {
-      // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION includes ActiveProcesses at byte 40 on both architectures.
-      const accounting = Buffer.alloc(48);
-      if (!api.query(job, 1, accounting, accounting.length, null)) throw new Error("Could not query CI job accounting.");
-      return accounting.readUInt32LE(40) > 0;
-    },
-    terminate() {
-      if (!api.terminate(job, 1)) throw new Error("Could not terminate the CI job.");
-    },
-    close() {
-      if (!api.close(job)) throw new Error("Could not close the CI job.");
-    },
-  };
-}
-
-/** Bind only the Windows job operations used to own and confirm this CI tree. */
-function loadWindowsJobApi() {
-  const kernel = koffi.load("kernel32.dll");
-  const handle = koffi.pointer(koffi.opaque());
-  return {
-    // JOBOBJECT_EXTENDED_LIMIT_INFORMATION: native pointer fields differ between Win32 and Win64.
-    limitsSize: process.arch === "ia32" ? 112 : 144,
-    create: kernel.func("CreateJobObjectW", handle, ["void *", "str16"]),
-    set: kernel.func("SetInformationJobObject", "int", [handle, "int", "void *", "uint32_t"]),
-    open: kernel.func("OpenProcess", handle, ["uint32_t", "int", "uint32_t"]),
-    assign: kernel.func("AssignProcessToJobObject", "int", [handle, handle]),
-    query: kernel.func("QueryInformationJobObject", "int", [handle, "int", "void *", "uint32_t", "void *"]),
-    terminate: kernel.func("TerminateJobObject", "int", [handle, "uint32_t"]),
-    close: kernel.func("CloseHandle", "int", [handle]),
-  };
 }

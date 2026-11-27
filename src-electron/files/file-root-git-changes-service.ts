@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getDefaultGitExecutablePath } from "../platform/git-executable.js";
 
 import type {
   FileRootChangesRequest,
@@ -123,7 +124,6 @@ const MAX_HISTORY_FILE_BLOB_BYTES = 64 * 1024 * 1024;
 const HISTORY_FILE_INSPECTION_BYTES = 8 * 1024;
 const MAX_HISTORY_STDERR_BYTES = 64 * 1024;
 const HISTORY_LOG_FORMAT = "%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P%x00%D%x00%x01";
-let defaultGitExecutablePath: Promise<string> | null = null;
 
 function normalizeGitConfigPath(directoryPath: string): string {
   return process.platform === "win32" ? directoryPath.replace(/\\/g, "/") : directoryPath;
@@ -353,11 +353,6 @@ function runWorkspaceGitOperationWithAdmission<T>(
   });
 }
 
-function getDefaultGitExecutablePath(): Promise<string> {
-  defaultGitExecutablePath ??= resolveTrustedGitExecutablePath(process.env);
-  return defaultGitExecutablePath;
-}
-
 function createWorkspaceGitConfigReadEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const inheritedEnv = Object.fromEntries(
     Object.entries(sourceEnv).filter(([name]) => !name.toUpperCase().startsWith("GIT_")),
@@ -376,33 +371,6 @@ function createWorkspaceGitProcessEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.Proc
     GIT_CONFIG_SYSTEM: GIT_NULL_DEVICE,
     GIT_CONFIG_GLOBAL: GIT_NULL_DEVICE,
   };
-}
-
-function executableNames(): string[] {
-  return process.platform === "win32" ? ["git.exe"] : ["git"];
-}
-
-async function resolveTrustedGitExecutablePath(sourceEnv: NodeJS.ProcessEnv): Promise<string> {
-  const pathValue = Object.entries(sourceEnv).find(([name]) => name.toUpperCase() === "PATH")?.[1] ?? "";
-  for (const directoryPath of pathValue.split(path.delimiter)) {
-    const trimmedPath = directoryPath.trim().replace(/^"|"$/g, "");
-    if (!trimmedPath || !path.isAbsolute(trimmedPath)) {
-      continue;
-    }
-    for (const executableName of executableNames()) {
-      const candidatePath = path.join(trimmedPath, executableName);
-      try {
-        const canonicalPath = await realpath(candidatePath);
-        const candidateStat = await stat(canonicalPath);
-        if (candidateStat.isFile()) {
-          return canonicalPath;
-        }
-      } catch {
-        // Continue searching the process-start PATH.
-      }
-    }
-  }
-  throw new Error("Git executable could not be resolved from an absolute PATH entry.");
 }
 
 function runGitProcess(

@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
-import path from "node:path";
+import { realpath } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { localPrCommitSchema, type LocalPrFailure } from "../../src-shared/local-pr/local-pr-contract.js";
+import { getDefaultGitExecutablePath } from "../platform/git-executable.js";
 
 /** One workspace's worktree and the identity shared by all its linked worktrees. */
 export type LocalPrRepository = { repositoryId: string; root: string; workspacePath: string };
@@ -21,25 +21,13 @@ const gitArgs = [
   "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 ];
 const timeout = 30_000;
-let executable: Promise<string> | undefined;
-
 /** Resolves Git on the process PATH, never by looking in the repository working directory. */
-function gitExecutable(): Promise<string> {
-  return executable ??= (async () => {
-    const search = Object.entries(process.env).find(([key]) => key.toUpperCase() === "PATH")?.[1] ?? "";
-    // Never interpret relative or empty PATH entries using the invocation's repository.
-    for (const entry of search.split(path.delimiter)) {
-      const folder = entry.trim().replace(/^"|"$/gu, "");
-      if (!path.isAbsolute(folder)) continue;
-      try {
-        const file = await realpath(path.join(folder, process.platform === "win32" ? "git.exe" : "git"));
-        if ((await stat(file)).isFile()) return file;
-      } catch {
-        // An absolute PATH entry need not contain Git.
-      }
-    }
+async function gitExecutable(): Promise<string> {
+  try {
+    return await getDefaultGitExecutablePath();
+  } catch {
     throw new LocalPrError("GIT_UNAVAILABLE", "Git is not available on the application PATH.");
-  })();
+  }
 }
 
 /** Prevents inherited Git routing overrides, replacement objects and network fetches. */

@@ -217,7 +217,7 @@ async function runningPid(f: Awaited<ReturnType<typeof fixture>>, v: LocalPrVers
 }
 
 /** The cancellation and graceful app-stop paths close the owned child before publishing final states. */
-test("cancel and application shutdown stop the running command; reset reopens CI", async (t) => {
+test("cancel and application shutdown stop the running command", async (t) => {
   const f = await fixture(t);
   const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid);setInterval(()=>{},1000)"`, "echo must-not-run"]));
   const first = unwrap(await f.run(v, "pr_ci_start"));
@@ -231,8 +231,7 @@ test("cancel and application shutdown stop the running command; reset reopens CI
   await f.service.shutdown();
   const restarted = new LocalPrCiService({ userDataPath: f.data });
   assert.equal(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs.find(({ id }) => id === next.id)?.state, "interrupted");
-  await restarted.reset();
-  assert.deepEqual(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs, []);
+  assert.equal(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs.find(({ id }) => id === first.id)?.state, "canceled");
 });
 
 /** A delayed mutation must reject expired bindings without reserving or stopping CI; accepted work outlives its creating Turn. */

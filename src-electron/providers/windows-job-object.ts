@@ -1,6 +1,7 @@
 import koffi from "koffi";
 
 const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9;
+const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
 const PROCESS_TERMINATE = 0x0001;
 const PROCESS_SET_QUOTA = 0x0100;
@@ -21,6 +22,7 @@ type WindowsJobApi = Readonly<{
     processHandle: Exclude<NativeHandle, null>,
   ) => number;
   terminateJobObject: (jobHandle: Exclude<NativeHandle, null>, exitCode: number) => number;
+  countActiveProcesses: (jobHandle: Exclude<NativeHandle, null>) => number;
   closeHandle: (handle: Exclude<NativeHandle, null>) => number;
   jobLimitsSize: number;
 }>;
@@ -34,6 +36,7 @@ export interface WindowsJobObject {
   assignProcess(pid: number): void;
   terminate(): void;
   close(): void;
+  hasProcesses(): boolean;
 }
 
 export class WindowsJobObjectAcquisitionError extends Error {
@@ -82,6 +85,10 @@ export function createWindowsJobObject(dependencies: WindowsJobObjectDependencie
       if (!native.terminateJobObject(jobHandle, 1)) {
         throw new Error("Windows process ownership could not terminate its processes.");
       }
+    },
+    hasProcesses() {
+      if (closed) throw new Error("Windows process ownership is closed.");
+      return native.countActiveProcesses(jobHandle) > 0;
     },
     close() {
       if (closed) return;
@@ -151,6 +158,19 @@ function createWindowsJobApi() {
     PeakProcessMemoryUsed: "uintptr_t",
     PeakJobMemoryUsed: "uintptr_t",
   });
+  const accounting = koffi.struct("WithMateWindowsJobAccounting", {
+    TotalUserTime: "int64_t",
+    TotalKernelTime: "int64_t",
+    ThisPeriodTotalUserTime: "int64_t",
+    ThisPeriodTotalKernelTime: "int64_t",
+    TotalPageFaultCount: "uint32_t",
+    TotalProcesses: "uint32_t",
+    ActiveProcesses: "uint32_t",
+    TotalTerminatedProcesses: "uint32_t",
+  });
+  const query = kernel32.func("QueryInformationJobObject", "int", [
+    handle, "int", koffi.out(koffi.pointer(accounting)), "uint32_t", "void *",
+  ]);
   return {
     createJobObject: kernel32.func("CreateJobObjectW", handle, ["void *", "str16"]),
     setInformationJobObject: kernel32.func("SetInformationJobObject", "int", [
@@ -162,6 +182,13 @@ function createWindowsJobApi() {
     openProcess: kernel32.func("OpenProcess", handle, ["uint32_t", "int", "uint32_t"]),
     assignProcessToJobObject: kernel32.func("AssignProcessToJobObject", "int", [handle, handle]),
     terminateJobObject: kernel32.func("TerminateJobObject", "int", [handle, "uint32_t"]),
+    countActiveProcesses(jobHandle: Exclude<NativeHandle, null>) {
+      const info = { ActiveProcesses: 0 };
+      if (!query(jobHandle, JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS, info, koffi.sizeof(accounting), null)) {
+        throw new Error("Windows process ownership could not query its processes.");
+      }
+      return info.ActiveProcesses;
+    },
     closeHandle: kernel32.func("CloseHandle", "int", [handle]),
     jobLimitsSize: koffi.sizeof(extendedLimits),
   };

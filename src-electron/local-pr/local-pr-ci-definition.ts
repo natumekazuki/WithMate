@@ -6,6 +6,7 @@ import { isAlias, parseDocument, visit } from "yaml";
 import { z } from "zod";
 
 import type { LocalPrData } from "../../src-shared/local-pr/local-pr-contract.js";
+import { getDefaultGitExecutablePath } from "../platform/git-executable.js";
 
 const exec = promisify(execFile);
 const definitionPath = ".withmate/ci.yml";
@@ -88,7 +89,7 @@ async function git(cwd: string, args: string[]): Promise<Buffer> {
   // Opt in for these Git invocations only: neither the original repo nor the OS configuration is changed.
   const config = ["-c", `core.hooksPath=${nullDevice}`, ...(windows ? ["-c", "core.longpaths=true"] : [])];
   try {
-    const { stdout } = await exec("git", ["--no-replace-objects", ...config, ...args], {
+    const { stdout } = await exec(await getDefaultGitExecutablePath(), ["--no-replace-objects", ...config, ...args], {
       cwd, encoding: "buffer", maxBuffer: definitionBytes * 2, windowsHide: true,
       env: { ...env, GIT_CONFIG_GLOBAL: nullDevice, GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_ALLOW_PROTOCOL: "file", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
     });
