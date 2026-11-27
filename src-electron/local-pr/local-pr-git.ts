@@ -20,6 +20,8 @@ const gitArgs = [
   "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 ];
 const timeout = 30_000;
+export const localPrEmptyGitConfigEnv = "GIT_WITHMATE_EMPTY_CONFIG";
+
 /** Resolves Git on the process PATH, never by looking in the repository working directory. */
 async function gitExecutable(): Promise<string> {
   try {
@@ -39,6 +41,7 @@ function gitEnvironment(): NodeJS.ProcessEnv {
     GIT_ATTR_NOSYSTEM: "1",
     GIT_ALLOW_PROTOCOL: "",
     GIT_TERMINAL_PROMPT: "0",
+    [localPrEmptyGitConfigEnv]: " ",
   };
 }
 

@@ -262,6 +262,24 @@ test("Local PR requires a manual checkout, then merges in the linked worktree", 
   assert.equal(await readFile(path.join(f.root, "base.txt"), "utf8"), "unrelated work\n");
 });
 
+/** Git accepts '=' in branch names and must still use the normal strategy, not branch.mergeOptions. */
+test("Local PR applies the submitted files to a branch whose name contains equals", async (t) => {
+  const f = await fixture(t);
+  const branch = "release=stable";
+  git(f.root, "branch", "-m", branch);
+  git(f.root, "config", `branch.${branch}.mergeOptions`, "-s ours");
+  const pr = value<"pr_create">(await f.execute("pr_create", {
+    title: "Release", targetBranch: `refs/heads/${branch}`, headCommit: f.head,
+  }));
+  const approved = tuple(pr.id, pr.versions[0]);
+  value(await f.execute("approve", approved, "gui"));
+  const merged = value<"pr_merge">(await f.execute("pr_merge", approved));
+  assert.equal(merged.state, "merged");
+  assert.equal(git(f.root, "show", "-s", "--format=%P", "HEAD"), `${f.base} ${f.head}`);
+  assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
+  assert.equal(git(f.root, "config", `branch.${branch}.mergeOptions`), "-s ours");
+});
+
 /** Git's conflict remains for the user to resolve, without marking the PR merged. */
 test("Local PR does not treat a Git merge conflict as a merged PR", async (t) => {
   const f = await fixture(t, { conflict: true });

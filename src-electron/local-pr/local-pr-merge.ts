@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import type { LocalPrVersion } from "../../src-shared/local-pr/local-pr-contract.js";
 import {
-  gitLine, gitObjectId, gitUtf8, LocalPrError, localPrGit, readLocalPrBranch, resolveLocalPrRepository,
+  gitLine, gitObjectId, gitUtf8, LocalPrError, localPrEmptyGitConfigEnv, localPrGit, readLocalPrBranch, resolveLocalPrRepository,
   runLocalPrGit, verifyLocalPrCommit, type LocalPrRepository,
 } from "./local-pr-git.js";
 
@@ -180,8 +180,8 @@ export async function mergeLocalPr(
     // --no-overwrite-ignore is not a protection guarantee for this Git path.
     result = await runLocalPrGit(root, [
       ...filterArgs, "-c", "merge.renormalize=false", "-c", "submodule.recurse=false",
-      // Git appends strategies from branch.mergeOptions even with an explicit -s.
-      "-c", `branch.${branch.slice("refs/heads/".length)}.mergeOptions=`,
+      // Git appends branch.mergeOptions even with -s. --config-env also handles '=' in the branch name.
+      `--config-env=branch.${branch.slice("refs/heads/".length)}.mergeOptions=${localPrEmptyGitConfigEnv}`,
       "merge", "-s", "ort", "--no-ff", "--no-squash", "--commit", "--no-edit", "--no-autostash",
       "--no-gpg-sign", "--no-stat", "--no-overwrite-ignore", "--", source,
     ]);
