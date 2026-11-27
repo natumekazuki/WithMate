@@ -30,6 +30,7 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 | Version | Release Notes |
 | --- | --- |
+| v7.0.1 | [WithMate v7.0.1](v7.0.1.md) |
 | v7.0.1-preview.7 | [WithMate v7.0.1-preview.7](v7.0.1-preview.7.md) |
 | v7.0.1-preview.6 | [WithMate v7.0.1-preview.6](v7.0.1-preview.6.md) |
 | v7.0.1-preview.5 | [WithMate v7.0.1-preview.5](v7.0.1-preview.5.md) |
