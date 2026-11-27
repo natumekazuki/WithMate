@@ -23,7 +23,10 @@ async function fixture(t: TestContext, minimumDataPathLength = 0) {
   const workspace = join(root, "worktree with spaces");
   await mkdir(data);
   await mkdir(original);
-  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  // Fixture setup must not hit MAX_PATH before the production CI preparation runs.
+  const git = (cwd: string, ...args: string[]) => execFileSync("git",
+    [...(process.platform === "win32" ? ["-c", "core.longpaths=true"] : []), ...args],
+    { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
   git(original, "init", "--template=");
   git(original, "config", "user.name", "CI fixture");
   git(original, "config", "user.email", "ci@example.invalid");
@@ -190,22 +193,31 @@ test("CI validates, starts and reruns only the repository-root definition from r
   }
 });
 
-/** Windows Git must materialize a tracked path beyond MAX_PATH without changing the source repo or machine config. */
-test("Windows CI checks out tracked paths beyond MAX_PATH using only CI Git configuration", { skip: process.platform !== "win32" }, async (t) => {
-  const f = await fixture(t, 127);
-  const directory = "deep-" + "d".repeat(91);
+/** Deep userData must not lengthen the Git object store; checkout still materializes long source paths. */
+test("Windows CI runs a fixed submission with deep userData and tracked paths beyond MAX_PATH", { skip: process.platform !== "win32" }, async (t) => {
+  const f = await fixture(t, 180);
+  const directory = `${"d".repeat(124)}/${"e".repeat(124)}`;
   const path = `${directory}/pinned.txt`;
-  await mkdir(join(f.workspace, directory));
+  await mkdir(join(f.workspace, directory), { recursive: true });
   await writeFile(join(f.workspace, path), "pinned content");
   f.git(f.workspace, "add", path);
   f.git(f.workspace, "commit", "-m", "deep tracked path");
-  const v = await f.commit(definition([`node -e "const fs=require('node:fs'); if (fs.readFileSync('${path}','utf8') !== 'pinned content') process.exit(7); console.log(process.cwd().length)"`]));
+  const v = await f.commit(definition([`node -e "const fs=require('node:fs'); if (fs.readFileSync('${path}','utf8') !== 'pinned content') process.exit(7); console.log(process.cwd())"`]));
+  await writeFile(join(f.workspace, path), "uncommitted edit");
+  const before = f.git(f.workspace, "status", "--porcelain");
   const started = unwrap(await f.run(v, "pr_ci_start"));
-  const checkout = join(f.data, "local-pr-ci", "work", started.id, "checkout");
-  assert.ok(join(checkout, path).length > 260, "fixture must exceed legacy MAX_PATH");
   const end = await eventually(async () => unwrap(await f.run(v, "pr_ci_list")).runs.find((item) => item.id === started.id && item.state !== "running"));
   assert.equal(end.state, "succeeded", end.error ?? "Git must prepare the long checkout");
-  assert.equal(unwrap(await f.run(v, "pr_ci_log", { runId: started.id })).log.trim(), String(checkout.length));
+  const checkout = unwrap(await f.run(v, "pr_ci_log", { runId: started.id })).log.trim();
+  assert.ok(join(checkout, path).length > 260, "fixture must exceed legacy MAX_PATH");
+  assert.ok(!checkout.startsWith(f.data + "\\"), "working copy must not be nested under deep userData");
+  await assert.rejects(lstat(checkout), { code: "ENOENT" });
+  assert.equal(f.git(f.workspace, "rev-parse", "HEAD"), v.headCommit);
+  assert.equal(f.git(f.workspace, "status", "--porcelain"), before);
+  assert.equal(await readFile(join(f.workspace, path), "utf8"), "uncommitted edit");
+  const restarted = new LocalPrCiService({ userDataPath: f.data });
+  assert.deepEqual(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs, [end]);
+  assert.equal(unwrap(await f.run(v, "pr_ci_log", { runId: started.id }, restarted)).log.trim(), checkout);
 });
 
 /** Wait until the native shell actually executes a long-lived child. */
@@ -283,14 +295,16 @@ test("early zero exit does not report success", async (t) => {
 /** An actual abrupt exit leaves the running record for recovery, not a fabricated terminal result. */
 test("startup recovers an interrupted Windows CI process and retains its log", { skip: process.platform !== "win32" }, async (t) => {
   const f = await fixture(t);
-  const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid);setInterval(()=>{},1000)"`]));
+  const temp = join(f.data, "temp");
+  await mkdir(temp);
+  const v = await f.commit(definition([`node -e "console.log('owned-child:'+process.pid+':'+process.env.WITHMATE_CI_WORK);setInterval(()=>{},1000)"`]));
   const entry = new URL("../../src-electron/local-pr/local-pr-ci-service.ts", import.meta.url).href;
   const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
     import { LocalPrCiService } from ${JSON.stringify(entry)};
     const service = new LocalPrCiService({userDataPath:${JSON.stringify(f.data)}});
     const result = await service.execute(${JSON.stringify(f.repository)}, ${JSON.stringify(f.prId)}, ${JSON.stringify(v)}, 'pr_ci_start', ${JSON.stringify({ prId: f.prId, version: v.version })});
     if (!result.ok) throw new Error(result.message);
-  `], { windowsHide: true, stdio: "pipe" });
+  `], { windowsHide: true, stdio: "pipe", env: { ...process.env, TEMP: temp, TMP: temp } });
   const exit = once(child, "close");
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
@@ -301,8 +315,8 @@ test("startup recovers an interrupted Windows CI process and retains its log", {
     const [id] = await readdir(history);
     if (!id) return undefined;
     const log = await readFile(join(history, id, "output.log"), "utf8").catch(() => "");
-    const match = /owned-child:(\d+)/u.exec(log);
-    return match ? { id, pid: Number(match[1]) } : undefined;
+    const match = /owned-child:(\d+):([^\r\n]+)/u.exec(log);
+    return match ? { id, pid: Number(match[1]), work: match[2] } : undefined;
   });
   child.kill();
   await exit;
@@ -315,5 +329,6 @@ test("startup recovers an interrupted Windows CI process and retains its log", {
   const restarted = new LocalPrCiService({ userDataPath: f.data });
   assert.equal(unwrap(await f.run(v, "pr_ci_list", {}, restarted)).runs[0]?.state, "interrupted");
   assert.match(unwrap(await f.run(v, "pr_ci_log", { runId: live.id }, restarted)).log, /owned-child:/u);
-  assert.ok((await lstat(join(f.data, "local-pr-ci", "work", live.id))).isDirectory());
+  assert.ok(live.work.startsWith(join(temp, "withmate-pr-ci-")));
+  assert.ok((await lstat(live.work)).isDirectory());
 });

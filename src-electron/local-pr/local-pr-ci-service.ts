@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { finished } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -138,7 +139,7 @@ export class LocalPrCiService {
   private async loadRecords(): Promise<void> {
     await directory(this.root);
     await directory(this.history);
-    await directory(this.work);
+    if (process.platform !== "win32") await directory(this.work);
     for (const entry of await readdir(this.history, { withFileTypes: true })) {
       if (!entry.isDirectory() || !z.uuid().safeParse(entry.name).success) continue;
       const path = this.runPath(entry.name, "run.json");
@@ -181,8 +182,6 @@ export class LocalPrCiService {
 
   /** Execute and save the final state only after closing the log and confirming process ownership. */
   private async run(record: RecordEntry, task: Active, workspacePath: string, commands: string[]): Promise<void> {
-    const work = join(this.work, record.run.id);
-    const checkout = join(work, "checkout");
     const log = createWriteStream(this.runPath(record.run.id, "output.log"), { flags: "a" });
     const flushed = finished(log).then(() => true, () => false);
     let logged = 0;
@@ -202,20 +201,23 @@ export class LocalPrCiService {
     let exitCode: number | null = null;
     let error: string | null = null;
     let stopped = true;
-    let workCreated = false;
+    let work: string | undefined;
     try {
-      if (!task.reason) {
-        await mkdir(work, { mode: 0o700 });
-        workCreated = true;
+      if (task.reason) {
+        state = task.reason;
+      } else {
+        work = await this.createWorkDirectory(record.run.id);
+        const checkout = join(work, "checkout");
         await prepareLocalPrCiCheckout(workspacePath, checkout, record.run.headCommit, task.controller.signal);
-      }
-      if (task.reason) state = task.reason;
-      else {
-        // If native acquisition or release throws, leave the checkout intact until ownership can be confirmed.
-        stopped = false;
-        ({ state, exitCode, error, stopped } = await runLocalPrCiShell(work, checkout, commands, {
-          signal: task.controller.signal, reason: () => task.reason,
-        }, append));
+        if (task.reason) {
+          state = task.reason;
+        } else {
+          // If native acquisition or release throws, leave the checkout intact until ownership can be confirmed.
+          stopped = false;
+          ({ state, exitCode, error, stopped } = await runLocalPrCiShell(work, checkout, commands, {
+            signal: task.controller.signal, reason: () => task.reason,
+          }, append));
+        }
       }
     } catch (cause) {
       state = stopped ? task.reason ?? "failed" : "interrupted";
@@ -228,7 +230,7 @@ export class LocalPrCiService {
       error = "The CI log could not be saved.";
     }
     if (!stopped) this.stopUnconfirmed = true;
-    if (workCreated && stopped) {
+    if (work && stopped) {
       await rm(work, { recursive: true, force: true, maxRetries: 2 }).catch(() => undefined);
     }
 
@@ -242,6 +244,15 @@ export class LocalPrCiService {
       throw cause;
     }
     this.changed(record);
+  }
+
+  /** Allocate a checkout directory owned only by this run; history stays under userData. */
+  private async createWorkDirectory(id: string): Promise<string> {
+    // Git for Windows can fail to write objects under a deep userData path even with core.longpaths.
+    if (process.platform === "win32") return mkdtemp(join(tmpdir(), "withmate-pr-ci-"));
+    const work = join(this.work, id);
+    await mkdir(work, { mode: 0o700 });
+    return work;
   }
 
   /** Shutdown can supersede a pending cancellation; neither is a terminal result by itself. */

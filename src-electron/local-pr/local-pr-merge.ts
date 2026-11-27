@@ -49,40 +49,6 @@ async function requireNoOperation(root: string): Promise<void> {
   }
 }
 
-/** Reads repository configuration as data, without executing configured commands. */
-async function config(root: string, regex: string): Promise<string[]> {
-  const result = await runLocalPrGit(root, ["config", "-z", "--get-regexp", regex]);
-  if (result.code !== 0 && (result.code !== 1 || !!result.stderr)) {
-    throw new LocalPrError("GIT_FAILED", result.stderr || "Git config could not be read.");
-  }
-  return gitUtf8(result.stdout).split("\0").filter(Boolean);
-}
-
-/** Preserves the external-filter boundary without computing the merged tree in advance. */
-async function checkoutFilterArgs(root: string, head: string): Promise<string[]> {
-  const filters = new Set((await config(root, "^filter\\..*\\.(clean|smudge|process)$"))
-    .map((value) => /^filter\.(.+)\.[^\n]+\n./su.exec(value)?.[1]).filter((name) => name !== undefined));
-  if (!filters.size) return [];
-  const tracked = gitUtf8(await localPrGit(root, ["ls-files", "-z"]));
-  const submitted = gitUtf8(await localPrGit(root, ["ls-tree", "-rz", "--name-only", head]));
-  const paths = new Set((tracked + submitted).split("\0").filter(Boolean));
-  const input = [...paths].map((file) => `${file}\0`).join("");
-  // Live and submitted attributes cover known filters before status or checkout reads any file.
-  for (const source of [[], [`--attr-source=${head}`]]) {
-    const attrs = gitUtf8(await localPrGit(root, [...source, "check-attr", "-z", "--stdin", "filter"], input)).split("\0");
-    if (attrs.some((value, i) => i % 3 === 2 && filters.has(value))) {
-      throw new LocalPrError("UNSUPPORTED_WORKTREE", "This checkout uses an external Git filter. Merge it directly in Git.");
-    }
-  }
-  // Merged attributes need not equal either input. Disable configured commands for these
-  // invocations and make a selected filter fail rather than silently skip conversion.
-  if ([...filters].some((name) => name.includes("=") || /[\r\n]/u.test(name))) {
-    throw new LocalPrError("UNSUPPORTED_WORKTREE", "Git filter commands could not be disabled for this checkout.");
-  }
-  return [...filters].flatMap((name) => ["clean=", "smudge=", "process=", "required=true"]
-    .flatMap((setting) => ["-c", `filter.${name}.${setting}`]));
-}
-
 /** Inspects actual HEAD and the direct target ref independently. */
 async function checkoutState(root: string, branch: string) {
   const [symbolic, head, target] = await Promise.all([
@@ -96,7 +62,7 @@ async function checkoutState(root: string, branch: string) {
 
 /** Confirms the expected merge, or reports Git's observed state without changing it. */
 async function mergeOutcome(
-  root: string, branch: string, old: string, source: string, filterArgs: string[],
+  root: string, branch: string, old: string, source: string,
   result: Awaited<ReturnType<typeof runLocalPrGit>> | undefined, reason: string,
 ): Promise<string> {
   let state: Awaited<ReturnType<typeof checkoutState>>;
@@ -121,7 +87,7 @@ async function mergeOutcome(
       throw new LocalPrError("MERGE_CONFLICT", `Git reported merge conflicts.${manual}`, "unknown");
     }
   }
-  const status = sameTarget && !merging ? await localPrGit(root, [...filterArgs, ...statusArgs]).catch(() => null) : null;
+  const status = sameTarget && !merging ? await localPrGit(root, statusArgs).catch(() => null) : null;
   const clean = status?.length === 0;
   if (result?.code === 0 && clean) {
     if (unchanged) {
@@ -152,16 +118,13 @@ export async function mergeLocalPr(
   const root = await targetWorktree(repository, branch);
   await requireNoOperation(root);
 
-  // Keep command-capable drivers and filters out of the application's Git process.
-  if ((await config(root, "^merge\\..*\\.driver$")).length) {
-    throw new LocalPrError("UNSUPPORTED_MERGE", "External Git merge drivers cannot run through Local PR.");
-  }
-  const filterArgs = await checkoutFilterArgs(root, source);
   const flags = gitUtf8(await localPrGit(root, ["ls-files", "-v", "-z"])).split("\0").filter(Boolean);
   if (flags.some((entry) => !entry.startsWith("H "))) {
     throw new LocalPrError("UNSUPPORTED_WORKTREE", "The target index has sparse, ignored, or unmerged entries.");
   }
-  if ((await localPrGit(root, [...filterArgs, ...statusArgs])).length) {
+  // Git may run a configured clean filter while checking the approved checkout.
+  guard();
+  if ((await localPrGit(root, statusArgs)).length) {
     throw new LocalPrError("WORKTREE_DIRTY", "Commit or move work in the target checkout, then retry the merge.");
   }
 
@@ -179,7 +142,7 @@ export async function mergeLocalPr(
     // Git 2.49's true merge may overwrite an existing ignored file at the same path.
     // --no-overwrite-ignore is not a protection guarantee for this Git path.
     result = await runLocalPrGit(root, [
-      ...filterArgs, "-c", "merge.renormalize=false", "-c", "submodule.recurse=false",
+      "-c", "submodule.recurse=false",
       // Git appends branch.mergeOptions even with -s. --config-env also handles '=' in the branch name.
       `--config-env=branch.${branch.slice("refs/heads/".length)}.mergeOptions=${localPrEmptyGitConfigEnv}`,
       "merge", "-s", "ort", "--no-ff", "--no-squash", "--commit", "--no-edit", "--no-autostash",
@@ -190,5 +153,5 @@ export async function mergeLocalPr(
     // Process interruption and a negative exit status have different effect guarantees.
     reason = error instanceof Error ? error.message : "Git merge did not complete.";
   }
-  return mergeOutcome(root, branch, old, source, filterArgs, result, reason);
+  return mergeOutcome(root, branch, old, source, result, reason);
 }

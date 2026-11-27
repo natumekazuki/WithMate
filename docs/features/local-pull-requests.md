@@ -25,11 +25,15 @@ commands:
 
 WithMateのOS権限でコマンドを実行します。提出commitの独立したcheckoutを用意しますが、Providerのsandboxではありません。Checksでは版ごとの定義、実行状態、結果、ログを確認し、取消または再実行できます。未設定、未実行、失敗、取消、アプリ終了等による中断を成功とは扱いません。以前の提出版の成功はその版の履歴です。
 
+Windowsでは、アプリのデータ保存先が深くてもGitがcheckoutを準備できるよう、作業にはOSの一時フォルダーを使います。実行履歴とログの保存先は変わりません。
+
 ## 承認とmerge
 
 **Approve** は、表示した提出commitとmerge先commitの組をGUIで承認します。承認を取り消したとき、新しい版を提出したとき、merge先が進んだときは、以前の承認ではmergeできません。CI結果は判断材料ですが、CIの成功は強制条件ではありません。
 
 承認後の **Merge** は、GUI・MCP・CLIのどの入口からも同じ判定を通ります。merge先をcheckoutしているworktreeで、ブランチとcommitを再確認し、提出commitを指定して通常のGit mergeを実行します。merge先がどのworktreeにもcheckoutされていない場合は、Gitでcheckoutしてから同じPRで再実行してください。WithMateがブランチを切り替えることはありません。提出元の未コミット変更はmergeに含まれません。
+
+Gitが対象ファイルに選ぶ外部merge driverやfilterは、WithMateのOS権限で実行されます。
 
 merge先のworktreeに未コミットのtracked変更があれば開始しません。実行中は同じworktreeをほかの操作で編集したり、ブランチを切り替えたりしないでください。直前の確認とGitの実行は一体の操作ではありません。競合やGitの失敗で途中状態が残る場合は、対象worktreeをGitで確認してから再試行してください。WithMateは自動stash、強制reset、失敗時の自動巻き戻しを行いません。WithMate外で実行したGit操作に対しては承認を強制しません。
 

@@ -204,17 +204,6 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(git(f.root, "rev-parse", "HEAD"), target);
   await rm(indexLock);
 
-  // The app must not execute a repository's external checkout program on behalf of an Agent.
-  git(f.root, "config", "filter.fixture.smudge", "false");
-  const attributes = path.join(f.root, ".git", "info", "attributes");
-  await writeFile(attributes, "l.txt filter=fixture\n");
-  rejected(await f.execute("pr_merge", v2), "UNSUPPORTED_WORKTREE");
-  assert.equal(git(f.root, "rev-parse", "HEAD"), target);
-  await rm(attributes);
-  git(f.root, "config", "merge.fixture.driver", "false");
-  rejected(await f.execute("pr_merge", v2), "UNSUPPORTED_MERGE");
-  git(f.root, "config", "--unset", "merge.fixture.driver");
-
   // Let Git reject a colliding untracked file but preserve unrelated untracked work.
   const untracked = path.join(f.root, "l.txt");
   await writeFile(untracked, "untracked user content\n");
@@ -238,6 +227,44 @@ test("Local PR rejects stale approval, dirty or locked checkout, and merges clea
   assert.equal(await readFile(path.join(f.root, "scratch.txt"), "utf8"), "unrelated draft\n");
   assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
   await assert.rejects(readFile(path.join(f.root, "not-submitted.txt")), { code: "ENOENT" });
+  await f.restart();
+  assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
+});
+
+/** An exact GUI approval permits Git's selected programs, without rejecting unused configuration. */
+test("Local PR uses the checkout's Git driver and filter only after approval", async (t) => {
+  const f = await fixture(t, { conflict: true });
+  const target = git(f.root, "rev-parse", "HEAD");
+  const driverLog = path.join(f.root, "driver-ran.txt");
+  const filterLog = path.join(f.root, "filter-ran.txt");
+  const unusedLog = path.join(f.root, "unused-program-ran.txt");
+  await writeFile(path.join(f.root, ".git", "info", "attributes"), "base.txt merge=fixture\nl.txt filter=fixture\n");
+  git(f.root, "config", "merge.fixture.driver", "echo driver > driver-ran.txt; cp -- %B %A");
+  git(f.root, "config", "filter.fixture.clean", "cat");
+  git(f.root, "config", "filter.fixture.smudge", "echo filter > filter-ran.txt; cat");
+  git(f.root, "config", "filter.fixture.required", "true");
+  git(f.root, "config", "merge.unused.driver", "echo unused > unused-program-ran.txt");
+  git(f.root, "config", "filter.unused.smudge", "echo unused > unused-program-ran.txt; cat");
+  const pr = await f.create();
+  const approved = tuple(pr.id, pr.versions[0]);
+
+  // The Agent cannot approve or cause the selected programs to run before GUI approval.
+  rejected(await f.execute("approve", approved, "agent"), "GUI_REQUIRED");
+  rejected(await f.execute("pr_merge", approved, "agent"), "APPROVAL_REQUIRED");
+  assert.equal(git(f.root, "rev-parse", "HEAD"), target);
+  for (const file of [driverLog, filterLog, unusedLog]) await assert.rejects(readFile(file), { code: "ENOENT" });
+  value(await f.execute("approve", approved, "gui"));
+  for (const file of [driverLog, filterLog]) await assert.rejects(readFile(file), { code: "ENOENT" });
+
+  const merged = value<"pr_merge">(await f.execute("pr_merge", approved, "agent"));
+  assert.equal(merged.state, "merged");
+  assert.equal(merged.mergedCommit, git(f.root, "rev-parse", "HEAD"));
+  assert.equal(git(f.root, "show", "-s", "--format=%P", "HEAD"), `${target} ${f.head}`);
+  assert.equal(git(f.root, "show", "HEAD:base.txt"), "source");
+  assert.equal(await readFile(path.join(f.root, "l.txt"), "utf8"), "other file\n");
+  assert.match(await readFile(driverLog, "utf8"), /^driver\r?\n$/u);
+  assert.match(await readFile(filterLog, "utf8"), /^filter\r?\n$/u);
+  await assert.rejects(readFile(unusedLog), { code: "ENOENT" });
   await f.restart();
   assert.equal(value<"pr_get">(await f.execute("pr_get", { prId: pr.id })).mergedCommit, merged.mergedCommit);
 });
