@@ -1,5 +1,7 @@
 # ADR 036: MemoryとCharacter Affectの機構を撤去する
 
+Session Graphの維持に関する範囲は[ADR 037](037-session-graph-removal.md)により適用対象外とする。
+
 ## Status
 
 Accepted（2026-11-15）。本判断はMemory／Affectの専用機構と専用データの廃止に適用する。通常Session、Character定義、保存履歴、Session Graph、Repository Glossaryの責務は維持する。
