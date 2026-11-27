@@ -21,64 +21,25 @@ const providerCatalog: ModelCatalogProvider = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude selectorは保存済みApprovalを維持し、対応値は選択可能、非対応値はdisabledのUnsupportedとして表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md; docs/design/provider-adapter.md#approval-modes" }
-// fault = "保存済みuntrustedを自動実行へ暗黙変換するか、neverを非対応として扱う"
-// observable = "選択値を含むapprovalChoiceOptionsのvalue、label、disabled"
-// observation_boundary = "public-boundary"
-// scope = "Claude runtime selection saved approval"
-// lifecycle = "permanent"
-// impact = "利用者の承認設定が意図せず変わるかAuto Runを選べなくなる"
-// distinction = "provider候補一覧testは保存済み選択値を補完するrenderer側の経路を通らない"
-// @end-test-value
-test("Claude runtime options preserve supported and unsupported saved approval values", () => {
-  const supported = [
-    { value: "never", label: "Auto Run" },
-    { value: "on-request", label: "Provider Controlled" },
-    { value: "accept-edits", label: "Accept Edits" },
-    { value: "dont-ask", label: "Preapproved Only" },
-    { value: "plan", label: "Plan" },
-  ];
-  for (const selectedApprovalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "untrusted"] as const) {
-    const options = buildRuntimeSelectionOptions({
-      providerId: "claude", providerCatalog: null, models: [], selectedModel: "claude-opus-5-5",
-      reasoningEfforts: ["high"], selectedApprovalMode, selectedCodexSandboxMode: "workspace-write",
-      selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
-    });
-    assert.deepEqual(options.approvalChoiceOptions, selectedApprovalMode === "untrusted"
-      ? [{ value: "untrusted", label: "Unsupported (untrusted)", disabled: true }, ...supported]
-      : supported);
-  }
-});
-
-// @test-value v2
-// kind = "contract"
 // claim = "providerと現在の選択値からruntime optionsを構築し、Depth候補へ省略用Defaultを含める"
-// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes; docs/design/provider-adapter.md#sandbox-modes; docs/design/model-catalog.md" }
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#sandbox-modes; docs/design/model-catalog.md" }
 // fault = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"
-// observable = "approval、sandbox、model、reasoning optionsとfallback label"
+// observable = "sandbox、model、reasoning optionsとfallback label"
 // observation_boundary = "public-boundary"
 // scope = "runtime-selection-options"
 // lifecycle = "permanent"
 // @end-test-value
-test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / fallback をまとめて構築する", () => {
+test("buildRuntimeSelectionOptions は Copilot の sandbox / model / reasoning / fallback を構築する", () => {
   const options = buildRuntimeSelectionOptions({
     providerId: "copilot",
     providerCatalog,
     models: providerCatalog.models,
     selectedModel: "legacy-model",
     reasoningEfforts: ["high", "low"],
-    selectedApprovalMode: "on-request",
     selectedCodexSandboxMode: "danger-full-access" as CodexSandboxMode,
     selectedCodexSpeed: "standard",
-    selectedCodexReviewer: "auto-review",
   });
 
-  assert.deepEqual(options.approvalChoiceOptions, [
-    { value: "never", label: "Auto Run" },
-    { value: "on-request", label: "Provider Controlled" },
-    { value: "untrusted", label: "Safety Focused" },
-  ]);
   assert.deepEqual(options.sandboxChoiceOptions, []);
   assert.deepEqual(options.modelSelectOptions[0], { value: "legacy-model", label: "legacy-model", model: null });
   assert.equal(options.selectedModelFallbackLabel, "legacy-model");
@@ -106,10 +67,8 @@ test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空
     models: providerCatalog.models,
     selectedModel: "model-a",
     reasoningEfforts: ["low", "high"],
-    selectedApprovalMode: "untrusted",
     selectedCodexSandboxMode: "workspace-write",
     selectedCodexSpeed: "standard",
-    selectedCodexReviewer: "auto-review",
   });
 
   assert.deepEqual(options.sandboxChoiceOptions, []);

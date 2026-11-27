@@ -5,11 +5,100 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { CoordinationPane } from "../../src/coordination/CoordinationPane.js";
 import type {
+  CoordinationIdentity,
   CoordinationRecord,
   CoordinationRequest,
   CoordinationSummary,
 } from "../../src-shared/coordination/coordination-contract.js";
+import type { CoordinationDisplayIdentity } from "../../src-shared/coordination/coordination-window-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Coordinationは未解決のSession名だけをbusyとして示し、取得済みの相談と回答を待ち・欠損・失敗で隠さない"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md 読込・空・失敗と操作とアクセシビリティ; docs/design/desktop-ui.md Coordination" }
+// fault = "名前待ちを本文に表示する、取得失敗や欠損後もbusyにする、または名前だけの再取得で相談行を再マウントする"
+// observable = "各対象名のstatus/busy、相談と回答の表示、確定した名前・欠損・失敗、一覧で保持されたfocus"
+// observation_boundary = "component-behavior"
+// scope = "CoordinationPaneの一覧・詳細・保存回答。記録とidentity APIはfixture"
+// lifecycle = "permanent"
+// impact = "相談の相手が確定していなくても本文と既存操作を利用でき、失敗を待ちと誤認しない"
+// distinction = "identity hookの検査だけでは待ち表示の場所・accessible statusと本文・focusの保持を検出できない"
+// @end-test-value
+test("Coordination scopes unresolved Session names to accessible busy indicators", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  globals.forEach((name) => Object.defineProperty(globalThis, name, {
+    configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+  }));
+  const doc = dom.window.document;
+  const root = createRoot(doc.getElementById("root")!);
+  const identity = (sessionId: string): CoordinationIdentity => ({ kind: "main", sessionId, incarnationId: "inc" });
+  const initiator = identity("origin");
+  const respondent = identity("assigned");
+  const actor = identity("answerer");
+  const at = "2026-11-07T00:00:00Z";
+  const record: CoordinationRecord = {
+    id: "consultation", crewRootSessionId: "origin", kind: "blocker", initiator,
+    initiatorTurnId: "turn", originReceiptId: null, caller: null, body: "Keep the consultation visible",
+    choices: [], respondent, state: "open", answerRevision: 1, createdAt: at, updatedAt: at,
+    answers: [{ id: "answer", revision: 1, actor: { ...actor, turnId: "answer-turn" }, body: "Keep the saved answer visible", selectedChoices: [], createdAt: at }],
+  };
+  const { body, choices, answers, ...fields } = record;
+  const summary: CoordinationSummary = { ...fields, initiatorMainSessionId: "origin", bodyPreview: body };
+  const pending = new Map<string, { resolve(value: CoordinationDisplayIdentity | null): void; reject(error: Error): void }>();
+  dom.window.withmate = {
+    getCoordinationIdentity: (value) => new Promise((resolve, reject) => pending.set(value.sessionId, { resolve, reject })),
+    executeCoordination: async (request) => request.operation === "get" ? { record, initiatorTarget: initiator } : { items: [summary], total: 1, nextOffset: null },
+    subscribeSessionInvalidation: () => () => {},
+    subscribeCoordinationChanged: () => () => {},
+  } as Pick<WithMateWindowApi, "getCoordinationIdentity" | "executeCoordination" | "subscribeSessionInvalidation" | "subscribeCoordinationChanged"> as WithMateWindowApi;
+  const originLabel = "Loading Originating Session";
+  const assignedLabel = "Loading Assigned Session";
+  const answerLabel = "Loading Answering Session";
+  const busy = (label: string, within: ParentNode = doc) => within.querySelector(`[role="status"][aria-label="${label}"][aria-busy="true"]`);
+  try {
+    await act(async () => root.render(createElement(CoordinationPane, { sessionId: "origin", active: true, navigation: null })));
+    const row = doc.querySelector<HTMLButtonElement>(".coordination-list-row")!;
+    assert.ok(busy(originLabel, row));
+    assert.match(row.getAttribute("aria-label")!, /Keep the consultation visible.*Loading Originating Session/);
+    assert.match(row.textContent!, /Keep the consultation visible/);
+    assert.doesNotMatch(row.textContent!, /Loading/);
+    row.focus();
+    await act(async () => pending.get("origin")!.resolve({ title: "Origin Task", character: { name: "Origin", iconPath: "" } }));
+    assert.match(row.textContent!, /Origin Task/);
+    assert.equal(busy(originLabel), null);
+    assert.equal(doc.activeElement, row);
+    await act(async () => root.render(createElement(CoordinationPane, {
+      key: "fresh-detail", sessionId: "origin", active: true, navigation: { ...initiator, id: record.id },
+    })));
+    const origin = doc.querySelector<HTMLButtonElement>(".coordination-detail-origin")!;
+    assert.ok(busy(originLabel, origin));
+    assert.match(origin.getAttribute("aria-label")!, /^Open Origin: Loading Originating Session/);
+    assert.ok(busy(assignedLabel, doc.querySelector(".coordination-parties")!));
+    assert.ok(busy(answerLabel, doc.querySelector('[aria-label="Saved answers"]')!));
+    assert.match(doc.body.textContent!, /Keep the consultation visible.*Keep the saved answer visible/s);
+    assert.doesNotMatch(doc.body.textContent!, /Loading/);
+    await act(async () => {
+      pending.get("origin")!.resolve({ title: "Origin Task", character: { name: "Origin", iconPath: "" } });
+      pending.get("assigned")!.resolve(null);
+      pending.get("answerer")!.reject(new Error("Identity lookup failed"));
+    });
+    assert.equal(busy(assignedLabel), null);
+    assert.equal(busy(answerLabel), null);
+    assert.match(origin.getAttribute("aria-label")!, /Origin Task/);
+    assert.match(doc.body.textContent!, /Assigned To: Session Unavailable.*Session Identity Unavailable.*Keep the saved answer visible/s);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => {
+      const descriptor = saved[index];
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    });
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -350,10 +439,10 @@ test("Coordination preserves the draft and current context when the answer is re
 
 // @test-value v2
 // kind = "contract"
-// claim = "通信失敗は取得済み詳細とdraftを保持し、typed削除済みでは古いrecordを除去してdraftを保ち、遅い取得成功で復活させない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/839 閉じたWindow・再起動・更新の整合/Crew全体の削除条件" }
-// fault = "一時失敗で入力を失う、削除済みrecordを現行として描画する、または削除確認後の遅い成功を適用して古い本文を復活させる"
-// observable = "Refresh前後の本文・checkbox状態、削除済みstatusとreadonly draft、古いpromise解決後の本文不在"
+// claim = "通信失敗と再取得は取得済み詳細とdraftを保つ。更新中の操作はfocusを保ち重複起動せず、typed削除済みではdraftを残し遅い取得成功で古いrecordを復活させない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの詳細・削除通知; docs/design/ui-design-guidelines.md 操作とアクセシビリティ、ボタン" }
+// fault = "一時失敗や再取得で入力を失う、更新操作でfocus喪失または重複読取、削除確認後に遅い成功を適用する"
+// observable = "Refreshのbusy・focusと読取回数、本文・checkbox状態、削除済みstatusとreadonly draft、古いpromise解決後の本文不在"
 // observation_boundary = "component-behavior"
 // scope = "CoordinationPaneのtransient/terminal読取結果と世代の整合"
 // lifecycle = "permanent"
@@ -397,6 +486,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     updatedAt: "2026-11-07T00:00:00Z",
   };
   let mode: "ready" | "transient" | "pending" | "deleted" = "ready";
+  let detailReads = 0;
   let changed = () => {};
   let resolveOld!: (value: { record: CoordinationRecord }) => void;
   const oldRead = new Promise<{ record: CoordinationRecord }>((resolve) => {
@@ -412,6 +502,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     async executeCoordination(request) {
       if (request.operation !== "get")
         return { items: [], total: 0, nextOffset: null };
+      detailReads += 1;
       if (mode === "transient") throw new Error("Connection unavailable");
       if (mode === "pending") return oldRead;
       if (mode === "deleted")
@@ -443,10 +534,9 @@ test("Coordination distinguishes transient reads from terminal deletion without 
         'input[type="checkbox"]',
       );
     await act(async () => checkbox()!.click());
-    const refresh = () =>
-      dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!.click();
+    const refresh = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!;
     mode = "transient";
-    await act(async () => refresh());
+    await act(async () => refresh.click());
     assert.match(
       dom.window.document.body.textContent!,
       /Saved consultation body/,
@@ -457,9 +547,17 @@ test("Coordination distinguishes transient reads from terminal deletion without 
       null,
     );
     mode = "pending";
-    await act(async () => refresh());
+    const beforeRefresh = detailReads;
+    refresh.focus();
+    await act(async () => refresh.click());
+    assert.equal(detailReads, beforeRefresh + 1);
+    assert.equal(refresh.getAttribute("aria-disabled"), "true");
+    assert.equal(dom.window.document.activeElement, refresh);
+    assert.equal(checkbox()!.checked, true);
+    assert.match(dom.window.document.body.textContent!, /Saved consultation body/);
+    await act(async () => refresh.click());
+    assert.equal(detailReads, beforeRefresh + 1);
     mode = "deleted";
-    assert.equal(dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!.disabled, true);
     await act(async () => changed());
     assert.ok(
       dom.window.document.querySelector('[aria-label="Deleted Coordination"]'),

@@ -6,6 +6,7 @@ import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-revi
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import { supportsWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -108,22 +109,6 @@ function isCreationContext(value: unknown): value is AuxiliaryCreationContext {
     && typeof (value as AuxiliaryCreationContext).parentIncarnationId === "string";
 }
 
-function buildInterruptedMessages(messages: AuxiliarySession["messages"]): AuxiliarySession["messages"] {
-  const interruptedMessage = "The previous Auxiliary run may have been interrupted when the app quit. Send again if needed.";
-  const lastMessage = messages.at(-1);
-  if (lastMessage?.role === "assistant" && lastMessage.text === interruptedMessage) {
-    return messages;
-  }
-
-  return [
-    ...messages,
-    {
-      role: "assistant",
-      text: interruptedMessage,
-      accent: true,
-    },
-  ];
-}
 
 function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
   if (!(input.model ?? providerCatalog.defaultModelId).trim()) {
@@ -372,8 +357,10 @@ export class AuxiliarySessionService {
 
   async getLatestAuxiliarySessionView(parentSessionId: string): Promise<AuxiliarySession | null> {
     const storage = this.deps.getStorage();
-    const summary = (await storage.listAuxiliarySessionSummaries([parentSessionId])).at(-1);
-    return summary ? this.getAuxiliarySessionView(summary.id) : null;
+    const identity = this.deps.captureStorageIdentity?.();
+    const session = await storage.getLatestAuxiliarySessionView(parentSessionId);
+    this.assertStorageIdentity(storage, identity);
+    return session ? this.overlayExecutionOptions(session) : null;
   }
 
   async getAuxiliarySessionSummary(auxiliarySessionId: string): Promise<AuxiliarySessionSummary | null> {
@@ -449,8 +436,8 @@ export class AuxiliarySessionService {
     if (!snapshot || !provider || provider.id !== session.provider) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
-    const options = { ...validateSessionExecutionOptions(request.executionOptions, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, request.executionOptions, request.confirmedReviewerChange) };
+    const { withMateReviewerExplicit: _explicit, ...requested } = validateSessionExecutionOptions(request.executionOptions, provider);
+    const options = { ...requested, ...resolveExecutionOptionsReviewerUpdate(fresh, requested, request.confirmedReviewerChange, request.approvalChoice) };
     if (options.codexReviewer !== request.executionOptions.codexReviewer) validateSessionExecutionOptions(options, provider);
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
@@ -854,6 +841,8 @@ export class AuxiliarySessionService {
       codexSandboxMode: launchSelection.codexSandboxMode,
       codexSpeed: parent.codexSpeed,
       codexReviewer: parent.codexReviewer,
+      withMateReviewerExplicit: supportsWithMateAutoReview(launchSelection.provider)
+        && (parent.withMateReviewerExplicit || parent.provider === "codex" || parent.provider === "claude") ? true : undefined,
       customAgentName: launchSelection.customAgentName,
       threadId: "",
       composerDraft: "",
@@ -1175,7 +1164,7 @@ export class AuxiliarySessionService {
     return { session: { ...await this.toRuntimeSession(this.overlayExecutionOptions(stored)), messages: runtimeSession.messages }, turn: stored.queuedTurn };
   }
 
-  async appendRunningInput(runtimeSession: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Promise<Session> {
+  async appendRunningInput(runtimeSession: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }, replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     const storage = this.deps.getStorage();
     const identity = this.deps.captureStorageIdentity?.();
     const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
@@ -1184,7 +1173,7 @@ export class AuxiliarySessionService {
     if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) {
       throw new Error("The Auxiliary Session incarnation does not match.");
     }
-    const userMessage = { role: "user" as const, text };
+    const userMessage = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}) };
     const stored = await storage.appendAuxiliarySteer({
       auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
       expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length,
@@ -1197,14 +1186,14 @@ export class AuxiliarySessionService {
   }
 
   async beginRunningInput(runtimeSession: Session, text: string, turnId: number, nativeTurnId: string,
-    attachments: ComposerAttachment[]): Promise<Session> {
+    attachments: ComposerAttachment[], _origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin, questionRequestId?: string, replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     const storage = this.deps.getStorage();
     const identity = this.deps.captureStorageIdentity?.();
     const current = await storage.getAuxiliarySessionMetadata(runtimeSession.id);
     if (current) this.assertCharacterSnapshotValid(current);
     this.assertStorageIdentity(storage, identity);
     if (!current || current.createdAt !== getSessionIncarnationId(runtimeSession)) throw new Error("The Auxiliary Session incarnation does not match.");
-    const userMessage = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+    const userMessage = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}), turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(questionRequestId ? { questionRequestId } : {}) } };
     const stored = await storage.beginAuxiliarySteer({ auxiliarySessionId: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt,
       expectedMessageCount: runtimeSession.messageCount ?? runtimeSession.messages.length, userMessage, turnId, nativeTurnId, attachments, updatedAt: currentTimestampLabel() });
     if (!stored) throw new Error("The Auxiliary Steer input could not be saved.");
@@ -1321,6 +1310,7 @@ export class AuxiliarySessionService {
       codexSandboxMode: runtimeSession.codexSandboxMode,
       codexSpeed: runtimeSession.codexSpeed,
       codexReviewer: runtimeSession.codexReviewer,
+      withMateReviewerExplicit: runtimeSession.withMateReviewerExplicit,
       customAgentName: runtimeSession.customAgentName,
       threadId: runtimeSession.threadId,
       composerDraft: "",
@@ -1401,33 +1391,6 @@ export class AuxiliarySessionService {
     return Promise.all(sessions.map((session) => storage.upsertAuxiliarySession(session)));
   }
 
-  async recoverInterruptedSessions(): Promise<void> {
-    const storage = this.deps.getStorage();
-    const runningSessions = await storage.listRunningAuxiliarySessions();
-    if (runningSessions.length === 0) {
-      return;
-    }
-
-    const now = currentTimestampLabel();
-    for (const summary of runningSessions) {
-      const current = await storage.getAuxiliarySession(summary.id);
-      if (current) this.assertCharacterSnapshotValid(current);
-      if (!current || current.runState !== "running") {
-        continue;
-      }
-
-      await storage.updateAuxiliarySessionIfMatches({
-        session: {
-          ...current,
-          runState: "error",
-          updatedAt: now,
-          messages: buildInterruptedMessages(current.messages),
-        },
-        expectedSession: current,
-      });
-    }
-  }
-
   private async toRuntimeSession(auxiliary: AuxiliarySession): Promise<Session> {
     const parent = await this.deps.getParentSession(auxiliary.parentSessionId);
     if (!parent) {
@@ -1449,6 +1412,7 @@ export class AuxiliarySessionService {
       codexSandboxMode: auxiliary.codexSandboxMode,
       codexSpeed: auxiliary.codexSpeed,
       codexReviewer: auxiliary.codexReviewer,
+      withMateReviewerExplicit: auxiliary.withMateReviewerExplicit,
       model: auxiliary.model,
       reasoningEffort: auxiliary.reasoningEffort,
       customAgentName: auxiliary.customAgentName,

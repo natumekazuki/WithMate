@@ -70,7 +70,7 @@ test("enqueue IPCはtyped preflight rejectだけを未受付replyへ変換する
 
 // @test-value v2
 // kind = "security"
-// claim = "7 queue APIはMainとAuxの実IDを保持しowning parent Session Window以外を依存呼出し前に拒否する"
+// claim = "受付・照会・一覧・取消・Send Inputのqueue IPCはMainとAuxの実IDを保持しowning parent Session Window以外を依存呼出し前に拒否する"
 // oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue handlers" }
 // fault = "Auxの親と異なるWindowへqueue本文/receiptアクセスを許可するかtargetを親IDに置換する"
 // observable = "Main/Aux ownerの返却payloadと実target引数、非owner要求の拒否と依存件数"
@@ -86,7 +86,7 @@ test("queue IPCはowning Main Windowに限定し引数を保持する", async ()
   const other = createWindowStub("file:///session.html?sessionId=other");
   let eventWindow = owner;
   const calls: Array<{ method: string; args: unknown[] }> = [];
-  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "sendQueuedSessionInput"];
+  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "sendQueuedSessionInput"];
   const queue = Object.fromEntries(methods.map((method) => [method, async (...args: unknown[]) => {
     const payload = { method, args };
     calls.push(payload);
@@ -103,7 +103,6 @@ test("queue IPCはowning Main Windowに限定し引数を保持する", async ()
     ["withmate:list-session-turn-queue", "listSessionTurnQueue", []],
     ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
     ["withmate:cancel-queued-session-turn", "cancelQueuedSessionTurn", ["item-1"]],
-    ["withmate:release-interrupted-session-turn", "releaseInterruptedSessionTurn", ["item-1"]],
     ["withmate:send-queued-session-input", "sendQueuedSessionInput", ["item-1", "turn-1"]],
   ] as const;
   for (const [channel, method, args] of cases) {
@@ -121,7 +120,7 @@ test("queue IPCはowning Main Windowに限定し引数を保持する", async ()
   for (const [channel, , args] of cases) {
     await assert.rejects(async () => handlers.get(channel)?.({}, "unknown-aux", ...args), /target Session window/);
   }
-  assert.equal(calls.length, 14);
+  assert.equal(calls.length, 2 * cases.length);
 });
 
 // @test-value v2
@@ -774,6 +773,34 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 
   return { deps: deps as never, calls };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Settingsはpreload経由でMainの実行中versionを読み、他Windowは同じIPCを呼べない"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout; src-electron/ipc/settings.ts" }
+// fault = "異なる値やchannelを使うかSettings以外へversion取得を許す"
+// observable = "preload経由で返るversionと別Windowからの拒否"
+// observation_boundary = "public-boundary"
+// scope = "Settings app version IPC"
+// lifecycle = "permanent"
+// distinction = "型検査や表示testではpreloadからMain handlerまでの接続とsender境界を確認できない"
+// @end-test-value
+test("app version IPC returns the Main value to Settings", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("file:///home.html?mode=settings");
+  const otherWindow = createWindowStub("file:///home.html");
+  let sender = settingsWindow;
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    getAppVersion: () => "7.0.1-preview.2",
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({ invoke: (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args) } as never);
+  assert.equal(await api.getAppVersion(), "7.0.1-preview.2");
+  sender = otherWindow;
+  await assert.rejects(() => api.getAppVersion(), /Settings window/);
+});
 
 // @test-value v2
 // kind = "contract"
@@ -3431,7 +3458,9 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
       /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
-      () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, {
+        sessionId: "aux-1", incarnationId: auxiliarySession.createdAt, execution: { kind: "turn", id: "1" },
+      }) as Promise<unknown>,
       /Auxiliary session IPC is only available/,
     );
   }

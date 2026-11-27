@@ -15,11 +15,12 @@ export type PdfReaderHostMessage = PdfReaderEnvelope & (
   | { type: "theme"; themeTokens: PdfReaderThemeTokens }
   | { type: "settings"; zoomWheelStep: number | null }
   | { type: "find" }
+  | { type: "get-selection"; requestId: string }
 );
 export type PdfReaderFrameMessage = PdfReaderEnvelope & (
   | { type: "ready" | "loaded" }
   | { type: "error"; message: string }
-  | { type: "selection"; text: string }
+  | { type: "selection"; text: string; requestId?: string }
   | { type: "open-link"; target: string }
 );
 
@@ -31,7 +32,8 @@ export function isPdfReaderFrameMessage(value: unknown, instanceId: string): val
     case "ready":
     case "loaded": return true;
     case "error": return typeof message.message === "string" && message.message.length <= 16_384;
-    case "selection": return typeof message.text === "string" && message.text.length <= 1_000_000;
+    case "selection": return typeof message.text === "string" && message.text.length <= 1_000_000
+      && (message.requestId === undefined || typeof message.requestId === "string" && message.requestId.length > 0 && message.requestId.length <= 128);
     case "open-link": return typeof message.target === "string" && message.target.length > 0 && message.target.length <= 16_384;
     default: return false;
   }

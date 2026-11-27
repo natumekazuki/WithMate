@@ -94,5 +94,5 @@ export function useCoordinationMonitor() {
       );
     }
   };
-  return { groups: groups ?? [], loading: loading && groups === null, refreshing: loading && groups !== null, error, retry, open };
+  return { groups: groups ?? [], hasSnapshot: groups !== null, loading: loading && groups === null, refreshing: loading && groups !== null, error, retry, open };
 }

@@ -36,10 +36,10 @@ function harness(read: (operation: ExecutionReadOperation, request: unknown) => 
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存回答の実receiptを起票元へ照会し、配送完了を受信Turn完了や回答利用と混同せずに表示する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・利用" }
-// fault = "別のSessionやreceiptを読み、受付完了をTurn完了や回答利用として表示する"
-// observable = "実paneの配送statusとexact target/receiptの読取、対象通知後の状態、pane非表示中の購読解除"
+// claim = "保存回答の実receiptを起票元へ照会し、初回は照会だけをbusyと示し、再照会では取得済み配送状態を保つ。配送完了を受信Turn完了や回答利用と混同しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・利用; docs/design/ui-design-guidelines.md 読込・空・失敗" }
+// fault = "別のSessionやreceiptを読む、配送照会で回答本文や取得済み配送を隠す、または受付完了をTurn完了や回答利用として表示する"
+// observable = "実paneの配送statusとexact target/receiptの読取、初回待ちのaccessible statusと回答本文、再照会の保持状態、pane非表示中の購読解除"
 // observation_boundary = "consumer"
 // scope = "CoordinationPaneの最新保存回答からexecution読取まで。storageとIPCはfixture"
 // lifecycle = "permanent"
@@ -48,8 +48,9 @@ function harness(read: (operation: ExecutionReadOperation, request: unknown) => 
 // @end-test-value
 test("saved answer reads the exact delivery without claiming the recipient turn is complete", async () => {
   let turnState = "running";
+  let completeRead: () => void;
   const record: CoordinationRecord = { id: "actual-consultation", crewRootSessionId: "actual-parent", kind: "blocker", initiator: { kind: "auxiliary", sessionId: target.sessionId, incarnationId: target.incarnationId }, initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Need a decision", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [{ id: "answer-1", revision: 1, actor: { kind: "user" }, body: "Use the agreed approach", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z", receiptId: "saved-receipt" }], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z" };
-  const h = harness(async () => ({ ...description, turnState }), {
+  const h = harness(() => new Promise((resolve) => { completeRead = () => resolve({ ...description, turnState }); }), {
     getCoordinationIdentity: async () => ({ title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }),
     subscribeSessionInvalidation: () => () => {},
     executeCoordination: async (request: CoordinationRequest) => request.operation === "get" ? { record, initiatorTarget: target } : { items: [], total: 0, nextOffset: null },
@@ -59,6 +60,12 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
   const renderPane = (active: boolean) => h.root.render(<CoordinationPane sessionId="viewer-main" active={active} navigation={navigation} />);
   try {
     await act(async () => renderPane(true));
+    const deliveryBusy = () => h.dom.window.document.querySelector('[role="status"][aria-label="Checking Answer Delivery"][aria-busy="true"]');
+    assert.ok(deliveryBusy());
+    assert.match(h.dom.window.document.body.textContent!, /Use the agreed approach/);
+    assert.doesNotMatch(h.dom.window.document.body.textContent!, /Checking (Answer )?Delivery/);
+    await act(async () => completeRead());
+    assert.equal(deliveryBusy(), null);
     assert.match(h.dom.window.document.body.textContent!, /Delivered/);
     assert.doesNotMatch(h.dom.window.document.body.textContent!, /Turn Completed|Answer Used/);
     assert.deepEqual(h.requests[0], { owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } });
@@ -66,6 +73,9 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
     assert.equal(h.requests.length, 1);
     turnState = "failed";
     await act(async () => { for (const listener of h.listeners) listener(target.sessionId); });
+    assert.match(h.dom.window.document.body.textContent!, /Delivered/);
+    assert.equal(deliveryBusy(), null);
+    await act(async () => completeRead());
     assert.match(h.dom.window.document.body.textContent!, /Delivered · Turn Failed/);
     await act(async () => renderPane(false));
     assert.equal(h.listeners.size, 0);
@@ -88,7 +98,7 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
 // @end-test-value
 test("answer delivery preserves unknown and failure for the exact receipt", async () => {
   let unavailable = true;
-  const h = harness(async () => unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnState: "failed" });
+  const h = harness(async () => unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnId: null, turnState: null, userMessageSeq: null });
   try {
     await act(async () => h.root.render(<CoordinationAnswerDelivery ownerSessionId="viewer-main" target={target} receiptId="saved-receipt" />));
     assert.match(h.dom.window.document.body.textContent!, /Delivery Unknown/);
@@ -97,5 +107,47 @@ test("answer delivery preserves unknown and failure for the exact receipt", asyn
     await act(async () => retry.click());
     assert.match(h.dom.window.document.body.textContent!, /Delivery Failed/);
     assert.deepEqual(h.requests.map(({ owner, operation, request }) => ({ owner, operation, request })), [0, 1].map(() => ({ owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } })));
+  } finally { await h.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ開始入力とTurnが表す失敗を一度だけ表示し、追加配送自身の失敗、配送結果不明、確定した成功は潰さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Coordinationの最新回答と配送状態" }
+// fault = "保存された同じTurnの失敗を配送と二重に表示する、または追加配送の独立した失敗・結果不明をTurn失敗へ読み替える"
+// observable = "正確なreceiptの読取応答ごとに実CoordinationAnswerDeliveryが表示する一つのstatus"
+// observation_boundary = "consumer"
+// scope = "Coordinationの保存回答に付く開始・追加配送およびTurnの表示。IPC応答だけを置換"
+// lifecycle = "permanent"
+// distinction = "既存の取得Retryテストと異なり、同じphaseでも開始と追加の意味が違う場合を検証する"
+// @end-test-value
+test("only the matching start input shares its failure with the saved turn", async () => {
+  const start = { kind: "start", inputSeq: 10 };
+  let state: { receiptState: string; turnState: string | null; entry?: { kind: string; inputSeq: number | null } } =
+    { receiptState: "failed", turnState: "failed", entry: start };
+  const h = harness(async () => ({
+    ...description, receiptState: state.receiptState, turnState: state.turnState,
+    ...(state.turnState === null ? { turnId: null, userMessageSeq: null } : {}),
+    resultState: state.turnState === "completed" ? "saved" : state.turnState === "failed" ? "partial" : "unknown",
+    inputs: { entry: state.entry ?? null },
+  }));
+  const statuses = () => Array.from(
+    h.dom.window.document.querySelectorAll(".coordination-answer-delivery [role='status']"),
+    (element) => element.textContent,
+  );
+  try {
+    await act(async () => h.root.render(<CoordinationAnswerDelivery ownerSessionId="viewer-main" target={target} receiptId="saved-receipt" />));
+    assert.deepEqual(statuses(), ["Turn Failed"]);
+    const expect = async (next: typeof state, label: string) => {
+      state = next;
+      await act(async () => { for (const notify of h.listeners) notify(target.sessionId); });
+      assert.deepEqual(statuses(), [label]);
+    };
+    await expect({ receiptState: "interrupted", turnState: "failed", entry: start }, "Turn Failed");
+    await expect({ receiptState: "failed", turnState: "failed", entry: { kind: "additional", inputSeq: null } }, "Delivery Failed · Turn Failed");
+    await expect({ receiptState: "interrupted", turnState: "failed", entry: { kind: "additional", inputSeq: null } }, "Delivery Outcome Unknown · Turn Failed");
+    await expect({ receiptState: "failed", turnState: "failed", entry: { kind: "start", inputSeq: null } }, "Delivery Failed · Turn Failed");
+    await expect({ receiptState: "interrupted", turnState: null }, "Delivery Outcome Unknown");
+    await expect({ receiptState: "completed", turnState: "completed", entry: start }, "Delivered");
   } finally { await h.close(); }
 });

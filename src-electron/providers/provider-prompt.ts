@@ -48,9 +48,16 @@ function buildFolderContextSection(
   ].join("\n");
 }
 
-export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"]): string {
+export function composeProviderInput(userMessage: string, provenance?: RunSessionTurnInput["inputProvenance"], preserveWhitespace = false,
+  metadata?: Pick<RunSessionTurnInput, "replyTo" | "messageIdentity" | "mainConversationFrame">): string {
   if (!userMessage.trim()) return "";
   const sections: string[] = [];
+  const fields = (values: Record<string, string | number | undefined>) => Object.entries(values)
+    .filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
+  if (metadata?.messageIdentity) sections.push("# Message Identity\n\n" + fields(metadata.messageIdentity));
+  if (metadata?.mainConversationFrame !== undefined) {
+    sections.push("# Conversation Thread\n\nthread: " + JSON.stringify(metadata.mainConversationFrame));
+  }
   if (provenance) {
     const origin = provenance.origin;
     const sender = projectSessionInputSender(origin);
@@ -64,12 +71,32 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
       if ("actorMainSessionId" in origin && origin.actorMainSessionId) lines.push("Owner Main Session: " + value(origin.actorMainSessionId));
     }
     lines.push("Operation: " + value(origin?.operation), "Changed since acceptance: " + value(provenance.originalChanged));
+    if (provenance.retrySource) {
+      const source = provenance.retrySource;
+      const sourceSender = projectSessionInputSender(source.origin);
+      lines.push("Retry requested by: GUI user (" + LOCAL_USER_ID + ")",
+        "Original sender: " + (source.origin.kind === "session" ? "Session" : "GUI user (" + LOCAL_USER_ID + ")"));
+      if (source.origin.kind === "session") {
+        if (sourceSender.character) lines.push("Original character: " + value(sourceSender.character.name) + " / ID: " + value(sourceSender.character.id));
+        lines.push("Original session: " + value(source.origin.actorSessionId), "Original incarnation: " + value(source.origin.actorIncarnationId),
+          "Original source Turn: " + value(source.origin.actorTurnId));
+      }
+      lines.push("Original receipt: " + value(source.receiptId), "Failed Turn: " + value(source.turnId),
+        "Original input changed before dispatch: " + value(source.changedSinceAcceptance));
+      if (provenance.originalChanged === true) lines.push("Starting input edited by: GUI user (" + LOCAL_USER_ID + ")");
+    }
     if (provenance.coordinationOperation) lines.push("Coordination operation: " + value(provenance.coordinationOperation));
     if (provenance.coordination) lines.push("Coordination:", JSON.stringify(provenance.coordination, null, 2));
     sections.push(lines.join("\n"));
   }
-  const heading = provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
-  sections.push("# " + heading + "\n\n" + userMessage.trim());
+  if (metadata?.replyTo) {
+    const { target, ...reference } = metadata.replyTo;
+    const { kind, ...identity } = target;
+    sections.push("# Reply To\n\n" + fields({ ...identity, ...reference }));
+  }
+  const heading = provenance?.retrySource && provenance.originalChanged === false ? provenance.retrySource.origin.kind === "session" ? "Retried Session Input" : "Retried User Input"
+    : provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";
+  sections.push("# " + heading + "\n\n" + (preserveWhitespace ? userMessage : userMessage.trim()));
   return sections.join("\n\n");
 }
 
@@ -103,7 +130,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   }
 
   if (userMessageText) {
-    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance));
+    inputSections.push(composeProviderInput(userMessageText, input.inputProvenance, false, input));
   }
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;

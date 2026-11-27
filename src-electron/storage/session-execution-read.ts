@@ -1,17 +1,22 @@
 import type { DatabaseSync } from "node:sqlite";
-import { coordinationDeliveryText } from "../../src-shared/coordination/coordination-delivery.js";
-import type { ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
-import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
+import { coordinationDeliveryText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
+import type { ExecutionReadInput, SentInstructionBodyRequest, SentInstructionCardRequest } from "../../src-shared/session/session-execution-read.js";
+import { executionOperationRequestSchemas, executionWindowRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
-import type { SessionSteerOrigin, SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import { projectRetryInputAuthor, type SessionSteerOrigin, type SessionTurnQueueCapturedInput, type SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
+import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";
+import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
 import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
+import { readConversationThreads } from "./conversation-threads.js";
 import { readSessionHistory } from "./session-history-read.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
+import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
+import { listSentInstructionCards, readSentInstructionBodies } from "./sent-instruction-card-read.js";
 
 type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
 type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };
@@ -23,7 +28,148 @@ const attachments = (items: ComposerAttachment[]) => items.map(({ id, kind, disp
 const captured = (json: string | null) => json === null ? null : JSON.parse(json) as SessionTurnQueueCapturedInput;
 const publicInput = (value: SessionTurnQueueCapturedInput | null) => value ? { text: value.request.userMessage, attachments: attachments(value.attachments) } : null;
 const comparisonInput = (value: SessionTurnQueueCapturedInput | null) => value ? JSON.stringify([value.request.userMessage, value.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]) : null;
+function isInputUnchanged(acceptedJson: string | null, comparisonJson: string | null): boolean | null {
+  const accepted = comparisonInput(captured(acceptedJson));
+  const comparison = comparisonInput(captured(comparisonJson));
+  return accepted === null || comparison === null ? null : accepted === comparison;
+}
 const page = <T>(all: T[], offset = 0, limit = 32) => ({ items: all.slice(offset, offset + limit), total: all.length, offset, nextOffset: offset + limit < all.length ? offset + limit : null });
+
+function senderTheme(db: DatabaseSync, origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): { main: string; sub: string } | null {
+  if (origin?.kind !== "session" || !origin.actorSessionId || !origin.actorIncarnationId || !origin.actorKind) return null;
+  const expected = origin.actorSnapshot?.character.id;
+  if (!expected || isUnknownCharacterOwnerId(expected) || expected === NEUTRAL_CHARACTER_ID) return null;
+  const readMain = (id: string) => db.prepare("SELECT incarnation_id, character_id, character_snapshot_json, runtime_policy_json FROM sessions_v6 WHERE id = ?").get(id) as
+    { incarnation_id: string; character_id: string | null; character_snapshot_json: string | null; runtime_policy_json: string } | undefined;
+  if (origin.actorKind === "main") {
+    const row = readMain(origin.actorSessionId);
+    if (!row || (row.incarnation_id?.trim() || `legacy:${origin.actorSessionId}`) !== origin.actorIncarnationId) return null;
+    const policy = JSON.parse(row.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
+    if ((row.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
+    const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
+    if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== expected)) return null;
+    const theme = snapshot?.theme ?? policy.characterThemeColors;
+    return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+  }
+  const row = db.prepare("SELECT parent_session_id, created_at, character_id, character_snapshot_json, character_snapshot_invalid FROM auxiliary_sessions WHERE id = ?").get(origin.actorSessionId) as
+    { parent_session_id: string; created_at: string; character_id: string | null; character_snapshot_json: string | null; character_snapshot_invalid: number } | undefined;
+  if (!row || row.character_snapshot_invalid || row.created_at !== origin.actorIncarnationId || !readMain(row.parent_session_id)) return null;
+  if ("actorMainSessionId" in origin && origin.actorMainSessionId && row.parent_session_id !== origin.actorMainSessionId) return null;
+  const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
+  if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== row.character_id)) return null;
+  if (snapshot && row.character_id === expected) return snapshot.theme;
+  if (row.character_id || row.character_snapshot_json) return null;
+  const parent = readMain(row.parent_session_id)!;
+  const policy = JSON.parse(parent.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
+  if ((parent.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
+  const parentSnapshot = parseCharacterRuntimeSnapshotJson(parent.character_snapshot_json);
+  if (parent.character_snapshot_json && (!parentSnapshot || parentSnapshot.characterId !== expected)) return null;
+  const theme = parentSnapshot?.theme ?? policy.characterThemeColors;
+  return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+}
+
+type TurnInputDisplayReference = { target: SessionTarget; receiptId?: string; turnId?: string; messageSeq?: number };
+type DisplayReceipt = Pick<Receipt, "id" | "state" | "turn_id" | "input_turn_id" | "user_message_seq"> & {
+  fixed: number;
+  origin_json: string | null;
+  theme_origin_json: string | null;
+  retry_source_json: string | null;
+  coordination_input_json: string | null;
+};
+type DisplayTurn = Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">;
+
+function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference: TurnInputDisplayReference): Result {
+  const mainTarget = target.kind === "main";
+  const table = mainTarget ? "session_messages_v6" : "auxiliary_session_messages";
+  const owner = mainTarget ? "session_id" : "auxiliary_session_id";
+  const targetRow = (mainTarget
+    ? db.prepare("SELECT incarnation_id FROM sessions_v6 WHERE id = ?")
+    : db.prepare(`SELECT a.created_at AS incarnation_id, a.parent_session_id, p.incarnation_id AS parent_incarnation
+        FROM auxiliary_sessions a JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
+        JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`)).get(target.sessionId) as
+    { incarnation_id: string; parent_session_id?: string; parent_incarnation?: string } | undefined;
+  if (!targetRow) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
+  const incarnation = mainTarget ? targetRow.incarnation_id?.trim() || `legacy:${target.sessionId}` : targetRow.incarnation_id;
+  if (incarnation !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
+  if (!mainTarget && (targetRow.parent_session_id !== target.mainSessionId
+    || (targetRow.parent_incarnation?.trim() || `legacy:${target.mainSessionId}`) !== target.mainIncarnationId)) {
+    return failure("EXECUTION_TARGET_REPLACED", "The Auxiliary parent identity does not match.");
+  }
+
+  const where = mainTarget ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
+  const receiptInput = "COALESCE(dispatched_json, captured_json)";
+  const readReceipts = (column: "id" | "user_message_seq", value: string | number) => db.prepare(`
+    SELECT id, state, turn_id, input_turn_id, user_message_seq, dispatched_json IS NOT NULL AS fixed,
+      COALESCE(json_extract(dispatched_json, '$.origin'), json_extract(accepted_json, '$.origin')) AS origin_json,
+      json_extract(COALESCE(dispatched_json, accepted_json, captured_json), '$.origin') AS theme_origin_json,
+      COALESCE(json_extract(dispatched_json, '$.retrySource'), json_extract(accepted_json, '$.retrySource')) AS retry_source_json,
+      CASE WHEN json_type(${receiptInput}, '$.coordination') = 'object' THEN ${receiptInput} END AS coordination_input_json
+    FROM session_turn_queue_v6 WHERE ${where} AND incarnation_id = ? AND ${column} = ? LIMIT 2`)
+    .all(target.sessionId, target.incarnationId, value) as DisplayReceipt[];
+  const turns = `SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${where}`;
+  const readTurn = (id: string | null | undefined) => id ? db.prepare(`${turns} AND id = ?`).get(target.sessionId, id) as DisplayTurn | undefined : undefined;
+  const readMessage = (seq: number) => db.prepare(`SELECT role, CASE WHEN role = 'user' THEN json_extract(body, '$.turnInput') END AS input_json
+    FROM ${table} WHERE ${owner} = ? AND seq = ?`).get(target.sessionId, seq) as { role: string; input_json: string | null } | undefined;
+
+  let receipt: DisplayReceipt | undefined;
+  let turn: DisplayTurn | undefined;
+  let directOrigin: SessionSteerOrigin | undefined;
+  let findStart = reference.turnId !== undefined;
+  if (reference.receiptId !== undefined) {
+    [receipt] = readReceipts("id", reference.receiptId);
+    if (!receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
+    turn = readTurn(receipt.turn_id);
+  } else if (reference.messageSeq !== undefined) {
+    const message = readMessage(reference.messageSeq);
+    if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
+    if (message.role !== "user" && message.role !== "assistant") throw new Error("Invalid saved execution message.");
+    const input = message.input_json === null ? undefined : normalizeMessage({ role: message.role, turnInput: JSON.parse(message.input_json) })?.turnInput;
+    if (!input?.queueId) directOrigin = input?.origin;
+    const matching = readReceipts("user_message_seq", reference.messageSeq);
+    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    [receipt] = matching;
+    if (receipt || input) turn = readTurn(receipt ? receipt.turn_id : input?.turnId);
+    else {
+      const matchingTurns = db.prepare(`${turns} AND (user_message_seq = ? OR assistant_message_seq = ?) LIMIT 2`).all(target.sessionId, reference.messageSeq, reference.messageSeq) as DisplayTurn[];
+      if (matchingTurns.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous Turn linkage.");
+      [turn] = matchingTurns;
+    }
+    if (!receipt && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has no recorded execution linkage.");
+    findStart = message.role === "assistant";
+  } else {
+    turn = readTurn(reference.turnId);
+    if (!turn) return failure("EXECUTION_NOT_FOUND", "The Turn does not belong to this target.");
+  }
+  // The Resend control follows the same response-to-start lookup as Details.
+  if (findStart && !receipt && turn?.user_message_seq != null) {
+    if (readMessage(turn.user_message_seq)?.role !== "user") return failure("EXECUTION_LINK_UNAVAILABLE", "The saved Turn has no exact start input.");
+    const matching = readReceipts("user_message_seq", turn.user_message_seq);
+    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    [receipt] = matching;
+    if (receipt && receipt.turn_id !== String(turn.id)) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
+  }
+  if (receipt?.turn_id && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
+  if (receipt && turn && receipt.input_turn_id === null && receipt.user_message_seq !== null && receipt.user_message_seq !== turn.user_message_seq) {
+    return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's start input does not match its saved Turn.");
+  }
+  const origin = directOrigin ?? (receipt?.origin_json ? JSON.parse(receipt.origin_json) as SessionTurnQueueOrigin : null);
+  const themeOrigin = directOrigin ?? (receipt?.theme_origin_json ? JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin : null);
+  const coordinationInput = captured(receipt?.coordination_input_json ?? null);
+  const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) as SessionTurnQueueCapturedInput["retrySource"] : null;
+  // Only this already-resolved Retry receipt needs complete snapshots for comparison.
+  // The receipt and snapshots are read in the same transaction.
+  const retryInput = receipt && retrySource ? db.prepare(`
+    SELECT accepted_json, COALESCE(dispatched_json, captured_json) AS comparison_json
+    FROM session_turn_queue_v6 WHERE id = ?`).get(receipt.id) as
+    { accepted_json: string | null; comparison_json: string | null } | undefined : undefined;
+  const retryInputUnchanged = retryInput ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json) : null;
+  return { ok: true, origin, senderTheme: senderTheme(db, projectRetryInputAuthor(themeOrigin, retrySource, retryInputUnchanged)),
+    retrySource, retryInputUnchanged,
+    ...(coordinationInput?.coordination ? { coordination: { id: coordinationInput.coordination.id, text: coordinationDeliveryText(coordinationInput), consultation: readCoordinationNotification(coordinationInput)?.consultation } } : {}),
+    receiptId: receipt?.id ?? null, receiptState: receipt?.state ?? null, turnId: turn ? String(turn.id) : null, turnState: turn?.phase ?? null,
+    isFixedStart: !!receipt?.fixed && receipt.input_turn_id === null,
+  };
+}
 
 /** Synchronous snapshot on the existing DB. No execution state or output copies are owned here. */
 export class SessionExecutionReadStorage {
@@ -35,7 +181,7 @@ export class SessionExecutionReadStorage {
   close(): void { this.db.close(); }
   execute(input: ExecutionReadInput): Result {
     assertRuntimeTurnAdmission();
-    const parsed = executionOperationRequestSchemas[input.operation].safeParse(input.request);
+    const parsed = executionWindowRequestSchemas[input.operation].safeParse(input.request);
     if (!parsed.success) return failure("EXECUTION_INVALID_REQUEST", parsed.error.message);
     const identity = (target: SessionTarget) => JSON.stringify([target.kind, target.sessionId, target.incarnationId, target.kind === "auxiliary" ? target.mainSessionId : null, target.kind === "auxiliary" ? target.mainIncarnationId : null]);
     if (identity(parsed.data.target) !== identity(input.target)) return failure("EXECUTION_TARGET_MISMATCH", "The request and resolved target do not match.");
@@ -49,11 +195,16 @@ export class SessionExecutionReadStorage {
   }
 
   private read(target: SessionTarget, operation: ExecutionReadInput["operation"], request: ExecutionReadInput["request"]): Result {
+    if (operation === "read_turn_input_display") return readTurnInputDisplay(this.db, target, request);
     const table = target.kind === "main" ? "session_messages_v6" : "auxiliary_session_messages";
     const owner = target.kind === "main" ? "session_id" : "auxiliary_session_id";
     const snapshot = readConversationQuerySnapshot(this.db, table, target.sessionId);
     if (!snapshot) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
     if (snapshot.incarnationId !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
+    if (operation === "read_conversation_threads") {
+      return target.kind === "main" ? { ok: true, ...readConversationThreads(this.db, target) }
+        : failure("EXECUTION_TARGET_MISMATCH", "Conversation threads require a Main Session.");
+    }
     if (target.kind === "auxiliary") {
       const parent = this.db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ?").get(target.sessionId) as { parent_session_id: string };
       const main = readConversationQuerySnapshot(this.db, "session_messages_v6", target.mainSessionId);
@@ -64,32 +215,84 @@ export class SessionExecutionReadStorage {
     if (operation === "list_messages" || operation === "get_message" || operation === "list_operations" || operation === "get_operation_detail") {
       const last = this.db.prepare(`SELECT MAX(seq) AS seq FROM ${table} WHERE ${owner} = ?`).get(target.sessionId) as { seq: number | null };
       const { target: _target, ...historyRequest } = request;
+      const thread = operation === "list_messages"
+        ? (request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_messages>).thread : undefined;
+      let messageIndexes: number[] | undefined;
+      if (thread !== undefined) {
+        if (target.kind !== "main") return failure("EXECUTION_TARGET_MISMATCH", "A conversation thread requires a Main history target.");
+        const projection = readConversationThreads(this.db, target);
+        messageIndexes = thread === null ? projection.initialMessageIndexes
+          : projection.children.find((frame) => conversationPeerKey(frame.target) === conversationPeerKey(thread))?.messageIndexes;
+        if (!messageIndexes) return failure("EXECUTION_THREAD_UNAVAILABLE", "The peer does not identify an available thread of this Main Session.");
+      }
       if (last.seq === null) {
         if (operation !== "list_messages") return failure("HISTORY_NOT_SAVED", "The Session has no saved messages.");
         if ((historyRequest as { offset?: number }).offset) return failure("HISTORY_INVALID_REQUEST", "Offset is beyond the empty conversation.");
         return { ok: true, window: { fromSeq: 0, toSeq: -1 }, total: 0, offset: 0, nextOffset: null, items: [] };
       }
-      return readSessionHistory(this.db, { scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq }, operation, request: historyRequest as SessionHistoryRequest });
+      return readSessionHistory(this.db, { scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq }, operation, request: historyRequest as SessionHistoryRequest }, messageIndexes);
     }
     const queueWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
     const queueParams = [target.sessionId, target.incarnationId];
     const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
     const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
-    if (operation === "list_sent_deliveries") {
-      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries>;
+    if (operation === "list_sent_deliveries" || operation === "list_sent_steers" || operation === "list_issued_coordinations"
+      || operation === "list_sent_instruction_cards" || operation === "read_sent_instruction_bodies") {
+      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>
+        | SentInstructionCardRequest | SentInstructionBodyRequest;
       const messageSeqs = [...new Set(options.messageSeqs)];
       const liveTurnIds = options.liveTurnIds ?? [];
-      if (!messageSeqs.length && !liveTurnIds.length) return { ok: true, items: [], nextCursor: null };
       const marks = (values: unknown[]) => values.map(() => "?").join(",");
       const clauses = [...(messageSeqs.length ? [`user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`] : []), ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : [])];
-      const sourceTurns = this.db.prepare(`SELECT id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
-        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "user_message_seq" | "assistant_message_seq">[];
+      const sourceTurns = !clauses.length ? [] : this.db.prepare(`SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
+        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">[];
+      if (operation === "list_sent_instruction_cards") return listSentInstructionCards(this.db, target, options as SentInstructionCardRequest, sourceTurns);
+      if (operation === "read_sent_instruction_bodies") return readSentInstructionBodies(this.db, target, options as SentInstructionBodyRequest, sourceTurns);
       if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
+      const pageOptions = options as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
       const turnIds = sourceTurns.map((turn) => String(turn.id));
-      const limit = options.limit ?? 20;
+      const limit = pageOptions.limit ?? 20;
+      const messageForTurn = (turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">) =>
+        turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
+          : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
+      if (operation === "list_sent_steers") {
+        // Direct parent Steer is Main -> Main. Its recipient message is the
+        // existing durable input record, not a second receipt or sender copy.
+        const rows = this.db.prepare(`SELECT m.id, m.seq, m.body, m.session_id, recipient.incarnation_id
+          FROM session_messages_v6 m JOIN sessions_v6 recipient ON recipient.id=m.session_id
+          WHERE json_extract(m.body, '$.turnInput.origin.actorKind')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorSessionId')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorIncarnationId')=?
+            AND json_extract(m.body, '$.turnInput.origin.actorTurnId') IN (${marks(turnIds)})
+            AND json_extract(m.body, '$.turnInput.origin.kind')='session'
+            AND json_extract(m.body, '$.turnInput.origin.operation')='steer'
+            AND json_extract(m.body, '$.turnInput.origin.targetSessionId')=m.session_id
+            AND json_extract(m.body, '$.turnInput.origin.targetIncarnationId')=recipient.incarnation_id
+            AND json_extract(m.body, '$.turnInput.queueId') IS NULL AND m.role='user' AND m.id>?
+          ORDER BY m.id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: number; seq: number; body: string; session_id: string; incarnation_id: string }>;
+        return { ok: true, items: rows.slice(0, limit).map((row) => {
+          const message = normalizeMessage({ ...JSON.parse(row.body), role: "user" });
+          if (!message?.turnInput?.origin) throw new Error("Invalid saved outgoing Steer input.");
+          const origin = message.turnInput.origin;
+          return { sequence: row.id, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!),
+            target: { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id }, messageSeq: row.seq,
+            state: message.turnInput.state, origin, text: message.text };
+        }), nextCursor: rows.length > limit ? rows[limit - 1].id : null };
+      }
+      if (operation === "list_issued_coordinations") {
+        const records = this.db.prepare(`SELECT id, json_extract(payload_json,'$.initiatorTurnId') AS source_turn_id,
+          json_extract(payload_json,'$.body') AS consultation FROM coordination_records_v7
+          WHERE initiator_kind=? AND initiator_session_id=? AND initiator_incarnation_id=?
+            AND json_extract(payload_json,'$.initiatorTurnId') IN (${marks(turnIds)}) AND id>?
+          ORDER BY id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? "", limit + 1) as Array<{ id: string; source_turn_id: string; consultation: string }>;
+        return { ok: true, items: records.slice(0, limit).map((record) => ({
+          id: record.id, sourceTurnId: record.source_turn_id, consultation: record.consultation,
+          sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === record.source_turn_id)!),
+        })), nextCursor: records.length > limit ? records[limit - 1].id : null };
+      }
       const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
-        parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json
+        parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json, q.source_display_position, q.source_display_verified
         FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
         LEFT JOIN auxiliary_sessions auxiliary ON auxiliary.id=q.auxiliary_session_id AND auxiliary.parent_session_id=parent.id
         WHERE json_extract(q.accepted_json, '$.origin.actorKind')=?
@@ -98,14 +301,17 @@ export class SessionExecutionReadStorage {
           AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
           AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
           AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
-        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string }>;
+        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string; source_display_position: number | null; source_display_verified: number }>;
       return { ok: true, items: rows.slice(0, limit).map((row) => {
         const input = captured(row.input_json)!;
         const origin = input.origin!;
         const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
         const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
-        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: sourceTurn.assistant_message_seq !== null && messageSeqs.includes(sourceTurn.assistant_message_seq) ? sourceTurn.assistant_message_seq : sourceTurn.user_message_seq !== null && messageSeqs.includes(sourceTurn.user_message_seq) ? sourceTurn.user_message_seq : null, target: recipient, state: row.state, origin, text: input.request.userMessage,
-          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}) };
+        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn),
+          sourceDisplayPosition: row.source_display_verified === 1 || (sourceTurn.phase === "running" && liveTurnIds.includes(String(sourceTurn.id))) ? row.source_display_position : null,
+          target: recipient, state: row.state, origin, text: input.request.userMessage,
+          ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}),
+          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}) };
       }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
     }
     const getMessage = (seq: number | null): Message | null => {
@@ -119,8 +325,7 @@ export class SessionExecutionReadStorage {
     const getTurn = (id: string | null) => id ? this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`).get(target.sessionId, id) as Turn | undefined : undefined;
     const hasAssistant = (turn: Turn) => turn.assistant_message_seq !== null && Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${owner} = ? AND seq = ? AND role = 'assistant'`).get(target.sessionId, turn.assistant_message_seq));
     const inputSummary = (entry: Receipt | undefined, turn: Turn | undefined) => {
-      const entryOriginal = entry ? comparisonInput(captured(entry.accepted_json)) : null;
-      const entryComparison = entry ? comparisonInput(captured(entry.dispatched_json ?? entry.captured_json)) : null;
+      const entryUnchanged = entry ? isInputUnchanged(entry.accepted_json, entry.dispatched_json ?? entry.captured_json) : null;
       const linked = turn ? this.db.prepare(`SELECT seq, role, json_remove(body, '$.text') AS body, withmate_execution_utf16_length(json_extract(body, '$.text')) AS text_chars FROM ${table} WHERE ${owner} = ? AND role = 'user' AND json_extract(body, '$.turnInput.turnId') = ? ORDER BY seq`).all(target.sessionId, String(turn.id)) as SavedMessage[] : [];
       const records = linked.map((row) => ({ seq: row.seq, textChars: row.text_chars ?? 0, message: normalizeMessage({ ...JSON.parse(row.body), role: row.role })! }));
       const confirmed = records.filter((row) => row.message.turnInput?.state === "confirmed");
@@ -135,7 +340,7 @@ export class SessionExecutionReadStorage {
         records, confirmed, unresolvedReferences, notSent,
         summary: {
           entry: entry ? { receiptId: entry.id, inputSeq: entry.user_message_seq, kind: entry.input_turn_id === null ? "start" : "additional", stage: entry.dispatched_json !== null ? "fixed" : entry.state === "queued" ? "planned" : "not-fixed",
-            comparison: entryOriginal !== null && entryComparison !== null ? entryOriginal === entryComparison ? "unchanged" : "changed" : "unknown", detail: { operation: "get_execution_input", receiptId: entry.id } } : null,
+            comparison: entryUnchanged === null ? "unknown" : entryUnchanged ? "unchanged" : "changed", detail: { operation: "get_execution_input", receiptId: entry.id } } : null,
           startChanged: startOriginal !== null && startFixed !== null ? startOriginal !== startFixed : null,
           additional: { confirmedCount: confirmed.length, references: confirmed.slice(0, 100).map(({ seq }) => ({ seq })), referencesNextOffset: confirmed.length > 100 ? 101 : null, unresolved: unresolvedReferences.slice(0, 100), unresolvedCount: unresolvedReferences.length, unresolvedNextOffset: unresolvedReferences.length > 100 ? 100 : null, notSent: notSent.slice(0, 100).map(({ seq }) => ({ seq })), notSentCount: notSent.length, notSentNextOffset: notSent.length > 100 ? 100 : null, coverage: start?.accepted_json ? "recorded" : "unknown" },
         },
@@ -143,6 +348,7 @@ export class SessionExecutionReadStorage {
     };
     const describeExecution = (entry: Receipt | undefined, turn: Turn | undefined) => ({
       origin: entry ? captured(entry.dispatched_json)?.origin ?? captured(entry.accepted_json)?.origin ?? null : null,
+      retrySource: entry ? captured(entry.dispatched_json)?.retrySource ?? captured(entry.accepted_json)?.retrySource ?? null : null,
       receiptId: entry?.id ?? null, receiptState: entry?.state ?? null, turnId: turn ? String(turn.id) : entry?.turn_id ?? null,
       turnState: turn?.phase ?? null, resultState: !turn ? entry?.dispatched_json ? "unknown" : "not-started" : !hasAssistant(turn) ? turn.phase === "running" ? "running" : "not-saved" : turn.phase === "completed" ? "saved" : "partial",
       userMessageSeq: turn?.user_message_seq ?? null, assistantMessageSeq: turn?.assistant_message_seq ?? null,
@@ -161,9 +367,11 @@ export class SessionExecutionReadStorage {
     let receipt = ref.receiptId ? this.db.prepare(`${receiptQuery} AND id = ?`).get(...queueParams, ref.receiptId) as Receipt | undefined : undefined;
     if (ref.receiptId && !receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
     let turn = getTurn(receipt?.turn_id ?? ref.turnId ?? null);
+    let messageOrigin: SessionSteerOrigin | undefined;
     if (ref.messageSeq !== undefined) {
       const message = getMessage(ref.messageSeq);
       if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
+      if (message.turnInput && !message.turnInput.queueId) messageOrigin = message.turnInput.origin;
       const matchingReceipts = this.db.prepare(`${receiptQuery} AND user_message_seq = ?`).all(...queueParams, ref.messageSeq) as Receipt[];
       if (matchingReceipts.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
       receipt = matchingReceipts[0];
@@ -189,8 +397,9 @@ export class SessionExecutionReadStorage {
       const executionSettings = input ? { source: "input", provider: input.provider, ...input.request.executionOptions }
         : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
           approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
-      return { ok: true, ...description, executionSettings,
-        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}),
+      const inputOrigin = messageOrigin ?? captured(receipt?.dispatched_json ?? receipt?.accepted_json ?? receipt?.captured_json ?? null)?.origin;
+      return { ok: true, ...description, executionSettings, senderTheme: senderTheme(this.db, inputOrigin),
+        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}),
         output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
     }
     if (operation === "list_execution_inputs") {

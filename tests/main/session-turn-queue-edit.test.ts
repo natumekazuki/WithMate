@@ -15,20 +15,21 @@ import { buildNewSession, getSessionIncarnationId } from "../../src-shared/sessi
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 
-async function fixture() {
+async function fixture(model?: string) {
   const temporary = await mkdtemp(join(os.tmpdir(), "withmate-queue-edit-"));
   const dbPath = join(temporary, "withmate-v6.db");
   const sessions = new SessionStorageV6(dbPath);
   const queue = new SessionTurnQueueStorageV6(dbPath);
-  const session = sessions.insertSession(buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+  const session = sessions.insertSession(buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", model,
     characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }));
   const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
   const capture = (userMessage: string): SessionTurnQueueCapturedInput => ({ request: { userMessage, clientRequestId: randomUUID(), submitSource: "composer",
     executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath,
     origin: { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId } });
   const store: SessionTurnQueueStore = {
-    enqueue: async (...args) => queue.enqueue(...args), getReceipt: async (...args) => queue.getReceipt(...args),
+    admit: async (...args) => queue.admit(...args), getReceipt: async (...args) => queue.getReceipt(...args),
     getReceiptById: async (...args) => queue.getReceiptById(...args),
     listActive: async (...args) => queue.listActive(...args), listReceipts: async (...args) => queue.listReceipts(...args),
     listPendingOwners: async () => queue.listPendingOwners(), claimNext: async (...args) => queue.claimNext(...args),
@@ -36,10 +37,74 @@ async function fixture() {
     markStarted: async (...args) => queue.markStarted(...args), settle: async (...args) => queue.settle(...args),
     cancelQueued: async (...args) => queue.cancelQueued(...args), updateQueued: async (...args) => queue.updateQueued(...args),
     reorderQueued: async (...args) => queue.reorderQueued(...args), recoverInterrupted: async () => queue.recoverInterrupted(),
-    releaseInterrupted: async (...args) => queue.releaseInterrupted(...args),
   };
   return { sessions, queue, session, owner, capture, store, dbPath, temporary, close: async () => { queue.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); } };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "失敗Turnの再実行は通常の待機中編集と取消ができ、元の失敗receiptと今回の受付時入力・実行設定を保持する。同じ要求IDの再試行では受付を増やさず、再実行はSteerにならない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Queued Message Edit; docs/design/session-run-lifecycle.md: GUI Turn Queue / Queue Editing" }
+// fault = "再実行の編集や取消を拒む、元の失敗receiptや今回の受付時入力・設定を上書きする、同じ要求IDで重複受付する、再実行を実行中Turnへの入力としてclaimする"
+// observable = "Main facadeで再実行・編集・同一ID再試行・取消をしたreceipt、SQLiteに残る元の失敗receiptと今回の固定入力、ServiceのSteer拒否"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacadeとSessionTurnQueueServiceの再実行予約・SQLite保存"
+// lifecycle = "permanent"
+// distinction = "普通の予約編集と再実行受付を別々に調べる既存testでは、編集後に同じ要求IDで再試行した結果、元の失敗receipt、今回の固定入力をまとめて照合できない"
+// @end-test-value
+test("待機中の再実行は元の失敗receiptを変えずに編集と取消ができ、Steerにはならない", async () => {
+  const f = await fixture("test-model");
+  let busy = true;
+  const service = new SessionTurnQueueService({ store: f.store, isRunInFlight: () => busy,
+    sendInput: async () => { throw new Error("Unexpected Provider input"); }, dispatch: async () => ({ state: "completed" }) });
+  const attachment = (name: string) => ({ id: name, kind: "file" as const, source: "text" as const,
+    absolutePath: `C:/workspace/${name}`, displayPath: name, workspaceRelativePath: name, isOutsideWorkspace: false });
+  const original = { ...f.capture("Start @old.txt"), attachments: [attachment("old.txt")],
+    origin: { kind: "session" as const, operation: "send" as const, actorSessionId: "sender", actorIncarnationId: "sender-incarnation",
+      actorKind: "main" as const, actorTurnId: "2", actorSnapshot: { sessionTitle: "Sender Session", character: { id: "sender", name: "Fixture Sender", iconPath: "" } },
+      targetSessionId: f.owner.sessionId, targetIncarnationId: f.owner.incarnationId } };
+  const settings = captureSessionExecutionOptions(f.session);
+  const source = f.queue.enqueue(f.owner, original);
+  f.queue.claimNext(f.owner);
+  f.queue.markStarted(f.owner, source.id, { turnId: "42", userMessageSeq: 8 });
+  const failed = f.queue.settle(f.owner, source.id, "failed");
+  const retry = { target: { kind: "main" as const, ...f.owner }, receiptId: source.id, turnId: "42",
+    clientRequestId: randomUUID(), executionOptions: settings };
+  const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession: async (id) => f.sessions.getSession(id),
+    getAppSettings: async () => createDefaultAppSettings(),
+    validateWorkspace: async () => {}, validateProvider: async () => ({ provider: { id: "codex", label: "Codex",
+      models: [{ id: f.session.model, label: f.session.model, reasoningEfforts: [f.session.reasoningEffort] }],
+      defaultModelId: f.session.model, defaultReasoningEffort: f.session.reasoningEffort } }),
+    preview: async (_session, text) => { assert.equal(text, "Edit @new.txt"); return { errors: [], attachments: [attachment("new.txt")] }; },
+    readRetryExecution: async () => executionOperationResultSchemas.get_execution.parse({ ok: true, origin: original.origin,
+      receiptId: source.id, receiptState: "failed", turnId: "42", turnState: "failed", resultState: "partial", userMessageSeq: 8, assistantMessageSeq: null,
+      inputs: { entry: { receiptId: source.id, inputSeq: 8, kind: "start", stage: "fixed", comparison: "unchanged", detail: { operation: "get_execution_input", receiptId: source.id } }, startChanged: false,
+        additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null }),
+    validateRetryAttachments: async (_session, attachments) => assert.deepEqual(attachments, original.attachments), store: f.store, service });
+  try {
+    const accepted = await facade.retryFailedSessionTurn(f.session.id, retry);
+    assert.equal(accepted.captured.request.userMessage, original.request.userMessage);
+    assert.deepEqual(accepted.captured.attachments, original.attachments);
+    assert.deepEqual(accepted.captured.retrySource?.origin, original.origin);
+    assert.equal(accepted.captured.origin?.kind, "gui");
+    const edit = { incarnationId: f.owner.incarnationId, id: accepted.id };
+    assert.equal((await facade.beginQueuedSessionTurnEdit(f.session.id, edit)).id, accepted.id);
+    const updated = await facade.updateQueuedSessionTurn(f.session.id, { ...edit, userMessage: " Edit @new.txt " });
+    assert.deepEqual(updated.captured, { ...accepted.captured,
+      request: { ...accepted.captured.request, userMessage: "Edit @new.txt" }, attachments: [attachment("new.txt")] });
+    assert.deepEqual(updated.accepted, accepted.captured);
+    assert.deepEqual(await facade.retryFailedSessionTurn(f.session.id, retry), updated);
+    await assert.rejects(facade.sendQueuedSessionInput(f.session.id, updated.id, "43"), /must start a new Turn/);
+    const cancelCandidate = await facade.retryFailedSessionTurn(f.session.id, { ...retry, clientRequestId: randomUUID() });
+    assert.equal((await facade.cancelQueuedSessionTurn(f.session.id, cancelCandidate.id)).state, "canceled");
+    assert.equal(f.queue.listReceipts(f.owner).receipts.length, 3);
+    busy = false;
+    service.wake(f.session.id);
+    await service.waitForPending();
+    assert.deepEqual(f.queue.getReceiptById(f.owner, updated.id)?.dispatched, updated.captured);
+    assert.deepEqual(f.queue.getReceiptById(f.owner, source.id), failed);
+  } finally { await service.close(); await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

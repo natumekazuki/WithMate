@@ -41,14 +41,15 @@ type AsyncStore<T extends object> = {
 };
 
 const STORE_METHODS = {
-  coordination: ["execute", "deliveryTarget"],
+  coordination: ["execute", "deliveryTarget", "readStatus"],
   sessionGraph: ["execute"],
   execution: ["execute"],
   session: [
     "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
-    "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
-    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
+    "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage", "readSessionManagementScope",
+    "listHomeCrewMembersPage",
+    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getReadySessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
     "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
     "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
@@ -58,11 +59,11 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn"],
-  queue: ["enqueue", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
+  queue: ["enqueue", "admit", "verifySourceDisplayPosition", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
-    "listRunningAuxiliarySessions", "getLatestAuxiliarySession",
+    "listRunningAuxiliarySessions", "getLatestAuxiliarySession", "getLatestAuxiliarySessionView",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
     "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
     "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
@@ -91,7 +92,7 @@ const STORE_METHODS = {
 
 const MUTATIONS = new Set([
   "reorderQueued", "updateQueued",
-  "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
+  "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted",
   "pinSessionFile", "unpinSessionFile",
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
   "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
@@ -110,7 +111,7 @@ const MUTATIONS = new Set([
   "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
-  "enqueue",
+  "enqueue", "admit", "verifySourceDisplayPosition",
 ]);
 
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
@@ -136,7 +137,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const changed: import("./conversation-query.js").ConversationMutationSink = (table, id) => conversationQueries?.invalidate(table, id);
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
-  const queue = new SessionTurnQueueStorageV6(data.dbPath);
+  const queue = new SessionTurnQueueStorageV6(data.dbPath, changed);
   const sessionGraph = new SessionGraphStorageV6(data.dbPath);
   const execution = new SessionExecutionReadStorage(data.dbPath);
   const coordination = new CoordinationStorageV7(data.dbPath);

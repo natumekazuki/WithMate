@@ -74,8 +74,8 @@ async function mount(api: Partial<WithMateWindowApi>, run: (fixture: {
 // kind = "contract"
 // claim = "Codex visualize PDFだけが可視化後に共有readerへ渡り、追記でも保持され、本文検索と明示Copy・Quote・PDF基準linkが成立する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "全PDF linkを自動読込する、本文更新で再転送する、補助UIが検索へ混入する、引用やlinkが別文脈へ渡る"
-// observable = "inspect/chunk request・iframe同一性・load転送回数・検索index・callbackとlink request・Source原文"
+// fault = "全PDF linkを自動読込する、未取得や初回待機をReload中と扱う、本文更新で再転送する、補助UIが検索へ混入する、引用やlinkが別文脈へ渡る"
+// observable = "可視化前と初回inspect中のstatus・busy、inspect/chunk request・iframe同一性・load転送回数・検索index・callbackとlink request・Source原文"
 // observation_boundary = "consumer"
 // scope = "MessageRichTextのvisualize PDFと共有reader接続"
 // lifecycle = "permanent"
@@ -85,7 +85,13 @@ async function mount(api: Partial<WithMateWindowApi>, run: (fixture: {
 test("visualize PDFs reuse the inline reader without disrupting chat actions or search", async () => {
   const inspected: unknown[] = [], read: unknown[] = [], opened: unknown[] = [], copied: string[] = [], quoted: string[] = [];
   const file = descriptor();
-  await mount({ inspectSessionPdf: async (request) => { inspected.push(request); return file; },
+  let finishInitialInspection!: () => void;
+  const initialInspection = new Promise<void>((resolve) => { finishInitialInspection = resolve; });
+  await mount({ inspectSessionPdf: async (request) => {
+      inspected.push(request);
+      if (inspected.length === 1) await initialInspection;
+      return file;
+    },
     readSessionPdfChunk: async (request) => { read.push(request); return chunk(file); },
     openSessionFilePreviewWindow: async (request) => { opened.push(request); return { status: "opened", targetType: "external-url", target: "https://example.test" }; },
   }, async ({ render, reveal, document, emit, click }) => {
@@ -93,15 +99,36 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     const text = `Before ${marker()} after`;
     await render(text, props);
     assert.deepEqual(inspected, []);
+    const content = document.querySelector("[aria-label='Embedded PDF']");
+    assert.ok(content);
+    assert.equal(content.textContent, "");
+    assert.equal(content.getAttribute("aria-busy"), "false");
+    assert.equal(content.querySelector("[role='status']"), null);
     await reveal();
     assert.deepEqual(inspected, [{ sessionId: "session", target }]);
+    assert.equal(content.getAttribute("aria-busy"), "true");
+    assert.ok(content.querySelector("[role='status'][aria-label='Loading PDF']"));
+    const reload = document.querySelector<HTMLButtonElement>("button[aria-label='Reload PDF Preview']");
+    assert.ok(reload?.disabled);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    await act(async () => finishInitialInspection());
     assert.equal(read.length, 1);
     const frame = document.querySelector("iframe")!;
     assert.ok(frame);
     assert.ok(document.querySelector('p > .message-file-preview[data-format="pdf"]'));
     assert.equal(document.querySelector('.message-file-preview')?.querySelector("div"), null);
     const sent: unknown[] = [];
-    frame.contentWindow!.postMessage = (message: unknown) => sent.push(message);
+    frame.contentWindow!.postMessage = (message: unknown) => {
+      sent.push(message);
+      const request = message as { type: string; requestId?: string };
+      if (request.type === "get-selection") queueMicrotask(() => document.defaultView!.dispatchEvent(new document.defaultView!.MessageEvent("message", {
+        source: frame.contentWindow, origin: PDF_READER_ORIGIN,
+        data: { channel: PDF_READER_CHANNEL, instanceId: new URLSearchParams(new URL(frame.src).hash.slice(1)).get("instanceId"),
+          type: "selection", text: "PDF selected text", requestId: request.requestId },
+      })));
+    };
+    const controls = [...document.querySelectorAll<HTMLButtonElement>(".message-file-preview-header .session-pdf-selection-actions button")];
+    assert.deepEqual(controls.map((button) => [button.textContent, button.disabled]), [["Copy Text", true], ["Quote", true]]);
     await emit("ready");
     await render(`${text} more`, { ...props });
     await emit("ready");
@@ -111,11 +138,19 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     await emit("selection", { text: "PDF selected text" });
     await emit("open-link", { target: "../other.pdf" });
     assert.deepEqual([copied, quoted, opened], [[], [], []]);
-    await click("Copy"); await click("Quote"); await click("Open");
+    assert.ok(controls.every((button) => !button.disabled));
+    await click("Copy Text"); await click("Quote"); await click("Open");
     assert.deepEqual(copied, ["PDF selected text"]); assert.deepEqual(quoted, ["PDF selected text"]);
     assert.deepEqual(opened, [{ kind: "link", sessionId: "session", target: "../other.pdf", baseResource: file }]);
+    await emit("selection", { text: "" });
+    assert.deepEqual([...document.querySelectorAll(".message-file-preview-header .session-pdf-selection-actions button")], controls);
+    assert.ok(controls.every((button) => button.disabled));
     const index = createRenderedTextSearchIndex(document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
     assert.equal(index.normalizedText, projectMessageRenderedSearchText(`${text} more`, "codex").toLocaleLowerCase());
+    await emit("selection", { text: "before reload" });
+    await click("Reload");
+    assert.notEqual(document.querySelector("iframe"), frame);
+    assert.ok([...document.querySelectorAll<HTMLButtonElement>(".session-pdf-selection-actions button")].every((button) => button.disabled));
     await render(text, { displayMode: "source" });
     assert.equal(document.querySelector("iframe"), null);
     assert.equal(document.querySelector("pre")?.textContent, text);
@@ -126,16 +161,16 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     for (const responseProvider of [undefined, "claude", "copilot"]) {
       await render(marker(), { responseProvider }); assert.equal(document.querySelector('.message-file-preview[data-format="pdf"]'), null);
     }
-    assert.equal(inspected.length, 1);
+    assert.equal(inspected.length, 2);
   });
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "50MiB以上は明示確認前にbytesを取得せず、読込revision不一致は失敗表示しReloadで回復する"
+// claim = "50MiB以上は明示確認前にbytesを取得せず、確認後は通常のReload待機と区別し、読込revision不一致は失敗表示してReloadで回復する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "大容量を無確認で読み込む、revision不一致を成功表示する、失敗後に再読込できない"
-// observable = "読込回数・Load Anyway・error文言・Reload後のiframe"
+// fault = "大容量を無確認で読み込む、確認後に別操作のReloadを再びbusyにする、revision不一致を成功表示する、失敗後に再読込できない"
+// observable = "読込回数・Load Anyway・明示読込中の本文statusとReloadのaria-busy・error文言・Reload後のiframe"
 // observation_boundary = "component-behavior"
 // scope = "inline PDF大容量確認とerror/retry"
 // lifecycle = "permanent"
@@ -144,12 +179,26 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
 // @end-test-value
 test("inline PDFs require large-file consent and recover from a stale read", async () => {
   let file = descriptor(target, SESSION_FILE_LARGE_WARNING_BYTES), reads = 0;
+  let finishFirstRead!: () => void;
+  const firstRead = new Promise<void>((resolve) => { finishFirstRead = resolve; });
   await mount({ inspectSessionPdf: async () => file,
-    readSessionPdfChunk: async () => { reads++; return reads === 1 ? { ...chunk(file, 0, 5), revision: "changed" } : chunk(file); },
+    readSessionPdfChunk: async () => {
+      reads++;
+      if (reads !== 1) return chunk(file);
+      await firstRead;
+      return { ...chunk(file, 0, 5), revision: "changed" };
+    },
   }, async ({ render, reveal, document, click }) => {
     await render(marker()); await reveal();
     assert.equal(reads, 0); assert.match(document.body.textContent!, /50.0 MiB/);
+    await click("Reload");
+    assert.equal(reads, 0);
     await click("Load Anyway");
+    assert.ok(document.querySelector("[role='status'][aria-label^='Loading PDF:']"));
+    const reload = document.querySelector<HTMLButtonElement>("button[aria-label='Reload PDF Preview']");
+    assert.ok(reload?.disabled);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    await act(async () => finishFirstRead());
     assert.equal(reads, 1); assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /changed/);
     file = descriptor();
     await click("Reload");

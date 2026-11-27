@@ -29,7 +29,7 @@ import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
-import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
+import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApprovalChoice } from "../../src-shared/settings/session-approval-choice.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +38,7 @@ import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 // claim = "runtime設定は現在の選択値を正式名の文字で表し、供給された候補と変更通知を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示" }
 // fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、または変更が別設定へ通知される"
-// observable = "実composerのModel pickerと5selectのaccessible name、現在値表示とtitle、変更callbackの保存値"
+// observable = "実composerのModel pickerと4 selectのaccessible name、現在値表示とtitle、変更callbackの保存値"
 // observation_boundary = "component-behavior"
 // scope = "Session composer runtime settings"
 // lifecycle = "permanent"
@@ -61,8 +61,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       setSelection((current) => ({ ...current, [key]: value }));
     };
     return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      approvalOptions: [option("untrusted", "Safety Focused"), option("on-request", "Provider Controlled")],
-      reviewerOptions: [option("user", "User"), option("auto-review", "Auto Review")],
+      approvalOptions: getSessionApprovalChoices(),
       sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
       reasoningOptions: [option("low", "Low"), option("high", "High")],
       modelOptions: [
@@ -72,7 +71,6 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
       ...selection,
       onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
-      onChangeCodexReviewer: (value) => change("selectedCodexReviewer", value),
       onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
       onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
       onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
@@ -84,15 +82,14 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
     await act(async () => root.render(React.createElement(Fixture)));
     const document = dom.window.document;
     assert.deepEqual([...document.querySelectorAll('.composer-settings select, .composer-settings button[aria-haspopup="listbox"]')].map((select) => select.getAttribute("aria-label")),
-      ["Approval", "Reviewer", "Sandbox", "Model", "Reasoning depth", "Speed"]);
+      ["Approval", "Sandbox", "Model", "Reasoning depth", "Speed"]);
     const model = document.querySelector<HTMLButtonElement>('button[aria-label="Model"]')!;
     assert.equal(model.querySelector("span")?.textContent, "GPT-5.4");
     assert.equal(model.title, "Model: GPT-5.4");
     const depth = document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning depth"]')!;
     assert.deepEqual([...depth.options].map((item) => item.value), ["low", "high"]);
     for (const [label, value, title, key] of [
-      ["Approval", "on-request", "Provider Controlled", "selectedApprovalMode"],
-      ["Reviewer", "auto-review", "Auto Review", "selectedCodexReviewer"],
+      ["Approval", "auto-review", "Auto Review", "selectedApprovalMode"],
       ["Sandbox", "read-only", "Read Only", "selectedCodexSandboxMode"],
       ["Reasoning depth", "low", "Low", "selectedReasoningEffort"],
       ["Speed", "fast", "Fast", "selectedCodexSpeed"],
@@ -116,7 +113,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
     assert.equal(changes.at(-1), "selectedModel:vendor/model-b");
     assert.equal(model.querySelector("span")?.textContent, "Model B");
     assert.equal(model.title, "Model: Model B");
-    assert.equal(changes.length, 6);
+    assert.equal(changes.length, 5);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -143,8 +140,7 @@ test("ComposerのDepthは省略valueとDefault表示を一致させ非対応モ�
     providerId: "codex",
     providerCatalog: { id: "codex", label: "Codex", defaultModelId: model.id, defaultReasoningEffort: "", models: [model] },
     models: [model], selectedModel: model.id,
-    selectedApprovalMode: "never" as const, selectedCodexSandboxMode: "workspace-write" as const,
-    selectedCodexSpeed: "standard" as const, selectedCodexReviewer: "user" as const,
+    selectedCodexSandboxMode: "workspace-write" as const, selectedCodexSpeed: "standard" as const,
   };
   const props = createComposerTestProps({ selectedReasoningEffort: "" });
   const options = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: props.selectedReasoningEffort, reasoningEfforts: model.reasoningEfforts });
@@ -212,8 +208,6 @@ function createComposerTestProps(
     isComposerBlockedFeedbackActive: false,
     approvalOptions: [{ value: "untrusted", label: "untrusted" }],
     selectedApprovalMode: "untrusted",
-    reviewerOptions: [],
-    selectedCodexReviewer: "user",
     sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
     selectedCodexSandboxMode: "workspace-write",
     speedOptions: [],
@@ -247,7 +241,6 @@ function createComposerTestProps(
     onDraftCompositionEnd() {},
     onSendOrCancel() {},
     onChangeApprovalMode() {},
-    onChangeCodexReviewer() {},
     onChangeCodexSandboxMode() {},
     onChangeCodexSpeed() {},
     onChangeModel() {},
@@ -258,181 +251,59 @@ function createComposerTestProps(
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存済みClaude非対応approvalは不正な選択値として表示され、明示選択でon-requestへ復旧できる"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
-// fault = "不正値をon-request表示に隠すか対応するoptionを選んでも変更callbackが動かない"
-// observable = "実composer selectの選択値・表示・aria-invalidと選択後callback値"
+// claim = "4 ProviderでApprovalは同じフラットな候補を表示し、旧設定を選択扱いせず明示User/Auto Reviewへ切り替えられる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Approvalの選択; docs/design/withmate-auto-review.md#設定と適用範囲" }
+// fault = "Providerごとに名称やReviewer階層が違う、未指定や旧制限を勝手に置き換える、User/Auto Reviewの明示選択を捕捉しない"
+// observable = "実selectの選択可能値と表示・変更イベントで更新された次Turn設定"
 // observation_boundary = "component-behavior"
-// scope = "claude-approval-recovery"
+// scope = "Session composerの共通Approval候補と旧設定からの変更"
 // lifecycle = "permanent"
-// impact = "ユーザーが権限設定を誤認し送信不能な状態から復旧できない"
-// distinction = "options helperや型検査ではnative selectの表示とchange通知を確認できず短いDOM操作で維持する"
+// impact = "次Turnが手動と自動のどちらか利用者が判断・変更できなくなる"
+// distinction = "helpers単体ではnative selectのプレースホルダーと変更通知を確認できない"
 // @end-test-value
-test("Claudeの不正Approvalを明示表示し有効値への操作で復旧する", async () => {
+test("Approval is flat across providers and keeps legacy settings until a choice is made", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  let root: Root | null = null;
-  const changes: ApprovalMode[] = [];
-  function Fixture() {
-    const [approvalMode, setApprovalMode] = useState<ApprovalMode>("untrusted");
-    const options = buildRuntimeSelectionOptions({
-      providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
-      reasoningEfforts: [], selectedApprovalMode: approvalMode,
-      selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
-    });
-    return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      selectedApprovalMode: approvalMode, approvalOptions: options.approvalChoiceOptions,
-      onChangeApprovalMode(value) { changes.push(value); setApprovalMode(value); },
-    }));
-  }
-  try {
-    root = createRoot(dom.window.document.getElementById("root")!);
-    await act(async () => root?.render(React.createElement(Fixture)));
-    const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
-    assert.equal(select.value, "untrusted");
-    assert.equal(select.selectedOptions[0]?.textContent, "Unsupported (untrusted)");
-    assert.equal(select.selectedOptions[0]?.disabled, true);
-    assert.equal(select.getAttribute("aria-invalid"), "true");
-    assert.equal(select.title, "Approval: Unsupported (untrusted)");
-    assert.deepEqual(changes, []);
-    await act(async () => {
-      select.value = "on-request";
-      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    });
-    assert.deepEqual(changes, ["on-request"]);
-    assert.equal(select.value, "on-request");
-    assert.equal(select.selectedOptions[0]?.textContent, "Provider Controlled");
-    assert.equal(select.getAttribute("aria-invalid"), null);
-    assert.equal(select.title, "Approval: Provider Controlled");
-    assert.deepEqual([...select.options].map((option) => option.value), ["never", "on-request", "accept-edits", "dont-ask", "plan"]);
-  } finally {
-    await act(async () => root?.unmount());
-    dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-  }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Claude composerはApprovalを先に選べ、不適合なReviewerの変更は確認後のみ両方へ反映し、Auto Run中はReviewerを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval; docs/design/provider-adapter.md#approval-modes" }
-// fault = "Approvalを選べない、確認前や取消時に設定が変わる、またはAuto Run往復でReviewerを失う"
-// observable = "実selectの候補と値、確認dialogの取消・承認・owner切替後のcallbackと両設定、Auto Run往復後の状態"
-// observation_boundary = "component-behavior"
-// scope = "shared composer Claude approval and reviewer"
-// lifecycle = "permanent"
-// impact = "承認方針を誤認して送信不能になり、復旧操作でも設定が失われる"
-// distinction = "候補生成とvalidationのtestは実controlのdisabledと修正callback、再描画を通らない"
-// @end-test-value
-test("ClaudeのApprovalはReviewer切替を確認し、取消とAuto Runで選択を保持する", async () => {
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
-  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const changes: Array<[ApprovalMode, ApprovalMode | undefined]> = [];
-  const registry = new ComposerControllerRegistry();
-  let changeOwner: (owner: string) => void = () => {};
-  let changeIdentity: (identity: string) => void = () => {};
-  function Fixture() {
-    const [approval, setApproval] = useState<ApprovalMode>("plan");
-    const [reviewer, setReviewer] = useState<"user" | "auto-review">("auto-review");
-    const [owner, setOwner] = useState("first");
-    const [identity, setIdentity] = useState("incarnation-1");
-    changeOwner = setOwner;
-    changeIdentity = setIdentity;
-    const options = buildRuntimeSelectionOptions({
-      providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
-      reasoningEfforts: [], selectedApprovalMode: approval, selectedCodexSandboxMode: "workspace-write",
-      selectedCodexSpeed: "standard", selectedCodexReviewer: reviewer,
-    });
+  const changes: string[] = [];
+  function Fixture({ provider }: { provider: string }) {
+    const [settings, setSettings] = useState({
+      provider, approvalMode: provider === "claude" ? "plan" as const : "on-request" as const,
+      codexReviewer: "user" as const,
+    } as Parameters<typeof getSessionApprovalDisplay>[0]);
+    const selected = getSessionApprovalDisplay(settings);
+    const options = getSessionApprovalChoices();
     return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      providerId: "claude", runtimeSelectionIdentity: identity, selectedApprovalMode: approval, approvalOptions: options.approvalChoiceOptions,
-      composerController: { owner: { kind: "main", id: owner }, registry },
-      selectedCodexReviewer: reviewer, reviewerOptions: options.reviewerSelectOptions,
-      onChangeApprovalMode: (value, confirmation) => {
-        changes.push([value, confirmation?.previousApprovalMode]);
-        setApproval(value);
-        if (confirmation) setReviewer("user");
+      providerId: provider, selectedApprovalMode: selected.value,
+      approvalOptions: selected.value ? options : [{ value: "", label: selected.label, disabled: true, }, ...options],
+      onChangeApprovalMode: (value) => {
+        changes.push(value);
+        const patch = resolveSessionApprovalChoice(provider, value);
+        assert.ok(patch);
+        setSettings({ ...settings, ...patch });
       },
-      onChangeCodexReviewer: setReviewer,
     }));
   }
   try {
-    await act(async () => root.render(React.createElement(Fixture)));
-    const approval = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
-    const reviewer = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Reviewer"]')!;
-    const select = async (control: HTMLSelectElement, value: string) => {
-      await act(async () => { control.value = value; control.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
-    };
-    assert.equal(reviewer.getAttribute("aria-invalid"), "true");
-    assert.equal(reviewer.disabled, false);
-    await select(reviewer, "user");
-    assert.equal(reviewer.getAttribute("aria-invalid"), null);
-    assert.equal(approval.getAttribute("aria-invalid"), null);
-    assert.equal(reviewer.disabled, true);
-    await select(approval, "on-request");
-    assert.equal(reviewer.disabled, false);
-    await select(reviewer, "auto-review");
-    assert.deepEqual([...approval.options].filter((option) => option.disabled).map((option) => option.value), []);
-    for (const value of ["accept-edits", "dont-ask", "plan"]) {
+    for (const provider of ["codex", "claude", "copilot", "opencode"]) {
       const count = changes.length;
-      await select(approval, value);
-      const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-      assert.equal(dialog.open, true);
-      assert.equal(approval.value, "on-request");
-      assert.equal(reviewer.value, "auto-review");
+      await act(async () => root.render(React.createElement(Fixture, { key: provider, provider })));
+      const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
+      assert.deepEqual([...select.options].filter((option) => !option.disabled).map((option) => [option.value, option.textContent]),
+        [["auto-run", "Auto Run"], ["auto-review", "Auto Review"], ["user", "User"], ["safety-focused", "Safety Focused"]]);
+      assert.equal(select.selectedOptions[0]?.textContent,
+        provider === "codex" ? "User" : provider === "claude" ? "Plan" : "Settings Default");
+      assert.equal(select.selectedOptions[0]?.disabled, provider !== "codex");
       assert.equal(changes.length, count);
-      assert.match(dialog.textContent ?? "", /requires Reviewer to be User/);
-      await act(async () => dialog.querySelector<HTMLButtonElement>("button")!.click());
-      assert.equal(dialog.open, false);
-      assert.equal(approval.value, "on-request");
-      assert.equal(reviewer.value, "auto-review");
-      assert.equal(changes.length, count);
+      for (const value of ["auto-review", "user"]) {
+        await act(async () => { select.value = value; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+        assert.equal(select.value, value);
+      }
+      assert.deepEqual(changes.slice(count), ["auto-review", "user"]);
     }
-    await select(approval, "accept-edits");
-    const confirm = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-    await act(async () => confirm.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
-    assert.deepEqual(changes.at(-1), ["accept-edits", "on-request"]);
-    assert.equal(approval.value, "accept-edits");
-    assert.equal(reviewer.value, "user");
-    await select(approval, "on-request");
-    await select(reviewer, "auto-review");
-    await select(approval, "never");
-    assert.equal(reviewer.disabled, true);
-    assert.equal(reviewer.value, "auto-review");
-    await select(approval, "on-request");
-    assert.equal(reviewer.disabled, false);
-    assert.equal(reviewer.value, "auto-review");
-    await select(approval, "never");
-    await select(approval, "plan");
-    const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
-    assert.equal(dialog.open, true);
-    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
-    assert.deepEqual(changes.at(-1), ["plan", "never"]);
-    assert.equal(approval.value, "plan");
-    assert.equal(reviewer.value, "user");
-    assert.equal(reviewer.disabled, true);
-    await select(approval, "on-request");
-    await select(reviewer, "auto-review");
-    await select(approval, "accept-edits");
-    assert.equal(dialog.open, true);
-    const count = changes.length;
-    await act(async () => changeOwner("second"));
-    assert.equal(dialog.open, false);
-    assert.equal(changes.length, count);
-    await select(approval, "accept-edits");
-    assert.equal(dialog.open, true);
-    await act(async () => changeIdentity("incarnation-2"));
-    assert.equal(dialog.open, false);
-    assert.equal(changes.length, count);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -825,7 +696,7 @@ test("応答Detailsに実行設定と配送状態を集約する", async () => {
   const requests: Array<{ operation: string; request: Record<string, unknown> }> = [];
   Object.defineProperty(mounted.dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: Record<string, unknown>) => {
     requests.push({ operation, request });
-    if (operation === "list_sent_deliveries") return { ok: true, items: [], nextCursor: null };
+    if (operation === "list_sent_instruction_cards") return { ok: true, items: [], cursors: { receipts: null, steers: null } };
     assert.equal(operation, "get_execution");
     return { ok: true, receiptId: "start", turnId: "42", userMessageSeq: 8, assistantMessageSeq: 9, receiptState: "completed", turnState: "completed" };
   } } });
@@ -1513,6 +1384,87 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     assert.equal(allToggleCount, 1);
     assert.equal(shortcutEvent.defaultPrevented, true);
   } finally {
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "本文のない保存済み応答は折りたたんでも代替文を出さず、失敗・Details・開閉のフォーカスと実際の本文を保持する。展開後は表示中の失敗結果を既読にできる"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#rendering-policy; docs/design/desktop-ui.md の確定した送信・実行失敗とMonitorの自動既読" }
+// fault = "空のpreviewを作る、失敗を消す、開閉時にfocusや参照先を失う、実本文を消す、または空の本文を開閉したときに誤って既読にする/できない"
+// observable = "開閉ボタンのname/expanded/controlsとactiveElement、空の本文、Failed・Details、別messageの実preview、表示済み失敗に対する開閉前後の既読API呼出"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumn のMain・Aux共通折りたたみ表示"
+// lifecycle = "permanent"
+// distinction = "plain-text projectionや手製DOMのobserver単体では、実Columnでの開閉control・既読の接続を観測できない"
+// @end-test-value
+test("SessionMessageColumn は空の失敗本文を埋めず、実本文と別表示を保つ", async () => {
+  const messages: Message[] = [
+    { ...createArtifactMessage(), text: "", runFailure: "Fixture failure" },
+    { role: "assistant", text: "No content" },
+  ];
+  const messageKeys = ["empty", "literal"];
+  const messageCollapseTargets = buildMessageCollapseTargets(messages, [
+    { kind: "session", messageIndex: 0 },
+    { kind: "auxiliary", sessionId: "aux-fixture", messageIndex: 0, artifact: undefined },
+  ], messageKeys);
+  const collapsedMessageKeys = new Set(["literal"]);
+  const mounted = await mountSessionMessageColumn({
+    messages, messageKeys, messageCollapseTargets, collapsedMessageKeys,
+    expandedArtifacts: { empty: true },
+    onToggleMessageCollapse: (key) => {
+      if (collapsedMessageKeys.has(key)) collapsedMessageKeys.delete(key);
+      else collapsedMessageKeys.add(key);
+    },
+  });
+  let stopObserve: (() => void) | undefined;
+  try {
+    const body = mounted.container.querySelector("#message-body-empty");
+    const row = body?.closest("article");
+    const button = row?.querySelector<HTMLButtonElement>("button[aria-label='Collapse message']");
+    assert.ok(body && row && button);
+    assert.equal(row.querySelector(".session-run-failure strong")?.textContent, "Failed");
+    assert.equal(row.querySelector(".session-run-failure p")?.textContent, "Fixture failure");
+    assert.ok(row.querySelector("#artifact-panel-empty"));
+    await act(async () => { button.focus(); button.click(); });
+    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    assert.equal(mounted.dom.window.document.activeElement, button);
+    assert.equal(button.getAttribute("aria-label"), "Expand message");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    const collapsedBody = mounted.dom.window.document.getElementById(button.getAttribute("aria-controls") ?? "");
+    assert.equal(collapsedBody?.id, body.id);
+    assert.equal(collapsedBody.textContent, "");
+    assert.equal(collapsedBody.querySelector(".message-collapsed-preview"), null);
+    assert.ok(row.querySelector(".session-run-failure")?.textContent?.includes("Fixture failure"));
+    assert.ok(row.querySelector("#artifact-panel-empty"));
+    assert.equal(mounted.container.querySelector("#message-body-literal .message-collapsed-preview")?.textContent, "No content");
+
+    const { window } = mounted.dom;
+    const shownFailure = row.querySelector<HTMLElement>(".session-run-failure")!;
+    shownFailure.getBoundingClientRect = () => createRect({ top: 20, left: 0, width: 400, height: 80 });
+    Object.defineProperty(window.document, "hasFocus", { value: () => true });
+    const acknowledgements: Array<[string, number]> = [];
+    stopObserve = observeSessionResultRead({
+      sessionId: "session-1", list: mounted.messageListRef.current!, assistantMessageIndexes: new Map([[0, 0]]),
+      api: {
+        getUnreadSessionResult: async () => ({ turnId: 7, assistantMessageSeq: 0 }),
+        markSessionResultRead: async (id, turnId) => { acknowledgements.push([id, turnId]); return true; },
+        onSessionTurnUpdated: () => () => {},
+      },
+    });
+    const flushFrame = () => act(async () => {
+      await Promise.resolve();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    await flushFrame();
+    assert.deepEqual(acknowledgements, []);
+    await act(async () => button.click());
+    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    await flushFrame();
+    assert.deepEqual(acknowledgements, [["session-1", 7]]);
+  } finally {
+    stopObserve?.();
     await mounted.cleanup();
   }
 });
@@ -4545,6 +4497,33 @@ test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "質問内に表示できる受付済み回答だけを重複する入力行から隠し未確認や未取得の入力は維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "質問内に回答がないまま元の入力を隠す、または質問と入力を二重表示する"
+// observable = "対応する質問の回答と各入力状態におけるuser row"
+// observation_boundary = "component-behavior"
+// scope = "Codex question response history projection"
+// lifecycle = "permanent"
+// impact = "回答を閲覧できなくなるか、同じ回答が会話内に重複する"
+// distinction = "入力storageのtestだけでは現在pageでの質問と回答の表示関係を検証できない"
+// @end-test-value
+test("question-linked input is hidden only when its confirmed answer is visible", async () => {
+  const question: Message = { role: "assistant", text: "Question", elicitationRecords: [{ requestId: "q", kind: "question", message: "Question",
+    fields: [{ title: "Question", answer: { selected: [], text: ["A response"] } }], status: "answered" }] };
+  const input: Message = { role: "user", text: "A response", turnInput: { turnId: "1", nativeTurnId: "n", state: "confirmed", questionRequestId: "q", attachments: [] } };
+  const mounted = await mountSessionMessageColumn({ messages: [input, question], isRunning: false });
+  try {
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 0);
+    assert.match(mounted.container.textContent ?? "", /A response/);
+    await mounted.rerender({ messages: [{ ...input, turnInput: { ...input.turnInput!, state: "unknown" } }, question] });
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
+    await mounted.rerender({ messages: [input] });
+    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
+  } finally { await mounted.cleanup(); }
+});
+
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -4777,8 +4756,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
-      reviewerOptions: [],
-      selectedCodexReviewer: "user",
       speedOptions: [],
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
@@ -4806,7 +4783,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
-      onChangeCodexReviewer() {},
       onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
@@ -4947,8 +4923,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
-      reviewerOptions: [],
-      selectedCodexReviewer: "user",
       speedOptions: [],
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
@@ -4976,7 +4950,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       onDraftCompositionEnd() {},
       onSendOrCancel() {},
       onChangeApprovalMode() {},
-      onChangeCodexReviewer() {},
       onChangeCodexSpeed() {},
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
@@ -5051,12 +5024,12 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionComposerExpandedのbusy送信buttonはbusy reasonを可視文言へ昇格せず、spinnerとaria-busyを主表示にして送信を抑止する"
+// claim = "SessionComposerExpandedは送信受付待ちにSendを無効化し、理由をtitleとstatusで伝え、常設文言の代わりにspinnerとaria-busyで示す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Send disabled理由とtitle; docs/design/ui-design-guidelines.md: ボタン" }
 // fault = "busy中のSendが理由と異なるtitleや常設helper feedbackを表示する、spinnerまたはaria-busyが欠ける、または送信を許可する"
 // observable = "Send buttonのdisabled・aria-busy・title・spinner、textareaのaria-busy、status announcement、feedback DOM"
 // observation_boundary = "component-behavior"
-// scope = "expanded composer busy send action"
+// scope = "expanded composer send admission pending"
 // lifecycle = "permanent"
 // impact = "送信直後の待機状態を簡潔な視覚表示とaccessible statusで示し、同じbusy説明の重複表示を防ぐ"
 // distinction = "sendability state testはbusy/error併存判定を確認し、このtestはSessionComposerExpandedへの表示投影を確認する"
@@ -5067,6 +5040,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
     React.createElement(SessionComposerExpanded, createComposerTestProps({
       draft: "hello",
       isSendDisabled: true,
+      queueTurnBusy: true,
       composerSendability: {
         isBusy: true,
         busyReason,

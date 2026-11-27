@@ -26,6 +26,8 @@ import {
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import {
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   getShortcutDispatcher,
@@ -49,10 +51,134 @@ function createChatDom(...args: ConstructorParameters<typeof JSDOM>) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "queue対応Composerは実行中も次依頼の作成操作と全設定選択を使え、read-only/close凍結/Reviewer制約では変更を拒否する"
+// claim = "Main一覧は自分の実行中Turnの確定所属だけにリングを出し、別枠閲覧・子だけの実行・予約・完了では移動や残留をしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "子のrunStateまたは閲覧先でリングを出す、ALLにも出す、受付や完了を処理中と数える"
+// observable = "実ChatWindowの候補行の処理中リングと状態名、閲覧選択、Main入力・応答の可視本文"
+// observation_boundary = "component-behavior"
+// scope = "Main自身のlive Turnとキュー受付を人工IPCへ与えたSession Window"
+// lifecycle = "permanent"
+// impact = "利用者が応答中の会話を誤認して別スレッドの続きを送る"
+// distinction = "共有Switcherの外観や並び順の単体確認ではMain実行・受理・表示所属の接合を検知できない"
+// @end-test-value
+test("Main switcher rings only the executing Main frame independently of selection and child state", async () => {
+  const dom = createChatDom("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const matchMedia = dom.window.matchMedia;
+  dom.window.matchMedia = (query) => Object.assign(matchMedia(query), { matches: query.includes("prefers-reduced-motion") });
+  class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node,
+    navigator: dom.window.navigator, ResizeObserver: TestResizeObserver, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window) };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLElement.prototype.scrollIntoView = noop;
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    attachEvent: { configurable: true, value: noop }, detachEvent: { configurable: true, value: noop },
+    offsetHeight: { get(this: HTMLElement) { return this.classList.contains("session-message-virtual-row") ? 72 : 720; } },
+    offsetWidth: { get: () => 850 }, clientHeight: { get: () => 720 },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const props = createChatWindowProps({ messages: [] });
+  const main = { kind: "main" as const, sessionId: "main", incarnationId: "main-inc" };
+  const a = { kind: "main" as const, sessionId: "a", incarnationId: "a-inc" };
+  const b = { kind: "main" as const, sessionId: "b", incarnationId: "b-inc" };
+  const thread = (target: typeof a, title: string, isProcessing = false) => ({ target, title, isProcessing,
+    inboundTurnIds: [], sentMessageIndexes: [], messageIndexes: [] });
+  const projection = { ok: true, initialMessageIndexes: [], children: [thread(a, "Peer Alpha"), thread(b, "Peer Beta", true)] };
+  const request = { clientRequestId: "draft-a", userMessage: "Affinity input", mainConversationFrame: a,
+    executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "read-only",
+      codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } } as const;
+  const captured = { request, provider: "codex", workspacePath: "fixture", attachments: [],
+    origin: { kind: "gui" as const, operation: "send" as const, targetSessionId: main.sessionId, targetIncarnationId: main.incarnationId } };
+  const item: SessionTurnQueueReceipt = { sessionId: main.sessionId, incarnationId: main.incarnationId, id: "receipt-a",
+    requestId: request.clientRequestId, state: "queued", sequence: 1, queuePosition: 1, captured, accepted: captured,
+    turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "", updatedAt: "" };
+  let receipts: SessionTurnQueueReceipt[] = [];
+  let terminal: SessionTurnQueueReceipt | null = null;
+  let changed: ((id: string) => void) | undefined;
+  let live: LiveSessionRunState | null = null;
+  const api = {
+    readSessionExecution: async (_owner: string, operation: string) =>
+      operation === "read_conversation_threads" ? projection : { ok: true, items: [], nextCursor: null },
+    getConversationPage: async () => ({ sessionId: main.sessionId, incarnationId: main.incarnationId, startIndex: 0, totalCount: 0, messages: [] }),
+    listSessionTurnQueue: async () => receipts,
+    getSessionTurnQueueReceipt: async (_id: string, requestId: string) => terminal?.requestId === requestId ? terminal : null,
+    onSessionTurnQueueChanged: (listener: (id: string) => void) => { changed = listener; return () => { changed = undefined; }; },
+  };
+  Object.defineProperty(dom.window, "withmate", { value: api });
+  const render = () => React.createElement(ChatWindow, { ...props, concurrentChats: {
+    main: { ...props.messageColumnProps, sessionId: main.sessionId, inputReadContext: { ownerSessionId: main.sessionId, target: main } },
+    mainSession: { id: main.sessionId, incarnationId: main.incarnationId, runState: "running", messages: [] },
+    mainLiveRun: live, auxiliary: null, target: "main", widthRatio: 0, auxiliaryItems: [], selectedAuxiliaryId: null,
+    onSelectAuxiliary: noop, onTargetChange: noop, onWidthRatioChange: noop, api,
+  } });
+  const switcher = () => dom.window.document.querySelector<HTMLButtonElement>(".main-thread-header .session-switcher-current")!;
+  const readOptions = () => Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".main-thread-header [role=option]"));
+  const label = (node: HTMLButtonElement) => node.querySelector(".session-switcher-option-label")?.textContent?.trim();
+  const optionsWithRing = () => readOptions().filter((node) => node.querySelector(".session-switcher-processing-ring")).map(label);
+  const select = async (title: string) => {
+    if (readOptions().length === 0) await act(async () => switcher().click());
+    const option = readOptions().find((node) => label(node) === title);
+    assert.ok(option);
+    await act(async () => option.click());
+  };
+  const active: LiveSessionRunState = { sessionId: main.sessionId, sessionTurnId: "10", runState: "running", threadId: "provider",
+    assistantText: "Delayed response for Alpha", steps: [], backgroundTasks: [], usage: null, errorMessage: "",
+    approvalRequest: null, elicitationRequest: null, queueReceipt: { id: item.id, incarnationId: item.incarnationId, userMessageSeq: 0 } };
+  const waitForPresentedResponse = async () => {
+    for (let attempts = 0; attempts < 12; attempts += 1) {
+      if (dom.window.document.body.textContent?.includes(active.assistantText)) return;
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 25)); });
+    }
+    assert.match(dom.window.document.body.textContent ?? "", /Delayed response for Alpha/);
+  };
+  try {
+    await act(async () => root.render(render()));
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), [], "Beta alone is running");
+    receipts = [item];
+    await act(async () => changed?.(main.sessionId));
+    assert.deepEqual(optionsWithRing(), [], "a queued prompt is not an executing Turn");
+    await select("Peer Beta");
+    receipts = [{ ...item, state: "running", turnId: "10", userMessageSeq: 0 }];
+    live = active;
+    await act(async () => { changed?.(main.sessionId); root.render(render()); });
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Affinity input|Delayed response for Alpha/);
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), ["Peer Alpha"]);
+    assert.equal(readOptions().find((node) => node.textContent?.includes("Peer Alpha"))?.title, "Processing");
+    assert.equal(readOptions().find((node) => node.textContent?.includes("Peer Beta"))?.getAttribute("aria-selected"), "true");
+    await select("Peer Alpha");
+    assert.match(dom.window.document.body.textContent ?? "", /Affinity input/);
+    await waitForPresentedResponse();
+    await select("ALL");
+    await waitForPresentedResponse();
+    assert.equal((dom.window.document.body.textContent?.match(/Delayed response for Alpha/g) ?? []).length, 1);
+    await act(async () => switcher().click());
+    assert.deepEqual(optionsWithRing(), ["Peer Alpha"]);
+    live = { ...active, runState: "idle", assistantText: "" };
+    terminal = { ...receipts[0], state: "completed" };
+    receipts = [];
+    await act(async () => { changed?.(main.sessionId); root.render(render()); });
+    assert.deepEqual(optionsWithRing(), [], "completed Main must lose its ring even before its summary refreshes");
+    live = { ...active, sessionTurnId: "11", queueReceipt: undefined, assistantText: "Initial response" };
+    await act(async () => root.render(render()));
+    assert.deepEqual(optionsWithRing(), [props.headerProps.taskTitle]);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "queue対応Composerは実行中も次依頼の作成操作と設定選択を使え、read-only/close凍結なら変更を拒否する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの次依頼編集と実行設定" }
-// fault = "runningだけで入力作成を抑止する、または凍結・read-only・Approval neverでも設定やtoolbar操作を許す"
-// observable = "実Composerのbutton/select disabled、toolbar callback、選択callback、Reviewerの変更可否"
+// fault = "runningだけで入力作成を抑止する、または凍結・read-onlyでも設定やtoolbar操作を許す"
+// observable = "実Composerのbutton/select disabled、toolbar callback、Approvalの選択callback"
 // observation_boundary = "component-behavior"
 // scope = "queue Composer preparation controls"
 // lifecycle = "permanent"
@@ -75,9 +201,8 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
     composerController: { owner: { kind: "main", id: "main" }, registry, initialDraft: "next request" },
     canSelectCustomAgent: true, showAttachmentControls: true, showCustomAgentPicker: true,
     showSkillPicker: true, showPromptTemplateButton: true, showAdditionalDirectoryControls: true,
-    showExecutionModeControls: true, selectedApprovalMode: "untrusted",
-    approvalOptions: [{ value: "untrusted", label: "Safety Focused" }, { value: "never", label: "Auto Run" }],
-    reviewerOptions: [{ value: "user", label: "User" }, { value: "auto-review", label: "Auto Review" }],
+    showExecutionModeControls: true, selectedApprovalMode: "safety-focused",
+    approvalOptions: [{ value: "safety-focused", label: "Safety Focused" }, { value: "auto-run", label: "Auto Run" }],
     sandboxOptions: [{ value: "workspace-write", label: "Workspace Write" }],
     speedOptions: [{ value: "standard", label: "Standard" }],
     onOpenPromptTemplates: () => events.push("template"), onToggleSkillPicker: () => events.push("skill"),
@@ -91,7 +216,7 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
   )].filter((element) => element.getAttribute("aria-label") !== "Additional Directories: 0" && !element.closest(".session-action-dock-cancel-slot"));
   try {
     await act(async () => root.render(React.createElement(ChatWindow, props)));
-    assert.ok(controls().length >= 11);
+    assert.ok(controls().length >= 10);
     assert.ok(controls().every((element) => !element.disabled));
     for (const label of ["Template", "Skill", "Agent", "Add Directory"]) {
       const button = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === label)!;
@@ -99,12 +224,8 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
     }
     assert.deepEqual(events, ["template", "skill", "agent", "directory"]);
     const approval = dom.window.document.querySelector<HTMLSelectElement>('[aria-label="Approval"]')!;
-    await act(async () => { approval.value = "never"; approval.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
-    assert.equal(events.at(-1), "never");
-    props.composerProps.selectedApprovalMode = "never";
-    await act(async () => root.render(React.createElement(ChatWindow, props)));
-    assert.equal(dom.window.document.querySelector<HTMLSelectElement>('[aria-label="Reviewer"]')!.disabled, true);
-    props.composerProps.selectedApprovalMode = "untrusted";
+    await act(async () => { approval.value = "auto-run"; approval.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+    assert.equal(events.at(-1), "auto-run");
     props.composerProps.composerBlocked = true;
     await act(async () => root.render(React.createElement(ChatWindow, props)));
     assert.ok(controls().every((element) => element.disabled));
@@ -379,7 +500,7 @@ test("ChatWindow は preview と compact ActionDock 内に recovery actions を�
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");
   props.recoveryActions = {
-    retryState: { kind: "failed", lastRequestText: "Retry this request" },
+    retryState: { kind: "interrupted", lastRequestText: "Retry this request" },
     requestKey: "main:incarnation:0", targetLabel: "Main",
     isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,
     onResendLastMessage() {}, onEditLastMessage() {}, onConfirmRetryDraftReplace() {}, onCancelRetryDraftReplace() {},
@@ -521,6 +642,7 @@ test("ChatWindow は submit pending を非表示の busy status として通知�
   props.composerProps = {
     ...props.composerProps,
     isComposerDisabled: true,
+    queueTurnBusy: true,
     composerSendability: {
       isBusy: true,
       busyReason: "Message submission is in progress.",
@@ -745,9 +867,9 @@ test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象
 
 // @test-value v2
 // kind = "contract"
-// claim = "Skill panelは矢印で候補を移動しEnterで選択、Escapeで取消し、閉じると起点へfocusを戻す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Skill picker" }
-// fault = "候補のkeyboard操作または終了後のfocus復帰が機能しない"
+// claim = "Skill panelは同じ候補の再取得でfocusを保持し、矢印で候補を移動しEnterで選択、Escapeで取消し、閉じると起点へfocusを戻す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Skill picker; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "候補のkeyboard操作または終了後のfocus復帰が機能しないか、同じ候補の再取得で候補が消えてfocusを失う"
 // observable = "候補callback、開閉状態、検索入力値とactiveElement"
 // observation_boundary = "component-behavior"
 // scope = "ChatWindow Skill picker keyboard interaction"
@@ -810,7 +932,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     },
   ];
 
-  function SkillPickerHarness() {
+  function SkillPickerHarness({ loading = false, errorMessage }: { loading?: boolean; errorMessage?: string }) {
     const [isOpen, setIsOpen] = React.useState(false);
     const props = createChatWindowProps();
     props.composerProps = {
@@ -821,7 +943,8 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     };
     props.skillPickerProps = {
       isOpen,
-      isLoading: false,
+      isLoading: loading,
+      errorMessage,
       items,
       onSelectSkill: (skillId) => {
         selected.push(skillId);
@@ -838,7 +961,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(SkillPickerHarness));
+      root.render(React.createElement(SkillPickerHarness, {}));
     });
     const skillButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "Skill");
@@ -855,6 +978,11 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
     await act(async () => {
       searchInput.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
+    assert.equal(dom.window.document.activeElement, options[0]);
+
+    await act(async () => root?.render(React.createElement(SkillPickerHarness, { loading: true })));
+    assert.equal(dom.window.document.activeElement, options[0]);
+    await act(async () => root?.render(React.createElement(SkillPickerHarness, { errorMessage: "Skill refresh failed" })));
     assert.equal(dom.window.document.activeElement, options[0]);
 
     await act(async () => {
@@ -2015,10 +2143,10 @@ test("ChatWindow はAuxiliaryを幅0で完全に閉じsplitterの再展開導線
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの読み込みエラー中もsummary switcherを保持し、Main targetから別Auxiliaryを選択できる"
-// oracle = { type = "contract", ref = "issue-710-auxiliary-switcher-error" }
-// fault = "Auxiliary detail errorがswitcherを消してしまい、Main表示中に別のAuxiliaryへ切り替えられない"
-// observable = "switcher trigger、error region、Main/Auxiliary target button、別Auxiliary選択callbackのrender済みDOM"
+// claim = "Auxiliaryの読込エラー中もsummary switcherが使え、取得済み本文は同じ会話の再取得中・失敗後も保持される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#scope; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "Auxiliaryの読込エラーでswitcherを失うか、取得済み本文を待機表示・エラーと差し替えて閲覧位置を失う"
+// observable = "switcherと別Auxiliary選択、対象ボタン、各状態のerror region、取得済み本文DOMの同一性"
 // observation_boundary = "component-behavior"
 // scope = "concurrent-chat-shell"
 // lifecycle = "permanent"
@@ -2048,11 +2176,9 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
   let root: Root | null = null;
   const selected: string[] = [];
   try {
-    await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(ChatWindow, {
-        ...props,
-        concurrentChats: {
+    const renderAuxiliary = (state: Partial<NonNullable<ChatWindowProps["concurrentChats"]>>) => root?.render(React.createElement(ChatWindow, {
+      ...props,
+      concurrentChats: {
           main: props.messageColumnProps,
           auxiliary: null,
           selectedAuxiliaryId: "aux-a",
@@ -2066,8 +2192,12 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
           onSelectAuxiliary: (id) => selected.push(id),
           onTargetChange() {},
           onWidthRatioChange() {},
-        },
-      }));
+          ...state,
+      },
+    }));
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      renderAuxiliary({});
     });
 
     assert.ok(dom.window.document.querySelector("[aria-label='Auxiliary conversation']"));
@@ -2085,6 +2215,19 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
     assert.ok(optionB);
     await act(async () => optionB.click());
     assert.deepEqual(selected, ["aux-b"]);
+
+    const auxiliary = { ...props.messageColumnProps, sessionId: "aux-b", messages: [{ role: "assistant" as const, text: "Saved Auxiliary message" }] };
+    const loaded = { auxiliary, auxiliarySession: { id: "aux-b", messages: auxiliary.messages }, selectedAuxiliaryId: "aux-b" };
+    const body = () => dom.window.document.querySelector('#session-auxiliary-chat-pane [role="region"][aria-label="Conversation messages"]');
+    await act(async () => renderAuxiliary({ ...loaded, error: null }));
+    const retained = body();
+    assert.ok(retained);
+    assert.equal(retained.getAttribute("data-message-count"), "1");
+    await act(async () => renderAuxiliary({ ...loaded, loading: true, error: null }));
+    assert.equal(body(), retained);
+    await act(async () => renderAuxiliary({ ...loaded, error: "Auxiliary refresh failed" }));
+    assert.equal(body(), retained);
+    assert.match(dom.window.document.querySelector('#session-auxiliary-chat-pane [role="alert"]')?.textContent ?? "", /Auxiliary refresh failed/);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -2100,8 +2243,8 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保ち、幅不足の片側表示を含む非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない。送信は列ごとのcaptureから受付完了通知まで移動を待つ"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope" }
+// claim = "MainとAuxiliaryの末尾移動button・別々のshortcutは指定列だけ追従へ戻し、入力focusと送信対象を保つ。取得済みAuxiliaryの再取得中・失敗後は使え、非表示・未取得列やPreview・Terminal・IME・repeatでは実行しない。送信は列ごとのcaptureから受付完了通知まで移動を待つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Auxiliary Session; docs/features/keyboard-shortcuts.md: command scope; docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "末尾移動先を送信対象で決める、非表示列に配送する、またはfocus・送信対象・送信時追従を変更する"
 // observable = "両列のscrollTop、button clickとkeydownの結果、activeElement、target変更callback、composer送信callback"
 // observation_boundary = "component-behavior"
@@ -2367,13 +2510,16 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
     mainContentReady = true;
     auxiliaryLoading = true;
     await act(async () => root?.render(renderChatWindow()));
-    assert.equal(await press("n"), false);
+    assert.equal(await press("n"), true);
     auxiliaryLoading = false;
     auxiliaryError = "Read failed";
     await act(async () => root?.render(renderChatWindow()));
+    assert.equal(await press("n"), true);
+    hasAuxiliary = false;
+    await act(async () => root?.render(renderChatWindow()));
     assert.equal(await press("n"), false);
     auxiliaryError = null;
-    hasAuxiliary = false;
+    auxiliaryLoading = true;
     await act(async () => root?.render(renderChatWindow()));
     assert.equal(await press("n"), false);
     const currentMainList = dom.window.document.querySelector<HTMLDivElement>(".session-concurrent-chat-main .session-message-list")!;
@@ -2827,10 +2973,10 @@ test("ConcurrentChatSplitter は幅0をclickだけで既定幅へ戻す", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "共通switcherは中央triggerから検索一覧を開き、処理中候補を一覧optionのindicatorで示し、検索中の矢印・IME入力を壊さず、検索0件では本文を追加せず、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI flow" }
-// fault = "処理中候補のindicatorがDOMから欠落する、検索中のArrowDownで候補を飛ばす、IMEのEscapeで一覧を閉じる、検索0件で説明文を追加する、候補を選べない、候補がなくなってもpopoverが残る、または閉じた後にtriggerへfocusが戻らない"
-// observable = "候補一覧、処理中候補のindicator、検索0件時にempty文言を描画しないこと、空label候補のaccessible name、選択callback、options空化後を含むpopoverの表示状態、document.activeElement"
+// claim = "共通switcherは実行と未読を選択と独立して示し、検索中の矢印・IME入力、検索0件、候補確定・outside click・Escape後のfocus復帰と候補消滅時のpopover閉鎖を扱う"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher; docs/design/auxiliary-session.md: UI flow" }
+// fault = "実行リングや未読を未表示にする、未読をタイトル以外や選択状態と混同する、非視覚的な状態が欠ける、または検索・選択・取消・focus復帰を壊す"
+// observable = "リングの所属と状態説明、タイトルの未読マーカーとoptionのaria-selected、検索0件時のDOM、空labelのaccessible name、選択callback、popoverの表示状態、document.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "session-switcher"
 // lifecycle = "permanent"
@@ -2865,8 +3011,8 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
       root.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",
         options: [
-          { id: "a", label: "Alpha", preview: "first", isProcessing: true, icon: React.createElement("span", null, "A") },
-          { id: "b", label: "Beta", preview: "second", icon: React.createElement("span", null, "B") },
+          { id: "a", label: "Alpha", preview: "first", isProcessing: true, hasUnreadResult: true, icon: React.createElement("span", null, "A") },
+          { id: "b", label: "Beta", preview: "second", hasUnreadResult: true, icon: React.createElement("span", null, "B") },
         ],
         selectedId: "a",
         searchable: true,
@@ -2881,8 +3027,16 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     assert.ok(search);
     assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 2);
     const initialOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-    assert.ok(initialOptions[0]?.querySelector(".session-switcher-processing-indicator"));
-    assert.equal(initialOptions[1]?.querySelector(".session-switcher-processing-indicator"), null);
+    assert.ok(trigger.querySelector(".session-switcher-icon > .session-switcher-processing-ring"));
+    assert.equal(trigger.getAttribute("aria-description"), "Processing; Unread Result");
+    assert.deepEqual([...trigger.querySelectorAll(".has-unread-result")].map((item) => item.textContent), ["Alpha"]);
+    assert.ok(initialOptions[0]?.querySelector(".session-switcher-icon > .session-switcher-processing-ring"));
+    assert.equal(initialOptions[1]?.querySelector(".session-switcher-processing-ring"), null);
+    for (const [index, label] of ["Alpha", "Beta"].entries()) {
+      assert.equal(initialOptions[index].getAttribute("aria-description"), index === 0 ? "Processing; Unread Result" : "Unread Result");
+      assert.equal(initialOptions[index].getAttribute("aria-selected"), String(index === 0));
+      assert.deepEqual([...initialOptions[index].querySelectorAll(".has-unread-result")].map((item) => item.textContent), [label]);
+    }
     assert.equal(initialOptions[0]?.getAttribute("title"), "Processing");
     assert.equal(initialOptions[1]?.getAttribute("title"), null);
     await act(async () => {
@@ -2894,7 +3048,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const filteredOptions = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
     assert.equal(filteredOptions.length, 1);
     assert.equal(filteredOptions[0]?.querySelector(".session-switcher-option-label")?.textContent, "Beta");
-    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-indicator"), null);
+    assert.equal(filteredOptions[0]?.querySelector(".session-switcher-processing-ring"), null);
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(search, "missing");
@@ -2933,7 +3087,7 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",
-        options: [{ id: "unnamed", label: "" }],
+        options: [{ id: "unnamed", label: "", isProcessing: true, hasUnreadResult: true, icon: React.createElement("span", null, "?") }],
         selectedId: "unnamed",
         onMove() {},
         onSelect() {},
@@ -2942,13 +3096,14 @@ test("SessionSwitcher は検索・確定・取消操作とfocus復帰を扱う",
     const unnamedTrigger = dom.window.document.querySelector<HTMLButtonElement>(".session-switcher-current");
     assert.ok(unnamedTrigger);
     assert.equal(unnamedTrigger.getAttribute("aria-label"), "Auxiliary conversation");
+    assert.equal(unnamedTrigger.getAttribute("aria-description"), "Processing; Unread Result");
     await act(async () => unnamedTrigger.click());
     const unnamedOption = dom.window.document.querySelector<HTMLButtonElement>('[role="option"]');
     assert.ok(unnamedOption);
     assert.equal(unnamedOption.getAttribute("aria-label"), "Auxiliary conversation");
+    assert.equal(unnamedOption.getAttribute("aria-description"), "Processing; Unread Result");
 
-    await act(async () => unnamedTrigger.click());
-    assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+    assert.ok(dom.window.document.querySelector('[role="listbox"]'));
     await act(async () => {
       root?.render(React.createElement(SessionSwitcher, {
         ariaLabel: "Auxiliary conversation",

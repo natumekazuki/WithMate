@@ -240,7 +240,7 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
   const normalizedColumns = ["title", "description", "run_state", "preview", "provider_id", "catalog_revision",
     "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
-    "codex_reviewer", "custom_agent_name", "thread_id",
+    "codex_reviewer", "withmate_reviewer_explicit", "custom_agent_name", "thread_id",
     "display_after_message_index", "character_id", "character_snapshot_json",
     "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
     "creation_request_json"];
@@ -569,6 +569,7 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     codex_sandbox_mode TEXT NOT NULL DEFAULT '',
     codex_speed TEXT NOT NULL DEFAULT '',
     codex_reviewer TEXT NOT NULL DEFAULT '',
+    withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1)),
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
@@ -651,6 +652,8 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
     accepted_json TEXT CHECK (accepted_json IS NULL OR json_valid(accepted_json)),
     dispatched_json TEXT CHECK (dispatched_json IS NULL OR json_valid(dispatched_json)),
+    source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0),
+    source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1)),
     turn_id TEXT,
     input_turn_id TEXT,
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
@@ -667,6 +670,12 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     ON session_turn_queue_v6(session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_turn_queue_auxiliary_request
     ON session_turn_queue_v6(auxiliary_session_id, incarnation_id, request_id) WHERE auxiliary_session_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_main_message
+    ON session_turn_queue_v6(session_id, incarnation_id, user_message_seq)
+    WHERE auxiliary_session_id IS NULL AND user_message_seq IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_auxiliary_message
+    ON session_turn_queue_v6(auxiliary_session_id, incarnation_id, user_message_seq)
+    WHERE auxiliary_session_id IS NOT NULL AND user_message_seq IS NOT NULL;
 `;
 
 export const CREATE_V6_SCHEMA_SQL = [
@@ -848,6 +857,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
+  const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+  if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("withmate_reviewer_explicit")) {
+    db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))");
+  }
 
   db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 
@@ -883,11 +896,23 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
     }
   }
+  if (!queueColumns.has("source_display_position")) {
+    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0)");
+  }
+  if (!queueColumns.has("source_display_verified")) {
+    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1))");
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_sender ON session_turn_queue_v6(
     json_extract(accepted_json, '$.origin.actorKind'),
     json_extract(accepted_json, '$.origin.actorSessionId'),
     json_extract(accepted_json, '$.origin.actorIncarnationId'),
     json_extract(accepted_json, '$.origin.actorTurnId'), sequence)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_messages_steer_sender ON session_messages_v6(
+    json_extract(body, '$.turnInput.origin.actorKind'),
+    json_extract(body, '$.turnInput.origin.actorSessionId'),
+    json_extract(body, '$.turnInput.origin.actorIncarnationId'),
+    json_extract(body, '$.turnInput.origin.actorTurnId'), id)
+    WHERE role='user' AND json_extract(body, '$.turnInput.origin.operation')='steer'`);
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

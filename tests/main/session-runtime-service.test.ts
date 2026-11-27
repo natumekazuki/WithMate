@@ -5,10 +5,10 @@ import path from "node:path";
 import { describe, it, mock } from "node:test";
 
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
-import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { CancelSessionRunRequest, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -25,6 +25,7 @@ import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixt
 import {
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
+  stopWindowSessionRun,
 } from "../../src-electron/session/session-runtime-service.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
@@ -43,6 +44,13 @@ import type { SessionRuntimeService as ProductionSessionRuntimeService } from ".
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
+import { registerSessionRuntimeHandlers } from "../../src-electron/ipc/session-runtime.js";
+import { registerAuxiliaryHandlers } from "../../src-electron/ipc/auxiliary.js";
+import type { IpcHandleRegistrar, MainIpcAuxiliaryDeps, MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts.js";
+import { WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, WITHMATE_CANCEL_SESSION_RUN_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -181,6 +189,259 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
   });
 }
 
+function createWindowCancelFixture(kind: "main" | "auxiliary", session: Session, runtime: ProductionSessionRuntimeService,
+  queue: Pick<SessionTurnQueueService, "stopClaim">, options: { authorize: () => boolean; lookup?: () => Promise<void>; onApply: () => void }) {
+  const handlers = new Map<string, Parameters<IpcHandleRegistrar["handle"]>[1]>();
+  const ipc: IpcHandleRegistrar = { handle: (channel, listener) => { handlers.set(channel, listener); } };
+  const event = {} as Parameters<Parameters<IpcHandleRegistrar["handle"]>[1]>[0];
+  const window = {} as NonNullable<ReturnType<MainIpcAuxiliaryDeps["resolveEventWindow"]>>;
+  const otherWindow = {} as typeof window;
+  const unused = () => { throw new Error("Unrelated IPC fixture dependency"); };
+  const windowDeps = { resolveEventWindow: () => options.authorize() ? window : otherWindow, resolveSessionWindow: (id: string) => id === "main" ? window : null };
+  const stop = (request: CancelSessionRunRequest, authorize: () => void) => stopWindowSessionRun(request, runtime, queue, authorize, options.onApply);
+  if (kind === "main") {
+    // The registrar captures unrelated handlers without invoking their dependencies.
+    registerSessionRuntimeHandlers(ipc, { ...windowDeps, cancelSessionRun: stop } as unknown as MainIpcSessionRuntimeDeps);
+  } else {
+    registerAuxiliaryHandlers(ipc, {
+      ...windowDeps,
+      getAuxiliarySession: async (id: string) => {
+        assert.equal(id, session.id);
+        await options.lookup?.();
+        return { id, parentSessionId: "main", createdAt: getSessionIncarnationId(session) } as NonNullable<Awaited<ReturnType<NonNullable<MainIpcAuxiliaryDeps["getAuxiliarySession"]>>>>;
+      },
+      listAuxiliarySessions: unused, listOpenAuxiliarySessionSummaries: unused, getLatestAuxiliarySession: unused,
+      createAuxiliarySession: unused, updateAuxiliarySession: unused, runAuxiliarySessionTurn: unused,
+      getAuxiliaryDraft: unused, saveAuxiliaryDraft: unused, getAuxiliarySessionStatus: unused,
+      cancelAuxiliarySessionRun: stop,
+    });
+  }
+  const invoke = handlers.get(kind === "main" ? WITHMATE_CANCEL_SESSION_RUN_CHANNEL : WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)!;
+  return async (request: CancelSessionRunRequest) => invoke(event, request);
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Aに対する古いGUI Cancelは、同じSessionで後から開始したBの実行・承認・質問を取り消さない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975 — 項目4と受入条件" }
+// fault = "Main runtimeのSession読取待ち、またはAuxの所有Window照合待ちの後で対象TurnをSession内の最新実行へ付け替える"
+// observable = "BのAbortSignal、live Turn IDと取消状態、承認・質問の要求ID、Providerが受け取る個別決定、Bの保存本文と承認reviewの入力fence"
+// observation_boundary = "consumer"
+// scope = "Main/Aux GUI Cancel IPCから本番Session runtimeとProvider callbackまで"
+// lifecycle = "permanent"
+// distinction = "runtimeの親子exact stop単体検査ではGUI IPCが操作時の対象を捨てる欠陥を検出できない"
+// @end-test-value
+it("GUI Cancel IPC leaves the next Main and Auxiliary turns and their requests intact", async () => {
+  const results: unknown[] = [];
+  for (const kind of ["main", "auxiliary"] as const) {
+    const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+    const { promise: endA, resolve: finishA } = queueGate();
+    const { promise: ownerGate, resolve: resumeOwnerCheck } = queueGate();
+    let stored = session;
+    let pauseMainLookup = false;
+    let turnNumber = 0;
+    let live: LiveSessionRunState | null = null;
+    let bSignal: AbortSignal | undefined;
+    const updateLiveSessionRun = (_id: string, recipe: (state: LiveSessionRunState) => LiveSessionRunState) => live = live ? recipe(live) : null;
+    const approvals = new SessionApprovalService({ updateLiveSessionRun });
+    const questions = new SessionElicitationService({ updateLiveSessionRun });
+    const decisions: unknown[] = [];
+    const runtime = createProgressRuntime(session, async (input) => {
+      if (turnNumber === 1) {
+        await endA;
+        return createPartialResult({ assistantText: "A completed" });
+      }
+      bSignal = input.signal;
+      decisions.push(...await Promise.all([
+        input.onApprovalRequest!({ requestId: "approval-B", provider: "codex", kind: "shell", title: "Approval", summary: "B", decisionMode: "direct-decision" }),
+        input.onElicitationRequest!({ requestId: "question-B", provider: "codex", mode: "form", message: "B", fields: [] }),
+      ]));
+      return createPartialResult({ assistantText: "B completed" });
+    }, {
+      getSession: async () => {
+        if (pauseMainLookup) {
+          pauseMainLookup = false;
+          await ownerGate;
+        }
+        return stored;
+      },
+      upsertSession: (next) => stored = next,
+      createSessionTurn: (input) => ({ ...input, id: ++turnNumber }),
+      setLiveSessionRun: (_id, state) => { live = state; },
+      getLiveSessionRun: () => live,
+      waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+      waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+      resolvePendingApprovalRequest: (id) => approvals.cancelSession(id),
+      resolvePendingElicitationRequest: (id) => questions.cancelSession(id),
+    });
+    const fence = new ApprovalReviewInputFence();
+    const stop = createWindowCancelFixture(kind, session, runtime, { stopClaim: async () => assert.fail("Unexpected receipt stop") }, {
+      authorize: () => true, lookup: () => ownerGate, onApply: () => fence.invalidate(),
+    });
+    const request = { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" };
+    const currentLive = (): LiveSessionRunState | null => live;
+    const a = runtime.runSessionTurn(session.id, request);
+    try {
+      await waitForCondition(() => currentLive()?.sessionTurnId === "1", "A has started");
+      const aStop: CancelSessionRunRequest = { sessionId: session.id, incarnationId: getSessionIncarnationId(session), execution: { kind: "turn", id: currentLive()!.sessionTurnId! } };
+      // Main waits on the exact runtime stop's Session read; Aux waits earlier
+      // on the owning Window lookup in its registered IPC handler.
+      pauseMainLookup = kind === "main";
+      const stale = stop(aStop);
+      finishA();
+      assert.equal((await a).messages.at(-1)?.text, "A completed");
+      const b = runtime.runSessionTurn(session.id, request);
+      await waitForCondition(() => !!currentLive()?.approvalRequest && !!currentLive()?.elicitationRequest, "B awaits both decisions");
+      const reviewCurrent = fence.capture();
+      resumeOwnerCheck();
+      await stale;
+      const preserved = [bSignal?.aborted, currentLive()?.sessionTurnId, currentLive()?.cancellationState,
+        currentLive()?.approvalRequest?.requestId, currentLive()?.elicitationRequest?.requestId, reviewCurrent()];
+      if (!bSignal?.aborted) {
+        approvals.resolveLiveApproval(session.id, "approval-B", "approve");
+        await questions.resolveLiveElicitation(session.id, "question-B", { action: "decline" });
+      }
+      const completed = await b;
+      results.push({ kind, preserved, decisions, text: completed.messages.at(-1)?.text });
+    } finally {
+      finishA();
+      resumeOwnerCheck();
+      runtime.cancelAllRuns();
+      await runtime.waitForPendingRuns();
+    }
+  }
+  assert.deepEqual(results, ["main", "auxiliary"].map((kind) => ({
+    kind, preserved: [false, "2", undefined, "approval-B", "question-B", true], decisions: ["approve", { action: "decline" }], text: "B completed",
+  })));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot/OpenCodeの明示Userと既定Off、ネイティブは従来の手動要求を維持し、仲介選択時は適格な実要求だけを設定先へ渡し、経路不成立は公開せず不許可とする"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+// fault = "旧Userを明示Userと誤る、明示Auto ReviewのOff・設定先不成立を手動に落とす、または実際の判断元をProviderへ渡さない"
+// observable = "Provider callbackに返った決定とsource、公開・通知、設定先に渡すbinding、審査会話の開閉と元Turn・実引数"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeServiceから審査Turnと既存承認キューを経由するProvider callbackの戻り値"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "アダプター単体と審査単体では実効設定によるSession runtimeの振り分けを観測しない"
+// @end-test-value
+it("routes configured broker reviews without falling back to manual on an unavailable route", { timeout: 4000 }, async () => {
+  const selection = { providerId: "codex", model: "reviewer", reasoningEffort: "high" } as const;
+  const cases = (["copilot", "opencode"] as const).flatMap((provider) => [
+    [provider, "legacy", true, true, "pass", "reviewer"], [provider, "legacy", false, true, "pass", "manual"],
+    [provider, "user", true, true, "pass", "manual"], [provider, "auto-review", true, true, "pass", "reviewer"],
+    [provider, "auto-review", false, true, "pass", "blocked"], [provider, "auto-review", true, false, "pass", "blocked"],
+    [provider, "auto-review", true, true, "fail", "blocked"], [provider, "auto-review", true, true, "absent", "blocked"],
+    [provider, "auto-review", true, true, "throws", "blocked"],
+  ] as const);
+  for (const [provider, preference, enabled, hasEvidence, route, source] of [...cases,
+    ["codex", "legacy", true, true, "pass", "manual"], ["claude", "legacy", true, true, "pass", "manual"]] as const) {
+    const session = createSession({ provider, approvalMode: "on-request", codexReviewer: preference === "legacy" ? "user" : preference,
+      withMateReviewerExplicit: preference === "legacy" ? undefined : true });
+    const catalog = createProviderCatalog(provider);
+    const sources: ApprovalDecisionSource[] = [];
+    const decisions: Array<LiveApprovalDecision | undefined> = [];
+    const publications: string[] = [];
+    const notifications: string[] = [];
+    let opened = 0;
+    let closed = 0;
+    const binding = { bindingId: "source", bindingReference: "source-reference", providerId: provider,
+      executionGeneration: "source-generation", transport: "env", expiresAt: null, turnCapability: "source-turn",
+      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "", sessionGraphUrl: "", token: "source-token" } } as const;
+    let live = createLiveRunState({ sessionId: session.id });
+    const approvals = new SessionApprovalService({
+      updateLiveSessionRun: (_id, update) => {
+        const next = update(live);
+        if (next.approvalRequest && next.approvalRequest !== live.approvalRequest) publications.push(next.approvalRequest.requestId);
+        return live = next;
+      },
+      notifyApproval: (id, requestId) => {
+        notifications.push(requestId);
+        queueMicrotask(() => approvals.resolveLiveApproval(id, requestId, "approve"));
+      },
+    });
+    const runtime = createProgressRuntime(session, async (input) => {
+      const request: LiveApprovalRequest = { requestId: "request", provider, kind: "read", title: "Operation", summary: "Read fixture", decisionMode: "direct-decision" };
+      decisions.push(await input.onApprovalRequest?.(request, undefined, hasEvidence ? { operation: { file: "fixture.txt", cwd: session.workspacePath } } : undefined,
+        (decisionSource) => { sources.push(decisionSource); }));
+      assert.deepEqual(sources, [source], `${provider}/${preference}/${enabled}/${hasEvidence}/${route}`);
+      return createPartialResult({ assistantText: "done" });
+    }, {
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } }, withMateAutoReview: enabled ? selection : null }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
+      beginProviderAgentRuntimeTurn: () => ({ handle: "source-handle", binding }),
+      startWithMateApprovalReview: (args) => {
+        assert.equal(args.binding, binding);
+        assert.deepEqual(args.selection, selection);
+        if (route === "absent") return undefined;
+        if (route === "throws") throw new Error("Review route failed to initialize");
+        return new WithMateApprovalReviewTurn({ ...args, policyCurrent: () => true, inputs: new ApprovalReviewInputFence(),
+          source: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
+          open: async () => {
+            opened++;
+            if (route === "fail") throw new Error("Reviewer unavailable");
+            return { close() { closed++; }, review: async (prompt) => {
+              const evidence = JSON.parse(prompt);
+              assert.equal(evidence.turnId, "1");
+              assert.equal(evidence.pendingOperation.operation.file, "fixture.txt");
+              assert.doesNotMatch(prompt, /source-token|source-reference|source-turn/);
+              return { decision: "allow_once", reason: "Explicitly authorized." };
+            } };
+          } });
+      },
+      waitForApprovalDecision: (sessionId, request, signal, review, observer) =>
+        approvals.waitForLiveApprovalDecision(sessionId, request, signal, review, observer),
+    });
+    const result = await runtime.runSessionTurn(session.id, { userMessage: "Read fixture.txt", executionOptions: captureSessionExecutionOptions(session) });
+    assert.equal(result.runState, "idle");
+    assert.deepEqual(decisions, [source === "blocked" ? "deny" : "approve"]);
+    assert.deepEqual([opened, closed], source === "reviewer" ? [1, 1] : route === "fail" ? [1, 0] : [0, 0]);
+    assert.deepEqual([publications, notifications], source === "manual" ? [["request"], ["request"]] : [[], []]);
+    assert.deepEqual([result.codexReviewer, result.withMateReviewerExplicit], [session.codexReviewer, session.withMateReviewerExplicit]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "新しいSafety FocusedではProviderから届いた実承認をread/write問わず拒否し、手動UIや審査役を起動しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "実承認を許可するかUserまたはAuto Reviewへ流してSafety Focusedを変質させる"
+// observable = "Providerの実承認callbackに返るread/writeの判断とsource、会話結果"
+// observation_boundary = "consumer"
+// scope = "4 Providerの実承認callbackから共通SessionRuntimeServiceへの判断境界（Provider fixture）"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "承認を拒否する設定で操作が実行されたり、判断待ちで実行が停止したりする"
+// distinction = "Adapterごとの設定testでは実承認と手動・審査への分岐を観測できない"
+// @end-test-value
+it("Safety Focused rejects real approval callbacks without manual or automatic review", async () => {
+  for (const provider of ["codex", "claude", "copilot", "opencode"]) {
+    const session = createSession({ provider, approvalMode: "safety-focused", codexReviewer: "auto-review" });
+    const catalog = createProviderCatalog(provider);
+    const results: Array<LiveApprovalDecision | undefined> = [];
+    const sources: ApprovalDecisionSource[] = [];
+    const runtime = createProgressRuntime(session, async (input) => {
+      for (const kind of ["read", "write"]) {
+        results.push(await input.onApprovalRequest?.({ requestId: kind, provider, kind, title: kind, summary: kind, decisionMode: "direct-decision" },
+          undefined, { operation: { kind } }, (source) => { sources.push(source); }));
+      }
+      return createPartialResult({ assistantText: "done" });
+    }, {
+      getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } },
+        withMateAutoReview: { providerId: "codex", model: "review", reasoningEffort: "" } }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
+      waitForApprovalDecision: () => assert.fail("Safety Focused must not open manual approval"),
+      startWithMateApprovalReview: () => assert.fail("Safety Focused must not start review"),
+    });
+    const result = await runtime.runSessionTurn(session.id, { userMessage: "Safety boundary", executionOptions: captureSessionExecutionOptions(session) });
+    assert.deepEqual(results, ["deny", "deny"]);
+    assert.deepEqual(sources, ["blocked", "blocked"]);
+    assert.equal(result.messages.at(-1)?.text, "done");
+  }
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "指定WithMate Turn停止は同incarnationの現在Turnだけに適用し、Provider Turn IDや後続Turnへ対象を付け替えない"
@@ -228,10 +489,10 @@ it("指定Turn停止はWithMate identityを固定し後続へ適用しない", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "直接SteerはProvider呼出前にpendingを保存し、未送信・外部結果不明・保存ACK喪失を区別して再送せず同じTurnの本文を保持する"
-// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別" }
-// fault = "記録前にProviderへ送る、未送信を不明にする、不明送信を再送する、確定commitのACK喪失で入力を上書きする"
-// observable = "adapter呼出時のpending message、呼出件数、保存messageのTurn/native IDと配送状態、terminal後の本文列"
+// claim = "直接SteerはProvider呼出前にpendingと固定された返信参照を保存し、通常Turnの会話枠を再提示せず、未送信・結果不明・保存ACK喪失を区別する"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別; docs/design/prompt-composition.md#metadataと必要時取得" }
+// fault = "記録前にProviderへ送る、Steerに通常開始用の所属を足す、未送信を不明にする、または不明送信を再送する"
+// observable = "adapter呼出時のpendingと返信参照、Provider入力の返信IDと所属欄、配送状態、呼出件数、terminal後の本文と参照"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeService直接Steerとfixture永続portの故障注入"
 // lifecycle = "permanent"
@@ -240,6 +501,7 @@ it("指定Turn停止はWithMate identityを固定し後続へ適用しない", a
 it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再送しない", async () => {
   for (const mode of ["unknown", "not-sent", "begin-lost", "confirm-lost"] as const) {
     let stored = createSession({ threadId: "thread" });
+    const reference = { target: { kind: "main" as const, sessionId: stored.id, incarnationId: getSessionIncarnationId(stored) }, seq: 0 };
     let finish!: () => void;
     const done = new Promise<void>((resolve) => { finish = resolve; });
     let calls = 0;
@@ -260,6 +522,9 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
         assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
         assert.equal(stored.messages.at(-1)?.turnInput?.turnId, "1");
         assert.equal(stored.messages.at(-1)?.turnInput?.nativeTurnId, input.expectedTurnId);
+        assert.deepEqual(stored.messages.at(-1)?.replyTo, reference);
+        assert.match(input.userMessage, /# Reply To\n\nsessionId: [^\n]+\nincarnationId: [^\n]+\nseq: 0\n\n# User Input\n\nadditional$/);
+        assert.doesNotMatch(input.userMessage, /# Conversation Thread/);
         if (mode === "unknown") throw new Error("Provider outcome unknown");
         return { turnId: input.expectedTurnId };
       },
@@ -278,12 +543,13 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
     const turn = runtime.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
     try {
       await waitForCondition(() => entered, "direct input active turn");
-      await assert.rejects(runtime.steerSessionTurn(stored.id, { expectedTurnId: "native-turn", userMessage: "additional" }));
+      await assert.rejects(runtime.steerSessionTurn(stored.id, { expectedTurnId: "native-turn", userMessage: "additional", replyTo: reference }));
       assert.equal(calls, mode === "unknown" || mode === "confirm-lost" ? 1 : 0);
       assert.equal(stored.messages.at(-1)?.turnInput?.state, mode === "unknown" ? "unknown" : mode === "confirm-lost" ? "confirmed" : "not-sent");
       finish();
       await turn;
       assert.deepEqual(stored.messages.map((message) => message.text), ["start", "additional", "partial retained"]);
+      assert.deepEqual(stored.messages[1]?.replyTo, reference);
     } finally { finish(); await turn; }
   }
 });
@@ -295,6 +561,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     appendRunningInput: deps.appendRunningInput ?? ((session: Session) => deps.upsertSession(session)),
     checkpointRuntimeMetadata: deps.checkpointRuntimeMetadata ?? ((session: Session) => deps.upsertSession(session)),
     appendTerminalSession: deps.appendTerminalSession ?? ((session: Session) => deps.upsertSession(session)),
+    beginSourceDisplayTurn: deps.beginSourceDisplayTurn,
   };
   const owner = { assertActive() {}, isActive: () => true };
   const admission = { runSessionAdmissionExclusive: async <T>(_id: string, operation: () => T | Promise<T>): Promise<T> => operation() };
@@ -355,6 +622,207 @@ function queueGate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ世代のMain/Aux Cancelは開始claimから確定Turnまで同じ実行を取り消し、別Window・別世代・別receiptでは実行も審査も変更しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/975 — 項目4と受入条件; docs/design/session-run-lifecycle.md#session-run-cancel" }
+// fault = "Turn IDのないclaimを止められない、実行へpromoteした同じreceiptを見失う、または別Windowや別世代の要求を適用する"
+// observable = "受付時のstartingとnull Turn ID、所有違反、入力fence、live取消待ち、Providerの呼出し・AbortSignal、receipt/Turnの終端"
+// observation_boundary = "public-boundary"
+// scope = "Main/Aux本番Cancel IPC・queue claim・runtime admission・Provider実行"
+// lifecycle = "permanent"
+// distinction = "旧StopのA→B競合とは別に、正当なclaim取消のruntime前・admission・開始保存中・同一receipt確定後と通常Turn取消を、保存境界のgateで検証する"
+// @end-test-value
+it("GUI Cancel IPC accepts only the owned starting receipt or current Turn", async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const phase of ["claim", "admission", "atomic", "promoted", "running"] as const) {
+    const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+    const receipt = queuedReceipt(session);
+    const { sessionId, incarnationId } = receipt;
+    const request: CancelSessionRunRequest = { sessionId, incarnationId, execution: { kind: "receipt", id: receipt.id } };
+    const dispatch = queueGate();
+    const admission = queueGate();
+    const atomic = queueGate();
+    const lookup = queueGate();
+    let waitedForAdmission = false;
+    let waitForPromotion = false;
+    let authorized = true;
+    let revokeAfterFirstCheck = false;
+    let live: LiveSessionRunState | null = null;
+    let signal: AbortSignal | undefined;
+    let phaseSaved: string | undefined;
+    let atomicStarts = 0;
+    let state = receipt.state;
+    const readLive = () => live;
+    const runtime = createProgressRuntime(session, async (input) => {
+      const currentSignal = input.signal;
+      assert.ok(currentSignal);
+      signal = currentSignal;
+      if (!currentSignal.aborted) await new Promise<void>((resolve) => currentSignal.addEventListener("abort", () => resolve(), { once: true }));
+      throw new ProviderTurnError("canceled", createPartialResult(), true);
+    }, {
+      runSessionAdmissionExclusive: async (_id, operation) => {
+        waitedForAdmission = true;
+        if (phase === "admission") await admission.promise;
+        return operation();
+      },
+      setLiveSessionRun: (_id, value) => { live = value; },
+      getLiveSessionRun: readLive,
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: async (next, _, id, turn) => {
+        assert.equal(id, receipt.id);
+        atomicStarts++;
+        if (phase === "atomic") await atomic.promise;
+        return { session: next, turn: { ...turn, id: 41 } };
+      },
+      appendTerminalSession: async (next, terminal) => { phaseSaved = terminal.phase; return next; },
+    });
+    const unused = () => { throw new Error("Unrelated queue storage operation"); };
+    const store: SessionTurnQueueStore = {
+      admit: async () => ({ receipt, claimed: receipt }),
+      claimNext: async () => null,
+      markStarted: async (_owner, id, start) => {
+        assert.equal(id, receipt.id);
+        state = "running";
+        return { ...receipt, ...start, state };
+      },
+      settle: async (_owner, id, outcome) => {
+        assert.equal(id, receipt.id);
+        state = outcome;
+        return { ...receipt, state: outcome };
+      },
+      getReceipt: unused, getReceiptById: unused, listActive: unused, listReceipts: unused, listPendingOwners: unused,
+      claimForInput: unused, restoreQueuedInput: unused, cancelQueued: unused, updateQueued: unused, reorderQueued: unused,
+      recoverInterrupted: unused,
+    };
+    const queue = new SessionTurnQueueService({
+      store,
+      isRunInFlight: (id) => runtime.isRunInFlight(id),
+      dispatch: async (claimed, onStarted, control) => {
+        await dispatch.promise;
+        return runtime.runQueuedSessionTurn(claimed, onStarted, control);
+      },
+    });
+    const review = new ApprovalReviewInputFence();
+    const reviewCurrent = review.capture();
+    const stop = createWindowCancelFixture(kind, session, runtime, queue, {
+      authorize: () => {
+        const current = authorized;
+        if (revokeAfterFirstCheck) authorized = false;
+        return current;
+      },
+      lookup: () => waitForPromotion ? lookup.promise : Promise.resolve(),
+      onApply: () => review.invalidate(),
+    });
+    try {
+      const accepted = await queue.enqueue(receipt, receipt.captured);
+      assert.deepEqual([accepted.state, accepted.turnId], ["starting", null]);
+      authorized = false;
+      await assert.rejects(stop(request), /only available from the target Session window/);
+      authorized = true;
+      await stop({ ...request, incarnationId: "other-generation" });
+      await stop({ ...request, execution: { kind: "receipt", id: "other-receipt" } });
+      assert.equal(reviewCurrent(), true);
+      assert.equal(state, "starting");
+      if (phase === "claim") {
+        const ack = stop(request);
+        // Let the owner lookup finish before releasing the production dispatch slot.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        dispatch.resolve();
+        await ack;
+        assert.equal(waitedForAdmission, false);
+      } else {
+        waitForPromotion = phase === "promoted" && kind === "auxiliary";
+        const pendingStop = waitForPromotion ? stop(request) : undefined;
+        dispatch.resolve();
+        if (phase === "admission") {
+          await waitForCondition(() => waitedForAdmission, "runtime reached the admission gate");
+          assert.equal(readLive()?.sessionTurnId, undefined);
+          await stop(request);
+          assert.equal(readLive()?.cancellationState, "requested");
+          admission.resolve();
+        } else if (phase === "atomic") {
+          await waitForCondition(() => atomicStarts === 1, "atomic start has been issued");
+          await stop(request);
+          assert.equal(readLive()?.cancellationState, "requested");
+          atomic.resolve();
+        } else {
+          await waitForCondition(() => Boolean(signal), "the same receipt became a persisted Turn and reached Provider");
+          if (phase === "running") {
+            const running: CancelSessionRunRequest = { ...request, execution: { kind: "turn", id: "41" } };
+            authorized = false;
+            await assert.rejects(stop(running), /only available from the target Session window/);
+            authorized = true;
+            revokeAfterFirstCheck = true;
+            await assert.rejects(stop(running), /only available from the target Session window/);
+            revokeAfterFirstCheck = false;
+            authorized = true;
+            await stop({ ...running, incarnationId: "other-generation" });
+            assert.equal(signal?.aborted, false);
+            assert.equal(reviewCurrent(), true);
+            await stop(running);
+          } else {
+            lookup.resolve();
+            await (pendingStop ?? stop(request));
+          }
+          assert.equal(signal?.aborted, true);
+        }
+      }
+      await queue.waitForPending();
+      assert.equal(state, "canceled", `${kind} ${phase}`);
+      assert.equal(reviewCurrent(), phase === "claim", "only an exact runtime stop invalidates review");
+      assert.equal(atomicStarts, phase === "claim" || phase === "admission" ? 0 : 1);
+      if (phase === "atomic") assert.equal(signal, undefined, "confirmed start must save cancellation without dispatching the Provider");
+      assert.equal(phaseSaved, atomicStarts ? "canceled" : undefined);
+      assert.equal(runtime.isRunInFlight(sessionId), false);
+    } finally {
+      dispatch.resolve();
+      admission.resolve();
+      atomic.resolve();
+      lookup.resolve();
+      await queue.stopClaim(receipt, receipt.id);
+      await queue.close();
+      await runtime.waitForPendingRuns();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "GUIが選んだ失敗Turnの固定開始入力はruntime dispatchを通って元Session来歴と共にProviderへ届く"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "receiptに保存したretrySourceをruntimeが落とす、本文をGUI新規指示として分類する"
+// observable = "実runtimeからadapterに渡るprovenanceと組み立てたProvider入力"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeService.runQueuedSessionTurnの失敗Turn再実行"
+// lifecycle = "permanent"
+// impact = "Agentが元Session指示をGUIユーザー自身の新規指示と誤解する"
+// distinction = "prompt単体testはqueueからruntime経由でretrySourceが渡ることを検証しない"
+// @end-test-value
+it("queue runtimeはGUI再実行と元Session来歴をProviderへ渡す", async () => {
+  const session = createSession();
+  const receipt = queuedReceipt(session);
+  const target = { targetSessionId: session.id, targetIncarnationId: getSessionIncarnationId(session) };
+  const gui = { kind: "gui" as const, operation: "send" as const, ...target };
+  const origin = { kind: "session" as const, operation: "send" as const, actorKind: "main" as const,
+    actorSessionId: "parent", actorIncarnationId: "parent-inc", actorTurnId: "12", ...target,
+    actorSnapshot: { sessionTitle: "Source", character: { id: "sender", name: "Sender", iconPath: "" } } };
+  receipt.dispatched!.origin = gui;
+  receipt.dispatched!.retrySource = { receiptId: "old-receipt", turnId: "41", origin, changedSinceAcceptance: true };
+  receipt.accepted = structuredClone(receipt.dispatched);
+  const runtime = createProgressRuntime(session, async (input) => {
+    assert.deepEqual(input.inputProvenance?.origin, gui);
+    assert.deepEqual(input.inputProvenance?.retrySource, receipt.dispatched!.retrySource);
+    const prompt = composeProviderPrompt(input).inputBodyText;
+    assert.match(prompt, /Retry requested by: GUI user/);
+    assert.match(prompt, /Original sender: Session/);
+    assert.match(prompt, /# Retried Session Input\n\ncaptured message/);
+    return createPartialResult({ assistantText: "done" });
+  }, { assertCapturedComposerAttachmentsAvailable: async () => {},
+    persistQueuedTurnStart: async (next, count, _queueId, turn) => ({ session: { ...next, messageCount: count + 1 }, turn: { ...turn, id: 42 } }),
+    appendTerminalSession: async (next) => next });
+  assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async () => {}), { state: "completed" });
+});
 
 // @test-value v2
 // kind = "contract"
@@ -589,17 +1057,17 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
 
 // @test-value v2
 // kind = "invariant"
-// claim = "開始後の次設定とdirectory選択は現在TurnのProvider再試行へ混入せず次queued Turnに適用される"
+// claim = "runtimeは現在Turnに固定設定を渡し、失敗後も次queued Turnには新しい捕捉値を適用する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次送信用設定と現在Turnのcapture分離" }
-// fault = "checkpoint ACKの新directoryや設定を現在Turnの内部再試行へ渡すか次queued Turnで旧captureを再利用する"
-// observable = "初回/内部再試行/次queued実行のProvider optionsとadditionalDirectories、各Turnのruntime認可に渡す同一設定"
+// fault = "現在Turnの設定と次queued Turnで既に捕捉した新設定を取り違える"
+// observable = "失敗Turn/次queued Turnの状態、Providerへの設定/追加directory、runtime認可の設定"
 // observation_boundary = "public-boundary"
 // scope = "session runtime current capture and next queued execution"
 // lifecycle = "permanent"
 // impact = "実行中Turnの権限を無断で広げるか次依頼が利用者の選択を使わない"
-// distinction = "selection service testはProvider内部再試行を通らず、adapter testはcheckpoint ACKとの競合を作らない"
+// distinction = "単一Turnのadapter/testでは実行中の設定変更と失敗保存後の次queue入力が交差しない"
 // @end-test-value
-it("次設定とdirs変更は現在provider再試行を変えず次queueへ適用する", async () => {
+it("実行中の次設定とdirs変更は現在Turnの失敗後も次queueへ適用する", async () => {
   const session = createSession({ provider: "copilot", threadId: "stale-thread", approvalMode: "on-request",
     allowedAdditionalDirectories: ["C:/current-context"] });
   let current = session;
@@ -608,7 +1076,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
   let attempts = 0;
   const runtime = createProgressRuntime(session, async (input) => {
     attempts += 1;
-    if (attempts <= 2) {
+    if (attempts === 1) {
       assert.deepEqual(input.executionOptions, oldOptions);
       assert.deepEqual(input.session.allowedAdditionalDirectories, ["C:/current-context"]);
     } else {
@@ -633,18 +1101,18 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     appendTerminalSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
   });
   await runtime.runSessionTurn(session.id, { userMessage: "current", executionOptions: oldOptions });
-  assert.equal(current.runState, "idle");
+  assert.equal(current.runState, "error");
   assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(current), async () => undefined), { state: "completed" });
-  assert.equal(attempts, 3);
+  assert.equal(attempts, 2);
   assert.deepEqual(runtimeOptions, [oldOptions, captureSessionExecutionOptions(current)]);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行のlive stateは保存済みturn IDとprovider native IDを区別し、複数回の進捗でも両方を維持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ; src-shared/session/runtime-state.ts: LiveSessionRunState" }
-// fault = "保存済みturn IDをlive stateへ渡さないか、providerの進捗で上書きするか、native IDを保存IDへ置換する"
-// observable = "開始通知のturn IDと、Main/Auxiliaryの初期・進捗live stateにあるsessionTurnId・turnId・本文"
+// claim = "queued実行は保存済みTurn・入力seqとprovider native IDを区別し、MainのProviderに正本の入力seqと最終回答目印を渡す。明示返信の参照は開始保存とProviderへ同じ値を渡す"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常sessionの入力; docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ" }
+// fault = "保存Turn/receiptの対応をlive stateで失う、Providerに渡す開始入力seqや最終回答目印を取り違える、または保存・実行の一方で返信参照を失う"
+// observable = "開始通知のTurn ID、Provider境界のmessageIdentity（Mainのみ）、Main/Auxiliaryのlive state、開始保存とProviderのreplyTo"
 // observation_boundary = "public-boundary"
 // scope = "SessionRuntimeServiceのqueued開始とprovider進捗合流"
 // lifecycle = "permanent"
@@ -654,10 +1122,15 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する", async () => {
   for (const auxiliary of [false, true]) {
     const session = createSession({ incarnationId: "owner" });
+    const reference = auxiliary ? undefined : { target: { kind: "main" as const, sessionId: "referenced", incarnationId: "reference-v1" }, seq: 7, finalAnswerTurnId: "38" };
     let live: LiveSessionRunState | null = null;
     const states: LiveSessionRunState[] = [];
     const starts: string[] = [];
     const runtime = createProgressRuntime(session, async (input, progress) => {
+      assert.deepEqual(input.messageIdentity, auxiliary ? undefined : {
+        sessionId: session.id, incarnationId: "owner", seq: 0, finalAnswerTurnId: "41",
+      });
+      assert.deepEqual(input.replyTo, reference);
       for (const assistantText of ["partial", "partial updated"]) {
         await emitTestProgress(progress, { ...createLiveRunState({ sessionId: input.session.id, assistantText }),
           sessionTurnId: "provider-value", turnId: "native-turn", inputAvailable: true });
@@ -666,14 +1139,22 @@ it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する"
     }, {
       isAuxiliarySession: () => auxiliary,
       assertCapturedComposerAttachmentsAvailable: async () => {},
-      persistQueuedTurnStart: (next, _count, _id, turn) => ({ session: next, turn: { ...turn, id: 41 } }),
+      persistQueuedTurnStart: (next, _count, _id, turn) => {
+        assert.deepEqual(next.messages.at(-1)?.replyTo, reference);
+        return { session: next, turn: { ...turn, id: 41 } };
+      },
       appendTerminalSession: (next) => next,
       setLiveSessionRun: (_id, state) => { live = state; if (state) states.push(state); },
       getLiveSessionRun: () => live,
     });
-    assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(session), async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
+    const receipt = queuedReceipt(session);
+    if (reference) receipt.dispatched!.request.replyTo = reference;
+    assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
     assert.deepEqual(starts, ["41"]);
     assert.equal(states[0]?.sessionTurnId, "41");
+    const startedStates = states.filter((state) => state.sessionTurnId === "41");
+    assert.ok(startedStates.length >= 3);
+    for (const state of startedStates) assert.deepEqual(state.queueReceipt, { id: receipt.id, incarnationId: receipt.incarnationId, userMessageSeq: 0 });
     assert.deepEqual(states.filter((state) => state.inputAvailable).map((state) => [state.sessionTurnId, state.turnId, state.assistantText]), [
       ["41", "native-turn", "partial"], ["41", "native-turn", "partial updated"],
     ]);
@@ -1005,7 +1486,52 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "async質問の回答は通常steerと区別され、ACK前は入力をpendingで保存し、ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
+  // claim = "４Providerの通常質問は送信を確認した回答だけを終端履歴へ保存し、未確認の回答を保存しない"
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; docs/design/database-schema.md: 質問formの記録" }
+  // fault = "送信確認前の値を保存するか、確認済みの選択と自由回答を再読込時に失う"
+  // observable = "各Providerの送信通知前後のlive recordと終端messageの回答"
+  // observation_boundary = "public-boundary"
+  // scope = "SessionRuntimeService question reply history"
+  // lifecycle = "permanent"
+  // impact = "送られていない回答を送信済みと誤認するか、送信内容を後から確認できない"
+  // distinction = "adapter単体は共通serviceからterminal保存までの回答の伝播を検証しない"
+  // @end-test-value
+  it("各Providerの質問回答は送信通知後だけ履歴に残す", async () => {
+    for (const providerId of ["codex", "copilot", "claude", "opencode"] as const) for (const delivered of [false, true]) {
+      let stored = createSession({ provider: providerId, approvalMode: "on-request", codexReviewer: "user" });
+      let live: LiveSessionRunState | null = null;
+      const questions = new SessionElicitationService({ updateLiveSessionRun: (_id, recipe) => { live = recipe(live!); return live; } });
+      const adapter: ProviderCodingAdapter = {
+        composePrompt: () => ({ systemBodyText: "", inputBodyText: "", logicalPrompt: { systemText: "", inputText: "", composedText: "" }, imagePaths: [], additionalDirectories: [] }),
+        getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+        runSessionTurn: async (input) => {
+          const request: LiveElicitationRequest = { requestId: "question", provider: providerId, kind: "question", mode: "form", message: "Choose",
+            fields: [{ type: "select", name: "choice", title: "Choose", required: true, options: [{ value: "a", label: "A" }] }] };
+          const answer = input.onElicitationRequest!(request);
+          questions.resolveLiveElicitation(input.session.id, "question", { action: "accept", content: { choice: "a" }, answerPresentation: { choice: { selected: [0], text: [] } } });
+          await answer;
+          assert.equal(live?.elicitationRecords?.[0].fields[0].answer, undefined);
+          if (delivered) input.onElicitationDelivered?.("question");
+          return createPartialResult({ assistantText: "done" });
+        },
+      };
+      const service = createTestRuntime({ getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
+        resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [providerId]: { enabled: true } } }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) }),
+        getProviderCodingAdapter: () => adapter, createSessionTurn: createSessionTurnBase, updateSessionTurn() {},
+        setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+        waitForApprovalDecision: () => "deny", waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
+        setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest: (id) => questions.cancelSession(id),
+      });
+      await service.runSessionTurn(stored.id, { executionOptions: captureSessionExecutionOptions(stored), userMessage: "start" });
+      assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.[0].fields[0].answer, delivered ? { selected: [0], text: [] } : undefined);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "async質問の回答はACK前に表示用回答を確定せず、ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
   // oracle = { type = "contract", ref = "Issue #823; Issue #780 explicit same-turn input" }
   // fault = "通常steerで質問を回答済みにする、provider progressで質問を消す、ACK前に回答済みへ進める、または終端保存が回答ACKを追い越して質問履歴を失う"
   // observable = "実SessionElicitationServiceのlive要求・record、adapter steer入力、保存Sessionのuser本文とterminal elicitationRecords"
@@ -1030,7 +1556,7 @@ describe("SessionRuntimeService", () => {
       let service!: SessionRuntimeService;
       const questions = new SessionElicitationService({
         updateLiveSessionRun: (_id, recipe) => { live = recipe(currentLive()); return live; },
-        sendUserMessage: async (id, turnId, message, answer) => { await service.answerSessionQuestion(id, turnId, message, answer); },
+        sendUserMessage: async (id, turnId, message, answer, requestId) => { await service.answerSessionQuestion(id, turnId, message, answer, requestId); },
       });
       const adapter: ProviderCodingAdapter = {
         composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
@@ -1078,11 +1604,14 @@ describe("SessionRuntimeService", () => {
         await publishProgress();
         assert.equal(currentLive().elicitationRequests?.length, 2, "provider progress preserves active questions");
         assert.equal(currentLive().elicitationRecords?.length, 2, "provider progress preserves history");
-        const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" } });
+        const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" },
+          answerPresentation: { answer: { selected: [], text: ["Take option A"] } } });
         await waitForCondition(() => sent.length === 2, "answer dispatched through existing steer");
         assert.equal(currentLive().elicitationRecords?.[0].status, "pending", "ACK is required before answered");
+        assert.equal(currentLive().elicitationRecords?.[0].fields[0].answer, undefined);
         assert.deepEqual(stored.messages.map(message => message.text), ["start", "ordinary steer", "Take option A"]);
         assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
+        assert.equal(stored.messages.at(-1)?.turnInput?.questionRequestId, "answer-me");
         if (outcome === "canceled") service.cancelRun(stored.id);
         finishProvider();
         await waitForCondition(() => currentLive().inputAvailable === false, "provider terminal stops input admission");
@@ -1095,6 +1624,7 @@ describe("SessionRuntimeService", () => {
         assert.deepEqual(sent, ["ordinary steer", "【質問】\nChoose a direction\n【回答】\nTake option A"]);
         assert.deepEqual(stored.messages.filter(message => message.role === "user").map(message => message.text), ["start", "ordinary steer", "Take option A"]);
         assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.map(record => [record.requestId, record.status]), [["answer-me", "answered"], ["unanswered", "expired"]]);
+        assert.deepEqual(stored.messages.at(-1)?.elicitationRecords?.[0].fields[0].answer, { selected: [], text: ["Take option A"] });
         assert.equal(phases.at(-1), outcome);
         assert.throws(() => questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "duplicate" } }), /no longer exists/);
       } finally {
@@ -1223,6 +1753,48 @@ describe("SessionRuntimeService", () => {
       assert.equal(terminalCalls, 1);
       assert.equal(notifications, 0);
       assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Main/Auxの実行は終端保存中に当該Turnの送信位置検証用scopeを保持し、保存成否に関わらずreleaseする"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/974#受入条件検証" }
+  // fault = "scopeの解放を保存成功側へ置くか、Main/Auxの片方でscopeを接続しない"
+  // observable = "終端保存時のscopeのSession・incarnation・Turn、run終了後のscope解放回数"
+  // observation_boundary = "component-behavior"
+  // scope = "Main and Auxiliary runtime assembly / source-display scope lifetime"
+  // lifecycle = "permanent"
+  // impact = "照合前の本文破棄、または終了済みTurnの本文の長期残留を防ぐ"
+  // distinction = "既存の終端保存失敗testは送信位置用scopeやMain/Auxのassemblyを通らない"
+  // @end-test-value
+  it("Main/Auxの送信位置用scopeを終端保存の成否に関わらず解放する", async () => {
+    for (const kind of ["main", "auxiliary"] as const) {
+      const session = createSession({ id: kind, incarnationId: `${kind}-incarnation` });
+      for (const fail of [false, true]) {
+        const lost = new Error("Terminal persistence response lost");
+        let active: readonly [string, string, string] | undefined;
+        let persistedOwner: readonly [string, string, string] | undefined;
+        let released = 0;
+        const service = createProgressRuntime(session, async () => createPartialResult({ assistantText: "final text" }), {
+          beginSourceDisplayTurn(source, turnId) {
+            active = [source.id, getSessionIncarnationId(source), turnId];
+            return () => { active = undefined; released++; };
+          },
+          async appendTerminalSession(next) {
+            await Promise.resolve();
+            persistedOwner = active;
+            if (fail) throw lost;
+            return next;
+          },
+        }, (deps) => assembleBackgroundEventRuntime(kind, deps, createSession({ id: `${kind}-parent` })));
+        const run = service.runSessionTurn(session.id, { userMessage: "run", executionOptions: TEST_EXECUTION_OPTIONS });
+        if (fail) await assert.rejects(run, (error) => error === lost);
+        else await run;
+        assert.deepEqual(persistedOwner, [session.id, getSessionIncarnationId(session), "1"]);
+        assert.equal(active, undefined);
+        assert.equal(released, 1);
+      }
+    }
   });
 
   // @test-value v2
@@ -1510,10 +2082,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "queued steerは固定添付・実送信元をProviderへ渡し、準備中の重複を拒否し、append返信喪失でも元本文と正本件数をterminalへ維持する"
-  // oracle = { type = "contract", ref = "GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
-  // fault = "queued本文を再previewするか、commit済み追加入力の件数を失いterminal保存を失敗させる"
-  // observable = "provider attachmentsと実送信元/変更有無付き入力本文、重複reject、append queue contextと件数、terminalの未装飾本文"
+  // claim = "queued steerは固定添付・実送信元・返信先を渡すが予約の会話枠を渡さず、append返信喪失でも本文と参照を維持する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#metadataと必要時取得; GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
+  // fault = "queued本文を再previewする、通常開始用の予約所属をSteerで出す、参照を予定値に差し替えるかcommit済み追加を終端で失う"
+  // observable = "Provider入力内の添付・来歴・返信先・所属欄、重複拒否、appendへ届くqueue contextと返信先、terminalの未装飾本文・参照"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService.steerQueuedSessionTurn and terminal persistence"
   // lifecycle = "permanent"
@@ -1547,6 +2119,9 @@ describe("SessionRuntimeService", () => {
     };
     receipt.captured.origin = { kind: "session", actorKind: "main", actorSessionId: "actual-parent", actorIncarnationId: "parent-incarnation",
       actorTurnId: "15", operation: "send", targetSessionId: stored.id, targetIncarnationId: getSessionIncarnationId(stored) };
+    const replyTo = { target: { kind: "main" as const, sessionId: "fixed-reply", incarnationId: "fixed-generation" }, seq: 2, finalAnswerTurnId: "6" };
+    receipt.captured.request.replyTo = replyTo;
+    receipt.captured.request.mainConversationFrame = { kind: "main", sessionId: "reserved-peer", incarnationId: "peer-v1" };
     receipt.accepted = structuredClone(receipt.captured);
     receipt.dispatched = structuredClone(receipt.captured);
     const service = createTestRuntime({
@@ -1554,10 +2129,11 @@ describe("SessionRuntimeService", () => {
       resolveComposerPreview: async (_, text) => { assert.equal(text, "start"); return { attachments: [], errors: [] }; },
       assertCapturedComposerAttachmentsAvailable: async (_, attachments) => { assert.deepEqual(attachments, receipt.captured.attachments); verifying = true; await preparing; },
       getQueuedInputReceipt: () => receipt,
-      appendRunningInput: (session, text, localTurnId, context) => {
+      appendRunningInput: (session, text, localTurnId, context, reference) => {
         assert.equal(localTurnId, 1);
         assert.deepEqual(context, { queueId: receipt.id, inputTurnId: "provider-turn" });
-        stored = { ...stored, messages: [...stored.messages, { role: "user", text }] };
+        assert.deepEqual(reference, replyTo);
+        stored = { ...stored, messages: [...stored.messages, { role: "user", text, replyTo: reference }] };
         receipt.state = "completed";
         throw new Error("append commit reply lost");
       },
@@ -1570,8 +2146,10 @@ describe("SessionRuntimeService", () => {
     });
     const turn = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
     await waitForCondition(() => live?.inputAvailable === true, "active queued input turn");
+    receipt.captured.request.replyTo = { ...replyTo, seq: 98 };
     const steer = service.steerQueuedSessionTurn(receipt, "provider-turn");
     await waitForCondition(() => verifying, "captured verification held");
+    receipt.dispatched.request.replyTo = { ...replyTo, seq: 99 };
     await assert.rejects(service.steerQueuedSessionTurn(receipt, "provider-turn"), /already being sent/);
     finishPrepare();
     await steer;
@@ -1579,9 +2157,14 @@ describe("SessionRuntimeService", () => {
     assert.match(sent[0]!.userMessage, /# Session Input\n\nqueued @captured/);
     assert.match(sent[0]!.userMessage, /Session: "actual-parent"/);
     assert.match(sent[0]!.userMessage, /Changed since acceptance: false/);
+    assert.match(sent[0]!.userMessage, /# Reply To\n\nsessionId: "fixed-reply"\nincarnationId: "fixed-generation"\nseq: 2\nfinalAnswerTurnId: "6"\n\n# Session Input/);
+    assert.ok(!sent[0]!.userMessage.includes("# Message Identity"));
+    assert.doesNotMatch(sent[0]!.userMessage, /# Conversation Thread|reserved-peer/);
     assert.equal(sent.length, 1);
     finishTurn();
-    assert.deepEqual((await turn).messages.map((message) => message.text), ["start", "queued @captured", "done"]);
+    const completed = await turn;
+    assert.deepEqual(completed.messages.map((message) => message.text), ["start", "queued @captured", "done"]);
+    assert.deepEqual(completed.messages[1]?.replyTo, replyTo);
   });
 
   // @test-value v2
@@ -3619,15 +4202,15 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
 
   // @test-value v2
   // kind = "regression"
-  // claim = "内部stale retryが成功したturnは一つのcompleted terminal通知だけを依頼する"
-  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
-  // fault = "内部retryの各attemptを別turnとして通知し、同一turnで重複通知する"
-  // scope = "session-runtime-stale-retry-terminal-notification"
-  // observable = "completed terminal通知の回数と保存済みSession"
+  // claim = "adapter呼出後のstaleエラーはpartialがなくても再実行せず、元の開始入力に一度だけFailedを保存・通知する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
+  // fault = "履歴やpartialが空のstaleエラーで、入力を新しいProvider threadへ自動送信する"
+  // scope = "SessionRuntimeService adapter failure and terminal persistence"
+  // observable = "adapter呼出のthread、保存済みuser/assistant、Turn phaseとterminal通知回数"
   // observation_boundary = "public-boundary"
   // lifecycle = "permanent"
   // @end-test-value
-  it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {
+  it("adapter呼出後のstale errorはpartialがなくても再実行しない", async () => {
     const session = createSession({ provider: "copilot", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
@@ -3761,164 +4344,30 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     });
 
     const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await waitForCondition(() => turnUpdates.length === 1, "retry成功turnが保存されること");
+    await waitForCondition(() => turnUpdates.length === 1, "元TurnのFailedが保存されること");
 
-    assert.equal(result.runState, "idle");
-    assert.equal(result.threadId, "thread-fresh");
+    assert.equal(result.runState, "error");
+    assert.equal(result.threadId, "");
+    assert.equal(result.messages.at(-1)?.text, "");
+    assert.match(result.messages.at(-1)?.runFailure ?? "", /thread not found/i);
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
-    assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
-    assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
-    assert.deepEqual(seenTurnCapabilities, ["turn-capability-a", "turn-capability-a"]);
+    assert.deepEqual(seenThreadIds, ["thread-stale"]);
+    assert.deepEqual(seenBindingGenerations, ["generation-1"]);
+    assert.deepEqual(seenTurnCapabilities, ["turn-capability-a"]);
     assert.equal(bindingGeneration, 1);
     assert.equal(runtimeTurnHandles.length, 1);
     assert.deepEqual(endedRuntimeTurnHandles, runtimeTurnHandles);
-    assert.deepEqual(reset, [{ providerId: "copilot", sessionId: session.id }]);
-    assert.deepEqual(invalidated, []);
-    assert.equal(storedSessions.length, 3);
+    assert.deepEqual(reset, []);
+    assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: session.id }]);
+    assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "");
     assert.equal(turnUpdates.length, 1);
-    assert.equal(turnUpdates.at(-1)?.phase, "completed");
+    assert.equal(turnUpdates.at(-1)?.phase, "failed");
     assert.equal(notificationCount, 1);
     assert.equal(currentDateCount, 1);
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "stale retry中は旧attemptのlate progressをlive stateへ反映しない"
-  // oracle = { type = "contract", ref = "Session runtime stale attempt isolation contract" }
-  // fault = "旧providerのlate progressが新attemptのUIへ混入する"
-  // observable = "live progressのthreadIdとassistantText"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService stale attempt isolation"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("stale retry 中は旧 attempt の late progress を live state へ反映しない", async () => {
-    const session = createSession({ provider: "copilot", threadId: "thread-stale" });
-    const turnUpdates: UpdateSessionTurnInput[] = [];
-    const liveStates: Array<LiveSessionRunState | null> = [];
-    let attempt = 0;
-    let notifySecondAttemptStarted: (() => void) | null = null;
-    let releaseSecondAttempt: (() => void) | null = null;
-    const secondAttemptStarted = new Promise<void>((resolve) => {
-      notifySecondAttemptStarted = resolve;
-    });
-    const secondAttemptGate = new Promise<void>((resolve) => {
-      releaseSecondAttempt = resolve;
-    });
-
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn(input, onProgress) {
-        attempt += 1;
-        if (attempt === 1) {
-          await emitTestProgress(onProgress, createLiveRunState({
-            sessionId: input.session.id,
-            threadId: "thread-before-retry",
-            assistantText: "1 回目の progress",
-            steps: [{ id: "step-1", type: "command_execution", summary: "npm test", status: "in_progress" }],
-            usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 1 },
-          }));
-          setTimeout(() => {
-            void emitTestProgress(onProgress, createLiveRunState({
-              sessionId: input.session.id,
-              threadId: "thread-stale-late",
-              assistantText: "旧 attempt の late progress",
-              steps: [{ id: "step-stale-late", type: "command_execution", summary: "stale step", status: "in_progress" }],
-              usage: { inputTokens: 99, cachedInputTokens: 0, outputTokens: 9 },
-            }));
-          }, 0);
-          throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
-        }
-
-        notifySecondAttemptStarted?.();
-        await emitTestProgress(onProgress, createLiveRunState({
-          sessionId: input.session.id,
-          threadId: "thread-fresh-progress",
-          assistantText: "2 回目の progress",
-          steps: [{ id: "step-2", type: "command_execution", summary: "npm run build", status: "in_progress" }],
-          usage: { inputTokens: 20, cachedInputTokens: 0, outputTokens: 2 },
-        }));
-        await secondAttemptGate;
-        return createPartialResult({
-          threadId: "thread-fresh",
-          assistantText: "再試行で成功したよ。",
-        });
-      },
-    };
-
-    const service = createTestRuntime({
-      getSession(sessionId) {
-        return sessionId === session.id ? session : null;
-      },
-      upsertSession(next) {
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      createSessionTurn(input) {
-        return createSessionTurnBase(input);
-      },
-      updateSessionTurn(_id, entry) {
-        turnUpdates.push(entry);
-      },
-      setLiveSessionRun(_sessionId, state) {
-        liveStates.push(state);
-      },
-      getLiveSessionRun() {
-        return liveStates.at(-1) ?? null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
-
-    const runPromise = service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
-    await secondAttemptStarted;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-releaseSecondAttempt!();
-    await runPromise;
-
-    assert.equal(liveStates.some((state) => state?.threadId === "thread-stale-late"), false);
-    assert.equal(liveStates.some((state) => state?.assistantText === "旧 attempt の late progress"), false);
-  });
 
 
   // @test-value v2

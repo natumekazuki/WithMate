@@ -1,11 +1,12 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { ConcurrentChatSplitter } from "../chat/chat-window.js";
+import type { HomeRightPaneView, homeRightPaneLabels } from "./HomeHeader.js";
 
-type HomeDashboardScreenProps = {
+export type HomeDashboardScreenProps = {
   homePageClassName: string;
   header: ReactNode;
-  rightPaneLabel: "Monitor" | "Characters" | "Previews";
+  rightPaneLabel: typeof homeRightPaneLabels[HomeRightPaneView];
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;

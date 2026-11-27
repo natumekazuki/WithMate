@@ -21,9 +21,17 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
+import { FailedTurnRetry } from "./failed-turn-retry.js";
 import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
-import { useSentDeliveries } from "./use-sent-deliveries.js";
+import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
+import { ReplyQuote } from "./reply-quote.js";
+import type { SessionReply } from "../../../src-shared/session/session-reply.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
+import type { ConversationThread } from "../../../src-shared/session/conversation-threads.js";
+import type { SentInstruction } from "./use-sent-deliveries.js";
+import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
+import { useIssuedCoordinations } from "./use-issued-coordinations.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -90,15 +98,20 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  selectedReplyKey?: string;
+  onSelectReply?: (key: string, reference: SessionReply) => void;
   inputReadContext?: TurnInputReadContext;
+  conversationChild?: ConversationThread;
   liveWithMateTurnId?: string;
+  sentReadLiveTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
+  onTurnReceiptsObserved?: (receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string; kind: "main" | "auxiliary" }) => void;
   responsePending?: boolean;
   submissionError?: string;
   submissionUncertain?: boolean;
   turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
   onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
-  onReleaseInterruptedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
+  onSendQueuedTurnInput?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
   onMoveQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./use-session-turn-queue.js").SessionTurnQueueMoveDirection) => void;
   queuedTurnIds?: readonly string[];
   queueReorderDisabled?: boolean;
@@ -113,11 +126,14 @@ export type SessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: string[];
   pendingResponseMessageKey?: string | null;
+  pendingResponseInsertIndex?: number;
   responsePresentationKey?: string;
+  responseExecutionTurnIds?: readonly (string | undefined)[];
   streamingResponseMessageKey?: string | null;
   messageCollapseTargets?: readonly MessageCollapseTarget[];
   collapsedMessageKeys?: ReadonlySet<string>;
   messageJumpRequest?: MessageJumpRequest | null;
+  savedReplySourceIndexes?: readonly (number | undefined)[];
   conversationPaging?: {
     loading: boolean; error: string;
     onRetry: () => void;
@@ -459,12 +475,20 @@ export function SelectionTextActionSurface({
   );
 }
 
+function insertPendingRowValue<T>(values: readonly T[] | undefined, index: number, empty: T): readonly T[] | undefined {
+  return values && index >= 0 ? [...values.slice(0, index), empty, ...values.slice(index)] : values;
+}
+
 export function SessionMessageColumn({
+  selectedReplyKey,
+  onSelectReply,
   inputReadContext,
+  conversationChild: thread,
   liveWithMateTurnId,
+  sentReadLiveTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
-  onReleaseInterruptedTurn,
+  onSendQueuedTurnInput,
   onMoveQueuedTurn,
   queuedTurnIds,
   queueReorderDisabled,
@@ -482,20 +506,23 @@ export function SessionMessageColumn({
   messages: suppliedMessages,
   messageKeys: suppliedMessageKeys,
   pendingResponseMessageKey: suppliedPendingResponseKey = null,
+  pendingResponseInsertIndex,
   responsePresentationKey,
+  responseExecutionTurnIds: suppliedResponseExecutionTurnIds,
   streamingResponseMessageKey,
   messageCollapseTargets = [],
   collapsedMessageKeys = new Set(),
   messageJumpRequest = null,
+  savedReplySourceIndexes: suppliedSavedReplySourceIndexes,
   conversationPaging,
   searchConversation,
   cancelConversationQuery,
   conversationQueryOwner = sessionId,
   conversationQueryRevision = 0,
   searchTailMessages,
-  searchMessageIndexes,
+  searchMessageIndexes: suppliedSearchMessageIndexes,
   onLoadMessagePage,
-  messageGroups,
+  messageGroups: suppliedMessageGroups,
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -536,15 +563,43 @@ export function SessionMessageColumn({
   glossaryAnnotationMatcher,
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
-  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
+  const peer = thread && conversationPeerKey(thread.target);
+  const threadMessages = useMemo(() => thread && new Set(thread.messageIndexes), [thread]);
+  const isSentOnly = (messageIndex: number | undefined) => messageIndex !== undefined && !!threadMessages && !threadMessages.has(messageIndex);
+  const sentTurnId = sentReadLiveTurnId ?? liveWithMateTurnId;
+  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, sentTurnId,
+    (isContentActive || inputReadContext?.target.kind === "main") && artifactDetailsEnabled,
+    suppliedSavedReplySourceIndexes, suppliedResponseExecutionTurnIds);
+  const sent = sentDeliveries.items;
+  const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, sentTurnId, isContentActive && artifactDetailsEnabled,
+    suppliedSavedReplySourceIndexes, suppliedResponseExecutionTurnIds);
+  const issuedWithoutReceipt = issued.items.filter((record) =>
+    !sent.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
+  const renderIssued = (record: typeof issued.items[number], tail = false) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${tail ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
-  const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
-  const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
-  const messageKeys = useMemo(() => sharedPending ? [...suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`), responsePresentationKey!] : suppliedMessageKeys, [suppliedMessages, suppliedMessageKeys, sharedPending, responsePresentationKey, sessionId]);
-  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : suppliedPendingResponseKey;
   const responseRowKeys = useRef({ owner: conversationQueryOwner, keys: new Map<string, string>() });
   if (responseRowKeys.current.owner !== conversationQueryOwner) responseRowKeys.current = { owner: conversationQueryOwner, keys: new Map() };
   const rowKeys = responseRowKeys.current.keys;
+  const existingResponseKey = suppliedPendingResponseKey && suppliedMessageKeys?.includes(suppliedPendingResponseKey)
+    ? suppliedPendingResponseKey
+    : suppliedMessageKeys?.find((key) => key === responsePresentationKey || rowKeys.get(key) === responsePresentationKey && rowKeys.has(key));
+  const sharedPending = !!responsePresentationKey && hasResponseStatus && !existingResponseKey;
+  const sharedPendingIndex = sharedPending ? pendingResponseInsertIndex ?? suppliedMessages.length : -1;
+  const rawMessages = useMemo(() => sharedPendingIndex < 0 ? suppliedMessages : [
+    ...suppliedMessages.slice(0, sharedPendingIndex), { role: "assistant" as const, text: "" }, ...suppliedMessages.slice(sharedPendingIndex),
+  ], [suppliedMessages, sharedPendingIndex]);
+  const messageKeys = useMemo(() => {
+    if (sharedPendingIndex < 0) return suppliedMessageKeys;
+    const keys = suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`);
+    keys.splice(sharedPendingIndex, 0, responsePresentationKey!);
+    return keys;
+  }, [suppliedMessages, suppliedMessageKeys, sharedPendingIndex, responsePresentationKey, sessionId]);
+  // The inserted surface has no saved seq, search ordinal, or message group.
+  const savedReplySourceIndexes = useMemo(() => insertPendingRowValue(suppliedSavedReplySourceIndexes, sharedPendingIndex, undefined), [suppliedSavedReplySourceIndexes, sharedPendingIndex]);
+  const responseExecutionTurnIds = useMemo(() => insertPendingRowValue(suppliedResponseExecutionTurnIds, sharedPendingIndex, undefined), [suppliedResponseExecutionTurnIds, sharedPendingIndex]);
+  const searchMessageIndexes = useMemo(() => insertPendingRowValue(suppliedSearchMessageIndexes, sharedPendingIndex, -1), [suppliedSearchMessageIndexes, sharedPendingIndex]);
+  const messageGroups = useMemo(() => insertPendingRowValue(suppliedMessageGroups, sharedPendingIndex, null), [suppliedMessageGroups, sharedPendingIndex]);
+  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : existingResponseKey ?? suppliedPendingResponseKey;
   for (const key of rowKeys.keys()) if (!messageKeys?.includes(key)) rowKeys.delete(key);
   if (responsePresentationKey && pendingResponseMessageKey && !rowKeys.has(pendingResponseMessageKey)) rowKeys.set(pendingResponseMessageKey, responsePresentationKey);
   const streamingIndex = streamingResponseMessageKey ? suppliedMessageKeys?.indexOf(streamingResponseMessageKey) ?? -1 : -1;
@@ -574,14 +629,14 @@ export function SessionMessageColumn({
     : rawMessages.map((message, index) => index === streamingIndex ? { ...message, text: presentedText } : message), [rawMessages, streamingIndex, presentedText]);
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const [conversationFindError, setConversationFindError] = useState("");
-  const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
+  const [messageJumpHighlight, setMessageJumpHighlight] = useState<MessageJumpRequest | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const scrolledSourceMatchRef = useRef<string | null>(null);
   const findSelectionSnapshot = useRef<{ owner: string; query: string; mode: MessageViewMode; anchor?: FindSourceAnchor } | null>(null);
   const [appliedModeAnchor, setAppliedModeAnchor] = useState<FindSourceAnchor>();
-  const handledMessageJumpRequestIdRef = useRef<number | null>(null);
-  const requestedMessageJumpIdRef = useRef<number | null>(null);
+  const handledMessageJumpRef = useRef<MessageJumpRequest | null>(null);
+  const requestedMessageJumpRef = useRef<MessageJumpRequest | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
   const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
   const messageCollapseTargetByKey = useMemo(
@@ -596,6 +651,12 @@ export function SessionMessageColumn({
   const sentMessageContext = { onOpenPath, markdownLinkFileContext, markdownImageContext: markdownLinkFileContext,
     resolveImageSource, displayMode: messageViewMode, responseProvider: provider, onFind: openFind,
     onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
+  const renderSent = (item: SentInstruction, inline = false) => inputReadContext
+    ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
+        replyJumpHighlighted={!!messageJumpHighlight?.reply?.sentKey && messageJumpHighlight.reply.isCurrent()
+          && messageJumpHighlight.reply.sentKey === sentInstructionKey(item)
+          && messageJumpHighlight.reply.seq === item.sourceMessageSeq} {...sentMessageContext} />
+    : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
     () => {
@@ -661,6 +722,9 @@ export function SessionMessageColumn({
   const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
   const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
   const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
+  const visibleAnsweredQuestionIds = new Set([...messages.flatMap((message) => message.elicitationRecords ?? []), ...visibleLiveElicitationRecords ?? []]
+    .filter((record) => record.status === "answered" && record.fields.length > 0 && record.fields.every((field) => field.answer !== undefined))
+    .map((record) => record.requestId));
   const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const hasLiveRequests = hasElicitationRequests || isRunning && liveApprovalRequest !== null;
   const liveRequestMessageIndex = hasLiveRequests ? pendingResponseMessageIndex : -1;
@@ -694,25 +758,61 @@ export function SessionMessageColumn({
     useFlushSync: false,
     useAnimationFrameWithResizeObserver: false,
   });
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
-    shouldAdjustSessionMessageScrollPosition({
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+    const shouldAdjust = shouldAdjustSessionMessageScrollPosition({
       itemEnd: item.end,
       scrollOffset: instance.scrollOffset ?? 0,
-    })
-  );
+    });
+    if (!shouldAdjust) return false;
+    const jump = handledMessageJumpRef.current;
+    if (jump === messageJumpRequest && jump?.reply?.sentKey && jump.reply.isCurrent()
+      && savedReplySourceIndexes?.[item.index] === jump.reply.seq) {
+      // On a frame switch, resize can see the previous offset before the jump's
+      // scroll event. A row that still contains the viewport must not shift it.
+      const list = messageListRef.current;
+      const row = list?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${item.index}"]`);
+      if (list && row && row.getBoundingClientRect().bottom > list.getBoundingClientRect().top) return false;
+    }
+    return true;
+  };
   const virtualMessages = messageVirtualizer.getVirtualItems();
   useLayoutEffect(() => {
     onMessageListLayout?.();
   }, [virtualMessages, onMessageListLayout]);
   useEffect(() => {
     if (!artifactDetailsEnabled) {
-      requestedMessageJumpIdRef.current = null;
+      requestedMessageJumpRef.current = null;
       return;
     }
     if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
       return;
     }
-    if (handledMessageJumpRequestIdRef.current === messageJumpRequest.requestId) {
+    if (handledMessageJumpRef.current === messageJumpRequest) {
+      return;
+    }
+    const reply = messageJumpRequest.reply;
+    if (reply) {
+      if (!reply.isCurrent()) return;
+      const messageIndex = savedReplySourceIndexes?.indexOf(reply.seq) ?? -1;
+      if (messageIndex < 0) return;
+      const list = messageListRef.current;
+      if (!list) return;
+      const row = list.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      const target = reply.sentKey
+        ? [...(row?.querySelectorAll<HTMLElement>("[data-sent-instruction-key]") ?? [])]
+          .find((card) => card.dataset.sentInstructionKey === reply.sentKey)
+        : row?.querySelector<HTMLElement>(":scope > .message-row > .message-card");
+      if (!target) {
+        if (!row && requestedMessageJumpRef.current !== messageJumpRequest) {
+          requestedMessageJumpRef.current = messageJumpRequest;
+          messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+        }
+        return;
+      }
+      handledMessageJumpRef.current = messageJumpRequest;
+      messageVirtualizer.scrollToOffset(list.scrollTop + target.getBoundingClientRect().top - list.getBoundingClientRect().top);
+      list.focus({ preventScroll: true });
+      setMessageJumpHighlight(messageJumpRequest);
       return;
     }
     const messageIndex = messageKeys?.indexOf(messageJumpRequest.key) ?? -1;
@@ -724,35 +824,35 @@ export function SessionMessageColumn({
       const element = messageListRef.current;
       const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
       if (element && row) {
-        handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+        handledMessageJumpRef.current = messageJumpRequest;
         // Replace the index target so a later reconciliation cannot undo the viewport offset.
         messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
         return;
       }
     }
-    if (requestedMessageJumpIdRef.current === messageJumpRequest.requestId) return;
-    requestedMessageJumpIdRef.current = messageJumpRequest.requestId;
+    if (requestedMessageJumpRef.current === messageJumpRequest) return;
+    requestedMessageJumpRef.current = messageJumpRequest;
     messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
     if (messageJumpRequest.offset === undefined) {
-      handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
-      setMessageJumpHighlightKey(messageJumpRequest.key);
+      handledMessageJumpRef.current = messageJumpRequest;
+      setMessageJumpHighlight(messageJumpRequest);
     }
-  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages]);
+  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages, savedReplySourceIndexes, sent]);
 
   useEffect(() => {
-    if (!messageJumpHighlightKey || typeof window === "undefined") {
+    if (!messageJumpHighlight || typeof window === "undefined") {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      setMessageJumpHighlightKey((current) => current === messageJumpHighlightKey ? null : current);
+      setMessageJumpHighlight((current) => current === messageJumpHighlight ? null : current);
     }, 1200);
     return () => window.clearTimeout(timeoutId);
-  }, [messageJumpHighlightKey]);
+  }, [messageJumpHighlight]);
 
   useEffect(() => {
-    setMessageJumpHighlightKey(null);
-    handledMessageJumpRequestIdRef.current = null;
-    requestedMessageJumpIdRef.current = null;
+    setMessageJumpHighlight(null);
+    handledMessageJumpRef.current = null;
+    requestedMessageJumpRef.current = null;
   }, [sessionId]);
   const hasPendingMessageText =
     pendingMessageTextVisible &&
@@ -1302,6 +1402,7 @@ export function SessionMessageColumn({
   const inlineApproval = isRunning && liveApprovalRequest ? {
     key: `approval-${liveApprovalRequest.requestId}`,
     position: liveApprovalRequest.textPosition ?? liveRunAssistantText.length,
+    stableOwner: true,
     content: <LiveRequestSurface
       liveApprovalRequest={liveApprovalRequest}
       approvalActionRequestId={approvalActionRequestId}
@@ -1313,6 +1414,57 @@ export function SessionMessageColumn({
       onOpenPath={onOpenPath}
     />,
   } : undefined;
+  const liveSent = sent.filter((item) => item.sourceTurnId === sentTurnId
+    && (item.sourceTurnId === liveWithMateTurnId || conversationPeerKey(item.target) === peer));
+  const inlineLivePossible = !!liveWithMateTurnId && isRunning
+    && (pendingResponseMessageIndex < 0 || messages[pendingResponseMessageIndex]?.role === "assistant");
+  const outgoingResponseRows = new Map<string, number>();
+  const outgoingSavedRows = new Map<number, number>();
+  messages.forEach((message, index) => {
+    const savedSeq = savedReplySourceIndexes ? savedReplySourceIndexes[index] : message.historyIndex;
+    if (savedSeq !== undefined) outgoingSavedRows.set(savedSeq, index);
+    if (message.role === "assistant" && !isSentOnly(savedSeq)) {
+      const turn = responseExecutionTurnIds?.[index] ?? (index === pendingResponseMessageIndex ? liveWithMateTurnId : undefined);
+      if (turn) outgoingResponseRows.set(turn, index);
+    }
+  });
+  // A verified response owns the card. A saved input coordinate is a fallback
+  // until that response becomes available, not a second place to render it.
+  const sourceRow = ({ sourceTurnId, sourceMessageSeq }: { sourceTurnId: string; sourceMessageSeq: number | null }) => {
+    const savedRow = sourceMessageSeq === null ? undefined : outgoingSavedRows.get(sourceMessageSeq);
+    return savedRow !== undefined && messages[savedRow].role === "assistant" ? savedRow : outgoingResponseRows.get(sourceTurnId) ?? savedRow;
+  };
+  const outgoingRows = new Map<number, typeof sent>();
+  const assignedOutgoing = new Set<(typeof sent)[number]>();
+  for (const item of sent) {
+    if (inlineLivePossible && pendingResponseMessageIndex < 0 && liveSent.includes(item)) continue;
+    const index = sourceRow(item);
+    if (index === undefined) continue;
+    assignedOutgoing.add(item);
+    const row = outgoingRows.get(index);
+    if (row) row.push(item);
+    else outgoingRows.set(index, [item]);
+  }
+  const issuedRows = new Map<number, typeof issuedWithoutReceipt>();
+  const issuedTail: typeof issuedWithoutReceipt = [];
+  for (const record of issuedWithoutReceipt) {
+    const index = sourceRow(record);
+    if (index === undefined) {
+      if (record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId) issuedTail.push(record);
+      continue;
+    }
+    const seq = savedReplySourceIndexes ? savedReplySourceIndexes[index] : messages[index].historyIndex;
+    if (isSentOnly(seq)) continue;
+    const row = issuedRows.get(index);
+    if (row) row.push(record);
+    else issuedRows.set(index, [record]);
+  }
+  const renderInlineSent = (items: typeof liveSent, text: string) => !inputReadContext ? [] : items
+    .map((item) => {
+      const position = "sourceDisplayPosition" in item ? item.sourceDisplayPosition : null;
+      const positionUnknown = position == null || position > text.length;
+      return { key: `sent-${sentInstructionKey(item)}`, position: positionUnknown ? text.length : position!, content: renderSent(item, true) };
+    });
   const renderPendingContent = () => (
     <div className="pending-response-content">
       {pendingResponseMessageIndex < 0 ? <InlineResponseContent
@@ -1323,14 +1475,14 @@ export function SessionMessageColumn({
         responseProvider={provider}
         records={visibleLiveElicitationRecords}
         requests={activeQuestions}
-        inlineContent={inlineApproval}
+        inlineContent={[...renderInlineSent(inlineLivePossible ? liveSent : [], liveRunAssistantText), ...(inlineApproval ? [inlineApproval] : [])]}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart, inlineContent) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} isStreaming={isRunning} responseProvider={provider}
+        renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} selectedRanges={selectedRanges} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath} onFind={openFind}
           onCopyText={onCopyMessageText} onQuoteText={onQuoteMessageText}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1364,13 +1516,13 @@ export function SessionMessageColumn({
       {liveRunErrorMessage ? (
         <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
       ) : null}
-      <PendingRunIndicator announcement={pendingRunIndicatorAnnouncement} />
+      <PendingRunIndicator phase="running" announcement={pendingRunIndicatorAnnouncement} />
     </div>
   );
 
   const renderResponseStatus = () => isRunning ? renderPendingContent() : <div className="pending-response-content">
     {submissionError ? submissionUncertain ? <p className="pending-run-error-note" role="alert">{submissionError}</p> : <SessionRunFailure reason={submissionError} />
-      : <PendingRunIndicator announcement="Waiting for response" />}
+      : <PendingRunIndicator phase="waiting" announcement="Waiting for response" />}
   </div>;
   const renderPendingResponse = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
@@ -1424,7 +1576,7 @@ export function SessionMessageColumn({
         </button>
       ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} data-message-count={messages.length} tabIndex={0} role="region" aria-label="Conversation messages">
-        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail ? (
+        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail || liveSent.length || sentDeliveries.error ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
@@ -1436,6 +1588,17 @@ export function SessionMessageColumn({
             const message = messages[absoluteIndex];
             if (!message) {
               return null;
+            }
+            const savedSeq = savedReplySourceIndexes ? savedReplySourceIndexes[absoluteIndex] : message.historyIndex;
+            if (isSentOnly(savedSeq)) {
+              return <div key={getRowKey(absoluteIndex)} ref={messageVirtualizer.measureElement} className="session-message-virtual-row" data-index={absoluteIndex}>
+                {outgoingRows.get(absoluteIndex)?.filter((item) => conversationPeerKey(item.target) === peer)
+                  .map((item) => renderSent(item))}
+              </div>;
+            }
+            if (message.role === "user" && message.turnInput?.state === "confirmed" && message.turnInput.questionRequestId
+              && visibleAnsweredQuestionIds.has(message.turnInput.questionRequestId)) {
+              return <div key={`question-answer-${getRowKey(absoluteIndex)}`} ref={messageVirtualizer.measureElement} data-index={absoluteIndex} aria-hidden="true" />;
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
@@ -1453,9 +1616,12 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const executionTurnId = isAssistant && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined;
-            const hasExecutionDetails = isAssistant && inputReadContext && (message.historyIndex !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
-            const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
+            const executionTurnId = isAssistant ? responseExecutionTurnIds?.[absoluteIndex]
+              ?? ((sharedPending || !responseExecutionTurnIds) && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined) : undefined;
+            const hasExecutionDetails = isAssistant && inputReadContext && (savedSeq !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
+            const queueReceipt = turnQueueMetadata?.get(messageKey);
+            const queuedState = queueReceipt?.state;
+            const isAwaitingSavedResponse = isAssistant && (queuedState === "completed" || queuedState === "canceled");
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
@@ -1479,6 +1645,12 @@ export function SessionMessageColumn({
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
             const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
+            const canRetryFailedTurn = isAssistant && message.runFailure !== undefined && savedSeq !== undefined && !!inputReadContext;
+            const replyTarget = onSelectReply && inputReadContext && savedSeq !== undefined && message.text.trim()
+              ? { target: inputReadContext.target, seq: savedSeq } : undefined;
+            const replyKey = replyTarget ? JSON.stringify(["message", conversationPeerKey(replyTarget.target), replyTarget.seq]) : undefined;
+            const replySelected = replyKey !== undefined && selectedReplyKey === replyKey;
+            const hasMessageActions = !!replyTarget || !!(messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark)) || canRetryFailedTurn;
 
             return (
               <div
@@ -1487,9 +1659,10 @@ export function SessionMessageColumn({
                 className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
-                  messageJumpHighlightKey === messageKey ? " message-jump-highlight" : ""
+                  messageJumpHighlight?.key === messageKey ? " message-jump-highlight" : ""
                 }`}
                 data-index={absoluteIndex}
+                data-conversation-row-key={messageKey}
               >
                 {isMessageGroupStart && messageGroup ? (
                   <div
@@ -1501,11 +1674,15 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
-                const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
-                const collapsedPreview = read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
+                const author = message.role === "user" ? read.displayOrigin : undefined;
+                const displayOrigin = author?.kind === "session" ? author : undefined;
+                const isSessionOrigin = displayOrigin !== undefined;
+                const senderTheme = displayOrigin ? read.senderTheme : null;
+                const messageSent = isAssistant ? outgoingRows.get(absoluteIndex) ?? [] : [];
+                const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
-                className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
+                className={`message-row ${displayedRole}${isAwaitingSavedResponse || absoluteIndex === sharedPendingIndex ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
@@ -1534,10 +1711,11 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
-                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
+                {displayOrigin ? <TurnInputOriginAvatar read={read} origin={displayOrigin} /> : null}
+                <div className={`message-card ${displayedRole}${senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.sentKey && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
+                  style={senderTheme ? { "--sender-main": senderTheme.main } as CSSProperties : undefined}>
                   <div className="message-card-content">
-                    {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
+                    {displayOrigin ? <SessionOriginRoute origin={displayOrigin} onError={read.setReadError} /> : null}
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -1556,24 +1734,29 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    <div className={`message-text-wrapper${messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? " has-message-collapse-control" : ""}`}>
-                      {messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark) ? (
+                    {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} navigable /> : null}
+                    <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
+                      {hasMessageActions ? (
                         <div className="message-collapse-control">
-                          {onToggleMessageCollapse ? (
+                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} read={read} /> : null}
+                          {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
+                            aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
+                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}
+                          {messageCollapseTarget && onToggleMessageCollapse ? (
                             <button
                               className="message-collapse-toggle"
                               type="button"
                               onClick={() => onToggleMessageCollapse(messageKey)}
                               aria-expanded={!isMessageCollapsed}
                               aria-controls={messageBodyId}
-                              aria-label={`${messageCollapseLabel}: ${collapsedPreview}`}
+                              aria-label={collapsedPreview ? `${messageCollapseLabel}: ${collapsedPreview}` : messageCollapseLabel}
                               title={messageCollapseLabel}
                             >
                               <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
                               <span className="visually-hidden">{messageCollapseLabel}</span>
                             </button>
                           ) : null}
-                          {onToggleMessageBookmark ? (
+                          {messageCollapseTarget && onToggleMessageBookmark ? (
                             <button
                               className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
                               type="button"
@@ -1590,12 +1773,18 @@ export function SessionMessageColumn({
                           ) : null}
                         </div>
                       ) : null}
+                      {/* Keep the disclosure target without treating a collapsed empty body as a visible result. */}
                       <div
                         id={messageBodyId}
-                        data-message-body="true"
+                        data-message-body={shouldRenderFullMessage || collapsedPreview ? "true" : "false"}
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
-                        {shouldRenderFullMessage ? (
+                        {shouldRenderFullMessage && read.coordination && inputReadContext ? <>
+                          <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={inputReadContext.target} />
+                          <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
+                            <MessageRichText text={read.text} displayMode={messageViewMode} onOpenPath={onOpenPath} resolveImageSource={resolveImageSource} markdownImageContext={markdownLinkFileContext} markdownLinkFileContext={markdownLinkFileContext} />
+                          </ReceivedCoordinationContent>
+                        </> : shouldRenderFullMessage ? (
                           <InlineResponseContent
                             sessionId={sessionId}
                             workspacePath={workspacePath}
@@ -1604,17 +1793,18 @@ export function SessionMessageColumn({
                             responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
                             requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
-                            inlineContent={absoluteIndex === pendingResponseMessageIndex ? inlineApproval : undefined}
+                            inlineContent={[...renderInlineSent(messageSent, read.text), ...(absoluteIndex === pendingResponseMessageIndex && inlineApproval ? [inlineApproval] : [])]}
                             inputAvailable={elicitationInputAvailable}
                             drafts={elicitationDrafts}
                             elicitationActionRequestId={elicitationActionRequestId}
                             elicitationAction={elicitationAction}
                             onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            renderText={(text, key, sourceStart, inlineContent) => <MessageRichText
+                            renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText
                               key={key}
                               sourceStart={sourceStart}
                               inlineContent={inlineContent}
+                              selectedRanges={selectedRanges}
                               resolveImageSource={resolveImageSource}
                               text={text}
                               responseProvider={message.role === "assistant" ? provider : undefined}
@@ -1633,11 +1823,12 @@ export function SessionMessageColumn({
                               onActivateGlossaryEntry={onActivateGlossaryEntry}
                             />}
                           />
-                        ) : (
+                        ) : collapsedPreview ? (
                           <p className="message-collapsed-preview">{collapsedPreview}</p>
-                        )}
+                        ) : null}
                       </div>
                     </div>
+                    {shouldRenderFullMessage ? issuedRows.get(absoluteIndex)?.map((record) => renderIssued(record)) : null}
                     <TurnInputStatus message={message} />
                     {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
@@ -1672,7 +1863,10 @@ export function SessionMessageColumn({
                             </section>
                           </div> : null}
 
-                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length} /> : null}
+                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}
+                            turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length}
+                            displayReadError={canRetryFailedTurn ? read.readError : undefined}
+                            onRetryDisplay={canRetryFailedTurn && read.readError ? () => read.setRevision((value) => value + 1) : undefined} /> : null}
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">
@@ -1754,24 +1948,27 @@ export function SessionMessageColumn({
                       ) : null}
                       </section>
                     ) : null}
-                    {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
-                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator announcement="Loading response" /></div>
+                    {queueReceipt && message.turnInput?.queueId !== queueReceipt.id ? <SessionTurnQueueStatus receipt={queueReceipt} position={queuedTurnIds?.includes(queueReceipt.id) ? queuedTurnIds.indexOf(queueReceipt.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === queueReceipt.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onSendInput={onSendQueuedTurnInput} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
+                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator phase="waiting" announcement="Loading response" /></div>
                       : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>
                 </article>;
               }}</TurnInputReadBoundary>
-                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+                {inputReadContext && !(isAssistant && shouldRenderFullMessage) ? outgoingRows.get(absoluteIndex)?.map((item) => renderSent(item)) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
+            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null && !assignedOutgoing.has(item)).map((item) => renderSent(item)) : null}
+            {issuedTail.map((record) => renderIssued(record, true))}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
-            {sentDeliveries.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.loadMore}>Load More Sent Messages</button> : null}
+            {issued.busy ? <LoadingIndicator inline label="Loading Coordination" /> : null}
+            {issued.error ? <p role="alert">{issued.error} <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.retry}>Retry Coordination</button></p> : null}
+            {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

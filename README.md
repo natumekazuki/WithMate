@@ -114,7 +114,7 @@ macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です�
 - [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
 - [Documentation Map](docs/design/documentation-map.md): 現行設計・運用文書の一覧と保存規則
 - [ADR](docs/adr/): 設計判断の背景、代替案、採否と適用状態
-- [Release Notes](docs/releases/README.md): versionごとの変更、互換性、検証結果
+- [Release Notes](docs/releases/README.md): versionごとの変更と利用者への影響
 
 ## ライセンスと利用上の注意
 

@@ -11,7 +11,9 @@ import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
+import type { SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
+import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import type { ReadStatus } from "../../ui/loading-indicator.js";
 import type {
   ComposerControllerRegistry,
@@ -43,6 +45,7 @@ export function useMainSessionRuntime({
     | "previewComposerInput"
     | "runSessionTurn"
     | "enqueueSessionTurn"
+    | "retryFailedSessionTurn"
     | "getSessionTurnQueueReceipt"
     | "getLiveSessionRun"
     | "setSessionPinned"
@@ -82,9 +85,16 @@ export function useMainSessionRuntime({
   const refetchRevisionRef = useRef(new LatestRequestRevision());
   const submitCoordinatorRef = useRef(new SessionSubmitCoordinator());
   const acceptanceRef = useRef(new SessionTurnAcceptance());
-  const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<
-    string | null
-  >(null);
+  // The leases are independent: switching conversations must not hide another owner's pending submit.
+  const [, notifySubmitState] = useState(0);
+  const submitStateChanged = useCallback(() => notifySubmitState((current) => current + 1), []);
+  const observeTurnReceipts = useCallback((receipts: readonly SessionTurnQueueReceipt[]) => {
+    let recovered = false;
+    for (const receipt of receipts) {
+      if (acceptanceRef.current.observeReceipt(receipt, composerRegistry)) recovered = true;
+    }
+    if (recovered) submitStateChanged();
+  }, [composerRegistry, submitStateChanged]);
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] =
     useState(false);
   const [isSessionPinPending, setIsSessionPinPending] = useState(false);
@@ -104,7 +114,7 @@ export function useMainSessionRuntime({
     [applySessions],
   );
 
-  const selectExecutionOptions = useCallback((session: Session, confirmedReviewerChange?: ConfirmedReviewerChange) => {
+  const selectExecutionOptions = useCallback((session: Session, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice) => {
     const options = captureSessionExecutionOptions(session);
     const incarnationId = getSessionIncarnationId(session);
     const revision = ++selectionRequestRevisionRef.current;
@@ -113,7 +123,7 @@ export function useMainSessionRuntime({
     applySessions((current) => current.map((candidate) => candidate.id === session.id ? { ...candidate, ...options } : candidate));
     if (api) {
       void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId, executionOptions: options,
-        ...(confirmedReviewerChange ? { confirmedReviewerChange } : {}) })
+        ...(confirmedReviewerChange ? { confirmedReviewerChange } : {}), ...(approvalChoice ? { approvalChoice } : {}) })
         .then((result) => {
           if (result.status === "accepted" && !result.checkpointSaved) {
             void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id } });
@@ -280,31 +290,46 @@ export function useMainSessionRuntime({
         state: {
           setComposerPreview: (preview) =>
             composerRegistry.setPreview(input.composerOwner, preview),
-          setPendingSubmitSessionId,
+          onSubmitStateChanged: submitStateChanged,
           setForceComposerBlockedFeedback,
           collapseActionDock: input.collapseActionDock,
           commitSubmission: (publish) => flushSync(publish),
         },
         log: input.log,
       }),
-    [api, composerRegistry],
+    [api, composerRegistry, submitStateChanged],
   );
 
-  const resolveUncertainTurn = async (retry: boolean, ownerId: string | null = selectedId) => {
+  const resolveUncertainTurn = async (retry: boolean, ownerId: string | null, incarnationId?: string) => {
     if (!api || !ownerId) return;
     if (retry && composerRegistry.isFrozen) return;
     const lease = submitCoordinatorRef.current.tryAcquire(ownerId);
     if (!lease) return;
-    setPendingSubmitSessionId(ownerId);
+    submitStateChanged();
     try {
       const receipt = retry
-        ? await acceptanceRef.current.retry(api, ownerId, composerRegistry)
-        : await acceptanceRef.current.check(api, ownerId, composerRegistry);
+        ? await acceptanceRef.current.retry(api, ownerId, composerRegistry, incarnationId)
+        : await acceptanceRef.current.check(api, ownerId, composerRegistry, incarnationId);
       setReadRevision((current) => current + 1);
-      if (!receipt && acceptanceRef.current.hasUncertain(ownerId)) throw new Error("No receipt is available yet. Retry Original Turn uses the same request identity and captured input.");
+      if (!receipt && acceptanceRef.current.hasUncertain(ownerId, incarnationId)) throw new Error("No receipt is available yet. Retry Original Turn uses the same request identity and captured input.");
     } finally {
       lease.release();
-      setPendingSubmitSessionId((current) => current === ownerId ? null : current);
+      submitStateChanged();
+    }
+  };
+
+  const submitFailedRetry = async (request: import("../../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest) => {
+    if (!api || composerRegistry.isFrozen) throw new Error("Failed Turn retry is unavailable.");
+    const ownerId = request.target.sessionId;
+    const lease = submitCoordinatorRef.current.tryAcquire(ownerId);
+    if (!lease) throw new Error("Another submission is in progress.");
+    submitStateChanged();
+    try {
+      return await acceptanceRef.current.submitFailedRetry(api, ownerId, request);
+    } finally {
+      lease.release();
+      submitStateChanged();
+      setReadRevision((current) => current + 1);
     }
   };
 
@@ -320,16 +345,19 @@ export function useMainSessionRuntime({
       if (current?.id === sessionId) currentSessionRef.current = patch(current);
       setSessionProjection((sessions) => sessions.map((session) => session.id === sessionId ? patch(session) : session));
     },
-    pendingSubmitSessionId,
+    hasPendingSubmitFor: (sessionId: string | null) => sessionId ? submitCoordinatorRef.current.isClaimed(sessionId) : false,
+    submitCoordinator: submitCoordinatorRef.current,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn,
+    submitFailedRetry,
     turnSubmissions: acceptanceRef.current.submissions,
-    hasUncertainTurn: selectedId ? acceptanceRef.current.hasUncertain(selectedId) : false,
-    hasUncertainTurnFor: (sessionId: string | null) => sessionId ? acceptanceRef.current.hasUncertain(sessionId) : false,
-    checkTurnReceipt: (sessionId: string | null = selectedId) => resolveUncertainTurn(false, sessionId),
-    retryOriginalTurn: (sessionId: string | null = selectedId) => resolveUncertainTurn(true, sessionId),
+    observeTurnReceipts,
+    hasUncertainTurnFor: (sessionId: string | null, incarnationId?: string) => sessionId ? acceptanceRef.current.hasUncertain(sessionId, incarnationId) : false,
+    resendRecoveryError: (sessionId: string, incarnationId: string) => acceptanceRef.current.resendRecoveryError(sessionId, incarnationId),
+    checkTurnReceipt: (sessionId: string | null = selectedId, incarnationId?: string) => resolveUncertainTurn(false, sessionId, incarnationId),
+    retryOriginalTurn: (sessionId: string | null = selectedId, incarnationId?: string) => resolveUncertainTurn(true, sessionId, incarnationId),
   };
 }

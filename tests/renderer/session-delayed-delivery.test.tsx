@@ -15,10 +15,10 @@ const receipt: SessionTurnQueueReceipt = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "レスポンス前の遅延入力は待機と不明を区別し、送信元Turnの終端・実解放までSteerを無効にして取消と即時入力を妨げない"
-// oracle = { type = "contract", ref = "approved delayed Session message feature: after_source_turn gating" }
-// fault = "待機理由を確認できない、不明状態を通常待機と混同する、未解放中にSteerを許可する、実解放後も無効にする、または即時入力や取消を巻き込む"
-// observable = "queueの待機理由、不明状態表示と各送信元状態のSteer・Cancel buttonのdisabled状態"
+// claim = "遅延入力は送信元Turnの状態不明を示し、終端・実解放までSteerを無効にして取消と即時入力を妨げない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Turn Input Details; docs/design/session-run-lifecycle.md: Bound Session API" }
+// fault = "不明状態を隠す、未解放中にSteerを許可する、実解放後も無効にする、または即時入力や取消を巻き込む"
+// observable = "queueの不明状態表示と各送信元状態のSteer・Cancel buttonのdisabled状態"
 // observation_boundary = "component-behavior"
 // scope = "SessionTurnQueueStatusの配送待機表示・操作"
 // lifecycle = "permanent"
@@ -26,22 +26,20 @@ const receipt: SessionTurnQueueReceipt = {
 // distinction = "backendの配送検査はrendererの表示とbutton状態を検出しない"
 // @end-test-value
 test("delayed delivery reports source state and gates only steer until terminal", () => {
-  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueStatus receipt={value} busy={false} onCancel={() => {}} onRelease={() => {}} onSendInput={() => {}} />)).window.document;
+  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueStatus receipt={value} busy={false} onCancel={() => {}} onSendInput={() => {}} />)).window.document;
   const button = (document: Document, name: string) => [...document.querySelectorAll("button")].find((item) => item.textContent === name || item.getAttribute("aria-label")?.startsWith(name))!;
   for (const phase of ["running", "unknown", undefined] as const) {
     const document = render({ ...receipt, sourceTurnPhase: phase });
-    if (phase === "running") assert.match(document.body.textContent!, /Waiting For Sender Turn/);
-    else assert.match(document.body.textContent!, /Source Turn State Unknown/);
+    if (phase !== "running") assert.match(document.body.textContent!, /Source Turn State Unknown/);
     assert.equal(button(document, "Steer").disabled, true);
     assert.equal(button(document, "Cancel").disabled, false);
   }
   for (const phase of ["completed", "failed", "canceled"] as const) {
     const document = render({ ...receipt, sourceTurnPhase: phase });
     assert.equal(button(document, "Steer").disabled, false);
-    assert.doesNotMatch(document.body.textContent!, /Waiting For Sender Turn|Source Turn State Unknown/);
+    assert.doesNotMatch(document.body.textContent!, /Source Turn State Unknown/);
   }
   const releasing = render({ ...receipt, sourceTurnPhase: "canceled", sourceTurnPendingRelease: true });
-  assert.match(releasing.body.textContent!, /Waiting For Sender Turn/);
   assert.equal(button(releasing, "Steer").disabled, true);
   assert.equal(button(releasing, "Cancel").disabled, false);
   const immediate = render({ ...receipt, captured: { ...receipt.captured, origin: { ...receipt.captured.origin!, deliveryTiming: "immediate" } }, sourceTurnPhase: "running" });

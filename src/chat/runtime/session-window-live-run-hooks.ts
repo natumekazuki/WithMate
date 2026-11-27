@@ -35,5 +35,6 @@ export function useSessionRunControls(api: WithMateWindowApi | null, selectedSes
     if (api && activeRunSessionId) updateSessionLiveState(api, activeRunSessionId, update);
   }, [api, activeRunSessionId]);
   return { ...active, getLiveRunRevision, setLiveRunState,
-    hasSelectedSessionLiveRun: main.hasLiveRun, selectedSessionCancellationState: main.cancellationState };
+    hasSelectedSessionLiveRun: main.hasLiveRun, selectedSessionCancellationState: main.cancellationState,
+    mainStopTurnId: main.stopTurnId, mainStopReceiptId: main.stopReceiptId, mainStopIncarnationId: main.stopIncarnationId };
 }

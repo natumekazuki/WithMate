@@ -30,10 +30,10 @@ function findButton(container: Element, text: string): HTMLButtonElement {
 
 // @test-value v2
 // kind = "contract"
-// claim = "New SessionのStartは取得状態とRandom/固定選択に追従し、title・開始中busyを反映する。JSDOMで明示設定したRandomのfocusは取得状態更新後も残り、Cancelで起点へ戻る"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog" }
-// fault = "取得状態の配線やmemo依存が欠落してStartが更新されないか、固定選択を妨げるか、取得状態更新で入力・設定済みfocusを失うか、Cancelでfocusが戻らない"
-// observable = "HomeAppのStart disabled/aria-disabled/busy、title値、明示focus後の取得状態更新とCancel後のdocument.activeElement、作成要求回数"
+// claim = "New SessionのStartと取得待ちのaccessible statusはRandom/固定選択と未取得・失敗・回復を区別する。Randomの設定済みfocusとtitle入力を保ち、Cancelで起点へ戻す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: New Session dialog; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "待っている対象が状態に追従しないか取得待ちと実際の開始busyを混同するか、固定選択を妨げるか、取得状態更新・Cancelで設定済みfocusを失う"
+// observable = "HomeAppのStart disabled/aria-disabled/busy、取得対象のrole=status名と領域のaria-busyと失敗alert、title値、document.activeElement、作成要求回数"
 // observation_boundary = "component-behavior"
 // scope = "HomeApp New Session prerequisite transitions"
 // lifecycle = "permanent"
@@ -136,6 +136,7 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
     const assertFixedThenRandom = async (randomReady: boolean) => {
       await act(async () => specific.click());
       assertReady(true);
+      assert.equal(dialog.querySelector('.home-launch-feedback [role="status"]'), null);
       await act(async () => random.click());
       // JSDOMのclickはnative focus移動を再現しない。以降の取得状態更新の前提を設定する。
       random.focus();
@@ -143,24 +144,41 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
     };
 
     assertReady(false);
+    const readiness = dialog.querySelector(".home-launch-feedback")!;
+    const pending = (label: string) => {
+      assert.equal(readiness.getAttribute("aria-busy"), "true");
+      assert.ok(readiness.querySelector(`[role="status"][aria-label="${label}"]`));
+      assert.equal(readiness.textContent, "");
+    };
+    const settled = (error?: string) => {
+      assert.equal(readiness.hasAttribute("aria-busy"), false);
+      assert.equal(readiness.querySelector('[role="status"]'), null);
+      assert.equal(readiness.querySelector('[role="alert"]')?.textContent, error);
+    };
+    pending("Loading session history for random character selection");
     await assertFixedThenRandom(false);
     await act(async () => usage.resolve([]));
     assertReady(false);
+    pending("Loading open session windows for random character selection");
     await act(async () => openWindows.reject(new Error("Windows unavailable")));
     assertReady(false);
+    settled("Open session windows are unavailable, so random selection cannot start.");
     await assertFixedThenRandom(false);
     await act(async () => onOpenWindows([]));
     assertReady(true);
+    settled();
     assert.equal(dom.window.document.activeElement, random);
 
     usageFailed = true;
     await act(async () => invalidate());
     assertReady(false);
+    settled("Session history is unavailable, so random selection cannot start.");
     assert.equal(dom.window.document.activeElement, random);
     await assertFixedThenRandom(false);
     usageFailed = false;
     await act(async () => invalidate());
     assertReady(true);
+    settled();
     assert.equal(dom.window.document.activeElement, random);
 
     assert.equal(createCount, 0);

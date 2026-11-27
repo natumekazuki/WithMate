@@ -10,6 +10,7 @@ export type SessionTurnTerminalCommit = {
   completedAt: string;
 };
 
+/** Finalize the exact Turn and its unresolved direct inputs inside the caller's transaction. */
 export function writeSessionTurnTerminalCommit(
   db: DatabaseSync,
   commit: SessionTurnTerminalCommit,
@@ -42,4 +43,19 @@ export function writeSessionTurnTerminalCommit(
   if (result.changes !== 1) {
     throw new Error(`session turn terminal commit target mismatch: ${commit.turnId}`);
   }
+  const messageTable = ownerKind === "auxiliary" ? "auxiliary_session_messages" : "session_messages_v6";
+  // The provider may have received a persisted pending input. Once its Turn
+  // ends, only the delivery outcome is unknown; do not rewrite its evidence.
+  db.prepare(`
+    UPDATE ${messageTable}
+    SET body = json_set(body, '$.turnInput.state', 'unknown')
+    WHERE ${ownerColumn} = ? AND role = 'user'
+      AND seq > (SELECT user_message_seq FROM session_turns_v6 WHERE id = ?)
+      AND seq < ?
+      AND CASE WHEN json_valid(body) THEN
+        json_extract(body, '$.turnInput.turnId') = ?
+        AND json_extract(body, '$.turnInput.state') = 'pending'
+        AND json_extract(body, '$.turnInput.queueId') IS NULL
+      ELSE 0 END
+  `).run(commit.sessionId, commit.turnId, commit.assistantMessageSeq, String(commit.turnId));
 }

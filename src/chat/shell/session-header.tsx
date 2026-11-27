@@ -229,7 +229,10 @@ export function SessionHeader({
                     </button>
                   ) : null}
                   {showDeleteButton ? (
-                    <button className="danger" type="button" role="menuitem" onClick={() => runSessionAction(onDeleteSession)} disabled={isRunning}>
+                    <button className="danger" type="button" role="menuitem" onClick={() => {
+                      sessionActionsTriggerRef.current?.focus();
+                      runSessionAction(onDeleteSession);
+                    }} disabled={isRunning}>
                       {deleteActionLabel}
                     </button>
                   ) : null}

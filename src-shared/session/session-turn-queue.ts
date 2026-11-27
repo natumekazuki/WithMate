@@ -4,6 +4,13 @@ import { LOCAL_USER_ID, type ConversationParticipant } from "../character/charac
 import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../character/character-owner.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
+export type RetryFailedSessionTurnRequest = {
+  target: import("./session-target.js").SessionTarget;
+  receiptId: string;
+  turnId: string;
+  clientRequestId: string;
+  executionOptions: import("./session-execution-options.js").SessionExecutionOptions;
+};
 export type SessionMessageDeliveryTiming = "immediate" | "after_source_turn";
 export type SessionMessageSourceTurnPhase = "running" | "completed" | "failed" | "canceled" | "unknown";
 export type SessionTurnQueueDisplaySnapshot = {
@@ -34,12 +41,23 @@ export type SessionTurnQueueOrigin = {
   targetSnapshot?: SessionTurnQueueDisplaySnapshot;
 };
 export type SessionTurnQueueCapturedInput = {
-  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
+  /** Transient observation; excluded from the idempotent acceptance payload. */
+  sourceDisplayPosition?: number;
+  /** Kept in memory only until the source Turn is finalized. */
+  sourceDisplayText?: string;
+  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; targetKind?: "main" | "auxiliary"; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
   request: RunSessionTurnRequest & { clientRequestId: string };
   attachments: ComposerAttachment[];
   provider: string;
   workspacePath: string;
   origin?: SessionTurnQueueOrigin;
+  /** Original delivery provenance for a new GUI-requested execution, not its actor. */
+  retrySource?: {
+    receiptId: string;
+    turnId: string;
+    origin: SessionTurnQueueOrigin;
+    changedSinceAcceptance: boolean;
+  };
 };
 
 export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | "targetSessionId" | "targetIncarnationId" | "targetSnapshot"> & {
@@ -50,6 +68,14 @@ export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | 
   actorTurnId: string;
   operation: "steer";
 };
+
+/** The displayed author of a confirmed exact replay is distinct from the GUI receipt actor. */
+export function projectRetryInputAuthor(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
+  source: SessionTurnQueueCapturedInput["retrySource"] | null, unchanged: boolean | null | undefined) {
+  return origin?.kind === "gui" && source?.changedSinceAcceptance === false && unchanged === true
+    && source.origin.targetSessionId === origin.targetSessionId
+    && source.origin.targetIncarnationId === origin.targetIncarnationId ? source.origin : origin;
+}
 
 export type SessionSteerResult = {
   outcome: "applied" | "not-applied" | "unknown";
@@ -96,6 +122,8 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   releasedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Internal enqueue result; not part of the accepted request. */
+  sourceDisplayInserted?: boolean;
 };
 export type SessionTurnQueueReceiptPage = { receipts: SessionTurnQueueReceipt[]; nextCursor: number | null };
 export type ReorderQueuedSessionTurnsRequest = { incarnationId: string; expectedQueuedIds: string[]; queuedIds: string[] };
@@ -106,8 +134,13 @@ export type SessionTurnQueueAcceptanceResult = SessionTurnQueueReceipt | {
   state: "rejected";
   reason: string;
 };
+export type SessionTurnQueueAdmission = {
+  receipt: SessionTurnQueueReceipt;
+  /** The single new claim to hand off, not a previously accepted receipt. */
+  claimed: SessionTurnQueueReceipt | null;
+};
 export type SessionTurnQueueStore = {
-  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt>;
+  admit(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, claim?: { unreleasedSourceTurnIds: readonly string[] }): Promise<SessionTurnQueueAdmission>;
   getReceipt(owner: SessionTurnQueueOwner, requestId: string): Promise<SessionTurnQueueReceipt | null>;
   getReceiptById(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt | null>;
   listActive(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt[]>;
@@ -121,6 +154,5 @@ export type SessionTurnQueueStore = {
   cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt>;
   updateQueued(owner: SessionTurnQueueOwner, id: string, input: { userMessage: string; attachments: ComposerAttachment[] }): Promise<SessionTurnQueueReceipt>;
   reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]): Promise<SessionTurnQueueReorderResult>;
-  recoverInterrupted(): Promise<number>;
-  releaseInterrupted(owner: SessionTurnQueueOwner, id: string, options?: { runReleased: boolean }): Promise<SessionTurnQueueReceipt>;
+  recoverInterrupted(target?: SessionTurnQueueOwner & { receiptId: string }): Promise<number>;
 };

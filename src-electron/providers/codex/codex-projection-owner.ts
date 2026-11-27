@@ -1,5 +1,6 @@
 import { createProviderAgentRuntimeBindingRedactor, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
-import { PROVIDER_TEXT_PREVIEW_LIMIT, stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
+import { APP_LOG_MAX_SERIALIZED_DATA_LENGTH, APP_LOG_MAX_STRING_LENGTH } from "../../app/app-log-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem, stringifyBoundedProviderRawItems } from "../../session/provider-payload-limits.js";
 import { buildCodexStableRawItems, buildCodexProviderMetadata } from "./codex-event-projection.js";
 import { applyCodexTurnEvent, collectCodexAssistantResponseFromItems, collectCodexQuestionRanges, createCodexTurnStreamState, getLiveCodexAssistantPreview, getLiveCodexReasoningPreview, type CodexNativeNotification } from "./codex-turn-events.js";
 import type { CodexProjectionStart, CodexProjectionProgress, CodexProjectionFinal, CodexProjectionEvent } from "./codex-projection-protocol.js";
@@ -61,11 +62,45 @@ export class CodexProjectionOwner {
         }
       }
     }
-    applyCodexTurnEvent(this.state, event);
+    const disposition = applyCodexTurnEvent(this.state, event);
     return {
       changed: this.input.progress && revision !== this.state.revision,
+      ...(disposition === "unhandled" ? {
+        unhandledNotification: this.unhandledNotification(event),
+      } : {}),
       ...(this.input.progress && errorMessage !== this.state.streamErrorMessage
         ? { errorMessage: this.redactor.sanitizeText(this.state.streamErrorMessage) } : {}),
+    };
+  }
+
+  private unhandledNotification(event: CodexNativeNotification): NonNullable<CodexProjectionEvent["unhandledNotification"]> {
+    const { sanitizeText } = this.redactor;
+    // Bound identifiers independently of params. Reserve room for params even
+    // when a notification uses long IDs or JSON escape sequences.
+    const identifier = (value: string) => {
+      const redacted = sanitizeText(value, 256);
+      return value.length > 256 || redacted.length > 256 ? `${redacted.slice(0, 256)}...` : redacted;
+    };
+    const context = {
+      sessionId: identifier(this.input.sessionId),
+      threadId: identifier(this.input.threadId),
+      turnId: identifier(this.input.turnId),
+      method: identifier(event.method),
+    };
+    if (event.params === undefined) return context;
+
+    const budget = APP_LOG_MAX_SERIALIZED_DATA_LENGTH - JSON.stringify(context).length;
+    const bounded = boundProviderRawItem({
+      type: "withmate.codex.unhandled_notification", data: { params: event.params },
+    }, budget, sanitizeText, APP_LOG_MAX_STRING_LENGTH - 100).data!;
+    const data = { ...context, ...bounded };
+    if (JSON.stringify(data).length <= APP_LOG_MAX_SERIALIZED_DATA_LENGTH) return data;
+    // The raw-item budget is approximate (nesting and omitted-item markers).
+    // Keep the correlation fields and a prefix of the already redacted params.
+    // A UTF-16 code unit expands to at most six characters in JSON.
+    return {
+      ...context,
+      params: { truncated: true, preview: JSON.stringify(bounded.params).slice(0, Math.floor((budget - 80) / 6)) },
     };
   }
 

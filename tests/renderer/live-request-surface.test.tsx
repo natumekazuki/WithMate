@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationSelectField } from "../../src-shared/session/runtime-state.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +31,7 @@ async function mountElicitation(request: LiveElicitationRequest, initialProps: P
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   const responses: unknown[] = [];
+  const answerPresentations: unknown[] = [];
   const render = async (nextRequest: LiveElicitationRequest, props: Partial<LiveRequestSurfaceProps> = {}) => {
     await act(async () => root.render(React.createElement(LiveRequestSurface, {
       liveApprovalRequest: null,
@@ -37,13 +39,17 @@ async function mountElicitation(request: LiveElicitationRequest, initialProps: P
       liveElicitationRequest: nextRequest,
       elicitationActionRequestId: null,
       onResolveLiveApproval() {},
-      onResolveLiveElicitation(_request, response) { responses.push(response); },
+      onResolveLiveElicitation(_request, response) {
+        const { answerPresentation, ...providerResponse } = response;
+        responses.push(providerResponse);
+        answerPresentations.push(answerPresentation);
+      },
       ...props,
     })));
   };
   await render(request, initialProps);
   return {
-    container, dom, responses, render,
+    container, dom, responses, answerPresentations, render,
     async cleanup() {
       await act(async () => root.unmount());
       globalThis.window = previousWindow;
@@ -79,6 +85,35 @@ async function pasteFiles(dom: JSDOM, input: HTMLTextAreaElement, files: Array<{
   await act(async () => { input.dispatchEvent(event); });
   return event;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "候補と同じ文字列を自由入力で送った場合も候補の選択とは区別して回答表示用情報を渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "自由入力を候補の選択と誤認するか、送信値を変更する"
+// observable = "同一文字列の候補選択・自由入力それぞれの回答と表示用情報"
+// observation_boundary = "component-behavior"
+// scope = "question answer presentation"
+// lifecycle = "permanent"
+// impact = "実際に選んでいない候補を履歴で選択済みと誤認する"
+// distinction = "payloadだけの確認では同じ値の入力方法を区別できない"
+// @end-test-value
+test("question response distinguishes a choice from identical custom text", async () => {
+  const mounted = await mountElicitation({ requestId: "same", provider: "claude", kind: "question", mode: "form", message: "Choose",
+    fields: [{ type: "select", name: "choice", title: "Choice", required: true, allowFreeText: true, options: [{ value: "same", label: "Same" }] }] });
+  try {
+    const radios = mounted.container.querySelectorAll<HTMLInputElement>('input[type="radio"]');
+    const input = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Choice Custom Answer"]');
+    assert.ok(input);
+    await act(async () => radios[0].click());
+    await submit(mounted.container);
+    await enterText(mounted.dom, input, "same");
+    await act(async () => radios[1].click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { choice: "same" } }, { action: "accept", content: { choice: "same" } }]);
+    assert.deepEqual(mounted.answerPresentations, [{ choice: { selected: [0], text: [] } }, { choice: { selected: [], text: ["same"] } }]);
+  } finally { await mounted.cleanup(); }
+});
 
 function pastedFile(name: string, type: string) {
   return { name, type, arrayBuffer: async () => new TextEncoder().encode(name).buffer };
@@ -281,27 +316,30 @@ test("LiveRequestSurface はmixed pasteを対象質問の文字列回答に保�
 
 // @test-value v2
 // kind = "contract"
-// claim = "自由回答のmultiline化後も文字数制約を検証し、format付きfieldは既存native inputから同じ構造化回答を送信する"
+// claim = "Codex MCP formは文字数・email・URI・date-timeに合わない値を送信せず、同じformに入力を残して訂正後の構造化回答を送信する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: native response constraints and strict MCP schemas" }
-// fault = "textarea化でminLength/maxLength検証を迂回するか、format付き入力を自由回答へ置換してpayloadを変える"
-// observable = "短すぎる/長すぎる回答のvalidationと送信件数、format input type、受理された回答payload"
+// fault = "入力欄の書式や文字数に合わない値をProviderへ送信するか、訂正に必要な入力を消す"
+// observable = "不正値のvalidation、送信件数と入力保持、訂正後の回答payload"
 // observation_boundary = "component-behavior"
 // scope = "question-answer-schema-preservation"
 // lifecycle = "permanent"
 // impact = "providerが要求したschemaに違反する回答や変形した形式付き回答を送信する"
 // distinction = "schema型検査ではmultiline editorの入力からSubmitへのvalidation接続を検証できない"
 // @end-test-value
-test("LiveRequestSurface はmultiline回答でも文字数制約とformat fieldを維持する", async () => {
+test("Codex MCP form keeps invalid answers in the same form until corrected", async () => {
   const mounted = await mountElicitation({ requestId: "strict", provider: "codex", mode: "form", message: "Enter values", fields: [
     { type: "text", name: "answer", title: "Answer", required: true, minLength: 3, maxLength: 5 },
     { type: "text", name: "url", title: "URL", required: true, format: "uri" },
+    { type: "text", name: "email", title: "Email", required: true, format: "email" },
+    { type: "text", name: "when", title: "When", required: true, format: "date-time" },
   ] });
   try {
     const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
     const url = mounted.container.querySelector<HTMLInputElement>('input[aria-label="URL"]')!;
+    const email = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Email"]')!;
+    const when = mounted.container.querySelector<HTMLInputElement>('input[aria-label="When"]')!;
     assert.ok(answer && url);
     assert.equal(url.type, "url");
-    await enterText(mounted.dom, url, "https://example.test/reference");
     for (const [value, error] of [["a", "at least 3"], ["abc\ndef", "at most 5"]]) {
       await enterText(mounted.dom, answer, value);
       await submit(mounted.container);
@@ -309,8 +347,27 @@ test("LiveRequestSurface はmultiline回答でも文字数制約とformat field�
       assert.ok(mounted.container.textContent?.includes(error));
     }
     await enterText(mounted.dom, answer, "a\nb");
+    await enterText(mounted.dom, url, "https://example.test/reference");
+    await enterText(mounted.dom, email, "a@example.test");
+    await enterText(mounted.dom, when, "2026-11-01T00:00:00+09:00");
+    for (const [input, bad, error] of [
+      [url, "relative/path", "valid URI"],
+      [email, "a@example", "valid email address"],
+      [when, "2026-11-01T00:00:00", "with a time zone"],
+    ] as const) {
+      const good = input.value;
+      await enterText(mounted.dom, input, bad);
+      await submit(mounted.container);
+      assert.deepEqual(mounted.responses, []);
+      assert.ok(mounted.container.textContent?.includes(error));
+      assert.equal(input.value, bad);
+      assert.equal(answer.value, "a\nb");
+      await enterText(mounted.dom, input, good);
+    }
     await submit(mounted.container);
-    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "a\nb", url: "https://example.test/reference" } }]);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: {
+      answer: "a\nb", url: "https://example.test/reference", email: "a@example.test", when: "2026-11-01T00:00:00+09:00",
+    } }]);
   } finally { await mounted.cleanup(); }
 });
 
@@ -1163,6 +1220,130 @@ test("InlineResponseContent retains structured choices when a source question re
         assert.ok(visible.indexOf("Feature") < visible.indexOf("After"));
         assert.equal(body.querySelectorAll("input,button,select,textarea").length, 0);
       } finally { dom.window.close(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "回答済み質問では本文内の選択肢を重複せず強調し自由回答を質問の位置へ残す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "既存本文の候補を選択済みにできない、候補を重複表示する、または自由回答を失う"
+// observable = "描画された選択肢と自由回答のDOM・順序・重複数"
+// observation_boundary = "component-behavior"
+// scope = "InlineResponseContent question answer history"
+// lifecycle = "permanent"
+// impact = "利用者が元の質問と送信した回答を結び付けて見返せない"
+// distinction = "回答投影の単体testはMarkdown本文への選択強調と重複を検出できない"
+// @end-test-value
+test("resolved question highlights source choice and displays free answer in place", () => {
+  const source = "Choose a provider\n\n- Exa\n- Tavily";
+  const record: ElicitationRecord = { requestId: "source", kind: "question", message: "Question", status: "answered",
+    textRange: { start: 7, end: 7 + source.length }, fields: [{ title: "Choose a provider", options: ["Exa", "Tavily"], answer: { selected: [1], text: ["Use it\ncarefully"] } }] };
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
+      text: `Before\n${source}\nAfter`, records: [record], requests: [],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (text, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      const document = dom.window.document;
+      const selected = document.querySelector(".elicitation-record-selected");
+      assert.ok(selected?.textContent?.includes("Tavily"));
+      assert.equal(document.body.textContent?.split("Tavily").length, 2);
+      assert.equal(document.querySelector(".elicitation-record-answer")?.textContent, "Answer: Use it\ncarefully");
+      assert.ok(document.body.textContent!.indexOf("Use it") < document.body.textContent!.indexOf("After"));
+    } finally { dom.window.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "回答済み質問と複数の送信カードが同じ本文にあっても選択肢の強調とカードの順序を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; https://github.com/natumekazuki/WithMate/issues/953" }
+// fault = "複数カードの挿入で選択強調を落とす、またはカードの順序を入れ替える"
+// observable = "PreviewとSourceで描画された選択部分、カードの個数と順序、自由回答"
+// observation_boundary = "component-behavior"
+// scope = "InlineResponseContentとMessageRichTextの質問履歴・送信カードの共存"
+// lifecycle = "permanent"
+// impact = "回答した選択肢や送信の前後関係を読み違える"
+// distinction = "質問だけとカードだけの表示testでは両方が同じ本文にあるときの干渉を検出できない"
+// @end-test-value
+test("resolved question selection and multiple sent cards coexist in preview and source", () => {
+  const source = "Choose a provider\n\n- Exa\n- Tavily";
+  const text = `Before\n${source}\nAfter`;
+  const record: ElicitationRecord = { requestId: "source", kind: "question", message: "Question", status: "answered",
+    textRange: { start: 7, end: 7 + source.length }, fields: [{ title: "Choose a provider", options: ["Exa", "Tavily"], answer: { selected: [1], text: ["Use it"] } }] };
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
+      text, records: [record], requests: [],
+      inlineContent: [
+        { key: "first", position: text.indexOf("Exa") + 1, content: React.createElement("span", { className: "test-card" }, "CARD-A") },
+        { key: "second", position: text.indexOf("Tavily") + 2, content: React.createElement("span", { className: "test-card" }, "CARD-B") },
+      ],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (body, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text: body, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      const document = dom.window.document;
+      const selected = Array.from(document.querySelectorAll(".elicitation-record-selected"), (node) => node.textContent ?? "").join("");
+      assert.match(selected, /Tavily/);
+      assert.deepEqual(Array.from(document.querySelectorAll(".test-card"), (node) => node.textContent), ["CARD-A", "CARD-B"]);
+      assert.equal(document.querySelector(".elicitation-record-answer")?.textContent, "Answer: Use it");
+    } finally { dom.window.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ承認の操作位置は送信カードと質問の追加・削除を通して維持される"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "別のinline内容や本文分割が変わった時に承認を再mountしてfocusを失う"
+// observable = "PreviewとSourceでの承認ボタンのDOM同一性とactiveElement"
+// observation_boundary = "component-behavior"
+// scope = "複数inline内容と質問が共存するInlineResponseContent"
+// lifecycle = "permanent"
+// impact = "承認の確認中にkeyboardの操作位置を失う"
+// distinction = "既存の承認継続testは送信カードの追加・削除を通らない"
+// @end-test-value
+test("approval focus survives sent cards and question changes", async () => {
+  for (const displayMode of ["preview", "source"] as const) {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    const previousNode = globalThis.Node;
+    globalThis.window = dom.window as unknown as Window & typeof globalThis;
+    globalThis.document = dom.window.document;
+    globalThis.HTMLElement = dom.window.HTMLElement;
+    globalThis.Node = dom.window.Node;
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    const text = "Before approval\n\nAfter approval";
+    const approval = { key: "approval", position: 15, stableOwner: true, content: React.createElement("button", null, "Approval") };
+    const sent = { key: "sent", position: 3, content: React.createElement("span", null, "Sent") };
+    const record: ElicitationRecord = { requestId: "question", kind: "question", message: "Question", status: "answered", fields: [{ title: "Branch" }], textRange: { start: 0, end: 0 } };
+    const render = async (withSent: boolean, withQuestion: boolean) => act(async () => root.render(React.createElement(InlineResponseContent, {
+      text, inlineContent: withSent ? [sent, approval] : [approval], records: withQuestion ? [record] : [],
+      elicitationActionRequestId: null, onResolveLiveElicitation() {},
+      renderText: (body, key, sourceStart, inlineContent, selectedRanges) => React.createElement(MessageRichText, { key, text: body, sourceStart, inlineContent, selectedRanges, displayMode }),
+    })));
+    try {
+      await render(false, false);
+      const button = dom.window.document.querySelector<HTMLButtonElement>("button")!;
+      button.focus();
+      for (const [withSent, withQuestion] of [[true, false], [true, true], [false, true], [false, false]]) {
+        await render(withSent, withQuestion);
+        assert.equal(dom.window.document.querySelector("button") === button, true, `${displayMode}: sent=${withSent}, question=${withQuestion}`);
+        assert.equal(dom.window.document.activeElement === button, true, `${displayMode}: sent=${withSent}, question=${withQuestion}`);
+      }
+    } finally {
+      await act(async () => root.unmount());
+      globalThis.window = previousWindow;
+      globalThis.document = previousDocument;
+      globalThis.HTMLElement = previousHTMLElement;
+      globalThis.Node = previousNode;
+      dom.window.close();
     }
   }
 });

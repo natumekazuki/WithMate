@@ -23,14 +23,14 @@ function createLegacyTable(db: DatabaseSync): void {
 // @test-value v2
 // kind = "contract"
 // claim = "旧V6の最小turn owner・結果・本文位置・時刻は再起動後も通常会話を変更せず利用できる"
-// oracle = { type = "contract", ref = "docs/design/database-schema.md#起動時の移行とデータ保護" }
+// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema、docs/design/database-schema.md#storage-overview" }
 // fault = "移行でturn linkageや結果を破棄する、または通常artifactを旧Audit詳細で置換する"
-// observable = "再open後のturn fieldsと通常message/artifactの保存値"
+// observable = "移行直後のMain応答本文・artifactの保存値、turnのowner・phaseと外部キー整合性、再open後のturnの本文位置・thread・終端時刻・エラー"
 // observation_boundary = "public-boundary"
 // scope = "V6 legacy turn migration"
 // lifecycle = "permanent"
 // impact = "turn結果、通常会話、Timingとownerの継続性を保護する"
-// distinction = "schema/type checkだけでは既存行を持つDBの移行結果とtransaction rollbackを検証できない"
+// distinction = "schema/type checkだけでは旧Auditの本文から通常会話の応答位置を復元できるか検証できない"
 // @end-test-value
 test("既存V6を最小turnへ移行し通常履歴とturn ownerを保持する", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-turn-migration-"));
@@ -41,8 +41,10 @@ test("既存V6を最小turnへ移行し通常履歴とturn ownerを保持する"
       insertSession(db);
       db.exec(`INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
         VALUES ('aux', 'main', '2026-10-01', '2026-10-01')`);
-      db.exec(`INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
-        VALUES ('main', 0, 'user', 'question', '2026-10-01'), ('main', 1, 'assistant', 'normal result', '2026-10-01')`);
+      const assistantBody = JSON.stringify({ role: "assistant", text: "normal result" });
+      db.prepare(`INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+        VALUES ('main', 0, 'user', ?, '2026-10-01'), ('main', 1, 'assistant', ?, '2026-10-01')`)
+        .run(JSON.stringify({ role: "user", text: "question" }), assistantBody);
       const artifactBody = JSON.stringify({ operationTimeline: [{ type: "shell", summary: "normal", details: "saved output" }] });
       db.prepare("UPDATE session_messages_v6 SET artifact_body = ? WHERE session_id = 'main' AND seq = 1").run(artifactBody);
       db.exec("ALTER TABLE session_turns_v6 ADD COLUMN summary TEXT NOT NULL DEFAULT ''");
@@ -54,7 +56,7 @@ test("既存V6を最小turnへ移行し通常履歴とturn ownerを保持する"
         approvalMode: "untrusted", errorMessage: "cancel", threadId: "aux-thread" }));
       ensureV6Schema(db);
       ensureV6Schema(db);
-      assert.equal((db.prepare("SELECT body FROM session_messages_v6 WHERE session_id = 'main' AND seq = 1").get() as { body: string }).body, "normal result");
+      assert.equal((db.prepare("SELECT body FROM session_messages_v6 WHERE session_id = 'main' AND seq = 1").get() as { body: string }).body, assistantBody);
       assert.equal((db.prepare("SELECT artifact_body FROM session_messages_v6 WHERE session_id = 'main' AND seq = 1").get() as { artifact_body: string }).artifact_body, artifactBody);
       assert.deepEqual(db.prepare("SELECT session_id, auxiliary_session_id, phase FROM session_turns_v6 ORDER BY id").all().map((row) => ({ ...row })), [
         { session_id: "main", auxiliary_session_id: null, phase: "completed" },

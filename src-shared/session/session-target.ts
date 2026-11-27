@@ -1,10 +1,9 @@
 import { z } from "zod";
 
 const id = z.string().trim().min(1).max(256);
+export const mainSessionTargetSchema = z.object({ kind: z.literal("main"), sessionId: id, incarnationId: id }).strict();
 export const sessionTargetSchema = z.discriminatedUnion("kind", [
-  z
-    .object({ kind: z.literal("main"), sessionId: id, incarnationId: id })
-    .strict(),
+  mainSessionTargetSchema,
   z
     .object({
       kind: z.literal("auxiliary"),
@@ -16,3 +15,4 @@ export const sessionTargetSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 export type SessionTarget = z.infer<typeof sessionTargetSchema>;
+export type MainSessionTarget = z.infer<typeof mainSessionTargetSchema>;

@@ -5,7 +5,7 @@ import { ComposerIcon } from "../composer/composer-icon.js";
 
 export type SessionRecoveryActionsProps = {
   retryState: {
-    kind: "interrupted" | "failed" | "canceled";
+    kind: "interrupted" | "canceled";
     lastRequestText: string;
   } | null;
   requestKey: string;

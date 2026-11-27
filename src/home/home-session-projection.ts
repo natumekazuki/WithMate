@@ -1,8 +1,9 @@
 import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import { sessionStateLabel } from "../ui/ui-utils.js";
+import { sessionStatusLabel } from "../ui/ui-utils.js";
 
-export type HomeSessionState = { kind: "approval" | "running" | "interrupted" | "error" | "neutral"; label: string };
+export type HomeSessionState = { kind: "approval" | "running" | "error" | "neutral"; label: string };
+export const HOME_SESSION_FAILURE_STATE = { kind: "error", label: "Failed" } as const;
 export type HomeMonitorAuxiliaryDataState = "loading" | "ready" | "error";
 export type HomeAgentMonitorEntry = { kind: "agent"; session: HomeSessionSummary; state: HomeSessionState; mainState: HomeSessionState; auxiliarySessions: AuxiliarySessionSummary[] };
 export type HomeMonitorEntry = HomeAgentMonitorEntry;
@@ -18,20 +19,19 @@ export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessio
   if (cancellationStates.includes("terminating")) return { kind: "running", label: "Waiting For Stop" };
   if (cancellationStates.includes("requested")) return { kind: "running", label: "Canceling" };
   if (session.status === "running" || session.runState === "running" || auxiliaries.some((item) => item.runState === "running")) return { kind: "running", label: "Running" };
-  if (session.runState === "interrupted") return { kind: "interrupted", label: "Interrupted" };
-  if (session.runState === "error") return { kind: "error", label: "Error" };
+  if (session.runState === "interrupted" || session.runState === "error") return HOME_SESSION_FAILURE_STATE;
   if (session.runState && session.runState !== "idle") return { kind: "neutral", label: "Unknown" };
-  return { kind: "neutral", label: sessionStateLabel(session) };
+  return { kind: "neutral", label: sessionStatusLabel(session.status) };
 }
 export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState {
   if (summary.cancellationState === "terminating") return { kind: "running", label: "Waiting For Stop" };
   if (summary.cancellationState === "requested") return { kind: "running", label: "Canceling" };
   if (summary.approvalPending) return { kind: "approval", label: "Attention" };
   if (summary.runState === "running") return { kind: "running", label: "Running" };
-  if (summary.runState === "error") return { kind: "error", label: "Error" };
+  if (summary.runState === "error") return HOME_SESSION_FAILURE_STATE;
   return { kind: "neutral", label: "Idle" };
 }
-function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+export function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
   const isActive = (session: AuxiliarySessionSummary) => ["running", "approval"].includes(getHomeAuxiliarySessionState(session).kind);
   return [...sessions].sort((left, right) => Number(isActive(right)) - Number(isActive(left)) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }

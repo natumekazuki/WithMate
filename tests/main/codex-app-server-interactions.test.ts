@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { CodexTurnInteractions, type CodexInteractionRequest } from "../../src-electron/providers/codex/codex-app-server-interactions.js";
-import type { LiveElicitationRequest, LiveElicitationResponse } from "../../src-shared/session/runtime-state.js";
+import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
+import type { LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 function request(id: string | number, method: string, params: unknown) {
   const results: unknown[] = [];
@@ -18,6 +19,53 @@ function question(id: string, options: unknown = null, isOther = false, isSecret
 const command = "item/commandExecution/requestApproval";
 const inputMethod = "item/tool/requestUserInput";
 const mcpMethod = "mcpServer/elicitation/request";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex MCP formの不正回答は受付境界で拒否し、同じrequestを訂正して元RPCへ一度だけ応答できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms" }
+// fault = "不正回答を受理してformを閉じ、元RPCをprotocol errorで終了する"
+// observable = "受付エラー、live requestと履歴の状態、元RPCに送った応答・エラー"
+// observation_boundary = "consumer"
+// scope = "Codex interaction and SessionElicitationService"
+// lifecycle = "permanent"
+// impact = "利用者が値を訂正できず進行中turnを失敗させる"
+// distinction = "Provider単体testは不正値での終端拒否だけを確認し、受付が同じformを維持することは検証しない"
+// @end-test-value
+test("Codex MCP keeps its response port open after an invalid answer at admission", async () => {
+  let state: LiveSessionRunState = {
+    sessionId: "session", threadId: "thread", assistantText: "", steps: [], backgroundTasks: [],
+    usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null,
+  };
+  const service = new SessionElicitationService({ updateLiveSessionRun: (_id, recipe) => (state = recipe(state)) });
+  const helper = new CodexTurnInteractions({
+    onElicitationRequest: (form, signal) => service.waitForLiveElicitationResponse("session", form, signal!),
+  });
+  const call = request("rpc", mcpMethod, {
+    mode: "form", message: "Provide a contact", serverName: "fixture",
+    requestedSchema: { type: "object", properties: { email: { type: "string", format: "email" } }, required: ["email"] },
+  });
+  try {
+    helper.accept(call.wire);
+    await setImmediate();
+    const form = state.elicitationRequest;
+    assert.ok(form);
+    assert.throws(() => service.resolveLiveElicitation("session", form.requestId,
+      { action: "accept", content: { email: "contact@example" } }), /Correct the answers/);
+    await setImmediate();
+    assert.equal(state.elicitationRequest?.requestId, form.requestId);
+    assert.equal(state.elicitationRecords?.[0]?.status, "pending");
+    assert.deepEqual(call.results, []);
+    assert.deepEqual(call.errors, []);
+    service.resolveLiveElicitation("session", form.requestId, { action: "accept", content: { email: "contact@example.test" } });
+    await setImmediate();
+    assert.equal(state.elicitationRequest, null);
+    assert.deepEqual(call.results, [{ action: "accept", content: { email: "contact@example.test" } }]);
+    assert.deepEqual(call.errors, []);
+  } finally {
+    helper.close();
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -57,10 +105,10 @@ test("native Close returns empty answers and continues serving requests", async 
 
 // @test-value v2
 // kind = "contract"
-// claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方を通知対象として識別できる"
+// claim = "native Codex質問だけがquestion種別を持ち、blocking/nonblocking両方で回答送信を通知する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "native質問の種別を落とすかMCP入力要求もquestionとして投影する"
-// observable = "onElicitationRequestへ渡すkindとblockingおよび元RPCの応答"
+// observable = "onElicitationRequestへ渡すkindとblocking、元RPCの応答と回答送信通知"
 // observation_boundary = "consumer"
 // scope = "Codex native question discrimination"
 // lifecycle = "permanent"
@@ -69,10 +117,11 @@ test("native Close returns empty answers and continues serving requests", async 
 // @end-test-value
 test("distinguishes native questions from MCP input requests", async () => {
   const displayed: LiveElicitationRequest[] = [];
+  const delivered: string[] = [];
   const helper = new CodexTurnInteractions({ onElicitationRequest: (ui) => {
     displayed.push(ui);
     return { action: "accept", content: { q: "answer" } };
-  } });
+  }, onElicitationDelivered: (id) => { delivered.push(id); } });
   const requests = [
     request(1, inputMethod, { isBlocking: true, questions: [question("q")] }),
     request(2, inputMethod, { isBlocking: false, questions: [question("q")] }),
@@ -88,6 +137,7 @@ test("distinguishes native questions from MCP input requests", async () => {
     { kind: undefined, blocking: undefined },
   ]);
   assert.deepEqual(requests.map(({ results, errors }) => [results.length, errors.length]), [[1, 0], [1, 0], [1, 0]]);
+  assert.deepEqual(delivered, displayed.slice(0, 2).map((item) => item.requestId));
   helper.close();
 });
 

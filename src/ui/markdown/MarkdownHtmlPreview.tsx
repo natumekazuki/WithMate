@@ -50,7 +50,8 @@ export function MarkdownHtmlPreview({ path, href, title, children, sourceAttribu
   const loading = !error && current?.html === undefined;
   return (
     <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="HTML" sourceAttributes={sourceAttributes}
-      loading={loading} onReload={unavailable ? undefined : () => setRevision((value) => value + 1)}>
+      loading={loading} reloading={loading && revision > 0}
+      onReload={unavailable ? undefined : () => setRevision((value) => value + 1)}>
       {error ? <span className="message-file-preview-placeholder" role="alert">{error}</span>
         : current?.html !== undefined ? <HtmlPreview html={current.html} source={source} title={title || current.fileName || path} onFind={onFind} />
         : <span className="message-file-preview-placeholder"><LoadingIndicator label="Loading HTML preview" /></span>}

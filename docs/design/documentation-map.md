@@ -6,7 +6,7 @@
 
 - 一般文書は、対象branchの現行実装・設定・呼び出し経路について正しく、現在の利用・開発・保守に必要な情報だけを残します。現在有効な開発規則、互換性・データ保護契約、サポート中の移行・復旧手順は維持します。旧仕様、未実装の構想、作業計画・記録は、新しさ・進行中・採用済み・参照の有無を理由に保存しません。
 - 設計・作業文書の履歴保持を認める例外はADRです。背景、代替案、採否、結果、置換関係を保持でき、古いことや現行実装との違いだけを理由に削除・上書きしません。決定の記録と現在の適用状態は区別します。
-- リリースノートと索引は、ADRとは別枠でrepository内に恒久保存します。当時の変更内容・互換性・検証結果を現在の仕様へ書き換えません。
+- リリースノートと索引は、ADRとは別枠でrepository内に恒久保存します。公開済みノートの当時の記載を現在の仕様へ書き換えません。
 
 それ以外の情報は、次の場所で扱います。
 
@@ -56,6 +56,7 @@
 | [Electron Session Store](electron-session-store.md) | Session・turn・設定・catalogの読書きと保存owner |
 | [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
 | [Session History](session-history.md) | 通常Session APIによる保存済み会話・実行・操作記録の読取 |
+| [WithMate Auto Review](withmate-auto-review.md) | 審査設定、Turn単位の履歴読取と判定、手動承認への復帰 |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
@@ -87,4 +88,4 @@
 | 文書 | 役割 |
 | --- | --- |
 | [ADR](../adr/) | 設計判断の背景、代替案、採否、結果、置換関係。各ADRの適用状態を確認し、判断の採用と実装済みの状態を区別する |
-| [Release Notes](../releases/README.md) | versionごとの変更内容、互換性、当時の検証結果・利用上の注意を恒久保存する |
+| [Release Notes](../releases/README.md) | versionごとの変更内容と利用者への影響を恒久保存する |

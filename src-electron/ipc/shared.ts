@@ -30,6 +30,19 @@ import {
 
 import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/window/workspace-directory-validation.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
+import type { CancelSessionRunRequest } from "../../src-shared/session/runtime-state.js";
+
+export function readCancelSessionRunRequest(value: unknown): CancelSessionRunRequest {
+  const request = value as Partial<CancelSessionRunRequest> | null | undefined;
+  const execution = request?.execution;
+  if (typeof request?.sessionId !== "string" || !request.sessionId.trim()
+    || typeof request.incarnationId !== "string" || !request.incarnationId.trim()
+    || (execution?.kind !== "turn" && execution?.kind !== "receipt")
+    || typeof execution.id !== "string" || !execution.id.trim()) {
+    throw new Error("The cancellation target is invalid.");
+  }
+  return { sessionId: request.sessionId, incarnationId: request.incarnationId, execution: { kind: execution.kind, id: execution.id } };
+}
 
 export async function assertUsableWorkspaceDirectory(
   targetPath: unknown,
@@ -763,6 +776,7 @@ export function assertAuxiliaryCreateModeForOwner(
     Object.hasOwn(input, "codexSandboxMode") ||
     Object.hasOwn(input, "codexSpeed") ||
     Object.hasOwn(input, "codexReviewer") ||
+    Object.hasOwn(input, "withMateReviewerExplicit") ||
     Object.hasOwn(input, "customAgentName")
   ) {
     throw new Error(

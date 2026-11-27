@@ -59,7 +59,7 @@ test("latest turn recovery separates normal loading, preserves recovery, and iso
     output = useLatestSessionTurn(api, sessionId, scope, revision);
     const source = resolveRetrySource({ sessionId, messages: [{ role: "user", text: "Fix it" }], latestTurn: output.turn, runState });
     return <SessionRecoveryActions {...buildLiveSessionRecoveryActions({
-      retryState: source ? { kind: source.kind, lastRequestText: source.lastRequestText } : null,
+      retryState: source && source.kind !== "failed" ? { kind: source.kind, lastRequestText: source.lastRequestText } : null,
       requestKey: `${sessionId}:${scope}:0`, targetLabel: sessionId,
       latestTurnLoading: output.loading, latestTurnError: output.error, onRetryLatestTurn: output.retry,
       isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -7,15 +7,12 @@ import type {
 import type {
   HomeMonitorAuxiliaryDataState,
   HomeMonitorEntry,
-  HomeSessionState,
 } from "./home-session-projection.js";
-import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { ButtonContent } from "../ui/button-content.js";
-import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
-import { ComposerIcon } from "../chat/composer/composer-icon.js";
+import { HomeSessionCard } from "./HomeSessionCard.js";
 import { useCoordinationMonitor } from "../coordination/use-coordination-monitor.js";
 
 export type HomeMonitorContentProps = {
@@ -37,8 +34,6 @@ export type HomeMonitorContentProps = {
     point: SessionMonitorContextMenuPoint,
   ) => void;
 };
-
-type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading";
 
 function fitSectionWeights(weights: number[], closed: boolean[], height: number): number[] {
   if (height <= 0) return weights;
@@ -82,56 +77,6 @@ function layoutMonitorCards(list: HTMLElement) {
   });
   const height = `${Math.max(0, ...heights) - (cards.length ? gap : 0)}px`;
   if (list.style.height !== height) list.style.height = height;
-}
-
-function MonitorStatusIcon({
-  kind,
-  label,
-  count,
-}: {
-  kind: HomeMonitorStatusKind;
-  label: string;
-  count?: number;
-}) {
-  return (
-    <span
-      className={`home-monitor-status-icon ${kind}`}
-      role="img"
-      aria-label={count === undefined ? label : `${label}: ${count}`}
-      title={count === undefined ? label : `${label}: ${count}`}
-    >
-      <span className="home-monitor-status-icon-mark" aria-hidden="true" />
-      {count === undefined ? null : <span className="home-monitor-status-icon-count">: {count}</span>}
-    </span>
-  );
-}
-
-function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
-  const summaries = entry.auxiliarySessions;
-  const groups = [
-    { kind: "approval" as const, label: "Attention" },
-    { kind: "running" as const, label: "Running" },
-    { kind: "running" as const, label: "Canceling" },
-    { kind: "running" as const, label: "Waiting For Stop" },
-    { kind: "error" as const, label: "Error" },
-    { kind: "neutral" as const, label: "Idle" },
-  ].map((group) => ({
-    ...group,
-    count: summaries.filter((summary) => getHomeAuxiliarySessionState(summary).label === group.label).length,
-  })).filter((group) => group.count > 0);
-
-  return (
-    <span className="home-monitor-status-cluster home-monitor-auxiliary-status" aria-label="Auxiliary status">
-      {groups.map((group) => (
-        <MonitorStatusIcon
-          key={group.label}
-          kind={group.kind}
-          label={`Auxiliary ${group.label}`}
-          count={group.count}
-        />
-      ))}
-    </span>
-  );
 }
 
 export function HomeMonitorContent({
@@ -280,119 +225,28 @@ export function HomeMonitorContent({
     });
   };
 
-  const showEntryContextMenu = (
-    event: ReactMouseEvent<HTMLDivElement>,
-    entry: HomeMonitorEntry,
-  ) => {
-    event.preventDefault();
-    onShowContextMenu(entry.kind, entry.session.id, {
-      x: Math.max(0, Math.round(event.clientX)),
-      y: Math.max(0, Math.round(event.clientY)),
-    });
-  };
-
-  const showEntryContextMenuFromKeyboard = (
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    entry: HomeMonitorEntry,
-  ) => {
-    if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) {
-      return;
-    }
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    onShowContextMenu(entry.kind, entry.session.id, {
-      x: Math.max(0, Math.round(rect.left)),
-      y: Math.max(0, Math.round(rect.bottom)),
-    });
-  };
-
   const renderMonitorEntries = (entries: HomeMonitorEntry[]) => entries.map((entry) => {
     const pending = coordinationBySession.get(entry.session.id);
     const coordinationPrimary = pending && !entriesBySection[0]!.some(candidate => candidate.session.id === entry.session.id);
-    const auxiliarySessions = entry.auxiliarySessions;
     const entryKey = getEntryKey(entry);
-    const isExpanded = expandedEntryKeys.has(entryKey);
-    const canExpand = auxiliarySessions.length > 0;
-    const title = entry.session.taskTitle || entry.session.id;
-    const mainUnread = entry.session.hasUnreadResult === true;
-    const auxiliaryUnread = auxiliarySessions.some((summary) => summary.hasUnreadResult);
     const openParent = () => {
       if (coordinationPrimary) void coordination.open(pending);
       else onOpenSession(entry.session.id);
     };
 
     return (
-      <div
+      <HomeSessionCard
         key={entryKey}
-        className="home-monitor-card"
-        onContextMenu={(event) => showEntryContextMenu(event, entry)}
-      >
-        <div className="home-monitor-parent-row">
-          <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${title}`}>
-            <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
-              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
-            </span>
-            <button
-              className={`home-monitor-parent-button${mainUnread ? " has-unread-result" : ""}`}
-              type="button"
-              onClick={openParent}
-              onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
-              aria-haspopup="menu"
-              aria-label={coordinationPrimary ? `Open Coordination for ${title}` : `Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
-              title={title}
-            >
-              <CharacterAvatar
-                character={{ name: entry.session.character, iconPath: entry.session.characterIconPath }}
-                size="tiny"
-                className="home-monitor-avatar"
-              />
-              <strong className="home-monitor-parent-title">{title}</strong>
-            </button>
-          </div>
-          {canExpand ? (
-            <button
-              className={`home-monitor-disclosure${auxiliaryUnread ? " has-unread-result" : ""}`}
-              type="button"
-              aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}${auxiliaryUnread ? "; Unread Result" : ""}`}
-              title={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
-              aria-expanded={isExpanded}
-              onClick={() => toggleEntry(entry)}
-            >
-              <ComposerIcon name="auxiliary" />
-              {renderAuxiliaryStatusIcons(entry)}
-              <span aria-hidden="true">{isExpanded ? "▾" : "▸"}</span>
-            </button>
-          ) : null}
-        </div>
-        {isExpanded ? (
-          <div className="home-monitor-auxiliary-list" aria-label={`Auxiliary sessions for ${title}`}>
-            {auxiliarySessions.map((summary, index) => {
-              const status = getHomeAuxiliarySessionState(summary);
-              const preview = summary.preview?.trim() ?? "";
-              const openAuxiliary = () => {
-                onOpenSession(entry.session.id, summary.id);
-              };
-              return (
-                <button
-                  key={summary.id}
-                  className={`home-monitor-auxiliary-row${summary.hasUnreadResult ? " has-unread-result" : ""}`}
-                  type="button"
-                  onClick={openAuxiliary}
-                  aria-label={`${preview ? `Open Auxiliary: ${preview}` : `Open Auxiliary ${index + 1}`}${summary.hasUnreadResult ? "; Unread Result" : ""}`}
-                >
-                  <CharacterAvatar
-                    character={{ name: "", iconPath: summary.characterIconPath ?? "" }}
-                    size="tiny"
-                    className="home-monitor-auxiliary-avatar"
-                  />
-                  <span className="home-monitor-auxiliary-preview">{preview}</span>
-                  <MonitorStatusIcon kind={status.kind} label={`Auxiliary ${status.label}`} />
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
+        session={entry.session}
+        mainState={entry.mainState}
+        auxiliarySessions={entry.auxiliarySessions}
+        auxiliaryExpanded={expandedEntryKeys.has(entryKey)}
+        coordinationPrimary={Boolean(coordinationPrimary)}
+        onToggleAuxiliary={() => toggleEntry(entry)}
+        onOpenMain={openParent}
+        onOpenAuxiliary={(auxiliarySessionId) => onOpenSession(entry.session.id, auxiliarySessionId)}
+        onShowContextMenu={(point) => onShowContextMenu(entry.kind, entry.session.id, point)}
+      />
     );
   });
 
@@ -469,7 +323,13 @@ export function HomeMonitorContent({
           <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-coordination">
             <div className="home-monitor-section-head">
               <h3 id="home-monitor-coordination">Coordination</h3>
-              <span className="home-monitor-count" aria-label={`${sectionCounts[1]} Main session groups`}>{sectionCounts[1]}</span>
+              <span
+                className="home-monitor-count"
+                aria-hidden={!coordination.hasSnapshot || undefined}
+                aria-label={coordination.hasSnapshot ? `${sectionCounts[1]} Main session groups` : undefined}
+              >
+                {coordination.hasSnapshot ? sectionCounts[1] : null}
+              </span>
             </div>
             <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
               {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}

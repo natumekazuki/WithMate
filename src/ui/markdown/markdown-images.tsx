@@ -19,6 +19,7 @@ import {
   useImageViewport,
 } from "../image-viewport.js";
 import { useDialogA11y } from "../a11y.js";
+import { LoadingIndicator } from "../loading-indicator.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { MarkdownRenderContext, type MessageCopyFeedback } from "./markdown-context.js";
 import type { MarkdownImageResolver } from "./image-resource-loader.js";
@@ -271,13 +272,10 @@ export const MarkdownImage = memo(function MarkdownImage({
       {...sourceAttributes}
       ref={shellRef}
       className={`message-image-shell${isResolvingWithoutSource ? " is-resolving" : ""}`}
+      aria-busy={isLoading || undefined}
     >
       {showLoadingIndicator ? (
-        <span
-          className="message-image-loading"
-          role="status"
-          aria-label="Loading image"
-        />
+        <span className="message-image-loading"><LoadingIndicator inline label={alt ? `Loading image: ${alt}` : "Loading image"} /></span>
       ) : null}
       {loadStatus === "error" ? (
         <span className="message-image-error" role="alert" title={source}>

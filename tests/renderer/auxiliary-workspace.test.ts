@@ -128,6 +128,60 @@ function deferred<T>() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Auxiliaryの切替候補は共有終了結果の最新の既読状態を反映し、選択・並び・送信対象から独立する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#main-conversation-switcher" }
+// fault = "未選択Auxiliaryの結果通知を無視する、遅い旧取得で既読を巻き戻す、または未読の変化で切替順や送信対象を変更する"
+// observable = "実workspaceが切替へ渡す候補順・未読属性と選択ID・送信対象"
+// observation_boundary = "consumer"
+// scope = "Auxiliary workspaceから共通切替への、既存結果readとturn通知の接続。結果と通知はfixture"
+// lifecycle = "permanent"
+// impact = "開いていないAuxiliaryの確認要否がMonitorと食い違う、または閲覧位置や入力先を失う"
+// distinction = "既読サービス単体や共通切替のDOMテストは未選択Auxiliaryの通知、非同期逆順と一覧の独立性を検証しない"
+// @end-test-value
+test("Auxiliary switcher follows shared unread updates without changing order or target", async () => {
+  const a = session("a", "2026-01-01", { preview: "First" });
+  const b = session("b", "2026-01-02", { preview: "Second" });
+  const unreadResult = { turnId: 4, assistantMessageSeq: 1 };
+  const stale = deferred<typeof unreadResult>();
+  const reads: string[] = [];
+  let nextA: Promise<typeof unreadResult | null> = Promise.resolve(unreadResult);
+  let onTurn: ((id: string) => void) | undefined;
+  const view = setup({
+    listAuxiliarySessions: async () => [a, b],
+    getAuxiliarySession: async (id) => id === a.id ? a : id === b.id ? b : null,
+    getUnreadSessionResult: (id) => { reads.push(id); return id === a.id ? nextA : Promise.resolve(null); },
+    onSessionTurnUpdated: (listener) => { onTurn = listener; return () => { onTurn = undefined; }; },
+  });
+  const messageColumn = createStaticTextConversationMessageColumnProps({
+    sessionId: "parent-1", characterId: "fixture", characterName: "Fixture",
+    messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+  });
+  const surface = () => view.current.buildConcurrentChats({
+    mainSession: null, auxiliarySession: view.current.selectedSession, messageColumn,
+  });
+  const options = () => surface().auxiliaryItems.map(({ id, hasUnreadResult }) => [id, hasUnreadResult]);
+  try {
+    await view.render();
+    await act(async () => view.current.setTarget("auxiliary"));
+    assert.deepEqual(options(), [["b", false], ["a", true]]);
+    assert.ok(onTurn);
+    nextA = stale.promise;
+    await act(async () => onTurn?.(a.id));
+    nextA = Promise.resolve(null);
+    await act(async () => { onTurn?.("elsewhere"); onTurn?.(a.id); });
+    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    await act(async () => stale.resolve(unreadResult));
+    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    assert.equal(surface().selectedAuxiliaryId, b.id);
+    assert.equal(surface().target, "auxiliary");
+    assert.deepEqual(reads, ["a", "b", "a", "a"]);
+  } finally {
+    await view.unmount();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "実行状態が変わらないAuxiliary追加入力も親の保存通知で表示され、本文deltaや対象外・metadata通知では詳細再読込みを増やさない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界" }
 // fault = "保存通知を購読せず同じrunの受理済入力を表示しない、またはlive本文deltaだけで詳細を再取得する"
@@ -729,15 +783,17 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main/Auxiliary対象の切替とAuxiliary追加は選択中の幅を変更せず、確定した幅0は同一親の再マウントでも復元する"
-// oracle = { type = "contract", ref = "issue-710-auxiliary-width-target-separation" }
-// fault = "対象切替や新規追加で幅が暗黙に変わる、幅0から対象切替だけで再展開する、または確定した幅0を親セッション再マウントで失う"
+// claim = "Auxiliary追加は新しい会話を送信対象にし、対象切替と追加は幅を変更せず、確定した幅0を同一親へ戻った際に復元する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: UI Flow" }
+// fault = "追加後もMainを送信対象にする、対象切替や追加で幅が暗黙に変わる、または確定した幅0を親セッション切替後に失う"
 // observable = "hookのtarget、selectedId、widthRatioと親セッション切替後のwidthRatio"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-workspace-layout"
 // lifecycle = "permanent"
+// impact = "追加したAuxiliaryへ送るつもりの入力をMainへ誤送信することを防ぎ、会話領域の表示設定を保持する"
+// distinction = "型検査や作成serviceのtestでは作成後の送信対象と表示幅のrenderer状態を確認できない"
 // @end-test-value
-test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持する", async () => {
+test("Auxiliary追加は送信対象を切り替え、対象切替と追加は幅0を保持する", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
   const api: AuxiliaryWorkspaceApi = {
@@ -758,7 +814,7 @@ test("対象切替は選択・幅を変更せず、Auxiliaryの幅0を保持す�
   assert.equal(view.current.widthRatio, 0);
   await act(async () => { view.current.addSession(b); });
   assert.equal(view.current.selectedId, "b");
-  assert.equal(view.current.target, "main");
+  assert.equal(view.current.target, "auxiliary");
   assert.equal(view.current.widthRatio, 0);
   await view.render("parent-2");
   await view.render("parent-1");

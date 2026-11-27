@@ -1,6 +1,6 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { LiveApprovalDecision, LiveApprovalRequest, LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
@@ -21,6 +21,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     beginRunningInput?: SessionRuntimeServiceDeps["beginRunningInput"];
     settleRunningInput?: SessionRuntimeServiceDeps["settleRunningInput"];
     appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
+    beginSourceDisplayTurn?: SessionRuntimeServiceDeps["beginSourceDisplayTurn"];
     checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
     persistQueuedTurnStart?: SessionRuntimeServiceDeps["persistQueuedTurnStart"];
@@ -30,6 +31,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getSession(sessionId: string): Promise<Session | null>;
   };
   resolution: {
+    assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
     resolveProviderCatalog: SessionRuntimeServiceDeps["resolveProviderCatalog"];
@@ -58,7 +60,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     broadcastLiveSessionRun(sessionId: string): void;
   };
   interaction: {
-    waitForApprovalDecision(sessionId: string, request: LiveApprovalRequest, signal: AbortSignal): Promise<LiveApprovalDecision> | LiveApprovalDecision;
+    waitForApprovalDecision: SessionRuntimeServiceDeps["waitForApprovalDecision"];
+    startWithMateApprovalReview?: SessionRuntimeServiceDeps["startWithMateApprovalReview"];
     waitForElicitationResponse(sessionId: string, request: LiveElicitationRequest, signal: AbortSignal): Promise<LiveElicitationResponse> | LiveElicitationResponse;
     cancelApprovals(sessionId: string): void;
     cancelElicitations(sessionId: string): void;
@@ -90,10 +93,11 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
-    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId, queuedInput)),
+    appendRunningInput: (...args) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(...args)),
     beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
+    beginSourceDisplayTurn: deps.auxiliary.beginSourceDisplayTurn,
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
     persistQueuedTurnStart: deps.auxiliary.persistQueuedTurnStart ? (session, count, queueId, turn) => guarded("queued turn start", () => deps.auxiliary.persistQueuedTurnStart!(session, count, queueId, turn)) : undefined,
@@ -102,6 +106,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     onSessionRunReleased: deps.onSessionRunReleased,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
+    assertSavedReplyTo: deps.resolution.assertSavedReplyTo,
     resolveProviderSession: (session) => guarded("provider session path", async () => {
       const auxiliary = await deps.auxiliary.getSession(session.id);
       return deps.provider.resolveProviderSession(session, auxiliary?.parentSessionId ?? session.id);
@@ -130,6 +135,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,
+    startWithMateApprovalReview: deps.interaction.startWithMateApprovalReview,
     waitForElicitationResponse: deps.interaction.waitForElicitationResponse,
     setProviderQuotaTelemetry: (telemetry) => { assertOwner("provider quota projection"); deps.live.setProviderQuotaTelemetry(telemetry); },
     setSessionContextTelemetry: (telemetry) => { assertOwner("session context projection"); deps.live.setSessionContextTelemetry(telemetry); },

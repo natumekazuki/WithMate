@@ -1,4 +1,4 @@
-import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
+import type { CancelSessionRunRequest, ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { SessionTurnRecord } from "../session/session-turn-state.js";
 import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../session/session-folder-cleanup.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
@@ -133,10 +133,16 @@ import type {
   SessionGlossaryProjection,
 } from "../glossary/glossary-contract.js";
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
+import type { HomeCrewContextMenuRequest, HomeCrewPageResult } from "../window/home-crew-types.js";
+import type { OpenSessionWindowIdsPageRequest } from "../window/withmate-window-types.js";
 import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
 import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
 
 export type WithMateWindowNavigationApi = {
+  /** Home main frame only. Restart at the first page if a continuation is refused; do not publish partial pages. */
+  listHomeCrewPage(request?: OpenSessionWindowIdsPageRequest | null): Promise<HomeCrewPageResult>;
+  /** Home main frame only. Main resolves targets and confirmation from this exact member identity. */
+  showHomeCrewContextMenu(request: HomeCrewContextMenuRequest): Promise<SessionMonitorContextMenuResult>;
   showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
   listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
   focusSessionFilePreviewWindow(token: string): Promise<void>;
@@ -255,6 +261,7 @@ export type WithMateWindowSessionApi = {
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
+  retryFailedSessionTurn(sessionId: string, request: import("../session/session-turn-queue.js").RetryFailedSessionTurnRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
   sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   getSessionTurnQueueReceipt(sessionId: string, requestId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt | null>;
   listSessionTurnQueue(sessionId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt[]>;
@@ -264,9 +271,8 @@ export type WithMateWindowSessionApi = {
   updateQueuedSessionTurn(sessionId: string, request: import("../session/session-turn-queue.js").UpdateQueuedSessionTurnRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   cancelQueuedSessionTurnEdit(sessionId: string, request: import("../session/session-turn-queue.js").QueuedSessionTurnEditRequest): Promise<void>;
   reorderQueuedSessionTurns(sessionId: string, request: import("../session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReorderResult>;
-  releaseInterruptedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
-  cancelSessionRun(sessionId: string): Promise<void>;
+  cancelSessionRun(request: CancelSessionRunRequest): Promise<void>;
   getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
   getUnreadSessionResult(sessionId: string): Promise<import("../session/session-turn-state.js").UnreadSessionResult | null>;
   markSessionResultRead(sessionId: string, turnId: number): Promise<boolean>;
@@ -293,7 +299,7 @@ export type WithMateWindowAuxiliaryApi = {
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
   steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
-  cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
+  cancelAuxiliarySessionRun(request: CancelSessionRunRequest): Promise<void>;
 };
 
 export type WithMateWindowObservabilityApi = {
@@ -304,6 +310,7 @@ export type WithMateWindowObservabilityApi = {
 };
 
 export type WithMateWindowSettingsApi = {
+  getAppVersion(): Promise<string>;
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void>;
@@ -343,6 +350,7 @@ export type WithMateWindowPickerApi = {
 export type WithMateWindowSubscriptionApi = {
   onSessionTurnUpdated(listener: (sessionId: string) => void): () => void;
   onSessionTurnQueueChanged(listener: (sessionId: string) => void): () => void;
+  onSessionSentDeliveriesChanged(listener: (sourceSessionId: string) => void): () => void;
   subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
   subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
   acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;

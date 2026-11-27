@@ -178,6 +178,14 @@ export class TerminalService<TWindow extends TerminalOwner> {
     return count;
   }
 
+  getWindowCloseImpacts(window: TWindow): { identity: object; requiresConfirmation: boolean }[] {
+    return [...this.terminals.values()].flatMap((entry) =>
+      entry.window === window && (entry.phase === "starting" || entry.phase === "running")
+        ? [{ identity: entry.startAbort, requiresConfirmation: this.requiresCloseConfirmation(entry) }]
+        : [],
+    );
+  }
+
   countRequiringCloseConfirmation(window: TWindow): number {
     let count = 0;
     for (const entry of this.terminals.values()) {

@@ -6,7 +6,7 @@
 
 子Session作成前、または既存Sessionへ送る次Turnの実行設定を選び直す前に、`session.get_selection_policy`を読みます。実際の選択肢は宛先ProviderとWorkspaceの`session.get_catalog`から取得し、Model Availabilityを含む制約に従います。必要なら`session.get_provider_quota`で既存の利用枠観測も確認します。
 
-方針は判断材料であり、自動選定・実行許可ではありません。既存SessionのProviderは固定です。`enqueue`のModel／Depth／権限は当該次Turnだけへ適用され、`steer`は実行中Turnの設定を維持します。Roleによる作成権限、Characterの自動選定、個別操作の承認は変更しません。
+方針は判断材料であり、自動選定・実行許可ではありません。既存SessionのProviderは固定です。`enqueue`のModel／Depthの指定は当該次Turnだけへ適用され、権限は受付時の宛先の保存設定を使います。`steer`は実行中Turnの設定を維持します。Roleによる作成権限、Characterの自動選定、個別操作の承認は変更しません。
 
 Worktreeを新しく用意する直前には`session.resolve_worktree`へ対象repositoryのWorkspaceとbranch名を渡します。既存Worktreeの利用と新規作成候補を区別し、Git操作・base branch・作成先の占有・Workspaceの適否を別途確認します。照会自体はGitや設定を変更しません。
 

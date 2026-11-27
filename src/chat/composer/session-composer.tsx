@@ -3,13 +3,10 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ClipboardEven
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
 import { ButtonContent } from "../../ui/button-content.js";
-import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
-import { getApprovalReviewerOptionsForProvider } from "../../../src-shared/settings/provider-runtime-options.js";
-import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
+import { isSessionApprovalChoice, type SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
-import { isCodexReviewerControlDisabled, type CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
 
 import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
 
@@ -58,12 +55,14 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
+  replyUnavailableReason?: string;
   queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
   isActive?: boolean;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
   isCanceling?: boolean;
+  isAwaitingRunStop?: boolean;
   canSendInput?: boolean;
   onSendInput?: () => void;
   onQueueTurn?: () => void;
@@ -73,6 +72,7 @@ export type SessionComposerExpandedProps = {
   onCheckTurnReceipt?: () => void;
   onRetryOriginalTurn?: () => void;
   submissionError?: string;
+  inputAcceptanceUnconfirmed?: boolean;
   targetDock?: ReactNode;
   recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
@@ -109,12 +109,9 @@ export type SessionComposerExpandedProps = {
   externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
-  approvalOptions: Array<{ value: ApprovalMode; label: string; disabled?: boolean }>;
+  approvalOptions: Array<{ value: string; label: string; disabled?: boolean }>;
   providerId?: string;
-  runtimeSelectionIdentity?: string;
-  selectedApprovalMode: ApprovalMode;
-  reviewerOptions: Array<{ value: CodexReviewer; label: string; disabled?: boolean }>;
-  selectedCodexReviewer: CodexReviewer;
+  selectedApprovalMode: string;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
@@ -152,8 +149,7 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
-  onChangeApprovalMode: (value: ApprovalMode, confirmedReviewerChange?: ConfirmedReviewerChange) => void;
-  onChangeCodexReviewer: (value: CodexReviewer) => void;
+  onChangeApprovalMode: (value: SessionApprovalChoice) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (model: ModelCatalogItem) => void;
@@ -163,12 +159,14 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
+  replyUnavailableReason,
   queuedTurnEdit,
   isActive = true,
   composerController,
   onRetryComposerSave,
   isRunning,
   isCanceling = false,
+  isAwaitingRunStop = false,
   canSendInput = false,
   onSendInput,
   onQueueTurn,
@@ -178,6 +176,7 @@ export function SessionComposerExpanded({
   onCheckTurnReceipt,
   onRetryOriginalTurn,
   submissionError,
+  inputAcceptanceUnconfirmed = false,
   targetDock = null,
   recoveryActions = null,
   dockModeSwitch = null,
@@ -216,10 +215,7 @@ export function SessionComposerExpanded({
   isComposerBlockedFeedbackActive,
   approvalOptions,
   providerId,
-  runtimeSelectionIdentity,
   selectedApprovalMode,
-  reviewerOptions = [],
-  selectedCodexReviewer = "user",
   sandboxOptions,
   selectedCodexSandboxMode,
   speedOptions = [],
@@ -258,7 +254,6 @@ export function SessionComposerExpanded({
   onDraftCompositionEnd,
   onSendOrCancel,
   onChangeApprovalMode,
-  onChangeCodexReviewer = () => {},
   onChangeCodexSandboxMode,
   onChangeCodexSpeed = () => {},
   onChangeModel,
@@ -286,7 +281,7 @@ export function SessionComposerExpanded({
         runState: isRunning ? "running" : "idle",
         canSendInput: !canQueueTurn && canSendInput && !isCanceling,
         canQueueTurn,
-        busyReason: turnRecoveryBusyReason || (queueTurnBusy ? "Message submission is in progress." : composerSendability.busyReason),
+        busyReason: turnRecoveryBusyReason || composerSendability.busyReason || (queueTurnBusy ? "Message submission is in progress." : ""),
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
@@ -304,10 +299,14 @@ export function SessionComposerExpanded({
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
-  const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
+  const showBusySendState = !turnRecoveryAction && queueTurnBusy;
+  const recoveryControlsBusy = queueTurnBusy || displayedComposerSendability.isBusy || !!turnRecoveryAction;
   const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
-    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable;
-  const sendDisabledReason = composerFrozen
+    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable
+    || !!replyUnavailableReason;
+  const sendDisabledReason = replyUnavailableReason
+    ? replyUnavailableReason
+    : composerFrozen
     ? "Input is frozen while the window is closing."
     : turnRecoveryAction === "check"
       ? "Checking turn acceptance."
@@ -319,9 +318,9 @@ export function SessionComposerExpanded({
             ? "Cannot send while a run is active."
             : queueTurnBusy
               ? displayedComposerSendability.busyReason || "Message submission is in progress."
-              : composerBlocked || isComposerDisabled
-                ? displayedComposerSendability.primaryFeedback || "Message cannot be sent in this conversation."
-                : displayedSendButtonTitle || displayedComposerSendability.busyReason || "Message cannot be sent.";
+              : displayedComposerSendability.primaryFeedback || displayedComposerSendability.busyReason
+                || (composerBlocked || isComposerDisabled ? "Message cannot be sent in this conversation."
+                  : displayedSendButtonTitle || "Message cannot be sent.");
   const sendTitle = appendShortcutLabel(
     sendDisabled ? sendDisabledReason : queuedTurnEdit ? "Submit" : displayedSendButtonTitle || "Send",
     SHORTCUT_COMMAND_IDS.composerSubmit,
@@ -343,52 +342,13 @@ export function SessionComposerExpanded({
       : undefined,
   ].filter(Boolean).join(" ") || undefined;
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
-  const approvalSelectRef = useRef<HTMLSelectElement>(null);
-  const approvalDialogRef = useRef<HTMLDialogElement>(null);
-  const approvalCancelRef = useRef<HTMLButtonElement>(null);
-  const approvalDescriptionId = useId();
-  const [pendingApproval, setPendingApproval] = useState<{ value: ApprovalMode; previousApprovalMode: ApprovalMode; owner: string } | null>(null);
-  const approvalOwnerKey = `${errorOwnerKey}:${runtimeSelectionIdentity ?? ""}`;
-  const isPendingApprovalCurrent = !!pendingApproval && pendingApproval.owner === approvalOwnerKey
-    && pendingApproval.previousApprovalMode === selectedApprovalMode && selectedCodexReviewer === "auto-review"
-    && providerId === "claude" && !composerControlsDisabled && showExecutionModeControls;
-
-  useEffect(() => {
-    const dialog = approvalDialogRef.current;
-    if (!dialog) return;
-    if (isPendingApprovalCurrent && !dialog.open) {
-      dialog.showModal();
-      approvalCancelRef.current?.focus();
-    } else if (!isPendingApprovalCurrent && dialog.open) {
-      dialog.close();
-    }
-    if (pendingApproval && !isPendingApprovalCurrent) setPendingApproval(null);
-  }, [isPendingApprovalCurrent, pendingApproval]);
-
-  const dismissApprovalConfirmation = () => {
-    approvalDialogRef.current?.close();
-    setPendingApproval(null);
-    approvalSelectRef.current?.focus();
-  };
-
-  const selectApprovalMode = (value: ApprovalMode) => {
-    const reviewerConflict = selectedCodexReviewer === "auto-review"
-      && getApprovalReviewerOptionsForProvider(providerId, value)
-        .some((option) => option.value === "auto-review" && option.disabled);
-    if (reviewerConflict) {
-      setPendingApproval({ value, previousApprovalMode: selectedApprovalMode, owner: approvalOwnerKey });
-      return;
-    }
-    onChangeApprovalMode(value);
-  };
-
   useEffect(() => {
     if (!isActive || !showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
       setIsAttachmentMenuOpen(false);
     }
   }, [isActive, canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
 
-  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey]);
+  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey, controllerOwner.frameKey]);
   useEffect(() => {
     if (!isActive && isAgentPickerOpen) onCloseAgentPicker();
   }, [isActive, isAgentPickerOpen, onCloseAgentPicker]);
@@ -578,7 +538,7 @@ export function SessionComposerExpanded({
                     disabled={isCanceling}
                     aria-busy={isCanceling || undefined}
                   >
-                    <ButtonContent busy={isCanceling}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
+                    <ButtonContent busy={isCanceling && !isAwaitingRunStop}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
                   </button>
                 ) : null}
               </div>
@@ -666,17 +626,18 @@ export function SessionComposerExpanded({
               <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
                 <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} isActive={isActive} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
               </span>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy || !!turnRecoveryAction} aria-busy={turnRecoveryAction === "check" || undefined}>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={recoveryControlsBusy} aria-busy={turnRecoveryAction === "check" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
               </button>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={queueTurnBusy || !!turnRecoveryAction || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={recoveryControlsBusy || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "retry"}>Retry Original Turn</ButtonContent>
               </button>
             </div>
           ) : null}
-          {submissionError && !onCheckTurnReceipt ? (
+          {submissionError && (inputAcceptanceUnconfirmed || !onCheckTurnReceipt) ? (
             <div id={submissionErrorId} className="composer-save-feedback">
-              <span role="status">{queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
+              <span role="status">{inputAcceptanceUnconfirmed ? "Input acceptance could not be confirmed. Your draft is preserved."
+                : queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
               <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} isActive={isActive} label="Message Submission Error Details" message={submissionError} />
             </div>
           ) : null}
@@ -712,28 +673,13 @@ export function SessionComposerExpanded({
                 label="Approval"
                 value={selectedApprovalMode}
                 options={approvalOptions}
-                onChange={(value) => selectApprovalMode(value as ApprovalMode)}
-                selectRef={approvalSelectRef}
+                onChange={(value) => {
+                  if (isSessionApprovalChoice(value) && approvalOptions.some((option) => option.value === value && !option.disabled)) {
+                    onChangeApprovalMode(value);
+                  }
+                }}
                 disabled={executionControlsDisabled}
-                invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled)}
               />
-
-              {reviewerOptions.length > 0 ? (
-                <ComposerSettingSelect
-                  className="composer-setting-reviewer"
-                  label="Reviewer"
-                  value={selectedCodexReviewer}
-                  options={reviewerOptions}
-                  onChange={(value) => onChangeCodexReviewer(value as CodexReviewer)}
-                  invalid={reviewerOptions.some((option) => option.value === selectedCodexReviewer && option.disabled)}
-                  disabled={!!queuedTurnEdit || isCodexReviewerControlDisabled({
-                    approvalMode: selectedApprovalMode,
-                    isRunning: isRunning && !canQueueTurn,
-                    composerBlocked: composerBlocked || composerFrozen,
-                  }) || (reviewerOptions.filter((option) => !option.disabled).length === 1
-                    && reviewerOptions.some((option) => option.value === selectedCodexReviewer && !option.disabled))}
-                />
-              ) : null}
 
               {sandboxOptions.length > 0 ? (
                 <ComposerSettingSelect
@@ -828,18 +774,6 @@ export function SessionComposerExpanded({
         </span>
       </div>
 
-      <dialog ref={approvalDialogRef} className="session-recovery-conflict" aria-label="Change Approval and Reviewer" aria-describedby={approvalDescriptionId}
-        onCancel={(event) => { event.preventDefault(); dismissApprovalConfirmation(); }}>
-        <p id={approvalDescriptionId}>{approvalOptions.find((option) => option.value === pendingApproval?.value)?.label} requires Reviewer to be User. Switch from Auto Review to User and change Approval?</p>
-        <div className="session-recovery-conflict-actions">
-          <button ref={approvalCancelRef} className="drawer-toggle compact secondary" type="button" onClick={dismissApprovalConfirmation}>Cancel</button>
-          <button className="drawer-toggle compact" type="button" disabled={!isPendingApprovalCurrent} onClick={() => {
-            if (!pendingApproval || !isPendingApprovalCurrent) return;
-            onChangeApprovalMode(pendingApproval.value, { previousApprovalMode: pendingApproval.previousApprovalMode });
-            dismissApprovalConfirmation();
-          }}>Switch Reviewer and Approval</button>
-        </div>
-      </dialog>
     </div>
   );
 }

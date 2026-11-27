@@ -6,6 +6,8 @@
 
 通常Session APIの`list_messages / get_message / list_operations / get_operation_detail`は同じ対象検証と保存履歴helperを使い、Turn参照を持たない既存messageも取得できる。空会話は明示した空window（`fromSeq: 0, toSeq: -1`）の一覧を返す。
 
+`session.list_messages`と配布CLIの`list-messages`は、履歴所有Mainを`target`に指定したまま、任意の`thread`で同じ[会話枠](#main列の初期枠子session枠)の保存本文だけを取得できる。初期枠は`null`、相手枠はその直接の子のMain SessionTarget（ID・incarnationを含む）。`thread`の省略は従来どおり対象の全履歴。明示指定が正確な相手枠を識別しない場合やAuxiliaryを対象に指定した場合は、全履歴に置き換えずエラーを返す。件数とoffsetは絞込結果に対し、`window`と個々の`seq`は正本履歴の座標を保つ。子Session自身の本文や送信カードの重ね表示は含めない。個別seq取得の契約は変えない。
+
 読取の正本は`src-electron/storage/session-execution-read.ts`で、Storage Workerの`execution.execute`が既存DBの一つのread transactionから返す。receiptの`turn_id`から`session_turns_v6`の`user_message_seq`／`assistant_message_seq`だけを参照し、最新messageを代用しない。状態・入力概要・結果を同じsnapshotから返し、終端結果にもその時点の追加入力概要を含める。成功・取消・失敗と本文確定は別であり、終端保存がない場合は`not-saved`、Turn未確定のdispatchは`unknown`として返す。
 
 `list_execution_inputs`は開始入力に続けて、`Message.turnInput.turnId`が一致し配送保存を確認できた追加入力をseq順に返す。pending／unknown、未送信、記録不足は別に示す。本文の位置や近い時刻から所属を補わない。受付入口の比較と開始入力の変更有無は独立し、複数受付が同じTurnへ属しても専用回答や因果関係を推定しない。
@@ -14,11 +16,39 @@
 
 `get_execution_input`は不変受付原文と予定／dispatch固定入力の`inputPair`を一つのsnapshotで返す。原文不明は`null`である。本文は`maxChars`と`offset`で分割し、各pieceの実offset・続き・全長を返す。続きは最初の応答の`expectedInput`を指定し、予定入力が編集された場合は`EXECUTION_INPUT_RESTART_REQUIRED`として先頭からの再取得を要求する。cursorには既存の更新時刻と参照identityを使い、本文全体・独自hash・別revision台帳は保持しない。添付はID・種類・名前の参照だけを返し、内部の絶対pathを公開しない。
 
-`list_sent_deliveries`は表示中の保存message seqまたは明示live WithMate Turnに属する送信を、既存の不変receipt originから一括逆引きする。受付順のcursor、20件までのpage、原文全文の`text`を返す。保存metadataがCoordinationを示す通知には、`coordination.id`と相談／回答全文の`coordination.text`を併記する。元の`text`は原文のままとし、通常本文をJSONらしい形だけでCoordination扱いしない。エージェント向けの原文・入力比較の必要時読取には`get_execution_input`を使う。
+`list_sent_deliveries`は表示中の保存message seqまたは明示live WithMate Turnに属する送信を、既存の不変receipt originから一括逆引きする。受付順のcursor、20件までのpage、原文全文の`text`を返す。保存metadataがCoordinationを示す通知には、`coordination.id`、相談／回答全文の`coordination.text`、通知に保存された相談原文の`coordination.consultation`を併記する。`get_execution`も同じ通知投影を返す。元の`text`は原文のままとし、通常本文をJSONらしい形だけでCoordination扱いしない。エージェント向けの原文・入力比較の必要時読取には`get_execution_input`を使う。
+
+`list_issued_coordinations`は同じ保存message seq／明示live WithMate Turnの範囲と正確な起票元Session／incarnationに属する保存recordを読む。receiptがなくても起票Turnが一致するユーザー宛相談を含み、本文・起票Turn・表示中messageへの所属をrecord ID順のcursorと最大20件のpageで返す。表示中の同Turnのassistantを優先し、なければ表示中userへ付け、両方なければlive Turnのmessage参照はnullにする。出力内の厳密な位置や未記録の所属は推定しない。消去済みrecordは一覧から除き、別台帳や本文コピーを所有しない。MCPと配布CLIは同じSession操作schema・application dispatchで公開する。
+
+`list_sent_steers`は同じsource Turn解決を使い、直接Steerを宛先Mainの保存user messageの`turnInput.origin`から逆引きする。本文全文、正確な宛先とmessage seq、pending／confirmed／unknown／not-sentを返す。保存message行のsequenceをcursorに最大20件ずつ読み、receiptのcursorや状態とは混ぜない。queue経由のSend Inputは既存receiptを持つため`list_sent_deliveries`で扱う。直接Steerの詳細は返却された宛先とmessage seqで`get_execution`へ照会する。originのない入力を現在の親情報から補完しない。
 
 `list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
 
+## Main列の初期枠・子Session枠
+
+Session WindowのMain列は、初期枠と、保存された直接の親子関係・作成元・Crewが一致する作成済みの子Sessionごとに、同じ履歴を読み分ける。やり取りのない子も枠を持つ。Window専用の`read_conversation_threads`は所有Main Sessionとincarnationを確認し、既存の受付来歴・保存message・Turn記録から表示範囲の正本seqを返す。子に帰属が確定した本文は初期枠に重複させず、初期の内容や帰属不明の記録は初期枠に残す。履歴の変更・複製や別Provider会話、配送の追加は行わない。
+
+子からの開始入力に正確に対応する応答と、その応答中の送信カードは元の順に表示する。別枠から子宛てに送った記録がある場合は、その子の枠にも該当する一通だけを表示する。GUIの直接／予約Steerは実際に追加したWithMate Turnの開始入力の所属を継ぐ。Agent由来の追加入力はそれ自体の送信元の来歴で分類する。追加入力は同じTurnの応答を自分専用の返信にしない。現在選んでいる枠・本文・時刻から所属を推定しない。
+
+MainのGUIで通常送信するときは、明示返信した保存発言の所属を優先し、なければ送信操作時に開いている相手枠、相手枠もなければ初期枠に固定する。`ALL` は表示所属にならない。受付中も実行中も、入力とその通常応答を同じ枠に表示し、後から閲覧枠を替えても移さない。ALLには元の履歴順で一度だけ表示する。表示所属は既存のキュー受付の入力にのみ記録し、配送・Providerの会話・実行先は変えない。子起点の入力、Auxiliary、Steer、失敗Turnの再実行には、この送信時の指定を適用しない。
+
+表示所属を持たない旧GUI受付では、同じMainとincarnationの過去の保存seqを正確に指す明示返信だけを辿る。最終回答Turnも指定されていれば保存された回答と照合する。確定できない返信や返信のない入力から当時開いた枠を推定しない。保存済みの履歴や受付の書き換えは行わない。
+
+GUIのCoordination回答は、起票元のMain・incarnation・WithMate Turnと開始receiptを照合し、待機・実行・保存履歴とProvider入力の会話文脈をその枠に揃える。同Turnへの自動Steerでは元のTurnを継続し、通常配送では回答とその新Turnの応答を同じ枠に表示する。既存データも一致する起票参照だけから解決し、右ペイン操作時の閲覧枠には依存しない。
+
+失敗Turnの再実行は、照合できた同一Main・incarnationの失敗Turnと開始receiptから会話所属を引き継ぐ。元の入力と再実行入力がともに未変更と確認できた場合、待機・実行中・保存済みの入力カードは元発言者と宛先を示し、照合できる元発言者のCharacterカラーを使う。再実行の受付主体はGUIのままとし、由来や編集差の説明はカードに付けない。予約編集でも所属と元の記録は変えず、本文が同じでも添付の変更があれば元発言者の原文として扱わない。実行記録の読取では変更ありと比較不能を区別し、確認できた編集差と元送信者名は既存のDetailsに示す。
+
+本文は既存の会話pageで取得し、絞り込む場合は1 page分の正本seqを指定する。Find・Messages navigatorは表示枠に属する保存本文を全履歴から検索し、Bookmarkは正本seqの状態を変える。送信カードは従来の一括読取と状態の区別を共用する。
+
+## 明示返信
+
+GUIでは保存発言の返信ボタンで一通を選ぶ。Session間の送信カードは返信元として選べない。選んだ一通だけを履歴上で強調し、同じボタンの押下状態とアイコンで示す。別を押すと選択が移り、同じボタンを再度押すと解除する。選択・解除は送信先、下書き本文、閲覧位置を変えず、Composerに元本文の引用を表示しない。Mainでは明示返信も[枠ごとの下書き](desktop-ui.md#main-conversation-switcher)に保持する。未指定時に最新発言を自動指定しない。Agentの通常送信は、現Turnを起動した保存入力の実送信元と宛先が一致する場合だけ、その起動入力を参照する。別Sessionへの追加指示や、起動入力に特定できない送信に返信参照は付けない。
+
+選んだ参照は送信時に確定し、キューの入力JSONと保存発言JSONへ任意の`replyTo`として保存する。予定入力の編集や同じTurnへの追加送信で参照を差し替えない。送信後のGUIの引用は既存の一通読取から表示し、元の発言が利用できないときは別の発言で補わない。履歴や宛先の変更、追加のID・テーブル・backfillは行わない。
+
 ## 本文・操作詳細のpaging
+
+送信後の引用は一行に収め、幅を超えた部分だけ表示上省略する。正確な保存seqと世代がこのWindowに表示できると確認したときは、既存の会話枠・履歴pagingを使ってその発言へ移動し、短く強調する。旧送信receiptは、保存された送信元Turnと同じreceiptを親側の投影で確認できる場合だけ、親側の該当カードに移動する。宛先側の発言、Turn中の別カード、近い位置に置き換えない。未確定・権限外・別Windowにしかない参照は引用を非リンクで表示する。移動は下書き・送信先・履歴を変えない。
 
 通常Session APIは既存の保存履歴read engineを共用する。message／operationの一覧はoffsetとlimit、本文・詳細はoffsetとmaxChars（UTF-16 code unit）で取得する。応答のtotalとnextOffsetで続きを判断し、surrogate pairを途中で分割しない。未保存の操作詳細を空成功や成功実績へ補完しない。
 

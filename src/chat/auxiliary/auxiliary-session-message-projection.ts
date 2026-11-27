@@ -19,6 +19,7 @@ export type MessageListSource =
       kind: "live-assistant";
       sessionId: string;
       threadId: string | null;
+      withMateTurnId?: string;
     };
 
 export type MessageListProjection = {
@@ -47,6 +48,7 @@ type AuxiliaryMessageLookupSession = Pick<AuxiliarySession, "id" | "messages">;
 export type LiveAssistantProjection = {
   sessionId: string;
   threadId: string | null;
+  withMateTurnId?: string;
   messageIndex: number;
   text: string;
 };
@@ -137,7 +139,7 @@ export function buildMessageListProjection(
   const liveAssistant = normalizeLiveAssistantProjection(options.liveAssistant);
   const primaryMessageSourceKind = options.primaryMessageSourceKind ?? "session";
   const liveAssistantKey = liveAssistant
-    ? buildLiveAssistantProjectionKey(liveAssistant.sessionId, liveAssistant.threadId, liveAssistant.messageIndex)
+    ? buildLiveAssistantProjectionKey(liveAssistant.sessionId, liveAssistant.threadId, liveAssistant.messageIndex, liveAssistant.withMateTurnId)
     : null;
 
   const addSessionMessage = (message: Message, messageIndex: number) => {
@@ -213,6 +215,7 @@ export function buildMessageListProjection(
       kind: "live-assistant",
       sessionId: liveAssistant.sessionId,
       threadId: liveAssistant.threadId,
+      ...(liveAssistant.withMateTurnId ? { withMateTurnId: liveAssistant.withMateTurnId } : {}),
     });
     keys.push(liveAssistantKey);
     groups.push(group);
@@ -270,7 +273,7 @@ export function projectLiveAssistantOnSessionHistory(
   const live = normalizeLiveAssistantProjection(liveAssistant);
   if (!live || live.sessionId !== sessionId) return history;
 
-  const key = buildLiveAssistantProjectionKey(live.sessionId, live.threadId, live.messageIndex);
+  const key = buildLiveAssistantProjectionKey(live.sessionId, live.threadId, live.messageIndex, live.withMateTurnId);
   if (hasAssistantMessageAtIndex(sessionMessages, live.messageIndex)) {
     const localIndex = sessionMessages.findIndex((message, index) => getMessageHistoryIndex(message, index) === live.messageIndex);
     if (history.keys[localIndex] === key) return history;
@@ -281,7 +284,8 @@ export function projectLiveAssistantOnSessionHistory(
 
   return {
     messages: [...history.messages, { role: "assistant", text: live.text }],
-    sources: [...history.sources, { kind: "live-assistant", sessionId, threadId: live.threadId }],
+    sources: [...history.sources, { kind: "live-assistant", sessionId, threadId: live.threadId,
+      ...(live.withMateTurnId ? { withMateTurnId: live.withMateTurnId } : {}) }],
     keys: [...history.keys, key],
     groups: [...history.groups, null],
   };
@@ -291,8 +295,10 @@ export function buildLiveAssistantProjectionKey(
   sessionId: string,
   threadId: string | null,
   messageIndex: number,
+  withMateTurnId?: string,
 ): string {
-  return `live-assistant-${sessionId}-${messageIndex}-${threadId || "pending"}`;
+  return withMateTurnId ? `live-assistant-${sessionId}-turn-${withMateTurnId}`
+    : `live-assistant-${sessionId}-${messageIndex}-${threadId || "pending"}`;
 }
 
 export function hasPersistedLiveAssistantMessage(

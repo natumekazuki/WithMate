@@ -1,6 +1,7 @@
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "../settings/approval-mode.js";
 import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider } from "../settings/provider-runtime-options.js";
 import { CODEX_REVIEWER_VALUES, type CodexReviewer } from "../settings/codex-reviewer.js";
+import { supportsWithMateAutoReview } from "../settings/withmate-auto-review.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, type CodexSpeed } from "../settings/codex-speed.js";
 import { isModelReasoningEffort, type ModelCatalogProvider, type ModelReasoningEffort } from "../settings/model-catalog.js";
@@ -13,12 +14,12 @@ export type SessionExecutionOptions = Readonly<{
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
+  withMateReviewerExplicit?: true;
   customAgentName: string;
 }>;
 
-/** Explicit per-message choices; omitted Model/Depth are resolved only at acceptance. */
-export type SessionMessageExecutionOptions = Pick<SessionExecutionOptions, "approvalMode"> &
-  Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort" | "codexSandboxMode">>;
+/** Public per-message selections; the recipient supplies saved permissions. */
+export type SessionMessageExecutionOptions = Partial<Pick<SessionExecutionOptions, "model" | "reasoningEffort">>;
 
 export function captureSessionExecutionOptions(source: Pick<Session, keyof SessionExecutionOptions>): SessionExecutionOptions {
   return Object.freeze({
@@ -28,6 +29,7 @@ export function captureSessionExecutionOptions(source: Pick<Session, keyof Sessi
     codexSandboxMode: source.codexSandboxMode,
     codexSpeed: source.codexSpeed,
     codexReviewer: source.codexReviewer,
+    ...(source.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
     customAgentName: source.customAgentName,
   });
 }
@@ -61,6 +63,10 @@ export function validateSessionExecutionOptions(
   if (!CODEX_REVIEWER_VALUES.includes(candidate.codexReviewer as CodexReviewer)) {
     throw new Error("The selected reviewer is invalid.");
   }
+  if (candidate.withMateReviewerExplicit !== undefined
+    && (candidate.withMateReviewerExplicit !== true || !supportsWithMateAutoReview(providerCatalog.id))) {
+    throw new Error("The explicit WithMate reviewer setting is invalid for this provider.");
+  }
   if (getApprovalReviewerOptionsForProvider(providerCatalog.id, candidate.approvalMode as ApprovalMode)
     .some((option) => option.value === candidate.codexReviewer && option.disabled)) {
     throw new Error("The selected reviewer is not supported with this approval mode.");
@@ -75,6 +81,7 @@ export function validateSessionExecutionOptions(
     codexSandboxMode: candidate.codexSandboxMode as CodexSandboxMode,
     codexSpeed: candidate.codexSpeed as CodexSpeed,
     codexReviewer: candidate.codexReviewer as CodexReviewer,
+    ...(candidate.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
     customAgentName: candidate.customAgentName,
   });
 }

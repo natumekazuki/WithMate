@@ -40,7 +40,6 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const cancelConversationQuery = useStableOptionalCallback(props.cancelConversationQuery);
   const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
   const onCancelQueuedTurn = useStableOptionalCallback(props.onCancelQueuedTurn);
-  const onReleaseInterruptedTurn = useStableOptionalCallback(props.onReleaseInterruptedTurn);
 
   return (
     <MemoizedSessionMessageColumn
@@ -65,7 +64,6 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       cancelConversationQuery={cancelConversationQuery}
       onLoadMessagePage={onLoadMessagePage}
       onCancelQueuedTurn={onCancelQueuedTurn}
-      onReleaseInterruptedTurn={onReleaseInterruptedTurn}
     />
   );
 }

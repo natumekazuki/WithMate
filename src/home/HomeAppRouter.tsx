@@ -5,6 +5,7 @@ import { SettingsWindowScreen } from "../settings/SettingsWindowScreen.js";
 import { HomeDashboardScreen } from "./HomeDashboardScreen.js";
 import { HomeMonitorWindowScreen } from "./HomeMonitorWindowScreen.js";
 import { HomeStatusScreen } from "./HomeStatusScreen.js";
+import type { HomeDashboardScreenProps } from "./HomeDashboardScreen.js";
 
 type HomeAppRouterProps = {
   desktopRuntime: boolean;
@@ -16,7 +17,7 @@ type HomeAppRouterProps = {
   isMonitorWindowMode: boolean;
   monitorContent: ReactNode;
   header: ReactNode;
-  rightPaneLabel: "Monitor" | "Characters" | "Previews";
+  rightPaneLabel: HomeDashboardScreenProps["rightPaneLabel"];
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;

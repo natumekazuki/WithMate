@@ -92,9 +92,9 @@ import type {
   SessionMonitorEntryKind,
 } from "../../src-shared/window/withmate-window-types.js";
 import { useHomeSessionMonitor } from "./use-home-session-monitor.js";
-import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
+import { resolveRandomHomeLaunchReadiness, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
-type HomeRightPaneView = "monitor" | "characters" | "previews";
+import { homeRightPaneLabels, type HomeRightPaneView } from "./HomeHeader.js";
 
 export default function HomeApp() {
   const desktopRuntime = isDesktopRuntime();
@@ -634,17 +634,17 @@ export default function HomeApp() {
   const openSessionsLoadStatus = openSessionWindowIdsState.status === "loaded"
     ? sessionSummariesState.openStatus
     : openSessionWindowIdsState.status;
-  const randomLaunchFeedback = launchDraft.characterSelectionMode === "random"
-    ? resolveRandomHomeLaunchFeedback(sessionSummariesState.characterUsageStatus, openSessionsLoadStatus)
-    : "";
-  const launchFeedback = launchFeedbackState.source === "readiness" ? randomLaunchFeedback
-    : launchFeedbackState.source === "creation-error" ? "" : launchFeedbackState.message;
+  const randomLaunchReadiness = launchDraft.characterSelectionMode === "random"
+    ? resolveRandomHomeLaunchReadiness(sessionSummariesState.characterUsageStatus, openSessionsLoadStatus)
+    : null;
+  const launchFeedback = launchFeedbackState.source === "launch" ? launchFeedbackState.message : "";
   const launchCreationError = launchFeedbackState.source === "creation-error" ? launchFeedbackState.message : "";
+  const randomLaunchWaiting = randomLaunchReadiness !== null;
   useEffect(() => {
-    if (!randomLaunchFeedback) {
+    if (!randomLaunchWaiting) {
       setLaunchFeedbackState((current) => current.source === "readiness" ? { message: "", source: "launch" } : current);
     }
-  }, [randomLaunchFeedback]);
+  }, [randomLaunchWaiting]);
 
   const homeLaunchHandlers = buildHomeLaunchHandlers({
     launchDraft,
@@ -908,6 +908,7 @@ export default function HomeApp() {
       projection: launchProjection,
       canUsePrimaryFeatures,
       launchFeedback,
+      randomLaunchReadiness,
       launchCreationError,
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
@@ -934,7 +935,7 @@ export default function HomeApp() {
       isMonitorWindowMode={isMonitorWindowMode}
       monitorContent={monitorContent}
       header={header}
-      rightPaneLabel={rightPaneView === "monitor" ? "Monitor" : rightPaneView === "previews" ? "Previews" : "Characters"}
+      rightPaneLabel={homeRightPaneLabels[rightPaneView]}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}

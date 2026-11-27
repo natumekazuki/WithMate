@@ -1,4 +1,5 @@
 import type { ElicitationRecord, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import { isValidCodexElicitationContent } from "../../src-shared/session/codex-elicitation-validation.js";
 
 type PendingElicitationRequest = {
   request: LiveElicitationRequest;
@@ -11,7 +12,7 @@ type PendingElicitationRequest = {
 
 type SessionElicitationServiceOptions = {
   notifyQuestion?: (sessionId: string, signal: AbortSignal) => void;
-  sendUserMessage?: (sessionId: string, turnId: string, message: string, answer: string) => Promise<void>;
+  sendUserMessage?: (sessionId: string, turnId: string, message: string, answer: string, requestId: string) => Promise<void>;
   updateLiveSessionRun: (
     sessionId: string,
     recipe: (current: LiveSessionRunState) => LiveSessionRunState,
@@ -50,6 +51,10 @@ export class SessionElicitationService {
     if (response.action !== "accept" && response.action !== "decline" && response.action !== "cancel") {
       throw new Error("Invalid input response.");
     }
+    if (response.action === "accept" && pending.request.provider === "codex" && pending.request.kind !== "question"
+      && pending.request.mode === "form" && !isValidCodexElicitationContent(pending.request.fields, response.content)) {
+      throw new Error("Some answers do not match the form. Correct the answers and submit the same form again.");
+    }
     if (pending.request.delivery === "user-message" && response.action === "accept") {
       const { turnId } = pending.request;
       if (!turnId || !this.options.sendUserMessage) throw new Error("Question answering is unavailable.");
@@ -58,7 +63,7 @@ export class SessionElicitationService {
       pending.sending = true;
       return Promise.resolve().then(() => {
         if (pending.expired) throw new Error("The input request no longer exists.");
-        return this.options.sendUserMessage!(sessionId, turnId, message, answer);
+        return this.options.sendUserMessage!(sessionId, turnId, message, answer, pending.request.requestId);
       }).then(() => {
         pending.settle(response, "answered");
       }, (error: unknown) => {

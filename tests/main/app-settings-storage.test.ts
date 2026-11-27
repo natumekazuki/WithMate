@@ -14,6 +14,43 @@ import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboar
 describe("AppSettingsStorage", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "設定行がないDB・設定リセット・破損した審査設定ではOffを維持し、明示保存された一組は再起動後も読み取れる"
+  // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+  // fault = "未設定から自動承認を有効にする、壊れた設定を有効化する、または明示設定を永続化しない"
+  // observable = "SQLite再読込・reset時の審査設定"
+  // observation_boundary = "public-boundary"
+  // scope = "既存app_settingsへのreviewer設定の保存と再読込"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization", "privacy"]
+  // distinction = "rendererの初期状態だけでは既存DBと破損保存値を確認できない"
+  // @end-test-value
+  it("requires an explicit saved review selection and never enables from a broken row", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-review-settings-"));
+    const dbPath = path.join(directory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      const initial = storage.getSettings();
+      assert.equal(initial.withMateAutoReview, null);
+      const selection = { providerId: "codex", model: "chosen", reasoningEffort: "high" } as const;
+      storage.updateSettings({ ...initial, withMateAutoReview: selection });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().withMateAutoReview, selection);
+      const database = new DatabaseSync(dbPath);
+      try { database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?").run("{broken", "withmate_auto_review_json"); }
+      finally { database.close(); }
+      assert.equal(storage.getSettings().withMateAutoReview, null);
+      storage.updateSettings({ ...initial, withMateAutoReview: selection });
+      assert.equal(storage.resetSettings().withMateAutoReview, null);
+    } finally {
+      storage?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "model無効化設定を独立保存し未知IDも再openで保持し、破損JSONや不正値はエラーにしてresetで空に戻す"
   // oracle = { type = "contract", ref = "docs/design/model-catalog.md" }
   // fault = "無効化指定を永続化しないか読込エラーを空設定へ救済する"

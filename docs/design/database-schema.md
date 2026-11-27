@@ -30,7 +30,7 @@ turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設�
 
 失敗したassistant messageは生成本文`text`と失敗理由`runFailure`を分けてJSONへ保存する。本文に通知を含む既存の保存データは、同ownerのfailed turnとassistant message位置・error summaryが一致する通知末尾だけを読取時に分離する。生成本文に似た文字列があるだけでは失敗と判定せず、保存済みの本文・artifact・bookmarkは破壊しない。全件・page・会話queryで同じ本文投影を使用する。
 
-質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。入力値や既定値、再操作用のlive requestは保存しない。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
+質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。通常質問について送信された選択肢の位置と秘密でない自由回答を保持する。秘密値・一般formの入力値・未送信の既定値や再操作用のlive requestは保存しない。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
 
 通常Session送信の`accepted_json.origin.requestedExecutionOptions`は送信時の明示設定（省略項目を除く）を保持する。省略を解決した実効設定は既存の`accepted_json.request.executionOptions`へ格納し、同一request IDの照合には両方を使う。既存行に指定情報がない場合は補完せず、保存済み受付・結果を従来どおり読み取る。専用tableやschema migrationは追加しない。
 
@@ -50,11 +50,15 @@ Turn Queueは次の項目を保持する。
 - 状態
 - 最小turn ID／user seq
 - 追加入力先Turn ID
-- 結果不明後の明示解放時刻
+- 旧形式の明示解放時刻（既存receiptとの互換用。現在は後続実行の条件に使わない）
 
 受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。
 
 receiptのUUIDは受付時から終端後まで同じexecution identityである。新規受付は実actorの会話・incarnation・Turn、操作と明示宛先をoriginとして入力に含める。GUI入力はGUI起点として区別する。受付時入力は再試行照合元であり、編集と追加入力では変更しない。採用入力は通常dispatchとqueue経由Steerのclaimで本文・添付を一緒に固定し、Provider未呼出が確認されたqueued復帰でのみ固定を解除する。固定はProvider受信の証明ではない。原文・採用入力が保存されていない既存行はNULLのまま保持し、現在の入力から補わない。
+
+失敗Turnの明示的な新規再実行は既存の受付JSONに元receipt・Turn・送信来歴を`retrySource`として保持する。新しい受付の`origin`はGUIであり、元の配送actorや実行設定を再使用しない。追加入力は新しい開始入力へ混ぜない。
+
+送信側表示用の`source_display_position`は、受付時の送信元Turnのlive assistant本文のUTF-16位置を保持する。`source_display_verified`は確定本文が観測時の本文prefixを保持した場合だけ1にする。prefix自体はメモリで保持し、DBへ複製しない。受付の再試行比較には表示位置を含めず、初回受付の位置を維持する。未検証・未記録の履歴位置は不明とし、時刻や内容から推測しない。
 
 Session送信の`origin.deliveryTiming`は`immediate`（省略時の既定）または`after_source_turn`である。後者も受付時にreceiptを永続化し、通常のqueued状態で保持する。dispatch／Steerのclaimは、受付originの正確な送信元Main・incarnation・Turnの保存済みphaseがcompleted／failed／canceledで、終端保存が確定したものだけを対象とする。未完了・不明・置換された送信元では開始しない。実行候補はこの条件を満たすqueued項目の実行順とし、終了待ちの項目だけで後続の即時送信を塞がない。sourceの終端保存と結果は既存Turnを正本とし、新しいtableや終了フラグを持たない。受付読取の`sourceTurnPhase`はその正本から投影し、dispatch時の終端phaseを採用originへ含める。受付時本文とoriginは変更しない。
 
@@ -62,9 +66,11 @@ Session送信の`origin.deliveryTiming`は`immediate`（省略時の既定）ま
 
 Sessionからの送信とCoordination配送のoriginには、受付時の送信元・宛先のSession名とCharacterのID・名前・icon参照を表示snapshotとして含める。snapshotは表示用であり、認可・navigationには実Session identityを使う。再試行や予定入力の編集で保存済みsnapshotを現在の名前・Characterへ付け替えず、snapshotのない既存originへ現在値を補記しない。
 
-送信側の読取は、表示中の保存message seqを既存Turnへ一括解決し、receiptの`accepted_json.origin`にある送信actorのkind・Session・incarnation・Turnを完全一致させる。実行中は明示されたWithMate Turnだけを追加対象にし、Provider native IDや最新Turnから推測しない。既存receiptのexpression indexを使い、受付sequenceのkeysetで最大20件ずつ、本文は320文字の原文previewとして返す。全文と配送・受信Turnの結果は返却された正確な宛先とreceiptから共通execution読取で取得する。送信本文の別保存や会話messageの複製は行わない。
+送信側の読取は、表示中の保存message seqを既存Turnへ一括解決し、送信actorのkind・Session・incarnation・Turnを完全一致させる。実行中は明示されたWithMate Turnだけを追加対象にし、Provider native IDや最新Turnから推測しない。通常送信とqueue経由Send Inputは`list_sent_deliveries`で不変の`accepted_json.origin`から読み、receiptの受付sequenceをcursorとする。直接Steerは`list_sent_steers`で宛先Mainの既存user messageの`turnInput.origin`から読み、保存message行IDをcursorとする。それぞれexpression indexを使い、独立したkeysetで最大20件ずつ本文全文を返す。直接Steerには正確な宛先message seqとpending／confirmed／unknown／not-sentを返し、receiptを生成しない。共通execution詳細は返却された宛先とreceiptまたはmessage seqから取得する。送信本文の別保存や会話messageの複製は行わず、origin未記録の直接入力は逆引きしない。
 
 Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。
+
+通常受付と同時にclaimされた行は、`starting`と採用入力が揃った状態で初めて参照可能になる。実行枠を確保しなかった行は従来どおり`queued`として保存する。
 
 会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。
 
@@ -73,6 +79,8 @@ Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親ま�
 全履歴検索とMessages navigatorは、storage ownerの短いindexed cursor batchと、DBを所有しないCPU Workerで処理する。検索のsourceは保存本文、previewはMarkdownの表示検索投影を使い、全件のmatch数、messageの`seq`、message内の`occurrenceIndex`を維持する。
 
 結果は任意offsetから最大64件と総件数を返し、全本文・全matchの配列を転送・保持しない。Navigatorはuser／assistantだけを対象とし、Bookmarkを投影前に絞り、previewは最大160 Unicode codepointとする。
+
+Navigatorに子スレッド等の所属範囲が指定された場合は、正本seqの短いbatchで対象本文だけを読む。発言元はbatch内のuser seqについて、Main／Auxiliaryのownerとincarnationを照合する。紐づき済みreceiptの部分indexを既存V6 DBにも起動時に追加し、本文・receipt・schema versionは変更しない。同じseqに複数receiptがある場合は受付sequenceが最後のreceiptを使い、採用入力を受付時入力より優先する。receiptがなければ本文内の直接Steerのoriginを使う。
 
 継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
 
@@ -88,6 +96,8 @@ Characterの定義fileは`<userData>/characters/<character-id>/`に置き、cata
 
 Agent担当が未取得の回答をユーザーへ引き継ぐ場合は、その未開始配送と回答を取り消し、引継ぎ理由を現在の相談情報として示す。取得済みの回答は引継ぎで置き換えず、新しい相談として扱う。訂正された相談は現在の訂正先を参照できる。
 
+関連Turnへの自動Steerは既存receiptの`input_turn_id`／`dispatched_json`とMain／AuxiliaryのSteer appendを使い、入力・回答取得・receipt完了を同じtransactionへ含める。新規受付の`coordination.targetKind`は正確な配送先種別を保持する。これを持たない既存receiptへ現在値を補記せず、通常queueで配送する。interruptedで結果不明の回答は修正や引継ぎでも置換しない。関係照合と再送防止は[Coordinationの関連Turn配送](session-run-lifecycle.md#coordinationの関連turn配送)に従い、別台帳やmigrationは追加しない。
+
 取り下げと回答は併存する。取り下げは受理済み回答・queueを取消さず、未取得の有効な回答も受付ける。queueの本文は相談／回答の自然文とし、ID・回答revision・来歴・状態を持つ通知snapshotは既存captured入力の`coordination.notification`へ分離する。受付時入力を保ち、dispatch claim時に現在状態と取り下げ理由を採用通知へ追加する。Providerには本文と別の入力来歴contextで通知を渡す。通知JSONを本文に持つ既存受付も保存metadataで識別してdispatch時に分離し、受付原文と既存の保存会話は書き換えない。置き換えで取り消した受付も通常queueの受付記録として残る。Coordinationは既存Provider質問・承認やGUI Steerへ変換しない。
 
 起票Turn終了・Window close・再起動で記録は失効しない。Crew削除は未対応記録の起票元・現在のAgent担当と通常queueの既存guardで判定し、成立したCrew全体削除ではCrew所有記録をcascade削除する。解決済みや取り下げ済みの相談もCrewが存続する間保持する。
@@ -99,6 +109,8 @@ Agent担当が未取得の回答をユーザーへ引き継ぐ場合は、その
 Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Auxiliaryが共有する。親削除で全記録をcascade削除し、AuxiliaryのCloseでは消さない。構造・競合・MCP・表示の契約は[Session Graph](session-graph.md)を参照する。
 
 起動時の`ensureV6Schema`は、`app_settings.session_graph_agent_origin_contract_initialized_at`が未設定の場合に全Session・全TopicのGraph専用4 tableの行をrevision・payloadごと初期化する。Graphの初期化とmarker保存は同じtransaction内で行い、Window／MCPの利用前に完了する。markerは設定リセットでも保持し、再呼出し・再起動では新しく保存したGraphを消さない。Session、会話・draft・turn、Character資産や参照先fileは初期化対象に含めず、旧Graphの変換・読取互換は提供しない。
+
+Copilot／OpenCodeの明示Reviewerは、Mainでは `sessions_v6.runtime_policy_json.withMateReviewerExplicit`、Auxiliaryでは `auxiliary_sessions.withmate_reviewer_explicit` に保持する。旧データのマークなし／0は未指定であり、保存済みReviewerを明示したものと解釈しない。受付時に捕捉した値は後から書き換えない。
 
 ## Additional Directory
 

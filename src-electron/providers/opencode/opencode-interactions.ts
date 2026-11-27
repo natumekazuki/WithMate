@@ -28,5 +28,6 @@ export function buildOpenCodeElicitation(form: FormInfo1, requestId: string): Li
     }
     return result;
   });
-  return { requestId, provider: "opencode", kind: "question", mode: "form", message: form.title, fields, blocking: true };
+  return { requestId, provider: "opencode", kind: "question", mode: "form", message: form.title, fields, blocking: true,
+    retainQuestionAnswer: form.metadata?.kind === "question" };
 }

@@ -212,7 +212,7 @@ function sendQueue(h: Awaited<ReturnType<typeof mountDrafts>>, state: ReturnType
     auxiliaryDraftOwner: h.drafts.getOwner(selected)!, queueTurn: true, clearDraft: true, collapseActionDock: false,
     isCurrentSubmission: () => input.isCurrent() && state.binding.getSession()?.createdAt === selected.createdAt,
     selectedSessionRunState: selected.runState, blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-    state: { setComposerPreview: (preview) => h.registry.setPreview(owner, preview), setPendingSubmitSessionId() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} },
+    state: { setComposerPreview: (preview) => h.registry.setPreview(owner, preview), onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} },
     log() {},
   }).finally(release));
 }

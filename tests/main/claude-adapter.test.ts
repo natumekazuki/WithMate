@@ -1360,7 +1360,7 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 // kind = "contract"
 // claim = "Claudeは送信時ApprovalとReviewerをSDKの全6モードへ写像し、UserのProvider Controlledだけ通常toolを強制askする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
-// fault = "Auto Reviewをdefaultで実行するか、autoに強制askを重ねるか、Auto Runのbypass opt-inを渡さない"
+// fault = "Auto Reviewをdefaultで実行する、auto・Safety Focusedに通常toolの強制askを重ねる、またはAuto Runのbypass opt-inを渡さない"
 // observable = "SDK queryへ渡るpermission設定、PreToolUseの返却値、artifactのReviewer選択値"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn approval mapping"
@@ -1372,6 +1372,7 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
   for (const [approvalMode, codexReviewer, permissionMode] of [
     ["never", "user", "bypassPermissions"], ["never", "auto-review", "bypassPermissions"],
     ["on-request", "user", "default"], ["on-request", "auto-review", "auto"],
+    ["safety-focused", "auto-review", "default"],
     ["accept-edits", "user", "acceptEdits"], ["dont-ask", "user", "dontAsk"], ["plan", "user", "plan"],
   ] as const) {
     const request = input();
@@ -1386,7 +1387,9 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
           tool_name: toolName, tool_input: {}, tool_use_id: "tool-1",
         }, "tool-1", { signal: new AbortController().signal });
         const readOnly = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName);
-        assert.deepEqual(output, readOnly || permissionMode === "dontAsk" || (permissionMode !== "default" && toolName !== "AskUserQuestion") ? {} : {
+        const asks = toolName === "AskUserQuestion" ? permissionMode !== "dontAsk"
+          : !readOnly && approvalMode === "on-request" && codexReviewer === "user";
+        assert.deepEqual(output, !asks ? {} : {
           hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "WithMate approval required" },
         }, `${approvalMode}: ${toolName}`);
       }
@@ -1534,10 +1537,10 @@ it("rejects unavailable Claude modes without silently changing the selection", a
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Preapproved Only以外の全modeのAskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
+// claim = "Preapproved Only以外の全modeのAskUserQuestionは自由入力をSDK answersへ戻し、回答の引渡しを履歴へ通知する"
 // oracle = { type = "contract", ref = "Issue #751; src-shared/session/runtime-state.ts LiveElicitationRequest" }
 // fault = "Questionをapprovalへ誤配送する、またはOther入力を破棄する"
-// observable = "Elicitation cardのfieldsとSDK permission updatedInput.answers"
+// observable = "Elicitation cardのfields、SDK permission updatedInput.answers、回答引渡し通知"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
 // lifecycle = "permanent"
@@ -1557,6 +1560,8 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
       yield result("thread-question");
     }) });
     const request = input();
+    const delivered: string[] = [];
+    request.onElicitationDelivered = (id) => { delivered.push(id); };
     request.executionOptions = { ...request.executionOptions, approvalMode, codexReviewer };
     request.onElicitationRequest = (card) => {
       allowsFreeText = card.fields.some((field) => field.name === "0" && field.type === "select" && field.allowFreeText === true);
@@ -1564,6 +1569,7 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
     };
     await adapter.runSessionTurn(request);
     assert.equal(allowsFreeText, true);
+    assert.deepEqual(delivered, ["question-1"]);
     assert.deepEqual(permission, { behavior: "allow", updatedInput: {
       questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }], answers: { "Which path?": "A custom path" },
     } });

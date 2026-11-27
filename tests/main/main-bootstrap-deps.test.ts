@@ -50,6 +50,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     ipcRegistration: {
       window: {
+        async listHomeCrewPage() { return { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false }; },
+        async showHomeCrewContextMenu() { return { status: "dismissed" }; },
         async showSessionFilePreviewContextMenu() { return "dismissed"; },
         async listSessionFilePreviewWindows() { return []; },
         focusSessionFilePreviewWindow() {},
@@ -121,6 +123,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         getModelCatalog: () => ({ providers: [] }),
       } satisfies MainIpcCatalogDepsArgs,
       settings: {
+        getAppVersion: () => "1.0.0",
         getAppSettings: () =>
           ({ providers: {}, codingProviderSettings: {} }) as never,
         updateAppSettings: (settings) => settings,

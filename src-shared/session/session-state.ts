@@ -1,4 +1,5 @@
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
+import { sessionReplySchema, type SessionReply } from "./session-reply.js";
 import { getDefaultApprovalModeForProvider } from "../settings/provider-runtime-options.js";
 import {
   DEFAULT_CODEX_SANDBOX_MODE,
@@ -53,11 +54,13 @@ export type TurnInputMetadata = {
   nativeTurnId: string;
   state: TurnInputDeliveryState;
   queueId?: string;
+  questionRequestId?: string;
   origin?: import("./session-turn-queue.js").SessionSteerOrigin;
   attachments: ComposerAttachment[];
 };
 
 export type Message = {
+  replyTo?: SessionReply;
   output?: ProviderOutput;
   turnInput?: TurnInputMetadata;
   runFailure?: string;
@@ -108,6 +111,7 @@ export type Session = Partial<SessionRelationship> & {
   codexSandboxMode: CodexSandboxMode;
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
+  withMateReviewerExplicit?: true;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   customAgentName: string;
@@ -203,6 +207,7 @@ export type CreateSessionInput = {
   codexSandboxMode?: CodexSandboxMode;
   codexSpeed?: CodexSpeed;
   codexReviewer?: CodexReviewer;
+  withMateReviewerExplicit?: true;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   customAgentName?: string;
@@ -230,6 +235,7 @@ export type CreateSessionRequest = Omit<
   | "codexSandboxMode"
   | "codexSpeed"
   | "codexReviewer"
+  | "withMateReviewerExplicit"
   | "model"
   | "reasoningEffort"
   | "customAgentName"
@@ -410,6 +416,11 @@ function normalizeElicitationRecords(value: unknown): ElicitationRecord[] | unde
         title: field.title,
         ...(typeof field.description === "string" ? { description: field.description } : {}),
         ...(Array.isArray(field.options) ? { options: field.options.filter((option): option is string => typeof option === "string") } : {}),
+        ...(field.answer && Array.isArray(field.answer.selected) && Array.isArray(field.answer.text)
+          && (field.options === undefined || (Array.isArray(field.options) && field.options.every((option) => typeof option === "string")))
+          && field.answer.selected.every((index) => Number.isSafeInteger(index) && index >= 0 && index < (Array.isArray(field.options) ? field.options.length : 0))
+          && field.answer.text.every((text) => typeof text === "string")
+          ? { answer: { selected: [...field.answer.selected], text: [...field.answer.text] } } : {}),
       })),
     });
   }
@@ -438,6 +449,7 @@ export function normalizeMessage(value: unknown): Message | null {
   return {
     role: candidate.role,
     text: typeof candidate.text === "string" ? candidate.text : "",
+    ...(candidate.replyTo === undefined ? {} : { replyTo: sessionReplySchema.parse(candidate.replyTo) }),
     ...(candidate.output ? { output: normalizeProviderOutput(candidate.output, typeof candidate.text === "string" ? candidate.text : "") } : {}),
     ...(candidate.turnInput ? { turnInput: structuredClone(candidate.turnInput) } : {}),
     ...(candidate.role === "assistant" && typeof candidate.runFailure === "string" ? { runFailure: candidate.runFailure } : {}),
@@ -532,6 +544,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     ),
     codexSpeed: normalizeCodexSpeed((candidate as { codexSpeed?: unknown }).codexSpeed),
     codexReviewer: normalizeCodexReviewer((candidate as { codexReviewer?: unknown }).codexReviewer),
+    ...(candidate.withMateReviewerExplicit === true ? { withMateReviewerExplicit: true } : {}),
     model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
@@ -746,6 +759,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
     codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
     codexReviewer: normalizeCodexReviewer(input.codexReviewer ?? DEFAULT_CODEX_REVIEWER),
+    ...(input.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
@@ -824,6 +838,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
     summary.codexSandboxMode,
     summary.codexSpeed,
     summary.codexReviewer,
+    summary.withMateReviewerExplicit,
     summary.workspacePath,
     summary.branch,
     summary.sessionKind,

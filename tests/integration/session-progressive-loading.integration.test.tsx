@@ -17,10 +17,10 @@ function deferred<T>() {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Session基本情報の取得後は会話待ち・失敗でもFilesを操作でき、会話だけを再試行できる。成功した空会話はloading/errorと区別される"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/744" }
-// fault = "全Session取得をshell表示の条件にする、失敗を空会話と扱う、または未取得の会話を送信可能なSessionとして扱う"
-// observable = "実SessionWindowAppの基本情報・Files tab操作・loading/status/alert・Retry後の会話DOM・Send disabled状態"
+// claim = "Session基本情報の取得後は会話待ち・失敗でもFilesを操作でき、会話だけを再試行できる。読込待ちを送信中・成功した空会話と区別する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/744; docs/design/ui-design-guidelines.md#ボタン; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "会話取得をshell表示の条件にする、読込中を送信中に見せる、失敗を空会話と扱う、または未取得の会話を送信可能とする"
+// observable = "実SessionWindowAppの基本情報・Files tab操作・会話パネルのloading/status/alert・Retry後の会話DOM・Send disabled/busyと理由"
 // observation_boundary = "component-behavior"
 // scope = "Session Window progressive data reads"
 // lifecycle = "permanent"
@@ -85,7 +85,7 @@ test("Sessionは基本情報から描画し会話の失敗と空状態を独立�
     assert.doesNotMatch(container.textContent!, /No session is selected/);
     await act(async () => { summaryRead.resolve(summary); });
     assert.match(container.textContent!, /Composer input benchmark/);
-    assert.ok(container.querySelector('[role="status"][aria-label="Loading conversation"][aria-busy="true"]'));
+    assert.ok(container.querySelector('#session-main-chat-pane [role="status"][aria-label="Loading conversation"][aria-busy="true"]'));
     assert.equal(container.querySelectorAll('[role="alert"]').length, 0, container.querySelector('[role="alert"]')?.textContent ?? "Loading is not an error");
     assert.ok(filesCalls > 0, "Files read starts without waiting for conversation");
     const files = container.querySelector('[aria-label="File explorer"]')!;
@@ -100,6 +100,9 @@ test("Sessionは基本情報から描画し会話の失敗と空状態を独立�
     assert.equal(composer.value, "A valid draft");
     const send = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Send")!;
     assert.equal(send.disabled, true);
+    assert.equal(send.hasAttribute("aria-busy"), false);
+    assert.match(dom.window.document.getElementById(send.getAttribute("aria-describedby")!)?.textContent ?? "", /conversation is loading/i);
+    assert.doesNotMatch(container.textContent ?? "", /Message submission is in progress/);
     assert.equal(container.querySelector<HTMLSelectElement>('[aria-label="Approval"]')!.disabled, true);
     await act(async () => { conversationRead.reject(new Error("history unavailable")); });
     const alert = container.querySelector('#session-main-chat-pane [role="alert"]')!;

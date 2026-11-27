@@ -8,7 +8,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、artifact Details、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、診断 |
-| Session Monitor | 開いているSessionと、実行後に保持したSessionの状態をcompactに監視 |
+| Session Monitor | 開いているSessionと、Windowの有無にかかわらず実行を開始して監視保持したSessionの状態をcompactに監視 |
 | Diff | 広い面でGit差分を比較 |
 | File Preview | 対象fileを独立Windowで表示 |
 | Session Graph | 親Mainの共有Graphを独立した閲覧位置で表示 |
@@ -23,7 +23,7 @@ iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWit
 
 ホストとreaderの通信契約は`src-shared/file-explorer/pdf-reader-contract.ts`に置く。両側で送信元window、origin、frame instance IDを照合し、ready後に一度だけ転送用bytesをコピーして渡す。テーマとwheel刻みの更新、Find commandは文書の再転送とは分離する。resource切替・Reloadではiframeを作り直し、旧frameのmessageを無視する。reader内の文書とworker・描画資源の破棄はreaderが所有する。
 
-readerからのselectionとlink messageだけではホストAPIを実行しない。Copy／Quoteはホストbuttonから既存callbackを呼び、文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
+readerからのselectionとlink messageだけではホストAPIを実行しない。`PdfFilePreview`は選択状態と操作を所有し、ホストheaderが渡す描画先へ`Copy Text`／`Quote`をportalで置く。ホストbuttonの明示操作で`get-selection`を送り、その要求IDと現在のframeが一致するselection応答を一度だけ既存callbackへ渡す。通常のselection通知は有効状態だけを更新し、本文外・非表示の文書・解除済みのrangeは操作に使わない。文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
 
 PDF readerは`src/pdf-reader/`を`vite.pdf-reader.config.ts`で独立buildし、PDF.js worker、cMap、font、WASM、ICC、画像を同梱する。開発時も同じ配信経路を使う。`electron:dev`は起動前に`build:pdf-reader`を実行し、`build:renderer`は通常rendererとPDF readerの両方をbuildする。`src/pdf-reader/`の変更はHMRでは反映されないため、`npm run build:pdf-reader`で再buildし、File Previewの`Reload`で読み直す。基本の起動・build手順は[README](../../README.md#ソースから起動する)を参照する。
 
@@ -35,9 +35,21 @@ Home関連の追加・修正では、`HomeApp`への責務集中を抑えるた�
 
 分離は変更対象と、その責務を成立させるために必要な既存の結線に限定する。軽微な修正ごとの分割を必須にせず、行数だけによる細分化、汎用基盤や無関係な全面整理を増やさない。
 
+## Home CrewのデータとWindow操作
+
+Crewの掲載条件は、配下に実際のMain Session Windowが一つ以上あること。Recent Sessions、実行後にMonitorが保持するID、Auxiliary、PreviewやGraph Windowは起点にしない。MainはWindow registryの開いているIDと、SQLite storage Workerの保存済みroot／parent・incarnationを照合する。掲載されたCrewは閉じたroot・中間親・葉を含む。ページは軽量summaryと対応するAuxiliary summaryに限定し、会話本文を読まない。Window一覧・Session要約の無効化またはstorage世代変更で古いcursorを拒否する。Rendererは同じ取得世代の全ページが揃ってから一覧を差し替える。
+
+一覧とネイティブメニューのIPCはHomeのmain frameに限定する。メニューを選ぶときも、閉じたメンバーを含め現在のSession incarnationを照合する。`Copy Session Title`はその時点の保存タイトル全文を使う。単体の`Close`は既存の個別確認・draft flushを通る。
+
+`Close Descendant Windows`は、メニュー選択時に本人・兄弟・Auxiliaryを除外し、開いている子孫MainのWindow実体とincarnation、実行・端末の個体と影響を固定する。実行中（Auxiliaryのみでも一Window）または既存の端末保護条件に該当すれば、何も閉じる前に一度だけ確認する。確認には対象名、該当時だけ実行が継続するWindow数と停止する端末の全数、`Cancel`と総数付きの`Close`ボタンを表示する。保護該当数・推測・助言は表示せず、取消は0件。実行も保護端末もなければ確認を省略する。
+
+最初のClose前、各Closeの直前、draft flushを待った場合は実際にWindowを閉じる直前にも、Mainが選択と対象・影響を同期的に再照合する。Windowの追加・再作成、同数の実行や端末の差替え、新たな保護該当では対象を広げず、残りを閉じない。すでに閉じたものは閉じ直さず、途中失敗時は閉じた数と残った数、未試行数を区別する。一括確認の範囲内だけ個別確認を重ねず、通常のdraft flush・応答不能時の扱い・端末解放を維持する。会話runは停止しない。
+
 ## Sessionの起動と継続
 
 HomeのNew Sessionでtitle、起点Role（Standalone／Overall Coordinator）、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。同じ作成試行の再試行は同じclientRequestIdと作成入力を使う。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。
+
+親Agentが作成する通常子は、作成時・作成の復旧時・Turn開始時にSession Windowを生成しない。開いていない未実行の子はMonitorに加えず、実行を開始するとWindowなしでもHomeと独立Monitorで監視する。Recent SessionsやMonitorで利用者が子を開くとSession Windowを生成し、応答可能な既存Windowがあれば再利用する。利用者が選ぶ`Restore Sessions`によるWindowの最小化復元は、子Sessionの作成復旧とは別の操作である。
 
 通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
 

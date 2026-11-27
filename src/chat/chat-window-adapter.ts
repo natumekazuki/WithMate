@@ -1,7 +1,5 @@
-import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
@@ -13,7 +11,6 @@ import {
 } from "react";
 import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 import type { ChatWindowProps } from "./chat-window.js";
-import { approvalModeLabel } from "../ui/ui-utils.js";
 
 export const chatWindowNoop = () => {};
 
@@ -320,6 +317,7 @@ export function buildLiveSessionComposerDockProps(
     compactActionDock: {
       isRunning: input.isRunning,
       ...(input.isCanceling !== undefined ? { isCanceling: input.isCanceling } : {}),
+      ...(input.isAwaitingRunStop !== undefined ? { isAwaitingRunStop: input.isAwaitingRunStop } : {}),
       showJumpToBottom,
       cancelButtonTitle: input.canSendInput ? "Cancel run" : input.sendButtonTitle,
       onExpand: onExpandActionDock,
@@ -546,10 +544,8 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     customAgentItems: [],
     placeholder: undefined,
     isComposerBlockedFeedbackActive: false,
-    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: approvalModeLabel(DEFAULT_APPROVAL_MODE) }],
-    selectedApprovalMode: DEFAULT_APPROVAL_MODE,
-    reviewerOptions: [],
-    selectedCodexReviewer: DEFAULT_CODEX_REVIEWER,
+    approvalOptions: [],
+    selectedApprovalMode: "",
     sandboxOptions: [],
     selectedCodexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE,
     speedOptions: [],
@@ -569,7 +565,6 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onDraftCompositionStart: chatWindowNoop,
     onDraftCompositionEnd: chatWindowNoop,
     onChangeApprovalMode: chatWindowNoop,
-    onChangeCodexReviewer: chatWindowNoop,
     onChangeCodexSandboxMode: chatWindowNoop,
     onChangeCodexSpeed: chatWindowNoop,
     ...props,

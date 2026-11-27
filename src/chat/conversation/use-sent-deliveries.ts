@@ -1,62 +1,154 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Message } from "../../../src-shared/session/session-state.js";
+import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
+import type { SentInstructionCard, SentInstructionCardRequest } from "../../../src-shared/session/session-execution-read.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import type { TurnInputReadContext } from "./turn-input-details.js";
+import { createSentBodyReader, type SentBodyRead, type SentBodyReader } from "./sent-instruction-body.js";
 
 type SentPage = Extract<SessionExecutionReadResult<"list_sent_deliveries">, { ok: true }>;
 export type SentDelivery = SentPage["items"][number];
+type SteerPage = Extract<SessionExecutionReadResult<"list_sent_steers">, { ok: true }>;
+export type SentSteer = SteerPage["items"][number];
+export type SentInstruction = SentInstructionCard & { bodyRead: SentBodyRead };
+export const sentInstructionKey = (item: SentInstructionCard) => "receiptId" in item ? item.receiptId : `steer:${conversationPeerKey(item.target)}:${item.messageSeq}`;
 
-/** One bounded read for the displayed conversation range, never one read per assistant. */
-export function useSentDeliveries(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | null | undefined, enabled: boolean) {
-  const messageSeqs = [...new Set(messages.flatMap((message) => message.historyIndex === undefined ? [] : [message.historyIndex]))].slice(0, 180);
+type CatalogueItem = { card: SentInstructionCard; read: SentBodyReader; revision: number };
+type Catalogue = { owner: string; scope: string; items: CatalogueItem[] };
+const recipientIds = ({ target }: SentInstructionCard) => target.kind === "auxiliary" ? [target.sessionId, target.mainSessionId] : [target.sessionId];
+
+/** Positioning uses a bounded catalogue. Text belongs to the individual rendered cards. */
+export function useSentDeliveries(context: TurnInputReadContext | undefined, messages: readonly Message[], liveTurnId: string | null | undefined, enabled: boolean,
+  savedSeqs?: readonly (number | undefined)[], responseTurnIds?: readonly (string | undefined)[]) {
+  const messageSeqs = [...new Set((savedSeqs ?? messages.map((message) => message.historyIndex)).filter((seq) => seq !== undefined))].slice(0, 180);
   const liveTurnIds = liveTurnId ? [liveTurnId] : [];
-  const identity = JSON.stringify([context, messageSeqs, liveTurnIds]);
-  const [revision, setRevision] = useState(0);
-  const [data, setData] = useState<{ identity: string; page: SentPage } | null>(null);
-  const loadedData = useRef(data);
+  const sourceOwner = JSON.stringify([context?.ownerSessionId, context?.target && conversationPeerKey(context.target)]);
+  const identity = JSON.stringify([sourceOwner, messageSeqs, liveTurnIds]);
+  const scope = useMemo((): SentInstructionCardRequest | null =>
+    context && (messageSeqs.length || liveTurnIds.length) ? { target: context.target, messageSeqs, liveTurnIds } : null, [identity]);
+  const owner = context?.ownerSessionId;
+  const reader = useMemo(() => owner && scope ? createSentBodyReader(owner, scope) : null, [owner, scope, enabled]);
+  const [data, setData] = useState<Catalogue | null>(null);
+  const current = useRef<Catalogue | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const attempt = useRef(0);
-  const load = useCallback(async (cursor?: number) => {
-    if (!enabled || !context || (!messageSeqs.length && !liveTurnIds.length)) return;
-    const api = getWithMateApi();
-    if (!api?.readSessionExecution) { setError("Saved outgoing deliveries are unavailable."); return; }
-    const current = ++attempt.current;
-    const previous = loadedData.current?.identity === identity ? loadedData.current.page : null;
-    const desiredCount = cursor === undefined ? Math.max(20, previous?.items.length ?? 0) : 20;
-    setBusy(true); setError("");
-    try {
-      const items: SentDelivery[] = [];
-      let nextCursor = cursor;
-      let result: SentPage;
-      do {
-        const response = await api.readSessionExecution(context.ownerSessionId, "list_sent_deliveries", { target: context.target, messageSeqs, liveTurnIds, ...(nextCursor === undefined ? {} : { cursor: nextCursor }), limit: 20 });
-        if (attempt.current !== current) return;
-        if (!response.ok) { setError(response.message); return; }
-        result = response;
-        items.push(...result.items);
-        nextCursor = result.nextCursor ?? undefined;
-      } while (nextCursor !== undefined && items.length < desiredCount);
-      const next = { identity, page: { ...result, items: cursor !== undefined && previous ? [...previous.items, ...items.filter((item) => !previous.items.some((existing) => existing.receiptId === item.receiptId))] : items } };
-      loadedData.current = next;
-      setData(next);
-    } catch (failure) {
-      if (attempt.current === current) setError(failure instanceof Error ? failure.message : "Could not read outgoing deliveries.");
-    } finally { if (attempt.current === current) setBusy(false); }
-  }, [identity, enabled]);
-  useEffect(() => {
-    if (!enabled || !context) return;
-    // New outgoing receipts belong to the recipient. The existing global queue
-    // event therefore invalidates this one indexed source projection as well.
-    return getWithMateApi()?.onSessionTurnQueueChanged?.(() => setRevision((value) => value + 1));
-  }, [enabled, context?.ownerSessionId, context?.target.sessionId]);
+  const generation = useRef(0);
+  const retry = useRef<() => void>(undefined);
+  // A source Turn can still have a row before its saved response sequence reaches this column.
+  // Keep only cards with a current placement, and only for the same source incarnation.
+  const visibleSeqs = new Set(messageSeqs);
+  const visibleTurns = new Set([...(responseTurnIds ?? []), ...liveTurnIds]);
+  const hasPlacement = (item: SentInstructionCard) => visibleTurns.has(item.sourceTurnId)
+    || item.sourceMessageSeq !== null && visibleSeqs.has(item.sourceMessageSeq);
+  const hasPlacementRef = useRef(hasPlacement);
+  hasPlacementRef.current = hasPlacement;
+  const bridgeTurnsRef = useRef(new Set<string>());
+  bridgeTurnsRef.current = new Set(responseTurnIds?.flatMap((turn, index) => turn && savedSeqs?.[index] === undefined ? [turn] : []));
+
   useEffect(() => {
     setError("");
-    if (!enabled || !context || (!messageSeqs.length && !liveTurnIds.length)) { setBusy(false); return; }
-    void load();
-    return () => { ++attempt.current; };
-  }, [load, revision]);
-  const page = data?.identity === identity ? data.page : null;
-  return { items: page?.items ?? [], nextCursor: page?.nextCursor ?? null, error, busy, retry: () => void load(), loadMore: () => { if (page?.nextCursor != null && !busy) void load(page.nextCursor); } };
+    setBusy(false);
+    if (!enabled || !scope || !owner || !reader) return;
+    const api = getWithMateApi();
+    if (!api?.readSessionExecution) { setError("Saved outgoing messages are unavailable."); return; }
+    let active = true;
+    let inFlight = false;
+    let scheduled = false;
+    let changed = 0;
+    const unknownRecipients = new Set<string>();
+    const publish = (items: Iterable<CatalogueItem>) => {
+      const result = { owner: sourceOwner, scope: identity, items: [...items].sort(({ card: a }, { card: b }) =>
+        Number("receiptId" in b) - Number("receiptId" in a) || a.sequence - b.sequence) };
+      current.current = result;
+      setData(result);
+    };
+    const load = async () => {
+      if (!active) return;
+      const version = changed;
+      const revision = ++generation.current;
+      inFlight = true;
+      unknownRecipients.clear();
+      setError("");
+      setBusy(true);
+      const read = new Map<string, CatalogueItem>();
+      const previous = current.current?.owner === sourceOwner ? current.current.items.filter(({ card }) => hasPlacementRef.current(card)) : [];
+      const visible = new Map(previous.map((item) => [sentInstructionKey(item.card), item]));
+      let cursors: SentInstructionCardRequest["cursors"];
+      try {
+        do {
+          const response = await api.readSessionExecution(owner, "list_sent_instruction_cards", { ...scope, ...(cursors ? { cursors } : {}) });
+          if (!active || version !== changed) return;
+          if (!response.ok) {
+            if (response.code === "EXECUTION_TARGET_DELETED" || response.code === "EXECUTION_TARGET_REPLACED") publish([]);
+            setError(response.message);
+            return;
+          }
+          if (response.items.some((item) => recipientIds(item).some((id) => unknownRecipients.has(id)))) { changed++; return; }
+          for (const card of response.items) {
+            const key = sentInstructionKey(card);
+            const item = { card, read: reader, revision };
+            read.set(key, item);
+            visible.set(key, item);
+          }
+          if (response.cursors.receipts === null && response.cursors.steers === null) {
+            // A read without a saved source coordinate cannot invalidate a card on a bridged Turn.
+            for (const item of previous) {
+              const { card } = item;
+              const key = sentInstructionKey(card);
+              if (!read.has(key) && bridgeTurnsRef.current.has(card.sourceTurnId) && !liveTurnIds.includes(card.sourceTurnId)
+                && (card.sourceMessageSeq === null || !visibleSeqs.has(card.sourceMessageSeq))) {
+                read.set(key, item);
+              }
+            }
+            publish(read.values());
+            return;
+          }
+          // An absent card is not deleted until a complete sweep in this scope succeeds.
+          publish(visible.values());
+          cursors = response.cursors;
+        } while (active);
+      } catch (failure) {
+        if (active && version === changed) setError(failure instanceof Error ? failure.message : "Could not read outgoing messages.");
+      } finally {
+        inFlight = false;
+        if (active) {
+          if (version !== changed) schedule();
+          else setBusy(false);
+        }
+      }
+    };
+    const schedule = () => {
+      if (inFlight || scheduled) return;
+      scheduled = true;
+      queueMicrotask(() => { scheduled = false; void load(); });
+    };
+    const invalidate = () => { changed++; schedule(); };
+    const sourceChanged = (id: string) => { if (id === scope.target.sessionId) invalidate(); };
+    const subscriptions = [
+      api.onSessionSentDeliveriesChanged?.(sourceChanged),
+      // Existing source-position verification uses the source's queue event.
+      api.onSessionTurnQueueChanged?.(sourceChanged),
+      api.subscribeSessionInvalidation?.((event) => {
+        if (event.detailChanged === false) return;
+        const items = current.current?.owner === sourceOwner ? current.current.items.map((item) => item.card).filter(hasPlacementRef.current) : [];
+        if (event.scope === "all" || event.sessionIds.includes(scope.target.sessionId)
+          || items.some((item) => recipientIds(item).some((id) => event.sessionIds.includes(id)))) invalidate();
+        else if (inFlight) for (const id of event.sessionIds) unknownRecipients.add(id);
+      }),
+    ];
+    retry.current = invalidate;
+    schedule();
+    return () => { active = false; retry.current = undefined; for (const unsubscribe of subscriptions) unsubscribe?.(); };
+  }, [enabled, owner, scope, identity, reader, sourceOwner]);
+
+  const eligible = data?.owner === sourceOwner && (data.scope === identity || enabled);
+  const items = eligible ? data.items.filter(({ card }) => hasPlacement(card)).map(({ card: item, read, revision }): SentInstruction => ({
+    ...item, bodyRead: {
+      key: { sourceTurnId: item.sourceTurnId, sequence: item.sequence, recipient: item.target,
+        ...("receiptId" in item ? { receiptId: item.receiptId } : { messageSeq: item.messageSeq }) },
+      read, revision: "receiptId" in item ? 0 : revision, enabled,
+    },
+  })) : [];
+  return { items, error, busy, retry: () => retry.current?.() };
 }

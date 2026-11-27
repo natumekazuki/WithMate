@@ -9,7 +9,7 @@ export type MainSessionRuntimeAssemblyDeps = {
     isActive(): boolean;
   };
   admission: Required<Pick<SessionRuntimeServiceDeps, "runSessionAdmissionExclusive">>;
-  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">> & Pick<SessionRuntimeServiceDeps, "persistQueuedTurnStart" | "getQueuedInputReceipt" | "beginRunningInput" | "settleRunningInput">;
+  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">> & Pick<SessionRuntimeServiceDeps, "persistQueuedTurnStart" | "getQueuedInputReceipt" | "beginRunningInput" | "settleRunningInput" | "beginSourceDisplayTurn">;
   resolution: Pick<SessionRuntimeServiceDeps, "resolveRuntimeSessionForTurn" | "resolveComposerPreview" | "resolveProviderSession" | "resolveSessionFolderPath" | "resolveProviderCatalog"> & {
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
@@ -22,11 +22,13 @@ export type MainSessionRuntimeAssemblyDeps = {
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
+    readMainMessageThread?: SessionRuntimeServiceDeps["readMainMessageThread"];
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
-  interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
-  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased">;
+  interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "startWithMateApprovalReview" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
+  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased" | "onSentInputChanged">;
   timing: {
     currentTimestampLabel?: () => string;
   };
@@ -46,13 +48,14 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => { assertOwner("session read"); return deps.sessions.getSession(sessionId); },
-    appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.sessions.appendRunningInput(session, text, turnId, queuedInput)),
+    appendRunningInput: (...args) => guarded("Session input append", () => deps.sessions.appendRunningInput(...args)),
     beginRunningInput: deps.sessions.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.sessions.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.sessions.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.sessions.settleRunningInput!(...args)) : undefined,
     getQueuedInputReceipt: deps.sessions.getQueuedInputReceipt
       ? (receipt) => guarded("queued input receipt", () => deps.sessions.getQueuedInputReceipt!(receipt))
       : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.sessions.appendTerminalSession(session, commit, options)),
+    beginSourceDisplayTurn: deps.sessions.beginSourceDisplayTurn,
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.sessions.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, count) => guarded("running turn start", () => deps.sessions.persistRunningTurnStart(session, count)),
     persistQueuedTurnStart: deps.sessions.persistQueuedTurnStart
@@ -61,6 +64,8 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     clearCharacterAuthoringRuntimeState: (session) => guarded("authoring runtime clear", () => deps.sessions.clearCharacterAuthoringRuntimeState(session)),
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, message) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, message)),
+    assertSavedReplyTo: deps.context.assertSavedReplyTo,
+    readMainMessageThread: deps.context.readMainMessageThread,
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable
       ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments))
       : undefined,
@@ -81,6 +86,7 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
     getLiveSessionRun: (id) => { assertOwner("live session read"); return deps.live.getLiveSessionRun(id); },
     waitForApprovalDecision: deps.interaction.waitForApprovalDecision,
+    startWithMateApprovalReview: deps.interaction.startWithMateApprovalReview,
     waitForElicitationResponse: deps.interaction.waitForElicitationResponse,
     setProviderQuotaTelemetry: (telemetry) => { assertOwner("provider quota projection"); deps.live.setProviderQuotaTelemetry(telemetry); },
     setSessionContextTelemetry: (telemetry) => { assertOwner("session context projection"); deps.live.setSessionContextTelemetry(telemetry); },
@@ -90,6 +96,9 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolvePendingApprovalRequest: deps.interaction.resolvePendingApprovalRequest,
     resolvePendingElicitationRequest: deps.interaction.resolvePendingElicitationRequest,
     notifySessionTurnTerminal: deps.notification.notifySessionTurnTerminal,
+    onSentInputChanged: (origin) => {
+      if (deps.owner.isActive()) deps.notification.onSentInputChanged?.(origin);
+    },
     onSessionRunReleased: (sessionId) => {
       if (deps.owner.isActive()) deps.notification.onSessionRunReleased?.(sessionId);
     },

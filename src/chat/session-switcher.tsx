@@ -15,6 +15,7 @@ export type SessionSwitcherOption = {
   preview?: string;
   searchText?: string;
   isProcessing?: boolean;
+  hasUnreadResult?: boolean;
 };
 
 export type SessionSwitcherProps = {
@@ -31,6 +32,21 @@ export type SessionSwitcherProps = {
 
 function focusOption(list: HTMLElement | null, index: number) {
   list?.querySelectorAll<HTMLButtonElement>('[role="option"]')[index]?.focus();
+}
+
+function SwitcherVisuals({ icon, isProcessing }: Pick<SessionSwitcherOption, "icon" | "isProcessing">) {
+  if (!icon) return null;
+  return (
+    <span className="session-switcher-icon" aria-hidden="true">
+      {icon}
+      {isProcessing ? <span className="session-switcher-processing-ring" /> : null}
+    </span>
+  );
+}
+
+function switcherStatus(option: SessionSwitcherOption | undefined): string | undefined {
+  if (option?.isProcessing) return option.hasUnreadResult ? "Processing; Unread Result" : "Processing";
+  return option?.hasUnreadResult ? "Unread Result" : undefined;
 }
 
 /** Compact arrow/trigger switcher shared by context panes and Auxiliary panes. */
@@ -136,6 +152,7 @@ export function SessionSwitcher({
       aria-expanded={canOpen && isOpen}
       aria-controls={canOpen ? listId : undefined}
       aria-label={currentLabelText || currentPreviewText ? undefined : currentAccessibleLabel}
+      aria-description={switcherStatus(selectedOption)}
       onClick={() => {
         if (canOpen) {
           setIsOpen((current) => !current);
@@ -151,9 +168,9 @@ export function SessionSwitcher({
         }
       }}
     >
-      {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
-      <span className="session-switcher-label">{currentLabel}</span>
-      {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
+      <SwitcherVisuals icon={selectedOption?.icon} isProcessing={selectedOption?.isProcessing} />
+      <span className={`session-switcher-label${selectedOption?.hasUnreadResult && currentLabelText ? " has-unread-result" : ""}`}>{currentLabel}</span>
+      {selectedOption?.preview ? <span className={`session-switcher-preview${selectedOption.hasUnreadResult && !currentLabelText ? " has-unread-result" : ""}`}>{selectedOption.preview}</span> : null}
     </button>
   );
   return (
@@ -209,25 +226,17 @@ export function SessionSwitcher({
                 aria-selected={option.id === selectedId}
                 className="session-switcher-option"
                 aria-label={option.label.trim() || option.preview?.trim() ? undefined : ariaLabel}
+                aria-description={switcherStatus(option)}
                 title={option.isProcessing ? "Processing" : undefined}
                 onClick={() => {
                   onSelect(option.id);
                   close();
                 }}
               >
-                {option.icon ? (
-                  <span
-                    className={`session-switcher-icon${option.isProcessing ? " session-switcher-option-icon-processing" : ""}`}
-                    aria-hidden="true"
-                  >
-                    {option.icon}
-                    {option.isProcessing ? <span className="session-switcher-processing-indicator" /> : null}
-                  </span>
-                ) : null}
+                <SwitcherVisuals icon={option.icon} isProcessing={option.isProcessing} />
                 <span className="session-switcher-option-copy">
-                  <span className="session-switcher-option-label">{option.label}</span>
-                  {option.preview ? <span className="session-switcher-option-preview">{option.preview}</span> : null}
-                  {option.isProcessing ? <span className="visually-hidden">Processing</span> : null}
+                  <span className={`session-switcher-option-label${option.hasUnreadResult && option.label.trim() ? " has-unread-result" : ""}`}>{option.label}</span>
+                  {option.preview ? <span className={`session-switcher-option-preview${option.hasUnreadResult && !option.label.trim() ? " has-unread-result" : ""}`}>{option.preview}</span> : null}
                 </span>
               </button>
             )) : null}

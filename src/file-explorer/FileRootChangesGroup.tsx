@@ -26,6 +26,7 @@ export type GitRootChanges = {
   status: "idle" | "pending" | "success" | "empty" | "failed";
   entries: FileRootGitChangeEntry[];
   message: string;
+  hasSnapshot?: boolean;
 };
 
 type FileRootChangeRow =
@@ -305,6 +306,7 @@ export function FileRootChangesGroup({
     }
   }, [totalSize]);
 
+  const hasSnapshot = rootChange.status === "success" || rootChange.status === "empty" || rootChange.hasSnapshot;
   return (
     <section
       className={`workspace-changes-root-group${sizing === "content" ? " is-content-sized" : ""}`}
@@ -317,17 +319,18 @@ export function FileRootChangesGroup({
       <div className="workspace-changes-root-header" title={rootChange.root.displayPath}>
         <div className="workspace-changes-root-title-row">
           <strong id={headingId}>{rootChange.root.label}</strong>
-          {rootChange.status === "pending" ? (
-            <span
-              className="workspace-changes-root-pending"
-            >
-              <LoadingIndicator inline label={`Refreshing changes for ${rootChange.root.label}`} />
+          {hasSnapshot || rootChange.status === "pending" ? (
+            <span className="workspace-changes-root-summary">
+              {rootChange.status === "pending" ? (
+                <LoadingIndicator inline label={`Refreshing changes for ${rootChange.root.label}`} />
+              ) : null}
+              {hasSnapshot ? (
+                <span className="workspace-changes-root-count" aria-label={`${rootChange.entries.length} changed files`}>
+                  {rootChange.entries.length}
+                </span>
+              ) : null}
             </span>
-          ) : rootChange.status === "idle" || (rootChange.status === "failed" && rootChange.entries.length === 0) ? null : (
-            <span className="workspace-changes-root-count" aria-label={`${rootChange.entries.length} changed files`}>
-              {rootChange.entries.length}
-            </span>
-          )}
+          ) : null}
         </div>
         <span className="workspace-changes-root-path">{rootChange.root.displayPath}</span>
       </div>

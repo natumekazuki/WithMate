@@ -3,11 +3,12 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { LoadError } from "../ui/load-error.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
 
 export function receiptStateLabel(state: string | null) {
-  return ({ queued: "Queued", starting: "Starting", running: "In Progress", completed: "Completed", failed: "Failed", canceled: "Canceled", interrupted: "Interrupted — Outcome Unknown" })[state ?? ""] ?? "Unknown";
+  return ({ queued: "Queued", starting: "Starting", running: "In Progress", completed: "Completed", failed: "Failed", canceled: "Canceled", interrupted: "Outcome Unknown" })[state ?? ""] ?? "Unknown";
 }
 
 export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, acquired, consumed, active = true, onDeliveryChange }: {
@@ -54,13 +55,24 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, 
   }, [identity, active, onDeliveryChange]);
 
   if (!receiptId) return <p className="coordination-parties" role="status">{acquired ? "Received" : "Saved · Not Sent"}{consumed ? " · Answer Used" : ""}</p>;
-  const turnFailure = result && ["failed", "canceled", "interrupted"].includes(result.turnState ?? "")
+  const turnFailure = result && ["failed", "canceled"].includes(result.turnState ?? "")
     ? ` · Turn ${receiptStateLabel(result.turnState)}` : "";
+  const entry = result?.inputs?.entry;
+  // A start receipt mirrors its Turn's terminal phase. An additional input has its own delivery outcome.
+  const sameFailedTurn = result?.turnState === "failed"
+    && (result.receiptState === "failed" || result.receiptState === "interrupted")
+    && entry?.kind === "start" && entry.inputSeq !== null && entry.inputSeq === result.userMessageSeq;
+  const deliveryLabel = acquired ? `Received${turnFailure}` : error ? "Delivery Unknown" : result
+    ? sameFailedTurn ? "Turn Failed"
+      : `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}`
+    : null;
   return <div className="coordination-answer-delivery" aria-busy={loading || undefined}>
-    <p className="coordination-parties" role="status">
-      {acquired ? `Received${turnFailure}` : error ? "Delivery Unknown" : result ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : "Checking Delivery"}
-      {consumed ? " · Answer Used" : ""}
-    </p>
+    {active && deliveryLabel === null ? <LoadingIndicator label="Checking Answer Delivery" inline className="coordination-inline-loading" /> : null}
+    {deliveryLabel !== null || consumed ? (
+      <p className="coordination-parties" role="status">
+        {deliveryLabel}{consumed ? " · Answer Used" : ""}
+      </p>
+    ) : null}
     {error ? <LoadError message={error} onRetry={() => setRevision((value) => value + 1)} /> : null}
   </div>;
 }

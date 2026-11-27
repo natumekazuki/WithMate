@@ -8,13 +8,15 @@ import type {
 import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
+import { HomeCrewPanel } from "./HomeCrewPanel.js";
+import type { HomeRightPaneView } from "./HomeHeader.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 import { HomePreviewsPanel } from "./HomePreviewsPanel.js";
 
 export type HomeRightPaneProps = {
   searchText: string;
   providerQuota?: ReactNode;
-  rightPaneView: "monitor" | "characters" | "previews";
+  rightPaneView: HomeRightPaneView;
   approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
@@ -64,8 +66,9 @@ export function HomeRightPane({
 }: HomeRightPaneProps) {
   return (
     <section className="panel home-right-pane rise-3">
+      <HomeCrewPanel active={rightPaneView === "crew"} searchText={searchText} />
       {rightPaneView === "monitor" ? (
-        <section className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
+        <section id="home-panel-monitor" className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
           <HomeMonitorContent
             approvalEntries={approvalMonitorEntries}
             providerQuota={providerQuota}
@@ -83,11 +86,11 @@ export function HomeRightPane({
           />
         </section>
       ) : rightPaneView === "previews" ? (
-        <section className="home-monitor-panel" role="tabpanel" aria-label="Previews">
+        <section id="home-panel-previews" className="home-monitor-panel" role="tabpanel" aria-label="Previews">
           <HomePreviewsPanel />
         </section>
-      ) : (
-        <section className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">
+      ) : rightPaneView === "characters" ? (
+        <section id="home-panel-characters" className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
             searchText={searchText}
@@ -98,7 +101,7 @@ export function HomeRightPane({
             onEditCharacter={onEditCharacter}
           />
         </section>
-      )}
+      ) : null}
     </section>
   );
 }

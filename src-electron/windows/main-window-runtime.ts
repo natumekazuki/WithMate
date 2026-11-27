@@ -21,6 +21,7 @@ export type MainWindowRuntimeDeps = {
   rendererDistPath: string;
   userDataPath: string;
   getSession(sessionId: string): Session | null;
+  getStorageGeneration(): object | null;
   readSession(sessionId: string): Awaitable<Session | null>;
   getLiveSessionRunOwnerSessionId(sessionId: string): string | null;
   isSessionRunInFlight(sessionId: string): boolean;
@@ -128,6 +129,7 @@ export class MainWindowRuntime {
       cancelInFlightSessionRuns: deps.cancelInFlightSessionRuns,
       waitForPendingDraftSends: deps.waitForPendingDraftSends,
       getSession: deps.getSession,
+      getStorageGeneration: deps.getStorageGeneration,
       isRunInFlight: deps.isSessionRunInFlight,
       getTerminalCloseConfirmationCount: deps.getTerminalCloseConfirmationCount,
       onSessionWindowClosed: deps.onSessionWindowClosed,

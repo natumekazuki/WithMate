@@ -1,5 +1,6 @@
 import type { SessionExecutionOptions } from "./session-execution-options.js";
 import type { ApprovalMode } from "../settings/approval-mode.js";
+import type { SessionApprovalChoice } from "../settings/session-approval-choice.js";
 
 export type ConfirmedReviewerChange = { previousApprovalMode: ApprovalMode };
 
@@ -8,6 +9,7 @@ export type SetSessionExecutionOptionsRequest = {
   incarnationId: string;
   executionOptions: SessionExecutionOptions;
   confirmedReviewerChange?: ConfirmedReviewerChange;
+  approvalChoice?: SessionApprovalChoice;
 };
 
 export type SetExecutionOptionsResult =
@@ -48,6 +50,7 @@ export type AuxiliarySessionMutationIdentity = {
 export type SetAuxiliaryExecutionOptionsRequest = AuxiliarySessionMutationIdentity & {
   executionOptions: SessionExecutionOptions;
   confirmedReviewerChange?: ConfirmedReviewerChange;
+  approvalChoice?: SessionApprovalChoice;
 };
 
 export type SetAuxiliaryTitleRequest = AuxiliarySessionMutationIdentity & {

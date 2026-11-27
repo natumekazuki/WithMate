@@ -16,6 +16,7 @@ export type BoundedProviderRawItem = {
 
 type RawItemBudgetState = {
   remaining: number;
+  textPreviewLimit?: number;
   truncated: boolean;
   seen: WeakSet<object>;
   sanitizeText?: (value: string, previewLimit: number) => string;
@@ -86,13 +87,22 @@ function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState
     return RAW_ITEM_TRUNCATION_MARKER;
   }
 
-  const previewLimit = Math.max(0, Math.min(PROVIDER_TEXT_PREVIEW_LIMIT, state.remaining - 256));
-  const boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit, state.sanitizeText) : RAW_ITEM_TRUNCATION_MARKER;
+  const previewLimit = Math.max(0, Math.min(state.textPreviewLimit ?? PROVIDER_TEXT_PREVIEW_LIMIT, state.remaining - 256));
+  let boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit, state.sanitizeText) : RAW_ITEM_TRUNCATION_MARKER;
+  let length = measureBoundedJson(boundedValue);
+  if (state.textPreviewLimit !== undefined && length > state.remaining) {
+    // Escapes can expand a code unit to six JSON characters. Retry with a
+    // shorter source preview rather than dropping an otherwise useful field.
+    const escapedLimit = Math.floor((state.remaining - 256) / 6);
+    if (escapedLimit > 0 && escapedLimit < previewLimit) {
+      boundedValue = toTruncatedText(value, escapedLimit, state.sanitizeText);
+      length = measureBoundedJson(boundedValue);
+    }
+  }
   if (typeof boundedValue !== "string") {
     state.truncated = true;
   }
 
-  const length = measureBoundedJson(boundedValue);
   if (consumeRawItemBudget(state, length)) {
     return boundedValue;
   }
@@ -193,6 +203,11 @@ function cloneObjectWithinRawItemBudget(
 }
 
 function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+  // Compact log previews also charge per node so empty containers and nested
+  // punctuation cannot dominate the budget for the excerpt.
+  if (state.textPreviewLimit !== undefined && !consumeRawItemBudget(state, 8)) {
+    return RAW_ITEM_TRUNCATION_MARKER;
+  }
   if (typeof value === "string") {
     return cloneStringWithinRawItemBudget(value, state);
   }
@@ -220,9 +235,11 @@ function cloneRawItemWithinBudget(
   item: BoundedProviderRawItem,
   budget: number,
   sanitizeText?: RawItemBudgetState["sanitizeText"],
+  textPreviewLimit?: number,
 ): BoundedProviderRawItem {
   const state: RawItemBudgetState = {
     remaining: Math.max(0, budget),
+    textPreviewLimit,
     truncated: false,
     seen: new WeakSet<object>(),
     sanitizeText,
@@ -250,11 +267,13 @@ export function boundProviderRawItem(
   item: BoundedProviderRawItem,
   limit = PROVIDER_RAW_ITEM_CLONE_LIMIT,
   sanitizeText?: RawItemBudgetState["sanitizeText"],
+  textPreviewLimit?: number,
 ): BoundedProviderRawItem {
   return cloneRawItemWithinBudget(
     item,
     Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
     sanitizeText,
+    textPreviewLimit,
   );
 }
 

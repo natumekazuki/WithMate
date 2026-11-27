@@ -60,8 +60,8 @@ function setup() {
 // @test-value v2
 // kind = "contract"
 // claim = "HTML previewは可視世代の出自・partitionをguestへ渡し、旧完了を無視してready・失敗・keyboardの状態を現在世代へ反映する"
-// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation; HtmlPreview keyboard accessible description" }
-// fault = "旧URLを表示する、画面外や失敗後もguestを実行する、誤ったsource/partitionを渡す、またはfocus/Findを接続しない"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation; docs/design/ui-design-guidelines.md#読込空失敗" }
+// fault = "旧URLを表示する、画面外や失敗後もguestを実行する、画面外の未取得を読込中として表示する、誤ったsource/partitionを渡す、またはfocus/Findを接続しない"
 // observable = "webviewのsrc/title/partition、mountのsourceとdispose、busy・alert・status、activeElementとFind callback"
 // observation_boundary = "component-behavior"
 // scope = "HtmlPreviewの可視性・非同期mount登録からwebviewとrenderer状態へのlifecycle"
@@ -75,7 +75,10 @@ test("HTML previewは可視世代のguestと状態・focusを維持する", asyn
   try {
     await h.render(() => { finds += 1; });
     assert.equal(h.mounts.length, 0);
+    assert.equal(h.container.querySelector(".html-preview-viewport")?.getAttribute("aria-busy"), "false");
+    assert.equal(h.container.querySelector("[role='status']"), null);
     await h.intersect(true);
+    assert.ok(h.container.querySelector("[role='status'][aria-label='Loading HTML preview'][aria-busy='true']"));
     assert.equal(h.mounts[0].html, "<h1>Preview</h1>");
     assert.deepEqual(h.mounts[0].source, { kind: "resource", resource: { sessionId: "session-1", rootId: "workspace", relativePath: "index.html" } });
     await h.render(() => { finds += 1; });
@@ -85,6 +88,7 @@ test("HTML previewは可視世代のguestと状態・focusを維持する", asyn
     await h.intersect(false);
     assert.deepEqual(h.disposed, [h.mounts[0].id]);
     assert.equal(h.listeners.size, 0);
+    assert.equal(h.container.querySelector("[role='status']"), null);
     await h.intersect(true);
     const current = h.mounts[1];
     await act(async () => h.mounts[0].pending.resolve({ url: "withmate-html-preview://old/", partition: "old" }));

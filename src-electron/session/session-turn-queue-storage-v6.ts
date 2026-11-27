@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeSessionTurnClientRequestId } from "../../src-shared/session/runtime-state.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueAdmission, SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
 import { assertSessionLifecycleReady } from "./session-lifecycle-operation.js";
-import { coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
+import { recoverReleasedSessionTurn, recoverSessionTurnsAfterRestart } from "./session-turn-restart-recovery.js";
+import type { ConversationMutationSink } from "../storage/conversation-query.js";
+import { assertCoordinationInputTurn, coordinationDispatchJson } from "../coordination/coordination-dispatch.js";
+import type { ConversationThreads } from "../../src-shared/session/conversation-threads.js";
+import { readConversationCoordinationOrigin, readConversationThreads, readMainCoordinationFrame, readMainRetryFrame } from "../storage/conversation-threads.js";
 
 type QueueRow = {
   id: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; request_id: string; sequence: number;
@@ -56,7 +60,7 @@ function capturedJson(captured: SessionTurnQueueCapturedInput): string {
 export class SessionTurnQueueStorageV6 {
   private readonly db: DatabaseSync;
 
-  constructor(dbPath: string | DatabaseSync) {
+  constructor(dbPath: string | DatabaseSync, private readonly onConversationChanged?: ConversationMutationSink) {
     this.db = typeof dbPath === "string" ? openAppDatabase(dbPath) : dbPath;
     if (typeof dbPath === "string") ensureV6Schema(this.db);
   }
@@ -64,9 +68,15 @@ export class SessionTurnQueueStorageV6 {
   close(): void { this.db.close(); }
 
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): SessionTurnQueueReceipt {
+    // Coordination must commit its record with the queued receipt before trying related-Turn input.
+    return this.admit(owner, captured).receipt;
+  }
+
+  admit(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, claim?: { unreleasedSourceTurnIds: readonly string[] }): SessionTurnQueueAdmission {
     const requestId = normalizeSessionTurnClientRequestId(captured.request.clientRequestId);
     if (!requestId || requestId !== captured.request.clientRequestId) throw new Error("Queue request ID is invalid.");
-    const json = capturedJson(captured);
+    const { sourceDisplayPosition, sourceDisplayText: _sourceDisplayText, ...acceptance } = captured;
+    const displayPosition = typeof sourceDisplayPosition === "number" && Number.isSafeInteger(sourceDisplayPosition) && sourceDisplayPosition >= 0 ? sourceDisplayPosition : null;
     return this.withOwner(owner, () => {
       const target = this.db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ? AND created_at = ?")
         .get(owner.sessionId, owner.incarnationId) as { parent_session_id: string } | undefined;
@@ -75,12 +85,23 @@ export class SessionTurnQueueStorageV6 {
         .get(owner.sessionId, owner.incarnationId, requestId) as QueueRow | undefined;
       if (existing) {
         if (existing.accepted_json === null) throw new Error("The original queue acceptance input is unavailable; query its receipt instead.");
-        if (existing.accepted_json !== json) throw new Error("Queue request ID was reused with a different payload.");
-        return this.toReceipt(existing);
+        let original = existing.accepted_json;
+        // A retry frame is derived here, not supplied by the caller. An exact
+        // replay compares the original input with that derived field removed.
+        if (acceptance.retrySource && acceptance.request.mainConversationFrame === undefined) {
+          const accepted = JSON.parse(original) as SessionTurnQueueCapturedInput;
+          if (accepted.retrySource) {
+            delete accepted.request.mainConversationFrame;
+            original = capturedJson(accepted);
+          }
+        }
+        if (original !== capturedJson(acceptance)) throw new Error("Queue request ID was reused with a different payload.");
+        return { receipt: this.toReceipt(existing), claimed: null };
       }
       const id = randomUUID();
       const now = new Date().toISOString();
       const auxiliary = target;
+      const json = capturedJson(!auxiliary && acceptance.retrySource ? this.withInheritedFrame(owner, acceptance) : acceptance);
       if (auxiliary) {
         const request = captured.request;
         if (request.submitSource !== "retry") {
@@ -100,12 +121,21 @@ export class SessionTurnQueueStorageV6 {
         }
       }
       this.db.prepare(`INSERT INTO session_turn_queue_v6
-        (id, session_id, auxiliary_session_id, incarnation_id, request_id, state, captured_json, accepted_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
-          auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, json, now, now);
+        (id, session_id, auxiliary_session_id, incarnation_id, request_id, state, captured_json, accepted_json, source_display_position, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
+          auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, json, displayPosition, now, now);
       this.db.prepare("UPDATE session_turn_queue_v6 SET queue_position = sequence WHERE id = ?").run(id);
-      return this.required(owner, id);
+      const claimed = claim ? this.claimNextInTransaction(owner, claim.unreleasedSourceTurnIds) : null;
+      const receipt = claimed?.id === id ? claimed : this.required(owner, id);
+      return { receipt: displayPosition === null ? receipt : { ...receipt, sourceDisplayInserted: true }, claimed };
     });
+  }
+
+  verifySourceDisplayPosition(id: string, actorSessionId: string, actorIncarnationId: string, actorTurnId: string, valid: boolean): void {
+    this.db.prepare(`UPDATE session_turn_queue_v6 SET source_display_verified = ?, source_display_position = CASE WHEN ? THEN source_display_position ELSE NULL END
+      WHERE id = ? AND json_extract(accepted_json, '$.origin.actorSessionId') = ?
+        AND json_extract(accepted_json, '$.origin.actorIncarnationId') = ? AND json_extract(accepted_json, '$.origin.actorTurnId') = ?`)
+      .run(valid ? 1 : 0, valid ? 1 : 0, id, actorSessionId, actorIncarnationId, actorTurnId);
   }
 
   getReceipt(owner: SessionTurnQueueOwner, requestId: string): SessionTurnQueueReceipt | null {
@@ -117,9 +147,27 @@ export class SessionTurnQueueStorageV6 {
   }
 
   listActive(owner: SessionTurnQueueOwner): SessionTurnQueueReceipt[] {
+    let threads: ConversationThreads | undefined;
+    const readThreads = () => threads ??= readConversationThreads(this.db, { ...owner, kind: "main" });
     return this.withOwner(owner, () => (this.db.prepare(`SELECT * FROM session_turn_queue_v6
       WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ? AND state IN ('queued', 'starting', 'running', 'failed', 'interrupted') ORDER BY queue_position, sequence`)
-      .all(owner.sessionId, owner.incarnationId) as QueueRow[]).map((row) => this.toReceipt(row)));
+      .all(owner.sessionId, owner.incarnationId) as QueueRow[]).map((row) => {
+        const receipt = this.toReceipt(row);
+        return row.auxiliary_session_id === null ? { ...receipt, captured: this.withInheritedFrame(owner, receipt.captured, readThreads) } : receipt;
+      }));
+  }
+
+  private withInheritedFrame(owner: SessionTurnQueueOwner, input: SessionTurnQueueCapturedInput,
+    readThreads?: () => ConversationThreads): SessionTurnQueueCapturedInput {
+    const { coordination, origin, request, retrySource } = input;
+    if (request.mainConversationFrame !== undefined || origin?.kind !== "gui"
+      || origin.targetSessionId !== owner.sessionId || origin.targetIncarnationId !== owner.incarnationId) return input;
+    const source = { ...owner, kind: "main" as const };
+    if (coordination?.targetKind === "main" && coordination.operation === "answer" && coordination.actor.kind === "user") {
+      const record = readConversationCoordinationOrigin(this.db, coordination.id);
+      return { ...input, request: { ...request, mainConversationFrame: readMainCoordinationFrame(this.db, source, record, readThreads) } };
+    }
+    return retrySource ? { ...input, request: { ...request, mainConversationFrame: readMainRetryFrame(this.db, source, retrySource, readThreads) } } : input;
   }
 
   getReceiptById(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt | null {
@@ -150,35 +198,35 @@ export class SessionTurnQueueStorageV6 {
       LEFT JOIN auxiliary_sessions a ON a.id = q.auxiliary_session_id AND a.parent_session_id = s.id
       WHERE ((q.auxiliary_session_id IS NULL AND s.incarnation_id = q.incarnation_id)
         OR (a.created_at = q.incarnation_id))
-      AND (q.state IN ('queued', 'starting', 'running') OR (q.state = 'interrupted'
-        AND (q.released_at IS NULL OR (q.input_turn_id IS NULL AND
-          CASE WHEN q.auxiliary_session_id IS NULL THEN json_extract(s.runtime_policy_json, '$.runState') ELSE a.run_state END = 'running'))))
-      ${sourceSessionId === undefined ? "" : `AND q.state = 'queued'
-        AND json_extract(q.accepted_json, '$.origin.deliveryTiming') = 'after_source_turn'
+      AND q.state = 'queued'
+      ${sourceSessionId === undefined ? "" : `AND json_extract(q.accepted_json, '$.origin.deliveryTiming') = 'after_source_turn'
         AND json_extract(q.accepted_json, '$.origin.actorKind') = 'main'
         AND json_extract(q.accepted_json, '$.origin.actorSessionId') = ?`}`)
       .all(...(sourceSessionId === undefined ? [] : [sourceSessionId])) as Array<{ session_id: string; incarnation_id: string }>).map((row) => ({ sessionId: row.session_id, incarnationId: row.incarnation_id })));
   }
 
   claimNext(owner: SessionTurnQueueOwner, unreleasedSourceTurnIds: readonly string[] = []): SessionTurnQueueReceipt | null {
-    return this.withOwner(owner, () => {
-      if (this.db.prepare(`SELECT 1 FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
-        AND (state IN ('starting', 'running') OR (state = 'interrupted' AND released_at IS NULL)) LIMIT 1`).get(owner.sessionId, owner.incarnationId)) return null;
-      const row = this.db.prepare(`SELECT q.* FROM session_turn_queue_v6 q WHERE COALESCE(q.auxiliary_session_id, q.session_id) = ? AND q.incarnation_id = ?
-        AND q.state = 'queued' AND ${eligibleDeliverySql}
-        ${unreleasedSourceTurnIds.length ? `AND (COALESCE(json_extract(q.accepted_json, '$.origin.deliveryTiming'), 'immediate') = 'immediate'
-          OR json_extract(q.accepted_json, '$.origin.actorTurnId') NOT IN (${unreleasedSourceTurnIds.map(() => "?").join(",")}))` : ""}
-        ORDER BY q.queue_position, q.sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId, ...unreleasedSourceTurnIds) as QueueRow | undefined;
-      if (!row) return null;
-      const captured = JSON.parse(coordinationDispatchJson(this.db, row.captured_json)) as SessionTurnQueueCapturedInput;
-      const sourceTurnPhase = this.toReceipt(row).sourceTurnPhase;
-      if (captured.origin?.deliveryTiming === "after_source_turn" && sourceTurnPhase && sourceTurnPhase !== "running" && sourceTurnPhase !== "unknown") {
-        captured.origin = { ...captured.origin, sourceTurnPhase };
-      }
-      this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, updated_at = ? WHERE id = ?")
-        .run(capturedJson(captured), new Date().toISOString(), row.id);
-      return this.required(owner, row.id);
-    });
+    return this.withOwner(owner, () => this.claimNextInTransaction(owner, unreleasedSourceTurnIds));
+  }
+
+  private claimNextInTransaction(owner: SessionTurnQueueOwner, unreleasedSourceTurnIds: readonly string[]): SessionTurnQueueReceipt | null {
+    if (this.db.prepare(`SELECT 1 FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
+      AND state IN ('starting', 'running') LIMIT 1`).get(owner.sessionId, owner.incarnationId)) return null;
+    const row = this.db.prepare(`SELECT q.* FROM session_turn_queue_v6 q WHERE COALESCE(q.auxiliary_session_id, q.session_id) = ? AND q.incarnation_id = ?
+      AND q.state = 'queued' AND ${eligibleDeliverySql}
+      ${unreleasedSourceTurnIds.length ? `AND (COALESCE(json_extract(q.accepted_json, '$.origin.deliveryTiming'), 'immediate') = 'immediate'
+        OR json_extract(q.accepted_json, '$.origin.actorTurnId') NOT IN (${unreleasedSourceTurnIds.map(() => "?").join(",")}))` : ""}
+      ORDER BY q.queue_position, q.sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId, ...unreleasedSourceTurnIds) as QueueRow | undefined;
+    if (!row) return null;
+    const prepared = JSON.parse(coordinationDispatchJson(this.db, row.captured_json)) as SessionTurnQueueCapturedInput;
+    const captured = row.auxiliary_session_id === null ? this.withInheritedFrame(owner, prepared) : prepared;
+    const sourceTurnPhase = this.toReceipt(row).sourceTurnPhase;
+    if (captured.origin?.deliveryTiming === "after_source_turn" && sourceTurnPhase && sourceTurnPhase !== "running" && sourceTurnPhase !== "unknown") {
+      captured.origin = { ...captured.origin, sourceTurnPhase };
+    }
+    this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, updated_at = ? WHERE id = ?")
+      .run(capturedJson(captured), new Date().toISOString(), row.id);
+    return this.required(owner, row.id);
   }
 
   markStarted(owner: SessionTurnQueueOwner, id: string, input: { turnId: string; userMessageSeq: number }): SessionTurnQueueReceipt {
@@ -203,7 +251,9 @@ export class SessionTurnQueueStorageV6 {
       if (receipt.accepted?.origin?.deliveryTiming === "after_source_turn" && unreleasedSourceTurnIds.includes(receipt.accepted.origin.actorTurnId!)) {
         throw new Error("The sender Turn is still releasing its execution.");
       }
-      const turn = this.db.prepare(`SELECT t.id FROM session_turns_v6 t WHERE t.phase = 'running'
+      const targetKind = receipt.captured.coordination?.targetKind;
+      const turn = this.db.prepare(`SELECT t.id, t.auxiliary_session_id FROM session_turns_v6 t WHERE t.phase = 'running'
+        ${targetKind === "main" ? "AND t.auxiliary_session_id IS NULL" : targetKind === "auxiliary" ? "AND t.session_id IS NULL" : ""}
         AND ((t.session_id = ? AND t.auxiliary_session_id IS NULL AND EXISTS
           (SELECT 1 FROM sessions_v6 s WHERE s.id = t.session_id AND s.incarnation_id = ?
             AND json_extract(s.runtime_policy_json, '$.runState') = 'running')
@@ -211,11 +261,15 @@ export class SessionTurnQueueStorageV6 {
         OR (t.auxiliary_session_id = ? AND t.session_id IS NULL AND EXISTS
           (SELECT 1 FROM auxiliary_sessions a WHERE a.id = t.auxiliary_session_id AND a.created_at = ? AND a.run_state = 'running')
           AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = t.auxiliary_session_id)))`)
-        .get(owner.sessionId, owner.incarnationId, owner.sessionId, owner.incarnationId) as { id: number } | undefined;
+        .get(owner.sessionId, owner.incarnationId, owner.sessionId, owner.incarnationId) as { id: number; auxiliary_session_id: string | null } | undefined;
       if (!turn) throw new Error("The current running turn no longer matches.");
-      if (receipt.captured.coordination) throw new Error("Coordination delivery requires a new normal Turn.");
-      const captured = receipt.captured.origin?.deliveryTiming === "after_source_turn" && receipt.sourceTurnPhase
-        ? { ...receipt.captured, origin: { ...receipt.captured.origin, sourceTurnPhase: receipt.sourceTurnPhase as "completed" | "failed" | "canceled" } } : receipt.captured;
+      if (receipt.captured.coordination) assertCoordinationInputTurn(this.db, receipt.captured,
+        { ...owner, kind: turn.auxiliary_session_id === null ? "main" : "auxiliary" }, String(turn.id));
+      const prepared = receipt.captured.coordination
+        ? JSON.parse(coordinationDispatchJson(this.db, JSON.stringify(receipt.captured))) as SessionTurnQueueCapturedInput : receipt.captured;
+      const dispatch = turn.auxiliary_session_id === null ? this.withInheritedFrame(owner, prepared) : prepared;
+      const captured = dispatch.origin?.deliveryTiming === "after_source_turn" && receipt.sourceTurnPhase
+        ? { ...dispatch, origin: { ...dispatch.origin, sourceTurnPhase: receipt.sourceTurnPhase as "completed" | "failed" | "canceled" } } : dispatch;
       const result = this.db.prepare(`UPDATE session_turn_queue_v6 SET state = 'starting', dispatched_json = ?, turn_id = ?, input_turn_id = ?, updated_at = ?
         WHERE id = ? AND state = 'queued'`).run(capturedJson(captured), String(turn.id), expectedTurnId, new Date().toISOString(), id);
       if (Number(result.changes) !== 1) throw new Error("The queued input could not be claimed.");
@@ -295,47 +349,12 @@ export class SessionTurnQueueStorageV6 {
     });
   }
 
-  recoverInterrupted(): number {
-    return this.transaction(() => Number(this.db.prepare(`UPDATE session_turn_queue_v6
-      SET state = 'interrupted', reason = 'Execution outcome is unknown after interruption.', updated_at = ?
-      WHERE state IN ('starting', 'running') AND EXISTS (
-        SELECT 1 FROM sessions_v6 s LEFT JOIN auxiliary_sessions a ON a.id = session_turn_queue_v6.auxiliary_session_id
-        WHERE s.id = session_turn_queue_v6.session_id AND
-          ((session_turn_queue_v6.auxiliary_session_id IS NULL AND s.incarnation_id = session_turn_queue_v6.incarnation_id)
-          OR (a.parent_session_id = s.id AND a.created_at = session_turn_queue_v6.incarnation_id))
-      )`).run(new Date().toISOString()).changes));
-  }
-
-  releaseInterrupted(owner: SessionTurnQueueOwner, id: string, options?: { runReleased: boolean }): SessionTurnQueueReceipt {
-    return this.withOwner(owner, () => {
-      const receipt = this.required(owner, id);
-      if (["completed", "failed", "canceled"].includes(receipt.state)) return receipt;
-      if (receipt.state !== "interrupted") throw new Error("Queue receipt is not interrupted.");
-      const now = new Date().toISOString();
-      if (receipt.releasedAt === null) {
-        this.db.prepare("UPDATE session_turn_queue_v6 SET released_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
-      }
-      if (options?.runReleased === true && !receipt.inputTurnId && receipt.turnId !== null && receipt.userMessageSeq !== null) {
-        this.db.prepare(`UPDATE sessions_v6
-          SET runtime_policy_json = json_set(runtime_policy_json, '$.appStatus', 'idle', '$.runState', 'interrupted')
-          WHERE id = ? AND incarnation_id = ?
-            AND json_extract(runtime_policy_json, '$.appStatus') = 'running'
-            AND json_extract(runtime_policy_json, '$.runState') = 'running'
-            AND EXISTS (SELECT 1 FROM session_turns_v6 t WHERE CAST(t.id AS TEXT) = ?
-              AND t.session_id = sessions_v6.id AND t.auxiliary_session_id IS NULL
-              AND t.phase = 'running' AND t.user_message_seq = ?
-              AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE session_id = sessions_v6.id))`)
-          .run(owner.sessionId, owner.incarnationId, receipt.turnId, receipt.userMessageSeq);
-        this.db.prepare(`UPDATE auxiliary_sessions SET run_state = 'error'
-          WHERE id = ? AND created_at = ? AND run_state = 'running'
-          AND EXISTS (SELECT 1 FROM session_turns_v6 t WHERE CAST(t.id AS TEXT) = ?
-            AND t.auxiliary_session_id = auxiliary_sessions.id AND t.session_id IS NULL
-            AND t.phase = 'running' AND t.user_message_seq = ?
-            AND t.id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = auxiliary_sessions.id))`)
-          .run(owner.sessionId, owner.incarnationId, receipt.turnId, receipt.userMessageSeq);
-      }
-      return this.required(owner, id);
-    });
+  recoverInterrupted(target?: SessionTurnQueueOwner & { receiptId: string }): number {
+    const now = new Date().toISOString();
+    if (!target) return this.transaction(() => recoverSessionTurnsAfterRestart(this.db, now));
+    const result = this.withOwner(target, () => recoverReleasedSessionTurn(this.db, target, target.receiptId, now));
+    if (result.changed) this.onConversationChanged?.(result.auxiliary ? "auxiliary_session_messages" : "session_messages_v6", target.sessionId);
+    return Number(result.changed);
   }
 
   private required(owner: SessionTurnQueueOwner, id: string): SessionTurnQueueReceipt {

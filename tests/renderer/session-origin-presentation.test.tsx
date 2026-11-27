@@ -7,8 +7,9 @@ import { JSDOM } from "jsdom";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import { SentDeliveryRow } from "../../src/chat/conversation/sent-delivery-row.js";
 import { SessionOriginRoute } from "../../src/chat/conversation/turn-input-details.js";
-import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
+import type { SentDelivery, SentSteer } from "../../src/chat/conversation/use-sent-deliveries.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import { sentInstructionFixtureItem } from "./sent-instruction-reader-fixture.js";
 
 const origin = { kind: "session" as const, actorKind: "auxiliary" as const, actorSessionId: "sender-aux", actorMainSessionId: "sender-main", actorIncarnationId: "sender-inc", actorTurnId: "42", operation: "send" as const, targetSessionId: "target", targetIncarnationId: "target-inc",
   actorSnapshot: { sessionTitle: "Saved Sender Title", character: { id: "sender", name: "Saved Sender", iconPath: "" } },
@@ -17,6 +18,47 @@ const receipt: SessionTurnQueueReceipt = { id: "receipt", sessionId: "target", i
   captured: { origin, request: { userMessage: "Saved Instruction", clientRequestId: "request", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" } };
 const context = { ownerSessionId: "sender-main", target: { kind: "main" as const, sessionId: "sender-main", incarnationId: "source-inc" } };
 const item: SentDelivery = { receiptId: "receipt", sequence: 1, sourceTurnId: "42", sourceMessageSeq: 3, target: { kind: "main", sessionId: "target", incarnationId: "target-inc" }, state: "queued", origin, text: `${"Saved instruction. ".repeat(40)}End of full message.` };
+
+// @test-value v2
+// kind = "contract"
+// claim = "直接Steerの送信カードは保存宛先・全文と不明/未送信理由を示し、状態詳細はreceiptではなく正確な宛先messageで読む"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/966" }
+// fault = "直接入力を通常受付として表示する、未確定を確認済みにする、または別の入力・Turnの状態を読む"
+// observable = "送信カードの全文・宛先・unknown/not-sent理由とget_executionのtarget/messageSeq、Delivery Detailsの項目"
+// observation_boundary = "consumer"
+// scope = "本番SentDeliveryRowと共通AdditionalInputStatus。execution応答はfixture"
+// lifecycle = "permanent"
+// impact = "訂正の宛先や受信状態を誤認し、未送信を完了した指示として扱う"
+// distinction = "型検査とstorage testでは実DOMの表示と詳細入口からの正確な照会を検証できない。4状態は同じ小型DOMで確認する"
+// @end-test-value
+test("direct Steer cards show the recorded input state and read the exact message", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const requests: unknown[] = [];
+  Object.defineProperty(dom.window, "withmate", { value: { openSession: async () => {}, readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
+    assert.equal(operation, "get_execution"); requests.push(request); return { ok: true, turnState: "running", receiptState: null };
+  } } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const steer: SentSteer = { sequence: 1, sourceTurnId: "42", sourceMessageSeq: 3, target: item.target, messageSeq: 7, state: "pending", text: item.text,
+    origin: { ...origin, actorKind: "main", actorSessionId: "sender-main", operation: "steer" } };
+  try {
+    for (const [state, reason] of [["pending", null], ["unknown", "Delivery or saving could not be confirmed. This input is not a confirmed addition."], ["not-sent", "This input was not delivered to the Turn. It has not been sent as a new Turn."], ["confirmed", null]] as const) {
+      await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...steer, state })} context={context} />));
+      const row = dom.window.document.querySelector("article")!;
+      assert.ok(row.textContent?.includes(item.text));
+      assert.equal(row.querySelector(".session-message-mention")?.textContent, "@Saved Target");
+      assert.equal(row.querySelector('[role="alert"]')?.textContent ?? null, reason);
+    }
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Show Delivery Details"]')!.click());
+    assert.deepEqual(requests, [{ target: item.target, messageSeq: 7 }]);
+    assert.deepEqual([...dom.window.document.querySelectorAll("dt")].map((element) => element.textContent), ["Turn State"]);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -31,7 +73,7 @@ const item: SentDelivery = { receiptId: "receipt", sequence: 1, sourceTurnId: "4
 // distinction = "保存testではrendererの送信者と受信者の取り違えを検出しない。小さなSSRで識別表示を検証する"
 // @end-test-value
 test("incoming rows use saved sender identity and retain unknown legacy identity", () => {
-  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueRow receipt={value} character={{ name: "Current Recipient", iconPath: "" }} busy={false} onCancel={() => {}} onRelease={() => {}} />)).window.document;
+  const render = (value: SessionTurnQueueReceipt) => new JSDOM(renderToStaticMarkup(<SessionTurnQueueRow receipt={value} character={{ name: "Current Recipient", iconPath: "" }} busy={false} onCancel={() => {}} />)).window.document;
   const document = render(receipt);
   assert.equal(document.querySelector(".message-character-name")?.textContent, "Saved Sender");
   assert.equal(document.querySelector(".related-session-title")?.textContent, "Saved Sender Title");
@@ -118,7 +160,9 @@ test("sent messages show full content while refreshing exact delivery state", as
   const root = createRoot(dom.window.document.getElementById("root")!);
   const click = async (label: string) => { const button = [...dom.window.document.querySelectorAll("button")].find((element) => element.textContent?.includes(label) || element.getAttribute("aria-label") === label)!; assert.ok(button); await act(async () => button.click()); };
   try {
-    await act(async () => root.render(<SentDeliveryRow item={item} context={context} />));
+    const card = sentInstructionFixtureItem(item);
+    assert.ok("receiptId" in card);
+    await act(async () => root.render(<SentDeliveryRow item={card} context={context} />));
     assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, item.text);
     assert.match(dom.window.document.body.textContent!, /Saved Target.*Saved Target Title/);
     assert.equal(dom.window.document.querySelector(".session-message-mention")?.textContent, "@Saved Target");
@@ -129,7 +173,7 @@ test("sent messages show full content while refreshing exact delivery state", as
     assert.equal(state("Turn State"), "Running");
     assert.deepEqual(statusRequests[0], { target: item.target, receiptId: item.receiptId });
     receiptState = "completed";
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, state: "completed" }} context={context} />));
+    await act(async () => root.render(<SentDeliveryRow item={{ ...card, state: "completed" }} context={context} />));
     assert.equal(state("Receipt State"), "Completed");
     turnState = "completed";
     await act(async () => turnUpdated?.("target"));
@@ -156,17 +200,17 @@ test("sent messages show full content while refreshing exact delivery state", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存Coordination通知は相談本文の投影を読み、明示操作から正確な宛先のCoordination詳細を開ける"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user: Coordinationを理解しやすいUIへ改修" }
-// fault = "通知の内部JSONを通常本文として読むか、別Sessionや別相談の詳細を開く"
-// observable = "送信rowの全文とDelivery Details内のRelated Consultation clickがopenCoordinationへ渡す対象identityと相談ID"
+// claim = "送信通知は問いで識別できる正確な相談入口を持ち、別送本文と問い未記録の旧本文を一度だけ初期表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details: 相談の識別表示・当時本文・旧データ" }
+// fault = "別Session/相談を開く、問いの識別を失う、または別送本文/旧本文を隠す/Detailsと二重表示する"
+// observable = "plain textの問いとaccessible name、移動先identityと相談ID、送信本文の表示数と閉じた詳細外での可読性"
 // observation_boundary = "consumer"
 // scope = "SentDeliveryRowから保存済みCoordination表示・既存詳細navigationへの接続"
 // lifecycle = "permanent"
 // impact = "利用者が相談を読めず、対応先を取り違える"
 // distinction = "storage schemaや型検査では共通APIの投影が本文・詳細操作へ正しく接続されることを保証できない"
 // @end-test-value
-test("Coordination notifications show readable text and open their exact consultation", async () => {
+test("Coordination notifications identify exact consultations and preserve separately sent and legacy content", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -175,14 +219,27 @@ test("Coordination notifications show readable text and open their exact consult
   Object.defineProperty(dom.window, "withmate", { value: { openCoordination: async (request: unknown) => { opened.push(request); }, readSessionExecution: async () => ({ ok: true, receiptState: "completed", turnState: "completed" }) } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    const consultation = `${"Which approach should we use? ".repeat(20)}Final question.`;
-    await act(async () => root.render(<SentDeliveryRow item={{ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } }} context={context} />));
-    assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, consultation);
-    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
-    const button = dom.window.document.querySelector('[aria-label="Delivery Details"] [aria-label="Open Related Consultation"]') as HTMLButtonElement;
+    const consultation = `${"Which approach should we use? ".repeat(20)}\n\nFinal **condition**: preserve [the source](https://example.com/source).`;
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, text: '{"coordinationId":"consultation"}', coordination: { id: "consultation", text: consultation } })} context={context} />));
+    const button = dom.window.document.querySelector(".coordination-notice-link") as HTMLButtonElement;
     assert.ok(button);
+    assert.match(button.textContent!, /Final condition: preserve the source/);
+    assert.match(button.getAttribute("aria-label")!, /Open Consultation:.*Final condition/);
     await act(async () => button.click());
     assert.deepEqual(opened, [{ ...item.target, id: "consultation" }]);
+    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
+    assert.match(dom.window.document.querySelector('[aria-label="Sent Content"] .rich-text')?.textContent ?? "", /Final condition/);
+    assert.equal(dom.window.document.querySelector('[aria-label="Sent Content"]')?.closest('[aria-label="Delivery Details"]'), null);
+    await act(async () => (dom.window.document.querySelector('[aria-label="Hide Delivery Details"]') as HTMLButtonElement).click());
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, coordination: { id: "consultation", consultation, text: consultation } })} context={context} />));
+    await act(async () => (dom.window.document.querySelector('[aria-label="Show Delivery Details"]') as HTMLButtonElement).click());
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 0);
+    await act(async () => root.render(<SentDeliveryRow item={sentInstructionFixtureItem({ ...item, coordination: { id: "consultation", consultation: "Which approach?", text: "The saved reply." } })} context={context} />));
+    const reply = dom.window.document.querySelector('[aria-label="Sent Content"]')!;
+    assert.equal(dom.window.document.querySelectorAll('[aria-label="Sent Content"]').length, 1);
+    assert.equal(reply.querySelector(".rich-text")?.textContent, "The saved reply.");
+    assert.equal(reply.closest('[aria-label="Delivery Details"]'), null);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

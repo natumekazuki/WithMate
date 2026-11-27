@@ -20,8 +20,8 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - window 構成全体は `docs/design/window-architecture.md` を参照する
 - Rendererの承認・質問への応答、処理中request ID、取消操作は `src/chat/runtime/session-run-actions.ts` が所有し、Session Windowは対象会話とlive run投影を接続する。実行の正本はMainに置く。
 - Main Sessionの新Turn送信（preview、preflight、永続受付、Composer revisionに対応するclear、受付結果の照合、submit leaseの解放）は `src/chat/runtime/run-main-session-turn-operation.ts` と `session-turn-acceptance.ts` が所有する。未受付のMain下書きは永続保存・自動復元・自動再送しない。Auxiliaryの下書き保存契約は独立して維持する。
-- Mainの受付応答が不明なら、元のrequest IDと捕捉値を保持して正本receiptを照会する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。明示再試行も同じIDを使う。mutation前の明確な受付拒否では入力を保持する。durable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
-- 送信直後の表示はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させ、準備・受付ACKを待たず正常な送信文と応答待機枠を描画する。表示のDOM反映、dock折りたたみ、末尾追従の順を守り、実runの開始・成功は推定しない。処理エラー・timeoutが明確になった場合だけ対象のerrorを表示する。receiptは同じrequest IDで接続し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗とprovider実行失敗は別のUIとして扱う。
+- 通常送信と失敗Turnの再実行は、受付応答とその喪失直後の自動照会の間、対象会話の重複送信を防ぐ。自動照会でも受理を確認できなければ、元のrequest IDと捕捉値を保持して正本receiptの手動照会、または同一IDでの明示再試行を提供する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。mutation前の明確な受付拒否では入力を保持する。通常送信のdurable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。再実行では通常下書きを消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
+- 送信はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させる。dock折りたたみ・末尾追従の既存設定は送信操作時に一度適用する。送信文と応答待機枠は受付済みreceiptから描画し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗・受付不明・provider実行失敗は区別する。
 - Sessionのsnapshot/subscription、authoritative/projection mutation revision、submit pending/blocked state、submit coordinatorのlifetimeは `src/chat/runtime/use-main-session-runtime.ts` が所有する。Session Windowはselected ID、layout、feature hookの接続と、既存Composer Registryのshell lifetimeを保持する。
 
 ## Decision
@@ -53,27 +53,48 @@ stateDiagram-v2
 window は上の状態機械とは分離する。  
 `Running` 中に `Session Window` が閉じても、session state は Main Process 内で継続する。
 
+### 入力から読み返しまでの所有境界
+
+同じ会話の表示は、受付・実行・保存を一つの状態に置き換えず、各正本を同じ入力または応答に対応付ける。MainとAuxiliaryはこの境界を共有する。Mainの相手枠やALLは閲覧範囲であり、実行順や対象ownerにはしない。
+
+| 段階 | 正本・判断と引継ぎ |
+| --- | --- |
+| 入力・準備 | GUIはComposerのownerと編集revisionを捕捉する。通常Sendと直接Steerは同じ会話内で同時に草稿を消費しない。送信準備で捕捉が失効したら受付せず、受付開始後は画面選択と独立して元の要求を解決する。通常request IDの再照会は元入力に限り、後続の草稿は消さない。 |
+| 受付・予約 | Storage Workerのreceiptが受理の正本。GUIと通常Session間送信、明示再送は同じキューを使う。受付時入力・現在の予約編集・claimされた実行入力を区別する。未開始の取消・並べ替えは同一receiptを対象にし、表示順ではなく保存済み実行順を使う。配送元の解放待ちは宛先の別の実行可能な予約と区別する。 |
+| 開始・追加入力 | Main runtimeは会話identityとWithMate Turn、Provider adapterはその実行先を照合する。通常開始のreceipt、開始入力seq、Turnを同時保存する。予約をSteerした場合は同じreceiptの入力となり、直接Steerには別の通常receiptを作らない。質問・承認は実行中の対象要求へ回答し、通常送信としない。 |
+| ライブ・停止 | 本文・操作・要求・取消の一時状態はMain runtimeが通知し、rendererの会話列と操作面は必要部分だけ購読する。停止の受付や終端保存と、Provider等の実guard解放は別である。旧操作を次Turnに付け替えない。 |
+| 終端・再接続 | Storage Workerの終端transactionが本文・詳細とTurn/receipt状態を確定する。保存通知は再取得の契機であり、通知やライブ消失を本文保存の証明にしない。再openのスナップショット・保存履歴・起動回収は同じownerを照合し、送信や実行を再生しない。 |
+| 表示引継ぎ・読み返し | 会話列は受付と保存入力を正確なID/seqで、応答と実行詳細を同じTurnで結合する。表示用keyはフォーカス・開閉・スクロールを保持し、返信・検索・詳細の参照は保存seq/Turnで行う。保存が遅い間は認識済みの内容を残し、別Turnへ付け替えず、正本が届いたらその内容へ更新する。詳細は[Session History](session-history.md)と[Desktop UI](desktop-ui.md#session-window)を参照。 |
+
+Mainの最新相手枠の保存ページは、会話全体の末尾より先に届いた場合も受付との照合に使う。相手枠だけの取得で全体末尾が必要とするreceiptを破棄しない。応答に付く送信カードとreceiptなし起票も、同じsource会話の対応するTurnまたは保存seqに置ける間は、ライブ終了と保存範囲の目録更新の間で保持する。目録の正本がその範囲を再照合した結果は反映し、取得前の不在を削除とは見なさない。
+
 ## GUI Turn Queue
 
-Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Steer`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・並べ替え・追加入力・解放のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
+失敗が確定したTurnの開始入力は、直近か過去かにかかわらず、対応する会話の失敗レスポンスカードの`Resend`から明示的に選択して新しいTurnとして再実行できる。Mainは対象Sessionとincarnation、失敗Turn、開始receipt、固定された入力と元の送信来歴を照合し、欠落や不一致、結果不明、取消済みを拒否する。受付後に編集された場合は実際に固定された入力を用い、追加入力や元の配送・付随操作は再演しない。新しい受付のactorはGUIユーザーであり、元のreceipt・Turn・送信者は別の来歴として保存する。現在の実行設定と権限、添付の現在のアクセス範囲を使い、添付内容の同一性は保証しない。履歴やdraftは変更しない。受付応答が不明な場合は元のrequest IDで照会する。
+
+Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Steer`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・並べ替え・追加入力のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
 
 `MainSessionTurnQueueFacade`がSession ID／incarnation、本文、実行設定、provider／workspace、解決済み添付descriptorを捕捉する。添付はpath参照でありbytesをコピーしない。dispatchでは現在のowner・設定の利用可否・path認可と対象種類を再検証し、本文から添付を再解決しない。本文・設定は捕捉値、thread継続状態は最新Sessionを使う。
 
-`SessionTurnQueueService`はSessionごとに保存済み実行順で一件だけclaimする。初期は受付順で、queuedだけを個別取消・並べ替えできる。状態は`queued → starting → running → completed/failed/canceled/interrupted`で、starting以降や確定履歴の順序は変更しない。開始時のuser message・最小turn・receiptの対応付けとrunning状態は同じstorage transactionで確定し、終端本文・最小turn・receiptの終端も同じtransactionで確定する。
+`SessionTurnQueueService`はSessionごとに保存済み実行順で一件だけclaimする。初期は受付順で、queuedだけを個別取消・並べ替えできる。状態は`queued → starting → running → completed/failed/canceled`で、保存結果を確認できない経路では`interrupted`を維持する。starting以降や確定履歴の順序は変更しない。開始時のuser message・最小turn・receiptの対応付けとrunning状態は同じstorage transactionで確定し、終端本文・最小turn・receiptの終端も同じtransactionで確定する。
 
-並べ替えは受付・取消・通常claim・Steerのclaimと同じSession lockを使う。表示時のqueued ID列が保存列と一致した場合だけ、その同一集合の新順序をtransactionで保存する。追加・取消・開始・別の並べ替えが先に確定していれば変更せず、最新列を再取得する。保存失敗や応答不明でmutationを自動再送せず、再取得した現在順序を過去の操作成功の証明にしない。再起動時も保存順と既存のinterrupted保留・明示解放を維持する。
+Main／AuxiliaryのGUI送信と親子間の通常送信は、Session lock内で実行・編集・復旧・終了の保留を確認し、受付と実行可能な先頭一件のclaimを同じDB transactionで確定する。新規受付自身をclaimできた場合、受付応答と保存状態の初回公開は`starting`となる。先行予約が選ばれる場合や実行枠を確保できない場合は、新規受付を操作可能な`queued`として返す。claim済みの一件はlockの外で既存のdispatch／終端処理に一度だけ引き継ぎ、受付応答はProviderの開始・完了を待たない。既知のrequest IDの再照会から同じclaimを引き継ぎ直さない。
 
-確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。結果不明の実行は自動再実行せず、同Sessionの後続を保留する。`Release Later Turns`は不明な要求そのものの再実行ではなく後続の明示解放であり、実guardを迂回しない。
+並べ替えは受付・取消・通常claim・Steerのclaimと同じSession lockを使う。表示時のqueued ID列が保存列と一致した場合だけ、その同一集合の新順序をtransactionで保存する。追加・取消・開始・別の並べ替えが先に確定していれば変更せず、最新列を再取得する。保存失敗や応答不明でmutationを自動再送せず、再取得した現在順序を過去の操作成功の証明にしない。再起動時も保存順を維持する。
 
-atomic開始後に結果不明となった要求の明示解放では、実guard解放後にだけSessionの実行metadataをidle／interruptedへ収束させる。収束の対象は、同incarnation・receiptのturn ID／user seq・最新running最小turnに一致するSessionに限る。早期解放はreceiptの解放だけを保存し、後続claim前に収束する。本文・thread・設定や最小turnの未確定結果を上書きせず、過去receiptを新しいTurnへ適用しない。
+確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。生存中の通常実行で結果が不明な場合は自動再実行せず、正本確認と実guard解放を待つ。実guard解放後は当該受付・Turnのみを照合し、確定終端を保つ。終端の照合ができなくても、当該受付の`interrupted`が永続確認済みなら証拠を保持して後続を進める。正本照会・回収保存自体の結果が不明な間は進めない。
 
-予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻し、送信結果不明では`interrupted`として後続を保留する。追加入力の解放は現在Turnのruntime状態を書き換えず、元要求を再送しない。
+予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻す。送信結果不明のreceiptは`interrupted`と対象のidentityを保持し、元要求を再送しない。保存照合や生存中の実行guardは維持するが、保存された不明receipt自体は後続通常Turnを止めない。
 
-通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。予約・中断の状態と必要な操作は対象user bubbleに添え、確定した失敗は応答側の共通エラー欄へ集約する。通常履歴と別のreceipt一覧は表示しない。取得失敗で既存表示を空へ置換せずRetryを提供する。
+通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。予約の状態と操作は対象user bubbleに添える。通常失敗と再起動による失敗は、応答側の共通エラー欄に一度だけ表示する。結果不明の追加入力は親応答の失敗にせず、該当入力の表示と分ける。通常履歴と別のreceipt一覧は表示しない。取得失敗で既存表示を空へ置換せずRetryを提供する。
+
+### Failed Turn Retry
+
+Main／Auxiliaryの確定した失敗開始を`Resend`すると、対象receiptの保存済み固定入力と元の発信元を保ち、現在の実行設定で通常キューに新しいGUI受付を作る。別Turnの実行中でも受付できるが、そのTurnは停止せず、追加入力も送らない。再実行は先行予約を追い越さず、既存の実行・編集保留に従う。Composerの下書きは消費しない。開始入力や失敗が確定していない旧記録はこの操作の対象にせず、再試行自体の受付結果が不明なら元の要求IDで照会・回復する。
 
 ### Queue Editing
 
-Edit開始は既存のSession lockに入り、対象がqueuedであることを確認して、その会話のキュー全体の取り出しを止める。編集対象より前の予約も開始しないが、実行中Turnと他会話のキューは継続する。表示の再取得は止めない。開始済み項目を編集へ戻さない。
+Edit開始は既存のSession lockに入り、対象がqueuedであることを確認して、その会話のキュー全体の取り出しを止める。失敗Turnの再実行も同じ編集・取消条件を使う。編集した本文・添付は今回のGUI受付の入力にだけ適用し、元の受付・履歴・送信者を更新せず、再実行受付の来歴参照も保持する。編集対象より前の予約も開始しないが、実行中Turnと他会話のキューは継続する。表示の再取得は止めない。開始済み項目を編集へ戻さない。再実行を実行中Turnへの追加入力には転用しない。
 
 Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確認した後に保留を解放して後続を起動する。Cancel Editは保存済み本文を変更せず解放する。Mainの保存失敗・storage応答不明では保留を保持し、mutationを自動再送しない。Main成功後のrendererへの返信だけが失われた場合は既に再開している可能性があるため、rendererは編集入力を保持し、保留中・未保存とは断定しない。Cancel Editは保存済み更新を巻き戻さない。編集対象のSteerや予約取消で未保存本文を送信・破棄しない。
 
@@ -81,7 +102,7 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 ## Bound Session API
 
-通常親子の`enqueue`は一件ごとに実行設定を指定する。親→直属子は`model`と`reasoningEffort`を必須とし、Depth非対応Modelでは空文字列を明示する。子→直属親は両項目を個別に省略でき、省略分は受付時の親保存設定から確定する。全Providerで`approvalMode`を必須、Codex宛では`codexSandboxMode`も必須とし、他ProviderへのSandbox指定は拒否する。`get`／`list`の宛先`provider`／`workspacePath`を`get_catalog`へ渡して利用可能な選択肢を取得できる。実効ModelとDepthの組合せ、Provider対応権限、保存ReviewerとApprovalの整合を受付前に検証し、不整合ではreceiptを作らない。Reviewerを自動変更して確認手順を迂回せず、個別操作のユーザー承認・認証は従来どおり必要である。
+通常親子の`enqueue`は一件ごとにModelとDepthを選ぶ。親→直属子は`model`と`reasoningEffort`を必須とし、Depth非対応Modelでは空文字列を明示する。子→直属親は両項目を個別に省略でき、省略分は受付時の親保存設定から確定する。権限は両方向とも受付時の宛先の保存Approval・Sandbox・Reviewerを捕捉し、受付済みsnapshot、同一request keyの再確認、実行中Turnを後の設定変更で変えない。`get`／`list`の宛先`provider`／`workspacePath`を`get_catalog`へ渡して利用可能な選択肢を取得できる。実効ModelとDepthの組合せ、Provider対応権限、保存ReviewerとApprovalの整合を受付前に検証し、不整合ではreceiptを作らない。個別操作のユーザー承認・認証は従来どおり必要である。
 
 即時・遅延どちらも実効設定を`receipt.accepted.request.executionOptions`へ固定し、当該通常Turnだけに適用する。宛先Provider、保存設定、他の受付、実行中Turnは変更しない。明示設定と省略の区別を`accepted.origin.requestedExecutionOptions`へ保存し、同じrequestIdの再送は同じ本文・設定指定・配送タイミングだけを許可する。受付後の保存設定・catalog変更や送信元の後続Turnによって元の受付内容を再解決しない。過去の受付は設定指定を現在値から補記せず、そのまま照会できる。GUI送信、Coordination専用配送、進行中TurnへのSteer、受付済み条件の編集はこの指定の対象外である。
 
@@ -91,15 +112,23 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止・Steerの権限を与えない。通常送信は実際の直属親子だけ、取消・停止・Steerは親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、ユーザー回答・承認はこのAPIから公開しない。
 
-`steer`は親が明示した直属子の`target`（Session・incarnation）と`turnId`へ補足を送る。`get.currentTurn.turnId`で実行中のWithMate Turnを取得し、Provider native IDや最新Turnへ読み替えない。現在の対応宛先はCodexのみで、実行中TurnのModel・Depth・権限をそのまま使い、新Turn・receiptの作成や保存設定の変更はしない。通常送信の`enqueue`とは別操作であり、子からの報告やCoordinationは従来の配送を使う。
+`steer`は親が明示した直属子の`target`（Session・incarnation）と`turnId`へ補足を送る。`get.currentTurn.turnId`で実行中のWithMate Turnを取得し、Provider native IDや最新Turnへ読み替えない。現在の対応宛先はCodexのみで、実行中TurnのModel・Depth・権限をそのまま使い、新Turn・receiptの作成や保存設定の変更はしない。通常送信の`enqueue`とは別操作であり、子からの報告は通常送信、Coordinationは以下の専用配送を使う。
 
 `applied`はProviderの受理と追加入力保存の確定、`not-applied`はProvider未呼出を表す。終了・交代・非対応・送信準備中の失効では送信せず、別Turnや通常キューへ自動転送しない。Provider呼出後に受理または保存が確認できない場合は`SESSION_STEER_UNKNOWN`／`effect: unknown`と既知なら`result.messageSeq`を返す。自動再送せず、同じTurnの`list_execution_inputs`（不明分は`state: unresolved`）と`get_execution_input`で本文・配送状態・`inputOrigin`を照会する。`inputOrigin`はその補足を送った実親であり、開始入力の`origin`とは別に保持する。
 
-`enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
+受付の`failed`は通常の実行失敗と再起動で確定した実行失敗で使う。失敗した受付を自動実行し直さない。受付・実行状態と追加入力の配送結果は別であり、対象Turnへclaimした追加入力の保存済み入力seqがない場合、処理中の`starting`は`pending`、結果未確認の`interrupted`は`unknown`として`get_execution`と`list_execution_inputs`で照会できる。未呼出が確定して予約に戻った入力や保存で確定した入力は未確定receiptに含めず、`failed`だけで送付の有無を推定しない。
 
-取消grace後に終端を保存しても元Provider処理がterminating guardへ残る場合は、exact送信元Turnの実解放まで配送を開始しない。receiptの`sourceTurnPendingRelease`と待機表示で区別し、Steerでも迂回しない。保存済み終端だけを元処理の停止完了と同一視しない。
+Main／Auxiliaryの通常終端または当該Turnの回収を確定するとき、そのTurnの直接Steerに結果未確定の保存証跡が残っていれば、同じ終端transactionで`pending`を`unknown`にする。受理や未送信とは推定しない。本文、対象、確定済みの入力は保持し、自動再送しない。
 
-通常子の作成は`create_child`から共通lifecycleへ接続する。OはM／W、MはWを作成でき、Provider／Model／Depth／Approval／Workspaceを明示する。Sandboxは対応するCodexのみ明示必須で、他Providerの非対応値を受け付けない。Codex子は`codexReviewer`を任意指定でき、省略時は従来どおり`user`とする。`get_catalog`は既存catalogとnative設定optionsを返し、`options[].reviewers`に子作成で選択できるCodexのReviewer候補を返す。他Providerではこの候補は空配列で、Reviewerの明示指定は拒否する。選択・検証には既存のProvider別Approval／Reviewer契約を使用し、作成結果の`executionOptions.codexReviewer`、保存設定、初回以降の通常依頼でProviderへ渡す値を一致させる。Reviewerを自動選択したり、操作権限や個別承認を追加で付与したりしない。Characterは同Crewの通常Main使用数から共通作成ownerが選定し、同一request keyの再確認で子・Character・実行設定を変えない。子作成前と既存Sessionの実行設定の再選定前には保存された選定方針を読み、実際のcatalogと照合する。Workspaceの準備とGit操作は親Agentに委ね、WithMateはWorktreeの作成・merge・削除や外部Providerルールの同期を行わない。操作・保存境界は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。
+`enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。送信元の終端・実解放を待つ予約は応答待機の対象にせず、配送可能な別の予約は応答面へ進める。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
+
+取消grace後に終端を保存しても元Provider処理がterminating guardへ残る場合は、exact送信元Turnの実解放まで配送を開始しない。receiptの`sourceTurnPendingRelease`で区別し、Steerでも迂回しない。保存済み終端だけを元処理の停止完了と同一視しない。
+
+通常子の作成はMCP／CLIの`create_child`から共通lifecycleへ接続する。作成・作成復旧はSessionを保存して利用可能にするだけで、Windowを生成しない。OはM／W、MはWを作成でき、Provider／Model／Depth／Workspaceを明示する。Approval・Reviewer・Sandboxは呼出元の実行中Turnに捕捉された設定から決まり、Speedは継承しない。
+
+[子Sessionへの承認設定の継承](provider-adapter.md#子sessionへの承認設定の継承)に従い、明示したAuto Run・Auto Review・User・Safety Focusedは異種12方向でも子に渡す。宛先のnative権限環境は複製しない。制限付きCodex Sandbox、選択済みCopilot Custom Agent、旧固有Approvalは異種に転送しない。旧未指定Reviewerの互換動作は明示User／Auto Reviewと区別する。拒否したrequestには子Sessionもlifecycle操作も作らない。通常の `enqueue` は継承せず宛先の保存設定を使う。両操作は権限上書き引数や継承スイッチを公開しない。
+
+Characterは同Crewの通常Main使用数から共通作成ownerが選定し、同一request keyの再確認は新しい親Turnの設定で作成をやり直さず、保存した作成条件を使う。子作成前と既存Sessionの実行設定の再選定前には保存された選定方針を読み、実際のcatalogと照合する。Workspaceの準備とGit操作は親Agentに委ね、WithMateはWorktreeの作成・merge・削除や外部Providerルールの同期を行わない。操作・保存境界は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。
 
 `coordination_*`は相談の起票・保存済み実呼出元への明示配送・ユーザーへの引継ぎ・Agent回答・取り下げ・参照・解決・consumeを共通Coordination applicationへ接続する。作成／配送／回答に伴う保存とqueue受付は同applicationのatomic操作を呼び、adapterで別々に保存・enqueueしない。起票元への回答返却は取得済みを記録し、以後の回答変更を拒否する。自動配送ではTurn入力の保存と取得済みの更新を一体で確定する。実ユーザーとしての回答作成・変更はtrusted GUIへ分離する。
 Coordinationの配送は送信元Turnの終了を待たない即時経路を使う。
@@ -109,6 +138,12 @@ Coordinationの配送は送信元Turnの終了を待たない即時経路を使�
 `list_directories`／`add_directory`／`remove_directory`は実行元自身または保存済みの直属子Mainを対象とし、正確なSession incarnationを要求する。Mainと配下Auxiliaryは追加Directory一覧を共有し、別のMainは親子でも独立する。Workspace、Session Folder、Crew Folderは追加登録一覧と分けて返す。追加は実在する絶対directoryを検証し、削除は登録解除のみでファイルを消さない。更新は開始済みTurnを変更せず、後から開始するTurnへ反映する。実際のfilesystemアクセスはProviderの権限設定とOS権限にも依存する。
 
 MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布する。背景実行の限定履歴scopeを通常Agentに流用しない。受付成功とTurn完了を区別し、送信後の応答喪失は`effect: unknown`とする。enqueueの再確認は元request keyを使い、保存された送信元・操作・対象に照合する。取消は開始済み受付をTurn停止へ自動変換せず、Turn停止も最新Turnへ付け替えない。
+
+### Coordinationの関連Turn配送
+
+相談・GUI回答・Agent回答は、Coordinationと通常queue receiptを原子的に保存してから、入力可能なCodexの関連TurnへのSteerを既定で試す。回答はimmutable起票元のkind・Session・incarnation・起票Turnとの完全一致を必要とする。相談は起票Turnの元依頼を開始したreceiptのcaller kind・Session・incarnation・actorTurnIdが、宛先の実行中Turnと完全一致する場合だけ対象にする。追加Steerは開始originを置換せず、本文や別Turnの意味から関係を補わない。親依頼の実行中に子が起票しユーザーへ昇格された回答も、同じ起票Turnなら対象となる。関係不明・不一致・非対応Provider・非実行中の場合は同じreceiptの通常queue配送を維持する。
+
+来歴をclaim transactionで照合し、runtimeはProvider呼出前にexact incarnation、WithMate Turn、native Turnを再確認する。Steerは実行中のModel・Depth・権限を維持する。Provider未呼出と確定した拒否や終了競合は同じreceiptをqueuedへ復元する。結果未確認の追加入力が送付されたかを推測せず、通常配送や新しい操作IDで自動再送しない。Main／AuxiliaryのSteer入力保存・回答取得済み・receipt完了は同一transactionで確定し、consume・resolveとは区別する。通常送信・起票元/実ユーザーのResolve権限は変更しない。
 
 ## Ownership
 
@@ -139,10 +174,12 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 
 ### SessionApprovalService
 
-- Main／各Auxiliaryの会話ごとに承認要求をFIFOで保持し、先頭1件だけをlive stateへ公開・通知する。表示前の要求もdecision Promiseを保持し、先頭以外へのユーザー判断は受け付けない
+- Main／各Auxiliaryの会話ごとに承認要求をFIFOで保持する。表示前の要求もdecision Promiseを保持する。手動判断が必要な先頭1件だけをlive stateへ公開・通知し、審査中や待機中の要求への手動判断は受け付けない
 - 同一request identityの重複callbackは待機Promiseと判断を共有する。異なる要求を内容・summary一致で集約しない。Copilotの公開PermissionHandlerにはpermission request IDが渡らないため、同一要求オブジェクトだけを重複とし、別オブジェクトは同じtoolCallIdや表示内容でも個別に扱う
-- approve／denyで先頭を解決し、次の要求を公開する。個別signalのabortは該当要求だけをdenyで解決する。同一要求の重複callbackに属するsignalのabortは共有要求を失効させ、既にabort済みのsignalで届いた重複も同じdeny判断を共有する
+- approve／denyまたは先頭の取消で次の要求へ進む。後続の到着や取消だけでは現在の先頭を失効させない。個別signalのabortは該当要求だけをdenyで解決する。同一要求の重複callbackに属するsignalのabortは共有要求を失効させ、既にabort済みのsignalで届いた重複も同じdeny判断を共有する
 - turn取消・終端cleanup・resetは対象会話の全要求をdenyで解決し、途中の後続要求を公開・通知しない。全体resetは全会話へ適用する。承認待機は永続化しない
+- 対象Providerの実要求は[WithMate Auto Review](withmate-auto-review.md)を利用できる。構造化された判定も、同じ保留要求が先頭にあり失効していない場合だけ、このキューで解決する
+- 仲介審査中は公開せず、有効な`ask_user`だけを手動の先頭として公開する。仲介経路の不成立・結果不正・失効・取消は手動へ回さず拒否で解決する。既存のapprove／denyは出所を受け取るobserverの有無では変わらない。公開済み先頭への本人の応答を`manual`、審査の許可・拒否を`reviewer`、失敗・取消・拒否境界を`blocked`として実際の決着と一緒に伝える。未公開の従来要求を直接解決した場合も本人への帰属はせず、`blocked`として扱う
 
 ### SessionObservabilityService
 
@@ -159,7 +196,7 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 - diff / artifact の閲覧
 - session title の変更
 - session 削除
-- `interrupted` session の再送 UI
+- 失敗したTurnの明示再送 UI
 
 ## Close Behavior
 
@@ -172,7 +209,7 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
   - `閉じて続行`: 下記のdraft flushを試みてwindowを閉じる。session実行は継続する
 - 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・送信例外・ACKのtimeoutでも、入力中promptの未保存範囲を破棄してWindowを閉じる。終了済みRendererにはACKを要求せず、保存できなかった結果を保持してWindowを破棄する。close成立とdraft保存成功は別の結果として扱う。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
 - Windowの破棄はMain Processが所有するprovider実行・取得済み応答・terminal保存を中止しない。表示への通知失敗で保存処理を中断しない。Windowを開き直すと同じSessionと既存runへ接続し、runを再実行しない
-- 一度実行したSessionはMain／全Auxiliaryの実行中、承認・入力待ち、取消終了待ちのcloseではMonitorに保持する。Windowを閉じたまま完了してもStoppedへ移すだけで、同じSessionを再openしてStopped状態で通常closeするまで残す。close開始時の状態を捕捉し、確認・draft flush中の完了では解除へ読み替えず、その間に始まった実行も保持する。監視終了は本文の既読証明ではない
+- Main／Auxiliaryの実行・承認や入力待ち・取消終了待ちは、Windowを一度も開いていなくてもMonitorに保持する。Windowがない状態で終了してもStoppedへ移すだけで、同じSessionを明示openしてStopped状態で通常closeするまで残す。close開始時の状態を捕捉し、確認・draft flush中の完了では解除へ読み替えず、その間に始まった実行も保持する。監視終了は本文の既読証明ではない
 - Monitor保持はMainの生存期間内の一時状態とし、アプリ再起動へ永続化しない。未実行Windowは開いている間だけ対象とする。Session削除と明示DBリセットでは対応する保持も除去する。閉じた監視対象のcontext menuではWindowを閉じる操作を無効にし、IDコピーは維持する
 - 同じSessionを開く操作では、応答可能な既存Windowを再利用する。Renderer終了後は実際のclosedで旧Windowの登録・ownerを解放してから再生成する。応答不能の場合は通常closeの確認・flushを経て再生成し、確認取消では旧Windowを維持する。黒画面だけを根拠に自動破棄しない
 - 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
@@ -180,7 +217,8 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 
 ### Session Run Cancel
 
-- `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
+- `Session Window` の `Cancel` は、押した時点の対象会話・incarnationと、表示していた WithMate Turn ID または開始claimのreceipt IDを指定する。Main／Auxiliaryの所有Windowを確認し、停止直前まで同じ実行を照合する。終了・交代済みの対象は、後続の実行・質問・承認・承認レビューに作用しない
+- 開始claimの取消は、runtimeへ渡る前ならそのclaimを開始せず、引き渡し後なら同じreceiptの `AbortController` だけを止める。開始保存が確定した場合はそのTurnの取消を保存し、保存結果が不明な場合は取消確定として扱わない
 - キャンセル後の session は `runState = idle` に戻る
 - admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、turn 呼出しは収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、重複 Cancel と現在Turnへの追加入力を無効化する。Sendによる次Turnの永続予約は受け付けるが、実guard解放まで開始しない
@@ -237,13 +275,11 @@ current 実装では tray 常駐までは行わない。
 
 ## Persistence Expectations
 
-- `runState = running` は SQLite に保存される
-- アプリが強制 kill された場合、次回起動時に `running` のまま残る可能性がある
-- Main Session は次回起動時に `runState = interrupted` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する。Auxiliary は別の回収経路で `runState = error` とする
-- `interrupted` Main Session は `Session Window` から直前 user message を同じ内容で明示再送できる
-- queueのstarting／runningは起動時にinterruptedへ回収し、元要求は再実行しない。同Sessionのqueued後続も明示解放まで保留する。受付済み要求・終端receiptはWindow再open／app restart後も正本から取得し、同じrequest IDを二重受付しない。
-
-`interrupted` からの再開は明示再送で行う。
+- 通常失敗は終端処理が受け取った部分本文・Detailsを失敗理由と分けて保存する。Providerの実行呼出後は、エラー文字列や途中結果の有無だけを根拠に同じ入力を再実行しない。
+- Main／Auxiliary共通で、起動時はWorkerの保存回収を完了し、Session一覧を更新してからqueueを起こす。同じowner・incarnation・Turn・開始user seqと実メッセージを照合し、保存済みの終端は維持する。実開始が確認できた未終端Turnは、通常と同じ構造化されたFailedを一度保存する。部分本文・Details・入力を保持し、復旧を案内するassistant本文を合成しない。
+- 旧`interrupted`のrelease時刻有無は起動回収を変えない。以前の復旧本文は専用の保存来歴がなく、同じ文字列を実発言に含められるため、本文を推測で落とさない。
+- 実開始がない通常受付は元要求を再実行しない。起動回収で未着手と確認できる通常`starting`は受付だけを`failed`とし、最小Turnは作らない。旧`interrupted`は開始リンクがなくても不明の証拠を保ち、結果不明の追加入力も別Turnに付け替えない。同Sessionの後続は手動解放なしで保存済み実行順に進む。実際に最小Turnの終端が保存されたときだけ`after_source_turn`が進む。
+- 受付済み要求・終端receiptはWindow再open／app restart後も正本から取得し、同じrequest IDを二重受付しない。失敗した指示を再実行するのは既存の明示操作のみ。
 
 ## Relation To Existing Docs
 

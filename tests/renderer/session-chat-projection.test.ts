@@ -820,46 +820,59 @@ test("session composer feature は Speed の値・route・running guard を維�
 
 // @test-value v2
 // kind = "contract"
-// claim = "確認済みのClaude Approval変更は対象のMainまたはAuxiliaryへ両設定と確認前の状態を渡す"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
-// fault = "composer featureが確認情報を落とすか別の会話へ配送し、一括変更が拒否または誤適用される"
-// observable = "Main operationの値と確認情報、Auxiliary updateの適用結果と確認情報、composer surfaceのproviderと会話identity"
+// claim = "共通Approvalの選択は対象のMainまたはAuxiliaryへ配送し、AuxiliaryではApprovalとReviewerを一括で変更する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime settings; docs/design/withmate-auto-review.md#設定と適用範囲" }
+// fault = "Auto Review/Userを別の会話へ配送するか、旧Auto RunのままReviewerだけ変更する"
+// observable = "4 Providerの実featureが描画する候補／現在値／Sandbox、Main operationの選択値、Auxiliary updateの実効設定"
 // observation_boundary = "component-behavior"
-// scope = "confirmed approval composer target routing"
+// scope = "session composer Approval and target routing"
 // lifecycle = "permanent"
 // impact = "確認したApprovalとReviewerが次送信用に反映されない、または別の会話へ適用される"
 // distinction = "composerと各operationの個別testでは両者をつなぐfeatureのtarget別配送を検証できない"
 // @end-test-value
-test("composer featureは確認済みApproval変更を対象会話へ配送する", async () => {
+test("composer featureは共通Approvalの選択を対象会話へ配送する", async () => {
   await withReactDom(async (root) => {
     const registry = new ComposerControllerRegistry();
     const harness = await renderComposerHarness(root, createComposerInput(registry, { kind: "main", id: "main-session" }));
     const feature = harness.getFeature()!;
     const log: ComposerOperationLog = { mainDrafts: [], auxiliaryDrafts: [], mainSkills: [], auxiliarySkills: [], mainSpeedChanges: [], auxiliarySpeedChanges: [], mainSends: 0, auxiliarySends: 0 };
-    const confirmation = { previousApprovalMode: "never" as const };
+    for (const provider of ["codex", "claude", "copilot", "opencode"] as const) {
+      const bridge = createComposerBridge(log, "main", false, { provider });
+      bridge.session = { ...bridge.session, approvalMode: provider === "claude" ? "plan" : "on-request", codexReviewer: "user" };
+      const dom = new JSDOM(renderToStaticMarkup(React.createElement(SessionComposerExpanded, feature.buildSurface(bridge).composer)));
+      try {
+        const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]');
+        assert.ok(select);
+        assert.deepEqual([...select.options].filter((option) => !option.disabled).map(({ value, text }) => [value, text]), [
+          ["auto-run", "Auto Run"], ["auto-review", "Auto Review"], ["user", "User"], ["safety-focused", "Safety Focused"],
+        ]);
+        assert.equal(select.selectedOptions[0]?.text, provider === "codex" ? "User" : provider === "claude" ? "Plan" : "Settings Default");
+        assert.equal(select.selectedOptions[0]?.disabled, provider !== "codex");
+        assert.equal(!!dom.window.document.querySelector('select[aria-label="Sandbox"]'), provider === "codex");
+        assert.equal(dom.window.document.querySelector('select[aria-label="Reviewer"]'), null);
+      } finally { dom.window.close(); }
+    }
     const main = createComposerBridge(log, "main", false, { provider: "claude" });
     main.session = { ...main.session, id: "main-session", incarnationId: "main-incarnation", codexReviewer: "auto-review" };
     const mainCalls: unknown[] = [];
     main.operations.runtimeOptions.runMain = (option) => { mainCalls.push(option); };
     const mainSurface = feature.buildSurface(main).composer;
-    mainSurface.onChangeApprovalMode("plan", confirmation);
+    mainSurface.onChangeApprovalMode("auto-review");
     assert.equal(mainSurface.providerId, "claude");
-    assert.equal(mainSurface.runtimeSelectionIdentity, "main-incarnation");
-    assert.deepEqual(mainCalls, [{ kind: "approval-mode", value: "plan", confirmedReviewerChange: confirmation }]);
+    assert.deepEqual(mainCalls, [{ kind: "approval-choice", value: "auto-review" }]);
 
-    const auxiliarySession = { ...createAuxiliaryRuntimeSession(), provider: "claude", approvalMode: "never" as const, codexReviewer: "auto-review" as const };
-    const auxiliary = createComposerBridge(log, "auxiliary", false, { provider: "claude", auxiliarySession });
+    const auxiliarySession = { ...createAuxiliaryRuntimeSession(), provider: "copilot", approvalMode: "never" as const, codexReviewer: "auto-review" as const };
+    const auxiliary = createComposerBridge(log, "auxiliary", false, { provider: "copilot", auxiliarySession });
     auxiliary.session = { ...auxiliary.session, id: auxiliarySession.id, incarnationId: auxiliarySession.createdAt, codexReviewer: "auto-review" };
     const auxiliaryCalls: unknown[] = [];
-    auxiliary.operations.runtimeOptions.auxiliary.update = async (recipe, confirmed) => {
+    auxiliary.operations.runtimeOptions.auxiliary.update = async (recipe, confirmation, choice) => {
       const next = recipe(auxiliarySession);
-      auxiliaryCalls.push([next.approvalMode, next.codexReviewer, confirmed]);
+      auxiliaryCalls.push([next.approvalMode, next.codexReviewer, next.withMateReviewerExplicit, confirmation, choice]);
     };
     const auxiliarySurface = feature.buildSurface(auxiliary).composer;
-    auxiliarySurface.onChangeApprovalMode("accept-edits", confirmation);
+    auxiliarySurface.onChangeApprovalMode("user");
     await act(async () => await Promise.resolve());
-    assert.equal(auxiliarySurface.runtimeSelectionIdentity, auxiliarySession.createdAt);
-    assert.deepEqual(auxiliaryCalls, [["accept-edits", "user", confirmation]]);
+    assert.deepEqual(auxiliaryCalls, [["on-request", "user", true, undefined, "user"]]);
     assert.equal(mainCalls.length, 1);
   });
 });

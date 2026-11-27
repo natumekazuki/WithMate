@@ -19,6 +19,50 @@ function deferred<T>() {
   return { promise, resolve };
 }
 async function flush() { await setImmediate(); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常受付・外部commit済受付・取消・queue経由追加入力は各操作でonChangedを呼び、同じreceiptの不変accepted originを渡す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/966; docs/design/database-schema.md: receiptのUUID・送信側の読取" }
+// fault = "各queue操作の通知が欠ける、ownerだけを通知し送信元を失う、または現在の編集入力から別actorを通知する"
+// observable = "各操作前後のonChanged件数の増加と新規通知のowner/origin、queued Input完了後のreceipt状態"
+// observation_boundary = "public-boundary"
+// scope = "production queue serviceの通常受付・外部受付・取消・queued Send Input通知。storeとProviderはfixture"
+// lifecycle = "permanent"
+// impact = "受付済指示やその配送変化が送信元チャットへ反映されない"
+// distinction = "Window routingとstorageのtestはqueue mutationから送信元originが渡る接続を検証しない"
+// @end-test-value
+test("queue changes retain accepted source origin for sender invalidation", async () => {
+  const { store, rows } = boundary();
+  const origin = { kind: "session" as const, actorKind: "main" as const, actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "7", operation: "send" as const, targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId };
+  const notices: Array<{ owner: typeof owner; origin: unknown }> = [];
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => { throw new Error("Unexpected dispatch"); },
+    onChanged: (owner, origin) => notices.push({ owner, origin }), sendInput: async (receipt) => { await store.settle(owner, receipt.id, "completed"); } });
+  const assertNewSourceNotices = (before: number) => {
+    const added = notices.slice(before);
+    assert.ok(added.length > 0, "The operation must publish a new source invalidation.");
+    for (const notice of added) assert.deepEqual(notice, { owner, origin });
+  };
+  try {
+    const beforeEnqueue = notices.length;
+    const receipt = await service.enqueue(owner, { ...captured("first"), origin });
+    assertNewSourceNotices(beforeEnqueue);
+    rows[0].accepted = structuredClone(rows[0].captured);
+    rows[0].captured.origin = { ...origin, actorSessionId: "not-the-original" };
+    const beforeCancel = notices.length;
+    await service.cancelQueued(owner, receipt.id);
+    assertNewSourceNotices(beforeCancel);
+    const external = await store.enqueue(owner, { ...captured("external"), origin });
+    const beforeExternalAcceptance = notices.length;
+    service.acceptCommittedReceipt(external);
+    assertNewSourceNotices(beforeExternalAcceptance);
+    const beforeQueuedInput = notices.length;
+    const result = await service.sendQueuedInput(owner, external.id, "native");
+    assert.equal(result.state, "completed");
+    assertNewSourceNotices(beforeQueuedInput);
+  } finally { await service.close(); }
+});
+
 function boundary() {
   const rows: SessionTurnQueueReceipt[] = [];
   const update = (id: string, state: SessionTurnQueueReceipt["state"], reason?: string) => {
@@ -27,17 +71,23 @@ function boundary() {
     row.reason = reason ?? null;
     return structuredClone(row);
   };
-  const store: SessionTurnQueueStore = {
+  const enqueue = async (owned: typeof owner, input: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt> => {
+    const row: SessionTurnQueueReceipt = {
+      ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1, queuePosition: rows.length + 1,
+      state: "queued", captured: structuredClone(input), turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      createdAt: "now", updatedAt: "now",
+    };
+    rows.push(row);
+    return structuredClone(row);
+  };
+  const store: SessionTurnQueueStore & { enqueue: typeof enqueue } = {
     updateQueued: async () => { throw new Error("Unexpected edit"); },
     reorderQueued: async () => { throw new Error("Unexpected reorder"); },
-    enqueue: async (owned, input) => {
-      const row: SessionTurnQueueReceipt = {
-        ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1, queuePosition: rows.length + 1,
-        state: "queued", captured: structuredClone(input), turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
-        createdAt: "now", updatedAt: "now",
-      };
-      rows.push(row);
-      return structuredClone(row);
+    enqueue,
+    admit: async (owner, input, claim) => {
+      const receipt = await enqueue(owner, input);
+      const claimed = claim ? await store.claimNext(owner, claim.unreleasedSourceTurnIds) : null;
+      return { receipt: claimed?.id === receipt.id ? claimed : receipt, claimed };
     },
     getReceipt: async (owned, requestId) => rows.find((row) => row.incarnationId === owned.incarnationId && row.requestId === requestId) ?? null,
     getReceiptById: async (owned, id) => rows.find((row) => row.incarnationId === owned.incarnationId && row.id === id) ?? null,
@@ -46,7 +96,7 @@ function boundary() {
     listPendingOwners: async () => rows.length ? [owner] : [],
     claimNext: async (owned) => {
       const ownedRows = rows.filter((row) => row.incarnationId === owned.incarnationId && row.sessionId === owned.sessionId);
-      if (ownedRows.some((row) => row.state === "starting" || row.state === "running" || (row.state === "interrupted" && row.releasedAt === null))) return null;
+      if (ownedRows.some((row) => row.state === "starting" || row.state === "running")) return null;
       const row = ownedRows.find((row) => row.state === "queued");
       return row ? update(row.id, "starting") : null;
     },
@@ -73,13 +123,8 @@ function boundary() {
     },
     recoverInterrupted: async () => {
       const claimed = rows.filter((row) => row.state === "starting" || row.state === "running");
-      claimed.forEach((row) => update(row.id, "interrupted"));
+      claimed.forEach((row) => update(row.id, row.inputTurnId ? "interrupted" : "failed"));
       return claimed.length;
-    },
-    releaseInterrupted: async (_, id) => {
-      assert.equal(rows.find((row) => row.id === id)!.state, "interrupted");
-      rows.find((row) => row.id === id)!.releasedAt = "now";
-      return structuredClone(rows.find((row) => row.id === id)!);
     },
   };
   return { rows, store };
@@ -154,8 +199,8 @@ test("queue lock取得後にactorの受付と取消権限を再検証する", as
   const { store, rows } = boundary();
   const held = deferred<void>();
   const entered = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { entered.resolve(); await held.promise; return enqueue(...args); };
+  const admit = store.admit;
+  store.admit = async (...args) => { entered.resolve(); await held.promise; return admit(...args); };
   let valid = true;
   const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => ({ state: "completed" }) });
@@ -178,9 +223,9 @@ test("queue lock取得後にactorの受付と取消権限を再検証する", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued入力は未dispatch証明時だけqueuedへ戻り、dispatch結果不明は後続を保留し、成功とcommit返信喪失はcompletedへ収束して購読者へ通知する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn QueueのSteerと不明結果の非再実行; docs/design/desktop-ui.md: terminal時の処理中表示終了" }
-// fault = "結果不明入力をqueuedへ戻し重複送信する、後続を自動開始する、または完了を通知せず他の購読画面を待機させ続ける"
+// claim = "queued入力の結果不明は元要求を再送せず、実行解放後には後続を進める。確定済みはcompletedを通知する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "不明入力の再送、実guardを無視した後続実行、実guard解放後の永久保留、または完了通知の欠落"
 // observable = "receipt stateとprovider入力回数、後続dispatch回数、購読者が通知時に取得できるcompleted state"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueService.sendQueuedInput"
@@ -215,11 +260,16 @@ test("queued inputはdispatch境界を区別し正本completedを優先する", 
     assert.equal(rows[0]!.state, mode === "preflight" ? "queued" : mode === "unknown" ? "interrupted" : "completed");
     assert.equal(inputs, 1);
     if (mode === "unknown") {
-      guarded = false;
       service.wake(owner.sessionId);
-      await flush();
+      await service.waitForPending();
       assert.equal(dispatched, 0);
       assert.equal(rows[1]!.state, "queued");
+      guarded = false;
+      service.wake(owner.sessionId);
+      await service.waitForPending();
+      assert.equal(dispatched, 1);
+      assert.equal(rows[1]!.state, "completed");
+      assert.equal(rows[0]!.state, "interrupted");
     }
     await service.close();
   }
@@ -227,10 +277,10 @@ test("queued inputはdispatch境界を区別し正本completedを優先する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "input claim返信喪失と準備拒否は未送信のままqueuedへ戻り、restore返信喪失は正本照会で解決し未commitなら明示解放可能なinterruptedで保留する"
+// claim = "input claim返信喪失と準備拒否は未送信のままqueuedへ戻る。restoreが確認できずinterruptedを確定した場合は元の入力を再送せず後続を進める"
 // oracle = { type = "contract", ref = "GitHub Issue #801: pre-provider queued input recovery and unknown no replay" }
 // fault = "claim返信喪失をstartingへ固定するかProviderを送信し、restore不明を再実行する"
-// observable = "receipt state、入力とrestore回数、明示解放前後のFIFO dispatch"
+// observable = "receipt state、入力とrestore回数、実guard解放後のFIFO dispatch"
 // observation_boundary = "public-boundary"
 // scope = "SessionTurnQueueService.sendQueuedInput pre-provider recovery"
 // lifecycle = "permanent"
@@ -261,19 +311,14 @@ test("queued inputのclaim ACK喪失と準備拒否は未送信のまま回復�
       });
       await service.enqueue(owner, captured("input"));
       await service.enqueue(owner, captured("follower"));
-      await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), origin === "claim" ? /claim reply lost/ : mode === "restore-failed" ? /restore unavailable/ : /not dispatched/);
+      await assert.rejects(service.sendQueuedInput(owner, "input", "provider-turn"), origin === "claim" ? /claim reply lost/ : /not dispatched/);
       assert.equal(inputs, origin === "claim" ? 0 : 1);
       assert.equal(restores, 1);
       assert.equal(rows[0]!.state, mode === "restore-failed" ? "interrupted" : "queued");
       guarded = false;
       service.wake(owner.sessionId);
       await flush();
-      if (mode === "restore-failed") {
-        assert.deepEqual(dispatched, []);
-        await service.releaseInterrupted(owner, "input");
-        await flush();
-        assert.deepEqual(dispatched, ["follower"]);
-      } else assert.deepEqual(dispatched, ["input", "follower"]);
+      assert.deepEqual(dispatched, mode === "restore-failed" ? ["follower"] : ["input", "follower"]);
       await service.close();
     }
   }
@@ -317,44 +362,6 @@ test("FIFOは実guard解放まで後続を保留する", async () => {
   await service.close();
 });
 
-// @test-value v2
-// kind = "contract"
-// claim = "不明実行を再送せず後続を保留し、明示回復後もguardを尊重する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Persistence Expectations" }
-// fault = "throwした要求を再実行するか、回復操作で生存guardを無視する"
-// observable = "dispatch要求IDと回復前後のreceipt state"
-// observation_boundary = "component-behavior"
-// scope = "Main durable queue uncertain outcome recovery"
-// lifecycle = "permanent"
-// impact = "結果不明の要求の自動再送で外部操作が重複する"
-// distinction = "storeのstate遷移だけではserviceの自動dispatchを観測できない"
-// @end-test-value
-test("不明実行の後続は明示回復と実guard解放を待つ", async () => {
-  const { store, rows } = boundary();
-  const ids: string[] = [];
-  let guarded = false;
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded, dispatch: async (receipt) => {
-    ids.push(receipt.id);
-    if (receipt.id === "first") throw new Error("unknown");
-    return { state: "completed" };
-  } });
-  await service.enqueue(owner, captured("first"));
-  await service.enqueue(owner, captured("second"));
-  await flush();
-  service.wake(owner.sessionId);
-  await flush();
-  assert.deepEqual(ids, ["first"]);
-  assert.equal(rows[0]!.state, "interrupted");
-  guarded = true;
-  await service.releaseInterrupted(owner, "first");
-  await flush();
-  assert.deepEqual(ids, ["first"]);
-  guarded = false;
-  service.wake(owner.sessionId);
-  await flush();
-  assert.deepEqual(ids, ["first", "second"]);
-  await service.close();
-});
 
 // @test-value v2
 // kind = "contract"
@@ -392,7 +399,7 @@ test("queuedの取消は現在runを継続させる", async () => {
 // claim = "shutdownは受付と後続dispatchを止め、受付済み保存と現在runの終端保存を待つ"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md App Quit" }
 // fault = "closeを保存完了前に返すかshutdown開始後に後続をdispatchする"
-// observable = "close完了の時点、enqueue結果、dispatch ID、保存済みstate"
+// observable = "受付と終端のどちらか一方だけ保存中のclose完了状態、enqueue結果、dispatch ID、保存済みstate"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue shutdown persistence"
 // lifecycle = "permanent"
@@ -400,51 +407,61 @@ test("queuedの取消は現在runを継続させる", async () => {
 // distinction = "型検査ではpending mutationとdispatchの非同期待機を検証できない"
 // @end-test-value
 test("closeは受付済みmutationと実行終端を待ち後続を開始しない", async () => {
-  const { store, rows } = boundary();
-  const terminal = deferred<{ state: "completed" }>();
-  const terminalCommit = deferred<void>();
-  const settling = deferred<void>();
-  const settle = store.settle;
-  store.settle = async (...args) => {
-    settling.resolve();
-    await terminalCommit.promise;
-    return settle(...args);
-  };
-  const ids: string[] = [];
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
-    ids.push(receipt.id);
-    return terminal.promise;
-  } });
-  await service.enqueue(owner, captured("first"));
-  await flush();
-  const commit = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { await commit.promise; return enqueue(...args); };
-  const accepted = service.enqueue(owner, captured("second"));
-  let closed = false;
-  const closing = service.close().then(() => { closed = true; });
-  assert.throws(() => service.enqueue(owner, captured("third")), /shutting down/);
-  terminal.resolve({ state: "completed" });
-  await settling.promise;
-  await flush();
-  assert.equal(closed, false);
-  commit.resolve();
-  assert.equal((await accepted).state, "queued");
-  await flush();
-  assert.equal(closed, false);
-  assert.equal(rows[0]!.state, "starting");
-  terminalCommit.resolve();
-  await closing;
-  assert.deepEqual(ids, ["first"]);
-  assert.deepEqual(rows.map((row) => row.state), ["completed", "queued"]);
+  for (const firstCommit of ["admission", "terminal"]) {
+    const { store, rows } = boundary();
+    const terminal = deferred<{ state: "completed" }>();
+    const terminalCommit = deferred<void>();
+    const settling = deferred<void>();
+    const settle = store.settle;
+    store.settle = async (...args) => {
+      settling.resolve();
+      await terminalCommit.promise;
+      return settle(...args);
+    };
+    const ids: string[] = [];
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
+      ids.push(receipt.id);
+      return terminal.promise;
+    } });
+    await service.enqueue(owner, captured("first"));
+    const commit = deferred<void>();
+    const admit = store.admit;
+    store.admit = async (...args) => { await commit.promise; return admit(...args); };
+    const accepted = service.enqueue(owner, captured("second"));
+    let closed = false;
+    const closing = service.close().then(() => { closed = true; });
+    try {
+      assert.throws(() => service.enqueue(owner, captured("third")), /shutting down/);
+      terminal.resolve({ state: "completed" });
+      await settling.promise;
+      if (firstCommit === "admission") {
+        commit.resolve();
+        assert.equal((await accepted).state, "queued");
+        assert.equal(rows[0]!.state, "starting");
+      } else {
+        terminalCommit.resolve();
+      }
+      await flush();
+      if (firstCommit === "terminal") assert.deepEqual(rows.map((row) => row.state), ["completed"]);
+      assert.equal(closed, false, `close returned after only the ${firstCommit} commit`);
+    } finally {
+      terminal.resolve({ state: "completed" });
+      terminalCommit.resolve();
+      commit.resolve();
+      await closing;
+    }
+    assert.equal((await accepted).state, "queued");
+    assert.deepEqual(ids, ["first"]);
+    assert.deepEqual(rows.map((row) => row.state), ["completed", "queued"]);
+  }
 });
 
 // @test-value v2
 // kind = "contract"
 // claim = "ACKは保存commit後だけ返しobserver例外は受理と後続dispatchを壊さない"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Window Close" }
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close; docs/design/electron-session-store.md#turn-queue" }
 // fault = "保存前に受付ACKするか投影通知例外を保存失敗として扱う"
-// observable = "enqueue完了時点と返却receipt、dispatch ID列"
+// observable = "保存待ちとACK時の通知回数、返却receipt、dispatch ID列"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue acceptance notification"
 // lifecycle = "permanent"
@@ -453,20 +470,23 @@ test("closeは受付済みmutationと実行終端を待ち後続を開始しな�
 test("受理ACKはcommitを待ちobserver失敗でもdrainする", async () => {
   const { store } = boundary();
   const commit = deferred<void>();
-  const enqueue = store.enqueue;
-  store.enqueue = async (...args) => { await commit.promise; return enqueue(...args); };
+  const admit = store.admit;
+  store.admit = async (...args) => { await commit.promise; return admit(...args); };
   const ids: string[] = [];
+  let notifications = 0;
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => false,
     dispatch: async (receipt) => { ids.push(receipt.id); return { state: "completed" }; },
-    onChanged: () => { throw new Error("observer"); },
+    onChanged: () => { notifications += 1; throw new Error("observer"); },
   });
   let acknowledged = false;
   const accepting = service.enqueue(owner, captured("first")).then((receipt) => { acknowledged = true; return receipt; });
   await flush();
   assert.equal(acknowledged, false);
   assert.deepEqual(ids, []);
+  assert.equal(notifications, 0);
   commit.resolve();
   assert.equal((await accepting).id, "first");
+  assert.ok(notifications > 0);
   await service.enqueue(owner, captured("second"));
   await flush();
   assert.deepEqual(ids, ["first", "second"]);
@@ -475,10 +495,10 @@ test("受理ACKはcommitを待ちobserver失敗でもdrainする", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "restartは未claimのみを再開しclaim済み要求をinterruptedへ回収して後続を保留する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Persistence Expectations" }
-// fault = "restart時にclaim済み要求を自動再実行するか後続を先行実行する"
-// observable = "start後のdispatch ID列とreceipt state"
+// claim = "起動時は保存回収とSession一覧更新を待ち、失敗元を実行せず後続を自動開始する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#persistence-expectations" }
+// fault = "起動時に回収やSession一覧更新より先にclaimする、失敗元を再実行する、または後続を永久に保留する"
+// observable = "start時の一覧更新ゲート前後のdispatch ID列とreceipt state"
 // observation_boundary = "component-behavior"
 // scope = "Main durable queue startup reconciliation"
 // lifecycle = "permanent"
@@ -502,10 +522,17 @@ test("startは未claimを再開しclaim済みは再実行しない", async () =>
   const second = new SessionTurnQueueService({ store, isRunInFlight: () => false, dispatch: async (receipt) => {
     ids.push(receipt.id); return { state: "completed" };
   } });
-  await second.start();
-  await flush();
+  const refreshEntered = deferred<void>();
+  const refreshComplete = deferred<void>();
+  const starting = second.start(async () => { refreshEntered.resolve(); await refreshComplete.promise; });
+  await refreshEntered.promise;
   assert.deepEqual(ids, ["first"]);
-  assert.deepEqual(rows.map((row) => row.state), ["completed", "interrupted", "queued"]);
+  assert.deepEqual(rows.map((row) => row.state), ["completed", "failed", "queued"]);
+  refreshComplete.resolve();
+  await starting;
+  await second.waitForPending();
+  assert.deepEqual(ids, ["first", "follower"]);
+  assert.deepEqual(rows.map((row) => row.state), ["completed", "failed", "completed"]);
   await second.close();
 });
 
@@ -675,7 +702,8 @@ test("旧ownerの遅延失敗は再作成ownerを保留しない", async () => {
       }
       return { state: "completed" };
     } });
-    await service.enqueue(owner, captured("old-request"));
+    if (stage === "claim") service.acceptCommittedReceipt(await store.enqueue(owner, captured("old-request")));
+    else await service.enqueue(owner, captured("old-request"));
     await started.promise;
     guarded = true;
     const accepting = service.enqueue(replacement, captured("new-request"));
@@ -737,4 +765,62 @@ test("dispatch返信喪失はcanonical terminalへ収束し実guardを維持す�
   assert.deepEqual(ids, ["first", "second"]);
   assert.deepEqual(rows.map((row) => row.state), ["completed", "completed"]);
   await service.close();
+});
+
+
+// @test-value v2
+// kind = "contract"
+// claim = "同一の不明受付を正本確認できた場合にだけ、その結果を変更せず後続FIFOと新規入力を進める"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "実guard中や照会／回収保存の結果不明時に次の入力を開始する、全件回収する、不明受付を再実行する、または証拠確認後も後続を止める"
+// observable = "不明受付の再読込、回収引数のowner/incarnation/receipt ID、確認前後のdispatch ID列"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceの不明な通常dispatch後の稼働中の正本照合"
+// lifecycle = "permanent"
+// @end-test-value
+test("稼働中の照合不明は止め、永続したinterruptedの確認後は元入力を再送せず進める", async () => {
+  for (const fault of ["read", "write"] as const) {
+    const { store, rows } = boundary();
+    const dispatches: string[] = [];
+    const recoveries: Array<Parameters<typeof store.recoverInterrupted>[0]> = [];
+    const getReceipt = store.getReceipt;
+    let guarded = false;
+    let unavailable = false;
+    store.getReceipt = async (...args) => {
+      if (fault === "read" && unavailable) throw new Error("Cannot read the saved receipt.");
+      return getReceipt(...args);
+    };
+    store.recoverInterrupted = async (target) => {
+      recoveries.push(target);
+      if (fault === "write" && unavailable) throw new Error("Recovery reply lost.");
+      return 0; // No exact Turn can be proven for this interrupted receipt.
+    };
+    const service = new SessionTurnQueueService({ store, isRunInFlight: () => guarded, dispatch: async (receipt) => {
+      dispatches.push(receipt.id);
+      if (receipt.id === "first") { guarded = true; throw new Error("Dispatch reply lost."); }
+      return { state: "completed" };
+    } });
+    try {
+      await service.enqueue(owner, captured("first"));
+      await service.waitForPending();
+      const interrupted = structuredClone(rows[0]!);
+      assert.equal(interrupted.state, "interrupted");
+      await service.enqueue(owner, captured("second"));
+      await service.waitForPending();
+      assert.equal(recoveries.length, 0);
+      assert.deepEqual(dispatches, ["first"]);
+      unavailable = true;
+      guarded = false;
+      service.wake(owner.sessionId);
+      await service.waitForPending();
+      assert.deepEqual(dispatches, ["first"]);
+      assert.equal(rows[1]?.state, "queued");
+      unavailable = false;
+      await service.enqueue(owner, captured("new"));
+      await service.waitForPending();
+      assert.deepEqual(dispatches, ["first", "second", "new"]);
+      assert.deepEqual(recoveries, Array(fault === "read" ? 1 : 2).fill({ ...owner, receiptId: "first" }));
+      assert.deepEqual(await store.getReceipt(owner, "first"), interrupted);
+    } finally { await service.close(); }
+  }
 });

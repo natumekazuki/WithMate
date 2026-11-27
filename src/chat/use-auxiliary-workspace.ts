@@ -20,6 +20,8 @@ export type AuxiliaryWorkspaceApi = {
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState"> | null>;
   subscribeSessionInvalidation?: SessionSummaryInvalidationSubscriptionApi["subscribeSessionInvalidation"];
+  getUnreadSessionResult?: ConversationMessageColumnApi["getUnreadSessionResult"];
+  onSessionTurnUpdated?: ConversationMessageColumnApi["onSessionTurnUpdated"];
   subscribeLiveSessionRun?: (
     listener: (sessionId: string, state: LiveSessionRunState | null) => void,
   ) => () => void;
@@ -147,6 +149,47 @@ function replaceSummary(
 export function clampAuxiliaryWidthRatio(ratio: number): number {
   if (!Number.isFinite(ratio)) return DEFAULT_WIDTH_RATIO;
   return Math.min(1, Math.max(0, ratio));
+}
+
+function auxiliaryResultKey(owner: string, id: string, createdAt: string): string {
+  return JSON.stringify([owner, id, createdAt]);
+}
+
+function useAuxiliarySwitcherUnread(api: AuxiliaryWorkspaceApi | null, owner: string | null, summaries: AuxiliarySessionSummary[]) {
+  // Membership, not list order or live/detail updates, determines which shared results are read.
+  const membership = JSON.stringify(summaries.filter((item) => item.parentSessionId === owner)
+    .map(({ id, createdAt }) => [id, createdAt]).sort(([left], [right]) => left.localeCompare(right)));
+  const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    if (!owner || !api?.getUnreadSessionResult) return;
+    const targets = new Map<string, string>((JSON.parse(membership) as [string, string][])
+      .map(([id, createdAt]) => [id, auxiliaryResultKey(owner, id, createdAt)]));
+    const allowed = new Set(targets.values());
+    setUnread((previous) => [...previous].every((key) => allowed.has(key)) ? previous
+      : new Set([...previous].filter((key) => allowed.has(key))));
+    const revisions = new Map<string, number>();
+    let active = true;
+    const read = (id: string) => {
+      const key = targets.get(id);
+      if (!key) return;
+      const revision = (revisions.get(id) ?? 0) + 1;
+      revisions.set(id, revision);
+      void api.getUnreadSessionResult?.(id).then((result) => {
+        if (!active || revisions.get(id) !== revision) return;
+        setUnread((previous) => {
+          if (previous.has(key) === (result !== null)) return previous;
+          const next = new Set(previous);
+          if (result) next.add(key);
+          else next.delete(key);
+          return next;
+        });
+      }, () => { /* Keep the last confirmed display on a transient read failure. */ });
+    };
+    const unsubscribe = api.onSessionTurnUpdated?.(read);
+    for (const id of targets.keys()) read(id);
+    return () => { active = false; unsubscribe?.(); };
+  }, [api, owner, membership]);
+  return unread;
 }
 
 export function useAuxiliaryWorkspace(input: {
@@ -647,6 +690,7 @@ export function useAuxiliaryWorkspace(input: {
     cacheDetail(saved.id, saved);
     setSelectedId(saved.id);
     setSelectedSession(saved);
+    setTargetState("auxiliary");
     persistPrefs({ selectedId: saved.id });
   }, [cacheDetail, persistPrefs]);
 
@@ -768,6 +812,7 @@ export function useAuxiliaryWorkspace(input: {
   }, [cacheDetail, mergeExecutionSelection, pruneDetails]);
 
 
+  const unread = useAuxiliarySwitcherUnread(api, parentSessionId, summaries);
   const auxiliaryItems = useMemo(() => summaries.map((summary) => ({
     id: summary.id,
     label: summary.preview?.trim() ?? "",
@@ -777,12 +822,14 @@ export function useAuxiliaryWorkspace(input: {
       size: "tiny",
     }),
     isProcessing: summary.runState === "running",
-  })), [summaries]);
+    hasUnreadResult: parentSessionId === summary.parentSessionId
+      && unread.has(auxiliaryResultKey(summary.parentSessionId, summary.id, summary.createdAt)),
+  })), [summaries, unread, parentSessionId]);
 
   const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
     const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
     const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
-    const auxiliaryMessages = input.auxiliarySession?.messages ?? [];
+    const auxiliarySession = input.auxiliarySession?.id === selectedId ? input.auxiliarySession : null;
     const main = {
       ...input.messageColumn,
       inputReadContext: input.mainSession?.incarnationId ? { ownerSessionId: mainSessionId, target: { kind: "main" as const, sessionId: mainSessionId, incarnationId: input.mainSession.incarnationId } } : undefined,
@@ -792,15 +839,15 @@ export function useAuxiliaryWorkspace(input: {
       onLoadArtifactDetail: input.mainOnLoadArtifactDetail,
       onOpenPath: input.mainOnOpenPath,
     };
-    const auxiliary = input.auxiliarySession
+    const auxiliary = auxiliarySession
       ? {
           ...input.messageColumn,
-          inputReadContext: input.mainSession?.incarnationId && selectedSession?.id === input.auxiliarySession.id ? {
+          inputReadContext: input.mainSession?.incarnationId && selectedSession?.id === auxiliarySession.id ? {
             ownerSessionId: mainSessionId,
             target: { kind: "auxiliary" as const, sessionId: selectedSession.id, incarnationId: selectedSession.createdAt, mainSessionId: selectedSession.parentSessionId, mainIncarnationId: input.mainSession.incarnationId },
           } : undefined,
-          sessionId: input.auxiliarySession.id,
-          messages: auxiliaryMessages,
+          sessionId: auxiliarySession.id,
+          messages: auxiliarySession.messages ?? [],
           onToggleMessageBookmark: input.onToggleMessageBookmark,
           onLoadArtifactDetail: input.auxiliaryOnLoadArtifactDetail,
           onOpenPath: input.auxiliaryOnOpenPath,
@@ -811,7 +858,7 @@ export function useAuxiliaryWorkspace(input: {
       main,
       auxiliary,
       mainSession: input.mainSession,
-      auxiliarySession: input.auxiliarySession,
+      auxiliarySession,
       api: input.api,
       mainLiveRun: input.mainLiveRun,
       auxiliaryLiveRun: input.auxiliaryLiveRun,

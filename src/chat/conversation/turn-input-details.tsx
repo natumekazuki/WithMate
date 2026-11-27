@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { coordinationDeliveryText } from "../../../src-shared/coordination/coordination-delivery.js";
+import { useEffect, useState, type ReactNode } from "react";
+import { coordinationDeliveryText, readCoordinationNotification } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
+import { projectRetryInputAuthor, type SessionTurnQueueCapturedInput, type SessionTurnQueueReceipt, type SessionTurnQueueOrigin, type SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
@@ -10,24 +10,11 @@ import { CharacterAvatar } from "../../ui/ui-utils.js";
 import { approvalModeLabel } from "../../../src-shared/settings/approval-mode.js";
 import { reasoningEffortLabel } from "../../../src-shared/settings/model-catalog.js";
 import { codexSandboxModeOptions } from "../../../src-shared/settings/codex-sandbox-mode.js";
-
-const deliveryLabels = {
-  pending: "Input Acceptance Pending",
-  confirmed: "Additional Input Confirmed",
-  unknown: "Input Delivery Unknown",
-  "not-sent": "Input Not Sent",
-} as const;
-
-export function getQueuedSourceWaitState(receipt?: SessionTurnQueueReceipt): "waiting" | "unknown" | null {
-  const origin = receipt?.accepted?.origin ?? receipt?.captured.origin;
-  if (receipt?.state !== "queued" || origin?.deliveryTiming !== "after_source_turn") return null;
-  const phase = receipt.sourceTurnPhase;
-  if (phase === undefined || phase === "unknown") return "unknown";
-  return receipt.sourceTurnPendingRelease || phase === "running" ? "waiting" : null;
-}
+import { getQueuedSourceWaitState } from "./queued-source-wait.js";
 
 export type TurnInputReadContext = { ownerSessionId: string; target: SessionTarget };
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
+type InputDisplay = Extract<SessionExecutionReadResult<"read_turn_input_display">, { ok: true }>;
 type InputReference = { receiptId: string; turnId?: never } | { turnId: string; receiptId?: never };
 
 export function InputDetailRow({ label, children }: { label: string; children: ReactNode }) {
@@ -38,6 +25,12 @@ export function inputDetailStateLabel(value: string | null | undefined, fallback
   return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
 }
 
+function retryReceiptInputUnchanged(receipt: SessionTurnQueueReceipt) {
+  const comparison = (input: SessionTurnQueueCapturedInput) => JSON.stringify([input.request.userMessage,
+    input.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]);
+  return !!receipt.accepted && comparison(receipt.accepted) === comparison(receipt.dispatched ?? receipt.captured);
+}
+
 function ExecutionSettings({ settings }: { settings: NonNullable<Execution["executionSettings"]> }) {
   const providerLabel = ({ codex: "Codex", claude: "Claude", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[settings.provider] ?? settings.provider;
   const supportsReviewerAndSpeed = settings.provider === "codex" || settings.provider === "claude";
@@ -45,6 +38,7 @@ function ExecutionSettings({ settings }: { settings: NonNullable<Execution["exec
     ["provider", providerLabel], ["approval", approvalModeLabel(settings.approvalMode)],
   ];
   if (supportsReviewerAndSpeed) rows.push(["reviewer", settings.codexReviewer], ["speed", settings.codexSpeed]);
+  else if (settings.withMateReviewerExplicit) rows.push(["reviewer", settings.codexReviewer === "auto-review" ? "Auto Review" : "User"]);
   rows.push(["model", settings.model], ["reasoning", settings.reasoningEffort ? reasoningEffortLabel(settings.reasoningEffort) : settings.source === "input" ? "Provider Default" : null]);
   if (settings.provider === "codex") rows.push(["sandbox", codexSandboxModeOptions.find((option) => option.id === settings.codexSandboxMode)?.label ?? settings.codexSandboxMode]);
   if (settings.customAgentName) rows.push(["agent", settings.customAgentName]);
@@ -57,18 +51,39 @@ function ExecutionSettings({ settings }: { settings: NonNullable<Execution["exec
 }
 
 type TurnInputProps = { message: Message; receipt?: SessionTurnQueueReceipt; context?: TurnInputReadContext; turnId?: string; active?: boolean };
+type LoadedTurnInput = { key: string; display?: InputDisplay; execution?: Execution; error?: string; retryUserSeq?: number };
 
-export function useTurnInputRead({ message, receipt, context, turnId, active = true }: TurnInputProps) {
+export function useTurnInputRead({ message, receipt, context, turnId, active = true }: TurnInputProps, mode: "display" | "details" = "display") {
   const input = message.turnInput;
-  const [execution, setExecution] = useState<Execution | null>(null);
-  const [readError, setReadError] = useState("");
+  const [loaded, setLoaded] = useState<LoadedTurnInput | null>(null);
+  const [routeError, setRouteError] = useState<{ key: string; message: string }>();
   const [revision, setRevision] = useState(0);
   const receiptId = receipt?.id ?? input?.queueId;
   const reference: InputReference | null = receiptId ? { receiptId } : input || turnId ? { turnId: input?.turnId ?? turnId! } : null;
-  const statusReference = reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
-  const referenceIdentity = JSON.stringify([context, statusReference]);
-  const loadedReference = useRef(referenceIdentity);
-  const identity = JSON.stringify([context, statusReference, receipt?.updatedAt, input?.state, revision]);
+  const statusReference = input && !receiptId && message.historyIndex !== undefined
+    ? { messageSeq: message.historyIndex } : reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
+  const referenceIdentity = JSON.stringify([context, statusReference, mode]);
+  // The rendered retry input can outlive its active receipt. Reuse only a display read already
+  // bound to this owner's exact saved user sequence, while the saved-sequence read catches up.
+  const retainsRetryDisplay = mode === "display" && message.role === "user" && !receiptId
+    && message.historyIndex !== undefined && loaded?.retryUserSeq === message.historyIndex
+    && loaded.display?.receiptId && loaded.key === JSON.stringify([context, { receiptId: loaded.display.receiptId }, mode]);
+  const currentRead = active && (loaded?.key === referenceIdentity || retainsRetryDisplay) ? loaded : null;
+  const observed = currentRead?.display ?? null;
+  const execution = currentRead?.execution ?? null;
+  const captured = receipt?.dispatched ?? receipt?.captured;
+  // A direct additional input belongs to its own sender, not the Turn's start input.
+  const origin = input && !receiptId ? input.origin : observed?.origin ?? execution?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
+  const displayOrigin = projectRetryInputAuthor(origin, captured ? captured.retrySource : observed?.retrySource,
+    receipt ? !!captured?.retrySource && retryReceiptInputUnchanged(receipt) : observed?.retryInputUnchanged);
+  const observedAuthor = projectRetryInputAuthor(origin, observed?.retrySource, observed?.retryInputUnchanged);
+  // The local queue may reflect a newer edit than the last read. Never paint it with the earlier author's color.
+  const senderTheme = displayOrigin?.kind === "session" && observedAuthor?.kind === "session"
+    && displayOrigin.actorSessionId === observedAuthor.actorSessionId && displayOrigin.actorIncarnationId === observedAuthor.actorIncarnationId
+    && displayOrigin.actorKind === observedAuthor.actorKind
+    && displayOrigin.actorSnapshot?.character.id === observedAuthor.actorSnapshot?.character.id ? observed?.senderTheme ?? null : null;
+  const sourceSessionId = displayOrigin?.kind === "session" ? displayOrigin.actorSessionId : undefined;
+  const sourceMainId = displayOrigin?.kind === "session" && displayOrigin.actorKind === "auxiliary" ? displayOrigin.actorMainSessionId : undefined;
   useEffect(() => {
     const api = getWithMateApi();
     if (!active || !context) return;
@@ -78,38 +93,71 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
     return () => { queueChanged?.(); turnUpdated?.(); };
   }, [context?.target.sessionId, context?.ownerSessionId, active]);
   useEffect(() => {
-    if (loadedReference.current !== referenceIdentity) { setExecution(null); loadedReference.current = referenceIdentity; }
-    setReadError("");
+    if (!active || mode !== "display" || !sourceSessionId) return;
+    return getWithMateApi()?.subscribeSessionInvalidation?.((event) => {
+      // Main title, description and pin updates affect only summaries, not saved origin or color.
+      if (event.detailChanged === false) return;
+      if (event.scope === "ids" && !event.sessionIds.includes(sourceSessionId) && (!sourceMainId || !event.sessionIds.includes(sourceMainId))) return;
+      setRevision((value) => value + 1);
+    });
+  }, [active, mode, sourceSessionId, sourceMainId]);
+  const identity = JSON.stringify([referenceIdentity, receipt?.updatedAt, input?.state, revision]);
+  useEffect(() => {
     const api = getWithMateApi();
     if (!active || !context || !statusReference || !api?.readSessionExecution) return;
     let current = true;
-    void api.readSessionExecution(context.ownerSessionId, "get_execution", { target: context.target, ...statusReference }).then(async (result) => {
-      if (!current) return;
-      if (result.ok && message.role === "assistant" && !result.receiptId && result.userMessageSeq !== null) {
-        result = await api.readSessionExecution(context.ownerSessionId, "get_execution", { target: context.target, messageSeq: result.userMessageSeq });
+    setLoaded((value) => value?.key === referenceIdentity && value.error ? { ...value, error: undefined } : value);
+    setRouteError((value) => value?.key === referenceIdentity ? undefined : value);
+    const fail = (error: string) => setLoaded((value) => {
+      if (value?.key !== referenceIdentity) return { key: referenceIdentity, error };
+      const display = value.display ? { ...value.display, senderTheme: null } : undefined;
+      return { ...value, display, error };
+    });
+    const request = { target: context.target, ...statusReference };
+    const load = async () => {
+      if (mode === "display") {
+        const result = await api.readSessionExecution(context.ownerSessionId, "read_turn_input_display", request);
+        if (!current) return;
+        if (result.ok) {
+          const retryUserSeq = message.role === "user" && result.retrySource && receipt?.id === result.receiptId
+            ? receipt.userMessageSeq ?? undefined : undefined;
+          setLoaded({ key: referenceIdentity, display: result, retryUserSeq });
+        } else fail(result.message);
+      } else {
+        let result = await api.readSessionExecution(context.ownerSessionId, "get_execution", request);
+        if (current && result.ok && message.role === "assistant" && !result.receiptId && result.userMessageSeq !== null) {
+          result = await api.readSessionExecution(context.ownerSessionId, "get_execution", { target: context.target, messageSeq: result.userMessageSeq });
+        }
+        if (!current) return;
+        if (result.ok) setLoaded({ key: referenceIdentity, execution: result }); else fail(result.message);
       }
-      if (!current) return;
-      if (result.ok) setExecution(result); else setReadError(result.message);
-    }).catch((error) => { if (current) setReadError(error instanceof Error ? error.message : "Could not read saved input."); });
+    };
+    void load().catch((error) => {
+      if (current) fail(error instanceof Error ? error.message : "Could not read saved input.");
+    });
     return () => { current = false; };
   }, [identity, active]);
-  const observed = loadedReference.current === referenceIdentity ? execution : null;
-  // A direct additional input belongs to its own sender, not the Turn's start input.
-  const origin = input && !receiptId ? input.origin : observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
   const text = message.role === "user" ? receipt?.captured.coordination ? coordinationDeliveryText(receipt.dispatched ?? receipt.captured) : observed?.coordination?.text ?? message.text : message.text;
-  return { input, text, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
+  const coordination = message.role !== "user" ? null : captured?.coordination
+    ? { id: captured.coordination.id, consultation: readCoordinationNotification(captured)?.consultation ?? text }
+    : observed?.coordination ?? null;
+  const readError = currentRead?.error ?? (routeError?.key === referenceIdentity ? routeError.message : "");
+  const setReadError = (message: string) => setRouteError({ key: referenceIdentity, message });
+  return { input, text, coordination, execution, observed, origin, displayOrigin, senderTheme, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
-export function TurnExecutionDetails(props: TurnInputProps & { hasRunChecks?: boolean }) {
-  return <TurnInputDetailsContent {...props} read={useTurnInputRead(props)} />;
+type TurnExecutionDetailsProps = TurnInputProps & { hasRunChecks?: boolean; displayReadError?: string; onRetryDisplay?: () => void };
+
+export function TurnExecutionDetails(props: TurnExecutionDetailsProps) {
+  return <TurnInputDetailsContent {...props} read={useTurnInputRead(props, "details")} />;
 }
 
 export function TurnInputReadBoundary({ children, ...props }: TurnInputProps & { children: (read: ReturnType<typeof useTurnInputRead>) => ReactNode }) {
-  return children(useTurnInputRead({ ...props, active: props.message.role === "user" }));
+  return children(useTurnInputRead({ ...props, active: props.message.role === "user" || (props.message.role === "assistant" && props.message.runFailure !== undefined) }));
 }
 
-export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTurnInputRead> }) {
-  const origin = read.origin;
+export function TurnInputOriginAvatar({ read, origin = read.origin }: { read: ReturnType<typeof useTurnInputRead>;
+  origin?: ReturnType<typeof useTurnInputRead>["origin"] }) {
   if (origin?.kind !== "session") return null;
   const character = origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
   return <><div className="message-avatar-stack">
@@ -120,14 +168,20 @@ export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTur
 export function TurnInputStatus({ message }: { message: Message }) {
   const input = message.turnInput;
   if (message.role !== "user" || !input) return null;
+  return <AdditionalInputStatus state={input.state} />;
+}
+
+export function AdditionalInputStatus({ state }: { state: NonNullable<Message["turnInput"]>["state"] }) {
   return <>
-    <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p>
-    {input.state === "unknown" ? <p>Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
-    {input.state === "not-sent" ? <p>This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
+    {state === "unknown" ? <p className="message-paragraph" role="alert">Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
+    {state === "not-sent" ? <p className="message-paragraph" role="alert">This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
   </>;
 }
 
-export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin | SessionSteerOrigin; target?: SessionTarget; onError: (message: string) => void }) {
+export function SessionOriginRoute({ origin, target, onError, onOpenRecipientThread }: {
+  origin: SessionTurnQueueOrigin | SessionSteerOrigin; target?: SessionTarget;
+  onError: (message: string) => void; onOpenRecipientThread?: () => void;
+}) {
   const outbound = target !== undefined;
   const snapshot = outbound ? origin.targetSnapshot : origin.actorSnapshot;
   const recipient = origin.targetSnapshot?.character.name ?? "Unknown Recipient";
@@ -136,7 +190,10 @@ export function SessionOriginRoute({ origin, target, onError }: { origin: Sessio
     ? origin.actorMainSessionId && origin.actorSessionId ? [origin.actorMainSessionId, origin.actorSessionId] as const : null
     : origin.actorSessionId ? [origin.actorSessionId] as const : null;
   return <div className="session-message-address">
-    <span className="session-message-mention" title={`Recipient: ${recipient}`}>@{recipient}</span>
+    {outbound && onOpenRecipientThread
+      ? <button type="button" className="session-message-mention" title={`Go to this instruction in: ${sessionTitle}`}
+          aria-label={`@${recipient}: Go to this instruction in ${sessionTitle}`} onClick={onOpenRecipientThread}>@{recipient}</button>
+      : <span className="session-message-mention" title={`Recipient: ${recipient}`}>@{recipient}</span>}
     <button type="button" className="related-session-route" disabled={!route || !getWithMateApi()?.openSession}
     title={sessionTitle} aria-label={`${outbound ? "Open Recipient" : "Open Sender"}: ${sessionTitle}`}
     onClick={() => { if (route) void getWithMateApi()!.openSession(route[0], route[1]).catch((failure) => onError(failure instanceof Error ? failure.message : "Could not open sender Session.")); }}>
@@ -145,26 +202,35 @@ export function SessionOriginRoute({ origin, target, onError }: { origin: Sessio
   </button></div>;
 }
 
-function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; hasRunChecks?: boolean }) {
-  const { execution, observed, origin, statusReference, readError, setRevision } = read;
+function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false, displayReadError, onRetryDisplay }: TurnExecutionDetailsProps & { read: ReturnType<typeof useTurnInputRead> }) {
+  const { execution, origin, statusReference, readError, setRevision } = read;
   if (message.role !== "assistant" || !statusReference) return null;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const captured = receipt?.dispatched ?? receipt?.captured;
   const settings = execution?.executionSettings ?? (captured ? { source: "input" as const, provider: captured.provider, ...captured.request.executionOptions } : null);
-  const hasDelivery = observed?.receiptId || receipt;
+  const hasDelivery = execution?.receiptId || receipt;
+  const error = readError || displayReadError;
   return <section className="turn-input-details" aria-label="Turn Input Details">
     {!hasRunChecks && settings ? <ExecutionSettings settings={settings} /> : null}
     {hasDelivery ? <details className="artifact-fold" aria-label="Input State" open>
       <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Input State</strong></span></summary>
       <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Input State">
-        {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
-        <InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow>
-        <InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow>
+        {sourceWaitState === "unknown" ? <InputDetailRow label="Delivery"><span className="turn-input-state">Source Turn State Unknown</span></InputDetailRow> : null}
+        <InputDetailRow label="Receipt State">{inputDetailStateLabel(execution?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow>
+        <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
+        {execution?.inputs?.entry?.comparison === "changed" ? <InputDetailRow label="Starting Input">Edited before this Turn started</InputDetailRow> : null}
+        {execution?.retrySource?.changedSinceAcceptance ? <InputDetailRow label="Original Input">Edited before the original Turn started</InputDetailRow> : null}
+        {execution?.retrySource ? <InputDetailRow label="Original Sender">
+          {execution.retrySource.origin.kind === "session" ? execution.retrySource.origin.actorSnapshot?.character.name ?? "Unknown Session" : "You"}
+        </InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
         {origin?.operation === "send" && origin.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
       </dl>
     </details> : null}
-    {readError ? <p role="alert">{readError} <button type="button" className="drawer-toggle compact secondary" onClick={() => setRevision((value) => value + 1)}>Retry Input Details</button></p> : null}
-    {!observed && !readError ? <LoadingIndicator inline label="Loading input details" /> : null}
+    {error ? <p role="alert">{error} <button type="button" className="drawer-toggle compact secondary" onClick={() => {
+      if (readError) setRevision((value) => value + 1);
+      if (displayReadError) onRetryDisplay?.();
+    }}>Retry Input Details</button></p> : null}
+    {!execution && !readError ? <LoadingIndicator inline label="Loading input details" /> : null}
   </section>;
 }

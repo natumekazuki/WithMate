@@ -318,6 +318,9 @@ export function createSessionApi(
     enqueueSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(channels.WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, sessionId, request);
     },
+    retryFailedSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL, sessionId, request);
+    },
     getSessionTurnQueueReceipt(sessionId, requestId) {
       return ipcRenderer.invoke(channels.WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, sessionId, requestId);
     },
@@ -345,13 +348,10 @@ export function createSessionApi(
     sendQueuedSessionInput(sessionId, id, expectedTurnId) {
       return ipcRenderer.invoke(channels.WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, sessionId, id, expectedTurnId);
     },
-    releaseInterruptedSessionTurn(sessionId, id) {
-      return ipcRenderer.invoke(channels.WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, sessionId, id);
-    },
-    cancelSessionRun(sessionId) {
+    cancelSessionRun(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-        sessionId,
+        request,
       );
     },
     getLatestSessionTurn(sessionId) {

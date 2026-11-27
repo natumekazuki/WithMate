@@ -9,6 +9,15 @@ type ResourceDiscoveryApi = Pick<WithMateWindowApi,
   | "listWorkspaceSkills"
 >;
 
+type SkillList = {
+  api: ResourceDiscoveryApi;
+  providerId: string;
+  workspacePath: string;
+  items: DiscoveredSkill[];
+  loading: boolean;
+  error: string | null;
+};
+
 export function useResourceDiscovery({
   api,
   activeRunSessionId,
@@ -26,11 +35,18 @@ export function useResourceDiscovery({
   auxiliaryProvider: string | undefined;
   appSettingsRevision: unknown;
 }) {
-  const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [isCustomAgentListLoading, setIsCustomAgentListLoading] = useState(false);
-  const [isSkillListLoading, setIsSkillListLoading] = useState(false);
-  const [skillListError, setSkillListError] = useState<string | null>(null);
+  const [skillList, setSkillList] = useState<SkillList | null>(null);
+  const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
+    parentProviderId: selectedProvider,
+    parentWorkspacePath: selectedWorkspacePath,
+    auxiliaryProviderId: auxiliaryProvider,
+  });
+  const skillProviderId = skillDiscoveryRequest?.providerId;
+  const skillWorkspacePath = skillDiscoveryRequest?.workspacePath;
+  const currentSkillList = skillList?.api === api && skillList.providerId === skillProviderId
+    && skillList.workspacePath === skillWorkspacePath ? skillList : null;
 
   useEffect(() => {
     let active = true;
@@ -59,45 +75,33 @@ export function useResourceDiscovery({
   }, [activeRunSessionId, api, displayedProvider]);
 
   useEffect(() => {
-    let active = true;
-    const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
-      parentProviderId: selectedProvider,
-      parentWorkspacePath: selectedWorkspacePath,
-      auxiliaryProviderId: auxiliaryProvider,
-    });
-    if (!api || !skillDiscoveryRequest) {
-      setAvailableSkills([]);
-      setIsSkillListLoading(false);
-      setSkillListError(null);
-      return () => {
-        active = false;
-      };
+    if (!api || !skillProviderId || !skillWorkspacePath) {
+      setSkillList(null);
+      return;
     }
-    setIsSkillListLoading(true);
-    setSkillListError(null);
-    void api.listWorkspaceSkills(skillDiscoveryRequest.providerId, skillDiscoveryRequest.workspacePath).then((skills) => {
-      if (active) {
-        setAvailableSkills(skills);
-        setIsSkillListLoading(false);
-        setSkillListError(null);
-      }
-    }).catch(() => {
-      if (active) {
-        setAvailableSkills([]);
-        setIsSkillListLoading(false);
-        setSkillListError("Could not load skills. Check Settings or the workspace.");
-      }
+    let active = true;
+    const owner = { api, providerId: skillProviderId, workspacePath: skillWorkspacePath };
+    setSkillList((previous) => ({ ...owner, loading: true, error: null,
+      items: previous?.api === api && previous.providerId === skillProviderId
+        && previous.workspacePath === skillWorkspacePath ? previous.items : [],
+    }));
+    void api.listWorkspaceSkills(skillProviderId, skillWorkspacePath).then((items) => {
+      if (active) setSkillList({ ...owner, items, loading: false, error: null });
+    }, () => {
+      if (active) setSkillList((previous) => previous && ({ ...previous, loading: false,
+        error: "Could not load skills. Check Settings or the workspace.",
+      }));
     });
     return () => {
       active = false;
     };
-  }, [api, auxiliaryProvider, appSettingsRevision, selectedProvider, selectedWorkspacePath]);
+  }, [api, appSettingsRevision, skillProviderId, skillWorkspacePath]);
 
   return {
-    availableSkills,
+    availableSkills: currentSkillList?.items ?? [],
     availableCustomAgents,
     isCustomAgentListLoading,
-    isSkillListLoading,
-    skillListError,
+    isSkillListLoading: currentSkillList?.loading ?? Boolean(api && skillDiscoveryRequest),
+    skillListError: currentSkillList?.error ?? null,
   };
 }

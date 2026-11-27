@@ -98,6 +98,22 @@
   gap: 10px;
 }
 
+.settings-app-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-app-version .settings-provider-name {
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+}
+
 .settings-section-card {
   display: grid;
   gap: 16px;
@@ -645,6 +661,17 @@ details.settings-subsection {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.settings-review-select-row {
+  grid-template-columns: minmax(0, 1fr) min(50%, 16rem);
+}
+
+.settings-review-select-row select {
+  min-width: 0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  text-overflow: ellipsis;
 }
 
 .settings-inline-unit {

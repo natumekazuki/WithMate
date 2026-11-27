@@ -13,6 +13,7 @@
 
 .message-file-preview-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -21,7 +22,7 @@
 }
 
 .message-file-preview-header > a {
-  flex: 1;
+  flex: 1 1 8rem;
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -29,6 +30,20 @@
   white-space: nowrap;
   font-size: 0.8rem;
   font-weight: 400;
+}
+
+.message-file-preview[data-format="pdf"] .message-file-preview-header > a {
+  flex-basis: 0;
+}
+
+.message-file-preview-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: inherit;
+  /* Keep preview controls on the leading side, away from floating message actions. */
+  max-inline-size: 50%;
+  flex: none;
 }
 
 .message-file-preview-controls { flex: none; }

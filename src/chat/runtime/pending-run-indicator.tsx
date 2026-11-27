@@ -1,8 +1,9 @@
 type PendingRunIndicatorProps = {
+  phase: "running" | "waiting";
   announcement?: string;
 };
 
-export function PendingRunIndicator({ announcement }: PendingRunIndicatorProps) {
+export function PendingRunIndicator({ phase, announcement }: PendingRunIndicatorProps) {
   const statusText = announcement?.trim() || "Running";
 
   return (
@@ -10,7 +11,7 @@ export function PendingRunIndicator({ announcement }: PendingRunIndicatorProps) 
       <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
         {statusText}
       </span>
-      <div className="live-run-shell-status pending-run-indicator" aria-hidden="true">
+      <div className="live-run-shell-status pending-run-indicator" data-phase={phase} aria-hidden="true">
         <span className="typing-dots pending-run-indicator-dots">
           <span />
           <span />

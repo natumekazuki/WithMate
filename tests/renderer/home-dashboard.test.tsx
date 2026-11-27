@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import { HomeDashboardScreen } from "../../src/home/HomeDashboardScreen.js";
-import { HomeHeader } from "../../src/home/HomeHeader.js";
+import { HomeHeader, homeRightPaneLabels, type HomeRightPaneView } from "../../src/home/HomeHeader.js";
 
 // @test-value v2
 // kind = "contract"
@@ -37,7 +37,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
   let containerWidth = 1000;
   let settingsCalls = 0;
   let launchCalls = 0;
-  const renderScreen = (view: "monitor" | "characters" | "previews" = "monitor") => root.render(<HomeDashboardScreen
+  const renderScreen = (view: HomeRightPaneView = "monitor") => root.render(<HomeDashboardScreen
     homePageClassName="home-page"
     header={<HomeHeader
       searchInputText="keep this search"
@@ -51,7 +51,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
       onOpenSettingsWindow={() => { settingsCalls += 1; }}
       onRestoreSessionWindows={() => {}}
     />}
-    rightPaneLabel={view === "monitor" ? "Monitor" : view === "previews" ? "Previews" : "Characters"}
+    rightPaneLabel={homeRightPaneLabels[view]}
     recentSessionsPanel={<div>Recent Sessions</div>}
     rightPane={<button type="button">Open Session</button>}
     launchDialog={null}
@@ -117,7 +117,9 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
     assert.equal(input.value, "keep this search");
     await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
     assert.match(splitter.parentElement?.style.gridTemplateColumns ?? "", /0\.52fr/);
-    await act(async () => element.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="false"]')!.click());
+    const charactersTab = [...element.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent === "Characters");
+    assert.ok(charactersTab);
+    await act(async () => charactersTab.click());
     assert.equal(splitter.getAttribute("aria-label"), "Collapse Characters");
     await act(async () => splitter.click());
     assert.equal(splitter.getAttribute("aria-label"), "Open Characters");

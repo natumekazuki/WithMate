@@ -26,6 +26,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_STEER_SESSION_TURN_CHANNEL,
   WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
+  WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL,
   WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
@@ -35,7 +36,6 @@ import {
   WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL,
   WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL,
   WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
-  WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
@@ -66,6 +66,7 @@ import {
   assertSessionDeleteSender,
   assertSettingsWindowSender,
   assertUsableWorkspaceDirectory,
+  readCancelSessionRunRequest,
 } from "./shared.js";
 
 export type MainIpcSessionRuntimeServiceDeps = Omit<
@@ -163,6 +164,21 @@ export function registerSessionRuntimeHandlers(
       throw error;
     }
   });
+  ipcMain.handle(WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest) => {
+    const parentId = await assertQueueSender(event, sessionId);
+    const frame = event.senderFrame;
+    const assertCurrent = () => {
+      if (!frame || event.sender.isDestroyed() || event.sender.mainFrame !== frame) throw new Error("Retry requires the owning main application frame.");
+      assertOwningSessionWindowSender(event, parentId, deps);
+    };
+    assertCurrent();
+    try {
+      return await queue().retryFailedSessionTurn(sessionId, request, assertCurrent);
+    } catch (error) {
+      if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
+      throw error;
+    }
+  });
   ipcMain.handle(WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, async (event, sessionId: string, requestId: string) => {
     const parentId = await assertQueueSender(event, sessionId);
     const receipt = await queue().getSessionTurnQueueReceipt(sessionId, requestId);
@@ -190,10 +206,6 @@ export function registerSessionRuntimeHandlers(
     const result = await queue().reorderQueuedSessionTurns(sessionId, request);
     assertOwningSessionWindowSender(event, parentId, deps);
     return result;
-  });
-  ipcMain.handle(WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
-    await assertQueueSender(event, sessionId);
-    return queue().releaseInterruptedSessionTurn(sessionId, id);
   });
   ipcMain.handle(WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, async (event, sessionId: string, id: string, expectedTurnId: string) => {
     await assertQueueSender(event, sessionId);
@@ -321,8 +333,11 @@ export function registerSessionRuntimeHandlers(
   );
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
-    (_event, sessionId: string) => {
-      deps.cancelSessionRun(sessionId);
+    (event, value: unknown) => {
+      const request = readCancelSessionRunRequest(value);
+      const assertAuthorized = () => assertOwningSessionWindowSender(event, request.sessionId, deps);
+      assertAuthorized();
+      return deps.cancelSessionRun(request, assertAuthorized);
     },
   );
   ipcMain.handle(WITHMATE_STEER_SESSION_TURN_CHANNEL, (event, sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {

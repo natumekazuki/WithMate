@@ -39,6 +39,7 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeProviderEnabled"
   | "onChangeModelAvailability"
+  | "onChangeWithMateAutoReview"
   | "onChangeProviderInstructionRelativePath"
   | "onChangeProviderSkillRootPath"
   | "onChangeProviderSkillRelativePath"
@@ -54,6 +55,9 @@ export function buildSettingsDraftHandlers({
   };
 
   return {
+    onChangeWithMateAutoReview: (withMateAutoReview) => {
+      updateSettingsDraft((current) => ({ ...current, withMateAutoReview }));
+    },
     onChangeModelAvailability: (modelAvailability) => {
       updateSettingsDraft((current) => ({ ...current, modelAvailability }));
     },

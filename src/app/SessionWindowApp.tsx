@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { SessionGraphPreview, defaultSessionGraphViewState, type SessionGraphPreviewMemory } from "../session-graph/SessionGraphPreview.js";
@@ -44,8 +45,7 @@ import { isSameModelCatalogWorkspace, startModelCatalogSubscription } from "../s
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import {
-  buildAuxiliarySessionCancelTarget,
-  buildRunningSessionCancelTarget,
+  buildSessionStopTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
 } from "../chat/send-or-cancel.js";
@@ -60,8 +60,13 @@ import {
   useMainAuxiliaryRuntimeSession,
 } from "../chat/auxiliary/auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
+import { FailedTurnRetryContext } from "../chat/runtime/failed-turn-retry-context.js";
 import { resolveConversationAttentionEntries, type ConversationAttention } from "../chat/conversation-attention.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
+import { readReplyQuote } from "../chat/conversation/reply-quote.js";
+import type { SessionReply } from "../../src-shared/session/session-reply.js";
+import { conversationPeerKey, savedReplyConversationFrame } from "../../src-shared/session/conversation-threads.js";
+import { ALL_MAIN_THREADS_ID, type MainConversationView } from "../chat/conversation/use-main-conversation-threads.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
 import { usePastedFileReplacement } from "../chat/use-pasted-file-replacement.js";
 import { useResourceDiscovery } from "../chat/use-resource-discovery.js";
@@ -178,7 +183,6 @@ import {
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryActions,
-  type RetryState,
 } from "../chat/retry-state.js";
 import { loadOwnedAuxiliaryMessageArtifact, resolvePendingAuxiliaryMessageGroupId } from "../chat/auxiliary/auxiliary-session-message-projection.js";
 import {
@@ -325,6 +329,7 @@ export default function AgentSessionWindowApp() {
     ownerId: string;
     message: string;
   } | null>(null);
+  const [failedRetryFeedback, setFailedRetryFeedback] = useState<{ ownerId: string; incarnationId: string; lastUserSeq: number | null; message: string } | null>(null);
   const mainSessionRuntime = useMainSessionRuntime({
     api: withmateApi,
     selectedId,
@@ -333,7 +338,7 @@ export default function AgentSessionWindowApp() {
   });
   const {
     sessions,
-    pendingSubmitSessionId,
+    hasPendingSubmitFor,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
     toggleSessionPin,
@@ -485,7 +490,12 @@ export default function AgentSessionWindowApp() {
     hasSelectedSessionLiveRun,
     selectedSessionCancellationState,
     cancellationState: activeCancellationState,
-    runTurnId,
+    stopTurnId,
+    stopReceiptId,
+    stopIncarnationId,
+    mainStopTurnId,
+    mainStopReceiptId,
+    mainStopIncarnationId,
     hasLiveRun,
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
@@ -499,6 +509,26 @@ export default function AgentSessionWindowApp() {
     inputTurnId,
     setLiveRunState,
   } = useSessionRunControls(withmateApi, selectedSession, activeRunSessionId);
+  const [stopClaims, setStopClaims] = useState<Partial<Record<"main" | "auxiliary", { sessionId: string; incarnationId: string; receiptId: string }>>>({});
+  const observeTurnReceipts = useCallback((receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string; kind: "main" | "auxiliary" }) => {
+    mainSessionRuntime.observeTurnReceipts(receipts);
+    const receipt = receipts.find((item) => item.sessionId === owner.sessionId && item.incarnationId === owner.incarnationId
+      && !item.inputTurnId && (item.state === "starting" || item.state === "running"));
+    setStopClaims((current) => {
+      const previous = current[owner.kind];
+      if (!receipt ? !previous : previous?.receiptId === receipt.id && previous.incarnationId === owner.incarnationId && previous.sessionId === owner.sessionId) return current;
+      return { ...current, [owner.kind]: receipt ? { sessionId: owner.sessionId, incarnationId: owner.incarnationId, receiptId: receipt.id } : undefined };
+    });
+  }, [mainSessionRuntime.observeTurnReceipts]);
+  const stopMainIncarnation = selectedSession ? getSessionIncarnationId(selectedSession) : "";
+  const stopAuxiliaryId = activeAuxiliarySession?.id;
+  const stopAuxiliaryIncarnation = activeAuxiliarySession?.createdAt;
+  const mainStopTarget = useMemo(() => buildSessionStopTarget(selectedSessionId ? { sessionId: selectedSessionId, incarnationId: stopMainIncarnation } : null,
+    { turnId: mainStopTurnId, receiptId: mainStopReceiptId, incarnationId: mainStopIncarnationId }, stopClaims.main),
+  [selectedSessionId, stopMainIncarnation, mainStopTurnId, mainStopReceiptId, mainStopIncarnationId, stopClaims.main]);
+  const auxiliaryStopTarget = useMemo(() => buildSessionStopTarget(stopAuxiliaryId && stopAuxiliaryIncarnation ? { sessionId: stopAuxiliaryId, incarnationId: stopAuxiliaryIncarnation } : null,
+    { turnId: stopTurnId, receiptId: stopReceiptId, incarnationId: stopIncarnationId }, stopClaims.auxiliary),
+  [stopAuxiliaryId, stopAuxiliaryIncarnation, stopTurnId, stopReceiptId, stopIncarnationId, stopClaims.auxiliary]);
   const {
     approvalActionRequestId,
     elicitationActionRequestId,
@@ -509,20 +539,58 @@ export default function AgentSessionWindowApp() {
   } = useSessionRunActions({
     api: withmateApi,
     activeRunSessionId,
+    stopTargets: [mainStopTarget, auxiliaryStopTarget],
     setLiveRunState,
     onError: (message) => window.alert(message),
   });
   const isActiveCancelRequested = pendingCancelSessionIds.has(activeRunSessionId ?? "");
+  const mainViewRef = useRef<MainConversationView>(null);
+  const [mainViewSelection, setMainViewSelection] = useState<{ ownerKey: string; id: string; missingEditFrameId?: string }>();
+  const onMainConversationView = useCallback((view: MainConversationView) => {
+    mainViewRef.current = view;
+    const ownerKey = conversationPeerKey(view.main);
+    const edit = queueEditor.edits[view.main.sessionId];
+    const editingFrame = edit?.receipt.incarnationId === view.main.incarnationId ? edit.mainFrameId : undefined;
+    setMainViewSelection((previous) => {
+      // Only a successful thread projection can establish that the edit's peer is gone.
+      const missingEditFrameId = editingFrame && editingFrame !== ALL_MAIN_THREADS_ID
+        && (view.projection
+          ? !view.projection.children.some(({ target }) => conversationPeerKey(target) === editingFrame)
+          : previous?.ownerKey === ownerKey && previous.missingEditFrameId === editingFrame)
+        ? editingFrame : undefined;
+      return previous?.ownerKey === ownerKey && previous.id === view.id && previous.missingEditFrameId === missingEditFrameId
+        ? previous : { ownerKey, id: view.id, missingEditFrameId };
+    });
+  }, [queueEditor.edits]);
+  const mainIncarnation = selectedSession ? getSessionIncarnationId(selectedSession) : "";
+  const mainView = selectedSession && mainViewSelection?.ownerKey === conversationPeerKey({
+    kind: "main", sessionId: selectedSession.id, incarnationId: mainIncarnation,
+  }) ? mainViewSelection : undefined;
+  const mainFrameId = mainView?.id ?? "";
+  const composerFrameKey = auxiliaryWorkspace.target === "main" && mainFrameId
+    ? JSON.stringify([mainIncarnation, mainFrameId]) : undefined;
   const normalComposerOwner = useMemo<ComposerOwner>(
     () => ({
       kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
       id: activeRunSessionId ?? "__none__",
+      frameKey: composerFrameKey,
     }),
-    [activeRunSessionId, auxiliaryWorkspace.target],
+    [activeRunSessionId, auxiliaryWorkspace.target, composerFrameKey],
   );
-  const activeQueuedTurnEdit = queueEditor.edits[activeRunSessionId ?? ""];
+  const queuedEditForTarget = queueEditor.edits[activeRunSessionId ?? ""];
+  const editFrame = queuedEditForTarget?.mainFrameId;
+  const activeQueuedTurnEdit = queuedEditForTarget && (auxiliaryWorkspace.target === "auxiliary"
+    || queuedEditForTarget.receipt.incarnationId === mainIncarnation && editFrame !== undefined
+      && (editFrame === mainFrameId || mainFrameId === ALL_MAIN_THREADS_ID && mainView?.missingEditFrameId === editFrame))
+    ? queuedEditForTarget : undefined;
   const composerOwner = useMemo<ComposerOwner>(() => activeQueuedTurnEdit
     ? queuedTurnEditOwner(normalComposerOwner.id) : normalComposerOwner, [normalComposerOwner, !!activeQueuedTurnEdit]);
+  const currentComposerOwner = useRef(composerOwner);
+  currentComposerOwner.current = composerOwner;
+  const subscribeMainReply = useCallback((listener: () => void) => composerRegistry.subscribe(normalComposerOwner, listener), [composerRegistry, normalComposerOwner]);
+  const readMainReply = useCallback(() => normalComposerOwner.kind === "main"
+    ? composerRegistry.get(normalComposerOwner).reply : undefined, [composerRegistry, normalComposerOwner]);
+  const mainReply = useSyncExternalStore(subscribeMainReply, readMainReply, readMainReply);
   const composerDraft = activeQueuedTurnEdit?.receipt.captured.request.userMessage
     ?? (auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : "");
   const isAuxiliaryTargetUnavailable = auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession;
@@ -691,8 +759,8 @@ export default function AgentSessionWindowApp() {
     latestTurn: latestRecoveryTurn.turn,
     runState: visibleSessionRunState,
   }) : null, [recoverySession, activeAuxiliarySession, selectedSession?.latestUserMessage, latestRecoveryTurn.turn, visibleSessionRunState]);
-  const retryState = useMemo<RetryState | null>(() => {
-    if (!retrySource || !shouldShowRetryActions({
+  const retryState = useMemo(() => {
+    if (!retrySource || retrySource.kind === "failed" || !shouldShowRetryActions({
       hasLastUserMessage: true,
       isReadOnly: isSelectedSessionReadOnly,
       runState: visibleSessionRunState,
@@ -845,13 +913,18 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
-  const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence });
+  const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence,
+    submitCoordinator: mainSessionRuntime.submitCoordinator });
+  const hasUncertainTurnFor = (id: string | null) => id === activeAuxiliarySession?.id
+    ? mainSessionRuntime.hasUncertainTurnFor(id, activeAuxiliarySession.createdAt)
+    : id === selectedSession?.id && mainSessionRuntime.hasUncertainTurnFor(id, getSessionIncarnationId(selectedSession));
   const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId && !isActiveCancelRequested;
   const steeringError = activeRunSessionId && turnInput.errors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
     ? turnInput.errors[activeRunSessionId].message : "";
-  const composerBusyReason = activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId)
+  const isInputSubmissionPending = !!activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId);
+  const composerBusyReason = isInputSubmissionPending
     ? "Input submission is in progress."
-    : pendingSubmitSessionId !== null && pendingSubmitSessionId === activeRunSessionId
+    : hasPendingSubmitFor(activeRunSessionId)
     ? "Message submission is in progress."
     : auxiliaryWorkspace.target === "main" && !loadedSession && !mainSessionRuntime.readError
       ? "The conversation is loading."
@@ -1019,7 +1092,7 @@ export default function AgentSessionWindowApp() {
     retryState,
     hasLastUserMessage: !!retrySource,
     composerBlocked: !!composerBlockedReason || composerRegistry.isFrozen
-      || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id) || !!activeQueuedTurnEdit,
+      || hasUncertainTurnFor(composerOwner.id) || !!activeQueuedTurnEdit,
     isReadOnly: isSelectedSessionReadOnly,
     runState: visibleSessionRunState,
   });
@@ -1030,7 +1103,7 @@ export default function AgentSessionWindowApp() {
   } = chatShellFeature;
   const handleBeginQueuedTurnEdit = (receipt: SessionTurnQueueReceipt) => {
     if (composerRegistry.isFrozen || isSelectedSessionReadOnly) return;
-    void queueEditor.begin(receipt);
+    void queueEditor.begin(receipt, receipt.sessionId === selectedId ? mainFrameId : undefined);
     if (receipt.sessionId === selectedId) auxiliaryWorkspace.setTarget("main");
     else {
       auxiliaryWorkspace.selectSession(receipt.sessionId);
@@ -1071,6 +1144,44 @@ export default function AgentSessionWindowApp() {
   };
 
   const captureMessageListSendRef = useRef<((sessionId: string) => (() => void)) | null>(null);
+  const replyOwner = JSON.stringify([normalComposerOwner.kind, normalComposerOwner.id,
+    activeAuxiliarySession?.createdAt ?? selectedSession?.incarnationId]);
+  const [replyDraft, setReplyDraft] = useState<{ owner: string; key: string; revision: number; reference?: SessionReply; error?: string } | null>(null);
+  const replyRevision = useRef(0);
+  const auxiliaryReply = replyDraft?.owner === replyOwner ? replyDraft : null;
+  const selectedReply = activeQueuedTurnEdit ? null : normalComposerOwner.kind === "main" ? mainReply : auxiliaryReply;
+  const clearReply = (revision: number | undefined) => {
+    if (revision === undefined) return;
+    setReplyDraft((current) => current?.revision === revision ? null : current);
+  };
+  const selectReply = (key: string, reference: SessionReply) => {
+    if (!loadedSession || loadedSession.sessionKind !== "default" || isSelectedSessionReadOnly || composerRegistry.isFrozen || activeQueuedTurnEdit || isAuxiliaryTargetUnavailable) return;
+    if (normalComposerOwner.kind === "main") {
+      if (composerRegistry.get(normalComposerOwner).reply?.key === key) {
+        composerRegistry.setReply(normalComposerOwner, undefined);
+        return;
+      }
+      const pending = { key };
+      composerRegistry.setReply(normalComposerOwner, pending);
+      void readReplyQuote(loadedSession.id, reference).then((reply) => {
+        composerRegistry.resolveReply(normalComposerOwner, pending, { key, reference: reply.reference });
+      }, (error: unknown) => {
+        composerRegistry.resolveReply(normalComposerOwner, pending, { key, error: resolveSessionRunErrorMessage(error, "Could not read the reply target.") });
+      });
+      return;
+    }
+    if (auxiliaryReply?.key === key) {
+      clearReply(auxiliaryReply.revision);
+      return;
+    }
+    const revision = ++replyRevision.current;
+    setReplyDraft({ owner: replyOwner, key, revision });
+    void readReplyQuote(loadedSession.id, reference).then((reply) => {
+      setReplyDraft((current) => current?.revision === revision ? { ...current, reference: reply.reference } : current);
+    }, (error: unknown) => {
+      setReplyDraft((current) => current?.revision === revision ? { ...current, error: resolveSessionRunErrorMessage(error, "Could not read the reply target.") } : current);
+    });
+  };
   const sendMessage = async (
     messageText: string,
     options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
@@ -1080,13 +1191,26 @@ export default function AgentSessionWindowApp() {
       return;
     }
     const sessionId = sendSession.id;
-    const selectionContext = dockContextRef.current;
+    const incarnationId = getSessionIncarnationId(sendSession);
     const collapseSentActionDock = captureSendDockCollapse();
     const followAcceptedSend = options?.submitSource === "retry" ? undefined : captureMessageListSendRef.current?.(sessionId);
-    const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === sessionId;
+    const isCurrentSubmission = () => {
+      const current = getCurrentMainSession();
+      return composerOwnerRef.current === sessionId && current?.id === sessionId && getSessionIncarnationId(current) === incarnationId;
+    };
     const clientRequestId = createSessionTurnClientRequestId();
+    const reply = options?.submitSource === "retry" ? null : composerRegistry.get(composerOwner).reply;
+    if (reply && !reply.reference) return;
+    const main = { kind: "main" as const, sessionId, incarnationId };
+    const view = mainViewRef.current;
+    const currentView = view && conversationPeerKey(view.main) === conversationPeerKey(main) ? view : null;
+    const replyFrame = savedReplyConversationFrame(main, currentView?.projection, reply?.reference);
     const request: RunSessionTurnRequest = {
       userMessage: messageText,
+      ...(reply?.reference ? { replyTo: reply.reference } : {}),
+      ...(options?.submitSource === "retry" ? {} : {
+        mainConversationFrame: replyFrame !== undefined ? replyFrame : currentView?.child ?? null,
+      }),
       clientRequestId,
       submitSource: options?.submitSource ?? "composer",
       executionOptions: captureSessionExecutionOptions(sendSession),
@@ -1105,7 +1229,7 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       validateWorkspace: () => validateSessionWorkspace(sendSession, true),
       collapseActionDock: collapseSentActionDock,
-      onSubmitted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
+      onSubmitted: () => { if (isCurrentSubmission() && currentComposerOwner.current === composerOwner) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
     });
   };
@@ -1115,7 +1239,7 @@ export default function AgentSessionWindowApp() {
     if (activeQueuedTurnEdit) {
       const id = activeQueuedTurnEdit.receipt.sessionId;
       if (await queueEditor.submit(id)) requestAnimationFrame(() => {
-        if (composerOwnerRef.current === id) composerTextareaRef.current?.focus();
+        if (currentComposerOwner.current === normalComposerOwner || currentComposerOwner.current === composerOwner) composerTextareaRef.current?.focus();
       });
       return;
     }
@@ -1125,7 +1249,7 @@ export default function AgentSessionWindowApp() {
     }
     if (activeAuxiliarySession) {
       const currentComposerState = composerRegistry.get(composerOwner);
-      if (composerBusyReason || mainSessionRuntime.hasUncertainTurnFor(activeAuxiliarySession.id)) {
+      if (composerBusyReason || hasUncertainTurnFor(activeAuxiliarySession.id)) {
         return;
       }
       if (currentComposerState.saveState === "error" || currentComposerState.preview.errors.length > 0) {
@@ -1148,7 +1272,7 @@ export default function AgentSessionWindowApp() {
     }
 
     const currentComposerState = composerRegistry.get(composerOwner);
-    if (isComposerDisabled || mainSessionRuntime.hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
+    if (isComposerDisabled || hasUncertainTurnFor(selectedId) || currentComposerState.saveState === "error"
       || currentComposerState.preview.errors.length > 0 || !getComposerDraft().trim()) {
       triggerComposerBlockedFeedback();
       return;
@@ -1169,14 +1293,16 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSendInput = async () => {
-    if (activeQueuedTurnEdit) return;
+    if (activeQueuedTurnEdit || selectedReply && !selectedReply.reference) return;
     const selectionContext = dockContextRef.current;
-    if (mainSessionRuntime.hasUncertainTurnFor(composerOwner.id)) return;
+    if (hasPendingSubmitFor(composerOwner.id) || hasUncertainTurnFor(composerOwner.id)) return;
     const mainSession = getCurrentMainSession();
     if (!activeAuxiliarySession && !mainSession) return;
     await turnInput.send({
       owner: composerOwner,
       auxiliarySession: activeAuxiliarySession,
+      replyTo: selectedReply?.reference,
+      onAccepted: activeAuxiliarySession ? () => clearReply(auxiliaryReply?.revision) : undefined,
       turnId: inputTurnId ?? null,
       canSendInput,
       blockedReason: composerBlockedReason,
@@ -1193,12 +1319,8 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    if (selectedSessionCancellationState || pendingCancelSessionIds.has(selectedSession?.id ?? "")) return;
-    await cancelRun(buildRunningSessionCancelTarget({
-      sessionId: selectedSession?.id,
-      runState: selectedSessionRunState,
-      isRunning: isSelectedSessionRunning,
-    }), "main", runTurnId);
+    if (selectedSessionCancellationState) return;
+    await cancelRun(mainStopTarget, "main");
   };
 
   const handleComposerSubmitShortcut = () => {
@@ -1212,7 +1334,8 @@ export default function AgentSessionWindowApp() {
       return composerRegistry.isFrozen
         || current.isImeComposing
         || current.saveState === "error"
-        || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id);
+        || hasPendingSubmitFor(composerOwner.id)
+        || hasUncertainTurnFor(composerOwner.id);
     },
     isSubmitBlocked: () => {
       const current = composerRegistry.get(composerOwner);
@@ -1304,9 +1427,9 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       providerCatalog: selectedProviderCatalog,
       option,
-      persist: (nextSession, confirmedReviewerChange) => {
+      persist: (nextSession, confirmedReviewerChange, approvalChoice) => {
         setExecutionOptionsFeedback(null);
-        return Promise.resolve(selectMainExecutionOptions(nextSession, confirmedReviewerChange));
+        return Promise.resolve(selectMainExecutionOptions(nextSession, confirmedReviewerChange, approvalChoice));
       },
       createTimestampLabel: currentTimestampLabel,
     });
@@ -1337,12 +1460,17 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const updateAuxiliaryExecutionOptions = (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: import("../../src-shared/session/session-mutation-contract.js").ConfirmedReviewerChange) => auxiliaryExecutionOptionsOwner.update({
+  const updateAuxiliaryExecutionOptions = (
+    recipe: (current: AuxiliarySession) => AuxiliarySession,
+    confirmedReviewerChange?: import("../../src-shared/session/session-mutation-contract.js").ConfirmedReviewerChange,
+    approvalChoice?: import("../../src-shared/settings/session-approval-choice.js").SessionApprovalChoice,
+  ) => auxiliaryExecutionOptionsOwner.update({
     api: withmateApi,
     binding: auxiliaryBinding,
     isReadOnly: isSelectedSessionReadOnly,
     recipe,
     confirmedReviewerChange,
+    approvalChoice,
     onFeedback: setExecutionOptionsFeedback,
   });
 
@@ -1487,7 +1615,7 @@ export default function AgentSessionWindowApp() {
 
   const handleCancelAuxiliaryRun = async () => {
     if (activeCancellationState) return;
-    await cancelRun(buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }), "auxiliary", runTurnId);
+    await cancelRun(auxiliaryStopTarget, "auxiliary");
   };
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
@@ -1560,11 +1688,14 @@ export default function AgentSessionWindowApp() {
     const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
       && auxiliaryBinding.getSession()?.createdAt === selected.createdAt;
     const releaseDetail = auxiliaryBinding.retainDetail();
+    const reply = options?.submitSource === "retry" ? null : auxiliaryReply;
+    if (reply && !reply.reference) { releaseDetail(); return Promise.resolve(); }
     return auxiliaryDraftPersistence.trackSend(runMainSessionTurnFromRuntime({
       sessionId: selected.id,
       selectedSession: { ...displayedSession, id: selected.id, incarnationId: selected.createdAt },
       request: {
         userMessage: messageText ?? composerRegistry.capture(owner).draft,
+        ...(reply?.reference ? { replyTo: reply.reference } : {}),
         clientRequestId: createSessionTurnClientRequestId(),
         submitSource: options?.submitSource ?? "composer",
         executionOptions: captureSessionExecutionOptions(selected),
@@ -1583,7 +1714,7 @@ export default function AgentSessionWindowApp() {
       collapseActionDock: collapseSentActionDock,
       onSubmitted: () => { if (isCurrentSubmission()) followAcceptedSend?.(); },
       log: logSessionRunStuckInvestigation,
-    }).finally(releaseDetail));
+    }).then((receipt) => { if (receipt) clearReply(reply?.revision); return receipt; }).finally(releaseDetail));
   };
 
   const handleCopyMessageText = createCopyMessageTextHandler({
@@ -1627,12 +1758,12 @@ export default function AgentSessionWindowApp() {
 
   const insertReferencePaths = (selectedPaths: string[]) => {
     if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
-    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
+    const textarea = currentComposerOwner.current === composerOwner ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
     applySelectedPathReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: targetAuxiliarySession ? composerCaret : mainComposerCaretRef.current,
+      fallbackCaret: composerRegistry.get(composerOwner).selection.start,
       selectedPaths,
       textarea,
       workspacePath: selectedSession?.workspacePath ?? null,
@@ -1663,12 +1794,12 @@ export default function AgentSessionWindowApp() {
 
   const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
     if (composerRegistry.isFrozen || isAuxiliaryTargetUnavailable) return;
-    const textarea = composerOwnerRef.current === activeRunSessionId ? composerTextareaRef.current : null;
+    const textarea = currentComposerOwner.current === composerOwner ? composerTextareaRef.current : null;
     const targetAuxiliarySession = activeAuxiliarySession;
     const currentDraft = getComposerDraft();
     applyComposerReferenceInsertionCommand({
       draft: currentDraft,
-      fallbackCaret: composerCaret,
+      fallbackCaret: composerRegistry.get(composerOwner).selection.start,
       references,
       textarea,
       applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
@@ -2096,14 +2227,18 @@ export default function AgentSessionWindowApp() {
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {
-      isRunning: renderedIsRunning,
+      isRunning: renderedIsRunning || !!(activeAuxiliarySession ? auxiliaryStopTarget : mainStopTarget),
       canSendInput: !activeQueuedTurnEdit && canSendInput,
-      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : pendingSubmitSessionId === renderedSession.id,
-      hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
-      inputError: activeQueuedTurnEdit?.error || steeringError,
+      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving"
+        : isInputSubmissionPending || hasPendingSubmitFor(renderedSession.id),
+      hasUncertainTurn: hasUncertainTurnFor(renderedSession.id),
+      inputAcceptanceError: !activeQueuedTurnEdit ? steeringError : undefined,
+      inputError: activeQueuedTurnEdit?.error
+        || (!activeQueuedTurnEdit ? mainSessionRuntime.resendRecoveryError(renderedSession.id, getSessionIncarnationId(renderedSession)) : ""),
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
-      selectedRunState: selectedSessionRunState,
-      auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
+      isAwaitingRunStop: !!activeCancellationState,
+      selectedRunState: mainStopTarget ? "running" : selectedSessionRunState,
+      auxiliaryRunState: auxiliaryStopTarget ? "running" : activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly || (!activeAuxiliarySession && !loadedSession)
@@ -2159,8 +2294,8 @@ export default function AgentSessionWindowApp() {
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
         queue: handleSend,
-        checkReceipt: () => mainSessionRuntime.checkTurnReceipt(renderedSession.id),
-        retryOriginal: () => mainSessionRuntime.retryOriginalTurn(renderedSession.id),
+        checkReceipt: () => mainSessionRuntime.checkTurnReceipt(renderedSession.id, getSessionIncarnationId(renderedSession)),
+        retryOriginal: () => mainSessionRuntime.retryOriginalTurn(renderedSession.id, getSessionIncarnationId(renderedSession)),
       },
       runtimeOptions: {
         runMain: async (option) => {
@@ -2227,7 +2362,7 @@ export default function AgentSessionWindowApp() {
         const id = activeQueuedTurnEdit.receipt.sessionId;
         void queueEditor.cancel(id).then((ended) => {
           if (ended) requestAnimationFrame(() => {
-            if (composerOwnerRef.current === id) composerTextareaRef.current?.focus();
+            if (currentComposerOwner.current === normalComposerOwner || currentComposerOwner.current === composerOwner) composerTextareaRef.current?.focus();
           });
         });
       },
@@ -2277,6 +2412,9 @@ export default function AgentSessionWindowApp() {
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
   const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
+  const feedbackLastUserSeq = resolveRetrySource({ sessionId: renderedSession.id, messages: renderedSession.messages,
+    latestUserMessage: activeAuxiliarySession ? null : selectedSession.latestUserMessage, latestTurn: null, runState: "error" })?.userMessageSeq ?? null;
+  const feedbackIncarnation = activeAuxiliarySession?.createdAt ?? getSessionIncarnationId(selectedSession);
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryState,
@@ -2295,9 +2433,7 @@ export default function AgentSessionWindowApp() {
     },
     composerFeedback: {
       ...chatComposerFeature.composer.composerSendability,
-      ...(steeringError && !chatComposerFeature.composer.composerSendability.primaryFeedback
-        ? { primaryFeedback: steeringError, feedbackTone: "blocked" as const } : {}),
-      shouldShowFeedback: (chatComposerFeature.composer.composerSendability.shouldShowFeedback || !!steeringError)
+      shouldShowFeedback: chatComposerFeature.composer.composerSendability.shouldShowFeedback
         && !(auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError)
         && !(sessionExecutionBlockedReason && (
           sessionExecutionBlockedReason === appSettingsLoadError || sessionExecutionBlockedReason === modelCatalogLoadError
@@ -2381,7 +2517,9 @@ export default function AgentSessionWindowApp() {
     mainSession: selectedSession,
     auxiliarySession: auxiliaryWorkspace.selectedSession ? selectedAuxiliaryRuntimeSession : null,
     api: withmateApi ?? undefined,
-    messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions },
+    messageColumn: { ...chatWindowProps.messageColumnProps, turnSubmissions: mainSessionRuntime.turnSubmissions,
+      onTurnReceiptsObserved: observeTurnReceipts, selectedReplyKey: selectedReply?.key,
+      onSelectReply: withmateApi?.readSessionExecution && selectedSession.sessionKind === "default" && !activeQueuedTurnEdit && !isSelectedSessionReadOnly ? selectReply : undefined },
     onToggleMessageBookmark: handleToggleMessageBookmark,
     mainOnLoadArtifactDetail: (index) => withmateApi?.getSessionMessageArtifact(selectedSession.id, index) ?? Promise.resolve(null),
     mainOnOpenPath: (target) => handleOpenInlinePath(target, selectedSession.id),
@@ -2399,20 +2537,38 @@ export default function AgentSessionWindowApp() {
     scrollToLatestOnSend: appSettings.scrollToLatestOnSend,
   });
   concurrentChats.mainContentReady = loadedSession !== null;
+  concurrentChats.onMainConversationView = onMainConversationView;
   concurrentChats.captureMessageListSendRef = captureMessageListSendRef;
   concurrentChats.mainReadFeedback = mainSessionRuntime.readError
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
-    : !loadedSession ? <LoadingIndicator label="Loading conversation" /> : null;
+    : !loadedSession ? <LoadingIndicator className="concurrent-chat-state" label="Loading conversation" /> : null;
 
   return (
     <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
+      <FailedTurnRetryContext.Provider value={{ submit: (request) => {
+        setFailedRetryFeedback((current) => current?.ownerId === request.target.sessionId ? null : current);
+        const target = request.target.sessionId === selectedSession.id ? getCurrentMainSession() : activeAuxiliarySession;
+        if (!target || target.id !== request.target.sessionId) return Promise.reject(new Error("The selected conversation changed."));
+        return mainSessionRuntime.submitFailedRetry({ ...request, executionOptions: captureSessionExecutionOptions(target) });
+      },
+      // A saved failed start is admitted to the normal queue; a running Turn only blocks dispatch.
+      blocked: (id) => hasUncertainTurnFor(id) || hasPendingSubmitFor(id) || isSelectedSessionReadOnly
+        || (id !== selectedSession.id && id !== activeAuxiliarySession?.id),
+      onError: (ownerId, message, target) => {
+        const owner = ownerId === selectedSession.id ? selectedSession : activeAuxiliarySession;
+        if (owner?.id === ownerId && !message.includes("Check Receipt")) setFailedRetryFeedback({ ownerId,
+          incarnationId: ownerId === selectedSession.id ? getSessionIncarnationId(selectedSession) : activeAuxiliarySession!.createdAt,
+          lastUserSeq: resolveRetrySource({ sessionId: ownerId, messages: owner.messages, latestUserMessage: ownerId === selectedSession.id ? selectedSession.latestUserMessage : null, latestTurn: null, runState: "error" })?.userMessageSeq ?? null,
+          message: `Resend failed (${target}): ${message}` });
+      } }}>
       <ChatWindow
         {...chatWindowProps}
-        errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
+        errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors, ...(failedRetryFeedback?.ownerId === renderedSession.id && failedRetryFeedback.incarnationId === feedbackIncarnation && failedRetryFeedback.lastUserSeq === feedbackLastUserSeq ? [{ id: "failed-turn-retry", message: failedRetryFeedback.message, dismissLabel: "Dismiss resend error", onDismiss: () => setFailedRetryFeedback(null) }] : [])]}
         composerProps={{
           ...chatWindowProps.composerProps,
+          replyUnavailableReason: selectedReply && !selectedReply.reference ? selectedReply.error ?? "Loading the reply target." : undefined,
           externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
             ? "session-main-read-error" : undefined,
         }}
@@ -2446,6 +2602,7 @@ export default function AgentSessionWindowApp() {
         conversationAttention={conversationAttention}
         providerQuota={isAuxiliaryTargetUnavailable ? null : <ProviderQuota key={renderedSession.provider} api={withmateApi} providerId={renderedSession.provider} />}
       />
+      </FailedTurnRetryContext.Provider>
       <SessionFilesFeature
         ref={filesFeatureRef}
         api={withmateApi}

@@ -7,7 +7,7 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | turn実行・session再開 | 対応 | 対応 | 対応 | 対応 | 保存済みthread／session identityから再開する。Claude／OpenCodeは明示IDを使う |
 | 実行中の取消と状態表示 | 対応 | 対応 | 対応 | 対応 | Mainのrun stateを共通Session UIへ投影する |
 | model・reasoning depth | SDK一覧 | SDK一覧 | SDK一覧 | native一覧 | Model候補と任意のDepthは各SDKから取得し、Depthなしのmodelも扱う。一覧更新で選択値を変更しない。OpenCodeは実行時にnative model／variantの有効性も検証する |
-| approval / reviewer | 3方針＋User / Auto Review | 3方針・User判断 | 5方針＋User / Auto Review（組合せ制約あり） | Provider Controlled／Auto Run・User判断 | WithMateの承認方針と判断担当をnative設定へ写像する。Claudeは全6 permission modeへ対応する。OpenCodeはproject永続許可を発行しない |
+| Approval | 共通4択・native Reviewer | 共通4択・WithMate仲介 | 共通4択・native Reviewer | 共通4択・WithMate仲介 | [承認方針](provider-adapter.md#approval-modes)をProviderごとの実行経路へ写像する。SandboxはCodexだけ |
 | speed | Standard / Fast | UI設定なし | Standard / Fast | UI設定なし | ClaudeのFastはmodel・利用資格・追加課金条件に依存する |
 | sandbox設定 | 対応 | UI設定なし | UI設定なし | UI設定なし | Codexの選択値をApp Serverのsandbox policyへ渡す |
 | file・folder・画像の入力 | 対応 | 対応 | file／folder、PNG／JPEG／GIF／WebP | file URIへ変換、native model能力で制限 | workspaceと許可済みAdditional Directoryの範囲でprovider固有の入力へ変換する |

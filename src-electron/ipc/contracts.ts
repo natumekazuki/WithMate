@@ -10,6 +10,7 @@ import type {
 } from "../../src-shared/window/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type {
+  CancelSessionRunRequest,
   LiveApprovalDecision,
   LiveElicitationResponse,
   LiveSessionRunState,
@@ -157,6 +158,10 @@ import {
   type SessionMonitorContextMenuResult,
 } from "../../src-shared/window/withmate-window-types.js";
 export type MaybeWindow = BrowserWindow | null | undefined;
+export type MainIpcHomeCrewDeps = {
+  listHomeCrewPage(request: { cursor: string | null; limit: number }): Awaitable<import("../../src-shared/window/home-crew-types.js").HomeCrewPageResult>;
+  showHomeCrewContextMenu(window: BrowserWindow, request: import("../../src-shared/window/home-crew-types.js").HomeCrewContextMenuRequest): Awaitable<SessionMonitorContextMenuResult>;
+};
 export type IpcSenderEvent = Pick<IpcMainInvokeEvent, "sender">;
 export type LogIpcErrorInput = {
   channel: string;
@@ -213,6 +218,7 @@ export type MainIpcFilePreviewWindowDeps = {
 
 export type MainIpcWindowDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
+  MainIpcHomeCrewDeps &
   MainIpcSessionWindowDeps &
   MainIpcSessionMonitorWindowDeps &
   MainIpcWorkspaceValidationDeps &
@@ -294,6 +300,7 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
   MainIpcSettingsWindowDeps &
   {
+    getAppVersion(): string;
     getAppSettings(): Awaitable<AppSettings>;
     updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
     updateChatLayoutPreference(
@@ -366,7 +373,7 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
       auxiliarySessionId: string,
       request: RunSessionTurnRequest,
     ): Awaitable<AuxiliarySession>;
-    cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
+    cancelAuxiliarySessionRun?(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
     steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   };
 
@@ -410,7 +417,7 @@ export type MainIpcAuxiliaryDepsRequired = {
     auxiliarySessionId: string,
     request: RunSessionTurnRequest,
   ) => Awaitable<AuxiliarySession>;
-  cancelAuxiliarySessionRun: (auxiliarySessionId: string) => Awaitable<void>;
+  cancelAuxiliarySessionRun: (request: CancelSessionRunRequest, assertAuthorized: () => void) => Awaitable<void>;
 };
 
 export type ConversationQueryOwner = {
@@ -585,11 +592,12 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       sessionId: string,
       request: RunSessionTurnRequest,
     ): Promise<Session>;
-    cancelSessionRun(sessionId: string): void;
+    cancelSessionRun(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
     queue?: Pick<import("../../src-shared/ipc/withmate-window-api.js").WithMateWindowSessionApi,
       "enqueueSessionTurn" | "getSessionTurnQueueReceipt" | "listSessionTurnQueue" | "reorderQueuedSessionTurns" |
-      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" |
+      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "sendQueuedSessionInput" |
       "beginQueuedSessionTurnEdit" | "updateQueuedSessionTurn" | "cancelQueuedSessionTurnEdit"> & {
+        retryFailedSessionTurn(sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest, assertCurrent?: () => void): Promise<import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
         releaseQueuedSessionTurnEdit(sessionId: string): Promise<void>;
       };
     getAuxiliarySessionStatus?(sessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;

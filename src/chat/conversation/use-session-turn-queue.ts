@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { LiveSessionRunState } from "../../../src-shared/session/runtime-state.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
-export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
+export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
 type QueueState = {
   owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean; ready: boolean;
   reconciledHistory?: { canonicalSignature: string; submissionSignature: string };
 };
-export type SessionTurnQueueActionKind = "cancel" | "release" | "input" | "move-up" | "move-down";
+export type SessionTurnQueueActionKind = "cancel" | "input" | "move-up" | "move-down";
 export type SessionTurnQueueMoveDirection = "up" | "down";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
-export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = []) {
+export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean,
+  canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = [], liveRun?: LiveSessionRunState | null,
+  reconciliationUserSeqs: readonly number[] = canonicalUserSeqs) {
   const owner = `${sessionId}:${incarnationId}`;
   const [state, setState] = useState<QueueState>({ owner, active: [], bridges: [], error: "", loading: true, ready: false });
   const stateRef = useRef(state);
@@ -21,6 +24,9 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const canonicalRef = useRef(new Set(canonicalUserSeqs));
   canonicalRef.current = new Set(canonicalUserSeqs);
   const canonicalSignature = canonicalUserSeqs.join(",");
+  // A peer's page can ask for reconciliation but cannot retire a receipt
+  // needed while the Session-wide tail is still catching up.
+  const reconciliationSignature = reconciliationUserSeqs.join(",");
   const submissionsRef = useRef(submissions);
   submissionsRef.current = submissions;
   const submissionSignature = submissions.map((submission) => `${submission.requestId}:${submission.receipt?.updatedAt ?? ""}`).join(",");
@@ -33,17 +39,36 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const currentOwner = useRef(owner);
   currentOwner.current = owner;
   const reload = useCallback(() => setRevision((current) => current + 1), []);
-  const observedCanonical = useRef({ owner, signature: canonicalSignature });
+  const startedId = liveRun?.sessionId === sessionId && liveRun.queueReceipt?.incarnationId === incarnationId ? liveRun.queueReceipt.id : undefined;
+  const startedSeq = startedId ? liveRun?.queueReceipt?.userMessageSeq : undefined;
+  const startedTurnId = startedId ? liveRun?.sessionTurnId : undefined;
+  useLayoutEffect(() => {
+    if (!enabled || !startedId || startedSeq === undefined || !startedTurnId) return;
+    // The live start is committed. Discard reads begun before it and retain the
+    // identity until a fresh canonical read replaces the queue snapshot.
+    ++generation.current;
+    setState((current) => {
+      if (current.owner !== owner) return current;
+      const existing = [...current.active, ...current.bridges].find((receipt) => receipt.id === startedId)
+        ?? submissionsRef.current.find((submission) => submission.receipt?.id === startedId)?.receipt;
+      if (!existing || existing.inputTurnId || existing.state !== "queued" && existing.state !== "starting") return current;
+      const started = { ...existing, state: "running" as const, turnId: startedTurnId, userMessageSeq: startedSeq };
+      return { ...current, active: [...current.active.filter((receipt) => receipt.id !== startedId), started],
+        bridges: current.bridges.filter((receipt) => receipt.id !== startedId) };
+    });
+    reload();
+  }, [enabled, owner, startedId, startedSeq, startedTurnId, reload]);
+  const observedCanonical = useRef({ owner, signature: reconciliationSignature });
   useEffect(() => { setPendingAction(null); }, [owner]);
   useEffect(() => {
     const previous = observedCanonical.current;
-    observedCanonical.current = { owner, signature: canonicalSignature };
-    if (!enabled || previous.owner !== owner || previous.signature === canonicalSignature) return;
+    observedCanonical.current = { owner, signature: reconciliationSignature };
+    if (!enabled || previous.owner !== owner || previous.signature === reconciliationSignature) return;
     const known = stateRef.current.owner === owner ? [...stateRef.current.active, ...stateRef.current.bridges] : [];
     // Canonical-first delivery must still resolve a local request whose receipt has not bound its user seq.
-    if (submissionsRef.current.some((submission) => canonicalUserSeqs.some((seq) => seq >= submission.historyMessageCount)
+    if (submissionsRef.current.some((submission) => reconciliationUserSeqs.some((seq) => seq >= submission.historyMessageCount)
       && submission.receipt?.userMessageSeq == null && !known.some((receipt) => receipt.requestId === submission.requestId && receipt.userMessageSeq !== null))) reload();
-  }, [owner, enabled, canonicalSignature, reload]);
+  }, [owner, enabled, reconciliationSignature, reload]);
   useEffect(() => {
     setState((current) => {
       if (current.owner !== owner) return current;
@@ -57,7 +82,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     const request = ++generation.current;
     const previous = stateRef.current.owner === owner ? stateRef.current : null;
     // A receipt read can reconcile only the history/submissions observed before it began.
-    const reconciledHistory = { canonicalSignature, submissionSignature };
+    const reconciledHistory = { canonicalSignature: reconciliationSignature, submissionSignature };
     const requestedSubmissions = submissionsRef.current;
     setState((current) => current.owner === owner ? { ...current, error: "", loading: !current.ready }
       : { owner, active: [], bridges: [], error: "", loading: true, ready: false });
@@ -129,7 +154,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
             ? [...current.bridges.filter((item) => item.id !== receipt.id), accepted] : current.bridges,
         });
       } else {
-        const operation = kind === "cancel" ? api?.cancelQueuedSessionTurn : api?.releaseInterruptedSessionTurn;
+        const operation = api?.cancelQueuedSessionTurn;
         if (!operation) throw new Error("Queue action is unavailable.");
         await operation(sessionId, receipt.id);
       }
@@ -148,13 +173,15 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   }, [api, owner, sessionId, incarnationId, reload]);
   const retry = useCallback(() => { setActionError(null); reload(); }, [reload]);
   const cancel = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "cancel"), [act]);
-  const release = useCallback((receipt: SessionTurnQueueReceipt) => void act(receipt, "release"), [act]);
   const sendInput = useCallback((receipt: SessionTurnQueueReceipt, expectedTurnId: string) => void act(receipt, "input", expectedTurnId), [act]);
   const receipts = useMemo(() => {
     if (!enabled) return EMPTY_RECEIPTS;
     const known = state.owner === owner ? [...state.active, ...state.bridges] : [];
-    return [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
-  }, [enabled, state.owner, owner, state.active, state.bridges, submissions]);
+    const all = [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
+    if (!startedId || startedSeq === undefined || !startedTurnId) return all;
+    return all.map((receipt) => receipt.id === startedId && !receipt.inputTurnId && (receipt.state === "queued" || receipt.state === "starting")
+      ? { ...receipt, state: "running" as const, turnId: startedTurnId, userMessageSeq: startedSeq } : receipt);
+  }, [enabled, state.owner, owner, state.active, state.bridges, submissions, startedId, startedSeq, startedTurnId]);
   const queuedReceipts = useMemo(() => receipts.filter((receipt) => receipt.state === "queued").sort((left, right) => left.queuePosition - right.queuePosition), [receipts]);
   const move = useCallback((receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => {
     const expectedQueuedIds = queuedReceipts.map((item) => item.id);
@@ -166,7 +193,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     void act(receipt, direction === "up" ? "move-up" : "move-down", undefined, { expectedQueuedIds, queuedIds });
   }, [act, queuedReceipts]);
   return {
-    historyReconciled: state.owner === owner && state.reconciledHistory?.canonicalSignature === canonicalSignature
+    historyReconciled: state.owner === owner && state.reconciledHistory?.canonicalSignature === reconciliationSignature
       && state.reconciledHistory.submissionSignature === submissionSignature,
     receipts, queuedReceipts, announcement: enabled && announcement?.owner === owner ? announcement.message : "",
     error: enabled ? [actionError?.owner === owner ? actionError.message : "",
@@ -175,6 +202,6 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
     busyId: pendingAction?.owner === owner ? pendingAction.id : null,
     busyKind: pendingAction?.owner === owner ? pendingAction.kind : null,
-    reload: retry, cancel, release, sendInput, move,
+    reload: retry, cancel, sendInput, move,
   };
 }

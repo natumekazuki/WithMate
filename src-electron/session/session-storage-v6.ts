@@ -1,4 +1,24 @@
 import type { DatabaseSync } from "node:sqlite";
+import {
+  AUXILIARY_PUBLIC_CHARACTER_DESCRIPTION,
+  AUXILIARY_PUBLIC_CHARACTER_NAME,
+  AUXILIARY_SUMMARY_COLUMNS,
+  parseAuxiliarySessionSummaryRow,
+  type AuxiliarySessionSummaryRow,
+} from "../auxiliary/auxiliary-session-storage.js";
+import { projectCharacterPublicProfile } from "../../src-shared/character/character-participant.js";
+import type { SessionTarget } from "../../src-shared/session/session-target.js";
+import {
+  matchesRelatedSession,
+  matchesRelatedSessionSearch,
+  resolveRelatedAuxiliary,
+  resolveRelatedMain,
+  type RelatedSession,
+  type RelatedSessionPage,
+  type RelatedSessionQuery,
+  type SessionManagementScope,
+  type SessionManagementSelection,
+} from "./session-relationship-resolver.js";
 import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
@@ -68,6 +88,8 @@ import {
   parseSessionSummaryPageRequest,
 } from "./session-summary-query.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../../src-shared/window/withmate-window-types.js";
+import type { HomeCrewMember } from "../../src-shared/window/home-crew-types.js";
+import type { OpenCrewWindowIdentity } from "./home-crew-query.js";
 import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
@@ -114,6 +136,20 @@ type SessionV6Row = {
   is_pinned: number;
   updated_at: string;
   last_active_at: string;
+};
+
+const MAIN_SUMMARY_COLUMNS = `id, incarnation_id, title, description, session_role, root_session_id, parent_session_id,
+  created_by_session_id, state, session_kind, provider_id, catalog_revision, model_id, reasoning_effort, custom_agent_name,
+  approval_mode, codex_sandbox_mode, allowed_additional_directories_json, runtime_policy_json, thread_id, character_id,
+  character_snapshot_json, workspace_path, is_pinned, updated_at, last_active_at`;
+const RELATED_AUXILIARY_PARENT_COLUMNS = `s.incarnation_id AS main_incarnation_id, s.session_role AS main_session_role,
+  s.parent_session_id AS main_parent_session_id, s.root_session_id AS main_root_session_id, s.workspace_path AS main_workspace_path`;
+type RelatedAuxiliaryRow = AuxiliarySessionSummaryRow & {
+  main_incarnation_id: string;
+  main_session_role: string;
+  main_parent_session_id: string | null;
+  main_root_session_id: string;
+  main_workspace_path: string;
 };
 
 type HomeSessionSummaryV6Row = {
@@ -233,6 +269,15 @@ const V6_HOME_CHARACTER_NAME_EXPRESSION = `CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EX
   THEN ${v6SnapshotJsonValue("$.name")}
   ELSE ${v6RuntimeJsonValue("$.characterName")}
 END`;
+// Shared by Main Session summaries and conversation switcher candidates (sessions_v6 alias: s).
+export const MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS = `
+  ${V6_HOME_CHARACTER_NAME_EXPRESSION} AS character_name,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
+    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
+  END AS character_icon_path,
+  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state
+`;
 const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
   s.id,
   s.title AS task_title,
@@ -248,11 +293,7 @@ const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
   COALESCE(${v6RuntimeJsonValue("$.accessMode")}, 'active') AS access_mode,
   COALESCE(${v6RuntimeJsonValue("$.sourceSchemaVersion")}, ${CURRENT_SESSION_SCHEMA_VERSION}) AS source_schema_version,
   ${V6_HOME_CHARACTER_ID_EXPRESSION} AS character_id,
-  ${V6_HOME_CHARACTER_NAME_EXPRESSION} AS character_name,
-  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
-    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
-    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
-  END AS character_icon_path,
+  ${MAIN_SESSION_CHARACTER_AND_RUN_COLUMNS},
   CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
     THEN ${v6SnapshotJsonValue("$.theme.main")}
     ELSE ${v6RuntimeJsonValue("$.characterThemeColors.main")}
@@ -261,7 +302,6 @@ const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
     THEN ${v6SnapshotJsonValue("$.theme.sub")}
     ELSE ${v6RuntimeJsonValue("$.characterThemeColors.sub")}
   END AS character_theme_sub,
-  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state,
   s.is_pinned,
   s.last_active_at
 `;
@@ -298,7 +338,9 @@ function parseJsonArray(value: string): unknown[] {
   }
 }
 
-function decodeSessionV6RuntimeState(row: SessionV6Row): DecodedSessionV6RuntimeState {
+function decodeSessionV6RuntimeState(
+  row: Pick<SessionV6Row, "runtime_policy_json" | "character_id" | "character_snapshot_json" | "thread_id">,
+): DecodedSessionV6RuntimeState {
   const runtimePolicy = parseJsonObject(row.runtime_policy_json);
   const runtimeCharacterId = normalizeCharacterOwnerId(runtimePolicy.characterId);
   const storedCharacterId = normalizeCharacterOwnerId(row.character_id) ?? runtimeCharacterId;
@@ -319,6 +361,43 @@ function decodeSessionV6RuntimeState(row: SessionV6Row): DecodedSessionV6Runtime
     snapshot,
     threadId: unresolvedOwner || rejectedStoredSnapshot ? "" : row.thread_id,
   };
+}
+
+function textValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function registerRelatedSessionSearch(db: DatabaseSync): void {
+  db.function("related_main_matches", { deterministic: true }, (search, title, description, owner, policy, snapshot) => {
+    const decoded = decodeSessionV6RuntimeState({
+      character_id: textValue(owner), runtime_policy_json: textValue(policy), character_snapshot_json: textValue(snapshot), thread_id: "",
+    });
+    const name = textValue(decoded.snapshot?.name ?? decoded.runtimePolicy.characterName);
+    return Number(matchesRelatedSessionSearch({
+      title: textValue(title).trim() ? textValue(title) : "Untitled session",
+      description: textValue(description),
+      character: projectCharacterPublicProfile({ characterId: decoded.characterId, character: name.trim() ? name : "Character",
+        characterDescription: decoded.snapshot?.description }),
+    }, textValue(search)));
+  });
+  db.function("related_auxiliary_matches", { deterministic: true }, (search, title, description, owner, name, publicDescription) =>
+    Number(matchesRelatedSessionSearch({
+      title: textValue(title), description: textValue(description),
+      character: projectCharacterPublicProfile({ characterId: textValue(owner), character: String(name ?? ""), characterDescription: String(publicDescription ?? "") }),
+    }, textValue(search))));
+}
+
+function relatedAuxiliaryFromRow(row: RelatedAuxiliaryRow): RelatedSession {
+  const auxiliary = parseAuxiliarySessionSummaryRow(row);
+  if (!auxiliary) throw new Error("The saved Auxiliary summary is invalid.");
+  assertSessionRole(row.main_session_role);
+  // The parent's identity and relationship are needed, but its summary isn't.
+  return resolveRelatedAuxiliary(auxiliary, {
+    id: row.parent_session_id, incarnationId: row.main_incarnation_id,
+    ...normalizeSessionRelationship({ id: row.parent_session_id, sessionRole: row.main_session_role,
+      parentSessionId: row.main_parent_session_id, rootSessionId: row.main_root_session_id }),
+    workspacePath: row.main_workspace_path,
+  });
 }
 
 function normalizeSessionForStorage(session: Session): Session {
@@ -406,6 +485,7 @@ export class SessionStorageV6 {
   constructor(dbPath: string, private readonly onConversationChanged: ConversationMutationSink = () => {}) {
     this.db = openAppDatabase(dbPath);
     registerSessionProviderIdNormalizer(this.db);
+    registerRelatedSessionSearch(this.db);
     ensureV6Schema(this.db);
     this.ensureSchema();
   }
@@ -462,6 +542,91 @@ export class SessionStorageV6 {
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
   }
 
+  /** Executes in one Worker read: only the saved actor, requested target or page is materialized. */
+  readSessionManagementScope(reference: SessionTarget, selection: SessionManagementSelection): SessionManagementScope {
+    const actor = this.getRelatedSession(reference);
+    if (!actor || !matchesRelatedSession(actor, reference)) return { actor: null };
+    if (!selection) return { actor };
+    if ("query" in selection) return { actor, page: this.listRelatedSessionPage(actor, selection.query) };
+    const target = selection.target.kind === actor.kind && selection.target.sessionId === actor.id
+      ? actor : this.getRelatedSession(selection.target);
+    return { actor, target };
+  }
+
+  private getRelatedSession(reference: Pick<SessionTarget, "kind" | "sessionId">): RelatedSession | null {
+    if (reference.kind === "main") {
+      const summary = this.getReadySessionSummary(reference.sessionId);
+      return summary ? resolveRelatedMain(summary) : null;
+    }
+    const row = this.db.prepare(`SELECT ${AUXILIARY_SUMMARY_COLUMNS}, ${RELATED_AUXILIARY_PARENT_COLUMNS}
+      FROM auxiliary_sessions a JOIN sessions_v6 s ON s.id = a.parent_session_id
+      WHERE a.id = ? AND ${readySessionClause("s.id")}`).get(reference.sessionId) as RelatedAuxiliaryRow | undefined;
+    return row ? relatedAuxiliaryFromRow(row) : null;
+  }
+
+  private listRelatedSessionPage(actor: RelatedSession, query: RelatedSessionQuery): RelatedSessionPage {
+    const offset = query.offset ?? 0;
+    const limit = query.limit ?? 50;
+    const search = query.searchText?.trim().toLocaleLowerCase();
+    const clauses = [readySessionClause("s.id")];
+    const params: string[] = [];
+    if (!query.allCrews) {
+      // root_session_id is initialized for legacy roots and normalized by the Session writer.
+      clauses.push("s.root_session_id = ?");
+      params.push(query.rootSessionId ?? actor.rootSessionId);
+    }
+    const entries: RelatedSession[] = [];
+    let mainCount = 0;
+    let auxiliaryCount = 0;
+    if (query.relationship === "creator" && actor.createdBySessionId === null) {
+      return { entries, total: 0, hasMore: false };
+    }
+
+    if (query.role !== "auxiliary") {
+      const where = [...clauses];
+      const args = [...params];
+      if (query.role) { where.push("s.session_role = ?"); args.push(query.role); }
+      if (query.relationship === "created") { where.push("s.created_by_session_id = ?"); args.push(actor.id); }
+      if (query.relationship === "creator") { where.push("s.id = ?"); args.push(actor.createdBySessionId!); }
+      if (search) {
+        where.push("related_main_matches(?, s.title, s.description, s.character_id, s.runtime_policy_json, s.character_snapshot_json)");
+        args.push(search);
+      }
+      const from = `FROM sessions_v6 s WHERE ${where.join(" AND ")}`;
+      mainCount = (this.db.prepare(`SELECT COUNT(*) AS count ${from}`).get(...args) as { count: number }).count;
+      if (offset < mainCount) {
+        const rows = this.db.prepare(`SELECT ${MAIN_SUMMARY_COLUMNS} ${from}
+          ORDER BY s.last_active_at DESC, s.id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset) as SessionV6Row[];
+        for (const row of rows) entries.push(resolveRelatedMain(this.rowToSessionSummary(row)));
+      }
+    }
+
+    if ((!query.role || query.role === "auxiliary") && query.relationship !== "created") {
+      const where = [...clauses, "trim(a.id) <> ''", "trim(a.parent_session_id) = a.parent_session_id", "a.parent_session_id <> ''"];
+      const args = [...params];
+      if (query.relationship === "creator") { where.push("a.id = ?"); args.push(actor.createdBySessionId!); }
+      if (search) {
+        where.push(`related_auxiliary_matches(?, a.title, a.description, a.character_id,
+          ${AUXILIARY_PUBLIC_CHARACTER_NAME}, ${AUXILIARY_PUBLIC_CHARACTER_DESCRIPTION})`);
+        args.push(search);
+      }
+      const from = "FROM auxiliary_sessions a JOIN sessions_v6 s ON s.id = a.parent_session_id";
+      const filter = `WHERE ${where.join(" AND ")}`;
+      // Count doesn't need draft order or any summary columns.
+      auxiliaryCount = (this.db.prepare(`SELECT COUNT(*) AS count ${from} ${filter}`).get(...args) as { count: number }).count;
+      const auxiliaryOffset = Math.max(0, offset - mainCount);
+      if (entries.length < limit && auxiliaryOffset < auxiliaryCount) {
+        const rows = this.db.prepare(`SELECT ${AUXILIARY_SUMMARY_COLUMNS}, ${RELATED_AUXILIARY_PARENT_COLUMNS}
+          ${from} LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
+          ${filter} ORDER BY a.parent_session_id ASC, MAX(d.updated_at, a.updated_at) ASC, a.id ASC
+          LIMIT ? OFFSET ?`).all(...args, limit - entries.length, auxiliaryOffset) as RelatedAuxiliaryRow[];
+        for (const row of rows) entries.push(relatedAuxiliaryFromRow(row));
+      }
+    }
+    const total = mainCount + auxiliaryCount;
+    return { entries, total, hasMore: offset + limit < total };
+  }
+
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
     const parsed = parseSessionSummaryPageRequest(request);
     const isOpenScope = parsed.scope === "open";
@@ -515,6 +680,36 @@ export class SessionStorageV6 {
         ? encodeSessionSummaryCursor(parsed.scope, lastRow.last_active_at, lastRow.id, parsed.searchText)
         : null,
     };
+  }
+
+  listHomeCrewMembersPage(openWindows: readonly OpenCrewWindowIdentity[], afterId: string | null, limit: number): Omit<HomeCrewMember, "isWindowOpen">[] {
+    if (openWindows.length === 0) return [];
+    const rows = this.db.prepare(`
+      SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}, s.incarnation_id, s.root_session_id, s.parent_session_id, s.created_at
+      FROM sessions_v6 AS s
+      WHERE s.id > ? AND ${readySessionClause("s.id")}
+        AND s.root_session_id IN (
+          SELECT opened.root_session_id FROM json_each(?) AS ids
+          JOIN sessions_v6 AS opened ON opened.id = json_extract(ids.value, '$.sessionId')
+            AND opened.incarnation_id = json_extract(ids.value, '$.incarnationId')
+          JOIN sessions_v6 AS root ON root.id = opened.root_session_id AND root.parent_session_id IS NULL
+          WHERE ${readySessionClause("opened.id")} AND ${readySessionClause("root.id")}
+        )
+      ORDER BY s.id ASC
+      LIMIT ?
+    `).all(afterId ?? "", JSON.stringify(openWindows), limit + 1) as (HomeSessionSummaryV6Row &
+      Pick<SessionV6Row, "incarnation_id" | "root_session_id" | "parent_session_id"> & { created_at: string })[];
+    return rows.map((row) => {
+      const summary = this.rowToHomeSessionSummary(row);
+      if (!summary) throw new Error("Home Crew Session summary could not be read.");
+      return {
+        ...summary,
+        incarnationId: row.incarnation_id,
+        rootSessionId: row.root_session_id,
+        parentSessionId: row.parent_session_id,
+        createdAt: row.created_at,
+      };
+    });
   }
 
   listSessionCharacterUsage(): SessionCharacterUsage[] {
@@ -588,8 +783,8 @@ export class SessionStorageV6 {
     return readConversationQuerySnapshot(this.db, "session_messages_v6", sessionId);
   }
 
-  readConversationQueryBatch(sessionId: string, afterSeq: number) {
-    return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq);
+  readConversationQueryBatch(sessionId: string, afterSeq: number, includeSpeakers = true, messageIndexes?: readonly number[]) {
+    return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq, includeSpeakers, messageIndexes);
   }
 
   readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
@@ -598,14 +793,19 @@ export class SessionStorageV6 {
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {
+    return this.readSessionSummary(sessionId, false);
+  }
+
+  /** Exact consumer read; a saved Session still being initialized is not visible. */
+  getReadySessionSummary(sessionId: string): SessionSummary | null {
+    return this.readSessionSummary(sessionId, true);
+  }
+
+  private readSessionSummary(sessionId: string, readyOnly: boolean): SessionSummary | null {
     const row = this.db.prepare(`
-      SELECT id, incarnation_id, title, description, session_role, root_session_id, parent_session_id, created_by_session_id, state, session_kind, provider_id,
-        catalog_revision, model_id, reasoning_effort, custom_agent_name,
-        approval_mode, codex_sandbox_mode, allowed_additional_directories_json,
-        runtime_policy_json, thread_id, character_id, character_snapshot_json,
-        workspace_path, is_pinned, updated_at, last_active_at
+      SELECT ${MAIN_SUMMARY_COLUMNS}
       FROM sessions_v6
-      WHERE id = ?
+      WHERE id = ? ${readyOnly ? `AND ${readySessionClause("sessions_v6.id")}` : ""}
     `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSessionSummary(row) : null;
   }
@@ -689,6 +889,7 @@ export class SessionStorageV6 {
         if (!captured || captured.request.userMessage !== message.text) {
           throw new Error("The queued input does not match its captured message.");
         }
+        acquireCoordinationAnswer(this.db, captured, { kind: "main", sessionId: input.sessionId, incarnationId: input.incarnationId });
         message = { ...message, turnInput: { turnId: String(input.turnId), nativeTurnId: input.queuedInput.inputTurnId,
           state: "confirmed", queueId: input.queuedInput.queueId, attachments: captured.attachments } };
       }
@@ -716,6 +917,7 @@ export class SessionStorageV6 {
     return this.appendSessionSteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
       ...(input.userMessage.turnInput?.origin ? { origin: input.userMessage.turnInput.origin } : {}),
+      ...(input.userMessage.turnInput?.questionRequestId ? { questionRequestId: input.userMessage.turnInput.questionRequestId } : {}),
     } } });
   }
 
@@ -996,12 +1198,13 @@ export class SessionStorageV6 {
           codex_sandbox_mode = ?, custom_agent_name = ?,
           runtime_policy_json = json_set(
             CASE WHEN json_valid(runtime_policy_json) THEN runtime_policy_json ELSE '{}' END,
-            '$.codexSpeed', ?, '$.codexReviewer', ?
+            '$.codexSpeed', ?, '$.codexReviewer', ?, '$.withMateReviewerExplicit', json(?)
           )
       WHERE id = ? AND incarnation_id = ?
     `).run(
       options.model, options.reasoningEffort, options.approvalMode,
       options.codexSandboxMode, options.customAgentName, options.codexSpeed, options.codexReviewer,
+      options.withMateReviewerExplicit ? "true" : "null",
       sessionId, incarnationId,
     );
     if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
@@ -1559,6 +1762,7 @@ export class SessionStorageV6 {
       characterThemeColors: session.characterThemeColors,
       codexSpeed: session.codexSpeed,
       codexReviewer: session.codexReviewer,
+      withMateReviewerExplicit: session.withMateReviewerExplicit,
     };
     const conflictClause = operation === "create"
       ? "ON CONFLICT(id) DO NOTHING"
@@ -1742,6 +1946,7 @@ export class SessionStorageV6 {
       codexSandboxMode: row.codex_sandbox_mode,
       codexSpeed: runtimePolicy.codexSpeed,
       codexReviewer: runtimePolicy.codexReviewer,
+      withMateReviewerExplicit: runtimePolicy.withMateReviewerExplicit,
       model: row.model_id,
       reasoningEffort: row.reasoning_effort,
       customAgentName: row.custom_agent_name,

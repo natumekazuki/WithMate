@@ -69,8 +69,11 @@
   - `Clean Session Files`: Sessionと会話を残したファイル整理。操作条件は[Session Folder Cleanup](#session-folder-cleanup)を参照
 - `Save Settings`
 - 結果フィードバック
+- 本文の末尾に `App Version`（起動中のアプリのversion。設定として保存しない）
 
 ## Model Management
+
+`WithMate Auto Review` はCoding Agent Providerの実行設定とは別に、共通の審査Provider・Model・対応Depthを保存する。`Off` が既定。選択項目はラベルと幅を抑えた入力欄を同じ行に置く。対象、共有範囲、実行時の扱いは[WithMate Auto Review](withmate-auto-review.md)を参照する。
 
 `Coding Agent Providers`の各providerに`Models`入口を置き、同じSettings Windowの本文を共通の管理画面へ切り替える。検索とModel単位のcheckboxは4 provider共通とし、OpenCodeだけnativeサービスごとのcheckboxと配下のModel一覧を持つ。サービスOFFは個別設定を上書きせず、サービスONで元の個別設定へ戻る。
 
@@ -134,6 +137,7 @@ Model一覧の先頭に`Enable All`／`Disable All`を置く。OpenCodeでは展
 - `HomeApp.tsx` は provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
 - save時のpayloadは`settings-view-model`が設定draftから組み立てる。SDK model一覧の取得を待たず、設定保存でSessionのmodel／Depthを変更しない
 - Settings Windowはapp settingsを取得し、失敗は対象領域で再試行する。無関係な取得の完了や再試行で編集中draftを初期化しない。表示は共通spinnerとaccessible status/busyへ集約し、正常な読込中にLoading文字列を重ねない
+- App Versionは起動中のMain Processから取得し、設定の読込・保存とは独立して表示する。取得失敗時は表示箇所で再試行できる。
 - Settings Windowのsaveの文言組み立てと戻り値解釈は`settings-actions`が担当する
 - Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する。完了後に常設の成功説明を残さない

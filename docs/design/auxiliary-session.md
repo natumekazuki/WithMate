@@ -66,13 +66,13 @@ Auxiliary起動dialogのprovider pickerはHome `New Session`とCharacter authori
 
 作成開始後はprovider選択と重複開始を無効にし、開始button内のspinnerとbusyへ待機表示を集約する。結果不明では作成失敗と断定せず、同じ要求の結果確認中として通知する。取消可能な状態では`Cancel Creation`を提供し、取消応答待ちは取消button内のspinnerとbusyへ集約する。取消中に作成状態が進んでも取消応答待ちの表示を保ち、開始と再取消を無効にする。作成成功が先に確定した場合は既存の成功処理に従う。通常labelで確保したbutton寸法をbusy中も維持し、通知文と操作は別行に配置する。dialogを閉じる操作と作成の取消は区別する。
 
-Auxiliary中央には、キャラiconと内容previewを持つ前後切替を置く。中央表示名のクリック、Enter、Spaceで一覧を開き、確定選択時だけ切り替える。一覧行はiconと会話内容previewだけを表示し、実行中はicon内にcompactなprocessing indicatorを重ねる。Character名、番号、provider、日時、status badgeを情報列として追加しない。preview検索は保存済みpreview文字列だけを対象にする。
+Auxiliary中央には、キャラiconと内容previewを持つ前後切替を置く。中央表示名のクリック、Enter、Spaceで一覧を開き、確定選択時だけ切り替える。iconと実行表示の配置、一覧のスクロールは[Desktop UI](desktop-ui.md#main-conversation-switcher)の共通の会話切替に従う。Character名、番号、provider、日時、status badgeを情報列として追加しない。preview検索は保存済みpreview文字列だけを対象にする。
 
 MainとAuxiliaryの最小幅は各UI領域のCSSで360pxと定義する。レイアウトは領域の最小幅を読み、内部splitterを除いた実際の利用可能幅で比率を補正する。両方の最小幅とsplitterを確保できない場合は送信対象側だけを表示する。
 
 Auxiliaryの初期幅は0で、クリックで開閉する。幅0ではAuxiliaryのgrid track・表示領域・タイトル枠内のswitcherと追加buttonを表示せず、splitterだけを再展開導線として残す。閉じた状態からのdragや矢印キーによる展開は行わず、開いた領域だけを最小幅以上に調整する。
 
-幅と送信対象は独立し、対象はActionDockのMain／Auxiliaryスイッチとそのキーボードショートカットからだけ変更する。Auxiliaryの作成・選択では対象や幅を変更せず、開閉でも対象を変更しない。幅は既存の保存先へ保存し、復元時も0を有効な値として扱う。会話、draft、Character、runは保持する。
+幅と送信対象は独立し、対象はActionDockのMain／Auxiliaryスイッチとそのキーボードショートカットで変更する。Auxiliaryの追加が確定したときは新しい会話を選択し、送信対象をAuxiliaryへ切り替える。追加の取消・失敗時は対象を変更しない。会話の選択や開閉では対象を変更せず、追加・選択・開閉で幅を変更しない。幅は既存の保存先へ保存し、復元時も0を有効な値として扱う。会話、draft、Character、runは保持する。
 
 表示する会話本文がある非対象チャットには可読性を保ちながら非選択だと分かる濃度のoverlayをかけ、本文選択、Copy、リンク、switcher操作を遮らない。空の会話にはoverlayをかけない。
 
@@ -82,7 +82,7 @@ Windowsの通常Session Windowがfocus中でない間にAuxiliaryのturnが完�
 
 ### メッセージの投影とWindow内live受信
 
-メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。通常Send・送信shortcut・実行中の予約送信の末尾追従は、送信直後の先行表示をDOMへ反映してから既存の設定に従って対象Columnへ一度だけ通知する。遅い受付ACK・再照会・元要求の再試行では通知せず、後続の読み返しや会話・送信対象切替を維持する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
+メッセージの投影、折りたたみ状態、一覧からの移動要求、スクロール位置は各会話Columnが所有する。通常Send・送信shortcut・実行中の予約送信の末尾追従は、送信操作時に既存の設定に従って対象Columnへ一度だけ通知する。遅い受付ACK・再照会・元要求の再試行では通知せず、後続の読み返しや会話・送信対象切替を維持する。個別の折りたたみ状態はメッセージ一覧にも反映し、一覧選択は同じ会話の対象メッセージへ移動する。ContextPaneの一覧選択callbackも共通画面へ渡し、選択した内容を表示へ反映する。
 
 Window内live受信はrendererの`session-window-live-ingress.ts`が公開APIのcallbackを1本に集約し、ownerごとの初回取得を共有する。表示Column、表示中Contextは同じfull snapshotを参照する。
 
@@ -94,9 +94,9 @@ shellはMainと操作対象のcompact controlsだけを保持し、selector結�
 
 ### 送信受付の共通反映
 
-Main／Auxiliaryの`Send`は同じdurable queue受付を使う。workspace確認・preview・受付ACKを待たず、対象Columnへ捕捉本文と通常の応答待機枠を先行表示する。実行中の次Turnは現在応答より後の予約本文とする。表示用のWindow内状態は会話ID・incarnation・request IDで所有し、同じrequestのreceiptと保存user seqへ接続する。受付・終端先着でも本文と応答面を落とさず、同文の別要求を本文一致で結合しない。先行表示から保存済み本文や`running` Sessionを生成せず、保存結果とlive ingressから実行状態を反映する。
+Main／Auxiliaryの`Send`は同じdurable queue受付を使う。workspace確認・preview・受付応答・自動照会中は重複送信を防ぎ、本文や応答待機枠は受付を確認してから対象Columnへ表示する。実行中の次Turnは現在応答より後の予約本文とする。表示用のWindow内状態は会話ID・incarnation・request IDで所有し、同じrequestのreceiptと保存user seqへ接続する。受付・終端先着でも本文と応答面を落とさず、同文の別要求を本文一致で結合しない。保存結果とlive ingressから実行状態を反映する。
 
-送信文は先行表示・receipt・保存履歴を同じrequest由来の描画keyで引き継ぐ。次turnのlive応答が先着しても、表示中の各送信に属する未確定応答は対応する保存履歴へ合流するまで順序を保って表示する。本文bridgeは非表示・owner変更で解放し、描画keyの対応は読込済みpageと未確定分だけ保持する。queueの初回取得と背景再取得を区別し、既存結果がある背景再取得では末尾へloading行を出し直さない。対応付け済みの保存user seqの到着はbridgeの回収だけに使う。未対応の先行送信より先に保存userが届いた場合はreceiptを再照会する。
+送信文はreceipt・保存履歴を同じrequest由来の描画keyで引き継ぐ。次turnのlive応答が先着しても、表示中の各送信に属する未確定応答は対応する保存履歴へ合流するまで順序を保って表示する。本文bridgeは非表示・owner変更で解放し、描画keyの対応は読込済みpageと未確定分だけ保持する。queueの初回取得と背景再取得を区別し、既存結果がある背景再取得では末尾へloading行を出し直さない。対応付け済みの保存user seqの到着はbridgeの回収だけに使う。未対応の送信より先に保存userが届いた場合はreceiptを再照会する。
 
 Auxiliaryの状態更新はworkspaceのbinding setterを入口とする。ref、詳細cache、選択中のReact state、一覧summary、詳細取得の更新世代をまとめて更新する。古い詳細取得や状態取得で本文を巻き戻さず、会話切替後も予約と保存本文を保持する。canonical user seqの到着前にreceipt完了が通知された場合は小さい表示bridgeを保持し、確定結果を二重追加しない。
 
@@ -104,7 +104,7 @@ Auxiliaryの状態更新はworkspaceのbinding setterを入口とする。ref、
 
 MainのローカルdraftとAuxiliaryの永続draftはそれぞれのownerが保持する。Auxiliaryの通常送信は保存済みdraftのincarnation／durable revisionを指定し、queue受付とconsumeを同一transactionで保存する。受付ACKは捕捉した編集revisionだけを消し、待機中の後続編集を上書きしない。前回依頼の`Resend`は`submitSource: retry`で同じqueueへ渡し、現在のdraftは本文・durable revisionとも変更しない。受付結果不明時は同じrequest IDの確認・明示再試行を使う。
 
-- 正常な準備・受付待ちはerrorにせず、明示的な拒否・処理エラー・timeoutを対象送信の先行表示へ反映し、draftを保持する。準備中の編集・対象変更・freezeでcaptureが失効した場合は未受付の先行表示だけを取り消す。保存済み会話は生成・巻き戻ししない。受付結果不明では同じrequest IDの照会／明示再試行だけを許可し、timeoutやreceiptの一時的不在から未受付と推定して異なるIDで自動再送しない。
+- 正常な準備・受付待ちはerrorにせず、明示的な拒否・処理エラー・照会でも解決しないtimeoutを対象送信のfeedbackに反映し、draftを保持する。準備中の編集・対象変更・freezeでcaptureが失効した場合は受付せず、保存済み会話は生成・巻き戻ししない。受付結果不明では同じrequest IDの照会／明示再試行だけを許可し、timeoutやreceiptの一時的不在から未受付と推定して異なるIDで自動再送しない。
 - Providerの実行失敗が保存された場合は、送信済みuser message、途中応答、失敗表示を確定結果として保持する。受付前のdraftを復元しない。実行結果の保持は[Provider Adapter](provider-adapter.md#error-handling)に従う。
 
 ## Context boundary
@@ -202,7 +202,7 @@ Auxiliary の作成準備は provider / ownership coordinator の外で行う。
 
 Main Session の保存後に初期 Auxiliary の準備または commit が失敗した場合は、Main Session を削除しない。作成済み Main と Auxiliary 結果未確定または失敗を明示する。
 
-既存 Auxiliary の更新・runtime 保存・終了・中断復旧は、非同期読込み時に捕捉した storage へ update-only で送る。通常更新と中断復旧は読込み済み会話と現行行をtransaction内で照合する。
+既存 Auxiliary の更新・runtime 保存・終了は、非同期読込み時に捕捉した storage へ update-only で送る。通常更新は読込み済み会話と現行行をtransaction内で照合する。
 
 runtimeはmetadataとmessageCountだけを読み、開始・steer・terminalの専用commandで対象messageを追加する。ID・親ID・作成時刻によるincarnation・件数・親の生存を照合し、steerとterminalはrunning turn ownerも確認する。
 
@@ -222,7 +222,7 @@ Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行�
 
 ## Recovery
 
-アプリ強制終了などで `runState = running` の Auxiliary が残った場合、次回起動時に対象行を `runState = error` へ補正し、中断を示す assistant message を重複なく追加する。自動 resume は行わず、Session Window から直前 user message を明示的に再送する。保存済み Character / provider identity は変更しない。
+アプリ強制終了の後は[Mainと共通の保存回収](session-run-lifecycle.md#persistence-expectations)で最小Turnと既存メッセージを照合する。実行の再開は自動で行わず、保存済み Character / provider identity は変更しない。
 
 ## Preview contract
 

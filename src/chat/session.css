@@ -1,5 +1,6 @@
 @import "./composer/model-picker.css";
 @import "./composer/custom-agent-picker.css";
+@import "./conversation/coordination-notice.css";
 
 .session-feature-host {
   display: contents;
@@ -1082,6 +1083,63 @@
 }
 
 .message-row.session-outbound { row-gap: 6px; margin-block: 10px; }
+.session-outbound-inline { margin-block: 10px; min-width: 0; }
+.sent-delivery-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sent-delivery-header > .session-message-address { flex: 1 1 auto; }
+.sent-delivery-header > .artifact-toggle-icon { flex: 0 0 24px; }
+.sent-instruction-body { display: grid; min-width: 0; gap: 10px; }
+
+.session-reply-quote {
+  margin: 0;
+  min-width: 0;
+  padding: 4px 10px;
+  border-inline-start: 2px solid currentColor;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.session-reply-link {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.session-reply-link:focus-visible {
+  outline: 2px solid currentColor;
+}
+
+.message-card.is-reply-jump-target {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, var(--ink));
+  outline-offset: -2px;
+}
+
+.message-card.is-reply-selected {
+  isolation: isolate;
+}
+
+.message-card.is-reply-selected::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: rgb(255 255 255 / 12%);
+  pointer-events: none;
+}
 .message-row.session-outbound > .message-avatar-stack { grid-column: 1; grid-row: 1 / span 2; }
 .message-row.session-outbound > .message-character-name,
 .message-row.session-outbound > .message-card { grid-column: 2; }
@@ -1096,8 +1154,17 @@
 .message-row.session-origin .message-avatar-stack > .artifact-toggle-icon { width: 24px; justify-self: center; }
 .message-card.session-origin { border-color: rgba(148, 163, 184, 0.28); background: rgba(255, 255, 255, 0.9); box-shadow: inset -4px 0 0 rgba(148, 163, 184, 0.48); }
 .session-page .message-card.session-origin { border-color: rgba(203, 213, 225, 0.18); background: rgba(20, 27, 40, 0.98); }
+.session-page .message-card.session-origin.has-sender-theme {
+  border-color: transparent;
+  border-right: 3px solid var(--sender-main);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sender-main) 8%, rgba(20, 25, 34, 0.96));
+  box-shadow: none;
+}
 .session-message-address { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 24px; min-width: 0; }
 .session-message-mention { min-width: 0; max-width: 45%; overflow: hidden; color: var(--orange); font-size: 0.82rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+button.session-message-mention { padding: 0; border: 0; background: transparent; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+button.session-message-mention:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }
 .related-session-route { display: inline-flex; align-items: baseline; justify-self: start; gap: 8px; min-width: 0; max-width: 55%; padding: 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.72rem; text-align: left; cursor: pointer; }
 .related-session-route:hover .related-session-title { text-decoration: underline; text-underline-offset: 3px; }
 .related-session-route:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }
@@ -1235,12 +1302,13 @@
 .message-bookmark-toggle {
   position: sticky;
   top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin: 4px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1280,6 +1348,17 @@
   outline-offset: 2px;
 }
 
+.message-bookmark-toggle.reply-toggle {
+  background: #202020;
+  color: #d2d2d2;
+}
+
+.message-bookmark-toggle.reply-toggle[aria-pressed="true"] {
+  background: #d2d2d2;
+  border-color: #d2d2d2;
+  color: #202020;
+}
+
 .message-card-content {
   grid-area: 1 / 1;
   display: grid;
@@ -1292,23 +1371,9 @@
   min-width: 0;
 }
 
-.message-text-wrapper.has-message-collapse-control {
-  display: flex;
-}
-
-.message-text-wrapper.has-message-collapse-control > [data-message-body] {
-  order: 0;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
 .message-collapse-control {
-  position: relative;
-  display: flex;
-  order: 1;
-  flex: 0 0 auto;
-  flex-direction: row-reverse;
-  align-items: flex-start;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   opacity: 0;
   pointer-events: none;
@@ -1318,12 +1383,13 @@
 .message-collapse-toggle {
   position: sticky;
   top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin: 4px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -1335,16 +1401,26 @@
   pointer-events: none;
 }
 
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control {
+.message-text-wrapper:is(:hover, :focus-within) > .message-collapse-control,
+.message-collapse-control:has(> .reply-toggle[aria-pressed="true"]),
+/* A saved failure can have neither body lines to hover nor a Reply button. */
+.message-card:is(:hover, :focus-within) .message-text-wrapper:has(
+  > [data-message-body]:empty,
+  > [data-message-body] > .rich-text:only-child:empty
+) > .message-collapse-control:has(> .failed-turn-resend) {
   opacity: 1;
+
+  > button {
+    pointer-events: auto;
+  }
 }
 
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle,
-.message-text-wrapper.has-message-collapse-control:hover > .message-collapse-control > .message-bookmark-toggle,
-.message-text-wrapper.has-message-collapse-control:focus-within > .message-collapse-control > .message-bookmark-toggle {
-  pointer-events: auto;
+.message-collapse-control > .failed-turn-retry-feedback {
+  clear: right;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin-inline-start: auto;
+  overflow-wrap: anywhere;
 }
 
 .message-collapse-toggle:hover {
@@ -1396,7 +1472,8 @@
   box-shadow: none;
 }
 
-.session-page .message-row.session-outbound .message-card.assistant {
+.session-page .message-row.session-outbound .message-card.assistant,
+.session-page .session-outbound-inline .message-card.assistant {
   border: 1px solid color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--character-sub-soft) 42%, rgba(15, 19, 26, 0.98));
@@ -1849,8 +1926,7 @@
     opacity: 1;
   }
 
-  .message-collapse-control > .message-collapse-toggle,
-  .message-collapse-control > .message-bookmark-toggle,
+  .message-collapse-control > button,
   .message-code-block-actions > .message-code-copy-button {
     pointer-events: auto;
   }
@@ -2255,6 +2331,12 @@
   overflow-wrap: anywhere;
 }
 
+.elicitation-record-selected,
+.elicitation-record-answer {
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
 .live-elicitation-field {
   display: grid;
   min-width: 0;
@@ -2461,15 +2543,6 @@
   height: 10px;
   border-radius: 999px;
   background: rgba(15, 139, 141, 0.7);
-  animation: typingPulse 1.1s ease-in-out infinite;
-}
-
-.typing-dots span:nth-child(2) {
-  animation-delay: 0.14s;
-}
-
-.typing-dots span:nth-child(3) {
-  animation-delay: 0.28s;
 }
 
 .live-run-shell {
@@ -3538,6 +3611,8 @@
   border-radius: 10px;
 }
 
+.failed-turn-resend svg { width: 15px; height: 15px; }
+
 .composer-icon-button:focus-visible,
 .session-recovery-actions dialog button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
@@ -4438,11 +4513,6 @@
     0 0 0 1px color-mix(in srgb, var(--character-main, #6f8cff) 10%, transparent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .session-page .pending-run-indicator .typing-dots span {
-    animation: none;
-  }
-}
 .session-turn-queue-status {
   display: flex;
   flex-wrap: wrap;
@@ -4510,4 +4580,65 @@
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.crew-deletion-modal {
+  padding: 16px;
+  backdrop-filter: none;
+}
+
+.crew-deletion-dialog {
+  width: fit-content;
+  max-width: min(480px, 100%);
+  max-height: calc(100vh - 32px);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.crew-deletion-dialog .launch-panel.minimal {
+  display: grid;
+  gap: 10px;
+  padding: 20px 20px 0;
+}
+
+.crew-deletion-dialog :is(h2, p) {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.crew-deletion-dialog h2 {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.crew-deletion-blockers {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 20px;
+}
+
+.crew-deletion-blockers .drawer-toggle {
+  margin-block-start: 6px;
+}
+
+.crew-deletion-refresh {
+  justify-self: start;
+}
+
+.crew-deletion-dialog .launch-dialog-foot {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 20px;
+}
+
+.crew-deletion-dialog .drawer-toggle.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.crew-deletion-dialog .drawer-toggle.danger {
+  color: #fecaca;
 }

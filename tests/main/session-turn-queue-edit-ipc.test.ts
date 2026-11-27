@@ -7,6 +7,47 @@ import type { MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts
 
 // @test-value v2
 // kind = "contract"
+// claim = "失敗Turn再実行IPCは対象MainまたはAuxiliaryの親を所有するmain frameだけを許可し、非同期受付時にも認可を確認する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "別Windowやframeの要求を許す、認可失効後にqueueへ受付する"
+// observable = "IPC拒否とfacadeの対象、非同期受付時の認可callback結果"
+// observation_boundary = "public-boundary"
+// scope = "失敗Turn再実行のElectron IPC"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "別会話の失敗指示を権限のないWindowから実行できる"
+// distinction = "facade testはElectron Windowとframeの認可境界を通らない"
+// @end-test-value
+test("failed Turn retry IPC rechecks the owning window and main frame", async () => {
+  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: any[]) => any>();
+  const mainFrame = {};
+  const sender = { mainFrame, isDestroyed: () => false };
+  const ownerWindow = {};
+  let currentWindow = ownerWindow;
+  let calls = 0;
+  const queue = { retryFailedSessionTurn: async (id: string, request: unknown, assertCurrent: () => void) => {
+    calls++;
+    assert.equal(id, "aux"); assert.deepEqual(request, { original: true });
+    assertCurrent();
+    currentWindow = {};
+    assert.throws(assertCurrent, /target Session window/);
+    return { state: "queued" };
+  } };
+  const deps = { queue, resolveEventWindow: () => currentWindow, resolveSessionWindow: (id: string) => id === "main" ? ownerWindow : null,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux" ? { parentSessionId: "main" } : null } as unknown as MainIpcSessionRuntimeDeps;
+  registerSessionRuntimeHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, deps);
+  const invoke = (frame: object) => handlers.get("withmate:retry-failed-session-turn")!({ sender, senderFrame: frame } as unknown as IpcMainInvokeEvent, "aux", { original: true });
+  currentWindow = {};
+  await assert.rejects(invoke(mainFrame), /target Session window/);
+  currentWindow = ownerWindow;
+  await assert.rejects(invoke({}), /owning main application frame/);
+  assert.equal(calls, 0);
+  await invoke(mainFrame);
+  assert.equal(calls, 1);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "queued Edit IPCはMain/Auxのowning Windowだけを許可し、編集ownerのnavigation/crash/destructionで一時pauseを解放する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queue、owning Window喪失時の一時編集取消" }
 // fault = "別Windowの編集を通す、Auxを親IDに置換する、失敗した編集のpauseをowner喪失時に残す"

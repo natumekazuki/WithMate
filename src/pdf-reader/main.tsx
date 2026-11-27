@@ -7,6 +7,7 @@ import {
   type PdfReaderHostMessage,
 } from "../../src-shared/file-explorer/pdf-reader-contract.js";
 import { PdfReaderApp } from "./PdfReaderApp.js";
+import { readPdfSelection } from "./pdf-reader-selection.js";
 import "./pdf-reader.css";
 
 const parameters = new URLSearchParams(location.hash.slice(1));
@@ -46,11 +47,19 @@ function App() {
         setZoomWheelStep(message.zoomWheelStep);
       } else if (message.type === "find") {
         setFindRevision((current) => current + 1);
+      } else if (loaded && message.type === "get-selection" && typeof message.requestId === "string"
+        && message.requestId.length > 0 && message.requestId.length <= 128) {
+        send({ type: "selection", text: readPdfSelection(document), requestId: message.requestId });
       }
     };
+    const selection = () => send({ type: "selection", text: readPdfSelection(document) });
     window.addEventListener("message", receive);
+    document.addEventListener("selectionchange", selection);
     send({ type: "ready" });
-    return () => window.removeEventListener("message", receive);
+    return () => {
+      window.removeEventListener("message", receive);
+      document.removeEventListener("selectionchange", selection);
+    };
   }, []);
   return file ? <PdfReaderApp file={file} zoomWheelStep={zoomWheelStep} findRevision={findRevision}
     onLoaded={() => send({ type: "loaded" })}

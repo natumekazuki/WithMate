@@ -3,7 +3,8 @@ import { normalizeMessage } from "../../src-shared/session/session-state.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import { projectMessagePlainText } from "../../src-shared/session/message-search.js";
 import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterateMessageSearchMatches, messageSearchSourceRangesCorrespond, type MessageSearchProjection } from "../../src-shared/session/message-find.js";
-import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationNavigatorEntry, type ConversationSearchMatch, type ConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
+import { CONVERSATION_QUERY_PAGE_SIZE, conversationInputSpeaker, type ConversationNavigatorEntry, type ConversationSearchMatch, type ConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
+import type { SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
 import type { ConversationQueryRow } from "./conversation-query.js";
 
 export type ConversationProjectionInput = {
@@ -73,7 +74,9 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
       if (input.query.filter === "bookmarks" && message.isBookmarked !== true) continue;
       retain(() => ({ messageIndex: row.seq, role: message.role,
         preview: projection(`${input.cacheScope}:${input.provider}:${row.seq}:plain`, () => projectMessagePlainText(message.text, responseProvider)),
-        accent: message.accent === true, isBookmarked: message.isBookmarked === true }));
+        accent: message.accent === true, isBookmarked: message.isBookmarked === true,
+        ...(message.role === "user" ? { speaker: conversationInputSpeaker(row.inputOriginJson === undefined
+          ? message.turnInput?.origin : row.inputOriginJson ? JSON.parse(row.inputOriginJson) as SessionTurnQueueOrigin : null) } : {}) }));
     }
   }
   return { count, items, ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }) };

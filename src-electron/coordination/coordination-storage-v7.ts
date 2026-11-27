@@ -3,12 +3,14 @@ import { coordinationNotificationText, type CoordinationNotification } from "../
 import type { DatabaseSync } from "node:sqlite";
 import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationResult, type CoordinationStorageInput, type CoordinationStorageResult } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type { CoordinationStatus } from "../../src-shared/coordination/coordination-window-contract.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureCoordinationSchemaV7 } from "./coordination-schema-v7.js";
 import { assertSessionLifecycleReady } from "../session/session-lifecycle-operation.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CoordinationDeletedError, CoordinationRejectedError } from "./coordination-errors.js";
+import { readMainCoordinationFrame } from "../storage/conversation-threads.js";
 
 const same = (a: { kind: string; sessionId?: string; incarnationId?: string }, b: { kind: string; sessionId?: string; incarnationId?: string }) => a.kind === b.kind && a.sessionId === b.sessionId && a.incarnationId === b.incarnationId;
 type Saved = { payload_json: string };
@@ -21,6 +23,18 @@ export class CoordinationStorageV7 {
   private readonly queue: SessionTurnQueueStorageV6;
   constructor(dbPath: string) { this.db = openAppDatabase(dbPath); ensureCoordinationSchemaV7(this.db); this.queue = new SessionTurnQueueStorageV6(this.db); }
   close() { this.db.close(); }
+  readStatus(id: string): CoordinationStatus {
+    const row = this.db.prepare(`SELECT state, respondent_kind AS respondentKind,
+      json_array_length(payload_json, '$.answers') > 0 AS hasAnswer,
+      initiator_kind AS kind, initiator_session_id AS sessionId, initiator_incarnation_id AS incarnationId
+      FROM coordination_records_v7 WHERE id=?`).get(id) as
+      | (Omit<CoordinationStatus, "hasAnswer"> & CoordinationIdentity & { hasAnswer: number })
+      | undefined;
+    if (!row) throw new CoordinationDeletedError("Coordination was deleted or does not exist.");
+    // Match the detailed read's exact Auxiliary initiator check without loading its navigation payload.
+    if (row.kind === "auxiliary") this.identity(row);
+    return { state: row.state, respondentKind: row.respondentKind, hasAnswer: Boolean(row.hasAnswer) };
+  }
   deliveryTarget(input: Omit<CoordinationStorageInput, "delivery">): CoordinationIdentity | null {
     const request = coordinationRequestSchema.parse(input.request);
     if (input.actor.kind !== "user") this.identity(input.actor);
@@ -110,7 +124,7 @@ export class CoordinationStorageV7 {
     if (previous.receiptId) {
       const receipt = this.queue.getReceiptById(record.initiator, previous.receiptId);
       if (!receipt) throw new Error("The answer delivery receipt is unavailable.");
-      if (receipt.state === "starting" || receipt.state === "running") throw new Error("The answer is being delivered; check its state before editing.");
+      if (receipt.state === "starting" || receipt.state === "running" || receipt.state === "interrupted") throw new Error("The answer is being delivered or its delivery is unknown; check its state before editing.");
       if (receipt.state === "queued") queueUpdates.push(this.queue.cancelQueued(record.initiator, previous.receiptId));
     }
     record.history = record.history.map((entry) => {
@@ -211,7 +225,9 @@ export class CoordinationStorageV7 {
       const notification: CoordinationNotification = { coordinationId: record.id, kind: record.kind, consultation: record.body, actor, operation: request.operation, answer: answer ?? null, state: record.state, withdrawalReason: record.withdrawalReason ?? null };
       const display = input.delivery.captured.origin;
       const actorRoute = actor.kind === "auxiliary" && display?.actorMainSessionId ? { actorMainSessionId: display.actorMainSessionId } : {};
-      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, userMessage: coordinationNotificationText(notification), submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, answerId: answer?.id, answerRevision: answer?.revision, notification } };
+      const frame = actor.kind === "user" && request.operation === "answer" && deliveryTarget.kind === "main"
+        ? { mainConversationFrame: readMainCoordinationFrame(this.db, { ...deliveryTarget, kind: "main" }, record) } : {};
+      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, ...frame, userMessage: coordinationNotificationText(notification), submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, targetKind: deliveryTarget.kind, answerId: answer?.id, answerRevision: answer?.revision, notification } };
       receipt = this.queue.enqueue(deliveryTarget, captured);
       if (answer) answer.receiptId = receipt.id;
     }

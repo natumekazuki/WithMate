@@ -3,7 +3,7 @@ import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFold
 import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
 
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
-import type { LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type { CancelSessionRunRequest, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary } from "../../src-shared/session/session-state.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type {
@@ -148,6 +148,8 @@ import type { SessionWindowRestoreResult } from "../../src-shared/window/session
 type MaybeWindow = BrowserWindow | null | undefined;
 
 export type MainIpcWindowDepsArgs = {
+  listHomeCrewPage: MainIpcWindowDeps["listHomeCrewPage"];
+  showHomeCrewContextMenu: MainIpcWindowDeps["showHomeCrewContextMenu"];
   showSessionFilePreviewContextMenu: MainIpcWindowDeps["showSessionFilePreviewContextMenu"];
   listSessionFilePreviewWindows: MainIpcWindowDeps["listSessionFilePreviewWindows"];
   focusSessionFilePreviewWindow: MainIpcWindowDeps["focusSessionFilePreviewWindow"];
@@ -229,6 +231,7 @@ export type MainIpcCatalogDepsArgs = {
 };
 
 export type MainIpcSettingsDepsArgs = {
+  getAppVersion(): string;
   getAppSettings(): Awaitable<AppSettings>;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
@@ -334,7 +337,7 @@ export type MainIpcAuxiliaryDepsArgs = {
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
   steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
-  cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
+  cancelAuxiliarySessionRun(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
 };
 
 export type MainIpcSessionRuntimeDepsArgs = {
@@ -358,7 +361,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   steerSessionTurn?(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
-  cancelSessionRun(sessionId: string): void;
+  cancelSessionRun(request: CancelSessionRunRequest, assertAuthorized: () => void): Awaitable<void>;
 };
 
 export type MainIpcMateDepsArgs = {

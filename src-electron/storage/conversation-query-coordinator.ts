@@ -1,19 +1,19 @@
 import { Worker } from "node:worker_threads";
 import {
   CONVERSATION_QUERY_PAGE_SIZE,
-  isConversationSearchAnchor, type ConversationSearchAnchor,
+  isConversationMessageIndexes, isConversationSearchAnchor, type ConversationSearchAnchor,
   type ConversationQueryCancelRequest, type ConversationQueryOutcome, type ConversationQueryStamp,
   type ConversationSearchRequest, type ConversationNavigatorRequest,
   type ConversationSearchMatch, type ConversationNavigatorEntry,
 } from "../../src-shared/session/conversation-page.js";
-import type { ConversationQueryRow, ConversationQuerySnapshot, MessageTable } from "./conversation-query.js";
+import { CONVERSATION_QUERY_BATCH_SIZE, type ConversationQueryRow, type ConversationQuerySnapshot, type MessageTable } from "./conversation-query.js";
 import type { ConversationProjectionInput, ConversationProjectionResult } from "./conversation-projection-worker.js";
 
 type Item = ConversationSearchMatch | ConversationNavigatorEntry;
 type Query = ConversationProjectionInput["query"];
 export type ConversationQueryReader = {
   getConversationQuerySnapshot(id: string): ConversationQuerySnapshot | null;
-  readConversationQueryBatch(id: string, afterSeq: number): ConversationQueryRow[];
+  readConversationQueryBatch(id: string, afterSeq: number, includeSpeakers?: boolean, messageIndexes?: readonly number[]): ConversationQueryRow[];
 };
 export type ScheduleConversationRead = <T>(read: () => T) => Promise<T>;
 type Producer = {
@@ -21,6 +21,9 @@ type Producer = {
   stamp?: ConversationQueryStamp; snapshot?: ConversationQuerySnapshot;
   invalidated: boolean; page?: ConversationQueryOutcome<Item>;
   anchor?: ConversationSearchAnchor;
+  searchScope?: Set<number>;
+  navigatorIndexes?: readonly number[];
+  scopeSignature?: string;
 };
 type Job = {
   producer: Producer; offset: number; schedule: ScheduleConversationRead; reader: ConversationQueryReader;
@@ -54,9 +57,10 @@ export class ConversationQueryCoordinator {
       : { kind, filter: (request as ConversationNavigatorRequest).filter };
     let producer = this.producers.get(request.producerId);
     const offset = request.offset ?? 0;
+    const scopeSignature = request.messageIndexes?.join(",");
     if (request.stamp) {
       if (!producer || producer.invalidated || producer.id !== id || producer.table !== table || producer.requestId !== request.requestId
-        || JSON.stringify(producer.query) !== JSON.stringify(query) || !this.sameStamp(producer.stamp, request.stamp)) {
+        || producer.scopeSignature !== scopeSignature || JSON.stringify(producer.query) !== JSON.stringify(query) || !this.sameStamp(producer.stamp, request.stamp)) {
         return Promise.resolve({ status: "invalidated" });
       }
     } else {
@@ -67,6 +71,8 @@ export class ConversationQueryCoordinator {
         this.producers.delete(idle);
       }
       producer = { table, id, requestId: request.requestId, query, invalidated: false,
+        searchScope: kind === "search" && request.messageIndexes !== undefined ? new Set(request.messageIndexes) : undefined,
+        navigatorIndexes: kind === "navigator" ? request.messageIndexes?.slice() : undefined, scopeSignature,
         anchor: kind === "search" ? (request as ConversationSearchRequest).anchor : undefined };
       this.producers.set(request.producerId, producer);
     }
@@ -127,6 +133,7 @@ export class ConversationQueryCoordinator {
     if (!request || typeof request.requestId !== "string" || !request.requestId || request.requestId.length > 256
       || typeof request.producerId !== "string" || !request.producerId || request.producerId.length > 512
       || (request.offset !== undefined && (!Number.isSafeInteger(request.offset) || request.offset < 0))) throw new TypeError("Conversation query is invalid.");
+    if (request.messageIndexes !== undefined && !isConversationMessageIndexes(request.messageIndexes)) throw new TypeError("Conversation query message indexes are invalid.");
     if (kind === "search") {
       const input = request as ConversationSearchRequest;
       if (typeof input.query !== "string" || input.query.length > 10000 || (input.mode !== "source" && input.mode !== "preview")) throw new TypeError("Conversation search is invalid.");
@@ -186,20 +193,32 @@ export class ConversationQueryCoordinator {
     }
     if (producer.page?.status === "complete" && producer.page.offset === job.offset) return producer.page;
     let afterSeq = -1;
+    const indexes = producer.navigatorIndexes;
+    let scopeOffset = 0;
     let totalCount = 0;
     let anchorOrdinal: number | undefined;
     const items: Item[] = [];
-    while (!job.stopped && !(producer.query.kind === "search" && !producer.query.query.trim())) {
-      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq));
+    while (!job.stopped && (indexes === undefined || scopeOffset < indexes.length)
+      && !(producer.query.kind === "search" && !producer.query.query.trim())) {
+      const window = indexes?.slice(scopeOffset, scopeOffset + CONVERSATION_QUERY_BATCH_SIZE);
+      const rows = await job.schedule(() => job.reader.readConversationQueryBatch(producer.id, afterSeq, producer.query.kind === "navigator", window));
       if (job.stopped) return { status: job.stopped };
-      if (!rows.length) break;
+      const last = rows.at(-1);
+      // The byte cap may split a window. A window with no more stored rows can be skipped.
+      if (window && (!last || last.seq === window.at(-1))) scopeOffset += window.length;
+      if (!last) {
+        if (!window) break;
+        continue;
+      }
+      afterSeq = last.seq;
+      const selected = producer.searchScope ? rows.filter((row) => producer.searchScope!.has(row.seq)) : rows;
+      if (!selected.length) continue;
       const result = await this.project({ cacheScope: `${snapshot.ownerIdentity}:${producer.stamp.contentRevision}`,
-        provider: snapshot.provider, rows, query: producer.query, offset: job.offset, countBefore: totalCount, anchor: producer.anchor });
+        provider: snapshot.provider, rows: selected, query: producer.query, offset: job.offset, countBefore: totalCount, anchor: producer.anchor });
       if (job.stopped) return { status: job.stopped };
       totalCount += result.count;
       if (result.anchorOrdinal !== undefined) anchorOrdinal = result.anchorOrdinal;
       items.push(...result.items);
-      afterSeq = rows.at(-1)!.seq;
     }
     if (job.stopped) return { status: job.stopped };
     const final = await job.schedule(() => job.reader.getConversationQuerySnapshot(producer.id));

@@ -146,10 +146,10 @@ test("Filesの更新は展開と読む位置を保ち削除と取得失敗を区
 
 // @test-value v2
 // kind = "contract"
-// claim = "Filesのrootsとdirectory更新後もPin操作のfocusを保持し、更新待ちに利用者が移したfocusを奪わない"
+// claim = "Filesの更新中と更新後もPin操作のfocusを保持し、取得待ちには保存せず、利用者が移したfocusを奪わない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Filesの同一owner／root更新とPin keyboard操作" }
-// fault = "同じ行のPin buttonから展開buttonへfocusを移す、または更新応答で別controlからfocusを奪う"
-// observable = "roots・directory応答後のactiveElement identity、focus中buttonからのPin保存、展開中の子行と外部controlのfocus"
+// fault = "Pin取得待ちでnative disabledにしてfocusを落とす、取得待ちに保存する、または更新応答で別controlからfocusを奪う"
+// observable = "取得待ちのdisabled属性・aria-disabledと保存回数、roots・directory応答後のactiveElement identity、保存対象、展開中の子行"
 // observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane refresh control focus"
 // lifecycle = "permanent"
@@ -161,8 +161,9 @@ test("Filesの更新はPin controlのfocusと利用者のfocus移動を保つ", 
   let pins: SessionFilePin[] = [];
   const saved: string[] = [];
   let refreshing = false;
+  let pendingPins = Promise.withResolvers<SessionFilePin[]>();
   let finishDirectory: ((entries: SessionDirectoryEntry[]) => void) | undefined;
-  api.listSessionFilePins = async () => pins;
+  api.listSessionFilePins = async () => refreshing ? pendingPins.promise : pins;
   api.pinSessionFile = async (request) => {
     saved.push(request.relativePath);
     const result = pin(request.relativePath, "directory");
@@ -182,22 +183,33 @@ test("Filesの更新はPin controlのfocusと利用者のfocus移動を保つ", 
     await render("session-a", "session-a", { refreshRevision: 1 });
     await until(() => !!finishDirectory);
     assert.equal(document.activeElement, pinButton, "roots応答でもPin controlを維持する");
+    assert.equal(pinButton.disabled, false, "取得待ちもnative focusから除外しない");
+    assert.equal(pinButton.getAttribute("aria-disabled"), "true");
+    await act(async () => pinButton.click());
+    assert.deepEqual(saved, [], "取得待ちのPinは起動しない");
     await act(async () => finishDirectory?.([entry("folder", "directory"), entry("new.txt")]));
     await until(() => !!document.querySelector("[title='new.txt']"));
     assert.equal(document.activeElement, pinButton, "directory応答でもPin controlを維持する");
+    await act(async () => pendingPins.resolve(pins));
+    assert.equal(pinButton.getAttribute("aria-disabled"), null);
+    assert.equal(document.activeElement, pinButton, "Pin取得の完了後も同じcontrolを維持する");
     await act(async () => (document.activeElement as HTMLButtonElement).click());
     assert.deepEqual(saved, ["folder"]);
     assert.deepEqual(opened, []);
     assert.ok(document.querySelector("[title='folder/child.txt']"), "Pin操作でdirectoryを閉じない");
     assert.equal(pinButton.getAttribute("aria-label"), "Unpin folder");
     pinButton.focus();
+    pendingPins = Promise.withResolvers<SessionFilePin[]>();
     finishDirectory = undefined;
     await render("session-a", "session-a", { refreshRevision: 2 });
     await until(() => !!finishDirectory);
     assert.equal(document.activeElement, pinButton, "Unpin controlもroots応答で維持する");
     const filter = document.querySelector<HTMLButtonElement>("[aria-label='Pinned only']")!;
     filter.focus();
-    await act(async () => finishDirectory?.([entry("folder", "directory"), entry("latest.txt")]));
+    await act(async () => {
+      finishDirectory?.([entry("folder", "directory"), entry("latest.txt")]);
+      pendingPins.resolve(pins);
+    });
     await until(() => !!document.querySelector("[title='latest.txt']"));
     assert.equal(document.activeElement, filter, "待機中に移したfocusを奪わない");
   });
@@ -535,10 +547,10 @@ test("Pin directoryの旧応答はSessionとroot revisionの切替後へ展開�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Pin保存失敗は既存Pinを残してerrorとRetryを表示し、取得成功後だけ解除を再開して最後の解除ではfilterへfocusを戻す"
+// claim = "Pin保存失敗後も対象と解除操作のfocusを保ち、再取得成功まで解除を再送せず、最後の解除ではfilterへfocusを戻す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer Pin" }
-// fault = "失敗した解除を成功として行を消す、利用不可Pinを解除できない、または最後の解除でfocusが失われる"
-// observable = "alert、Pin行、Unpin button状態、解除request、最後のdocument.activeElement"
+// fault = "失敗で行を消す、失敗・再取得中に解除を再送するかnative disabledでfocusを落とす、または最後の解除でfocusが失われる"
+// observable = "alert、Pin行、Unpinのdisabled属性・aria-disabled・focus、解除request、最後のdocument.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane Pin failure recovery and unpin"
 // lifecycle = "permanent"
@@ -547,8 +559,11 @@ test("利用不可Pinの解除失敗を保持し再取得後に解除できる",
   const api = baseApi();
   let pins = [{ ...pin("deleted.md"), rootId: null, unavailableReason: "The file root is not available." }];
   let fail = true;
-  api.listSessionFilePins = async () => pins;
+  let unpinRequests = 0;
+  let pinResponse: Promise<SessionFilePin[]> | null = null;
+  api.listSessionFilePins = async () => pinResponse ?? pins;
   api.unpinSessionFile = async (request) => {
+    unpinRequests += 1;
     assert.equal(request.relativePath, "deleted.md");
     if (fail) throw new Error("Pin save failed.");
     pins = [];
@@ -557,15 +572,36 @@ test("利用不可Pinの解除失敗を保持し再取得後に解除できる",
     await click("Pinned only");
     await until(() => document.querySelectorAll(".session-file-pinned-row").length === 1);
     assert.equal(document.querySelector<HTMLButtonElement>(".session-file-pinned-row")?.disabled, true);
+    const unpin = document.querySelector<HTMLButtonElement>("[aria-label='Unpin deleted.md']")!;
+    unpin.focus();
     await click("Unpin deleted.md");
     assert.ok(document.querySelector("[role='alert']"));
+    assert.equal(document.activeElement, unpin, "解除失敗でも同じ操作に留まる");
+    assert.equal(unpin.disabled, false);
     await click("Pins Error Details");
     assert.equal(document.querySelector("[role='dialog'] p")?.textContent, "Pin save failed.");
     assert.equal(document.querySelectorAll(".session-file-pinned-row").length, 1);
-    assert.equal(document.querySelector<HTMLButtonElement>("[aria-label='Unpin deleted.md']")?.disabled, true);
+    assert.equal(unpin.getAttribute("aria-disabled"), "true");
+    await act(async () => unpin.click());
+    assert.equal(unpinRequests, 1, "再取得するまで解除を再送しない");
     fail = false;
+    const retryPins = Promise.withResolvers<SessionFilePin[]>();
+    pinResponse = retryPins.promise;
+    unpin.focus();
     await click("Retry Pins");
+    assert.equal(document.activeElement, unpin, "再取得中も同じ操作に留まる");
+    assert.equal(unpin.disabled, false);
+    assert.equal(unpin.getAttribute("aria-disabled"), "true");
+    await act(async () => unpin.click());
+    assert.equal(unpinRequests, 1, "応答を待たずに解除を再送しない");
+    await act(async () => {
+      pinResponse = null;
+      retryPins.resolve(pins);
+    });
+    assert.equal(document.activeElement, unpin);
+    assert.equal(unpin.getAttribute("aria-disabled"), null);
     await click("Unpin deleted.md");
+    assert.equal(unpinRequests, 2);
     await until(() => document.activeElement?.getAttribute("aria-label") === "Pinned only");
     assert.equal(document.querySelectorAll(".session-file-pinned-row").length, 0);
     assert.equal(document.querySelector("[role='alert']"), null);

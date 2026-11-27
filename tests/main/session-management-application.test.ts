@@ -6,6 +6,7 @@ import {
   type SessionManagementApplicationDeps,
 } from "../../src-electron/session/session-management-application.js";
 import type { RelatedSession } from "../../src-electron/session/session-relationship-resolver.js";
+import { fixtureSessionManagementScope } from "./fixtures/session-management-scope.js";
 const main = (
   id: string,
   parentSessionId: string | null = null,
@@ -35,7 +36,7 @@ function setup(entries: RelatedSession[]) {
   const calls: string[] = [];
   const deps: SessionManagementApplicationDeps = {
     operatingPolicy: async () => { throw new Error("unused"); },
-    listSessions: async () => entries,
+    readSessionScope: fixtureSessionManagementScope(() => entries),
     currentTurn: async () => ({
       turnId: "turn-actual",
       receipt: null,
@@ -139,7 +140,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     (
       await application.execute(
         "enqueue",
-        { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "report", approvalMode: "on-request", codexSandboxMode: "workspace-write" },
+        { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "report" },
         context,
       )
     ).ok,
@@ -150,7 +151,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     (
       await application.execute(
         "enqueue",
-        { target: reference(child), requestId: "22222222-2222-4222-8222-222222222222", message: "request", model: "model", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "workspace-write" },
+        { target: reference(child), requestId: "22222222-2222-4222-8222-222222222222", message: "request", model: "model", reasoningEffort: "high" },
         { actor: reference(parent), assertCurrent() {} },
       )
     ).ok,
@@ -161,7 +162,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     await assert.rejects(
       application.execute(
         "enqueue",
-        { target: reference(target), requestId: "33333333-3333-4333-8333-333333333333", message: "request", approvalMode: "on-request" },
+        { target: reference(target), requestId: "33333333-3333-4333-8333-333333333333", message: "request" },
         context,
       ),
       (error) =>
@@ -240,7 +241,7 @@ test("saved kind disambiguates colliding Main and Auxiliary IDs", async () => {
     mainIncarnationId: parent.incarnationId,
   };
   const { application, calls } = setup([parent, child, auxiliary]);
-  const input = { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "hello", approvalMode: "on-request" };
+  const input = { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "hello" };
   await assert.rejects(
     application.execute("enqueue", input, {
       actor: {

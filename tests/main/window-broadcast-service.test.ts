@@ -20,6 +20,32 @@ function createWindow(destroyed = false) {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "送信元の無効化は指定されたMainまたはAux所属MainのWindowだけへ送信元IDで配信し、宛先queue通知の範囲を変えない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; https://github.com/natumekazuki/WithMate/issues/966" }
+// fault = "送信元Windowへの通知がなく一覧が更新されない、Auxの所属Mainを誤る、Home・他Windowへ送信情報を配る"
+// observable = "実broadcast serviceから各Windowが受け取ったchannelとpayload"
+// observation_boundary = "public-boundary"
+// scope = "送信元invalidationと宛先queue eventのWindow routing"
+// lifecycle = "permanent"
+// impact = "新しい指示が送信元で欠落するか、無関係なWindowへ送信先情報が漏れる"
+// distinction = "hookのfixture通知ではMainの実routingを検証できず、型検査は誤ったbroadcast先を検出しない。固定3Windowで低コストに境界を確認する"
+// @end-test-value
+test("outgoing invalidation targets only the source owner without changing queue routing", () => {
+  const sender = createWindow(), recipient = createWindow(), other = createWindow();
+  const service = new WindowBroadcastService({ getAllWindows: () => [sender.window, recipient.window, other.window], getHomeWindows: () => [other.window],
+    getPrimaryHomeWindow: () => other.window, getSessionWindows: () => [sender.window, recipient.window], getLiveSessionRunStatusWindows: () => [],
+    getLiveSessionRunWindow: (id) => id === "source" ? sender.window : id === "recipient" ? recipient.window : null });
+  service.broadcastSessionTurnQueueChanged("recipient");
+  service.broadcastSessionSentDeliveriesChanged("source");
+  service.broadcastSessionSentDeliveriesChanged("source-aux", "source");
+  service.broadcastSessionSentDeliveriesChanged("closed-source");
+  assert.deepEqual(sender.sent, ["source", "source-aux"].map((payload) => ({ channel: "withmate:session-sent-deliveries-changed", payload })));
+  assert.deepEqual(recipient.sent, [{ channel: "withmate:session-turn-queue-changed", payload: "recipient" }]);
+  assert.deepEqual(other.sent, []);
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "到達不能Rendererをskipし、軽量通知の送信例外と診断例外を隔離して他Windowとownerへlive通知を配信する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#decision" }

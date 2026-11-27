@@ -96,6 +96,7 @@ describe("HomeSettingsContent", () => {
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
       onChangeModelAvailability={noOp}
+      onChangeWithMateAutoReview={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -173,6 +174,98 @@ describe("HomeSettingsContent", () => {
       dom.window.close();
     }
   }
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認審査は既定Offで、Codexの明示的なProvider・Model・Depthの選択が揃うまで保存できない"
+  // oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#設定と適用範囲" }
+  // fault = "初期状態で審査が選択済みになる、不完全な設定で保存できる、または明示した選択がSaveに渡らない"
+  // observable = "Provider初期値、各選択後のSaveボタン、Save callbackが捕捉した設定"
+  // observation_boundary = "component-behavior"
+  // scope = "SettingsのWithMate Auto Review設定と既存Save"
+  // lifecycle = "permanent"
+  // distinction = "永続化testでは選択途中のSave抑止と明示した選択の受け渡しを扱えない"
+  // @end-test-value
+  it("keeps approval review off until a complete selection is saved", async () => {
+    await withSettingsDom(async (container, root) => {
+      const initial = createDefaultAppSettings();
+      initial.codingProviderSettings.codex = { enabled: true, apiKey: "", skillRootPath: "" };
+      initial.codingProviderSettings.claude = { enabled: true, apiKey: "", skillRootPath: "" };
+      const catalog: ModelCatalogSnapshot = { providers: [{ id: "codex", label: "Codex", defaultModelId: "other", defaultReasoningEffort: "low",
+        models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", reasoningEfforts: ["low", "high"] }] },
+        { id: "claude", label: "Claude", defaultModelId: "sonnet", defaultReasoningEffort: "",
+          models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: [] }] }] };
+      let saved: typeof initial.withMateAutoReview | undefined;
+      function View() {
+        const [draft, setDraft] = useState(initial);
+        return React.cloneElement(buildSettingsContent(), { settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(catalog, draft), settingsDirty: draft !== initial,
+          onChangeWithMateAutoReview: (withMateAutoReview: typeof initial.withMateAutoReview) => setDraft((current) => ({ ...current, withMateAutoReview })),
+          onSaveSettings: () => { saved = draft.withMateAutoReview; },
+        });
+      }
+      await act(async () => root.render(<View />));
+      const area = [...container.querySelectorAll("details")].find((element) => element.querySelector("summary")?.textContent === "WithMate Auto Review")!;
+      const controls = () => area.querySelectorAll("select");
+      const save = () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!;
+      const choose = async (index: number, value: string) => {
+        const control = controls()[index];
+        await act(async () => {
+          control.value = value;
+          control.dispatchEvent(new window.Event("change", { bubbles: true }));
+        });
+      };
+      assert.equal(controls()[0].value, "");
+      assert.ok(controls()[0].querySelector('option[value="claude"]:not(:disabled)'));
+      await choose(0, "codex");
+      assert.equal(save().disabled, true);
+      await choose(1, "gpt-6-luna");
+      assert.equal(save().disabled, true);
+      await choose(2, "high");
+      assert.equal(save().disabled, false);
+      assert.equal(saved, undefined);
+      await act(async () => save().click());
+      assert.deepEqual(saved, { providerId: "codex", model: "gpt-6-luna", reasoningEffort: "high" });
+    });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Settingsは設定読込失敗時にもversion取得失敗を再試行し取得値を本文末尾に表示する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout; docs/design/settings-ui.md#settings-runtime" }
+  // fault = "設定読込失敗がversion表示や再試行を隠すか取得値を表示しない"
+  // observable = "本文末尾の取得失敗、Retry後のversionとSave Settingsのdisabled状態"
+  // observation_boundary = "component-behavior"
+  // scope = "Settings app version"
+  // lifecycle = "permanent"
+  // distinction = "IPC testは設定読込失敗との独立性と利用者に見える再試行を検証しない"
+  // @end-test-value
+  it("設定読込失敗時もApp versionを再試行して表示する", async () => {
+    await withSettingsDom(async (container, root) => {
+      let calls = 0;
+      window.withmate = { getAppVersion: async () => {
+        calls++;
+        if (calls === 1) throw new Error("unavailable");
+        return "7.0.1-preview.2";
+      } } as WithMateWindowApi;
+      await act(async () => root.render(React.cloneElement(buildSettingsContent(), {
+        settingsDraftLoaded: false,
+        appSettingsLoadStatus: "error",
+        appSettingsLoadError: "Settings unavailable",
+      })));
+      const version = container.querySelector<HTMLElement>(".settings-app-version")!;
+      assert.equal(version.parentElement?.lastElementChild, version);
+      assert.match(version.textContent!, /Could not load app version/);
+      const retry = version.querySelector<HTMLButtonElement>("button")!;
+      await act(async () => retry.click());
+      assert.match(version.textContent!, /7\.0\.1-preview\.2/);
+      assert.equal(container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')?.disabled, true);
+      assert.equal(calls, 2);
+      await act(async () => root.render(buildSettingsContent()));
+      assert.equal(container.querySelector(".settings-section")?.lastElementChild, version);
+      assert.match(version.textContent!, /7\.0\.1-preview\.2/);
+    });
+  });
 
   // @test-value v2
   // kind = "contract"
@@ -1885,7 +1978,7 @@ describe("HomeMonitorContent", () => {
     assert.ok(auxiliaryDisclosure);
     assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
     assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Error: 1"]'));
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Failed: 1"]'));
     assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'));
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 2);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
@@ -1896,7 +1989,7 @@ describe("HomeMonitorContent", () => {
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
-    assert.ok(html.includes('aria-label="Auxiliary Error: 1"'));
+    assert.ok(html.includes('aria-label="Auxiliary Failed: 1"'));
     assert.ok(html.includes('aria-label="Auxiliary Idle: 1"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
@@ -2663,7 +2756,7 @@ describe("HomeRightPane", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "HomeのMonitor tabはSession Monitor context menuの失敗feedbackを利用者向けlive statusへ表示する"
-  // oracle = { type = "contract", ref = "HomeRightPane Session Monitor feedback" }
+  // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window の Monitor（親行context menuの失敗表示）" }
   // fault = "HomeAppから渡されたcontext menu失敗messageがright paneで欠落するか、支援技術へ通知されない"
   // observable = "Monitor tab内のfeedback文字列、role=status、aria-live=polite"
   // observation_boundary = "component-behavior"
@@ -2683,10 +2776,10 @@ describe("HomeRightPane", () => {
       "Could not copy session ID.",
     );
 
-    const monitorPanel = html.match(/<section class="home-monitor-panel" role="tabpanel" aria-label="Session monitor">[\s\S]*?<\/section>/);
+    const monitorPanel = JSDOM.fragment(html).querySelector('[role="tabpanel"][aria-label="Session monitor"]');
     assert.ok(monitorPanel);
-    assert.match(monitorPanel[0], /Could not copy session ID\./);
-    assert.match(monitorPanel[0], /role="status" aria-live="polite"/);
+    const status = monitorPanel.querySelector('[role="status"][aria-live="polite"]');
+    assert.match(status?.textContent ?? "", /Could not copy session ID\./);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

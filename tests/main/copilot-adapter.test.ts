@@ -7,7 +7,7 @@ import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } f
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { LiveRunStep, LiveApprovalRequest, LiveSessionRunState, LiveElicitationRequest, LiveElicitationResponse } from "../../src-shared/session/runtime-state.js";
-import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
+import type { LiveBackgroundTask } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -28,7 +28,6 @@ import {
   resolveCopilotCliPath,
   resolveCopilotSessionForSettings,
   resolveNativeCopilotPackageName,
-  shouldRetryCopilotTurn,
   sortLiveBackgroundTasks,
   toCopilotReasoningEffort,
 } from "../../src-electron/providers/copilot/copilot-adapter.js";
@@ -161,6 +160,8 @@ function interactionTurn(event: SessionEvent, response?: LiveElicitationResponse
   input.signal = signal;
   const calls = { send: 0, abort: 0 };
   const requests: LiveElicitationRequest[] = [];
+  const delivered: string[] = [];
+  input.onElicitationDelivered = (requestId) => { delivered.push(requestId); };
   const replies: { method: string; payload: unknown }[] = [];
   const interests: string[] = [];
   const released: string[] = [];
@@ -206,7 +207,7 @@ function interactionTurn(event: SessionEvent, response?: LiveElicitationResponse
   };
   ports.getSession = async () => ({ session, selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" },
     client: { stop: async () => [], forceStop: async () => {} }, clientKey: "interaction-client" });
-  return { run: () => ports.runSessionTurnOnce(input, EMPTY_PROMPT), requests, replies, interests, released, logs, calls, listeners };
+  return { run: () => ports.runSessionTurnOnce(input, EMPTY_PROMPT), requests, replies, interests, released, logs, calls, listeners, delivered };
 }
 
 // @test-value v2
@@ -240,10 +241,10 @@ it("Copilotの質問は選択肢と自由回答の制約を共通fieldへ保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilot質問を同一request IDでUIへ渡し、選択・自由回答・Close・UI不在をnative回答へ変換してturnを完了する"
+// claim = "Copilot質問を同一request IDでUIへ渡し、選択・自由回答の受付だけを履歴へ通知し、Close・UI不在でもturnを完了する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "interestを登録しない、別requestへ返信する、wasFreeformを誤る、またはCloseでturnを中断する"
-// observable = "UI callbackのrequestと本文位置、SDK回答payload、interest解放と正常turn result"
+// observable = "UI callbackのrequestと本文位置、SDK回答payload、受付通知、interest解放と正常turn result"
 // observation_boundary = "public-boundary"
 // scope = "Copilot turn interaction bridge"
 // lifecycle = "permanent"
@@ -259,6 +260,7 @@ it("Copilot質問の回答とCloseを元のnative requestへ返す", async () =>
       answer: response?.action === "accept" ? response.content.answer : "", wasFreeform: response?.action !== "accept" || response.content.answer !== "Blue",
     } } }]);
     assert.deepEqual(fixture.released, fixture.interests);
+    assert.deepEqual(fixture.delivered, response?.action === "accept" ? ["ask-1"] : []);
     assert.equal(fixture.requests.length, response ? 1 : 0);
     if (response) {
       assert.equal(fixture.requests[0].kind, "question");
@@ -316,6 +318,7 @@ it("Copilotはidleが先でも回答ACKを待ち拒否とRPC失敗を報告す�
     void result.then(() => { settled = true; }, () => { settled = true; });
     while (fixture.replies.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(settled, false);
+    assert.deepEqual(fixture.delivered, []);
     if (rejectRpc) ack.reject(new Error("input RPC unavailable"));
     else ack.resolve({ success: false });
     await assert.rejects(result, (error: unknown) => {
@@ -324,6 +327,7 @@ it("Copilotはidleが先でも回答ACKを待ち拒否とRPC失敗を報告す�
       assert.match(error.message, rejectRpc ? /input RPC unavailable/ : /no longer pending/);
       return true;
     });
+    assert.deepEqual(fixture.delivered, []);
   }
 });
 
@@ -441,13 +445,16 @@ it("Copilot foregroundの当turn HTTP MCP設定をpromptから分離する", () 
 });
 
 
-function createWritePermissionRequest(): PermissionRequest {
+function createWritePermissionRequest(): Extract<PermissionRequest, { kind: "write" }> {
   return {
     kind: "write",
     toolCallId: "tool-call-1",
     intention: "Create file",
     fileName: "F:/repo/tmp/output.txt",
-  } as unknown as PermissionRequest;
+    diff: "",
+    newFileContents: "synthetic text",
+    canOfferSessionApproval: false,
+  };
 }
 
 // @test-value v2
@@ -471,13 +478,24 @@ it("Copilotは共有folderをnative追加directoryへ接続する", () => {
   assert.notEqual(configured.settingsKey, previous.settingsKey);
 });
 
-function createReadPermissionRequest(): PermissionRequest {
+function createReadPermissionRequest(): Extract<PermissionRequest, { kind: "read" }> {
   return {
     kind: "read",
     toolCallId: "tool-call-2",
     path: "F:/repo/src/index.ts",
-  } as unknown as PermissionRequest;
+    intention: "Read fixture",
+  };
 }
+
+const manualCopilotDecision = (kind: "approve-once" | "reject") => ({
+  kind: "attributed", result: { kind },
+  decisionContext: { source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user" },
+});
+
+const blockedCopilotDecision = {
+  kind: "attributed", result: { kind: "user-not-available" },
+  decisionContext: { source: "unattended_fallback", surface: "sdk", outcome: "autopilot_denied" },
+};
 
 describe("CopilotAdapter env", () => {
   it("Copilot child CLI では process warning を抑止する", () => {
@@ -1597,152 +1615,6 @@ it("Session generationごとのclientを分離しsettings-only clientをunbound�
   });
 
   // @test-value v2
-  // kind = "contract"
-  // claim = "stale接続のretry判定は開始だけの操作を許可し、取得済み本文・terminal操作・changed filesでは抑止する"
-  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
-  // fault = "未確定操作をretry blockerにする、または取得済み結果付きturnを再実行して副作用を重複する"
-  // observable = "shouldRetryCopilotTurnの結果"
-  // observation_boundary = "component-behavior"
-  // scope = "Copilot retry admission"
-  // lifecycle = "permanent"
-  // impact = "取得済み作業の重複実行を防ぐ"
-  // distinction = "取消testと型検査はstale失敗分類とpartial操作の組合せを検査しない"
-  // @end-test-value
-  it("進行途中の user-visible partial が無い stale connection / missing session だけ retry する", () => {
-    const emptyPartial = new ProviderTurnError("Connection is closed.", createPartialResult(), false);
-    const withAssistantText = new ProviderTurnError("Connection is closed.", createPartialResult({ assistantText: "4" }), false);
-    const missingSession = new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
-    const missingSessionCodeOnly = new ProviderTurnError("SessionNotFound", createPartialResult(), false);
-    const missingSessionSnakeCase = new ProviderTurnError("session_not_found", createPartialResult(), false);
-    const missingSessionWithRawItems = new ProviderTurnError(
-      "SessionNotFound: session not found",
-      createPartialResult({
-        providerMetadata: [{ provider: "copilot", kind: "diagnostic", summary: "SessionNotFound" }],
-      }),
-      false,
-    );
-    const missingSessionWithOperation = new ProviderTurnError(
-      "SessionNotFound: session not found",
-      createPartialResult({
-        artifact: { title: "Partial", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [{ type: "command_execution", summary: "dir", status: "in_progress" }] },
-      }),
-      false,
-    );
-    const missingSessionWithToolStartRawItems = new ProviderTurnError(
-      "SessionNotFound: session not found",
-      createPartialResult({
-        providerMetadata: [{ provider: "copilot", kind: "diagnostic", summary: "SessionNotFound" }],
-      }),
-      false,
-    );
-
-    assert.equal(shouldRetryCopilotTurn(emptyPartial), true);
-    assert.equal(shouldRetryCopilotTurn(withAssistantText), false);
-    assert.equal(shouldRetryCopilotTurn(missingSession), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionCodeOnly), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionSnakeCase), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionWithRawItems), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionWithToolStartRawItems), true);
-    assert.equal(shouldRetryCopilotTurn(missingSessionWithOperation), true);
-    for (const operation of [
-      { type: "command_execution", summary: "dir", status: "completed" },
-      { type: "command_execution", summary: "dir", status: "failed" },
-      { type: "command_execution", summary: "dir", status: "canceled" },
-    ]) {
-      assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
-        artifact: { title: "Partial", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: [operation] },
-      }), false)), false);
-    }
-    assert.equal(shouldRetryCopilotTurn(new ProviderTurnError("Connection is closed.", createPartialResult({
-      artifact: { title: "Partial", activitySummary: [], runChecks: [], changedFiles: [
-        { kind: "edit", path: "synthetic.txt", summary: "synthetic.txt updated", diffRows: [] },
-      ] },
-    }), false)), false);
-  });
-
-  it("CopilotAdapter は cached session の SessionNotFound を 1 回だけ internal retry する", async () => {
-    const adapter = {
-      composePrompt() {
-        return EMPTY_PROMPT;
-      },
-      runSessionTurn: CopilotAdapter.prototype.runSessionTurn,
-      runSessionTurnOnce: async () => {
-        throw new Error("not replaced");
-      },
-      resetRecoverableConnection: async () => undefined,
-    } as unknown as {
-      composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
-      runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult>;
-      runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
-      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
-    };
-
-    const input = createRunSessionInput({ threadId: "thread-stale" });
-    const attempts: string[] = [];
-    const resetCalls: string[] = [];
-    const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
-
-    adapter.runSessionTurnOnce = async (_input, _prompt) => {
-      attempts.push("attempt");
-      if (attempts.length === 1) {
-        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
-      }
-
-      return expected;
-    };
-    adapter.resetRecoverableConnection = async (nextInput) => {
-      resetCalls.push(nextInput.session.id);
-    };
-
-    const result = await adapter.runSessionTurn(input);
-
-    assert.equal(result, expected);
-    assert.equal(attempts.length, 2);
-    assert.deepEqual(resetCalls, [input.session.id]);
-  });
-
-  it("CopilotAdapter は SessionNotFound 後に同じ入力で internal retry する", async () => {
-    const adapter = {
-      composePrompt() {
-        return EMPTY_PROMPT;
-      },
-      runSessionTurn: CopilotAdapter.prototype.runSessionTurn,
-      runSessionTurnOnce: async () => {
-        throw new Error("not replaced");
-      },
-      resetRecoverableConnection: async () => undefined,
-    } as unknown as {
-      composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
-      runSessionTurn(input: RunSessionTurnInput): Promise<RunSessionTurnResult>;
-      runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
-      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
-    };
-
-    const attempts: string[] = [];
-    const resetCalls: string[] = [];
-    const expected = createPartialResult({ threadId: "thread-fresh", assistantText: "回復したよ。" });
-    const input: RunSessionTurnInput = createRunSessionInput({ threadId: "thread-stale" });
-
-    adapter.runSessionTurnOnce = async (nextInput) => {
-      attempts.push(nextInput.session.threadId);
-      if (attempts.length === 1) {
-        throw new ProviderTurnError("SessionNotFound: session not found", createPartialResult(), false);
-      }
-
-      return expected;
-    };
-    adapter.resetRecoverableConnection = async (nextInput) => {
-      resetCalls.push(nextInput.session.id);
-    };
-
-    const result = await adapter.runSessionTurn(input);
-
-    assert.equal(result, expected);
-    assert.deepEqual(attempts, ["thread-stale", "thread-stale"]);
-    assert.deepEqual(resetCalls, [input.session.id]);
-  });
-
-  // @test-value v2
   // kind = "invariant"
   // claim = "MCP elicitation schema の選択肢と制約を共通live fieldへ保持する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
@@ -2400,27 +2272,40 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "never approvalはCopilot write permission requestをapprove-onceへ変換する"
+  // claim = "CopilotのAuto Runは通常要求を今回だけ許可し、本人必須の要求には自動許可を返さない"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Approval-Modes" }
-  // fault = "never送信値を無視してwriteを拒否する"
-  // observable = "onPermissionRequestのdecision"
+  // fault = "通常writeを拒否するか、本人確認必須のread/writeを自動許可する"
+  // observable = "SDK callbackの通常・本人必須・確認不能時のdecisionと手動コールバックの引数"
   // observation_boundary = "component-behavior"
   // scope = "allow-all permission handler"
   // lifecycle = "permanent"
   // impact = "選択したpermission policyと実行が食い違う"
   // distinction = "untrusted/on-requestのpermission testとは異なるpolicy branch"
   // @end-test-value
-  it("allow-all permission handler は legacy approve-once を返す", async () => {
+  it("Copilot Auto Run skips ordinary confirmation but preserves mandatory human approval", async () => {
     const input = createRunSessionInput();
     input.session.approvalMode = "never";
     input.executionOptions = captureSessionExecutionOptions(input.session);
+    const manual: unknown[] = [];
+    input.onApprovalRequest = (_request, _signal, review, onDecisionSource) => {
+      manual.push(review);
+      onDecisionSource?.("manual");
+      return "approve";
+    };
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
     assert.ok(settings.config.onPermissionRequest);
-    await assert.doesNotReject(async () => {
-      const result = await settings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
-      assert.deepEqual(result, { kind: "approve-once" });
-    });
+    const invocation = { sessionId: "session-1" };
+    assert.deepEqual(await settings.config.onPermissionRequest(createWritePermissionRequest(), invocation), { kind: "approve-once" });
+    assert.deepEqual(manual, []);
+    for (const request of [createReadPermissionRequest(), createWritePermissionRequest()]) {
+      assert.deepEqual(await settings.config.onPermissionRequest({ ...request, managedApprovalRequired: true }, invocation),
+        manualCopilotDecision("approve-once"));
+    }
+    assert.deepEqual(manual, [undefined, undefined]);
+    const unavailable = buildCopilotSessionSettings({ ...input, onApprovalRequest: undefined }, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    assert.deepEqual(await unavailable.config.onPermissionRequest?.({ ...createWritePermissionRequest(), managedApprovalRequired: true }, invocation),
+      { kind: "user-not-available" });
   });
 
   // @test-value v2
@@ -2451,10 +2336,41 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "provider-controlled permissionはapproval callbackのapprove/denyとhandler不在をlegacy kindへ変換する"
-  // oracle = { type = "contract", ref = "src-electron/providers/copilot/copilot-adapter.ts: permission handler" }
-  // fault = "approval decisionを誤変換し、provider permissionを許可または拒否できない"
-  // observable = "approval callback入力と返却legacy kind"
+  // claim = "Copilot Safety Focusedは通常のSDK分類readを通し、実際の要承認read/writeとMCPの自己申告を承認しない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+  // fault = "すべてのcallbackを拒否して通常readを失うか、実askやMCP readOnlyヒントを承認不要と誤認する"
+  // observable = "通常read・要承認read/write・MCP callbackのSDK返却値と手動／審査bridgeの呼出"
+  // observation_boundary = "component-behavior"
+  // scope = "Copilot SDK permission callback、新しいSafety Focused"
+  // lifecycle = "permanent"
+  // risk_tags = ["authorization"]
+  // impact = "要承認操作が無断で実行されるか、通常読取まで使えなくなる"
+  // distinction = "runtime共通の実ask testはSDKの通常分類・promptRequestの差を通らない"
+  // @end-test-value
+  it("Copilot Safety Focused distinguishes read classification from a real approval prompt", async () => {
+    const input = createRunSessionInput();
+    input.executionOptions = { ...input.executionOptions, approvalMode: "safety-focused" };
+    input.onApprovalRequest = () => assert.fail("Safety Focused must not open an approval or a review");
+    const handler = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents).config.onPermissionRequest!;
+    const invocation = { sessionId: "session-1" };
+    const read = createReadPermissionRequest();
+    const readPrompt: NonNullable<Parameters<typeof handler>[1]["promptRequest"]> = { kind: "read", path: "F:/repo/sample.txt", intention: "Read fixture" };
+    assert.deepEqual(await handler(read, invocation), { kind: "approve-once" });
+    assert.deepEqual(await handler(read, { ...invocation, assistedApprovalAssessment: { status: "not-run", reason: "inactive" } }),
+      { kind: "approve-once" });
+    assert.deepEqual(await handler(read, { ...invocation, promptRequest: readPrompt }), { kind: "reject" });
+    assert.deepEqual(await handler({ ...read, managedApprovalRequired: true }, invocation), { kind: "reject" });
+    assert.deepEqual(await handler(createWritePermissionRequest(), invocation), { kind: "reject" });
+    const mcp = { kind: "mcp", serverName: "fixture", toolName: "test", args: {}, readOnly: true } as PermissionRequest;
+    assert.deepEqual(await handler(mcp, invocation), { kind: "reject" });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilotは資格を伏せた実要求を渡し、明示判断要求と本人必須・除外を分け、実回答だけを人間として返す"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: CopilotAdapterのon-requestとSDK応答" }
+  // fault = "明示判断を本人必須と誤る、managedやSDK除外を審査に出す、実要求の引数を落とす、資格を渡す、または出所不明な承認を採用する"
+  // observable = "approval callbackの審査入力・出所別のSDK応答"
   // observation_boundary = "public-boundary"
   // scope = "copilot-provider-permission"
   // lifecycle = "permanent"
@@ -2465,10 +2381,11 @@ describe("CopilotAdapter session settings", () => {
     const bindingReference = approvedInput.agentRuntimeBinding?.bindingReference ?? "";
     approvedInput.session.approvalMode = "on-request";
     approvedInput.executionOptions = captureSessionExecutionOptions(approvedInput.session);
-    const approvalRequests: unknown[] = [];
-    approvedInput.onApprovalRequest = async (request) => {
-      approvalRequests.push(request);
-      return "approve" as LiveApprovalDecision;
+    const approvalRequests: Array<{ request: LiveApprovalRequest; review: unknown }> = [];
+    approvedInput.onApprovalRequest = (request, _signal, review, onDecisionSource) => {
+      approvalRequests.push({ request, review });
+      onDecisionSource?.("manual");
+      return "approve";
     };
     const approvedSettings = buildCopilotSessionSettings(approvedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
 
@@ -2480,18 +2397,81 @@ describe("CopilotAdapter session settings", () => {
       fileName: `F:/repo/${bindingReference}.txt`,
     } as PermissionRequest, { sessionId: "session-1" });
     assert.deepEqual(readResult, { kind: "approve-once" });
-    assert.deepEqual(approvedWriteResult, { kind: "approve-once" });
+    assert.deepEqual(approvedWriteResult, manualCopilotDecision("approve-once"));
     assert.equal(approvalRequests.length, 1);
     assert.doesNotMatch(JSON.stringify(approvalRequests), new RegExp(bindingReference));
     assert.match(JSON.stringify(approvalRequests), new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+    const cleanWrite = { ...createWritePermissionRequest(), fileName: "F:/repo/review-target.txt", intention: "Create draft" } as PermissionRequest;
+    await approvedSettings.config.onPermissionRequest?.(cleanWrite, { sessionId: "session-1" });
+    assert.deepEqual(approvalRequests[1].review, { operation: { request: cleanWrite, workspacePath: "F:/repo" } });
+    await approvedSettings.config.onPermissionRequest?.({ ...createWritePermissionRequest(), managedApprovalRequired: true }, { sessionId: "session-1" });
+    assert.equal(approvalRequests.length, 3);
+    assert.equal(approvalRequests[2].review, undefined);
+    const request = createReadPermissionRequest();
+    const promptRequest = { ...request, resolvedPath: "F:/resolved/src/index.ts" };
+    const assistedApprovalAssessment = { status: "completed", recommendation: "requireApproval" } as const;
+    const invocation = { sessionId: "session-1", promptRequest, assistedApprovalAssessment };
+    assert.deepEqual(await approvedSettings.config.onPermissionRequest(request, invocation), manualCopilotDecision("approve-once"));
+    assert.deepEqual(approvalRequests[3].review, { operation: { request, workspacePath: "F:/repo", promptRequest, assistedApprovalAssessment } });
+    const confidentialPrompt = { ...promptRequest, intention: `Review ${bindingReference}` };
+    const confidentialAssessment = { ...assistedApprovalAssessment, rationale: `Rationale ${bindingReference}` };
+    await approvedSettings.config.onPermissionRequest(request, { sessionId: "session-1", promptRequest: confidentialPrompt,
+      assistedApprovalAssessment: confidentialAssessment });
+    assert.deepEqual(approvalRequests[4].review, { operation: { request, workspacePath: "F:/repo",
+      promptRequest: { ...confidentialPrompt, intention: `Review ${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}` },
+      assistedApprovalAssessment: { ...confidentialAssessment, rationale: `Rationale ${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}` },
+    } });
+    const ineligibleReviews: unknown[] = [];
+    const ineligibleHandler = buildCopilotSessionSettings({ ...approvedInput,
+      onApprovalRequest: (_request, _signal, review, onDecisionSource) => {
+        ineligibleReviews.push(review);
+        onDecisionSource?.("reviewer");
+        return "approve";
+      } }, EMPTY_PROMPT, "client-key", resolveCustomAgents).config.onPermissionRequest;
+    for (const [blockedRequest, blockedInvocation] of [
+      [request, { ...invocation, promptRequest: { ...promptRequest, managedApprovalRequired: true } }],
+      [request, { ...invocation, assistedApprovalAssessment: { status: "excluded", reason: "content-excluded" } }],
+      [request, { ...invocation, assistedApprovalAssessment: { status: "failed", reason: "model_error" } }],
+      [request, { ...invocation, promptRequest: undefined }],
+      [{ ...request, path: "" }, invocation],
+      [{ ...request, requestSandboxBypass: true }, invocation],
+    ] as const) {
+      assert.deepEqual(await ineligibleHandler(blockedRequest, blockedInvocation), blockedCopilotDecision);
+      assert.deepEqual(ineligibleReviews.splice(0), [undefined]);
+    }
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";
     deniedInput.executionOptions = captureSessionExecutionOptions(deniedInput.session);
-    deniedInput.onApprovalRequest = async () => "deny" as LiveApprovalDecision;
+    deniedInput.onApprovalRequest = (_request, _signal, _review, onDecisionSource) => {
+      onDecisionSource?.("manual");
+      return "deny";
+    };
     const deniedSettings = buildCopilotSessionSettings(deniedInput, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const deniedWriteResult = await deniedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
-    assert.deepEqual(deniedWriteResult, { kind: "reject" });
+    assert.deepEqual(deniedWriteResult, manualCopilotDecision("reject"));
+
+    for (const source of [undefined, "blocked"] as const) {
+      const handler = buildCopilotSessionSettings({ ...deniedInput, onApprovalRequest: (_request, _signal, _review, onDecisionSource) => {
+        if (source) onDecisionSource?.(source);
+        return "approve";
+      } }, EMPTY_PROMPT, "client-key", resolveCustomAgents).config.onPermissionRequest;
+      assert.deepEqual(await handler(request, invocation), blockedCopilotDecision);
+    }
+
+    const controller = new AbortController();
+    const reviewer = Promise.withResolvers<"approve">();
+    const canceled = buildCopilotSessionSettings({ ...deniedInput, signal: controller.signal,
+      onApprovalRequest: async (_request, signal, _review, onDecisionSource) => {
+        assert.equal(signal, controller.signal);
+        const decision = await reviewer.promise;
+        onDecisionSource?.("reviewer");
+        return decision;
+      } }, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    const canceledResponse = canceled.config.onPermissionRequest(request, invocation);
+    controller.abort();
+    reviewer.resolve("approve");
+    assert.deepEqual(await canceledResponse, blockedCopilotDecision);
 
     const missingHandlerInput = createRunSessionInput();
     missingHandlerInput.session.approvalMode = "on-request";
@@ -2506,7 +2486,7 @@ describe("CopilotAdapter session settings", () => {
   // claim = "Copilotの同一request objectは判断を共有し、同じtoolCallIdやsummaryの別要求は会話内FIFOで個別判断する"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: SessionApprovalService" }
   // fault = "toolCallIdまたはsummaryの一致で別要求をまとめるか、後続要求が先頭表示を上書きしてcallbackを未解決にする"
-  // observable = "live approvalRequest、通知request ID、全permission callbackのapprove-once/reject結果"
+  // observable = "live approvalRequest、通知request ID、各callbackのapprove-once/reject/user-not-availableと出所"
   // observation_boundary = "consumer"
   // scope = "Copilot permission handlerと実SessionApprovalServiceの接続"
   // lifecycle = "permanent"
@@ -2539,9 +2519,9 @@ describe("CopilotAdapter session settings", () => {
       },
       notifyApproval: (_sessionId, requestId) => { notifications.push(requestId); },
     });
-    input.onApprovalRequest = (request) => {
+    input.onApprovalRequest = (request, _signal, _review, onDecisionSource) => {
       requests.push(request);
-      return service.waitForLiveApprovalDecision(input.session.id, request, controller.signal);
+      return service.waitForLiveApprovalDecision(input.session.id, request, controller.signal, undefined, onDecisionSource);
     };
     const settings = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
     const handler = settings.config.onPermissionRequest;
@@ -2573,10 +2553,10 @@ describe("CopilotAdapter session settings", () => {
     service.reset();
     assert.equal(state.approvalRequest, null);
     assert.deepEqual(await Promise.all(decisions), [
-      { kind: "approve-once" },
-      { kind: "approve-once" },
-      { kind: "reject" },
-      { kind: "reject" },
+      manualCopilotDecision("approve-once"),
+      manualCopilotDecision("approve-once"),
+      manualCopilotDecision("reject"),
+      blockedCopilotDecision,
     ]);
   });
 

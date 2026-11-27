@@ -13,29 +13,34 @@ export type MarkdownFilePreviewProps = {
 };
 
 export function MarkdownFilePreviewFrame({
-  path, href, title, link, format, loading, onReload, shellRef, children, sourceAttributes,
+  path, href, title, link, format, loading, reloading, onReload, shellRef, children, sourceAttributes, headerActions,
 }: Omit<MarkdownFilePreviewProps, "children"> & {
   link: ReactNode;
   format: "HTML" | "PDF";
   loading: boolean;
+  reloading: boolean;
   onReload?: () => void;
   shellRef?: Ref<HTMLSpanElement>;
   children: ReactNode;
+  headerActions?: ReactNode;
 }) {
   const reloadLabel = `Reload ${format} Preview`;
   return (
     <span ref={shellRef} className="message-file-preview" data-format={format.toLowerCase()}
       aria-label={title || `${format} Preview`}>
       <span {...sourceAttributes} className="message-file-preview-header">
-        <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
-        {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
-          <button type="button" onClick={onReload} disabled={loading}
-            aria-busy={loading || undefined} aria-label={reloadLabel} title={reloadLabel}>
-            <ButtonContent busy={loading} busyLabel={`Reloading ${format} Preview`}>
-              <span aria-hidden="true">↻</span>
-            </ButtonContent>
-          </button>
+        {onReload || headerActions ? <span className="message-file-preview-header-actions">
+          {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
+            <button type="button" onClick={onReload} disabled={loading}
+              aria-busy={reloading || undefined} aria-label={reloadLabel} title={reloadLabel}>
+              <ButtonContent busy={reloading} busyLabel={`Reloading ${format} Preview`}>
+                <span aria-hidden="true">↻</span>
+              </ButtonContent>
+            </button>
+          </span> : null}
+          {headerActions}
         </span> : null}
+        <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
       </span>
       <span className="message-file-preview-auxiliary message-file-preview-content"
         aria-label={`Embedded ${format}`} aria-busy={loading}>

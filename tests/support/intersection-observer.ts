@@ -2,19 +2,21 @@ export function installIntersectionObserver(autoIntersect = true) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "IntersectionObserver");
   const observers: TestIntersectionObserver[] = [];
   class TestIntersectionObserver {
-    private target: Element | null = null;
+    private targets = new Set<Element>();
     constructor(private readonly callback: IntersectionObserverCallback) {
       observers.push(this);
     }
     observe(target: Element) {
-      this.target = target;
-      if (autoIntersect) queueMicrotask(() => this.intersect(true));
+      this.targets.add(target);
+      if (autoIntersect) queueMicrotask(() => { if (this.targets.has(target)) this.notify([target], true); });
     }
-    disconnect() { this.target = null; }
-    intersect(isIntersecting: boolean) {
-      if (!this.target) return;
+    unobserve(target: Element) { this.targets.delete(target); }
+    disconnect() { this.targets.clear(); }
+    intersect(isIntersecting: boolean) { this.notify([...this.targets], isIntersecting); }
+    private notify(targets: Element[], isIntersecting: boolean) {
+      if (!targets.length) return;
       this.callback(
-        [{ target: this.target, isIntersecting } as IntersectionObserverEntry],
+        targets.map((target) => ({ target, isIntersecting }) as IntersectionObserverEntry),
         this as unknown as IntersectionObserver,
       );
     }

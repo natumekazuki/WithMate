@@ -2,6 +2,7 @@ import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
+import { supportsWithMateAutoReview } from "../../../src-shared/settings/withmate-auto-review.js";
 import {
   applyAuxiliarySessionApprovalModeChange,
   applyAuxiliarySessionRuntimeOptionsPatch,
@@ -16,6 +17,7 @@ import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } fro
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import { captureSessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
+import type { SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
 import type { AuxiliarySessionBinding } from "../use-auxiliary-workspace.js";
 
 export class AuxiliaryExecutionOptionsOwner {
@@ -27,6 +29,7 @@ export class AuxiliaryExecutionOptionsOwner {
     isReadOnly: boolean;
     recipe: (current: AuxiliarySession) => AuxiliarySession;
     confirmedReviewerChange?: ConfirmedReviewerChange;
+    approvalChoice?: SessionApprovalChoice;
     onFeedback: (feedback: { ownerId: string; message: string } | null) => void;
   }): Promise<void> {
     const { api, binding } = input;
@@ -37,7 +40,8 @@ export class AuxiliaryExecutionOptionsOwner {
     if (input.confirmedReviewerChange && (current.provider !== "claude"
       || current.codexReviewer !== "auto-review"
       || current.approvalMode !== input.confirmedReviewerChange.previousApprovalMode)) return;
-    if (!input.confirmedReviewerChange && current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
+    if (!input.confirmedReviewerChange && !input.approvalChoice && current.approvalMode === "never"
+      && next.codexReviewer !== current.codexReviewer) return;
     const key = `${current.id}:${current.createdAt}`;
     const revision = (this.revisions.get(key) ?? 0) + 1;
     this.revisions.set(key, revision);
@@ -53,6 +57,7 @@ export class AuxiliaryExecutionOptionsOwner {
       createdAt: current.createdAt,
       executionOptions: captureSessionExecutionOptions(next),
       ...(input.confirmedReviewerChange ? { confirmedReviewerChange: input.confirmedReviewerChange } : {}),
+      ...(input.approvalChoice ? { approvalChoice: input.approvalChoice } : {}),
     }).then((result) => {
       if (result.status === "accepted" && !result.checkpointSaved) {
         void api.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id } });
@@ -113,9 +118,14 @@ export async function runAuxiliaryCodexReviewerChangeOperation(input: {
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
-  await input.updateActiveAuxiliarySession((current) => (
-    applyAuxiliarySessionCodexReviewerChange(current, input.codexReviewer, input.createTimestampLabel())
-  ));
+  await input.updateActiveAuxiliarySession((current) => {
+    if (supportsWithMateAutoReview(current.provider)) {
+      if (current.approvalMode !== "on-request") return current;
+      return applyAuxiliarySessionRuntimeOptionsPatch(current,
+        { codexReviewer: input.codexReviewer, withMateReviewerExplicit: true }, input.createTimestampLabel());
+    }
+    return applyAuxiliarySessionCodexReviewerChange(current, input.codexReviewer, input.createTimestampLabel());
+  });
 }
 
 export async function runAuxiliaryModelChangeOperation(input: {

@@ -14,16 +14,22 @@ import { toProviderTextPreview } from "./provider-payload-limits.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import { captureSessionTurnQueueDisplay, type SessionSteerOrigin, type SessionSteerResult, type SessionTurnQueueOwner, type SessionTurnQueueReceipt, type SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
-import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
+import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchControl, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
+import type { CancelSessionRunRequest } from "../../src-shared/session/runtime-state.js";
+import type { SessionTurnQueueService } from "./session-turn-queue-service.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
 import {
   ProviderTurnError,
+  reportApprovalDecisionSource,
+  type ApprovalDecisionSourceObserver,
   type ProviderCodingAdapter,
   type RunSessionTurnResult,
   type RunSessionTurnInput,
 } from "../providers/provider-runtime.js";
 import { composeProviderInput } from "../providers/provider-prompt.js";
+import { sessionReplySchema, type SessionReply } from "../../src-shared/session/session-reply.js";
+import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
@@ -31,6 +37,9 @@ import { formatCurrentDateTime } from "./current-date.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
+import { questionAnswerHistory } from "./question-answer-history.js";
+import { supportsWithMateAutoReview } from "../../src-shared/settings/withmate-auto-review.js";
+import type { PendingApprovalReview, StartWithMateApprovalReview, WithMateApprovalReviewTurn } from "./withmate-approval-review.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -54,8 +63,10 @@ export type SessionRuntimeServiceDeps = {
   assertCapturedComposerAttachmentsAvailable?(session: Session, attachments: ComposerAttachment[]): Promise<void>;
   onSessionRunReleased?(sessionId: string): void;
   getQueuedInputReceipt?(receipt: SessionTurnQueueReceipt): Awaitable<SessionTurnQueueReceipt | null>;
-  appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Awaitable<Session>;
-  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Awaitable<Session>;
+  appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }, replyTo?: SessionReply): Awaitable<Session>;
+  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin, questionRequestId?: string, replyTo?: SessionReply): Awaitable<Session>;
+  assertSavedReplyTo?(reference: SessionReply): Promise<void>;
+  readMainMessageThread?(target: MainSessionTarget, seq: number): Promise<MainSessionTarget | null | undefined>;
   settleRunningInput?(session: Session, messageSeq: number, turnId: number, state: Exclude<TurnInputDeliveryState, "pending">): Awaitable<Session>;
   checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
   appendTerminalSession(
@@ -63,6 +74,8 @@ export type SessionRuntimeServiceDeps = {
     terminalCommit: SessionTurnTerminalCommit,
     options?: { confirmedFinalAssistantText?: string | null },
   ): Awaitable<Session>;
+  /** Opens the in-memory source-display scope. Its synchronous disposer releases only this Turn, without writing storage. */
+  beginSourceDisplayTurn?(session: Session, turnId: string): () => void;
   clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -84,7 +97,10 @@ export type SessionRuntimeServiceDeps = {
     sessionId: string,
     request: LiveApprovalRequest,
     signal: AbortSignal,
+    review?: PendingApprovalReview | null,
+    onDecisionSource?: ApprovalDecisionSourceObserver,
   ): Promise<LiveApprovalDecision> | LiveApprovalDecision;
+  startWithMateApprovalReview?: StartWithMateApprovalReview;
   waitForElicitationResponse(
     sessionId: string,
     request: LiveElicitationRequest,
@@ -113,6 +129,7 @@ export type SessionRuntimeServiceDeps = {
   endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
+  onSentInputChanged?(origin: SessionSteerOrigin): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
@@ -343,34 +360,13 @@ export function isRetryableStaleThreadSessionError(error: unknown): boolean {
   );
 }
 
-function isRetryableCodexThreadBootstrapError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalizedMessage = message.trim().toLowerCase();
-  if (!normalizedMessage) {
-    return false;
-  }
-
-  return /codex exec exited with code 1:\s*reading prompt from stdin\.\.\./.test(normalizedMessage);
-}
-
-function shouldRetryUnusableThreadRun(
-  error: unknown,
-  partialResult: RunSessionTurnResult | null | undefined,
-): boolean {
-  if (hasMeaningfulPartialRunResult(partialResult)) {
-    return false;
-  }
-
-  return isRetryableStaleThreadSessionError(error) || isRetryableCodexThreadBootstrapError(error);
-}
-
 function shouldResetFailedSessionThread(
   error: unknown,
   currentThreadId: string,
   partialResult: RunSessionTurnResult | null | undefined,
   canceled: boolean,
 ): boolean {
-  if (canceled || !shouldRetryUnusableThreadRun(error, partialResult)) {
+  if (canceled || hasMeaningfulPartialRunResult(partialResult) || !isRetryableStaleThreadSessionError(error)) {
     return false;
   }
 
@@ -467,6 +463,7 @@ function queuedInputProvenance(receipt: SessionTurnQueueReceipt, input: SessionT
     originalChanged: receipt.accepted ? !isDeepStrictEqual(
       { text: receipt.accepted.request.userMessage, attachments: receipt.accepted.attachments },
       { text: input.request.userMessage, attachments: input.attachments }) : null,
+    ...(input.retrySource ? { retrySource: input.retrySource } : {}),
     ...(input.coordination ? { coordinationOperation: input.coordination.operation, coordination: readCoordinationNotification(input) ?? undefined } : {}) };
 }
 
@@ -484,6 +481,22 @@ type ParentSessionInput = {
   messageSeq: number | null;
 };
 
+export async function stopWindowSessionRun(
+  request: CancelSessionRunRequest,
+  runtime: Pick<SessionRuntimeService, "stopSessionTurn">,
+  queue: Pick<SessionTurnQueueService, "stopClaim">,
+  assertAuthorized: () => void,
+  onApply: () => void,
+): Promise<void> {
+  const { sessionId, incarnationId, execution } = request;
+  if (execution.kind === "receipt") {
+    assertAuthorized();
+    await queue.stopClaim({ sessionId, incarnationId }, execution.id, onApply);
+  } else {
+    await runtime.stopSessionTurn(sessionId, incarnationId, execution.id, assertAuthorized, onApply);
+  }
+}
+
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly startingSessionRuns = new Set<string>();
@@ -495,8 +508,8 @@ export class SessionRuntimeService {
   private readonly pendingSessionInputs = new Map<string, Promise<SteerSessionTurnResult>>();
   private readonly dispatchedSessionInputs = new Set<string>();
   private readonly finishingSessionTurns = new Set<string>();
-  private readonly appendSessionInput = new Map<string, (text: string, queued?: SessionTurnQueueReceipt, inputTurnId?: string) => Promise<void>>();
-  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
+  private readonly appendSessionInput = new Map<string, (text: string, queued?: SessionTurnQueueReceipt, inputTurnId?: string, replyTo?: SessionReply) => Promise<void>>();
+  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin, questionRequestId?: string, replyTo?: SessionReply): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
   private readonly pendingRuns = new Set<Promise<Session>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
@@ -521,6 +534,15 @@ export class SessionRuntimeService {
       || this.waitingSessionRunAdmissions.has(sessionId)
       || this.pendingSessionInputs.has(sessionId)
       || this.finishingSessionTurns.has(sessionId);
+  }
+
+  getCloseRunIdentity(sessionId: string): object | null {
+    if (!this.isRunInFlight(sessionId)) return null;
+    const identity = this.sessionRunControllers.get(sessionId)
+      ?? this.terminatingSessionRuns.get(sessionId)
+      ?? this.pendingSessionInputs.get(sessionId);
+    if (!identity) throw new Error("Session run identity is unavailable.");
+    return identity;
   }
 
   private cancellationState(sessionId: string): LiveSessionRunState["cancellationState"] {
@@ -598,7 +620,10 @@ export class SessionRuntimeService {
   }
 
   cancelRun(sessionId: string): void {
-    const controller = this.sessionRunControllers.get(sessionId);
+    this.requestRunCancel(sessionId, this.sessionRunControllers.get(sessionId));
+  }
+
+  private requestRunCancel(sessionId: string, controller: AbortController | undefined): void {
     if (this.pendingSessionRunCancels.has(sessionId)) {
       return;
     }
@@ -623,14 +648,23 @@ export class SessionRuntimeService {
     this.deps.broadcastLiveSessionRun(sessionId);
   }
 
-  async stopSessionTurn(sessionId: string, incarnationId: string, expectedTurnId: string, assertAuthorized?: () => void | Promise<void>): Promise<{ outcome: "applied" | "not-applied"; turnId: string }> {
+  private stopRunController(sessionId: string, controller: AbortController, onApply?: () => void): boolean {
+    if (this.sessionRunControllers.get(sessionId) !== controller || this.finishingSessionTurns.has(sessionId)) return false;
+    if (!controller.signal.aborted) {
+      onApply?.();
+      this.requestRunCancel(sessionId, controller);
+    }
+    return true;
+  }
+
+  async stopSessionTurn(sessionId: string, incarnationId: string, expectedTurnId: string, assertAuthorized?: () => void | Promise<void>, onApply?: () => void): Promise<{ outcome: "applied" | "not-applied"; turnId: string }> {
+    const controller = this.sessionRunControllers.get(sessionId);
     const session = await this.deps.getSession(sessionId);
     await assertAuthorized?.();
     const live = this.deps.getLiveSessionRun(sessionId);
     if (!expectedTurnId?.trim() || !incarnationId?.trim() || !session || getSessionIncarnationId(session) !== incarnationId
       || live?.sessionTurnId !== expectedTurnId || !this.inFlightSessionRuns.has(sessionId)
-      || this.finishingSessionTurns.has(sessionId)) return { outcome: "not-applied", turnId: expectedTurnId };
-    this.cancelRun(sessionId);
+      || !controller || !this.stopRunController(sessionId, controller, onApply)) return { outcome: "not-applied", turnId: expectedTurnId };
     return { outcome: "applied", turnId: expectedTurnId };
   }
 
@@ -671,11 +705,17 @@ export class SessionRuntimeService {
     } catch (error) {
       return { outcome: parent?.dispatched ? "unknown" : "not-applied", turnId, messageSeq: parent?.messageSeq ?? null,
         reason: error instanceof Error ? error.message : "The Steer result could not be confirmed." };
+    } finally {
+      // A lost storage reply may still have committed pending/not-sent input.
+      // Invalidate its exact source without treating the operation as accepted.
+      if (parent) {
+        try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot change the input outcome. */ }
+      }
     }
   }
 
-  answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string): Promise<SteerSessionTurnResult> {
-    return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message);
+  answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string, requestId?: string): Promise<SteerSessionTurnResult> {
+    return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message, undefined, requestId);
   }
 
   steerQueuedSessionTurn(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<SteerSessionTurnResult> {
@@ -683,7 +723,17 @@ export class SessionRuntimeService {
     return this.sendSessionInput(receipt.sessionId, { expectedTurnId, userMessage: receipt.dispatched.request.userMessage }, receipt);
   }
 
-  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput): Promise<SteerSessionTurnResult> {
+  async getCoordinationInputTurnId(receipt: SessionTurnQueueReceipt): Promise<string | null> {
+    const live = this.deps.getLiveSessionRun(receipt.sessionId);
+    const session = await this.deps.getSession(receipt.sessionId);
+    const kind = await this.deps.isAuxiliarySession?.(receipt.sessionId) ? "auxiliary" : "main";
+    if (!session || getSessionIncarnationId(session) !== receipt.incarnationId || session.provider !== "codex"
+      || receipt.captured.coordination?.targetKind !== kind || !live?.turnId
+      || !this.canAcceptSessionInput(receipt.sessionId, live.turnId)) return null;
+    return live.turnId;
+  }
+
+  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput, questionRequestId?: string): Promise<SteerSessionTurnResult> {
     const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
       || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
@@ -706,6 +756,10 @@ export class SessionRuntimeService {
     let dispatched = false;
     // Register the input before preparation starts, including synchronous deps.
     const operation = Promise.resolve().then(async () => {
+      const reference = queued ? queued.dispatched?.request.replyTo : request.replyTo;
+      const replyTo = reference === undefined ? undefined : sessionReplySchema.parse(reference);
+      const isAuxiliary = replyTo && await this.deps.isAuxiliarySession?.(sessionId);
+      if (replyTo && !queued) await this.deps.assertSavedReplyTo?.(replyTo);
       assertActiveTurn();
       const session = await this.deps.getSession(sessionId);
       if (!session || session.provider !== "codex" || isReadOnlySession(session)) throw new Error("This session cannot accept input.");
@@ -738,19 +792,28 @@ export class SessionRuntimeService {
       this.dispatchedSessionInputs.add(sessionId);
       let inputSeq: number | undefined;
       try {
-        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin);
+        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin, questionRequestId, replyTo);
         if (parent) parent.messageSeq = inputSeq ?? null;
+        if (parent) {
+          try { this.deps.onSentInputChanged?.(parent.origin); } catch { /* Publication cannot interrupt Provider dispatch. */ }
+        }
         assertActiveTurn();
         dispatched = true;
         if (parent) parent.dispatched = true;
-        const inputText = providerMessage ?? request.userMessage.trim();
+        const inputText = providerMessage ?? (queued ? request.userMessage : request.userMessage.trim());
+        const provenance = queued ? queuedInputProvenance(queued, queued.dispatched!) : parent ? { origin: parent.origin, originalChanged: false } : undefined;
+        const messageIdentity = replyTo && inputSeq !== undefined && !isAuxiliary
+          ? { sessionId, incarnationId: getSessionIncarnationId(session), seq: inputSeq } : undefined;
+        // Coordination is delivered into the same live Turn. Its queue acceptance
+        // records that Turn's thread; there is no new saved message identity yet.
+        const mainConversationFrame = queued?.dispatched?.coordination?.operation === "answer"
+          ? queued.dispatched.request.mainConversationFrame : undefined;
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId,
-          userMessage: queued ? composeProviderInput(inputText, queuedInputProvenance(queued, queued.dispatched!))
-            : parent ? composeProviderInput(inputText, { origin: parent.origin, originalChanged: false }) : inputText, attachments: preview.attachments });
+          userMessage: provenance || replyTo ? composeProviderInput(inputText, provenance, !!queued, { replyTo, messageIdentity, mainConversationFrame }) : inputText, attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, "confirmed");
-        else await appendInput(request.userMessage.trim(), queued, request.expectedTurnId);
+        else await appendInput(queued ? request.userMessage : request.userMessage.trim(), queued, request.expectedTurnId, replyTo);
         return result;
       } catch (error) {
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, dispatched ? "unknown" : "not-sent");
@@ -786,11 +849,15 @@ export class SessionRuntimeService {
     return this.trackRun(this.executeSessionTurn(sessionId, request));
   }
 
-  async runQueuedSessionTurn(receipt: SessionTurnQueueReceipt, onStarted: QueuedTurnContext["onStarted"]): Promise<SessionTurnQueueDispatchResult> {
+  async runQueuedSessionTurn(receipt: SessionTurnQueueReceipt, onStarted: QueuedTurnContext["onStarted"], control?: SessionTurnQueueDispatchControl): Promise<SessionTurnQueueDispatchResult> {
     if (!receipt.dispatched) throw new Error("The queued turn does not have a fixed dispatch snapshot.");
     const queued: QueuedTurnContext = { receipt, input: receipt.dispatched, onStarted };
+    const controller = new AbortController();
+    if (control && !control.bindCancel((onApply) => this.stopRunController(receipt.sessionId, controller, onApply))) {
+      return { state: "canceled", reason: "Session setup was canceled" };
+    }
     try {
-      await this.trackRun(this.executeSessionTurn(receipt.sessionId, queued.input.request, queued));
+      await this.trackRun(this.executeSessionTurn(receipt.sessionId, queued.input.request, queued, controller));
     } catch (error) {
       if (queued.outcome) return queued.outcome;
       if (error instanceof QueuedTurnPreStartCanceledError && !this.isRunInFlight(receipt.sessionId)) {
@@ -815,9 +882,8 @@ export class SessionRuntimeService {
     return run;
   }
 
-  private async executeSessionTurn(sessionId: string, request: RunSessionTurnRequest, queued?: QueuedTurnContext): Promise<Session> {
+  private async executeSessionTurn(sessionId: string, request: RunSessionTurnRequest, queued?: QueuedTurnContext, runAbortController = new AbortController()): Promise<Session> {
     const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
-    const runAbortController = new AbortController();
     if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
       logSessionRunStuckInvestigation("runtime.admission.rejected", {
         sessionId,
@@ -981,6 +1047,8 @@ export class SessionRuntimeService {
     }
 
     const nextMessage = request.userMessage.trim();
+    const replyTo = request.replyTo === undefined ? undefined : sessionReplySchema.parse(request.replyTo);
+    if (!queued && replyTo) await this.deps.assertSavedReplyTo?.(replyTo);
     if (!nextMessage) {
       throw new Error("Enter a message before sending.");
     }
@@ -1042,6 +1110,7 @@ export class SessionRuntimeService {
     let runningSession: Session;
     let initialLiveState: LiveSessionRunState;
     let runningTurn!: SessionTurnRecord;
+    let queueReceipt: LiveSessionRunState["queueReceipt"];
     let setupLiveRun = false;
     let setupRunningSessionSaved = false;
     try {
@@ -1050,7 +1119,7 @@ export class SessionRuntimeService {
         updatedAt: currentTimestampLabel(),
         status: "running",
         runState: "running",
-        messages: [...session.messages, { role: "user", text: nextMessage }],
+        messages: [...session.messages, { role: "user", text: nextMessage, ...(replyTo ? { replyTo } : {}) }],
         ...(session.messageCount !== undefined ? { messageCount: session.messageCount + 1 } : {}),
       };
 
@@ -1064,6 +1133,7 @@ export class SessionRuntimeService {
         this.unreleasedTurnIds.set(sessionId, String(runningTurn.id));
         if (typeof runningTurn.userMessageSeq !== "number") throw new Error("The queued turn message identity was not persisted.");
         await queued.onStarted({ turnId: String(runningTurn.id), userMessageSeq: runningTurn.userMessageSeq });
+        queueReceipt = { id: queued.receipt.id, incarnationId: queued.receipt.incarnationId, userMessageSeq: runningTurn.userMessageSeq };
       } else {
         runningSession = await this.deps.persistRunningTurnStart(runningSession, session.messageCount ?? session.messages.length);
       }
@@ -1074,11 +1144,13 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messageCount ?? runningSession.messages.length,
       });
-      throwIfRunCanceled(runAbortController.signal);
+      // A confirmed queued start owns a saved Turn and must save its terminal
+      // cancellation, even if Stop arrived while the start write was in flight.
+      if (!queued) throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
         ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
-        ...(queued ? { sessionTurnId: String(runningTurn.id) } : {}),
+        ...(queued ? { sessionTurnId: String(runningTurn.id), queueReceipt } : {}),
         backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
         reasoningText: "",
       };
@@ -1122,24 +1194,25 @@ export class SessionRuntimeService {
       throw error;
     }
     let terminalSettled = false;
+    let approvalReview: WithMateApprovalReviewTurn | undefined;
+    let providerAgentRuntimeTurnHandle: unknown;
+    let releaseSourceDisplays: (() => void) | undefined;
     let terminalPersistenceStarted = false;
-    let runtimePersistenceFailed = false;
-    let liveProgressGeneration = 0;
     let activeRunningSession = runningSession;
     let queuedInputRecoveryError: QueuedInputRuntimeRecoveryError | null = null;
     if (runningSession.provider === "codex" && this.deps.beginRunningInput && this.deps.settleRunningInput) {
       this.directSessionInput.set(sessionId, {
-        begin: async (text, nativeTurnId, attachments, origin) => {
+        begin: async (text, nativeTurnId, attachments, origin, questionRequestId, replyTo) => {
           const messageSeq = activeRunningSession.messageCount ?? activeRunningSession.messages.length;
           try {
-            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin);
+            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin, questionRequestId, replyTo);
           } catch (error) {
             // A lost append reply must not lead to Provider dispatch or a second append.
             const canonical = await this.deps.getSession(sessionId);
             if (canonical && getSessionIncarnationId(canonical) === getSessionIncarnationId(activeRunningSession)
               && canonical.messageCount === messageSeq + 1) {
-              activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text,
-                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending", ...(origin ? { origin } : {}) } }] };
+              activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text, ...(replyTo ? { replyTo } : {}),
+                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending", ...(origin ? { origin } : {}), ...(questionRequestId ? { questionRequestId } : {}) } }] };
               activeRunningSession = await this.deps.settleRunningInput!(activeRunningSession, messageSeq, runningTurn.id, "not-sent");
             } else if (!canonical || canonical.messageCount !== messageSeq) {
               queuedInputRecoveryError = new QueuedInputRuntimeRecoveryError("The direct input append outcome could not be confirmed.");
@@ -1156,10 +1229,10 @@ export class SessionRuntimeService {
         },
       });
     }
-    if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text, queuedInput, inputTurnId) => {
+    if (runningSession.provider === "codex") this.appendSessionInput.set(sessionId, async (text, queuedInput, inputTurnId, replyTo) => {
       try {
         activeRunningSession = await this.deps.appendRunningInput({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id,
-          queuedInput && inputTurnId ? { queueId: queuedInput.id, inputTurnId } : undefined);
+          queuedInput && inputTurnId ? { queueId: queuedInput.id, inputTurnId } : undefined, replyTo);
       } catch (error) {
         if (!queuedInput || !inputTurnId) throw error;
         try {
@@ -1169,7 +1242,7 @@ export class SessionRuntimeService {
           const canonical = await this.deps.getSession(sessionId);
           if (!canonical || getSessionIncarnationId(canonical) !== queuedInput.incarnationId
             || canonical.messageCount !== (activeRunningSession.messageCount ?? activeRunningSession.messages.length) + 1) throw error;
-          activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text }] };
+          activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text, ...(replyTo ? { replyTo } : {}) }] };
         } catch (recoveryError) {
           queuedInputRecoveryError = new QueuedInputRuntimeRecoveryError(recoveryError instanceof Error ? recoveryError.message : "Queued input runtime persistence could not be confirmed.");
           throw queuedInputRecoveryError;
@@ -1178,22 +1251,54 @@ export class SessionRuntimeService {
       this.deps.broadcastLiveSessionRun(sessionId);
     });
     const runProviderTurn = async (turnSession: Session) => {
-      const progressGeneration = ++liveProgressGeneration;
+      throwIfRunCanceled(runAbortController.signal);
       const elicitationResponses: Promise<LiveElicitationResponse>[] = [];
+      const pendingQuestionAnswers = new Map<string, { request: LiveElicitationRequest; response: LiveElicitationResponse }>();
+      const recordQuestionAnswer = (requestId: string) => {
+        const answer = pendingQuestionAnswers.get(requestId);
+        pendingQuestionAnswers.delete(requestId);
+        if (!answer || terminalSettled) return;
+        const fields = questionAnswerHistory(answer.request, answer.response);
+        const live = this.deps.getLiveSessionRun(sessionId);
+        if (!fields || !live) return;
+        this.setRuntimeLiveState(sessionId, { ...live, elicitationRecords: live.elicitationRecords?.map((record) =>
+          record.requestId !== requestId ? record : { ...record, fields: record.fields.map((field, index) =>
+            fields[index] ? { ...field, answer: fields[index] } : field) }) });
+        this.deps.broadcastLiveSessionRun(sessionId);
+      };
       const effectiveTurnSession = { ...await (this.deps.resolveProviderSession?.(turnSession) ?? turnSession),
         allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
+      const isAuxiliary = Boolean(await this.deps.isAuxiliarySession?.(sessionId));
+      const mainIdentity = !isAuxiliary && session.sessionKind === "default" && runningTurn.userMessageSeq != null
+        ? { sessionId, incarnationId: getSessionIncarnationId(turnSession), seq: runningTurn.userMessageSeq, finalAnswerTurnId: String(runningTurn.id) } : undefined;
+      let mainConversationFrame: MainSessionTarget | null | undefined;
+      if (mainIdentity) {
+        mainConversationFrame = queued?.input.request.mainConversationFrame;
+        if (mainConversationFrame === undefined) {
+          // An older GUI receipt can have a saved reply, and an agent's ordinary
+          // input keeps its existing origin-based display membership.
+          const needsSavedMembership = queued && (queued.input.origin?.kind === "session" || replyTo);
+          mainConversationFrame = needsSavedMembership && this.deps.readMainMessageThread
+            ? await this.deps.readMainMessageThread({ kind: "main", sessionId, incarnationId: mainIdentity.incarnationId }, mainIdentity.seq)
+            : null;
+        }
+      }
+      const sessionFolderPath = await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id);
+      throwIfRunCanceled(runAbortController.signal);
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         runtimeOwner: {
-          kind: await this.deps.isAuxiliarySession?.(sessionId) ? "auxiliary" : "main",
+          kind: isAuxiliary ? "auxiliary" : "main",
           id: sessionId,
           incarnationId: getSessionIncarnationId(turnSession),
         },
         executionOptions,
-        sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
+        sessionFolderPath,
         crewFolderPath: capturedCrewFolderPath,
         providerCatalog: provider,
         userMessage: nextMessage,
+        ...(replyTo ? { replyTo } : {}),
+        ...(mainIdentity ? { messageIdentity: mainIdentity, mainConversationFrame } : {}),
         ...(queued ? { inputProvenance: queuedInputProvenance(queued.receipt, queued.input) } : {}),
         appSettings,
         attachments: composerPreview.attachments,
@@ -1201,22 +1306,49 @@ export class SessionRuntimeService {
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),
-        onApprovalRequest: (approvalRequest, requestSignal) => {
-          if (terminalSettled || progressGeneration !== liveProgressGeneration) return "deny";
+        onApprovalRequest: (approvalRequest, requestSignal, nativeReview, onDecisionSource) => {
+          if (executionOptions.approvalMode === "safety-focused" || terminalSettled) {
+            reportApprovalDecisionSource(onDecisionSource, "blocked");
+            return "deny";
+          }
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
-          const decision = this.deps.waitForApprovalDecision(sessionId, {
+          const request = {
             ...approvalRequest,
             textPosition: this.deps.getLiveSessionRun(sessionId)?.assistantText.length ?? 0,
-          }, signal);
-          return decision;
+          };
+          const selection = appSettings.withMateAutoReview;
+          const useReview = executionOptions.approvalMode === "on-request" && supportsWithMateAutoReview(effectiveTurnSession.provider)
+            && (executionOptions.withMateReviewerExplicit ? executionOptions.codexReviewer === "auto-review" : !!selection);
+          if (!useReview) return this.deps.waitForApprovalDecision(sessionId, request, signal, undefined, onDecisionSource);
+
+          let review: PendingApprovalReview | null = null;
+          if (!signal.aborted && selection && approvalRequest.provider === effectiveTurnSession.provider
+            && approvalRequest.decisionMode === "direct-decision" && nativeReview) {
+            try {
+              approvalReview ??= this.deps.startWithMateApprovalReview?.({ selection,
+                turnId: String(runningTurn.id), workspacePath: effectiveTurnSession.workspacePath,
+                binding: agentRuntimeBinding, signal: runAbortController.signal });
+              review = approvalReview?.pending(request, nativeReview) ?? null;
+            } catch {
+              // A review route that cannot be constructed is not a manual route.
+            }
+          }
+          return this.deps.waitForApprovalDecision(sessionId, request, signal, review, onDecisionSource);
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {
-          if (terminalSettled || progressGeneration !== liveProgressGeneration) return { action: "cancel" };
+          if (terminalSettled) return { action: "cancel" };
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
-          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal);
+          const response = Promise.resolve(this.deps.waitForElicitationResponse(sessionId, elicitationRequest, signal)).then((value) => {
+            if (value.action === "accept") {
+              pendingQuestionAnswers.set(elicitationRequest.requestId, { request: elicitationRequest, response: value });
+              if (elicitationRequest.delivery === "user-message") recordQuestionAnswer(elicitationRequest.requestId);
+            }
+            return value;
+          });
           if (elicitationRequest.delivery === "user-message") elicitationResponses.push(Promise.resolve(response));
           return response;
         },
+        onElicitationDelivered: recordQuestionAnswer,
         onProviderQuotaTelemetry: (telemetry) => {
           this.deps.setProviderQuotaTelemetry(telemetry);
         },
@@ -1224,7 +1356,7 @@ export class SessionRuntimeService {
           this.deps.setSessionContextTelemetry(telemetry);
         },
       }, (state, changes) => {
-        if (terminalSettled || progressGeneration !== liveProgressGeneration) {
+        if (terminalSettled) {
           return;
         }
 
@@ -1232,6 +1364,7 @@ export class SessionRuntimeService {
         const nextLiveState: LiveSessionRunState = {
           ...state,
           sessionTurnId: String(runningTurn.id),
+          queueReceipt,
           steps: changes.snapshot === false
             ? applyProviderProgressChanges(currentLiveState?.steps ?? [], changes.steps) : state.steps,
           backgroundTasks: changes.snapshot === false
@@ -1253,6 +1386,7 @@ export class SessionRuntimeService {
         (promise) => this.trackTerminatingSessionRun(sessionId, promise),
         );
       } finally {
+        approvalReview?.close();
         this.finishingSessionTurns.add(sessionId);
         const live = this.deps.getLiveSessionRun(sessionId);
         if (live?.inputAvailable) {
@@ -1267,8 +1401,8 @@ export class SessionRuntimeService {
       }
     };
 
-    let providerAgentRuntimeTurnHandle: unknown;
     try {
+      releaseSourceDisplays = this.deps.beginSourceDisplayTurn?.(runningSession, String(runningTurn.id));
       const providerAgentRuntimeTurn = await Promise.resolve(
         this.deps.beginProviderAgentRuntimeTurn?.({
           session: activeRunningSession,
@@ -1282,63 +1416,20 @@ export class SessionRuntimeService {
       if (providerAgentRuntimeTurn) {
         agentRuntimeBinding = providerAgentRuntimeTurn.binding;
       }
-      let result: RunSessionTurnResult | null = null;
-      let didInternalRetry = false;
-      while (true) {
-        try {
-          result = await runProviderTurn(activeRunningSession);
-          logSessionRunStuckInvestigation("runtime.provider-turn.done", {
-            sessionId,
-            clientRequestId,
-            elapsedMs: Date.now() - investigationStartedAt,
-            assistantChars: result.assistantText.length,
-            operationCount: result.artifact?.operationTimeline?.length ?? 0,
-            hasThreadId: (result.threadId ?? "").trim().length > 0,
-          });
-          break;
-        } catch (error) {
-          const providerTurnError = error instanceof ProviderTurnError ? error : null;
-          const shouldRetry =
-            activeRunningSession.provider !== "codex" && activeRunningSession.provider !== "opencode" &&
-            !didInternalRetry &&
-            !isCanceledRunError(error) &&
-            !(await this.deps.isAuxiliarySession?.(sessionId)) &&
-            shouldRetryUnusableThreadRun(error, providerTurnError?.partialResult);
-
-          if (!shouldRetry) {
-            throw error;
-          }
-
-          didInternalRetry = true;
-          liveProgressGeneration += 1;
-          if (this.deps.resetProviderSessionThread) {
-            await Promise.resolve(this.deps.resetProviderSessionThread(activeRunningSession.provider, sessionId));
-          } else {
-            await Promise.resolve(this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId));
-          }
-          if (activeRunningSession.threadId) {
-            const resetSession: Session = {
-              ...activeRunningSession,
-              threadId: "",
-              updatedAt: currentTimestampLabel(),
-            };
-            try {
-              activeRunningSession = await this.deps.checkpointRuntimeMetadata(resetSession, activeRunningSession);
-            } catch (error) {
-              runtimePersistenceFailed = true;
-              throw error;
-            }
-          }
-          this.setRuntimeLiveState(sessionId, {
-            ...buildEmptyLiveSessionRunState(sessionId, ""),
-            sessionTurnId: String(runningTurn.id),
-            backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
-          });
-        }
-      }
+      // Calling the adapter is the runtime's dispatch boundary. Only the adapter
+      // can prove an error occurred during preparation, before sending input.
+      const result = await runProviderTurn(activeRunningSession);
       if (!result) {
         throw new Error("The provider did not return a completed turn.");
       }
+      logSessionRunStuckInvestigation("runtime.provider-turn.done", {
+        sessionId,
+        clientRequestId,
+        elapsedMs: Date.now() - investigationStartedAt,
+        assistantChars: result.assistantText.length,
+        operationCount: result.artifact?.operationTimeline?.length ?? 0,
+        hasThreadId: (result.threadId ?? "").trim().length > 0,
+      });
       const completedAt = new Date().toISOString();
 
       terminalSettled = true;
@@ -1397,7 +1488,7 @@ export class SessionRuntimeService {
 
       return storedCompletedSession;
     } catch (error: unknown) {
-      if (queuedInputRecoveryError || terminalPersistenceStarted || (queued && (terminalSettled || runtimePersistenceFailed))) {
+      if (queuedInputRecoveryError || terminalPersistenceStarted || (queued && terminalSettled)) {
         throw error;
       }
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
@@ -1487,6 +1578,8 @@ export class SessionRuntimeService {
       );
       return storedFailedSession;
     } finally {
+      releaseSourceDisplays?.();
+      approvalReview?.close();
       this.appendSessionInput.delete(sessionId);
       this.directSessionInput.delete(sessionId);
       if (providerAgentRuntimeTurnHandle !== undefined) {

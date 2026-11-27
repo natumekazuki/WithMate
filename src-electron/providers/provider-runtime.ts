@@ -26,7 +26,11 @@ export type RunSessionTurnInput = {
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
-  inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
+  replyTo?: import("../../src-shared/session/session-reply.js").SessionReply;
+  messageIdentity?: { sessionId: string; incarnationId: string; seq?: number; finalAnswerTurnId?: string };
+  /** Main display thread for this input. The exact history owner is its Message Identity. */
+  mainConversationFrame?: import("../../src-shared/session/session-target.js").MainSessionTarget | null;
+  inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; retrySource?: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueCapturedInput["retrySource"]; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   currentDateTime?: string;
@@ -36,6 +40,7 @@ export type RunSessionTurnInput = {
   onCleanupPending?: (completion: Promise<void>) => void;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
+  onElicitationDelivered?: (requestId: string) => void;
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
@@ -57,9 +62,26 @@ export type RunSessionTurnProgressHandler = (
   changes: RunSessionTurnProgressChanges,
 ) => void | Promise<void>;
 
+export type ApprovalDecisionSource = "manual" | "reviewer" | "blocked";
+export type ApprovalDecisionSourceObserver = (source: ApprovalDecisionSource) => void;
+
+/** Decision reporting must not change the approval outcome. */
+export function reportApprovalDecisionSource(observer: ApprovalDecisionSourceObserver | undefined, source: ApprovalDecisionSource): void {
+  if (!observer) return;
+  try {
+    void Promise.resolve(observer(source)).catch(() => undefined);
+  } catch {
+    // An observer cannot approve or veto the decision.
+  }
+}
+
 export type RunSessionTurnApprovalRequestHandler = (
   request: LiveApprovalRequest,
   signal?: AbortSignal,
+  /** Complete redacted native operation and any native freshness check; never a display preview. */
+  review?: { operation: unknown; isCurrent?: () => boolean },
+  /** Called once with the source of this decision, before the returned result is consumed. */
+  onDecisionSource?: ApprovalDecisionSourceObserver,
 ) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
 
 export type RunSessionTurnElicitationRequestHandler = (

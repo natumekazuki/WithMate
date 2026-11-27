@@ -99,6 +99,7 @@ export type LiveElicitationValue = string | number | boolean | string[];
 export type LiveElicitationResponse = {
   action: LiveElicitationAction;
   content?: Record<string, LiveElicitationValue>;
+  answerPresentation?: Record<string, { selected: number[]; text: string[] }>;
 };
 
 export type LiveElicitationChoiceOption = {
@@ -164,6 +165,8 @@ export type LiveElicitationRequest = {
   textPosition?: number;
   provider: string;
   kind?: "question";
+  /** Generic forms may use the question surface without retaining their answers. */
+  retainQuestionAnswer?: boolean;
   delivery?: "user-message";
   turnId?: string;
   mode: "form" | "url";
@@ -180,8 +183,19 @@ export type ElicitationRecord = {
   sourceItemId?: string;
   textRange?: { start: number; end: number };
   message: string;
-  fields: Array<{ title: string; description?: string; options?: string[] }>;
+  fields: Array<{
+    title: string;
+    description?: string;
+    options?: string[];
+    answer?: { selected: number[]; text: string[] };
+  }>;
   status: "pending" | "answered" | "declined" | "canceled" | "expired";
+};
+
+export type CancelSessionRunRequest = {
+  sessionId: string;
+  incarnationId: string;
+  execution: { kind: "turn" | "receipt"; id: string };
 };
 
 export type LiveSessionRunState = {
@@ -190,6 +204,8 @@ export type LiveSessionRunState = {
   runState?: string;
   /** Persisted WithMate session turn ID, distinct from the provider's turn ID. */
   sessionTurnId?: string;
+  /** Queue receipt and saved input belonging to this live normal turn. */
+  queueReceipt?: { id: string; incarnationId: string; userMessageSeq: number };
   turnId?: string;
   inputAvailable?: boolean;
   cancellationState?: "requested" | "terminating";
@@ -297,6 +313,9 @@ export type ComposerPreview = {
 };
 
 export type RunSessionTurnRequest = {
+  replyTo?: import("./session-reply.js").SessionReply;
+  /** Resolved Main GUI display membership only; null is the initial frame. Omitted for other operations. */
+  mainConversationFrame?: import("./session-target.js").MainSessionTarget | null;
   userMessage: string;
   executionOptions: SessionExecutionOptions;
   clientRequestId?: string;
@@ -307,6 +326,7 @@ export type RunSessionTurnRequest = {
 };
 
 export type SteerSessionTurnRequest = {
+  replyTo?: import("./session-reply.js").SessionReply;
   expectedTurnId: string;
   userMessage: string;
   clientRequestId?: string;

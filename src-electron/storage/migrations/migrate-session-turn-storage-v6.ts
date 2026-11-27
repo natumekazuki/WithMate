@@ -102,7 +102,11 @@ export function migrateLegacySessionTurnsV6(db: DatabaseSync): void {
         : "auxiliary_session_id";
       const matches = db
         .prepare(
-          `SELECT seq FROM ${table} WHERE ${ownerColumn} = ? AND role = 'assistant' AND body = ?`,
+          `SELECT seq FROM ${table} WHERE ${ownerColumn} = ? AND role = 'assistant'
+            AND COALESCE(CASE WHEN json_valid(body) THEN
+              CASE WHEN json_extract(body, '$.role') = 'assistant' AND json_type(body, '$.text') = 'text'
+                THEN json_extract(body, '$.text') END
+            END, body) = ?`,
         )
         .all(
           row.session_id ?? row.auxiliary_session_id,

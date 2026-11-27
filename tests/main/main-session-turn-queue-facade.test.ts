@@ -7,8 +7,115 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import type { ComposerPreview, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
+
+// @test-value v2
+// kind = "contract"
+// claim = "失敗確定の開始入力は固定済み本文・添付をGUIの現設定で別受付として一度だけ再実行する。再実行の失敗を再試行するときは、元のSession入力がそのまま固定されたかGUI編集されたかで来歴を区別する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queue; docs/design/prompt-composition.md: 来歴と原依頼" }
+// fault = "受付原文や後続入力を再生する、元actorや過去設定を新受付へ継承する、同じrequest IDを二重受付する、GUI編集後の固定入力に古いSession指示の来歴を付ける"
+// observable = "新receiptの本文、添付、GUI origin、元来歴、実行設定、受付回数と再実行の再試行で使う固定入力の来歴"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacade.retryFailedSessionTurn"
+// lifecycle = "permanent"
+// impact = "異なる指示や権限で実行し、外部操作を重複する"
+// distinction = "queue storage単体では元の開始入力とGUI受付を組み合わせるfacadeを通らない"
+// @end-test-value
+test("失敗Turnの固定入力を元来歴付きGUI新規受付として一度だけ捕捉する", async () => {
+  for (const [kind, edit] of [["gui", "none"], ["session", "none"], ["session", "message"], ["session", "attachment"]] as const) {
+    const f = retryFixture(kind);
+    try {
+      const [first, second] = await Promise.all([f.facade.retryFailedSessionTurn(f.session.id, f.retry), f.facade.retryFailedSessionTurn(f.session.id, f.retry)]);
+      assert.equal(first.id, second.id);
+      assert.equal(first.captured.request.userMessage, "Dispatched instruction");
+      assert.deepEqual(first.captured.attachments, f.preview.attachments);
+      assert.equal(first.captured.origin?.kind, "gui");
+      assert.equal(first.captured.retrySource?.origin.kind, kind);
+      assert.deepEqual(first.captured.retrySource?.origin, f.source.dispatched?.origin);
+      assert.equal(first.captured.retrySource?.receiptId, f.source.id);
+      assert.equal(first.captured.retrySource?.turnId, "42");
+      assert.equal(first.captured.retrySource?.changedSinceAcceptance, true);
+      assert.deepEqual(first.captured.request.executionOptions, captureSessionExecutionOptions(f.session));
+      assert.notDeepEqual(first.captured.request.executionOptions, f.source.dispatched?.request.executionOptions);
+      assert.equal(f.calls.acceptance, 1);
+      assert.equal(f.calls.preview, 0);
+      if (kind === "session") {
+        first.state = "failed"; first.turnId = "43"; first.userMessageSeq = 8;
+        first.dispatched = structuredClone(first.captured);
+        if (edit === "message") first.dispatched.request.userMessage = "Replacement by GUI user";
+        if (edit === "attachment") first.dispatched.attachments = [];
+        const prior = await f.deps.readRetryExecution!(f.retry);
+        assert.equal(prior.ok, true);
+        if (!prior.ok || !prior.inputs.entry) throw new Error("Expected saved source execution");
+        f.deps.readRetryExecution = async () => ({ ...prior, receiptId: first.id, turnId: "43", userMessageSeq: 8,
+          inputs: { ...prior.inputs, entry: { ...prior.inputs.entry!, receiptId: first.id, inputSeq: 8 } } });
+        f.deps.validateRetryAttachments = async (_session, attachments) => { assert.deepEqual(attachments, first.dispatched?.attachments); };
+        const again = await f.facade.retryFailedSessionTurn(f.session.id, { ...f.retry, receiptId: first.id, turnId: "43", clientRequestId: "49f27f3e-6436-4a58-831f-f81b28cc0a19" });
+        assert.equal(again.captured.request.userMessage, first.dispatched.request.userMessage);
+        assert.deepEqual(again.captured.attachments, first.dispatched.attachments);
+        assert.equal(again.captured.retrySource?.receiptId, first.id);
+        assert.equal(again.captured.retrySource?.turnId, "43");
+        assert.equal(again.captured.retrySource.changedSinceAcceptance, edit !== "none");
+        assert.deepEqual(again.captured.retrySource.origin, edit === "none" ? f.source.dispatched?.origin : first.dispatched.origin);
+        assert.deepEqual(first.dispatched.retrySource?.origin, f.source.dispatched?.origin);
+      }
+    } finally { await f.service.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "失敗が不確定または開始receipt・owner・元来歴・添付が確認できない再実行は受付しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#gui-turn-queue" }
+// fault = "cancelや結果不明、追加入力、別owner、不明な送信者や使用不能な添付を開始入力として受理する"
+// observable = "preflight拒否と新しいdurable receiptの受付件数"
+// observation_boundary = "public-boundary"
+// scope = "失敗Turn再実行のmain process検証"
+// lifecycle = "permanent"
+// impact = "別会話や結果不明の仕事を実行し外部に副作用を発生させる"
+// distinction = "表示制御と型検査はrendererを通さない偽造要求や保存内容の欠落を拒否できない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("不確定な失敗と来歴不一致や添付不能をmain側で拒否する", async () => {
+  for (const condition of ["canceled", "interrupted", "missing-origin", "different-owner", "additional", "attachment", "turn-mismatch", "settings-pending", "actor-expired"] as const) {
+    const f = retryFixture("session");
+    try {
+      if (condition === "canceled" || condition === "interrupted") f.source.state = condition;
+      if (condition === "missing-origin") { delete f.source.dispatched!.origin; }
+      if (condition === "different-owner") f.retry.target.incarnationId = "replaced";
+      if (condition === "additional") f.source.inputTurnId = f.retry.turnId;
+      if (condition === "attachment") f.deps.validateRetryAttachments = async () => { throw new Error("attachment unavailable"); };
+      if (condition === "turn-mismatch") {
+        const read = f.deps.readRetryExecution!;
+        f.deps.readRetryExecution = async (request) => { const result = await read(request); return result.ok ? { ...result, turnState: "running" } : result; };
+      }
+      if (condition === "settings-pending") f.retry.executionOptions = { ...f.retry.executionOptions, model: "new-selection" };
+      let actorValid = true;
+      if (condition === "actor-expired") f.deps.validateRetryAttachments = async () => { actorValid = false; };
+      await assert.rejects(f.facade.retryFailedSessionTurn(f.session.id, f.retry, () => { if (!actorValid) throw new Error("actor expired"); }));
+      assert.equal(f.calls.acceptance, 0);
+    } finally { await f.service.close(); }
+  }
+});
+
+function retryFixture(kind: "gui" | "session") {
+  const f = fixture();
+  const origin = { kind, operation: "send" as const, targetSessionId: f.session.id, targetIncarnationId: f.session.incarnationId,
+    ...(kind === "session" ? { actorKind: "main" as const, actorSessionId: "parent", actorIncarnationId: "parent-inc", actorTurnId: "12", actorSnapshot: { sessionTitle: "Parent", character: { id: "character-1", name: "Sender", iconPath: "" } } } : {}) };
+  const accepted = { request: { ...f.input, userMessage: "Accepted instruction", clientRequestId: requestId, executionOptions: { ...f.input.executionOptions, model: "old-model", codexSandboxMode: "read-only" as const } }, attachments: f.preview.attachments, provider: f.session.provider, workspacePath: f.session.workspacePath, origin };
+  const dispatched = { ...structuredClone(accepted), request: { ...accepted.request, userMessage: "Dispatched instruction" } };
+  const source: SessionTurnQueueReceipt = { sessionId: f.session.id, incarnationId: f.session.incarnationId, id: "source-receipt", requestId, sequence: 1, queuePosition: 1,
+    state: "failed", captured: dispatched, accepted, dispatched, turnId: "42", inputTurnId: null, userMessageSeq: 5, reason: "failure", releasedAt: null, createdAt: "then", updatedAt: "then" };
+  f.rows.push(source);
+  f.deps.readRetryExecution = async () => executionOperationResultSchemas.get_execution.parse({ ok: true, origin, receiptId: source.id, receiptState: "failed", turnId: "42", turnState: "failed", resultState: "partial", userMessageSeq: 5, assistantMessageSeq: 6,
+    inputs: { entry: { receiptId: source.id, inputSeq: 5, kind: "start", stage: "fixed", comparison: "changed", detail: { operation: "get_execution_input", receiptId: source.id } }, startChanged: true,
+      additional: { confirmedCount: 1, references: [{ seq: 7 }], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null });
+  f.deps.validateRetryAttachments = async (_session, attachments) => { assert.deepEqual(attachments, f.preview.attachments); };
+  const retry = { target: { kind: "main" as const, sessionId: f.session.id, incarnationId: f.session.incarnationId }, receiptId: source.id, turnId: "42", clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55", executionOptions: captureSessionExecutionOptions(f.session) };
+  return { ...f, source, retry };
+}
 // @test-value v2
 // kind = "contract"
 // claim = "Coordination配送準備はexact種別とincarnationの宛先に通常Send共通preflightを適用し、本文・添付の仮受付や独立enqueueを作らない"
@@ -150,19 +257,19 @@ function fixture() {
   const store: SessionTurnQueueStore = {
     updateQueued: unexpected,
     reorderQueued: unexpected,
-    enqueue: async (owner, captured) => {
+    admit: async (owner, captured) => {
       calls.acceptance += 1;
       const receipt: SessionTurnQueueReceipt = { ...owner, id: "durable-id", requestId: captured.request.clientRequestId,
         sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), accepted: structuredClone(captured), dispatched: null, turnId: null, userMessageSeq: null,
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
       rows.push(receipt);
-      return receipt;
+      return { receipt, claimed: null };
     },
     getReceipt: async (owner, id) => rows.find((row) => row.requestId === id && row.incarnationId === owner.incarnationId) ?? null,
     getReceiptById: async (owner, id) => rows.find((row) => row.id === id && row.incarnationId === owner.incarnationId) ?? null,
     listActive: unexpected, listReceipts: unexpected, listPendingOwners: unexpected,
     claimNext: async () => null, markStarted: unexpected, settle: unexpected, cancelQueued: unexpected,
-    recoverInterrupted: unexpected, releaseInterrupted: unexpected,
+    recoverInterrupted: unexpected,
     claimForInput: unexpected, restoreQueuedInput: unexpected,
   };
   const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: unexpected });
@@ -401,8 +508,8 @@ test("lookupとcommit返信の不明結果はknown rejectへ変換しない", as
     const failure = new Error(`${stage} unknown`);
     if (stage === "lookup") context.deps.store.getReceipt = async () => { throw failure; };
     else {
-      const enqueue = context.deps.store.enqueue;
-      context.deps.store.enqueue = async (...args) => { await enqueue(...args); throw failure; };
+      const admit = context.deps.store.admit;
+      context.deps.store.admit = async (...args) => { await admit(...args); throw failure; };
     }
     await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, context.input),
       (error) => error === failure && !(error instanceof SessionTurnQueuePreflightRejectedError));

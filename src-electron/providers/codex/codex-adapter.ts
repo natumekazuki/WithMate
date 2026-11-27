@@ -10,6 +10,8 @@ import { buildCodexAsyncQuestionRequest, CodexTurnInteractions } from "./codex-a
 import { CodexProjectionClient } from "./codex-projection-client.js";
 import { projectCodexQuotaTelemetry } from "./codex-quota-telemetry.js";
 import { parseCodexModelPage } from "./codex-model-catalog.js";
+import { z } from "zod";
+import { APPROVAL_REVIEW_INSTRUCTIONS, approvalReviewDecisionSchema, type OpenApprovalReviewer } from "../approval-reviewer.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
@@ -154,6 +156,20 @@ type CodexTransport = Pick<
   CodexAppServerTransport,
   "start" | "request" | "nextEvent" | "close" | "whenClosed"
 >;
+const approvalReviewOutputSchema = z.toJSONSchema(approvalReviewDecisionSchema);
+
+async function codexManagedMcpConfig(
+  transport: CodexTransport, workspace: string, binding: ProviderAgentRuntimeBindingProjection | null | undefined, signal?: AbortSignal,
+): Promise<Record<string, unknown> | undefined> {
+  if (!binding?.managedMcp) return undefined;
+  const response = await transport.request<{ config: Record<string, unknown> }>(
+    "config/read", { cwd: workspace, includeLayers: false }, { signal },
+  );
+  if (!response.config || typeof response.config !== "object" || Array.isArray(response.config)) {
+    throw new Error("Codex effective MCP configuration could not be resolved");
+  }
+  return { ...buildCodexManagedMcpDisableConfig(response.config), ...buildCodexManagedHttpMcpConfig(binding) };
+}
 export type CodexAdapterOptions = {
   appVersion?: string;
   snapshotDeadlineMs?: number;
@@ -760,6 +776,87 @@ export class CodexAdapter implements ProviderTurnAdapter {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
+
+  async openApprovalReviewer({ selection, workspacePath, appSettings, binding, signal }: Parameters<OpenApprovalReviewer>[0]) {
+    signal.throwIfAborted();
+    this.assertCleanupComplete(workspacePath);
+    const { transport, apiKey } = this.createTransport("codex", appSettings, workspacePath, binding);
+    let closing: Promise<void> | undefined;
+    let threadId: string | null = null;
+    const close = () => {
+      signal.removeEventListener("abort", onAbort);
+      return closing ??= transport.close().catch(async () => {
+        this.pendingCleanups.set(transport, { workspace: workspaceKey(workspacePath), threadId });
+        await transport.whenClosed();
+        this.pendingCleanups.delete(transport);
+      });
+    };
+    const onAbort = () => { void close(); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    const approvalsReviewer = mapCodexReviewerToApprovalsReviewer("auto-review");
+    const approvalPolicy = "on-request";
+    const { model, reasoningEffort } = selection;
+    try {
+      await transport.start(signal);
+      if (apiKey) {
+        const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey }, { signal });
+        if (login.type !== "apiKey") throw new Error("Codex authentication failed");
+      }
+      const mcpServers = await codexManagedMcpConfig(transport, workspacePath, binding, signal);
+      const thread = await transport.request<{
+        thread: { id: string }; model: string; approvalPolicy: string; approvalsReviewer: string; reasoningEffort: string | null;
+      }>("thread/start", {
+        cwd: workspacePath, model, approvalPolicy, approvalsReviewer, sandbox: "read-only", ephemeral: true,
+        allowProviderModelFallback: false, developerInstructions: APPROVAL_REVIEW_INSTRUCTIONS,
+        config: { mcp_servers: mcpServers, approvals_reviewer: approvalsReviewer,
+          ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}) },
+      }, { signal });
+      if (typeof thread.thread?.id !== "string" || !thread.thread.id || thread.model !== model
+        || thread.approvalPolicy !== approvalPolicy || thread.approvalsReviewer !== approvalsReviewer
+        || (reasoningEffort && thread.reasoningEffort !== reasoningEffort)) {
+        throw new Error("Codex did not start the selected native Auto Review conversation.");
+      }
+      signal.throwIfAborted();
+      threadId = thread.thread.id;
+      return { close, review: async (prompt: string) => {
+        signal.throwIfAborted();
+        const { turn } = await transport.request<{ turn: { id: string } }>("turn/start", {
+          threadId, model, approvalPolicy, approvalsReviewer, input: userInput(prompt, []),
+          ...(reasoningEffort ? { effort: reasoningEffort } : {}), outputSchema: approvalReviewOutputSchema,
+        }, { signal });
+        if (typeof turn?.id !== "string" || !turn.id) throw new Error("Codex reviewer has no active turn.");
+        let final: string | undefined;
+        let burst = 0;
+        for (;;) {
+          if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
+          const event = await transport.nextEvent();
+          signal.throwIfAborted();
+          // Any request left to the client is not a native approval result.
+          if (event.kind === "serverRequest") throw new Error("Codex reviewer requires user interaction.");
+          const params = asRecord(event.params);
+          if (params.threadId !== threadId) continue;
+          if (event.method === "model/rerouted" && params.turnId === turn.id) {
+            throw new Error("Codex reviewer model changed.");
+          }
+          if (event.method === "item/completed" && params.turnId === turn.id) {
+            const item = asRecord(params.item);
+            if (item.type === "agentMessage" && item.phase === "final_answer" && typeof item.text === "string") {
+              if (final !== undefined) throw new Error("Codex reviewer returned multiple final items.");
+              final = item.text;
+            }
+          } else if (event.method === "turn/completed") {
+            const completed = asRecord(params.turn);
+            if (completed.id !== turn.id) continue;
+            if (completed.status !== "completed" || final === undefined) throw new Error("Codex reviewer did not complete.");
+            return JSON.parse(final) as unknown;
+          }
+        }
+      } };
+    } catch (error) {
+      await close();
+      throw error;
+    }
+  }
   async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
     const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
     signal.throwIfAborted();
@@ -865,7 +962,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     if (!executable) throw new Error("Codex App Server binary was not found");
     const env = mergeDefinedProviderEnv(
       process.env,
-      buildProviderAgentRuntimeBindingEnv(binding),
+      buildProviderAgentRuntimeBindingEnv(binding, providerId),
     );
     const apiKey = resolveCodexApiKey(providerId, appSettings);
     if (apiKey) env.CODEX_API_KEY = apiKey;
@@ -1032,7 +1129,13 @@ export class CodexAdapter implements ProviderTurnAdapter {
       const completion = this.projection.call<(CodexProjectionEvent | null)[]>(projectionId, { type: "events", events })
         .then(async (results) => {
           for (const result of results) {
-            if (!result || !sessionInput || !args.onProgress) continue;
+            if (!result) continue;
+            if (result.unhandledNotification) this.writeLog({
+              level: "info", kind: "codex.run.unhandled-notification",
+              message: "Codex notification has no dedicated projection handler",
+              data: result.unhandledNotification,
+            });
+            if (!sessionInput || !args.onProgress) continue;
             if (result.errorMessage !== undefined) publishControl({ errorMessage: result.errorMessage });
             if (result.changed) scheduleLive();
           }
@@ -1067,19 +1170,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           throw new CodexAuthenticationError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)));
         }
       }
-      let managedMcpConfig: Record<string, unknown> | undefined;
-      if (sessionInput?.agentRuntimeBinding?.managedMcp) {
-        const response = await transport.request<{ config: Record<string, unknown> }>(
-          "config/read", { cwd: options.workingDirectory, includeLayers: false }, { signal },
-        );
-        if (!response.config || typeof response.config !== "object" || Array.isArray(response.config)) {
-          throw new Error("Codex effective MCP configuration could not be resolved");
-        }
-        managedMcpConfig = {
-          ...buildCodexManagedMcpDisableConfig(response.config),
-          ...buildCodexManagedHttpMcpConfig(sessionInput.agentRuntimeBinding),
-        };
-      }
+      const managedMcpConfig = await codexManagedMcpConfig(transport, options.workingDirectory, sessionInput?.agentRuntimeBinding, signal);
       const threadParams = {
         model: options.model,
         cwd: options.workingDirectory,
@@ -1580,7 +1671,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           input.executionOptions.codexSpeed,
         ),
         reviewer: mapCodexReviewerToApprovalsReviewer(
-          input.executionOptions.codexReviewer,
+          input.executionOptions.approvalMode === "safety-focused" ? "user" : input.executionOptions.codexReviewer,
         ),
         input: userInput(prompt.logicalPrompt.composedText, prompt.imagePaths),
         signal: input.signal,

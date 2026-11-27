@@ -182,6 +182,9 @@ export function SessionFileExplorerPane({
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
   const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision, active: visible && activeTab === "files", refreshRevision });
+  // A native disabled button loses focus as soon as an asynchronous refresh
+  // disables it, even if the virtualizer keeps the same row mounted.
+  const pinAriaDisabled = filePins.canChange ? undefined : true;
   const filesRefreshing = activeTab === "files" && (
     rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")
   );
@@ -687,8 +690,10 @@ export function SessionFileExplorerPane({
                       aria-label={`Unpin ${row.pin.relativePath}`}
                       title={`Unpin ${row.pin.rootPath}/${row.pin.relativePath}${row.pin.unavailableReason ? `\n${row.pin.unavailableReason}` : ""}`}
                       aria-pressed="true"
-                      disabled={!filePins.canChange}
-                      onClick={() => void removePin(row.pin, virtualRow.index)}
+                      aria-disabled={pinAriaDisabled}
+                      onClick={() => {
+                        if (filePins.canChange) void removePin(row.pin, virtualRow.index);
+                      }}
                     ><FilePinIcon active /></button>
                   </>
                 ) : row.kind === "root" ? (
@@ -753,8 +758,9 @@ export function SessionFileExplorerPane({
                         aria-label={`${findPin(row.rootId, row.entry.relativePath) ? "Unpin" : "Pin"} ${row.entry.relativePath}`}
                         title={findPin(row.rootId, row.entry.relativePath) ? "Unpin" : "Pin"}
                         aria-pressed={!!findPin(row.rootId, row.entry.relativePath)}
-                        disabled={!filePins.canChange}
+                        aria-disabled={pinAriaDisabled}
                         onClick={() => {
+                          if (!filePins.canChange) return;
                           const pin = findPin(row.rootId, row.entry.relativePath);
                           if (pin) void filePins.changePin(pin, true);
                           else if (sessionId) void filePins.changePin({ sessionId, rootId: row.rootId, relativePath: row.entry.relativePath }, false);

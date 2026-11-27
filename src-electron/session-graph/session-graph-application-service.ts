@@ -14,6 +14,8 @@ export type SessionGraphStore = {
 };
 export type SessionGraphReadOperation = SessionGraphUiReadOperation;
 export const sameSessionGraphOwner = (left: SessionGraphOwner, right: SessionGraphOwner): boolean => left.sessionId === right.sessionId && left.incarnationId === right.incarnationId;
+/** Internal invalidation for the exact Crew and storage generation that committed the apply. */
+export type SessionGraphChange = Pick<ResolvedSessionGraphSession, "owner" | "generation">;
 
 export type SessionGraphApplicationServiceDeps = {
     getStore: () => SessionGraphStore;
@@ -21,11 +23,11 @@ export type SessionGraphApplicationServiceDeps = {
 };
 export class SessionGraphApplicationService {
   readonly #deps: SessionGraphApplicationServiceDeps;
-  readonly #listeners = new Set<(sessionId: string) => void>();
+  readonly #listeners = new Set<(change: SessionGraphChange) => void>();
   constructor(deps: SessionGraphApplicationServiceDeps) { this.#deps = deps; }
 
   resolveSession(id: string, source?: { kind: "main" | "auxiliary"; incarnationId?: string }) { return this.#deps.resolveSession(id, source); }
-  subscribe(listener: (sessionId: string) => void): () => void {
+  subscribe(listener: (change: SessionGraphChange) => void): () => void {
     this.#listeners.add(listener);
     return () => { this.#listeners.delete(listener); };
   }
@@ -81,7 +83,8 @@ export class SessionGraphApplicationService {
       const result = await store.execute(target.owner, operation, parsed, captured.identity, actors, authority);
       await check();
       if (operation === "apply" && result.status === "ok") {
-        for (const listener of this.#listeners) listener(captured.owner.sessionId);
+        const change: SessionGraphChange = { owner: captured.owner, generation: captured.generation };
+        for (const listener of this.#listeners) listener(change);
       }
       return result;
     };

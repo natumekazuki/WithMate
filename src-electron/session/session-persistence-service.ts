@@ -3,8 +3,7 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import { assertSameSessionRelationship, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
 import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 import type { SessionLifecycleOperation } from "./session-lifecycle-operation.js";
-import type { CreateChildSessionRequest } from "../../src-shared/session/session-child-creation.js";
-import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import type { ResolvedChildSessionCreation } from "../../src-shared/session/session-child-creation.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import type { CrewDeletionStatus } from "../../src-shared/session/session-crew-deletion.js";
 import {
@@ -31,6 +30,7 @@ import { addAllowedAdditionalDirectory, removeAllowedAdditionalDirectory } from 
 import type { ChangeSessionAdditionalDirectoryRequest } from "../../src-shared/session/session-mutation-contract.js";
 import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
 import { resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
+import type { SessionApprovalChoice } from "../../src-shared/settings/session-approval-choice.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
@@ -223,7 +223,7 @@ export class SessionPersistenceService {
     return this.upsertSession(created, "create", deferPublication);
   }
 
-  async validateChildSessionCreation(input: CreateChildSessionRequest): Promise<void> {
+  async validateChildSessionCreation(input: ResolvedChildSessionCreation): Promise<void> {
     const settings = await this.deps.getAppSettings();
     const catalog = await this.deps.getModelCatalogSnapshot(input.workspacePath, input.provider);
     const provider = this.resolveEnabledProviderCatalog(catalog, settings, input.provider, true);
@@ -231,11 +231,10 @@ export class SessionPersistenceService {
     if (!model) throw new Error("The selected child model is not in the discovered model list.");
     if (model.reasoningEfforts.length === 0 ? input.reasoningEffort !== "" : !model.reasoningEfforts.includes(input.reasoningEffort)) throw new Error("The selected child depth is not supported by this model.");
     assertModelEnabled(settings.modelAvailability, provider.id, model.id);
-    const sandbox = getSandboxOptionsForProvider(provider.id);
-    if (sandbox.length === 0 ? input.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === input.codexSandboxMode)) throw new Error("The selected child sandbox option is not supported by this provider.");
-    if (input.codexReviewer !== undefined && provider.id !== "codex") throw new Error("Only Codex supports codexReviewer for child creation.");
+    if (provider.id === "codex" && input.codexSandboxMode === undefined) throw new Error("The resolved Codex sandbox mode is unavailable.");
     validateSessionExecutionOptions({ model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode,
-      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER, customAgentName: "" }, provider);
+      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
+      withMateReviewerExplicit: input.withMateReviewerExplicit, customAgentName: "" }, provider);
     validateSessionMetadataPatch({ title: input.title ?? "New task", description: input.description ?? "" });
   }
 
@@ -269,7 +268,7 @@ export class SessionPersistenceService {
     if (!session) throw new SessionNotFoundError(sessionId);
     this.syncStoredSession(session);
     this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(session)));
-    this.deps.broadcastSessions([sessionId]);
+    this.deps.broadcastSessions(session.parentSessionId ? [sessionId, session.parentSessionId] : [sessionId]);
     return session;
   }
 
@@ -454,7 +453,7 @@ export class SessionPersistenceService {
     });
   }
 
-  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions, confirmedReviewerChange?: ConfirmedReviewerChange): Promise<SetExecutionOptionsResult> {
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice): Promise<SetExecutionOptionsResult> {
     const revision = (this.selectionRequestRevisions.get(sessionId) ?? 0) + 1;
     this.selectionRequestRevisions.set(sessionId, revision);
     const catalog = await this.deps.getModelCatalogSnapshot();
@@ -467,8 +466,8 @@ export class SessionPersistenceService {
     const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
-    const validated = { ...validateSessionExecutionOptions(options, provider),
-      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, options, confirmedReviewerChange) };
+    const { withMateReviewerExplicit: _explicit, ...requested } = validateSessionExecutionOptions(options, provider);
+    const validated = { ...requested, ...resolveExecutionOptionsReviewerUpdate(fresh, requested, confirmedReviewerChange, approvalChoice) };
     if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider);
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
@@ -821,10 +820,10 @@ export class SessionPersistenceService {
     return { session: stored, ...(storedResult.queuedTurn ? { turn: storedResult.queuedTurn } : {}) };
   }
 
-  async appendRunningInput(nextSession: Session, text: string, turnId: number, queuedInput?: SessionSteerAppendInput["queuedInput"]): Promise<Session> {
+  async appendRunningInput(nextSession: Session, text: string, turnId: number, queuedInput?: SessionSteerAppendInput["queuedInput"], replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.appendStoredSessionSteer) throw new Error("Incremental Session input storage is unavailable.");
-      const message = { role: "user" as const, text };
+      const message = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}) };
       const result = await this.deps.appendStoredSessionSteer({
         sessionId: nextSession.id,
         incarnationId: getSessionIncarnationId(nextSession),
@@ -838,10 +837,10 @@ export class SessionPersistenceService {
     });
   }
 
-  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin): Promise<Session> {
+  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin, questionRequestId?: string, replyTo?: import("../../src-shared/session/session-reply.js").SessionReply): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.beginStoredSessionSteer) throw new Error("Durable Session input storage is unavailable.");
-      const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(origin ? { origin } : {}) } };
+      const message = { role: "user" as const, text, ...(replyTo ? { replyTo } : {}), turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(origin ? { origin } : {}), ...(questionRequestId ? { questionRequestId } : {}) } };
       const result = await this.deps.beginStoredSessionSteer({ sessionId: nextSession.id, incarnationId: getSessionIncarnationId(nextSession),
         expectedMessageCount: nextSession.messageCount ?? nextSession.messages.length, turnId, userMessage: message,
         nativeTurnId, attachments, updatedAt: nextSession.updatedAt });

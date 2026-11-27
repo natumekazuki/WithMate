@@ -8,8 +8,11 @@ import type { OpenCodeTransportOptions } from "../../src-electron/providers/open
 import { OpenCodeAdapter, buildOpenCodePermissions } from "../../src-electron/providers/opencode/opencode-adapter.js";
 import { resolveOpenCodeModelRef } from "../../src-electron/providers/opencode/opencode-model.js";
 import { buildOpenCodeElicitation } from "../../src-electron/providers/opencode/opencode-interactions.js";
-import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type ApprovalDecisionSource, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
+import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
@@ -24,7 +27,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; form?: FormInfo1; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; permissionAction?: string; permissionBurst?: () => AsyncIterable<OpenCodeEvent>; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -32,6 +35,7 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   let formDone!: () => void;
   const permissionReply = new Promise<void>((resolve) => { permissionDone = resolve; });
   const formReply = new Promise<void>((resolve) => { formDone = resolve; });
+  const formDispatched = Promise.withResolvers<unknown>();
   const mcpRegistrations: Array<{ server: string; location?: { directory?: string }; config: unknown }> = [];
   const root: SessionInfo = { id: "root", projectID: "project", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
     location: { directory: turn.executionWorkspacePath ?? turn.session.workspacePath }, metadata: { withmateOwner: { schema: 1, ...turn.runtimeOwner } } };
@@ -48,7 +52,13 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
         withmateOwner: { schema: 1, ...turn.runtimeOwner, ...(options.unknownInbox === "owner-id" ? { id: "other-session" } : {}), ...(options.unknownInbox === "incarnation" ? { incarnationId: "other-incarnation" } : {}) },
         withmateRequestID: "old" } } }] : [], cancel: async () => { calls.push("cancel-inbox"); pending = false; } },
       prompt: async (value: SessionPromptInput) => { calls.push("prompt"); prompt = value; return { id: value.id, sessionID: "root", type: "user", payload: { text: value.text }, delivery: "queue" }; },
-      interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }) => { calls.push(`form:${JSON.stringify(answer)}`); formDone(); }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
+      interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }, requestOptions?: { signal?: AbortSignal }) => {
+        calls.push(`form:${JSON.stringify(answer)}`);
+        if (options.replyEvent) {
+          formDispatched.resolve(answer);
+          await new Promise<void>((_resolve, reject) => requestOptions?.signal?.addEventListener("abort", () => reject(new Error("request aborted")), { once: true }));
+        } else formDone();
+      }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
     },
     message: { list: async () => { calls.push("snapshot"); await options.holdSnapshot?.(); return { data: messages(), cursor: {} }; } },
     mcp: { add: async (registration: typeof mcpRegistrations[number]) => { mcpRegistrations.push(registration); }, list: async () => ({ data: mcpRegistrations.map((entry) => ({ name: entry.server, status: { status: "connected" } })) }) },
@@ -58,8 +68,9 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       calls.push("connected"); yield event("server.connected", {});
       assert.ok(prompt, "event connection must be established before prompt admission");
       yield event("session.inbox.delivered", { sessionID: "root", inboxID: prompt.id });
+      if (options.permissionBurst) yield* options.permissionBurst();
       if (options.interactions) {
-        yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+        yield event("permission.asked", { id: "permission", sessionID: "child", action: options.permissionAction ?? "bash", resources: ["echo test"] });
         await permissionReply;
         yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
         await formReply;
@@ -67,7 +78,10 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       if (options.lateInteraction === "permission") yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
       if (options.form) {
         yield event("form.created", { form: options.form });
-        await formReply;
+        if (options.replyEvent) {
+          const answer = await formDispatched.promise;
+          yield event("form.replied", { id: options.form.id, sessionID: options.form.sessionID, answer: options.replyEvent === "matching" ? answer : { different: "answer" } });
+        } else await formReply;
       }
       if (options.lateInteraction === "form") yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
       yield event("session.text.delta", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, delta: "partial" });
@@ -85,6 +99,111 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   }) });
   return { adapter, client, calls, getPrompt: () => prompt, mcpRegistrations, release };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの後着と別IDの解決は先頭審査を失効させず、実要求を仲介で別々に判定して同じnative IDへFIFOで返す。ask_userだけを手動公開する"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#一件の判定と手動承認; docs/design/provider-adapter.md#current-runtime (OpenCodeAdapterのnative承認)" }
+// fault = "別IDでAを失効させる、取消済みBを審査・応答する、別IDへ結果を適用する、または審査例外を手動へ回す"
+// observable = "審査役へ渡るnative ID・read対象列、公開・通知とsource、native replyのID・会話・decision列"
+// observation_boundary = "consumer"
+// scope = "OpenCodeAdapter、WithMate仲介と承認キューの接続（native通信と審査先を合成）"
+// lifecycle = "permanent"
+// distinction = "共通FIFOのtestを通っても、OpenCode独自の全要求共通revisionでAを誤って失効できる"
+// risk_tags = ["authorization"]
+// @end-test-value
+it("OpenCode read decisions from the broker reach only their native request", { timeout: 3000 }, async () => {
+  const turn = input();
+  const started = Promise.withResolvers<void>();
+  const arrivals = Promise.withResolvers<void>();
+  const lastReply = Promise.withResolvers<void>();
+  const reviewed: Array<[string, string, string[]]> = [];
+  const replies: Array<[string, string, string]> = [];
+  const sources: Array<[string, ApprovalDecisionSource]> = [];
+  const published: string[] = [];
+  const notified: string[] = [];
+  const manual = Promise.withResolvers<string>();
+  const owner = new AbortController();
+  turn.signal = owner.signal;
+  let state: LiveSessionRunState = { sessionId: turn.session.id, threadId: "", assistantText: "", steps: [],
+    backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+  const approval = new SessionApprovalService({
+    updateLiveSessionRun(_id, update) {
+      const next = update(state);
+      if (next.approvalRequest && next.approvalRequest !== state.approvalRequest) published.push(next.approvalRequest.summary);
+      return state = next;
+    },
+    notifyApproval(_id, requestId) {
+      notified.push(state.approvalRequest!.summary);
+      manual.resolve(requestId);
+    },
+  });
+  const reviewer = new WithMateApprovalReviewTurn({
+    turnId: "source-turn", source: { kind: "main", sessionId: turn.session.id, incarnationId: "incarnation" },
+    workspacePath: turn.session.workspacePath, signal: owner.signal, inputs: new ApprovalReviewInputFence(), policyCurrent: () => true,
+    open: async () => ({
+      close() {},
+      async review(prompt) {
+        const { pendingOperation } = JSON.parse(prompt);
+        const { id, action, resources } = pendingOperation.operation;
+        reviewed.push([id, action, resources]);
+        if (id === "a") { started.resolve(); await arrivals.promise; return { decision: "allow_once", reason: "Authorized read." }; }
+        if (id === "c") return { decision: "deny", reason: "Not authorized." };
+        if (id === "d") return { decision: "ask_user", reason: "The user must choose this input." };
+        throw new Error("Synthetic reviewer failure");
+      },
+    }),
+  });
+  const run = fixture(turn, {
+    async *permissionBurst() {
+      yield event("permission.asked", { id: "a", sessionID: "child", action: "read", resources: ["a.txt"] });
+      await started.promise;
+      yield event("permission.asked", { id: "b", sessionID: "child", action: "read", resources: ["b.txt"] });
+      yield event("permission.asked", { id: "c", sessionID: "child", action: "read", resources: ["c.txt"] });
+      yield event("permission.asked", { id: "d", sessionID: "child", action: "read", resources: ["d.txt"] });
+      yield event("permission.asked", { id: "e", sessionID: "child", action: "read", resources: ["e.txt"] });
+      yield {
+        id: crypto.randomUUID(),
+        created: 1,
+        type: "permission.replied",
+        data: { requestID: "b", sessionID: "child", reply: "reject" },
+      } satisfies Extract<OpenCodeEvent, { type: "permission.replied" }>;
+      arrivals.resolve();
+      await lastReply.promise;
+    },
+  });
+  run.client.permission.reply = async ({ sessionID, requestID, decision }) => {
+    replies.push([sessionID, requestID, decision]);
+    if (requestID === "e") lastReply.resolve();
+  };
+  turn.onApprovalRequest = (request, signal, native) => {
+    assert.ok(signal && native);
+    const { id } = native.operation as { id: string };
+    return approval.waitForLiveApprovalDecision(turn.session.id, request, signal, reviewer.pending(request, native),
+      (source) => { sources.push([id, source]); });
+  };
+  const result = run.adapter.runSessionTurn(turn, () => {});
+  try {
+    const requestId = await Promise.race([manual.promise, result.then(() => assert.fail("Turn ended without asking for the current read"))]);
+    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]], ["d", "read", ["d.txt"]]]);
+    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"]]);
+    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"]]);
+    approval.resolveLiveApproval(turn.session.id, requestId, "approve");
+    await result;
+    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]],
+      ["d", "read", ["d.txt"]], ["e", "read", ["e.txt"]]]);
+    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"], ["d", "manual"], ["e", "blocked"]]);
+    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"], ["child", "d", "once"], ["child", "e", "reject"]]);
+  } finally {
+    owner.abort();
+    started.resolve();
+    arrivals.resolve();
+    lastReply.resolve();
+    await result.catch(() => undefined);
+  }
+});
 
 async function migrationFixture(turn: RunSessionTurnInput) {
   const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "withmate-opencode-migration-"));
@@ -328,10 +447,10 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 
 // @test-value v2
 // kind = "security"
-// claim = "OpenCodeの子承認とformはroot権限内で共通UIへ往復し承認はonceかrejectだけへ変換する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-// fault = "承認を永続alwaysへ変換するか子requestの型付き回答を失う"
-// observable = "承認callbackの要求とnative replyのdecision、form answer"
+// claim = "OpenCodeの子承認は対象を共通承認に渡し、Safety Focusedの実要求とSessionの強制denyは手動・自動承認に渡さずrejectする"
+// oracle = { type = "contract", ref = "docs/design/withmate-auto-review.md#審査会話と履歴の境界; docs/design/provider-adapter.md: OpenCodeAdapter" }
+// fault = "実要求の対象を失う、永続許可へ変換する、Safety Focusedで実要求を許可する、または強制deny対象をAuto Runや共通審査へ流す"
+// observable = "承認callbackの要求と審査入力、native replyのdecision、form answer"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode child interaction routing"
 // lifecycle = "permanent"
@@ -340,25 +459,35 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 // distinction = "共通UIのtestはOpenCode native reply変換と子帰属を通らない"
 // @end-test-value
 it("OpenCode routes child permissions and typed forms without permanent grants", async () => {
-  for (const mode of ["on-request", "never"] as const) {
+  for (const [mode, decision, action, reply, expectedApprovals] of [
+    ["on-request", "approve", "bash", "once", 1], ["on-request", "deny", "bash", "reject", 1],
+    ["never", "deny", "bash", "once", 0], ["safety-focused", "approve", "bash", "reject", 0],
+    ["never", "approve", "subagent", "reject", 0], ["on-request", "approve", "opencode_session_move", "reject", 0],
+  ] as const) {
     const turn = input(); turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
     let approvals = 0;
-    turn.onApprovalRequest = (request) => { approvals++; assert.equal(request.provider, "opencode"); return "deny"; };
+    turn.onApprovalRequest = (request, _signal, review) => {
+      approvals++;
+      assert.equal(request.provider, "opencode");
+      assert.deepEqual(review?.operation, { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+      assert.equal(review?.isCurrent?.(), true);
+      return decision;
+    };
     turn.onElicitationRequest = (request) => { assert.equal(request.fields[0].name, "answer"); return { action: "accept", content: { answer: "yes" } }; };
-    const run = fixture(turn, { interactions: true });
+    const run = fixture(turn, { interactions: true, permissionAction: action });
     await run.adapter.runSessionTurn(turn);
-    assert.equal(approvals, mode === "never" ? 0 : 1);
-    assert.ok(run.calls.includes(mode === "never" ? "permission:once" : "permission:reject"));
+    assert.equal(approvals, expectedApprovals);
+    assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:")), [`permission:${reply}`]);
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "OpenCode questionの単一・複数質問は選択と自由入力を共通UIへ提示し、元のkeyと値で回答してturnを完了する"
+// claim = "OpenCode questionの単一・複数質問は選択と自由入力を共通UIへ提示し、元のkeyと値で回答して受付を履歴へ通知する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/914" }
 // fault = "customを拒否する、自由入力や必須指定・選択肢説明を失う、または単一文字列と複数回答配列を取り違える"
-// observable = "質問callbackのfields、native form.replyのanswer、完了したassistantText"
+// observable = "質問callbackのfields、native form.replyのanswer、受付通知と完了したassistantText"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode question tool form round trip"
 // lifecycle = "permanent"
@@ -379,8 +508,12 @@ it("OpenCode completes question forms with selected and custom answers", async (
   for (const scenario of cases) {
     const turn = input();
     let questions = 0;
+    let displayedRequestId = "";
+    const delivered: string[] = [];
+    turn.onElicitationDelivered = (id) => { delivered.push(id); };
     turn.onElicitationRequest = (request) => {
       questions++;
+      displayedRequestId = request.requestId;
       assert.equal(request.provider, "opencode");
       assert.equal(request.kind, "question");
       assert.equal(request.blocking, true);
@@ -399,8 +532,35 @@ it("OpenCode completes question forms with selected and custom answers", async (
     const run = fixture(turn, { form: { id: "form", sessionID: "root", title: "Questions", metadata: { kind: "question" }, fields: scenario.fields } });
     const result = await run.adapter.runSessionTurn(turn);
     assert.equal(questions, 1);
+    assert.deepEqual(delivered, [displayedRequestId]);
     assert.equal(result.assistantText, "final");
     assert.deepEqual(run.calls.filter((call) => call.startsWith("form:")), [`form:${JSON.stringify(scenario.answer)}`]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCode form.repliedがreply応答より先に届いても、送信値と一致する同一formの回答だけを確定する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms; @opencode/client FormReplied" }
+// fault = "先着イベントによるabortで受理済みの回答を失うか、別の回答を利用者の送信として記録する"
+// observable = "matching・異なる回答イベントに対する元request IDの受付通知"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode form reply event race"
+// lifecycle = "permanent"
+// impact = "送信済み選択を見返せないか、選んでいない回答を表示する"
+// distinction = "通常往復fixtureはnative reply完了がイベントより先に返るため競合を検出しない"
+// @end-test-value
+it("OpenCode confirms only the matching early form reply", async () => {
+  for (const replyEvent of ["matching", "different"] as const) {
+    const turn = input();
+    const delivered: string[] = [];
+    let requestId = "";
+    turn.onElicitationRequest = (request) => { requestId = request.requestId; return { action: "accept", content: { q: "a" } }; };
+    turn.onElicitationDelivered = (id) => { delivered.push(id); };
+    const run = fixture(turn, { replyEvent, form: { id: "form", sessionID: "root", title: "Choose", metadata: { kind: "question" },
+      fields: [{ key: "q", type: "string", options: [{ value: "a", label: "A" }] }] } });
+    await run.adapter.runSessionTurn(turn);
+    assert.deepEqual(delivered, replyEvent === "matching" ? [requestId] : []);
   }
 });
 
@@ -548,12 +708,57 @@ it("OpenCode native conversions preserve model and permission boundaries", () =>
   assert.deepEqual(resolveOpenCodeModelRef("provider/model/nested", "high"), { providerID: "provider", id: "model/nested", variant: "high" });
   assert.throws(() => resolveOpenCodeModelRef("provider/model#high", "high"));
   assert.throws(() => buildOpenCodePermissions([path.join(process.cwd(), "wild*card")]));
-  assert.deepEqual(buildOpenCodePermissions([process.cwd()]), [{ action: "opencode_session_move", resource: "*", effect: "deny" }, { action: "external_directory", resource: path.join(process.cwd(), "*"), effect: "allow" }]);
+  assert.deepEqual(buildOpenCodePermissions([process.cwd()]), [
+    { action: "opencode_session_move", resource: "*", effect: "deny" },
+    { action: "subagent", resource: "*", effect: "deny" },
+    { action: "external_directory", resource: path.join(process.cwd(), "*"), effect: "allow" },
+  ]);
   const form: FormInfo1 = { id: "form", sessionID: "root", title: "question", fields: [{ key: "choice", type: "string", options: [{ value: "a", label: "A" }] }] };
   const field = buildOpenCodeElicitation(form, "request").fields[0];
   assert.equal(field.type, "select");
   if (field.type === "select") assert.deepEqual(field.options, [{ value: "a", label: "A" }]);
   assert.throws(() => buildOpenCodeElicitation({ ...form, fields: [{ key: "x", type: "string", pattern: "a+" }] }, "request"));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeのnative子起動・継続は新規Sessionと既存threadのどちらでもprompt前に拒否される設定を使う"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md の OpenCode 実行設定" }
+// fault = "native子の拒否を作成時か再開前の更新で渡さない、または設定の適用前にpromptを送る"
+// observable = "native Session createのpermissionsと、prompt受信時点でrootに最後に適用されたpermissions"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode adapter → OpenCode 2.2.5 Session API（fixture）、新規と保存済みnative thread"
+// lifecycle = "permanent"
+// impact = "WithMateが結果受領を保証しないnative子が実行されるのを防ぐ"
+// distinction = "既存の完了・再開testはprompt前のnative権限値を観測せず、権限生成関数だけでは経路漏れを検出できない"
+// risk_tags = ["authorization"]
+// @end-test-value
+it("OpenCode passes the native subagent deny when creating and before prompting a resumed session", async () => {
+  const expected = { action: "subagent", resource: "*", effect: "deny" };
+  for (const thread of ["", "native:root"]) {
+    const turn = input(thread);
+    const { adapter, client } = fixture(turn);
+    const create = client.session.create;
+    const prompt = client.session.prompt;
+    let created = false;
+    let updatedPermissions: Parameters<typeof client.session.update>[0]["permissions"];
+    client.session.create = async (request) => {
+      created = true;
+      assert.deepEqual(request?.permissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      return create(request);
+    };
+    client.session.update = async ({ sessionID, permissions }) => {
+      assert.equal(sessionID, "root");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      updatedPermissions = permissions;
+    };
+    client.session.prompt = async (...args) => {
+      assert.deepEqual(updatedPermissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      return prompt(...args);
+    };
+    await adapter.runSessionTurn(turn);
+    assert.equal(created, thread === "");
+  }
 });
 
 // @test-value v2

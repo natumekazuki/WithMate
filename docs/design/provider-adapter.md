@@ -71,7 +71,9 @@ providerごとの差は次。
   - `image` も `attachments` の `file` として送り、専用 UI 分岐は持たない
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
-  - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
+  - `on-request` の承認は Main Process の `onApprovalRequest` bridge を通す。実 `promptRequest` に対する SDK Assisted Permissions の `completed: requireApproval` は明示判断要求であり、それだけで本人専用にはならない。通常の分類 Read（実 prompt・本人必須・明示判断要求なし）はこの仲介を通らない
+  - [WithMate Auto Review](withmate-auto-review.md)に渡すのは、操作対象を特定できる完全な native 要求と実行 workspace、SDK から届いた prompt・判定文脈（仲介の認証情報は除去済み）。raw／prompt の `managedApprovalRequired`、sandbox 昇格、SDK 除外・失敗、判断根拠が不足する要求は審査に渡さない。Auto Review 中は本人必須の要求を実行せず、通常手動では人が実際に決着した場合だけ人間の応答とする。審査結果 `ask_user` の後の実回答も手動に属する
+  - SDK に返す一回限りの許可は `approve-once`。人間の許可・拒否だけを `human_response` として、拒否には `reject` を返す。WithMate の審査結果は SDK 内蔵 Assisted Permissions の判定ではなく `host_policy`。自動の拒否・応答不能は `user-not-available` で、人間が拒否したと扱わない。取消や出所不明も許可しない
   - turn送信前に`user_input.requested`と`elicitation.requested`のconsumer interestを登録し、通常終了時に解放する。取消時は専用CLI processの停止で破棄する。SDKのhandler callbackは併用せず、eventのrequest IDを回答まで保持する
   - `user_input.requested`は`kind: "question"`として共通質問UIへ中継する。選択肢は単一選択、`allowFreeform`省略時は自由回答可、選択肢なしはtext入力とし、`handlePendingUserInput`へ回答と`wasFreeform`を返す。Close／UI不在は空の回答で質問を終了し、turn自体は中断しない
   - `elicitation.requested`は同じ`onElicitationRequest` bridgeからform / URL UIへ中継し、`handlePendingElicitation`へ`accept / decline / cancel`を返す。変換できないfieldが1つでもあれば全体を`decline`し診断を残す。UI不在は`cancel`とし、不完全なformを受理しない。質問・elicitationの回答RPCの拒否・失敗はturn失敗として扱うが、取消cleanup開始後の切断は新たな回答失敗へ昇格させない。取消より先に発生した回答失敗は維持する
@@ -100,8 +102,9 @@ providerごとの差は次。
   - native DBは同じCLI・起動元環境の`debug paths db`で解決し、Main内でbootstrapを直列化する。DBの所有者はOpenCodeであり、adapterから直接SQLを実行しない。PATH／HOME、native global／project設定、AGENTS、skills、第三者MCPと既存のAPI key／OAuth認証を読み込む。service専用のmanaged環境変数はstandaloneには適用されず、必要な認証は起動元環境またはstandalone側へ利用者が設定する
   - 共通promptの`logicalPrompt.composedText`を毎turn送る。保存済みの明示thread IDを取得し、root・workspace・既存incarnation由来のownerを照合する。未配送inboxは同ownerとrequest IDを確認できる旧入力だけをcancelし、未知ownerや取消未確認はエラーにする。入力の自動再送やstale threadの自動resetはしない
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
-  - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
-  - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、選択肢の説明をlabelへ併記する。string／multiselectの`custom`は自由入力として扱い、単一回答は文字列、複数回答は選択値と自由入力を含む文字列配列で返す。`metadata.kind = question`で`required`が未指定のfieldは必須とし、その他はnativeの指定を維持する。`external`／`hidden`／`when`／`pattern`の未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
+  - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする。WithMateのOpenCode実行ではnativeの`subagent`による新規起動・継続を禁止する。新規Sessionの作成時と、既存threadを含む各Turnのprompt送信前にSession単位の拒否を適用する。OpenCodeのglobal／project設定や、WithMateの通常子Sessionの作成には影響しない
+  - `on-request`は[WithMate Auto Review](withmate-auto-review.md)または手動承認で判断し、approveを`once`、denyを`reject`へ変換する。native承認応答は到着順で、解決先は同じnative要求IDとSessionに限る。別要求の到着・解決では先頭を失効させず、対象IDの`permission.replied`またはTurn終端・取消で未回答の要求を失効させる。`never`はnative askへ`once`を返し、永続許可`always`は発行しない
+  - formは共通質問UIへ変換し、選択肢の説明をlabelへ併記する。string／multiselectの`custom`は自由入力として扱い、単一回答は文字列、複数回答は選択値と自由入力を含む文字列配列で返す。`metadata.kind = question`で`required`が未指定のfieldは必須とし、その他はnativeの指定を維持する。`external`／`hidden`／`when`／`pattern`の未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
   - stringの選択肢と自由入力でも`minLength`／`maxLength`／`format`を共通fieldへ保持し、送信値をSubmit前に検証する。文字数はnativeと同じ未加工文字列のUTF-16長で判定する。optionalの未回答は送信しない。選択肢外の既定値の表示・変更は[Question Forms](desktop-ui.md#question-forms)に従い、nativeへ返す既定値と文字列配列を失わない
   - token／contextは実取得値を投影する。quotaは公式`experimental.usage.limits`のGo枠だけを取得し、Mainの非永続cacheへ保持する。Go枠なしの正常応答は`null`から`unsupported`へ投影し、取得失敗とは区別する。独自Go HTTP APIやcredential読出しは行わない。詳細は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
 
@@ -151,7 +154,7 @@ provider adapterは共通のnative実行を所有し、用途別の背景SDK eng
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時は診断ログに必要なerror metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
-   - `OpenCodeAdapter`: 共通promptとfile URI、検証済みmodel／variantをnative Sessionへ渡す。明示threadと所有metadataを照合し、承認・formを共通pending UIへ返す
+   - `OpenCodeAdapter`: 共通promptとfile URI、検証済みmodel／variantをnative Sessionへ渡す。明示threadと所有metadataを照合し、承認を共通の承認キュー、formを共通質問UIへ渡す
 8. provider ownerがstream eventからsanitized live stateとprovider telemetryを組み立て、Main ProcessがIPCでSession Windowへ中継する。Codexのprojectionは共有Workerが所有し、transportと制御requestはMain Processに残す
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
@@ -218,35 +221,35 @@ adapter 実行に必要な保存済み session context:
 
 ## Approval Modes
 
-ApprovalとReviewerはproviderのnative設定名ではなく、WithMateの承認方式として定義する。Approvalは操作を自動許可・確認・拒否する方針、Reviewerは確認が必要な操作を誰が判断するかを表す。provider固有の実現方式はAdapterが写像し、対応しない選択や組合せを別設定へ暗黙変換しない。Sandboxは別の隔離設定であり、ApprovalやReviewerによるOSレベルの隔離は保証しない。
+GUI・MCP・CLIでは `Auto Run / Auto Review / User / Safety Focused` の同じ4択を公開する。承認方針と確認時の判断担当は、内部で `approvalMode` と `codexReviewer` に分けて保存・捕捉する。通常のSession作成・送信APIに権限上書き引数は追加しない。SandboxはCodexだけの独立設定であり、ApprovalによるOS隔離は保証しない。
 
-| Approval | 共通値 | WithMateでの意味 | Codex | Copilot | Claude（Reviewer: User） |
-| --- | --- | --- | --- | --- | --- |
-| Auto Run | `never` | 通常操作で承認確認を求めない。providerの明示的な禁止・必須確認は維持する | `never` | permission requestを自動許可 | `bypassPermissions`＋明示opt-in |
-| Provider Controlled | `on-request` | 確認が必要な操作をReviewerへ渡す。対象はproviderとWithMateの実行方針に従う | `on-request` | permission requestを共通UIへ | `default`＋read-only以外を強制ask |
-| Safety Focused | `untrusted` | 通常より許可範囲を絞り、provider別の安全側の方針で実行する | `untrusted` | read-only以外を拒否 | 非対応 |
-| Accept Edits | `accept-edits` | 編集・filesystem操作を自動許可し、それ以外の確認を維持する | 非対応 | 非対応 | `acceptEdits` |
-| Preapproved Only | `dont-ask` | 事前許可された操作だけ実行し、承認・AskUserQuestionの対話を開始しない | 非対応 | 非対応 | `dontAsk` |
-| Plan | `plan` | 計画用の権限制御で実行する。書込許可を自動的には与えない | 非対応 | 非対応 | `plan` |
+| Approval | Codex | Claude | Copilot | OpenCode |
+| --- | --- | --- | --- | --- |
+| Auto Run | `never`。nativeのSandbox・禁止規則を上書きしない | `bypassPermissions` ＋明示opt-in。SDKのdeny、hook、managed policyを維持 | 通常のpermission要求は `approve-once`。本人確認必須は手動へ、利用不能なら許可しない | native askへ `once`。native denyは上書きせず永続許可は発行しない |
+| Auto Review | `on-request` ＋native `auto_review` | `auto` のnative審査 | 適格な `on-request` を[WithMate仲介審査](withmate-auto-review.md)へ | 適格なnative askをWithMate仲介審査へ |
+| User | `on-request` ＋native `user` | `default`。現行どおりread-only以外を強制ask | SDKの確認要求を手動判断へ | native askを手動判断へ |
+| Safety Focused | `on-request` ＋native `user` で受けた実承認を拒否 | `default` でWithMateの強制askを追加せず、SDKの実承認を拒否 | SDKの通常read分類は通す。実ask、managed要求、readOnlyヒントだけのMCPは許可しない | native `permission.asked` を拒否。事前許可とdenyはnativeのまま |
 
-Reviewerは`User / Auto Review`をCodexとClaudeで提供し、既定値は`user`。既存の`codexReviewer` fieldを保存・送信時捕捉に共用し、新規fieldやmigrationは追加しない。
+Safety Focusedは承認不要の読取・nativeで既に許可された操作を止めず、実際に承認を求められれば読取／書込／shell等の種類にかかわらず拒否する。手動確認や自動審査は起動しない。一般の質問やその他の入力は承認と区別する。Copilot SDKの通常のpermission分類と、`promptRequest` や本人必須を示すmanaged／Assisted判定を区別する。Assisted通知の存在だけでは実確認ではなく、MCPの自己申告で実確認を許可しない。
 
-- `User`はproviderが要求した操作承認をWithMateの共通approval UIへ中継する。
-- `Auto Review`は確認対象の操作をproviderの自動審査へ任せる。Codexは`approvalsReviewer: "auto_review"`、ClaudeはApprovalが`on-request`の場合に`permissionMode: "auto"`へ写像する。審査方式・対象・利用条件の同一性は保証しない。providerが人の確認をなお要求した場合は共通UIへ中継する。
-- Claudeの`accept-edits / dont-ask / plan`はReviewerが`user`のときだけ有効。Auto Review中にこれらのApprovalを選ぶ場合は、UIでReviewerをUserへ変更する確認を求め、承認時に両方を一括変更する。送信時検証とAdapterは不正な組合せを拒否する。保存値が不正な組合せならinvalidを示し、Reviewerの明示変更で修正できる。
-- `never`ではReviewerを適用せず、controlをdisabledにして保存済み値を保持する。Reviewerが有効なApprovalへ戻した場合は以前の選択を再利用する。保存済みApprovalが`never`の間の通常のReviewer更新は採用しない。ClaudeでUserを要するApprovalへの変更を確認した場合に限り、変更前の選択を照合したうえで両方を一括変更する。
-- Auxiliary作成時のReviewerは既存どおり親Sessionから継承する。作成時に実際に保存するApprovalとの組合せをcommit前に検証し、非対応なら作成を拒否する。親や作成要求の設定をUserへ暗黙変更しない。
-- OpenCodeAdapterは`on-request`（既定）と`never`だけを選択可能にし、native askへそれぞれ共通UIの判断／今回だけ許可を返す。nativeの明示denyを上書きしない。
+Copilot／OpenCodeのAuto Reviewでは、委譲可能な承認要求を設定した審査Providerへ渡す。有効な `ask_user` の先頭だけを共通UIに公開して本人に確認する。委譲できない、審査先が未構成または利用不能、審査結果が得られない場合は手動に切り替えず不許可にする。選択は書き換えない。Codex／Claudeのネイティブ審査と通常の手動モードはこの扱いの対象外。Copilot／OpenCodeの明示UserとAuto Reviewには `withMateReviewerExplicit` を添えて保存し、未指定の旧値を明示Userとみなさない。通常の子Sessionは呼出元の明示Reviewerを継承する。Speed・Sandbox・Reviewerの実効性は別々に検証する。
 
-renderer / shared state / session persistence / 最小turn記録は上記の共通値を保持する。既存rowのlegacy値はread-pathで`allow-all -> never`、`safety -> untrusted`、`provider-controlled -> on-request`へ正規化する。Codex／CopilotのApproval既定値は`untrusted`、Claude／OpenCodeは`on-request`とする。
+既存の `untrusted` は従来の制限のまま（Codexのnative untrusted、Copilotのread-only分類）。新しい `safety-focused` に自動変換しない。Claudeの保存済み `accept-edits / dont-ask / plan` は対応する `acceptEdits / dontAsk / plan` を維持し、新規選択肢には出さない。旧 `allow-all / safety / provider-controlled` の読取時正規化と、保存履歴・捕捉済み受付、新規の初期値は変更しない。Claudeで使用中のnative permission modeが要求と異なる場合は失敗を通知する。
 
-Claudeの実行制御:
+### 子Sessionへの承認設定の継承
 
-- `never`では`allowDangerouslySkipPermissions: true`を渡す。SDKのdeny / askルール、hook、managed policyは上書きしない。
-- `on-request + user`では`Read / Glob / Grep / WebSearch / WebFetch`以外を`PreToolUse`でaskにする。他の有効な承認方式では通常toolを強制askせず、選択したnative modeの制御へ任せる。
-- `Preapproved Only`以外の`AskUserQuestion`と、SDKから届くMCP elicitationは共通質問UIを使う。残るSDK承認要求は共通approval UIへ中継し、拒否・取消・UI不在ではdenyする。
-- Auto Reviewのmodel・契約・managed policy等の利用条件はSDKが判定する。起動時に要求と異なるpermission modeが返れば失敗として通知する。
-- artifactには送信時のApprovalとReviewerを分けて記録する。Reviewerは選択値であり、個々の操作で自動審査が実行された証明ではない。
+新規の通常子（MCP／CLIの `create_child`）は、親の保存値や作成引数ではなく、呼出元の実行中Turnに捕捉された方針を使う。同一Providerの子には従来のApproval・Reviewer・Sandbox値を引き継ぐ。異なるProviderの子には、明示された4択の**承認要求への応答方針**を渡し、上表の宛先adapterで実行する。Codex・Claude・Copilot・OpenCode間の全12方向で同じ規則を使う。
+
+| 呼出元Turnの設定・条件 | 新規の異種子 |
+| --- | --- |
+| Auto Run／Safety Focused | それぞれ同じ方針を保存する。通常の実行や実承認は宛先のnativeルールに従い、権限を追加しない。 |
+| 明示User／Auto Review | Codex・Claudeならnative User／Auto Review。Copilot・OpenCodeなら明示マーカー付きで手動／WithMate仲介。仲介で審査できない場合は不許可にし、保存値は変えない。 |
+| 旧Copilot・OpenCodeの `on-request` でReviewer未指定 | 共通SettingsのOn/Offにかかわらず、Codex・Claudeの子は従来どおりnative User、仲介対応の子は未指定のまま。親を明示Userに変換しない。 |
+| Codex Sandbox | `danger-full-access` の親は異種に4択を渡せる。制限付きSandboxは非Codexに表せないので拒否。非CodexからCodexへは、親に保存された非適用の値を無視して `read-only` で開始する。 |
+| Copilotの選択済みCustom Agent | 捕捉した `customAgentName` が空白以外を含む場合、ツール制限を宛先で維持できるか確認できないため拒否する。名前から制限を推定せず、作成時の再探索・同名Agentへの置換はしない。 |
+| Provider固有の旧Approval（`untrusted`、Claudeの `accept-edits / dont-ask / plan`） | 共通方針に置き換えず拒否する。 |
+
+子の作成はOS権限、native事前許可・禁止、管理者ルールや別Workspaceの設定を複製する操作ではない。宛先の強制deny・本人必須を上書きせず、OpenCode固有のSession移動・native subagent禁止も変えない。明示4択に写像できても上表の制限は独立して適用する。拒否時には子もlifecycle操作も作らない。作成済みの同一requestの再試行は受付済み設定を使う。通常送信（`enqueue`）は継承せず、宛先の保存設定を受付時に固定する。
 
 ## Speed
 
@@ -345,6 +348,8 @@ CodexAdapterは同時turnで1つのprojection Workerを共有し、最後のturn
 
 assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示に影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
 
+scope内で専用分岐のない正常なnotificationは、受信ごとに`codex.run.unhandled-notification`をinfoで既存app logへ記録する。Workerはturn固有のredactorでAPI keyと既知binding情報を除去してから、session/thread/turn ID、methodとparamsを[app logの診断上限](app-log-base.md#provider-diagnostic-log-policy)に収め、Mainのloggerへ渡す。任意の秘密、会話、tool結果、path等の除去は保証しない。扱い済み通知（状態変更のない通知を含む）、scope外、Mainで処理する`serverRequest/resolved`、server requestはこの診断の対象ではない。診断はUI・通常履歴へ追加せず、terminal結果・順序・RPC処理を変更しない。
+
 live更新は33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。WorkerからMainへのstep配送は既存changesのupserts/removesだけとし、無変更operationのDetailsを再送しない。
 
 Codex progressは`changes.snapshot = false`、stateのcollectionsは空配列とし、制御通知も同じ契約を使う。`SessionRuntimeService`はchangesを既存のMain live stateへ統合し、同ID更新の位置と追加順を維持する。
@@ -375,11 +380,9 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 - Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
 - 失敗時は最小turnに `phase=failed` とerror summaryを記録する
 - canceled / failed のどちらでも、取得済みの `assistant text` / operations / artifact があれば捨てずに残す
-- `CopilotAdapter` は cached session 再利用中の `SessionNotFound` / stale connection も同一 turn 内で 1 回だけ internal retry できる
-  - retry 前には cached `CopilotSession` と client cache を破棄する
-  - retry 後は既存の `resumeSession(threadId)` を再試行し、missing session なら `createSession()` fallback へ落とす
-  - `session.error` や未対応event診断だけの局面では retry を妨げず、取得済みの `assistantText` / terminal操作（completed・failed・canceled）/ exitCode・error・操作の非空partial output / `artifact.changedFiles` がある時は retry を止める。partial outputの取得はturn実行中の証拠で判定し、artifactのdetails本文から推定しない
-  - `tool.execution_start` や pending permission のような未確定 step だけでは retry を妨げない。承認情報を継承した開始details、開始step由来のactivity summary、実行設定由来のrun checksも実行結果として扱わない
+- adapter は送出済み、または送出・実行結果が不明な入力を自動再送しない。応答ACK・本文・tool結果の欠落は未送出の根拠としない
+- `CopilotAdapter` は `session.send()` の未呼出が確実で、取消でない場合に限り、`SessionNotFound` や stale connection による接続準備を同一turn内で一度だけ回復できる。cached Sessionとclient cacheを破棄し、保存済みthread IDの `resumeSession(threadId)` を試す。resume時にmissing sessionが確定した場合の `createSession()` は送出前のSession準備として扱う
+- `CopilotAdapter` は `session.send()` の呼出後、ACKのrejectもeventの接続失敗も同一入力の再試行条件にしない。元の失敗と取得済みpartial resultを通常の終端処理へ返す
 - DB reset は running session がある間は拒否し、そのエラーメッセージを renderer にそのまま返す
 
 ## 通常履歴と最小turn

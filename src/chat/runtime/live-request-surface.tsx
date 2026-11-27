@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
+import { isValidCodexElicitationField } from "../../../src-shared/session/codex-elicitation-validation.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import { ComposerIcon } from "../composer/composer-icon.js";
 import { QuestionAnswerEditor } from "./question-answer-editor.js";
@@ -160,6 +161,22 @@ function buildLiveElicitationResponseContent(
   return Object.fromEntries(entries);
 }
 
+function codexFormFieldError(field: LiveElicitationField, value: LiveElicitationFieldValue | undefined): string | null {
+  if (isValidCodexElicitationField(field, value)) return null;
+  if (value === undefined) return `${field.title} is required.`;
+  if (field.type === "text" && typeof value === "string") {
+    if (field.required && !value.trim()) return `${field.title} is required.`;
+    const length = [...value].length;
+    if (field.minLength !== undefined && length < field.minLength) return `${field.title} must be at least ${field.minLength} characters.`;
+    if (field.maxLength !== undefined && length > field.maxLength) return `${field.title} must be at most ${field.maxLength} characters.`;
+    if (field.format === "date-time") return `Enter ${field.title} as an ISO date and time with a time zone (Z or +09:00).`;
+    if (field.format === "date") return `Enter a valid date (YYYY-MM-DD) for ${field.title}.`;
+    if (field.format === "email") return `Enter a valid email address for ${field.title}.`;
+    if (field.format === "uri") return `Enter a valid URI for ${field.title}.`;
+  }
+  return validateLiveElicitationField(field, value) ?? `Enter a valid answer for ${field.title}.`;
+}
+
 function liveElicitationTextValue(value: LiveElicitationFieldValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
@@ -254,8 +271,12 @@ function LiveElicitationCard({
       for (const field of request.fields) {
         if (field.type === "select" && field.allowFreeText && customFields.includes(field.name)) answers[field.name] = freeTextValues[field.name] ?? "";
       }
+      const content = buildLiveElicitationResponseContent(request, answers);
+      const codexForm = request.provider === "codex" && request.kind !== "question";
       for (const field of request.fields) {
-        const validation = validateLiveElicitationField(field, answers[field.name] ?? "");
+        const validation = codexForm
+          ? codexFormFieldError(field, Object.hasOwn(content, field.name) ? content[field.name] : undefined)
+          : validateLiveElicitationField(field, answers[field.name] ?? "");
         if (validation) {
           setValidationMessage(validation);
           return;
@@ -263,10 +284,30 @@ function LiveElicitationCard({
       }
 
       setValidationMessage(null);
-      const content = buildLiveElicitationResponseContent(request, answers);
+      const answerEntries: Array<[string, { selected: number[]; text: string[] }]> = [];
+      if (request.kind === "question") for (const field of request.fields) {
+        if (field.type === "text" && !field.secret && typeof content[field.name] === "string") {
+          answerEntries.push([field.name, { selected: [], text: [content[field.name] as string] }]);
+        } else if ((field.type === "number" && typeof content[field.name] === "number") || (field.type === "boolean" && typeof content[field.name] === "boolean")) {
+          answerEntries.push([field.name, { selected: [], text: [String(content[field.name])] }]);
+        } else if (field.type === "select" && typeof content[field.name] === "string") {
+          const value = content[field.name] as string;
+          const index = customFields.includes(field.name) ? -1 : field.options.findIndex((option) => option.value === value);
+          answerEntries.push([field.name, { selected: index < 0 ? [] : [index], text: index < 0 ? [value] : [] }]);
+        } else if (field.type === "multi-select" && Array.isArray(content[field.name])) {
+          const values = liveElicitationMultiSelectValue(fieldValues[field.name]);
+          const selected = values.flatMap((value) => {
+            const index = field.options.findIndex((option) => option.value === value);
+            return index < 0 ? [] : [index];
+          });
+          const text = (content[field.name] as string[]).filter((value) => !values.includes(value) || !field.options.some((option) => option.value === value));
+          answerEntries.push([field.name, { selected, text }]);
+        }
+      }
       onResolveLiveElicitation(request, {
         action,
         ...(Object.keys(content).length > 0 ? { content } : {}),
+        ...(answerEntries.length > 0 ? { answerPresentation: Object.fromEntries(answerEntries) } : {}),
       });
       return;
     }
@@ -498,7 +539,7 @@ function LiveElicitationCard({
   );
 }
 
-export function ElicitationRecords({ records, sourceText, responseProvider }: { records?: readonly ElicitationRecord[]; sourceText?: string; responseProvider?: string }) {
+export function ElicitationRecords({ records, sourceText, responseProvider, highlightedChoices }: { records?: readonly ElicitationRecord[]; sourceText?: string; responseProvider?: string; highlightedChoices?: ReadonlySet<string> }) {
   const source = sourceText === undefined ? undefined : projectMessageRenderedSearchText(sourceText, responseProvider);
   // A complete block/list item represents an existing choice; a substring does not.
   const sourceChoices = new Set(sourceText === undefined ? [] : fromMarkdown(sourceText).children.flatMap((node) =>
@@ -512,9 +553,11 @@ export function ElicitationRecords({ records, sourceText, responseProvider }: { 
       return {
         question: source?.includes(question) ? undefined : question,
         description: record.kind !== "question" ? field.description : undefined,
-        options: field.options?.filter((option) => !sourceChoices.has(option.trim())),
+        options: field.options?.map((option, index) => ({ label: option, selected: field.answer?.selected.includes(index) ?? false }))
+          .filter((option) => !sourceChoices.has(option.label.trim()) || (option.selected && !highlightedChoices?.has(option.label.trim()))),
+        answerText: field.answer?.text ?? [],
       };
-    }).filter((field) => field.question || field.description || field.options?.length);
+    }).filter((field) => field.question || field.description || field.options?.length || field.answerText.length);
     if (record.kind === "question" && fields.length === 0) return null;
     return (
       <div className="elicitation-record" key={record.requestId}>
@@ -524,7 +567,8 @@ export function ElicitationRecords({ records, sourceText, responseProvider }: { 
             <div className="live-elicitation-field" key={index}>
               {field.question ? <p>{field.question}</p> : null}
               {field.description ? <p>{field.description}</p> : null}
-              {field.options?.length ? <ul className="elicitation-record-options">{field.options.map((option, optionIndex) => <li key={optionIndex}>{option}</li>)}</ul> : null}
+              {field.options?.length ? <ul className="elicitation-record-options">{field.options.map((option, optionIndex) => <li key={optionIndex} className={option.selected ? "elicitation-record-selected" : undefined}>{option.selected ? <><span aria-hidden="true">✓ </span><span className="visually-hidden">Selected: </span></> : null}{option.label}</li>)}</ul> : null}
+              {field.answerText.map((answer, answerIndex) => <p className="elicitation-record-answer" key={answerIndex}><span className="visually-hidden">Answer: </span>{answer}</p>)}
             </div>
           ))}
         </div>
@@ -533,13 +577,27 @@ export function ElicitationRecords({ records, sourceText, responseProvider }: { 
   });
 }
 
+function selectedSourceRanges(source: string, record: ElicitationRecord, responseProvider?: string) {
+  const blocks = fromMarkdown(source).children.flatMap((node) => node.type === "list" ? node.children : [node]);
+  const selected = new Set(record.fields.flatMap((field) => field.answer?.selected.map((index) => field.options?.[index]?.trim()).filter((value): value is string => Boolean(value)) ?? []));
+  const ranges: Array<{ start: number; end: number }> = [];
+  const labels = new Set<string>();
+  for (const value of selected) {
+    const matches = blocks.filter((block) => block.position && projectMessageRenderedSearchText(source.slice(block.position.start.offset, block.position.end.offset), responseProvider).trim() === value);
+    if (matches.length !== 1 || matches[0].position?.start.offset === undefined || matches[0].position?.end.offset === undefined) continue;
+    ranges.push({ start: matches[0].position.start.offset, end: matches[0].position.end.offset });
+    labels.add(value);
+  }
+  return { ranges, labels };
+}
+
 export function InlineResponseContent({ text, records = [], requests = [], renderText, responseProvider, inlineContent, ...cardProps }: {
   text: string;
   responseProvider?: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
-  inlineContent?: MessageInlineContent;
-  renderText: (text: string, key: string, sourceStart: number, inlineContent?: MessageInlineContent) => ReactNode;
+  inlineContent?: MessageInlineContent | readonly MessageInlineContent[];
+  renderText: (text: string, key: string, sourceStart: number, inlineContent?: readonly MessageInlineContent[], selectedRanges?: Array<{ start: number; end: number }>) => ReactNode;
 } & Omit<LiveElicitationCardProps, "request">) {
   const entries = records.map((record) => ({ record, request: requests.find((request) => request.requestId === record.requestId) }));
   for (const request of requests) {
@@ -549,24 +607,29 @@ export function InlineResponseContent({ text, records = [], requests = [], rende
   }
   const fragments: ReactNode[] = [];
   let offset = 0;
-  let contentInserted = false;
-  const appendText = (end: number, key: string) => {
-    const content = inlineContent && !contentInserted && Math.min(inlineContent.position, text.length) <= end
-      ? { ...inlineContent, position: Math.max(0, inlineContent.position - offset) } : undefined;
-    if (content) contentInserted = true;
-    if (end > offset || content) fragments.push(renderText(text.slice(offset, end), content?.key ?? key, offset, content));
+  const contents = (inlineContent ? Array.isArray(inlineContent) ? inlineContent : [inlineContent as MessageInlineContent] : []).slice().sort((a, b) => a.position - b.position);
+  let nextContent = 0;
+  const appendText = (end: number, key: string, selectedRanges?: Array<{ start: number; end: number }>) => {
+    const selected: MessageInlineContent[] = [];
+    while (nextContent < contents.length && Math.min(contents[nextContent].position, text.length) <= end) {
+      const content = contents[nextContent++];
+      selected.push({ ...content, position: Math.max(0, content.position - offset) });
+    }
+    const owner = selected.find((content) => content.stableOwner) ?? selected[0];
+    if (end > offset || selected.length) fragments.push(renderText(text.slice(offset, end), owner?.key ?? key, offset, selected.length ? selected : undefined, selectedRanges?.map((range) => ({ start: range.start - offset, end: range.end - offset }))));
   };
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;
     const valid = range && range.start >= offset && range.end >= range.start && range.end <= text.length;
     // Keep the source body and supplement only question content absent from it.
     const sourceText = !request && valid && range.end > range.start ? text.slice(range.start, range.end) : undefined;
+    const selected = sourceText !== undefined ? selectedSourceRanges(sourceText, record, responseProvider) : undefined;
     const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;
     const end = valid ? range.end : start;
-    appendText(start, `text-${offset}-${start}-${record.requestId}`);
+    appendText(start, `text-${offset}-${start}-${record.requestId}`, selected?.ranges.map((entry) => ({ start: entry.start + range!.start, end: entry.end + range!.start })));
     fragments.push(<Fragment key={`${cardProps.sessionId ?? ""}:${record.requestId}`}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
-      : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} />}</Fragment>);
+      : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} highlightedChoices={selected?.labels} />}</Fragment>);
     offset = end;
   }
   appendText(text.length, `text-${offset}`);

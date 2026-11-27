@@ -610,6 +610,7 @@ export function SessionFilePreview({
   const busyActionRef = useRef<PreviewAction | null>(null);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
   const pdfPreviewRef = useRef<PdfFilePreviewHandle>(null);
+  const [pdfActionsContainer, setPdfActionsContainer] = useState<HTMLSpanElement | null>(null);
   const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
@@ -1193,6 +1194,8 @@ export function SessionFilePreview({
           {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
+          {previewKind === "pdf" ? <span ref={setPdfActionsContainer} className="session-pdf-selection-actions"
+            role="group" aria-label="Selected PDF Text" /> : null}
           {descriptor && (previewKind === "text" || isDocumentPreview) ? (
             <select
               aria-label="Text encoding"
@@ -1355,10 +1358,14 @@ export function SessionFilePreview({
         </div>
       ) : null}
       {loadState.status === "loading" ? (
-        <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
-          <progress max={loadState.descriptor.byteLength || 1} value={loadState.loadedBytes} />
-          <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
-        </div>
+        loadState.descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES ? (
+          <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
+            <progress aria-label="Loading file content" max={loadState.descriptor.byteLength} value={loadState.loadedBytes} />
+            <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
+          </div>
+        ) : (
+          <div className="session-file-preview-loading"><LoadingIndicator label="Loading file content" /></div>
+        )
       ) : null}
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">
@@ -1424,6 +1431,7 @@ export function SessionFilePreview({
           key={`${loadRevisionRef.current}:${descriptor?.revision}`}
           bytes={loaded.bytes}
           name={loaded.descriptor.name}
+          actionsContainer={pdfActionsContainer}
           onCopyText={onCopyText}
           onQuoteText={onQuoteText}
           onOpenLink={handleOpenMarkdownPath}
