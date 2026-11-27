@@ -1051,12 +1051,12 @@ function Overview({
   const [query, setQuery] = useState("");
   const [choice, setChoice] = useState<SessionTarget | null>(null);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
-  const [confirm, setConfirm] = useState<"merge" | "close" | null>(null);
+  const [confirmClose, setConfirmClose] = useState(false);
   const confirmationButton = useRef<HTMLButtonElement>(null);
   const triggerButton = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
-    if (confirm) confirmationButton.current?.focus();
-  }, [confirm]);
+    if (confirmClose) confirmationButton.current?.focus();
+  }, [confirmClose]);
   const [branchRevision, setBranchRevision] = useState(0);
   const branchesLoad = useCallback(() => api.execute("pr_branches", {}), [api]);
   const branches = useRead(
@@ -1143,13 +1143,14 @@ function Overview({
                 disabled={
                   busy ||
                   !approvalTarget ||
+                  !isApproved ||
+                  version !== pr.latestVersion ||
                   pr.currentTargetCommit === null ||
                   targetChanged
                 }
-                onClick={(event) => {
-                  triggerButton.current = event.currentTarget;
-                  setConfirm("merge");
-                }}
+                onClick={() =>
+                  approvalTarget && void run("pr_merge", approvalTarget)
+                }
               >
                 Merge
               </button>
@@ -1157,49 +1158,43 @@ function Overview({
                 disabled={busy}
                 onClick={(event) => {
                   triggerButton.current = event.currentTarget;
-                  setConfirm("close");
+                  setConfirmClose(true);
                 }}
               >
                 Close PR
               </button>
             </div>
           )}
-          {confirm && approvalTarget && (
+          {confirmClose && pr.state === "open" && (
             <div
               className="local-pr-confirm"
               role="group"
               aria-label="Confirm Action"
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
-                  setConfirm(null);
+                  setConfirmClose(false);
                   triggerButton.current?.focus();
                 }
               }}
             >
-              <p>
-                {confirm === "merge"
-                  ? `Merge v${latest?.version} into ${pr.targetBranch}?`
-                  : `Close ${pr.title} without merging?`}
-              </p>
+              <p>Close {pr.title} without merging?</p>
               <button
                 ref={confirmationButton}
                 disabled={busy}
                 onClick={() => {
-                  setConfirm(null);
-                  if (confirm === "merge") void run("pr_merge", approvalTarget);
-                  else
-                    void run("pr_close", {
-                      prId: pr.id,
-                      version: pr.latestVersion,
-                    });
+                  setConfirmClose(false);
+                  void run("pr_close", {
+                    prId: pr.id,
+                    version: pr.latestVersion,
+                  });
                   triggerButton.current?.focus();
                 }}
               >
-                {confirm === "merge" ? "Confirm Merge" : "Confirm Close"}
+                Confirm Close
               </button>{" "}
               <button
                 onClick={() => {
-                  setConfirm(null);
+                  setConfirmClose(false);
                   triggerButton.current?.focus();
                 }}
               >

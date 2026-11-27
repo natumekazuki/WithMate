@@ -4,7 +4,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createServer } from "vite";
-import type { LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
+import type { LocalPrDetail, LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
 
 /** Both windows preserve reads on failure; owned labels and local dates do not rewrite source content. */
 test("local PR labels, dates, and independent window refreshes retain their boundaries", async () => {
@@ -32,9 +32,9 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     kind: "main",
     sessionId: "fixture",
     incarnationId: "fixture",
-  };
+  } as const;
   const sha = "a".repeat(40);
-  const detail = {
+  const detail: LocalPrDetail = {
     id: "pr",
     title: "Review me",
     description: "lowercase USER text",
@@ -63,7 +63,12 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   const listeners = new Set<() => void>();
   let fail = false;
   let reads = 0;
-  const execute = async (operation: string) => {
+  const merges: unknown[] = [];
+  const execute = async (operation: string, input: unknown) => {
+    if (operation === "pr_merge") {
+      merges.push(input);
+      return { ok: true, data: detail };
+    }
     if (operation === "pr_get") reads += 1;
     if (operation === "pr_get" && fail)
       return {
@@ -231,6 +236,23 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       reload.click();
     });
     assert.equal(reads, 7);
+
+    await act(async () => button("Overview").click());
+    assert.equal(button("Merge").disabled, true);
+    detail.approval = {
+      prId: detail.id,
+      version: 1,
+      headCommit: sha,
+      targetCommit: sha,
+      approvedAt: "2026-11-27T19:00:00.000Z",
+    };
+    await act(async () => {
+      listeners.forEach((listener) => listener());
+    });
+    assert.equal(button("Merge").disabled, false);
+    await act(async () => button("Merge").click());
+    assert.deepEqual(merges, [{ prId: detail.id, version: 1, headCommit: sha, targetCommit: sha }]);
+    assert.doesNotMatch(first.textContent ?? "", /Confirm Merge/);
   } finally {
     await act(async () => roots.forEach((root) => root.unmount()));
     await vite.close();
