@@ -16,6 +16,7 @@ export default defineConfig({
         diff: path.resolve(projectRoot, "diff.html"),
         filePreview: path.resolve(projectRoot, "file-preview.html"),
         sessionGraph: path.resolve(projectRoot, "session-graph.html"),
+        localPr: path.resolve(projectRoot, "local-pr.html"),
         boot: path.resolve(projectRoot, "boot.html"),
         characterEditor: path.resolve(projectRoot, "character-editor.html"),
       },

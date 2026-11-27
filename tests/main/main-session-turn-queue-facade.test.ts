@@ -8,8 +8,33 @@ import type { ComposerPreview, RunSessionTurnRequest } from "../../src-shared/se
 import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
+import { enqueueLocalPrDiscussion } from "../../src-electron/local-pr/local-pr-session-bridge.js";
 
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
+
+/** Lost PR-send acknowledgment is resolved by the actual durable GUI receipt, without another Turn. */
+test("PR相談の応答喪失は通常Session queueで同じ受付へ収束する", async () => {
+  const f = fixture();
+  const input = { prId: requestId, version: 1, target: { kind: "main" as const, sessionId: f.session.id, incarnationId: f.session.incarnationId }, commentIds: [], message: "Review this change", requestId };
+  const queue = {
+    getSessionTurnQueueReceipt: f.facade.getSessionTurnQueueReceipt.bind(f.facade),
+    enqueueSessionTurn: async (...args: Parameters<MainSessionTurnQueueFacade["enqueueSessionTurn"]>) => {
+      await f.facade.enqueueSessionTurn(...args);
+      throw new Error("Reply lost after commit");
+    },
+  };
+  try {
+    const send = (message: string) => enqueueLocalPrDiscussion(queue, input, message, async () => f.session, () => undefined);
+    const message = `${input.message}\n\nFixed submission v1`;
+    const first = await send(message);
+    assert.deepEqual(first, { ok: true, data: { receiptId: f.rows[0]?.id } });
+    assert.deepEqual(await send(message), first);
+    assert.deepEqual(await send("Different message"), { ok: false, code: "PR_DISCUSSION_REQUEST_CONFLICT", message: "That request ID belongs to a different Session message.", effect: "none" });
+    assert.equal(f.calls.acceptance, 1);
+    assert.equal(f.rows[0]?.accepted?.origin?.kind, "gui");
+    assert.equal(f.rows[0]?.accepted?.request.userMessage, message);
+  } finally { await f.service.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

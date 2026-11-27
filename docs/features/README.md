@@ -13,6 +13,7 @@ WithMateの利用者向け機能ガイドです。機能ごとの使い方をま
 - [親子Session連携の推奨ルールサンプル](parent-child-session-rules.md)
 - [Sessionの選定方針とWorktree配置](session-operating-policies.md)
 - [Git履歴とcommit preview](git-history-and-commit-preview.md)
+- [ローカルPull Requests](local-pull-requests.md)
 - [Messageの縮小表示とnavigator](session-message-collapse-and-navigation.md)
 - [Messageのブックマークとnavigator絞り込み](message-bookmark-filter.md)
 - [キーボードショートカット](keyboard-shortcuts.md)

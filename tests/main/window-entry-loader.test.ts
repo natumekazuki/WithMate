@@ -39,6 +39,7 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadChatEntry(stub.window, { kind: "agent", sessionId: "session 1" });
   await loader.loadDiffEntry(stub.window, "diff#1");
   await loader.loadFilePreviewEntry(stub.window, "preview#1");
+  await loader.loadLocalPrEntry(stub.window);
   await loader.loadBootEntry(stub.window);
   await loader.loadCharacterEditorEntry(stub.window, "char 1");
   await loader.loadCharacterEditorEntry(stub.window);
@@ -48,6 +49,7 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173/session.html?sessionId=session%201" },
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
     { kind: "url", value: "http://localhost:5173/file-preview.html?token=preview%231" },
+    { kind: "url", value: "http://localhost:5173/local-pr.html" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
     { kind: "url", value: "http://localhost:5173/character-editor.html?characterId=char%201" },
     { kind: "url", value: "http://localhost:5173/character-editor.html" },

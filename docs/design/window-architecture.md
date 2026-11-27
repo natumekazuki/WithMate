@@ -12,6 +12,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Diff | 広い面でGit差分を比較 |
 | File Preview | 対象fileを独立Windowで表示 |
 | Session Graph | 親Mainの共有Graphを独立した閲覧位置で表示 |
+| Pull Requests | SessionのGitリポジトリで固定版のレビュー、Checks、GUI承認・merge |
 
 Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編集面を持たない。Auxiliaryは専用Windowを作らず、親Session Windowの同じchat shell内でMainと切り替える。親配下の複数Auxiliaryはstable IDで保存し、表示中でないrunも継続・terminal保存する。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 

@@ -7,6 +7,7 @@ import {
   normalizeSessionWindowRestoreResult,
 } from "../../src-shared/window/session-window-restore.js";
 import * as channels from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { LOCAL_PR_OPEN_WINDOW } from "../../src-shared/local-pr/local-pr-ipc.js";
 import type { IpcRendererLike } from "./ipc.js";
 
 export function createWindowApi(
@@ -40,6 +41,9 @@ export function createWindowApi(
         sessionId,
         auxiliarySessionId ?? null,
       );
+    },
+    openLocalPrWindow(target) {
+      return ipcRenderer.invoke(LOCAL_PR_OPEN_WINDOW, target);
     },
     showSessionMonitorContextMenu(request) {
       return ipcRenderer.invoke(

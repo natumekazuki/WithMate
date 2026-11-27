@@ -251,6 +251,13 @@ import { registerSessionCrewHandlers } from "./ipc/session-crew.js";
 import { assertOwningSessionWindowSender } from "./ipc/shared.js";
 import { registerCoordinationHandlers } from "./ipc/coordination.js";
 import { CoordinationApplicationService } from "./coordination/coordination-application-service.js";
+import { LocalPrApplication, failure as localPrFailure } from "./local-pr/local-pr-application.js";
+import { LocalPrCiService } from "./local-pr/local-pr-ci-service.js";
+import { LocalPrService, resolveLocalPrRepository, type LocalPrRepository } from "./local-pr/local-pr-service.js";
+import { LocalPrWindowService } from "./local-pr/local-pr-window.js";
+import { enqueueLocalPrDiscussion } from "./local-pr/local-pr-session-bridge.js";
+import type { LocalPrInput, LocalPrResult } from "../src-shared/local-pr/local-pr-contract.js";
+import type { SessionTarget } from "../src-shared/session/session-target.js";
 import { ChildSessionCreationRejectedError } from "./session/session-storage-errors.js";
 import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { MainStoreContext } from "./app/main-store-context.js";
@@ -848,9 +855,117 @@ const coordinationApplicationService = new CoordinationApplicationService({
   onAccepted: (receipt, text) => { if (text !== undefined) rememberSourceDisplay(receipt, text); requireMainSessionTurnQueueService().acceptCommittedReceipt(receipt); },
   onNotificationError: (error) => writeAppLog({ level: "warn", kind: "coordination.notification-failed", process: "main", message: "A saved Coordination notification failed", error: appLogService.errorToLogError(error) }),
 });
+
+const localPrCore = new LocalPrService({
+  getActiveOwner: () => databaseMaintenanceRequested ? null : mainStoreContext.activePersistentStoreOwner,
+  getStore: () => databaseMaintenanceRequested ? null : mainStoreContext.storageWorker?.stores.localPr ?? null,
+  onChanged: (repositoryId) => localPrWindowService.notify(repositoryId),
+});
+let localPrCiInitialization: Promise<LocalPrCiService> | null = null;
+
+/** Initialize the app-owned CI runner independently of a renderer's lifetime. */
+function getLocalPrCi(): Promise<LocalPrCiService> {
+  if (localPrCiInitialization) return localPrCiInitialization;
+  const instance = new LocalPrCiService({ userDataPath: app.getPath("userData"), onChanged: (id) => localPrWindowService.notify(id) });
+  const initialization = instance.initialize().then(() => instance).catch((error: unknown) => {
+    localPrCiInitialization = null;
+    throw error;
+  });
+  localPrCiInitialization = initialization;
+  return initialization;
+}
+
+/** Match the saved incarnation and, for Auxiliary, the exact parent included in the target. */
+async function readLocalPrSession(target: SessionTarget): Promise<Session | null> {
+  if (target.kind === "main") {
+    const session = await getRuntimeSession(target.sessionId);
+    return session && session.sessionKind === "default" && getSessionIncarnationId(session) === target.incarnationId ? session : null;
+  }
+  const service = requireAuxiliarySessionService();
+  const metadata = await service.getAuxiliarySessionMetadata(target.sessionId);
+  if (!metadata || metadata.parentSessionId !== target.mainSessionId || metadata.createdAt !== target.incarnationId) return null;
+  const parent = await readLocalPrSession({ kind: "main", sessionId: target.mainSessionId, incarnationId: target.mainIncarnationId });
+  if (!parent || parent.accessMode !== "active") return null;
+  const session = await service.getAuxiliaryRuntimeSession(target.sessionId);
+  return session && getSessionIncarnationId(session) === target.incarnationId ? session : null;
+}
+
+/** Only offer active saved Sessions that can address the same repository using normal PR tools. */
+async function chooseLocalPrSessions(repository: LocalPrRepository, input: LocalPrInput<"session_choices">): Promise<LocalPrResult<"session_choices">> {
+  const owner = requireActivePersistentStoreOwnerForFactory("PR Session choices");
+  const mains = await owner.sessionStorage.listSessionSummaries();
+  const query = input.query?.trim().toLowerCase() ?? "";
+  const active = mains.filter((session) => session.sessionKind === "default" && session.accessMode === "active");
+  const matches = new Map<string, Promise<boolean>>();
+  for (const session of active) {
+    if (!matches.has(session.workspacePath)) matches.set(session.workspacePath, resolveLocalPrRepository(session.workspacePath).then(
+      (value) => value.repositoryId === repository.repositoryId,
+      () => false,
+    ));
+  }
+  const eligible = new Map<string, (typeof active)[number]>();
+  for (const session of active) {
+    if (await matches.get(session.workspacePath)) eligible.set(session.id, session);
+  }
+  const sessions: Array<{ target: SessionTarget; title: string }> = [];
+  for (const main of eligible.values()) {
+    if (main.taskTitle.toLowerCase().includes(query)) sessions.push({ title: main.taskTitle, target: { kind: "main", sessionId: main.id, incarnationId: getSessionIncarnationId(main) } });
+  }
+  const auxiliaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries([...eligible.keys()]);
+  for (const auxiliary of auxiliaries) {
+    const parent = eligible.get(auxiliary.parentSessionId);
+    if (parent && `${parent.taskTitle} / ${auxiliary.title}`.toLowerCase().includes(query)) sessions.push({ title: `${parent.taskTitle} / ${auxiliary.title}`, target: {
+      kind: "auxiliary", sessionId: auxiliary.id, incarnationId: auxiliary.createdAt, mainSessionId: parent.id, mainIncarnationId: getSessionIncarnationId(parent),
+    } });
+  }
+  assertPersistentStoreOwnerIsActive(owner, "PR Session choices");
+  const offset = input.offset ?? 0;
+  return { ok: true, data: { sessions: sessions.slice(offset, offset + 50), hasMore: sessions.length > offset + 50 } };
+}
+
+const localPrApplication = new LocalPrApplication<LocalPrRepository>({
+  core: (repository, actor, origin, operation, input) => localPrCore.execute(repository, actor, origin, operation, input),
+  ci: async (repository, prId, version, operation, input) => (await getLocalPrCi()).execute(repository, prId, version, operation, input),
+  sessionChoices: chooseLocalPrSessions,
+  assertDiscussionTarget: async (target, repository) => {
+    const session = await readLocalPrSession(target);
+    if (!session || session.accessMode !== "active" || (await resolveLocalPrRepository(session.workspacePath)).repositoryId !== repository.repositoryId) {
+      throw new Error("Choose an active Session for this repository.");
+    }
+  },
+  sendDiscussion: (input, message, assertCurrent) => enqueueLocalPrDiscussion(requireMainSessionTurnQueueFacade(), input, message, readLocalPrSession, assertCurrent),
+});
+
+const localPrWindowService: LocalPrWindowService<LocalPrRepository> = new LocalPrWindowService({
+  resolveOwner: async (actor) => {
+    const generation = mainStoreContext.activePersistentStoreOwner;
+    if (!generation || databaseMaintenanceRequested) return null;
+    const session = await readLocalPrSession(actor);
+    if (!session || session.accessMode !== "active") return null;
+    const repository = await resolveLocalPrRepository(session.workspacePath);
+    if (generation !== mainStoreContext.activePersistentStoreOwner || databaseMaintenanceRequested) return null;
+    return { actor, repository, generation };
+  },
+  sessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+  createWindow: () => mainWindowComposition.createCursorPlacedWindow({ width: 1400, height: 900, minWidth: 720, minHeight: 520, title: "Pull Requests",
+    webPreferences: { preload: path.resolve(currentDir, "local-pr/local-pr-preload.js"), contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, sandbox: false, webviewTag: false },
+  }),
+  loadWindow: (window) => requireWindowEntryLoader().loadLocalPrEntry(window),
+  application: localPrApplication,
+});
+
 const sessionManagementRuntimeService = new SessionManagementRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
+  localPr: {
+    execute: async (operation, input, { actor, workspacePath, assertCurrent }) => {
+      let repository: LocalPrRepository;
+      try { repository = await resolveLocalPrRepository(workspacePath); }
+      catch (error) { return localPrFailure("PR_REPOSITORY_UNAVAILABLE", error instanceof Error ? error.message : String(error)); }
+      assertCurrent();
+      return localPrApplication.execute(repository, actor, "agent", operation, input, assertCurrent);
+    },
+  },
   application: new SessionManagementApplication({
     operatingPolicy: (actor, operation, request, assertCurrent) => new SessionOperatingPolicyService({
       getStore: () => requireAppSettingsStorage(),
@@ -1073,6 +1188,7 @@ async function issueProviderAgentRuntimeBinding(
       characterId: session.characterId,
       sessionKind: session.sessionKind,
       sessionIdentity,
+      sessionWorkspacePath: session.workspacePath,
       sessionGraphOwner: graphSession.owner,
       sessionGraphSource: graphSession.source,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
@@ -1427,6 +1543,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             ipcMain,
             registerMainIpcHandlers: (ipc, deps) => {
               registerMainIpcHandlers(ipc, deps);
+              localPrWindowService.register(ipc);
               registerSessionRoleHandlers(ipc, {
                 resolveEventWindow: (event) => BrowserWindow.fromWebContents(event.sender),
                 resolveSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
@@ -3021,11 +3138,13 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         closeSessionWindow: (sessionId) => {
           requireSessionWindowBridge().forgetSessionForMonitor(sessionId);
           sessionGraphWindowService.closeOwner(sessionId);
+          localPrWindowService.close(sessionId);
           requireSessionWindowBridge().closeSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },
         discardSessionWindow: (sessionId) => {
           sessionGraphWindowService.closeOwner(sessionId);
+          localPrWindowService.close(sessionId);
           requireSessionWindowBridge().discardSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },
@@ -3291,7 +3410,10 @@ function requireAppLifecycleService(): AppLifecycleService {
             if (!flushed) sessionTurnQueueService?.resume();
           }
         },
-        stopAgentRuntime: stopAgentRuntimeApiBestEffort,
+        stopAgentRuntime: async () => {
+          try { await stopAgentRuntimeApiBestEffort(); }
+          finally { await (await localPrCiInitialization)?.shutdown(); }
+        },
         closePersistentStores,
         invalidateAllProviderSessionThreads,
         revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
@@ -3678,6 +3800,7 @@ function hasRunningSessions(): boolean {
 
 function closeResetTargetWindows(): void {
   sessionGraphWindowService.closeAll();
+  localPrWindowService.close();
   requireMainWindowFacade().closeResetTargetWindows();
 }
 
@@ -4101,6 +4224,7 @@ if (!hasSingleInstanceLock) {
 
   app.on("will-quit", () => {
     sessionGraphWindowService.closeAll();
+    localPrWindowService.close();
     sessionObservabilityService?.dispose();
     terminalService?.releaseAll();
     writeAppLog({

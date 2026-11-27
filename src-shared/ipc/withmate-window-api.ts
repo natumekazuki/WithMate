@@ -137,6 +137,7 @@ import type { HomeCrewContextMenuRequest, HomeCrewPageResult } from "../window/h
 import type { OpenSessionWindowIdsPageRequest } from "../window/withmate-window-types.js";
 import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
 import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
+import type { MainSessionTarget } from "../session/session-target.js";
 
 export type WithMateWindowNavigationApi = {
   /** Home main frame only. Restart at the first page if a continuation is refused; do not publish partial pages. */
@@ -149,6 +150,7 @@ export type WithMateWindowNavigationApi = {
   closeSessionFilePreviewWindow(token: string): Promise<void>;
   closeSessionFilePreviewWindows(ownerSessionId: string): Promise<void>;
   openSession(sessionId: string, auxiliarySessionId?: string): Promise<void>;
+  openLocalPrWindow(target: MainSessionTarget): Promise<void>;
   showSessionMonitorContextMenu(
     request: SessionMonitorContextMenuRequest,
   ): Promise<SessionMonitorContextMenuResult>;

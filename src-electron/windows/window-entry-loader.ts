@@ -40,6 +40,11 @@ export class WindowEntryLoader {
     await this.load(window, "session-graph.html", `?token=${encodeURIComponent(token)}`);
   }
 
+  /** Load the isolated PR renderer without passing repository or actor identity in its URL. */
+  async loadLocalPrEntry(window: WindowLike): Promise<void> {
+    await this.load(window, "local-pr.html", "");
+  }
+
   async loadChatEntry(window: WindowLike, mode: ChatEntryMode): Promise<void> {
     await this.load(window, "session.html", buildChatEntrySearch(mode));
   }

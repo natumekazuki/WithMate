@@ -71,7 +71,7 @@ import {
   parseUnifiedDiff,
   type UnifiedDiffContentRow,
   type UnifiedDiffDisplayRow,
-} from "./unified-diff.js";
+} from "../../src-shared/file-explorer/unified-diff.js";
 import {
   canProjectStructuredText,
   highlightRawStructuredText,

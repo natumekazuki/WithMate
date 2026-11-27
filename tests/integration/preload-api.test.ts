@@ -848,6 +848,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openDiffWindow",
     "openSessionFilePreviewWindow",
     "openHomeWindow",
+    "openLocalPrWindow",
     "openAppLogFolder",
     "openCrashDumpFolder",
     "openPath",

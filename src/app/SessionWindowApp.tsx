@@ -654,6 +654,8 @@ export default function AgentSessionWindowApp() {
   const graphMemoryRef = useRef<SessionGraphPreviewMemory | null>(null);
   const [graphWindowOpening, setGraphWindowOpening] = useState(false);
   const [graphWindowError, setGraphWindowError] = useState("");
+  const [localPrOpening, setLocalPrOpening] = useState(false);
+  const [localPrError, setLocalPrError] = useState("");
   const graphTriggerRef = useRef<HTMLButtonElement>(null);
   const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
   const isConversationHidden = isFilePreviewActive
@@ -2202,8 +2204,21 @@ export default function AgentSessionWindowApp() {
     <button type="button" className="drawer-toggle compact secondary session-header-icon-button" title="Open Graph In New Window" aria-label="Open Graph In New Window" disabled={graphWindowOpening} aria-busy={graphWindowOpening || undefined} onClick={() => void openGraphWindow()}><ButtonContent busy={graphWindowOpening}>↗</ButtonContent></button>
     {graphWindowError ? <span role="alert" className="session-graph-entry-error">{graphWindowError}</span> : null}
   </div>;
+  const localPrHeaderAction = !isSelectedSessionReadOnly && isSelectedWorkspaceAvailable && selectedSession.sessionKind === "default" && withmateApi ? (
+    <div className="session-window-control-group session-graph-entry">
+      <button type="button" className="drawer-toggle compact secondary" aria-label="Pull Requests" disabled={localPrOpening} aria-busy={localPrOpening || undefined}
+        onClick={() => {
+          setLocalPrError("");
+          setLocalPrOpening(true);
+          void withmateApi.openLocalPrWindow({ kind: "main", sessionId: selectedSession.id, incarnationId: getSessionIncarnationId(selectedSession) })
+            .catch((cause: unknown) => setLocalPrError(cause instanceof Error ? cause.message : String(cause)))
+            .finally(() => setLocalPrOpening(false));
+        }}><ButtonContent busy={localPrOpening}>Pull Requests</ButtonContent></button>
+      {localPrError ? <span role="alert" className="session-graph-entry-error">{localPrError}</span> : null}
+    </div>
+  ) : null;
   const chatHeaderFeature = sessionHeader.buildChatHeader({
-    actions: graphHeaderActions,
+    actions: <>{graphHeaderActions}{localPrHeaderAction}</>,
     isRunning: isSelectedSessionRunning,
     isReadOnly: isSelectedSessionReadOnly,
     isPinned: selectedSession.isPinned === true,

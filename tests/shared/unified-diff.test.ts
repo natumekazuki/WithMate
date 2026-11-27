@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseUnifiedDiff } from "../../src/file-explorer/unified-diff.js";
+import { parseUnifiedDiff } from "../../src-shared/file-explorer/unified-diff.js";
 
 test("parseUnifiedDiff は複数hunkの行番号と変更blockをSplit表示用に揃える", () => {
   const parsed = parseUnifiedDiff([

@@ -13,6 +13,7 @@ WithMateは、Codex、GitHub Copilot、Claude Agent、OpenCodeのcoding agentを
 - Workspace、Session Folder、Additional Directoryのファイル参照と、HTML・PDFなどのプレビュー
 - Codexの`visualize`で指定されたHTML／PDFのチャット内表示
 - Gitの作業差分・commit履歴の確認と、Repository Glossaryの表示・検索
+- GitHubに送信せず、ローカルの[Pull Requests](docs/features/local-pull-requests.md)で提出・レビュー・CI・承認・merge
 - セッション、Character、SDKから取得したmodel候補などのローカル保存
 
 Codexが既定のproviderです。Claude AgentとOpenCodeはSettingsで有効化した場合に利用できます。providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
