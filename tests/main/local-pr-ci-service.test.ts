@@ -15,10 +15,10 @@ import type { LocalPrInput, LocalPrVersion } from "../../src-shared/local-pr/loc
 const definition = (commands: string[]) => `version: 1\ncommands:\n${commands.map((command) => `  - ${JSON.stringify(command)}`).join("\n")}\n`;
 
 /** Create a real repository and give CI a linked worktree path rather than assuming a `.git` directory. */
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, minimumDataPathLength = 0) {
   const root = await mkdtemp(join(tmpdir(), "withmate & %CI_TEST_PATH% "));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }));
-  const data = join(root, "user data");
+  const data = join(root, "user data" + "x".repeat(Math.max(0, minimumDataPathLength - root.length - 10)));
   const original = join(root, "repository");
   const workspace = join(root, "worktree with spaces");
   await mkdir(data);
@@ -153,6 +153,59 @@ test("CI validates only an ordinary pinned UTF-8 blob with supported YAML", asyn
   f.git(f.workspace, "commit", "-m", "symlink definition");
   const link = f.makeVersion(f.git(f.workspace, "rev-parse", "HEAD"), 30);
   assert.equal(unwrap(await f.run(link, "pr_ci_validate")).state, "invalid");
+});
+
+/** The same fixed CI identity must never select another definition just because a Session is rooted deeper. */
+test("CI validates, starts and reruns only the repository-root definition from root and worktree subdirectories", async (t) => {
+  const f = await fixture(t);
+  const sub = join(f.workspace, "sub");
+  await mkdir(join(sub, ".withmate"), { recursive: true });
+  await writeFile(join(sub, ".withmate", "ci.yml"), definition(["echo nested-definition"]));
+  f.git(f.workspace, "add", "sub");
+  f.git(f.workspace, "commit", "-m", "nested CI lookalike");
+  const nestedOnly = f.makeVersion(f.git(f.workspace, "rev-parse", "HEAD"));
+  const source = definition(["echo root-definition"]);
+  const v = await f.commit(source, 2);
+  f.git(f.original, "checkout", "--detach", v.headCommit);
+
+  const paths = [f.original, join(f.original, "sub"), sub];
+  const run = <T extends LocalPrCiOperation>(workspacePath: string, version: LocalPrVersion, operation: T, extras: object = {}) =>
+    f.service.execute({ ...f.repository, workspacePath }, f.prId, version, operation,
+      { prId: f.prId, version: version.version, ...extras } as LocalPrInput<T>);
+  let previousRunId: string | undefined;
+  for (const workspacePath of paths) {
+    const checked = unwrap(await run(workspacePath, v, "pr_ci_validate"));
+    assert.equal(checked.state, "valid", workspacePath);
+    assert.equal(checked.source, source, workspacePath);
+    assert.equal(unwrap(await run(workspacePath, nestedOnly, "pr_ci_validate")).state, "not_configured", workspacePath);
+    const started = unwrap(previousRunId
+      ? await run(workspacePath, v, "pr_ci_rerun", { runId: previousRunId })
+      : await run(workspacePath, v, "pr_ci_start"));
+    const end = await eventually(async () => unwrap(await f.run(v, "pr_ci_list")).runs.find((item) => item.id === started.id && item.state !== "running"));
+    assert.equal(end.state, "succeeded", end.error ?? workspacePath);
+    const output = unwrap(await f.run(v, "pr_ci_log", { runId: started.id })).log;
+    assert.match(output, /root-definition/u);
+    assert.doesNotMatch(output, /nested-definition/u);
+    previousRunId = started.id;
+  }
+});
+
+/** Windows Git must materialize a tracked path beyond MAX_PATH without changing the source repo or machine config. */
+test("Windows CI checks out tracked paths beyond MAX_PATH using only CI Git configuration", { skip: process.platform !== "win32" }, async (t) => {
+  const f = await fixture(t, 127);
+  const directory = "deep-" + "d".repeat(91);
+  const path = `${directory}/pinned.txt`;
+  await mkdir(join(f.workspace, directory));
+  await writeFile(join(f.workspace, path), "pinned content");
+  f.git(f.workspace, "add", path);
+  f.git(f.workspace, "commit", "-m", "deep tracked path");
+  const v = await f.commit(definition([`node -e "const fs=require('node:fs'); if (fs.readFileSync('${path}','utf8') !== 'pinned content') process.exit(7); console.log(process.cwd().length)"`]));
+  const started = unwrap(await f.run(v, "pr_ci_start"));
+  const checkout = join(f.data, "local-pr-ci", "work", started.id, "checkout");
+  assert.ok(join(checkout, path).length > 260, "fixture must exceed legacy MAX_PATH");
+  const end = await eventually(async () => unwrap(await f.run(v, "pr_ci_list")).runs.find((item) => item.id === started.id && item.state !== "running"));
+  assert.equal(end.state, "succeeded", end.error ?? "Git must prepare the long checkout");
+  assert.equal(unwrap(await f.run(v, "pr_ci_log", { runId: started.id })).log.trim(), String(checkout.length));
 });
 
 /** Wait until the native shell actually executes a long-lived child. */

@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
-import { delimiter } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { isAlias, parseDocument, visit } from "yaml";
@@ -30,7 +29,8 @@ export async function readLocalPrCiDefinition(workspacePath: string, headCommit:
   if ((await git(workspacePath, ["cat-file", "-t", headCommit])).toString().trim() !== "commit") {
     throw new Error("The pinned CI head is not a Git commit.");
   }
-  const entry = (await git(workspacePath, ["ls-tree", "-z", headCommit, "--", definitionPath])).toString();
+  // The Session can start in a subdirectory; CI always names a path from the commit's root.
+  const entry = (await git(workspacePath, ["ls-tree", "--full-tree", "-z", headCommit, "--", definitionPath])).toString();
   if (!entry) return { definition: { ...identity, state: "not_configured", source: null, error: null }, commands: null };
   const object = /^100(?:644|755) blob ([0-9a-f]{40}|[0-9a-f]{64})\t\.withmate\/ci\.yml\0$/u.exec(entry)?.[1];
   if (!object) return invalid("The CI definition must be an ordinary Git file.");
@@ -83,9 +83,12 @@ export async function prepareLocalPrCiCheckout(workspacePath: string, checkout: 
 /** Don't inherit Git redirects, worktree overrides, helpers, templates, or global/system config. */
 async function git(cwd: string, args: string[]): Promise<Buffer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^git_/iu.test(name)));
-  const nullDevice = delimiter === ";" ? "NUL" : "/dev/null";
+  const windows = process.platform === "win32";
+  const nullDevice = windows ? "NUL" : "/dev/null";
+  // Opt in for these Git invocations only: neither the original repo nor the OS configuration is changed.
+  const config = ["-c", `core.hooksPath=${nullDevice}`, ...(windows ? ["-c", "core.longpaths=true"] : [])];
   try {
-    const { stdout } = await exec("git", ["--no-replace-objects", "-c", `core.hooksPath=${nullDevice}`, ...args], {
+    const { stdout } = await exec("git", ["--no-replace-objects", ...config, ...args], {
       cwd, encoding: "buffer", maxBuffer: definitionBytes * 2, windowsHide: true,
       env: { ...env, GIT_CONFIG_GLOBAL: nullDevice, GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_ALLOW_PROTOCOL: "file", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
     });
