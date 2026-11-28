@@ -5926,11 +5926,13 @@ var sessionTargetSchema = discriminatedUnion("kind", [mainSessionTargetSchema, o
 }).strict()]);
 // src-shared/local-pr/local-pr-contract.ts
 var id$2 = uuid();
+/** PRの名前や本文に許容長を設定し、空白だけの入力を拒否する。 */
 var text$1 = (max) => string().min(1).max(max).refine((value) => !!value.trim());
 var stamp = string();
 var version = number().int().positive();
 var path$1 = string().min(1).max(32768).refine((value) => !value.includes("\0"));
 var branch = string().regex(/^refs\/heads\/.+$/u).max(1024);
+/** 省略形やブランチ名を受け付けず、完全なGitコミットIDだけを検証する。 */
 var localPrCommitSchema = string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
 var prId = { prId: id$2 };
 var prVersion = {
@@ -5989,6 +5991,7 @@ var localPrApprovalTargetSchema = strictObject({
 	headCommit: localPrCommitSchema,
 	targetCommit: localPrCommitSchema
 });
+/** PRの概要に、提出版・コメント・記録された承認と現在のマージ先を加える。 */
 var localPrDetailSchema = prSummary.extend({
 	versions: array(localPrVersionSchema),
 	comments: array(localPrCommentSchema),
@@ -6013,6 +6016,7 @@ var localPrDiffSchema = strictObject({
 	})),
 	patch: string().nullable()
 });
+/** 提出した先端のCI設定を調べ、未設定、有効、不正とその内容を区別する。 */
 var localPrCiDefinitionSchema = strictObject({
 	headCommit: localPrCommitSchema,
 	path: literal(".withmate/ci.yml"),
@@ -6024,6 +6028,7 @@ var localPrCiDefinitionSchema = strictObject({
 	source: string().nullable(),
 	error: string().nullable()
 });
+/** CIを実行した提出版と両端のコミット、進行状態、時刻および終了結果。 */
 var localPrCiRunSchema = strictObject({
 	id: id$2,
 	version,
@@ -6097,6 +6102,7 @@ var localPrAgentInput = {
 		offset: number().int().nonnegative().optional()
 	})
 };
+/** Agentに公開した各PR操作の成功時に渡すデータを検証する。 */
 var localPrAgentData = {
 	pr_list: strictObject({
 		entries: array(prSummary),

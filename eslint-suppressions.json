@@ -1004,16 +1004,6 @@
       "count": 206
     }
   },
-  "src-shared/local-pr/local-pr-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 26
-    }
-  },
-  "src-shared/local-pr/local-pr-ipc.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 11
-    }
-  },
   "src-shared/memory/memory-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 36
