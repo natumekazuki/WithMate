@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { SESSION_OPERATING_POLICY_READ_NOTICE } from "../../src-shared/session/session-operating-policy.js";
-import { LOCAL_PR_AGENT_WORKFLOW, LOCAL_PR_CI_EXECUTION_NOTICE } from "../../src-shared/local-pr/local-pr-agent-operations.js";
+import {
+  LOCAL_PR_AGENT_WORKFLOW,
+  LOCAL_PR_CI_EXECUTION_NOTICE,
+} from "../../src-shared/local-pr/local-pr-agent-operations.js";
 import {
   sessionOperationRequestSchemas,
   sessionOperationSuccessSchemas,
@@ -16,22 +19,26 @@ import {
   type SessionRuntimeClientDeps,
 } from "../../src-electron/platform/mcp/withmate-session-runtime-client.js";
 
+/** 操作失敗、入力不備、ランタイムとの通信失敗を呼び出し側が区別する終了コード。 */
 export const WITHMATE_SESSION_CLI_EXIT_CODES = {
   ok: 0,
   operationError: 1,
   usage: 2,
   transportError: 3,
 } as const;
+/** ランタイム接続に加え、CLIが使うファイル読み取りと標準入出力を差し替えられる。 */
 export type SessionCliDeps = SessionRuntimeClientDeps & {
   readFile?: typeof readFile;
   stdin?: NodeJS.ReadableStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
 };
+/** 通信失敗ではなく、利用者が修正できる入力不備を表す。 */
 class SessionCliUsageError extends Error {}
 const operations = Object.keys(
   sessionOperationRequestSchemas,
 ) as SessionOperation[];
+/** 対応コマンドと接続先の指定、現在のSessionで許される操作を示すヘルプ。 */
 export const SESSION_CLI_HELP = `Usage: withmate-session <command> [--json <json> | --file <path> | @file | --stdin]
 Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join(", ")}, schema, help
 Connection: --api-url <loopback-url> --instance <id> --generation <id>
@@ -54,6 +61,7 @@ ${LOCAL_PR_AGENT_WORKFLOW}
 ${LOCAL_PR_CI_EXECUTION_NOTICE}
 Use schema for exact shared input schemas and operation descriptions.
 `;
+/** コマンド名を内部名に正規化し、単一のJSON入力元と接続先オプションを読み取る。 */
 export async function parseWithMateSessionCliArgs(
   args: readonly string[],
   deps: Pick<SessionCliDeps, "stdin" | "readFile"> = {},
@@ -69,12 +77,11 @@ export async function parseWithMateSessionCliArgs(
   let inputSeen = false;
   const connection: Pick<
     SessionRuntimeClientDeps,
-    | "apiUrl"
-    | "applicationInstanceId"
-    | "runtimeGenerationId"
+    "apiUrl" | "applicationInstanceId" | "runtimeGenerationId"
   > = {};
   for (let index = 1; index < args.length; index++) {
     const option = args[index];
+    /** 現在のオプションの値を消費し、省略や次の長形式オプションを値として扱わない。 */
     const take = () => {
       const value = args[++index];
       if (!value || value.startsWith("--"))
@@ -118,6 +125,7 @@ export async function parseWithMateSessionCliArgs(
     ...connection,
   };
 }
+/** ヘルプとスキーマはローカルで出力し、操作の応答を標準出力と終了コードに変換する。 */
 export async function runWithMateSessionCli(
   args: readonly string[],
   deps: SessionCliDeps = {},

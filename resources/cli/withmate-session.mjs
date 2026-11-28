@@ -9376,14 +9376,17 @@ async function callSessionRuntime(operation, body, deps) {
 	}
 }
 // src-cli/session/withmate-session.ts
+/** 操作失敗、入力不備、ランタイムとの通信失敗を呼び出し側が区別する終了コード。 */
 var WITHMATE_SESSION_CLI_EXIT_CODES = {
 	ok: 0,
 	operationError: 1,
 	usage: 2,
 	transportError: 3
 };
+/** 通信失敗ではなく、利用者が修正できる入力不備を表す。 */
 var SessionCliUsageError = class extends Error {};
 var operations = Object.keys(sessionOperationRequestSchemas);
+/** 対応コマンドと接続先の指定、現在のSessionで許される操作を示すヘルプ。 */
 var SESSION_CLI_HELP = `Usage: withmate-session <command> [--json <json> | --file <path> | @file | --stdin]
 Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join(", ")}, schema, help
 Connection: --api-url <loopback-url> --instance <id> --generation <id>
@@ -9406,6 +9409,7 @@ ${LOCAL_PR_AGENT_WORKFLOW}
 ${LOCAL_PR_CI_EXECUTION_NOTICE}
 Use schema for exact shared input schemas and operation descriptions.
 `;
+/** コマンド名を内部名に正規化し、単一のJSON入力元と接続先オプションを読み取る。 */
 async function parseWithMateSessionCliArgs(args, deps = {}) {
 	const command = (args[0] ?? "help").replaceAll("-", "_");
 	if (command !== "help" && command !== "schema" && !operations.includes(command)) throw new SessionCliUsageError(`Unknown command: ${args[0]}`);
@@ -9414,6 +9418,7 @@ async function parseWithMateSessionCliArgs(args, deps = {}) {
 	const connection = {};
 	for (let index = 1; index < args.length; index++) {
 		const option = args[index];
+		/** 現在のオプションの値を消費し、省略や次の長形式オプションを値として扱わない。 */
 		const take = () => {
 			const value = args[++index];
 			if (!value || value.startsWith("--")) throw new SessionCliUsageError(`${option} requires a value.`);
@@ -9445,6 +9450,7 @@ async function parseWithMateSessionCliArgs(args, deps = {}) {
 		...connection
 	};
 }
+/** ヘルプとスキーマはローカルで出力し、操作の応答を標準出力と終了コードに変換する。 */
 async function runWithMateSessionCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	try {

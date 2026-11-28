@@ -29,21 +29,6 @@
       "count": 18
     }
   },
-  "src-cli/glossary/withmate-glossary-mcp.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
-    }
-  },
-  "src-cli/glossary/withmate-glossary.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 11
-    }
-  },
-  "src-cli/session/withmate-session.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 7
-    }
-  },
   "src-electron/app/app-lifecycle-deps.ts": {
     "jsdoc/require-jsdoc": {
       "count": 15
@@ -1585,11 +1570,6 @@
     }
   },
   "src-shared/character/launch-character-selection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src-shared/cli/cli-artifacts.ts": {
     "jsdoc/require-jsdoc": {
       "count": 2
     }

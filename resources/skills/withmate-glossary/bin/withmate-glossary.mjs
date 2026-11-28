@@ -23912,12 +23912,14 @@ var StdioServerTransport = class {
 	}
 };
 // src-cli/glossary/withmate-glossary-mcp.ts
+/** 用語集のMCPサーバーを標準入出力に接続し、接続完了後にサーバーを返す。 */
 async function startWithMateGlossaryMcpServer(deps = {}) {
 	const server = createWithMateGlossaryMcpServer(deps);
 	await server.connect(new StdioServerTransport());
 	return server;
 }
 // src-cli/glossary/withmate-glossary.ts
+/** 用語集操作の失敗、CLIの入力不備、接続の失敗を区別する終了コード。 */
 var WITHMATE_GLOSSARY_CLI_EXIT_CODES = {
 	ok: 0,
 	operationError: 1,
@@ -23971,22 +23973,27 @@ Connection options:
   --instance <application-instance-id>
   --generation <runtime-generation-id>
 `;
+/** 接続をやり直すだけでは解決しない、CLIの引数または入力の不備。 */
 var GlossaryCliUsageError = class extends Error {};
+/** オプションの次の引数を値として返し、空値や次の長形式オプションを拒む。 */
 function requireOptionValue(args, index, option) {
 	const value = args[index + 1];
 	if (!value || value.startsWith("--")) throw new GlossaryCliUsageError(`${option} requires a value.`);
 	return value;
 }
+/** ページ指定の値を数値に変換し、安全に表現できる整数以外は入力エラーにする。 */
 function parseInteger(value, option) {
 	const parsed = Number(value);
 	if (!Number.isSafeInteger(parsed)) throw new GlossaryCliUsageError(`${option} must be an integer.`);
 	return parsed;
 }
+/** 標準入力に相当するストリームを終端まで連結し、UTF-8として一度に解釈する。 */
 async function readStream(stream) {
 	const chunks = [];
 	for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
 	return Buffer.concat(chunks).toString("utf8");
 }
+/** 入力元を診断に残し、操作引数として渡せない配列・null・プリミティブを拒む。 */
 function parseJsonObject(raw, source) {
 	let value;
 	try {
@@ -23997,6 +24004,7 @@ function parseJsonObject(raw, source) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new GlossaryCliUsageError(`${source} must contain a JSON object.`);
 	return value;
 }
+/** JSONと短縮オプションの混在を拒み、操作入力と対象の指定を公開スキーマで検証する。 */
 async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 	const command = commandAliases.get(args[0] ?? "help");
 	if (!command) throw new GlossaryCliUsageError(`Unknown command: ${args[0]}`);
@@ -24087,6 +24095,7 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 		...runtimeGenerationId ? { runtimeGenerationId } : {}
 	};
 }
+/** MCPの操作定義を元に、操作名・接続パス・入力スキーマをCLI向けに出力する。 */
 function schemaProjection() {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -24098,6 +24107,7 @@ function schemaProjection() {
 		}))
 	};
 }
+/** ローカルのヘルプ・スキーマ・MCP起動を分岐し、用語集操作の応答をJSONで返す。 */
 async function runWithMateGlossaryCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	const stderr = deps.stderr ?? process.stderr;
