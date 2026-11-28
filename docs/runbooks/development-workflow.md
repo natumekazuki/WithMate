@@ -147,6 +147,8 @@ Node.jsとGit（WindowsではGit for Windows）をPATHに置き、`npm ci`で依
 2. **単独cloneで既存hook／hook pathがない場合**は、リポジトリrootで `git config --local core.hooksPath .githooks` を実行すると、以後のコミットで自動実行します。既存hookがあれば上書きせず、既存のhook管理方法で `npm run check:staged` を組み込み、非ゼロ終了をコミットに返してください。
 3. **linked worktree**の `--local` 設定はほかのworktreeと共有されます。すでにworktree固有の設定を利用できる場合のみ、既存hookを確認して `git config --worktree core.hooksPath .githooks` を選べます。共有設定を変えない場合は `npm run check:staged` を手動実行するか、既存hookがないことを確かめて `git -c core.hooksPath=.githooks commit ...` でその1回だけ有効にします。
 
-hookと `npm run check:staged` は検査入口をindexから読み込み、空白／衝突マーカー検査とコメントlintを実行します。lintに失敗したらテストに進みません。コード・テスト・実行設定などの変更では、検査自体の回帰テスト、配布設定のsmoke、ステージ済みの `tests/**/*.test.ts(x)` を実行します。ファイルはindexのtreeから一時展開し、インストール済みの `node_modules` だけを再利用します。package manifestやlockfileを変更した場合は、対象内容に合う依存を先にインストールしてください。検証中にindexが変わった場合は再実行を要求します。未ステージ／未追跡の作業ファイルは検査対象に含みません。
+hookと `npm run check:staged` は検査入口をindexから読み込み、空白／衝突マーカー検査とコメントlintを実行します。lintに失敗したらテストに進みません。コード・テスト・実行設定などの変更では、検査自体の回帰テスト、配布設定とGlossary CLIの生成物一致、ステージ済みの `tests/**/*.test.ts(x)` を実行します。CLI生成物と入力ソースを同期するには `npm run build:cli` を使用し、必要な出力もステージしてください。
+
+ファイルはindexのtreeから一時展開し、インストール済みの `node_modules` だけを再利用します。package manifestやlockfileを変更した場合は、対象内容に合う依存を先にインストールしてください。検証中にindexが変わった場合は再実行を要求します。未ステージ／未追跡の作業ファイルは検査対象に含みません。
 
 文書など対象外の変更ではテストを省略し、空の差分では検査対象なしと表示します。コミット前のテストは全件の代わりではありません。実際の統合候補の差分は `npm run lint -- --base <比較元commit>`（Windows PowerShellでは `npm.cmd`）で検査できます。GitHub CIはPRのbaseまたはpush直前を比較元として同じlintを実行し、型・依存境界とテスト全体も検査します。

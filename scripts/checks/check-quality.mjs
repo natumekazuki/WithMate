@@ -8,6 +8,7 @@ const runner = "scripts/checks/check-quality.mjs";
 const rules = "scripts/checks/comment-rules.mjs";
 const qualityTest = "tests/checks/code-quality.test.ts";
 const smokeTest = "tests/cli/package-config.test.ts";
+const bundleTest = "tests/main/managed-glossary-skill-service.test.ts";
 const testPattern = /^tests\/.+\.test\.tsx?$/;
 
 /** 子プロセスの異常終了も検証失敗として扱い、標準出力を必要な呼び出しにだけ返す。 */
@@ -142,7 +143,7 @@ async function lintSources(snapshot, changes) {
   console.log(files.length ? `コメント lint: ${files.length} ファイル、追加違反なし。` : "コメント lint: 対象 JS/TS なし。");
 }
 
-/** 検査の回帰、配布設定、変更されたテストを、ステージ済みファイルで実行する。 */
+/** 検査の回帰、配布設定・生成物の整合、変更されたテストを、ステージ済みファイルで実行する。 */
 function runStagedTests(snapshot, changes) {
   const env = { ...process.env };
   // node:test から呼ばれたときも、子の test runner が再帰実行として全件を止めないようにする。
@@ -152,6 +153,7 @@ function runStagedTests(snapshot, changes) {
   const files = [...new Set([
     qualityTest,
     smokeTest,
+    bundleTest,
     ...changes.filter(({ after, newMode }) => newMode.startsWith("100") && testPattern.test(after)).map(({ after }) => after),
   ])];
   console.log(`ステージ済みテスト: ${files.length} ファイル。`);

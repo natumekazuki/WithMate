@@ -136,6 +136,7 @@ test("Git hook は staged を検証し、空・rename・削除を区別して失
     write(".gitignore", "node_modules/\n");
     write("package.json", '{"type":"module"}\n');
     write("tests/checks/code-quality.test.ts", 'import {test} from "node:test";\n/** 検査用の空の正常例。 */\ntest("fixture", () => {});\n');
+    write("tests/main/managed-glossary-skill-service.test.ts", 'import {test} from "node:test";\n/** 実バンドルを含まない一時 repository 向けの正常例。 */\ntest("bundle fixture", () => {});\n');
     write("tests/cli/package-config.test.ts", [
       'import assert from "node:assert/strict";',
       'import {readFileSync} from "node:fs";',
