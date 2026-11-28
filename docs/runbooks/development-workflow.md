@@ -18,7 +18,7 @@ WithMateのコード変更、検証、課題管理、Git操作の運用規則で
 
 JS/TS系（JSX、TSX、MJS/CJS、MTS/CTSを含む）はESLintとBabelのESLint parserで構文解析し、`eslint-plugin-jsdoc`の既成ルールで対象宣言とJSDocの有無、空でない本文、日本語の文字を確認します。テストは `tests/**/*.test.ts(x)` の `test`／`it`／`describe` 等と `test.only`／`t.test` 等の設定済み構文を検査します。importの束縛・任意の別名は追跡しないため、設定にない呼び方はレビューで確認します。生成ディレクトリとSession／Glossary CLI同梱物2ファイルは対象外です。他形式のコメント、意味・根拠、説明の十分さはレビューで確認します。
 
-既存違反は[ESLintの一括抑制](https://eslint.org/docs/latest/use/suppressions)により、`eslint-suppressions.json` にファイル・規則ごとの件数を記録しています。新規ファイルや許容件数を超える違反は非ゼロ終了します。同じファイル・規則で別の違反に入れ替わっても識別できません。未使用の抑制が出たら `npm run lint -- --prune-suppressions` で減らします。パス変更時は対応する既存の抑制だけを移し、新しい違反を隠すために件数を増やさないでください。
+`npm run lint` は対象全体を抑制なしで検査します。日本語の説明が足りない場合は対象の実装・契約に沿って補い、ESLintの一括抑制ファイルや個別の無効化コメントで違反を回避しないでください。
 
 ## 実装境界
 
