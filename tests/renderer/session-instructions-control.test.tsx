@@ -6,7 +6,7 @@ import type { Root } from "react-dom/client";
 import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 import { SessionInstructionsControl } from "../../src/chat/composer/session-instructions-control.js";
 
-/** `ActionDock` が対象を切り替えたとき、遅れて届く読み取り結果や保存の応答が、別のエディターに反映されないことを確認する。 */
+/** 対象の切替でエディターを再マウントし、古い読込・保存の応答が切替後の入力欄を上書きしたり閉じたりしないことを確認する。 */
 test("切替前の読込・保存完了は新しい Instructions エディターを変更しない", async () => {
   const dom = new JSDOM("<div id='root'></div>");
   const globals = {

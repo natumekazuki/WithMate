@@ -45,7 +45,7 @@ export function normalizeSessionWindowRestoreIds(
   return sessionIds;
 }
 
-/** 要求したIDすべてが成功または既知の失敗に一度ずつ分類されるかを検証する。 */
+/** 要求・成功のID一覧を正規化し、正規化後の各要求IDが成功か既知の失敗の一方にだけ属するかを検証する。 */
 export function normalizeSessionWindowRestoreResult(
   value: unknown,
 ): SessionWindowRestoreResult | null {
