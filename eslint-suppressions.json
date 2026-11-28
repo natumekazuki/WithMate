@@ -1109,16 +1109,6 @@
       "count": 11
     }
   },
-  "src-shared/mate/mate-profile-sections.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 8
-    }
-  },
-  "src-shared/mate/mate-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 15
-    }
-  },
   "src-shared/memory/memory-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 36
@@ -1147,16 +1137,6 @@
   "src-shared/memory/session-memory-state.ts": {
     "jsdoc/require-jsdoc": {
       "count": 24
-    }
-  },
-  "src-shared/prompt-template.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 11
-    }
-  },
-  "src-shared/session-history/session-history-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 21
     }
   },
   "src-shared/session/conversation-page.ts": {
