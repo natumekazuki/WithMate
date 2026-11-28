@@ -704,26 +704,6 @@
       "count": 24
     }
   },
-  "src-shared/session/conversation-page.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 20
-    }
-  },
-  "src-shared/session/conversation-threads.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-shared/session/message-find.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 9
-    }
-  },
-  "src-shared/session/message-search.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 10
-    }
-  },
   "src-shared/session/runtime-state.ts": {
     "jsdoc/require-jsdoc": {
       "count": 52
