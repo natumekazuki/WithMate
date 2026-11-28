@@ -89,11 +89,11 @@ Windowsで作業branchのsmoke / 目視確認を行う場合は、対象Worktree
 
 このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。データの扱いは`-DataMode`で選択します。
 
-| モード | データの扱い |
-| --- | --- |
+| モード          | データの扱い                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Reuse`（既定） | 検証用ディレクトリを再コピーせず、そのデータで起動します。対象ディレクトリがなければ停止し、`Fresh`または`Copy`を案内します。必要なマイグレーション・初期化は通常のアプリ起動処理が行います |
-| `Fresh` | 検証用ディレクトリが不存在または空の場合だけ、コピー元のデータを持ち込まず初期状態で起動します。隠しファイルを含めて何か残っている場合は、削除・上書きせず停止します |
-| `Copy` | `%APPDATA%\WithMate`をコピー元として、検証用データを再作成します。通常ファイルをコピーし、SQLiteはbackup APIで整合したsnapshotを作成します。コピー元は変更しません |
+| `Fresh`         | 検証用ディレクトリが不存在または空の場合だけ、コピー元のデータを持ち込まず初期状態で起動します。隠しファイルを含めて何か残っている場合は、削除・上書きせず停止します                        |
+| `Copy`          | `%APPDATA%\WithMate`をコピー元として、検証用データを再作成します。通常ファイルをコピーし、SQLiteはbackup APIで整合したsnapshotを作成します。コピー元は変更しません                          |
 
 `Fresh`と`Reuse`にはコピー元の`%APPDATA%\WithMate`は不要です。`Fresh`で既存データがある場合や、`Copy`で検証用データを残したい場合は、必要なデータを事前に退避してください。自動退避や強制削除のオプションはありません。`Reuse`でもマイグレーション等による検証用データの更新は発生します。
 
@@ -147,8 +147,10 @@ Node.jsとGit（WindowsではGit for Windows）をPATHに置き、`npm ci`で依
 2. **単独cloneで既存hook／hook pathがない場合**は、リポジトリrootで `git config --local core.hooksPath .githooks` を実行すると、以後のコミットで自動実行します。既存hookがあれば上書きせず、既存のhook管理方法で `npm run check:staged` を組み込み、非ゼロ終了をコミットに返してください。
 3. **linked worktree**の `--local` 設定はほかのworktreeと共有されます。すでにworktree固有の設定を利用できる場合のみ、既存hookを確認して `git config --worktree core.hooksPath .githooks` を選べます。共有設定を変えない場合は `npm run check:staged` を手動実行するか、既存hookがないことを確かめて `git -c core.hooksPath=.githooks commit ...` でその1回だけ有効にします。
 
-hookと `npm run check:staged` はGitの空白／衝突マーカー検査に続いて、Git標準の `checkout-index` で一時展開したステージ済みtreeに対して `npm run lint` を実行します。エラーがあればテストに進みません。配布設定とGlossary CLIの生成物一致、および変更された `tests/**/*.test.ts(x)` を実行します。対象が100ファイルを超える場合は通常の全testを実行します。CLI生成物と入力ソースを同期するには `npm run build:cli` を使用し、出力もステージしてください。
+hookと `npm run check:staged` はGitの空白／衝突マーカー検査に続いて、Git標準の `checkout-index` でステージ済みtreeを一時展開します。追加・変更・rename後のファイルを、[PrettierのCLI](https://prettier.io/docs/cli)の `--check` で検査します。Markdownも対象です。未対応形式と `.prettierignore` に記載した生成物は除きます。適用する設定は `.prettierrc.json` を正本とし、埋め込み文字列の整形は行いません。書式に違反したら作業側で `npm run format -- <パス>` を実行し、整形差分を確認して必要な箇所をステージし直してください。
+
+書式を通過すると、同じ一時展開先で `npm run lint`、配布設定とGlossary CLIの生成物一致、および変更された `tests/**/*.test.ts(x)` を実行します。先行する検査に失敗した場合は次へ進みません。対象が100ファイルを超える場合は通常の全testを実行します。生成CLIは `npm run build:cli` で入力ソースと同期し、出力もステージしてください。
 
 stashや作業ファイルの上書きは行いません。起動用のhookと接続スクリプトは作業ツリーから読み、実際のlint設定・ソース・テストはindexから展開したものを使用します。インストール済みの `node_modules` は再利用するので、package manifestやlockfileを変えた場合は対象に合う依存を先にインストールしてください。検証中にindexが変わった場合は再実行を要求します。
 
-空の差分やMarkdownだけの変更では、Gitの空白／衝突マーカー検査の後は対象なしと表示します。GitHub CIとWithMateのLocal PR CIも統合候補に同じ `npm run lint` を実行し、型・依存境界とテスト全体を検査します。
+空の差分では対象なしと表示します。Markdownだけの変更では書式検査まで実行します。この書式検査は変更ファイルに適用し、未変更のファイルは整形しません。GitHub CIとWithMateのLocal PR CIも統合候補に同じ `npm run lint` を実行し、型・依存境界とテスト全体を検査します。

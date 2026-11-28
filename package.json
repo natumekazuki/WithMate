@@ -22,6 +22,8 @@
     "preview": "vite preview",
     "benchmark:data-loading": "tsx scripts/benchmarks/benchmark-data-loading.ts",
     "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write --ignore-unknown",
+    "format:check": "prettier --check --ignore-unknown",
     "check:staged": "node scripts/checks/run-staged-checks.mjs",
     "test": "node --import tsx scripts/checks/run-tests.ts",
     "test:shard": "node --import tsx scripts/checks/run-tests.ts",

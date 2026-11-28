@@ -73,14 +73,16 @@ npm run electron:dev
 
 ## 開発と検証
 
-| コマンド | 内容 |
-| --- | --- |
-| `npm run lint` | 作業ツリーのJS/TSをESLintで検査（JSDocの有無・本文・表記） |
-| `npm run check:staged` | コミット前の検査を手動実行（ステージ済みのlintと対象テスト） |
-| `npm run typecheck` | production・開発script・testの型検査と依存境界のcheck |
-| `npm test` | test全体の実行 |
-| `npm run build` | renderer、PDF reader、Electron main、Glossary／Session CLIのbuild |
-| `npm run electron:start` | 本番向けbuildとローカル起動 |
+| コマンド                         | 内容                                                               |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `npm run lint`                   | 作業ツリーのJS/TSをESLintで検査（JSDocの有無・本文・表記）         |
+| `npm run format -- <パス>`       | 指定した作業ファイルをPrettierで整形                               |
+| `npm run format:check -- <パス>` | 指定した作業ファイルの書式を検査                                   |
+| `npm run check:staged`           | コミット前の検査を手動実行（ステージ済みの書式・lint・対象テスト） |
+| `npm run typecheck`              | production・開発script・testの型検査と依存境界のcheck              |
+| `npm test`                       | test全体の実行                                                     |
+| `npm run build`                  | renderer、PDF reader、Electron main、Glossary／Session CLIのbuild  |
+| `npm run electron:start`         | 本番向けbuildとローカル起動                                        |
 
 Windowsで作業branchのsmoke・目視確認を行う場合は、インストール版とデータを分離する[visual check手順](docs/runbooks/development-workflow.md#分離したvisual-check)を使用してください。testの絞り込み、shard、PowerShellの引数指定などは[Development Workflowの検証手順](docs/runbooks/development-workflow.md#検証)を参照してください。
 
@@ -88,12 +90,12 @@ Windowsで作業branchのsmoke・目視確認を行う場合は、インスト�
 
 `electron-builder`で配布物を作成します。
 
-| コマンド | 配布物 |
-| --- | --- |
-| `npm run dist` | current platformの既定target |
-| `npm run dist:win` | Windows NSIS installer |
-| `npm run dist:mac` | macOS DMG |
-| `npm run dist:dir` | unpacked directory |
+| コマンド           | 配布物                       |
+| ------------------ | ---------------------------- |
+| `npm run dist`     | current platformの既定target |
+| `npm run dist:win` | Windows NSIS installer       |
+| `npm run dist:mac` | macOS DMG                    |
+| `npm run dist:dir` | unpacked directory           |
 
 macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です。packagingの詳細は[Distribution Packaging](docs/design/distribution-packaging.md)を参照してください。
 

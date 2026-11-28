@@ -1,0 +1,5 @@
+# 生成元のツールが出力を管理する。
+/package-lock.json
+/eslint-suppressions.json
+/resources/cli/withmate-session.mjs
+/resources/skills/withmate-glossary/bin/withmate-glossary.mjs
