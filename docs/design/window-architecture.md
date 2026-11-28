@@ -17,7 +17,7 @@ Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編�
 
 ## Pull Requestsのレビュー
 
-OverviewはMarkdownのDescriptionと版番号つきの会話を表示する。PR作成時はMarkdownを入力・プレビューでき、画像の挿入は既存ファイルへの絶対パス参照を本文に加える。表示は所有Sessionに紐づくPR Windowから既存の画像読み込みを使う。画像をコピー・永続化しないため、移動・削除した画像は表示されない。
+PR一覧は共通splitterで幅を調整・開閉でき、閉じても表示中のPRと版を保持する。OverviewはMarkdownのDescriptionと版番号つきの会話を表示する。PR作成時はMarkdownを入力・プレビューでき、画像の挿入は既存ファイルへの絶対パス参照を本文に加える。表示は所有Sessionに紐づくPR Windowから既存の画像読み込みを使う。画像をコピー・永続化しないため、移動・削除した画像は表示されない。
 
 Changesでファイルまたは差分上の行（Shiftで同じ側の範囲）を選び、指摘を固定版の下書きにする。Send Reviewは送信対象の指摘と既存Sessionを明示して通常のTurn queueへ渡す。受付は返答や変更完了とは区別し、配送結果が不明な場合は同じ要求IDで照会する。Sessionからの返信は同じPRのスレッドに表示し、修正版は同じPRの新しい提出版として確認・承認する。Checksの結果、Approvalの対象、Mergeの判断は固定版を基準とする。
 

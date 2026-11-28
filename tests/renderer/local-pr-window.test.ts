@@ -185,6 +185,17 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.equal(first.querySelector(".local-pr-description h3")?.textContent, "Review notes");
     assert.equal(first.querySelector(".local-pr-description strong")?.textContent, "lowercase USER text");
     assert.match(first.textContent ?? "", /lowercase USER text/);
+    const splitter = first.querySelector<HTMLButtonElement>("button[aria-label='Collapse Pull Request List']");
+    assert.ok(splitter);
+    assert.equal(splitter.getAttribute("aria-expanded"), "true");
+    await act(async () => splitter.click());
+    assert.equal(splitter.getAttribute("aria-expanded"), "false");
+    assert.equal(splitter.getAttribute("aria-label"), "Expand Pull Request List");
+    assert.equal(first.querySelector<HTMLElement>("#local-pr-list")?.hidden, true);
+    assert.match(first.querySelector("main")?.textContent ?? "", /lowercase USER text/);
+    await act(async () => splitter.click());
+    assert.equal(first.querySelector<HTMLElement>("#local-pr-list")?.hidden, false);
+    assert.equal(first.querySelector(".local-pr-list-item[aria-current='true'] strong")?.textContent, "Review me");
     const button = (name: string) => {
       const found = Array.from(first.querySelectorAll("button")).find(
         (item) => item.textContent?.trim() === name,

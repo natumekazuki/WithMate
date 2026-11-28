@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type ReactNode } from "react";
+import { ChatDockSplitter } from "../chat/chat-window.js";
+import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { commentThreads, isSameSession, unifiedReviewRows } from "./local-pr-review.js";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -189,6 +191,10 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     null,
   );
   const [creating, setCreating] = useState(false);
+  const [listExpanded, setListExpanded] = useState(true);
+  const [listWidth, setListWidth] = useState(272);
+  const listDragStart = useRef(272);
+  const workspace = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState<OpenReview | null>(null);
@@ -301,7 +307,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
     [api, refresh],
   );
 
-  /** Both the full list and the compact selector open the same PR at its latest version. */
+  /** Opening a PR selects its latest version without changing the list's visibility. */
   function selectPr(id: string) {
     setCreating(false);
     setSelected(id);
@@ -317,8 +323,9 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
   }
 
   return (
-    <div className="page-shell session-page local-pr-app">
-      <aside className="local-pr-list" aria-label="Pull Requests">
+    <div ref={workspace} className={`page-shell session-page local-pr-app${listExpanded ? "" : " is-list-collapsed"}`}
+      style={{ "--local-pr-list-width": `${listWidth}px` } as CSSProperties}>
+      <aside id="local-pr-list" className="local-pr-list" aria-label="Pull Requests" hidden={!listExpanded}>
         <header className="local-pr-list-toolbar">
           <h1>Pull Requests</h1>
           <div className="session-file-preview-actions">
@@ -346,16 +353,6 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             </button>
           </div>
         </header>
-        {!!list.data?.entries.length && (
-          <div className="local-pr-compact-list">
-            <select aria-label="Select Pull Request" value={selected ?? ""} onChange={(event) => selectPr(event.target.value)}>
-              <option disabled value="">Select Pull Request</option>
-              {list.data.entries.map((item) => (
-                <option key={item.id} value={item.id}>{item.title} · {prStateLabels[item.state]} · v{item.latestVersion} · {item.targetBranch}</option>
-              ))}
-            </select>
-          </div>
-        )}
         <div className="local-pr-list-items">
           {list.data?.entries.map((item) => (
             <button
@@ -368,9 +365,6 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
               <span>
                 {prStateLabels[item.state]} · v{item.latestVersion}
               </span>
-              <small title={`${item.sourceBranch ?? "Detached Head"} → ${item.targetBranch}`}>
-                {branchName(item.sourceBranch)} → {branchName(item.targetBranch)}
-              </small>
             </button>
           ))}
         </div>
@@ -378,6 +372,21 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
           <ReadState state={list} retry={refresh} />
         </div>
       </aside>
+      <ChatDockSplitter edge="left" className="local-pr-list-splitter"
+        isPanelExpanded={listExpanded} ariaControls="local-pr-list"
+        ariaLabel={listExpanded ? "Collapse Pull Request List" : "Expand Pull Request List"}
+        title={listExpanded ? "Collapse Pull Request List" : "Expand Pull Request List"}
+        onTogglePanel={() => setListExpanded((expanded) => !expanded)}
+        onPointerDown={() => { listDragStart.current = listWidth; }}
+        onDrag={(_event, delta) => {
+          if (listExpanded) setListWidth(Math.max(160, Math.min(listDragStart.current + delta.x, (workspace.current?.clientWidth ?? 512) - 240)));
+        }}
+        onKeyDown={(event) => {
+          if (!listExpanded || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+          event.preventDefault();
+          setListWidth((width) => Math.max(160, Math.min(width + (event.key === "ArrowRight" ? 16 : -16), (workspace.current?.clientWidth ?? 512) - 240)));
+        }}
+      />
       <main className="local-pr-main">
         {creating ? (
           <CreatePr
@@ -478,10 +487,6 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
                     revision={revision}
                     run={run}
                     busy={busy || detail.loading || !!detail.error}
-                    openChanges={() => {
-                      setAnchorComment(null);
-                      setTab("changes");
-                    }}
                     openReview={startReview}
                     nameAgent={nameAgent}
                     onSubmitted={() => setVersion(null)}
@@ -527,9 +532,7 @@ export default function LocalPrWindowApp({ api }: { api: LocalPrWindowApi }) {
             )}
           </>
         ) : list.data && (
-          <div className="local-pr-scroll local-pr-empty">
-            <p>{list.data.entries.length ? "Select a pull request." : "No pull requests yet."}</p>
-          </div>
+          <div className="local-pr-scroll local-pr-empty" />
         )}
         <div className="local-pr-main-feedback">
           {failure && !review && (
@@ -1087,7 +1090,6 @@ function Overview({
   revision,
   run,
   busy,
-  openChanges,
   openReview,
   openAnchor,
   nameAgent,
@@ -1099,7 +1101,6 @@ function Overview({
   revision: number;
   run: Run;
   busy: boolean;
-  openChanges: () => void;
   openReview: (ids: string[], version: number) => void;
   openAnchor: (comment: LocalPrComment) => void;
   nameAgent: (target: SessionTarget) => string;
@@ -1146,11 +1147,10 @@ function Overview({
           <section aria-labelledby="local-pr-description-title">
             <div className="local-pr-section-heading">
               <h3 id="local-pr-description-title">Description</h3>
-              <button onClick={openChanges}>Review Changes</button>
             </div>
             {pr.description.trim()
               ? <LocalPrDescription api={api} text={pr.description} revision={revision} />
-              : <p>No description.</p>}
+              : null}
           </section>
           <Conversation
             pr={pr}
@@ -1165,7 +1165,6 @@ function Overview({
           />
         </div>
         <aside className="local-pr-submission" aria-label="Review and Merge">
-          <h3>Review and Merge</h3>
           <p className="local-pr-submission-status">
             <span className="local-pr-status" data-state={isApproved ? "approved" : undefined}>
               {isApproved ? `Approved v${pr.approval?.version}` : `v${version} · ${version === pr.latestVersion ? "Not Approved" : "Previous Submission"}`}
@@ -1420,7 +1419,8 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
         <p>{comment.body}</p>
         <div className="local-pr-comment-actions">
           {!comment.draft && <button disabled={busy || !!editor} onClick={() => begin({ kind: "reply", comment })}>Reply</button>}
-          <button disabled={busy} onClick={() => openReview([comment.id], comment.version)}>Send to Agent</button>
+          <button className="local-pr-comment-send" aria-label="Send Comment to Agent" title="Send Comment to Agent"
+            disabled={busy} onClick={() => openReview([comment.id], comment.version)}><ComposerIcon name="send" /></button>
           {comment.draft && (
             <details className="local-pr-draft-menu">
               <summary>Draft Actions</summary>
@@ -1450,7 +1450,6 @@ function Conversation({ pr, version, threads, run, busy, openReview, openAnchor,
         )}
       </div>
       {editor && !editorInThread && compose()}
-      {threads.length === 0 && !editor && <p>No comments yet.</p>}
       {threads.map(({ comment, replies }) => (
         <div className="local-pr-thread" key={comment.id}>
           {commentBody(comment)}
