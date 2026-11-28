@@ -4,6 +4,7 @@ import { it } from "node:test";
 import { createDirectoryPathValidationController } from "../../src/launch/directory-path-validation.js";
 import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window/workspace-directory-validation.js";
 
+/** 検証応答をテストの任意の時点で返せるPromiseを用意する。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -12,6 +13,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+/** 遅延ゼロで予約された検証を実行できるよう、タイマーの巡回を待つ。 */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -27,18 +29,23 @@ async function flush(): Promise<void> {
 // lifecycle = "permanent"
 // distinction = "型検査とcomponent描画では識別できない非同期呼出の集約を小さいtimerで検出する"
 // @end-test-value
+/** 連続したパス入力は逐次予約を通知するが、ファイルシステム境界へは落ち着いた後に最新値だけを渡す。 */
 it("workspace validation は debounce 中の keystroke ごとに filesystem 境界を呼ばない", async () => {
   const calls: string[] = [];
   const scheduled: string[] = [];
   const started: string[] = [];
   const controller = createDirectoryPathValidationController({
     delayMs: 15,
+    /** 実ファイルに触れず、検証境界へ届いたパスを控える。 */
     validate: async (targetPath) => {
       calls.push(targetPath);
       return { valid: true };
     },
+    /** 入力のたびに予約されたパスを控える。 */
     onScheduled: (targetPath) => scheduled.push(targetPath),
+    /** 実際に検証を開始したパスを控える。 */
     onValidationStart: (targetPath) => started.push(targetPath),
+    /** この試験は開始までを観測するため、結果通知は使わない。 */
     onResult: () => {},
   });
 
@@ -64,6 +71,7 @@ it("workspace validation は debounce 中の keystroke ごとに filesystem 境�
 // lifecycle = "permanent"
 // distinction = "通常成功のみの描画確認では観測できない応答の逆転と取消を制御したPromiseで確認する"
 // @end-test-value
+/** 最新の検証を先に完了させても、古い入力や取り消した入力の結果が通知されないことを確かめる。 */
 it("workspace validation は古い response と cancel 後の response を反映しない", async () => {
   const first = deferred<WorkspaceDirectoryValidationResult>();
   const second = deferred<WorkspaceDirectoryValidationResult>();
@@ -71,13 +79,18 @@ it("workspace validation は古い response と cancel 後の response を反映
   const results: string[] = [];
   const controller = createDirectoryPathValidationController({
     delayMs: 0,
-    validate: (targetPath) => targetPath.endsWith("first")
-      ? first.promise
-      : targetPath.endsWith("cancelled")
-        ? cancelled.promise
-        : second.promise,
+    /** パスごとに保留中の応答を分け、テストから応答順を逆転させる。 */
+    validate: (targetPath) =>
+      targetPath.endsWith("first")
+        ? first.promise
+        : targetPath.endsWith("cancelled")
+          ? cancelled.promise
+          : second.promise,
+    /** 予約時点の通知はこの競合試験の観測対象外とする。 */
     onScheduled: () => {},
+    /** 検証の開始通知は観測せず、結果の通知だけを追う。 */
     onValidationStart: () => {},
+    /** 有効性の結果を通知できたパスを記録する。 */
     onResult: (targetPath) => results.push(targetPath),
   });
 

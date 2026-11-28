@@ -3,19 +3,35 @@ import test from "node:test";
 
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
 import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
-import type { LiveElicitationRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type {
+  LiveElicitationRequest,
+  LiveSessionRunState,
+} from "../../src-shared/session/runtime-state.js";
 
+/** 承認も質問も届いていない実行中の状態を作る。 */
 function createState(): LiveSessionRunState {
   return {
-    sessionId: "session-1", threadId: "thread-1", runState: "running", assistantText: "",
-    steps: [], backgroundTasks: [], usage: null, errorMessage: "",
-    approvalRequest: null, elicitationRequest: null,
+    sessionId: "session-1",
+    threadId: "thread-1",
+    runState: "running",
+    assistantText: "",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
   };
 }
 
 const question: LiveElicitationRequest = {
-  requestId: "question", provider: "codex", kind: "question", blocking: false,
-  mode: "form", message: "Choose", fields: [{ name: "answer", title: "Choose", type: "text", required: true }],
+  requestId: "question",
+  provider: "codex",
+  kind: "question",
+  blocking: false,
+  mode: "form",
+  message: "Choose",
+  fields: [{ name: "answer", title: "Choose", type: "text", required: true }],
 };
 
 // @test-value v2
@@ -30,22 +46,49 @@ const question: LiveElicitationRequest = {
 // impact = "質問待ちを見落とす、終了後も承認待ちが残る、または取消中の会話を誤分類する"
 // distinction = "型検査やrendererのsummary fixtureはlive入力要求から軽量状態への変換を検査しない"
 // @end-test-value
+/** 承認と有効な質問を同じ待機フラグへ反映し、元の実行状態と取消状態を維持する。 */
 test("軽量live状態は承認と入力待ちを集約し実行・取消状態を維持する", () => {
   assert.equal(projectLiveSessionRunStatus(null), null);
   const state = createState();
-  assert.deepEqual(projectLiveSessionRunStatus(state), { runState: "running", cancellationState: undefined });
-  assert.equal(projectLiveSessionRunStatus({ ...state, elicitationRequests: [] })?.approvalPending, undefined);
+  assert.deepEqual(projectLiveSessionRunStatus(state), {
+    runState: "running",
+    cancellationState: undefined,
+  });
+  assert.equal(
+    projectLiveSessionRunStatus({ ...state, elicitationRequests: [] })
+      ?.approvalPending,
+    undefined,
+  );
   const approvalRequest = {
-    requestId: "approval", provider: "codex", kind: "command", title: "Command",
-    summary: "Run command", decisionMode: "direct-decision" as const,
+    requestId: "approval",
+    provider: "codex",
+    kind: "command",
+    title: "Command",
+    summary: "Run command",
+    decisionMode: "direct-decision" as const,
   };
   for (const pending of [
-    { approvalRequest }, { elicitationRequest: question }, { elicitationRequests: [question] },
+    { approvalRequest },
+    { elicitationRequest: question },
+    { elicitationRequests: [question] },
   ]) {
-    for (const cancellationState of [undefined, "requested", "terminating"] as const) {
-      assert.deepEqual(projectLiveSessionRunStatus({ ...state, ...pending, cancellationState }), {
-        runState: "running", cancellationState, approvalPending: true,
-      });
+    for (const cancellationState of [
+      undefined,
+      "requested",
+      "terminating",
+    ] as const) {
+      assert.deepEqual(
+        projectLiveSessionRunStatus({
+          ...state,
+          ...pending,
+          cancellationState,
+        }),
+        {
+          runState: "running",
+          cancellationState,
+          approvalPending: true,
+        },
+      );
     }
   }
 });
@@ -62,35 +105,77 @@ test("軽量live状態は承認と入力待ちを集約し実行・取消状態�
 // impact = "複数質問の回答漏れや回答済みSessionの誤った待機表示が続く"
 // distinction = "service単体のフォーム一覧検査とrenderer単体のsummary検査の間にある待機集約の結線を少量のin-memory状態で確認する"
 // @end-test-value
+/** 各解決経路で待機が消え、並行する質問のうち一件でも未解決なら待機が続くことを確認する。 */
 test("質問serviceの回答・取消・終了をMonitor用待機状態へ反映する", async () => {
   let state = createState();
   const service = new SessionElicitationService({
-    updateLiveSessionRun: (_id, recipe) => { state = recipe(state); return state; },
+    /** サービスが適用した状態更新を、直後の投影で参照できるように保持する。 */
+    updateLiveSessionRun: (_id, recipe) => {
+      state = recipe(state);
+      return state;
+    },
+    /** 待機の投影に対象を絞るため、ユーザーメッセージは配送しない。 */
     sendUserMessage: async () => {},
   });
   const requests: LiveElicitationRequest[] = [
-    { ...question, blocking: true }, question,
+    { ...question, blocking: true },
+    question,
     { ...question, delivery: "user-message", turnId: "turn-1" },
     { ...question, provider: "copilot", kind: undefined },
-    { ...question, kind: undefined, mode: "url", url: "https://example.com/auth", fields: [] },
+    {
+      ...question,
+      kind: undefined,
+      mode: "url",
+      url: "https://example.com/auth",
+      fields: [],
+    },
     { ...question, provider: "claude" },
   ];
   for (const request of requests) {
-    for (const action of ["accept", "decline", "cancel", "expire", "end"] as const) {
+    for (const action of [
+      "accept",
+      "decline",
+      "cancel",
+      "expire",
+      "end",
+    ] as const) {
       const controller = new AbortController();
-      const response = service.waitForLiveElicitationResponse(state.sessionId, request, controller.signal);
+      const response = service.waitForLiveElicitationResponse(
+        state.sessionId,
+        request,
+        controller.signal,
+      );
       assert.equal(projectLiveSessionRunStatus(state)?.approvalPending, true);
       if (action === "expire") controller.abort();
       else if (action === "end") service.cancelSession(state.sessionId);
-      else await service.resolveLiveElicitation(state.sessionId, request.requestId, { action, content: { answer: "Yes" } });
+      else
+        await service.resolveLiveElicitation(
+          state.sessionId,
+          request.requestId,
+          { action, content: { answer: "Yes" } },
+        );
       await response;
-      assert.equal(projectLiveSessionRunStatus(state)?.approvalPending, undefined, `${request.provider}/${request.mode}/${action}`);
+      assert.equal(
+        projectLiveSessionRunStatus(state)?.approvalPending,
+        undefined,
+        `${request.provider}/${request.mode}/${action}`,
+      );
     }
   }
   const controller = new AbortController();
-  const first = service.waitForLiveElicitationResponse(state.sessionId, question, controller.signal);
-  const second = service.waitForLiveElicitationResponse(state.sessionId, { ...question, requestId: "second" }, controller.signal);
-  service.resolveLiveElicitation(state.sessionId, question.requestId, { action: "cancel" });
+  const first = service.waitForLiveElicitationResponse(
+    state.sessionId,
+    question,
+    controller.signal,
+  );
+  const second = service.waitForLiveElicitationResponse(
+    state.sessionId,
+    { ...question, requestId: "second" },
+    controller.signal,
+  );
+  service.resolveLiveElicitation(state.sessionId, question.requestId, {
+    action: "cancel",
+  });
   await first;
   assert.equal(projectLiveSessionRunStatus(state)?.approvalPending, true);
   service.reset();

@@ -4,16 +4,28 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { SyncTextBlobStore, TextBlobSizeLimitError, TextBlobStore } from "../../src-electron/storage/text-blob-store.js";
+import {
+  SyncTextBlobStore,
+  TextBlobSizeLimitError,
+  TextBlobStore,
+} from "../../src-electron/storage/text-blob-store.js";
 
-async function withStore(run: (store: TextBlobStore) => Promise<void>): Promise<void> {
+/** テスト専用の保存先を使う非同期ストアを用意する。 */
+async function withStore(
+  run: (store: TextBlobStore) => Promise<void>,
+): Promise<void> {
   await withBlobRoot(async (blobRootPath) => {
     await run(new TextBlobStore(blobRootPath));
   });
 }
 
-async function withBlobRoot(run: (blobRootPath: string) => Promise<void>): Promise<void> {
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-text-blob-store-"));
+/** 使い捨ての blob 保存先を提供し、検査が失敗しても作成したディレクトリを回収する。 */
+async function withBlobRoot(
+  run: (blobRootPath: string) => Promise<void>,
+): Promise<void> {
+  const tempDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-text-blob-store-"),
+  );
   try {
     await run(path.join(tempDirectory, "blobs"));
   } finally {
@@ -21,12 +33,16 @@ async function withBlobRoot(run: (blobRootPath: string) => Promise<void>): Promi
   }
 }
 
+/** 非同期の blob 保存・取得と未参照データの回収を実ファイルで検査する。 */
 describe("TextBlobStore", () => {
+  /** 圧縮後の参照情報を照合し、テキストと JSON が保存前の値に戻ることを確かめる。 */
   it("text と json を圧縮保存して roundtrip できる", async () => {
     await withStore(async (store) => {
       const text = "hello blob\n".repeat(128);
       const textRef = await store.putText({ contentType: "text/plain", text });
-      const jsonRef = await store.putJson({ value: { ok: true, items: ["a", "b"] } });
+      const jsonRef = await store.putJson({
+        value: { ok: true, items: ["a", "b"] },
+      });
 
       assert.match(textRef.blobId, /^[a-f0-9]{64}$/);
       assert.equal(textRef.codec, "br");
@@ -34,30 +50,52 @@ describe("TextBlobStore", () => {
       assert.equal(textRef.originalBytes, Buffer.byteLength(text, "utf8"));
       assert.ok(textRef.storedBytes > 0);
       assert.equal(await store.getText(textRef.blobId), text);
-      assert.deepEqual(await store.getJson(jsonRef.blobId), { ok: true, items: ["a", "b"] });
+      assert.deepEqual(await store.getJson(jsonRef.blobId), {
+        ok: true,
+        items: ["a", "b"],
+      });
       assert.deepEqual(await store.stat(textRef.blobId), textRef);
     });
   });
 
+  /** 許容サイズを超える参照は専用のエラーで拒否し、境界と同じサイズは許可する。 */
   it("maxOriginalBytes を超える blob は展開前に拒否する", async () => {
     await withStore(async (store) => {
-      const ref = await store.putText({ contentType: "text/plain", text: "abcdef" });
+      const ref = await store.putText({
+        contentType: "text/plain",
+        text: "abcdef",
+      });
 
       await assert.rejects(
         () => store.getText(ref.blobId, { maxOriginalBytes: 5 }),
-        (error) => error instanceof TextBlobSizeLimitError && error.blobId === ref.blobId,
+        (error) =>
+          error instanceof TextBlobSizeLimitError &&
+          error.blobId === ref.blobId,
       );
-      assert.equal(await store.getText(ref.blobId, { maxOriginalBytes: 6 }), "abcdef");
+      assert.equal(
+        await store.getText(ref.blobId, { maxOriginalBytes: 6 }),
+        "abcdef",
+      );
     });
   });
 
+  /** 指定した既存 blob だけを除去し、欠損 ID を削除成功と区別する。 */
   it("deleteUnreferenced で指定 blob を削除し、欠損 blob を report する", async () => {
     await withStore(async (store) => {
-      const kept = await store.putText({ contentType: "text/plain", text: "kept" });
-      const deleted = await store.putText({ contentType: "text/plain", text: "deleted" });
+      const kept = await store.putText({
+        contentType: "text/plain",
+        text: "kept",
+      });
+      const deleted = await store.putText({
+        contentType: "text/plain",
+        text: "deleted",
+      });
       const missingBlobId = "f".repeat(64);
 
-      const report = await store.deleteUnreferenced([deleted.blobId, missingBlobId]);
+      const report = await store.deleteUnreferenced([
+        deleted.blobId,
+        missingBlobId,
+      ]);
 
       assert.deepEqual(report.deletedBlobIds, [deleted.blobId]);
       assert.deepEqual(report.missingBlobIds, [missingBlobId]);
@@ -67,10 +105,17 @@ describe("TextBlobStore", () => {
     });
   });
 
+  /** ドライランでは孤立 blob の候補だけを報告し、本実行では参照済みデータを残す。 */
   it("collectGarbage で orphan blob を dry-run 後に cleanup できる", async () => {
     await withStore(async (store) => {
-      const live = await store.putText({ contentType: "text/plain", text: "live" });
-      const orphan = await store.putText({ contentType: "text/plain", text: "orphan" });
+      const live = await store.putText({
+        contentType: "text/plain",
+        text: "live",
+      });
+      const orphan = await store.putText({
+        contentType: "text/plain",
+        text: "orphan",
+      });
 
       const dryRun = await store.collectGarbage({
         referencedBlobIds: [live.blobId],
@@ -94,12 +139,20 @@ describe("TextBlobStore", () => {
     });
   });
 
+  /** 圧縮ファイルだけが残る孤立 blob も欠損として報告した上で回収する。 */
   it("metadata が欠けた blob file も GC report に出して cleanup する", async () => {
     await withStore(async (store) => {
       const blobId = "a".repeat(64);
-      const blobDirectory = path.join((store as unknown as { rootPath: string }).rootPath, "aa", "aa");
+      const blobDirectory = path.join(
+        (store as unknown as { rootPath: string }).rootPath,
+        "aa",
+        "aa",
+      );
       await mkdir(blobDirectory, { recursive: true });
-      await writeFile(path.join(blobDirectory, `${blobId}.br`), Buffer.from("orphan"));
+      await writeFile(
+        path.join(blobDirectory, `${blobId}.br`),
+        Buffer.from("orphan"),
+      );
 
       const report = await store.collectGarbage({ referencedBlobIds: [] });
 
@@ -110,11 +163,14 @@ describe("TextBlobStore", () => {
     });
   });
 
+  /** 同一内容を多数同時に保存しても参照 ID が揃い、その ID で元の本文を読める。 */
   it("同一 blob を並行 putText しても競合で失敗しない", async () => {
     await withStore(async (store) => {
       const text = "same text content";
       const refs = await Promise.all(
-        Array.from({ length: 20 }, () => store.putText({ contentType: "text/plain", text })),
+        Array.from({ length: 20 }, () =>
+          store.putText({ contentType: "text/plain", text }),
+        ),
       );
 
       assert.deepEqual(
@@ -126,33 +182,51 @@ describe("TextBlobStore", () => {
   });
 });
 
+/** 同期 API の保存形式の相互運用性と、サイズ制限・削除結果の契約を検査する。 */
 describe("SyncTextBlobStore", () => {
+  /** 非同期側が保存した本文・JSON・参照情報を同じ保存先の同期側から取得する。 */
   it("async store が書いた blob を同期 store で読める", async () => {
     await withBlobRoot(async (blobRootPath) => {
       const asyncStore = new TextBlobStore(blobRootPath);
       const syncStore = new SyncTextBlobStore(blobRootPath);
-      const textRef = await asyncStore.putText({ contentType: "text/plain", text: "async text" });
-      const jsonRef = await asyncStore.putJson({ value: { from: "async", count: 2 } });
+      const textRef = await asyncStore.putText({
+        contentType: "text/plain",
+        text: "async text",
+      });
+      const jsonRef = await asyncStore.putJson({
+        value: { from: "async", count: 2 },
+      });
 
       assert.equal(syncStore.getText(textRef.blobId), "async text");
-      assert.deepEqual(syncStore.getJson(jsonRef.blobId), { from: "async", count: 2 });
+      assert.deepEqual(syncStore.getJson(jsonRef.blobId), {
+        from: "async",
+        count: 2,
+      });
       assert.deepEqual(syncStore.stat(textRef.blobId), textRef);
     });
   });
 
+  /** 同期側が保存したデータを非同期側が形式変換なしに読み込める。 */
   it("同期 store が書いた blob を async store で読める", async () => {
     await withBlobRoot(async (blobRootPath) => {
       const asyncStore = new TextBlobStore(blobRootPath);
       const syncStore = new SyncTextBlobStore(blobRootPath);
-      const textRef = syncStore.putText({ contentType: "text/plain", text: "sync text" });
+      const textRef = syncStore.putText({
+        contentType: "text/plain",
+        text: "sync text",
+      });
       const jsonRef = syncStore.putJson({ value: { from: "sync", count: 3 } });
 
       assert.equal(await asyncStore.getText(textRef.blobId), "sync text");
-      assert.deepEqual(await asyncStore.getJson(jsonRef.blobId), { from: "sync", count: 3 });
+      assert.deepEqual(await asyncStore.getJson(jsonRef.blobId), {
+        from: "sync",
+        count: 3,
+      });
       assert.deepEqual(await asyncStore.stat(textRef.blobId), textRef);
     });
   });
 
+  /** 同期取得でも展開前の上限を検査し、上限と同じバイト数は受理する。 */
   it("maxOriginalBytes を超える blob は同期読み込みでも展開前に拒否する", async () => {
     await withBlobRoot(async (blobRootPath) => {
       const store = new SyncTextBlobStore(blobRootPath);
@@ -160,17 +234,26 @@ describe("SyncTextBlobStore", () => {
 
       assert.throws(
         () => store.getText(ref.blobId, { maxOriginalBytes: 5 }),
-        (error) => error instanceof TextBlobSizeLimitError && error.blobId === ref.blobId,
+        (error) =>
+          error instanceof TextBlobSizeLimitError &&
+          error.blobId === ref.blobId,
       );
-      assert.equal(store.getText(ref.blobId, { maxOriginalBytes: 6 }), "abcdef");
+      assert.equal(
+        store.getText(ref.blobId, { maxOriginalBytes: 6 }),
+        "abcdef",
+      );
     });
   });
 
+  /** 同期版も削除できた ID、存在しない ID、回収したバイト数を区別する。 */
   it("deleteUnreferenced で指定 blob を同期削除し、欠損 blob を report する", async () => {
     await withBlobRoot(async (blobRootPath) => {
       const store = new SyncTextBlobStore(blobRootPath);
       const kept = store.putText({ contentType: "text/plain", text: "kept" });
-      const deleted = store.putText({ contentType: "text/plain", text: "deleted" });
+      const deleted = store.putText({
+        contentType: "text/plain",
+        text: "deleted",
+      });
       const missingBlobId = "f".repeat(64);
 
       const report = store.deleteUnreferenced([deleted.blobId, missingBlobId]);

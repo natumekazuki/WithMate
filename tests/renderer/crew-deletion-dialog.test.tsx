@@ -19,34 +19,105 @@ import type { CrewDeletionStatus } from "../../src-shared/session/session-crew-d
 // impact = "未対応相談や受理済み入力を保持したCrewの削除を誤って促さず、core再検証と明示操作を維持する"
 // distinction = "storage guardのtestと異なり、状態更新がGUI操作可否へ投影される境界を確認する"
 // @end-test-value
+/** 削除確認のフォーカス管理と取消、相談解決後のキューによる削除禁止、許可後の明示削除を確認する。 */
 test("Crew deletion keeps remaining queue blockers after Coordination resolves", async () => {
-  const dom = new JSDOM('<!doctype html><button id="opener">Delete Crew</button><div id="root"></div>');
-  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
-  globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
-  let status: CrewDeletionStatus = { allowed: false, blockers: [{ kind: "coordination", id: "consult", sessionId: "other-branch", message: "Unresolved consultation in another branch." }, { kind: "queue", id: "receipt", message: "Accepted input remains." }] };
+  const dom = new JSDOM(
+    '<!doctype html><button id="opener">Delete Crew</button><div id="root"></div>',
+  );
+  const globals = [
+    "window",
+    "document",
+    "HTMLElement",
+    "Node",
+    "navigator",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const saved = globals.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
+  globals.forEach((name) =>
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+    }),
+  );
+  let status: CrewDeletionStatus = {
+    allowed: false,
+    blockers: [
+      {
+        kind: "coordination",
+        id: "consult",
+        sessionId: "other-branch",
+        message: "Unresolved consultation in another branch.",
+      },
+      { kind: "queue", id: "receipt", message: "Accepted input remains." },
+    ],
+  };
+  /** 相談購読が設定されるまでは状態変更の通知先がない。 */
   let changed = () => {};
   let deletes = 0;
   let closes = 0;
   let completed = 0;
   const api = {
-    async getCrewDeletionStatus(id: string, incarnation: string) { assert.equal(id, "root"); assert.equal(incarnation, "inc"); return status; },
-    subscribeCoordinationChanged(listener: () => void) { changed = listener; return () => {}; },
-    subscribeLiveSessionRunStatus() { return () => {}; },
-    async deleteSession(id: string) { assert.equal(id, "root"); deletes += 1; return true; },
+    /** 削除対象とその版を確認したうえで、その時点の削除可否を返す。 */
+    async getCrewDeletionStatus(id: string, incarnation: string) {
+      assert.equal(id, "root");
+      assert.equal(incarnation, "inc");
+      return status;
+    },
+    /** 相談の解決をテストから通知できるよう購読先を保持する。 */
+    subscribeCoordinationChanged(listener: () => void) {
+      changed = listener;
+      return () => {};
+    },
+    /** 削除可否の切替は相談通知で行うため、実行状態の通知は発行しない。 */
+    subscribeLiveSessionRunStatus() {
+      return () => {};
+    },
+    /** 削除要求の対象がルートかを確認し、実行回数を記録する。 */
+    async deleteSession(id: string) {
+      assert.equal(id, "root");
+      deletes += 1;
+      return true;
+    },
   } as unknown as WithMateWindowApi;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const opener = dom.window.document.getElementById("opener")!;
-  const render = () => root.render(createElement(CrewDeletionDialog, {
-    api, sessionId: "root", incarnationId: "inc", title: "Root",
-    onClose() { closes += 1; root.render(null); },
-    onDeleted() { completed += 1; },
-  }));
-  const action = (name: string) => [...dom.window.document.querySelectorAll<HTMLButtonElement>("[role=dialog] button")].find((button) => button.textContent?.trim() === name)!;
+  /** 取消後も同一の起点からダイアログを開き直せるようにする。 */
+  const render = () =>
+    root.render(
+      createElement(CrewDeletionDialog, {
+        api,
+        sessionId: "root",
+        incarnationId: "inc",
+        title: "Root",
+        /** 取消回数を記録し、実際に閉じて起点へのフォーカス復帰を観測できるようにする。 */
+        onClose() {
+          closes += 1;
+          root.render(null);
+        },
+        /** 削除成功後にのみ完了が通知されたことを数える。 */
+        onDeleted() {
+          completed += 1;
+        },
+      }),
+    );
+  /** ダイアログ内の可視ラベルで操作ボタンを探す。 */
+  const action = (name: string) =>
+    [
+      ...dom.window.document.querySelectorAll<HTMLButtonElement>(
+        "[role=dialog] button",
+      ),
+    ].find((button) => button.textContent?.trim() === name)!;
+  /** 有効・無効やフォーカスを確認する対象の削除ボタンを取得する。 */
   const deleteButton = () => action("Delete Crew");
+  /** 現在のフォーカスにキー操作を送り、ブラウザー既定動作の抑止を観測する。 */
   const pressKey = (key: string, shiftKey = false) => {
     const event = new dom.window.KeyboardEvent("keydown", {
-      key, shiftKey, bubbles: true, cancelable: true,
+      key,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
     });
     dom.window.document.activeElement!.dispatchEvent(event);
     return event.defaultPrevented;
@@ -72,23 +143,45 @@ test("Crew deletion keeps remaining queue blockers after Coordination resolves",
     }
     assert.equal(dom.window.document.activeElement, action("Cancel"));
     assert.equal(deleteButton().disabled, true);
-    assert.match(dom.window.document.body.textContent!, /Unresolved consultation in another branch/);
-    status = { allowed: false, blockers: [{ kind: "queue", id: "receipt", message: "Accepted input remains." }] };
+    assert.match(
+      dom.window.document.body.textContent!,
+      /Unresolved consultation in another branch/,
+    );
+    status = {
+      allowed: false,
+      blockers: [
+        { kind: "queue", id: "receipt", message: "Accepted input remains." },
+      ],
+    };
     await act(async () => changed());
     assert.equal(deleteButton().disabled, true);
-    assert.match(dom.window.document.body.textContent!, /Accepted input remains/);
+    assert.match(
+      dom.window.document.body.textContent!,
+      /Accepted input remains/,
+    );
     assert.equal(deletes, 0);
     status = { allowed: true, blockers: [] };
     await act(async () => changed());
     assert.equal(deleteButton().disabled, false);
     assert.equal(deletes, 0);
     const dialog = dom.window.document.querySelector("[role=dialog]")!;
-    const question = dialog.querySelector("h1, h2, h3, h4, h5, h6, [role=heading]")!;
+    const question = dialog.querySelector(
+      "h1, h2, h3, h4, h5, h6, [role=heading]",
+    )!;
     assert.match(question.textContent ?? "", /\bRoot\b/);
-    assert.equal(dom.window.document.getElementById(dialog.getAttribute("aria-labelledby")!), question);
-    await act(async () => { assert.equal(pressKey("Tab", true), true); });
+    assert.equal(
+      dom.window.document.getElementById(
+        dialog.getAttribute("aria-labelledby")!,
+      ),
+      question,
+    );
+    await act(async () => {
+      assert.equal(pressKey("Tab", true), true);
+    });
     assert.equal(dom.window.document.activeElement, deleteButton());
-    await act(async () => { assert.equal(pressKey("Tab"), true); });
+    await act(async () => {
+      assert.equal(pressKey("Tab"), true);
+    });
     assert.equal(dom.window.document.activeElement, action("Cancel"));
     await act(async () => pressKey("Escape"));
     assert.equal(closes, 1);
@@ -106,7 +199,12 @@ test("Crew deletion keeps remaining queue blockers after Coordination resolves",
     assert.equal(deletes, 1);
     assert.equal(completed, 1);
   } finally {
-    await act(async () => root.unmount()); dom.window.close();
-    globals.forEach((name, index) => { const descriptor = saved[index]; if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => {
+      const descriptor = saved[index];
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    });
   }
 });

@@ -18,19 +18,33 @@ import { resolveRetrySource } from "../../src/chat/retry-state.js";
 // impact = "streamingと永続化後の位置がずれ、重複表示や別messageの操作になる"
 // distinction = "型検査はページ長と全履歴数を区別できず、full-array送信testではoffsetが常に0である"
 // @end-test-value
+/** 履歴末尾60件から送信しても、楽観状態には全履歴の次の位置へ1件を追加し、保持件数と送信前のsnapshotを維持する。 */
 test("paged optimistic send keeps global history positions and a bounded tail", () => {
   const messages: Message[] = Array.from({ length: 60 }, (_, index) => ({
     role: index % 2 === 0 ? "user" : "assistant",
     text: `history-${940 + index}`,
     historyIndex: 940 + index,
   }));
-  const session = { messages, messageCount: 1000, runState: "idle", updatedAt: "before" };
-  const running = createOptimisticRunningSessionState(session, "next request", "after");
+  const session = {
+    messages,
+    messageCount: 1000,
+    runState: "idle",
+    updatedAt: "before",
+  };
+  const running = createOptimisticRunningSessionState(
+    session,
+    "next request",
+    "after",
+  );
   assert.equal(running.runState, "running");
   assert.equal(running.messageCount, 1001);
   assert.equal(running.messages.length, 60);
   assert.equal(running.messages[0].historyIndex, 941);
-  assert.deepEqual(running.messages.at(-1), { role: "user", text: "next request", historyIndex: 1000 });
+  assert.deepEqual(running.messages.at(-1), {
+    role: "user",
+    text: "next request",
+    historyIndex: 1000,
+  });
   assert.equal(session.messageCount, 1000);
   assert.equal(session.messages.length, 60);
   assert.equal(session.messages[0].historyIndex, 940);
@@ -48,6 +62,7 @@ test("paged optimistic send keeps global history positions and a bounded tail", 
 // impact = "送信完了時にBookmarkが消えるか同じ本文の別messageへ移る"
 // distinction = "既存full-array合成ではoffset変更を通らず、型検査でも誤対応を検出できない"
 // @end-test-value
+/** 履歴ページがずれたとき、位置と本文が一致するmessageだけがBookmarkを引き継ぎ、同じ本文の別位置には移らないことを確認する。 */
 test("bookmark convergence follows global positions across shifted pages", () => {
   const current: Message[] = [
     { role: "assistant", text: "same", historyIndex: 100, isBookmarked: true },
@@ -60,9 +75,18 @@ test("bookmark convergence follows global positions across shifted pages", () =>
     { role: "assistant", text: "same", historyIndex: 103 },
     { role: "user", text: "changed", historyIndex: 100 },
   ];
-  assert.deepEqual(mergeMessageBookmarkProjection(current, incoming).map((message) => [message.historyIndex, message.isBookmarked === true]), [
-    [101, false], [102, true], [103, false], [100, false],
-  ]);
+  assert.deepEqual(
+    mergeMessageBookmarkProjection(current, incoming).map((message) => [
+      message.historyIndex,
+      message.isBookmarked === true,
+    ]),
+    [
+      [101, false],
+      [102, true],
+      [103, false],
+      [100, false],
+    ],
+  );
 });
 
 // @test-value v2
@@ -77,16 +101,60 @@ test("bookmark convergence follows global positions across shifted pages", () =>
 // impact = "キャンセルした依頼の再送導線が消えるか別の依頼本文を復元する"
 // distinction = "既存retry testは全履歴を渡しておりpage外userとoffsetを検証しない"
 // @end-test-value
+/** キャンセル済みturnの再送元は、対応する全履歴位置のuser messageが表示ページ内外のどちらにあっても取得でき、位置が異なる場合は取得できない。 */
 test("retry resolves a global user sequence inside and outside the loaded page", () => {
   const user: Message = { role: "user", text: "retry this", historyIndex: 420 };
-  const assistant: Message = { role: "assistant", text: "canceled", historyIndex: 421 };
-  const canceled: SessionTurnRecord = {
-    id: 1, sessionId: "main", createdAt: "now", phase: "canceled", provider: "codex", model: "model",
-    reasoningEffort: "medium", approvalMode: "never", userMessageSeq: 420, assistantMessageSeq: 421,
-    threadId: "thread", errorMessage: "",
+  const assistant: Message = {
+    role: "assistant",
+    text: "canceled",
+    historyIndex: 421,
   };
-  const expected = { kind: "canceled", lastRequestText: "retry this", userMessageSeq: 420, terminalTurn: canceled };
-  assert.deepEqual(resolveRetrySource({ sessionId: "main", messages: [user, assistant], latestTurn: canceled, runState: "idle" }), expected);
-  assert.deepEqual(resolveRetrySource({ sessionId: "main", messages: [assistant], latestUserMessage: user, latestTurn: canceled, runState: "idle" }), expected);
-  assert.equal(resolveRetrySource({ sessionId: "main", messages: [user, assistant], latestTurn: { ...canceled, userMessageSeq: 0 }, runState: "idle" }), null);
+  const canceled: SessionTurnRecord = {
+    id: 1,
+    sessionId: "main",
+    createdAt: "now",
+    phase: "canceled",
+    provider: "codex",
+    model: "model",
+    reasoningEffort: "medium",
+    approvalMode: "never",
+    userMessageSeq: 420,
+    assistantMessageSeq: 421,
+    threadId: "thread",
+    errorMessage: "",
+  };
+  const expected = {
+    kind: "canceled",
+    lastRequestText: "retry this",
+    userMessageSeq: 420,
+    terminalTurn: canceled,
+  };
+  assert.deepEqual(
+    resolveRetrySource({
+      sessionId: "main",
+      messages: [user, assistant],
+      latestTurn: canceled,
+      runState: "idle",
+    }),
+    expected,
+  );
+  assert.deepEqual(
+    resolveRetrySource({
+      sessionId: "main",
+      messages: [assistant],
+      latestUserMessage: user,
+      latestTurn: canceled,
+      runState: "idle",
+    }),
+    expected,
+  );
+  assert.equal(
+    resolveRetrySource({
+      sessionId: "main",
+      messages: [user, assistant],
+      latestTurn: { ...canceled, userMessageSeq: 0 },
+      runState: "idle",
+    }),
+    null,
+  );
 });

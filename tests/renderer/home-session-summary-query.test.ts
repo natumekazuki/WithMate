@@ -7,9 +7,13 @@ import {
   listOpenSessionSummaryEntries,
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
-import type { SessionSummary, SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
+import type {
+  SessionSummary,
+  SessionSummaryPageRequest,
+} from "../../src-shared/session/session-state.js";
 import { buildHomeSessionProjection } from "../../src/home/home-session-projection.js";
 
+/** 順序や重複を照合するため ID だけを持つ最小の要約を作る。 */
 function summary(id: string): SessionSummary {
   return { id } as SessionSummary;
 }
@@ -24,11 +28,15 @@ function summary(id: string): SessionSummary {
 // scope = "listOpenSessionSummaryEntries open paging"
 // lifecycle = "permanent"
 // @end-test-value
+/** 指定に重複する Session ID があっても、重複なしで 100 件ずつ問い合わせる。 */
 test("Home summary query は open Session ID を100件ずつ取得し、重複を除く", async () => {
   const openRequests: string[][] = [];
   const openSearchTexts: Array<string | undefined> = [];
   const api = {
-    listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
+    /** 開いている Session の検索条件と ID を記録し、対応する要約を返す。 */
+    listSessionSummaryPage: async (
+      request?: SessionSummaryPageRequest | null,
+    ) => {
       if (request?.scope === "open") {
         const sessionIds = [...(request.sessionIds ?? [])];
         openRequests.push(sessionIds);
@@ -53,15 +61,22 @@ test("Home summary query は open Session ID を100件ずつ取得し、重複�
 
   const open = await listOpenSessionSummaryEntries(api, openSessionIds);
 
-  assert.deepEqual(openRequests.map((request) => request.length), [100, 1]);
+  assert.deepEqual(
+    openRequests.map((request) => request.length),
+    [100, 1],
+  );
   assert.deepEqual(openSearchTexts, ["", ""]);
   assert.equal(open.length, 101);
   assert.equal(new Set(open.map(({ id }) => id)).size, open.length);
 });
 
+/** ピン留め一覧を優先し、最近の一覧と重複する要約を一行にまとめる。 */
 test("Home summary merge は pinned を先に置き、Session IDでdedupeする", () => {
   assert.deepEqual(
-    mergeSessionSummaryEntries([summary("pinned"), summary("shared")], [summary("recent"), summary("shared")]),
+    mergeSessionSummaryEntries(
+      [summary("pinned"), summary("shared")],
+      [summary("recent"), summary("shared")],
+    ),
     [summary("pinned"), summary("shared"), summary("recent")],
   );
 });
@@ -76,33 +91,45 @@ test("Home summary merge は pinned を先に置き、Session IDでdedupeする"
 // scope = "fetchHomeSessionSummaryPages cursor chain"
 // lifecycle = "permanent"
 // @end-test-value
+/** バックグラウンド更新が保持済みのページ数だけカーソルを順にたどる。 */
 test("Home summary background refresh はloaded page数ぶんcursor chainを再取得する", async () => {
   const requests: Array<string | undefined> = [];
   const api = {
-    listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
+    /** 最近の一覧の指定を記録し、次ページへの固定のカーソル列を返す。 */
+    listSessionSummaryPage: async (
+      request?: SessionSummaryPageRequest | null,
+    ) => {
       if (request?.scope !== "recent") {
         return { entries: [], nextCursor: null, hasMore: false };
       }
 
       requests.push(request.cursor ?? undefined);
-      const pageIndex = request.cursor == null ? 0 : Number(request.cursor.split("-")[1]);
+      const pageIndex =
+        request.cursor == null ? 0 : Number(request.cursor.split("-")[1]);
       return {
         entries: [summary(`recent-${pageIndex}`)],
         nextCursor: pageIndex < 2 ? `cursor-${pageIndex + 1}` : null,
         hasMore: pageIndex < 2,
       };
     },
+    /** このページ取得では Character の利用状況を空にする。 */
     listSessionCharacterUsage: async () => [],
   };
 
   const pages = await fetchHomeSessionSummaryPages(api, "recent", "", 3);
 
   assert.deepEqual(requests, [undefined, "cursor-1", "cursor-2"]);
-  assert.deepEqual(pages.map(({ requestCursor, page }) => [requestCursor, page.entries[0]?.id]), [
-    [null, "recent-0"],
-    ["cursor-1", "recent-1"],
-    ["cursor-2", "recent-2"],
-  ]);
+  assert.deepEqual(
+    pages.map(({ requestCursor, page }) => [
+      requestCursor,
+      page.entries[0]?.id,
+    ]),
+    [
+      [null, "recent-0"],
+      ["cursor-1", "recent-1"],
+      ["cursor-2", "recent-2"],
+    ],
+  );
 });
 
 // @test-value v2
@@ -115,34 +142,78 @@ test("Home summary background refresh はloaded page数ぶんcursor chainを再�
 // scope = "Home partial summary refresh projection"
 // lifecycle = "permanent"
 // @end-test-value
+/** 同じ ID の新しい要約を Monitor に反映し、既存ページの順序やカーソルは保持する。 */
 test("Homeはpage順序を保持したまま成功open summaryの内容をMonitorへ反映する", () => {
-  const stale = { ...summary("pinned-2"), taskTitle: "Old title", status: "idle", runState: "idle" } as SessionSummary;
-  const fresh = { ...stale, taskTitle: "New title", status: "running", runState: "running" } as SessionSummary;
+  const stale = {
+    ...summary("pinned-2"),
+    taskTitle: "Old title",
+    status: "idle",
+    runState: "idle",
+  } as SessionSummary;
+  const fresh = {
+    ...stale,
+    taskTitle: "New title",
+    status: "running",
+    runState: "running",
+  } as SessionSummary;
   const pages = {
     pinned: [
-      { requestCursor: null, page: { entries: [summary("pinned-1")], nextCursor: "pinned-2", hasMore: true } },
-      { requestCursor: "pinned-2", page: { entries: [stale], nextCursor: null, hasMore: false } },
+      {
+        requestCursor: null,
+        page: {
+          entries: [summary("pinned-1")],
+          nextCursor: "pinned-2",
+          hasMore: true,
+        },
+      },
+      {
+        requestCursor: "pinned-2",
+        page: { entries: [stale], nextCursor: null, hasMore: false },
+      },
     ],
     recent: [
-      { requestCursor: null, page: { entries: [stale, summary("recent-1")], nextCursor: "recent-2", hasMore: true } },
-      { requestCursor: "recent-2", page: { entries: [summary("recent-2")], nextCursor: null, hasMore: false } },
+      {
+        requestCursor: null,
+        page: {
+          entries: [stale, summary("recent-1")],
+          nextCursor: "recent-2",
+          hasMore: true,
+        },
+      },
+      {
+        requestCursor: "recent-2",
+        page: {
+          entries: [summary("recent-2")],
+          nextCursor: null,
+          hasMore: false,
+        },
+      },
     ],
     open: [fresh, summary("open-not-in-page")],
   };
-  const retainedPages = structuredClone({ pinned: pages.pinned, recent: pages.recent });
+  const retainedPages = structuredClone({
+    pinned: pages.pinned,
+    recent: pages.recent,
+  });
   const entries = buildHomeSessionSummaryEntries(pages);
-  assert.deepEqual(entries.map(({ id }) => id), [
-    "pinned-1",
-    "pinned-2",
-    "recent-1",
-    "recent-2",
-    "open-not-in-page",
-  ]);
+  assert.deepEqual(
+    entries.map(({ id }) => id),
+    ["pinned-1", "pinned-2", "recent-1", "recent-2", "open-not-in-page"],
+  );
   assert.equal(entries[1], fresh);
   const projection = buildHomeSessionProjection(entries, ["pinned-2"], "");
-  assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => [session.id, session.taskTitle]), [["pinned-2", "New title"]]);
+  assert.deepEqual(
+    projection.runningMonitorEntries.map(({ session }) => [
+      session.id,
+      session.taskTitle,
+    ]),
+    [["pinned-2", "New title"]],
+  );
   assert.deepEqual(projection.nonRunningMonitorEntries, []);
-  assert.deepEqual({ pinned: pages.pinned, recent: pages.recent }, retainedPages);
+  assert.deepEqual(
+    { pinned: pages.pinned, recent: pages.recent },
+    retainedPages,
+  );
 });
 
 // @test-value v2
@@ -157,22 +228,39 @@ test("Homeはpage順序を保持したまま成功open summaryの内容をMonito
 // impact = "古い検索・open集合のreadがbackendへ滞留し、最新一覧取得を遅らせる"
 // distinction = "generation helperの結果適用判定では検出できない次queryの発行境界を直接観測する"
 // @end-test-value
+/** 世代失効後は進行中の問い合わせから次のページや ID のまとまりに進まない。 */
 test("失効generationは次pageとopen chunkを発行しない", async () => {
   for (const scope of ["recent", "pinned", "open"] as const) {
     let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let current = true;
     const requests: SessionSummaryPageRequest[] = [];
     const api = {
-      listSessionSummaryPage: async (request?: SessionSummaryPageRequest | null) => {
+      /** 最初の問い合わせを待たせて、次ページがある応答を世代失効後に返す。 */
+      listSessionSummaryPage: async (
+        request?: SessionSummaryPageRequest | null,
+      ) => {
         requests.push(request ?? {});
         await gate;
         return { entries: [], nextCursor: "next", hasMore: true };
       },
     };
-    const result = scope === "open"
-      ? listOpenSessionSummaryEntries(api, Array.from({ length: 201 }, (_, index) => String(index)), () => current)
-      : fetchHomeSessionSummaryPages(api, scope, "old-search", 3, () => current);
+    const result =
+      scope === "open"
+        ? listOpenSessionSummaryEntries(
+            api,
+            Array.from({ length: 201 }, (_, index) => String(index)),
+            () => current,
+          )
+        : fetchHomeSessionSummaryPages(
+            api,
+            scope,
+            "old-search",
+            3,
+            () => current,
+          );
     assert.equal(requests.length, 1);
     assert.equal(requests[0]?.scope, scope);
     if (scope === "open") assert.equal(requests[0]?.sessionIds?.length, 100);

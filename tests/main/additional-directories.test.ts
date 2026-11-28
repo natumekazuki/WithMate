@@ -11,14 +11,21 @@ import {
   isPathWithinDirectory,
   normalizeAllowedAdditionalDirectories,
 } from "../../src-electron/files/additional-directories.js";
-import { assertCapturedComposerAttachmentsAvailable, resolveComposerPreview } from "../../src-electron/files/composer-attachments.js";
+import {
+  assertCapturedComposerAttachmentsAvailable,
+  resolveComposerPreview,
+} from "../../src-electron/files/composer-attachments.js";
 import {
   appendSessionFilesDirectory,
   resolveSessionFilesDirectory,
 } from "../../src-electron/files/session-files.js";
 import { captureWorkspaceSnapshot } from "../../src-electron/platform/snapshot-ignore.js";
 
-function createSession(workspacePath: string, allowedAdditionalDirectories: string[] = []) {
+/** テストごとに固定の Character で Session を組み立て、追加ディレクトリを省略すれば workspace だけを認可する。 */
+function createSession(
+  workspacePath: string,
+  allowedAdditionalDirectories: string[] = [],
+) {
   return buildNewSession({
     taskTitle: "allowlist",
     workspaceLabel: "workspace",
@@ -33,6 +40,7 @@ function createSession(workspacePath: string, allowedAdditionalDirectories: stri
   });
 }
 
+/** 追加ルートの正規化から、添付プレビュー・受付後の再検証・スナップショットでの利用までを扱う。 */
 describe("additional directories", () => {
   // @test-value v2
   // kind = "security"
@@ -46,8 +54,11 @@ describe("additional directories", () => {
   // risk_tags = ["authorization", "privacy"]
   // distinction = "通常previewのtestは受付後の認可取消・target変更を検証せず、型やbuildは実filesystemを検証しない"
   // @end-test-value
+  /** 捕捉後の本文変更は添付記述子を変えずに認める一方、認可取消・ファイル消失・フォルダーへの置換は別々のエラーで拒む。 */
   it("捕捉した添付pathを現認可と存在・種類で再検証する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-captured-attachment-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-captured-attachment-"),
+    );
     const workspacePath = path.join(tempDirectory, "workspace");
     const externalPath = path.join(tempDirectory, "external");
     const filePath = path.join(externalPath, "input.txt");
@@ -56,23 +67,39 @@ describe("additional directories", () => {
     await writeFile(filePath, "accepted contents", "utf8");
     try {
       const session = createSession(workspacePath, [externalPath]);
-      const preview = await resolveComposerPreview(session, `@${filePath.replace(/\\/g, "/")}`);
+      const preview = await resolveComposerPreview(
+        session,
+        `@${filePath.replace(/\\/g, "/")}`,
+      );
       assert.deepEqual(preview.errors, []);
       assert.equal(preview.attachments.length, 1);
       const captured = structuredClone(preview.attachments);
       await writeFile(filePath, "changed contents", "utf8");
       await assertCapturedComposerAttachmentsAvailable(session, captured);
       assert.deepEqual(captured, preview.attachments);
-      await assert.rejects(assertCapturedComposerAttachmentsAvailable(createSession(workspacePath), captured), /outside the workspace/);
+      await assert.rejects(
+        assertCapturedComposerAttachmentsAvailable(
+          createSession(workspacePath),
+          captured,
+        ),
+        /outside the workspace/,
+      );
       await rm(filePath);
-      await assert.rejects(assertCapturedComposerAttachmentsAvailable(session, captured), /Path not found/);
+      await assert.rejects(
+        assertCapturedComposerAttachmentsAvailable(session, captured),
+        /Path not found/,
+      );
       await mkdir(filePath);
-      await assert.rejects(assertCapturedComposerAttachmentsAvailable(session, captured), /Expected a file/);
+      await assert.rejects(
+        assertCapturedComposerAttachmentsAvailable(session, captured),
+        /Expected a file/,
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** Windows として比較する場合、ドライブ名や各パス要素の大文字小文字が違っても同じディレクトリと判定する。 */
   it("Windows path は大文字小文字が異なっても同じ directory として比較する", () => {
     assert.equal(
       areDirectoryPathsEquivalent(
@@ -84,6 +111,7 @@ describe("additional directories", () => {
     );
   });
 
+  /** Workspace 配下・重複・既に親で認可した追加パスを除き、独立した追加ルートだけを順序付きで残す。 */
   it("workspace 内 path を除外しつつ重複と入れ子を正規化できる", () => {
     const workspacePath = path.resolve("C:/repo");
     const normalized = normalizeAllowedAdditionalDirectories(workspacePath, [
@@ -98,17 +126,30 @@ describe("additional directories", () => {
       path.resolve("C:/external/reference"),
       path.resolve("C:/shared"),
     ]);
-    assert.equal(isPathWithinDirectory(path.resolve("C:/shared/docs/file.md"), path.resolve("C:/shared")), true);
+    assert.equal(
+      isPathWithinDirectory(
+        path.resolve("C:/shared/docs/file.md"),
+        path.resolve("C:/shared"),
+      ),
+      true,
+    );
   });
 
+  /** 同じ実ファイルへの workspace 外参照でも、追加ルートがなければ添付せず、認可後は workspace 外の添付として返す。 */
   it("未許可の workspace 外 path は composer preview で拒否する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-additional-dir-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-additional-dir-"),
+    );
     const workspacePath = path.join(tempDirectory, "workspace");
     const externalPath = path.join(tempDirectory, "external");
     await mkdir(workspacePath, { recursive: true });
     await mkdir(externalPath, { recursive: true });
     await writeFile(path.join(workspacePath, "inside.txt"), "inside\n", "utf8");
-    await writeFile(path.join(externalPath, "outside.txt"), "outside\n", "utf8");
+    await writeFile(
+      path.join(externalPath, "outside.txt"),
+      "outside\n",
+      "utf8",
+    );
 
     try {
       const blockedSession = createSession(workspacePath);
@@ -132,8 +173,11 @@ describe("additional directories", () => {
     }
   });
 
+  /** Workspace そのものを添付すると、外部ではないフォルダーとして認識し、相対パスをドットで表す。 */
   it("workspace root 自体を @path で添付できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-workspace-root-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-workspace-root-"),
+    );
     const workspacePath = path.join(tempDirectory, "workspace");
     await mkdir(workspacePath, { recursive: true });
 
@@ -153,15 +197,21 @@ describe("additional directories", () => {
     }
   });
 
+  /** Session 用ディレクトリを認可に追加すると、ルート自体の参照を workspace 外のフォルダーとして絶対パス付きで返す。 */
   it("session files directory 自体を @path で添付できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-files-root-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-session-files-root-"),
+    );
     const workspacePath = path.join(tempDirectory, "workspace");
     const userDataPath = path.join(tempDirectory, "user-data");
     await mkdir(workspacePath, { recursive: true });
 
     try {
       const session = createSession(workspacePath);
-      const sessionFilesPath = resolveSessionFilesDirectory(userDataPath, session.id);
+      const sessionFilesPath = resolveSessionFilesDirectory(
+        userDataPath,
+        session.id,
+      );
       await mkdir(sessionFilesPath, { recursive: true });
 
       const preview = await resolveComposerPreview(
@@ -179,19 +229,41 @@ describe("additional directories", () => {
     }
   });
 
+  /** 複数ルートを一括捕捉しても、workspace 側の相対キーと追加ルート側の絶対キーで両方の本文を取得できる。 */
   it("snapshot は workspace と追加ディレクトリを同時に取得できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-additional-dir-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-additional-dir-"),
+    );
     const workspacePath = path.join(tempDirectory, "workspace");
     const externalPath = path.join(tempDirectory, "external");
     await mkdir(path.join(workspacePath, "src"), { recursive: true });
     await mkdir(externalPath, { recursive: true });
-    await writeFile(path.join(workspacePath, "src", "main.ts"), "console.log('workspace');\n", "utf8");
-    await writeFile(path.join(externalPath, "notes.md"), "# external\n", "utf8");
+    await writeFile(
+      path.join(workspacePath, "src", "main.ts"),
+      "console.log('workspace');\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(externalPath, "notes.md"),
+      "# external\n",
+      "utf8",
+    );
 
     try {
-      const result = await captureWorkspaceSnapshot([workspacePath, externalPath]);
-      assert.equal(result.snapshot.get("src/main.ts"), "console.log('workspace');\n");
-      assert.equal(result.snapshot.get(path.join(path.resolve(externalPath), "notes.md").replace(/\\/g, "/")), "# external\n");
+      const result = await captureWorkspaceSnapshot([
+        workspacePath,
+        externalPath,
+      ]);
+      assert.equal(
+        result.snapshot.get("src/main.ts"),
+        "console.log('workspace');\n",
+      );
+      assert.equal(
+        result.snapshot.get(
+          path.join(path.resolve(externalPath), "notes.md").replace(/\\/g, "/"),
+        ),
+        "# external\n",
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

@@ -6,7 +6,10 @@ import { createRoot } from "react-dom/client";
 import type { CoordinationIdentity } from "../../src-shared/coordination/coordination-contract.js";
 import type { CoordinationDisplayIdentity } from "../../src-shared/coordination/coordination-window-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import { coordinationIdentityKey, useCoordinationIdentities } from "../../src/coordination/use-coordination-identities.js";
+import {
+  coordinationIdentityKey,
+  useCoordinationIdentities,
+} from "../../src/coordination/use-coordination-identities.js";
 
 // @test-value v2
 // kind = "contract"
@@ -20,31 +23,81 @@ import { coordinationIdentityKey, useCoordinationIdentities } from "../../src/co
 // impact = "相談の相手を取り違えず、非表示paneの不要取得と失敗による誤った削除表示を防ぐ"
 // distinction = "型検査やIPC testはReact表示切替と遅いpromiseの適用順を検出できない"
 // @end-test-value
+/** 表示対象の識別子だけを重複なく取得し、ページ切替後の遅延応答を捨てる。再取得失敗はメタデータを残すが、欠損の応答は null として区別する。 */
 test("Coordination identity reads follow only visible stable identities and retain failed metadata", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
-  globals.forEach((name) => Object.defineProperty(globalThis, name, {
-    configurable: true,
-    value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
-  }));
-  const pending: Array<{ identity: CoordinationIdentity; resolve(value: CoordinationDisplayIdentity | null): void; reject(error: Error): void }> = [];
+  const globals = [
+    "window",
+    "document",
+    "HTMLElement",
+    "Node",
+    "navigator",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const saved = globals.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
+  globals.forEach((name) =>
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+    }),
+  );
+  const pending: Array<{
+    identity: CoordinationIdentity;
+    /** 指定した識別子の応答を、表示切替の前後で任意に解決する。 */
+    resolve(value: CoordinationDisplayIdentity | null): void;
+    /** 対象の再取得を通信エラーにして、欠損の応答と区別する。 */
+    reject(error: Error): void;
+  }> = [];
   dom.window.withmate = {
-    getCoordinationIdentity: (identity) => new Promise((resolve, reject) => pending.push({ identity, resolve, reject })),
+    /** IPC の問い合わせを保留し、呼び出し順と渡された識別子を検査できるようにする。 */
+    getCoordinationIdentity: (identity) =>
+      new Promise((resolve, reject) =>
+        pending.push({ identity, resolve, reject }),
+      ),
+    /** 無効化通知は送らず、購読だけを解除できる疎通用の実装に置き換える。 */
     subscribeSessionInvalidation: () => () => {},
-  } as Pick<WithMateWindowApi, "getCoordinationIdentity" | "subscribeSessionInvalidation"> as WithMateWindowApi;
-  const main: CoordinationIdentity = { kind: "main", sessionId: "main", incarnationId: "old" };
-  const auxiliary: CoordinationIdentity = { kind: "auxiliary", sessionId: "aux", incarnationId: "current" };
+  } as Pick<
+    WithMateWindowApi,
+    "getCoordinationIdentity" | "subscribeSessionInvalidation"
+  > as WithMateWindowApi;
+  const main: CoordinationIdentity = {
+    kind: "main",
+    sessionId: "main",
+    incarnationId: "old",
+  };
+  const auxiliary: CoordinationIdentity = {
+    kind: "auxiliary",
+    sessionId: "aux",
+    incarnationId: "current",
+  };
   let output: ReturnType<typeof useCoordinationIdentities>;
-  function Harness({ identities, active }: { identities: CoordinationIdentity[]; active: boolean }) {
+  /** 与えた表示対象と表示状態でフックを評価し、現在の取得結果を外から観測できるようにする。 */
+  function Harness({
+    identities,
+    active,
+  }: {
+    identities: CoordinationIdentity[];
+    active: boolean;
+  }) {
     output = useCoordinationIdentities(identities, active);
     return null;
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const render = async (identities: CoordinationIdentity[], active: boolean) => {
-    await act(async () => root.render(createElement(Harness, { identities, active })));
+  /** 識別子の切替や表示状態の変更を反映し、次のアサーション前に React の処理をフラッシュする。 */
+  const render = async (
+    identities: CoordinationIdentity[],
+    active: boolean,
+  ) => {
+    await act(async () =>
+      root.render(createElement(Harness, { identities, active })),
+    );
   };
-  const display = { title: "Current Auxiliary", character: { name: "AZKi", iconPath: "azki.png" } };
+  const display = {
+    title: "Current Auxiliary",
+    character: { name: "AZKi", iconPath: "azki.png" },
+  };
   try {
     await render([main, main], false);
     assert.equal(pending.length, 0);
@@ -53,16 +106,27 @@ test("Coordination identity reads follow only visible stable identities and reta
     assert.deepEqual(pending[0]!.identity, main);
     await render([auxiliary], true);
     assert.equal(pending.length, 2);
-    await act(async () => pending[0]!.resolve({ ...display, title: "Old Page" }));
+    await act(async () =>
+      pending[0]!.resolve({ ...display, title: "Old Page" }),
+    );
     assert.equal(output!.reads[coordinationIdentityKey(main)], undefined);
     await act(async () => pending[1]!.resolve(display));
-    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], { identity: display });
+    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], {
+      identity: display,
+    });
     await act(async () => output!.refresh());
-    await act(async () => pending[2]!.reject(new Error("Transport disconnected")));
-    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], { identity: display, error: "Transport disconnected" });
+    await act(async () =>
+      pending[2]!.reject(new Error("Transport disconnected")),
+    );
+    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], {
+      identity: display,
+      error: "Transport disconnected",
+    });
     await act(async () => output!.refresh());
     await act(async () => pending[3]!.resolve(null));
-    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], { identity: null });
+    assert.deepEqual(output!.reads[coordinationIdentityKey(auxiliary)], {
+      identity: null,
+    });
     await render([{ ...auxiliary, incarnationId: "replacement" }], true);
     assert.equal(pending.length, 5);
     assert.equal(output!.reads[coordinationIdentityKey(auxiliary)], undefined);

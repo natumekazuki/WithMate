@@ -9,6 +9,7 @@ import { CharacterStorage } from "../../src-electron/character/character-storage
 import { CharacterService } from "../../src-electron/character/character-service.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 
+/** 非同期処理の開始と解放をテスト側から明示的に同期する。 */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((promiseResolve) => {
@@ -17,6 +18,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
+/** キャラクター単位の直列化と全体保守時の受付制御を検査する。 */
 describe("CharacterWorkspaceOperationCoordinator", () => {
   // @test-value v2
   // kind = "contract"
@@ -30,18 +32,29 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
   // impact = "app内編集と送信の競合で定義の選択が不定になることを防ぐ"
   // distinction = "coordinator単体testではCharacterServiceのrefreshと編集の共有admissionを確認できない"
   // @end-test-value
+  /** スナップショット更新が確定するまでは同じキャラクターの編集とアーカイブを開始しない。 */
   it("refreshが完了するまで同一Characterの定義編集とarchiveを待機させる", async () => {
-    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-refresh-admission-"));
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-refresh-admission-"),
+    );
     const entered = deferred();
     const release = deferred();
+    /** 本物のストレージを使い、スナップショット更新の入口だけを停止できるようにする。 */
     class PausedRefreshStorage extends CharacterStorage {
-      override async refreshRuntimeSnapshot(id: string, previous: CharacterRuntimeSnapshot | null): Promise<CharacterRuntimeSnapshot> {
+      /** 更新に入ったことを通知し、明示的に解放された後で本来の更新処理へ進む。 */
+      override async refreshRuntimeSnapshot(
+        id: string,
+        previous: CharacterRuntimeSnapshot | null,
+      ): Promise<CharacterRuntimeSnapshot> {
         entered.resolve();
         await release.promise;
         return super.refreshRuntimeSnapshot(id, previous);
       }
     }
-    const storage = new PausedRefreshStorage(path.join(temporaryRoot, "withmate-v4.db"), temporaryRoot);
+    const storage = new PausedRefreshStorage(
+      path.join(temporaryRoot, "withmate-v4.db"),
+      temporaryRoot,
+    );
     try {
       const character = await storage.createCharacter({ name: "Mia" });
       const previous = await storage.createRuntimeSnapshot(character.id);
@@ -50,20 +63,40 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
       const refresh = service.refreshRuntimeSnapshot(character.id, previous);
       await entered.promise;
       const changed = character.definitionMarkdown + "\n- edited instruction\n";
-      const edit = service.updateCharacterDefinition({ characterId: character.id, definitionMarkdown: changed });
+      const edit = service.updateCharacterDefinition({
+        characterId: character.id,
+        definitionMarkdown: changed,
+      });
       const archive = service.archiveCharacter(character.id);
       await Promise.resolve();
-      assert.equal((await storage.getCharacter(character.id))?.definitionMarkdown, character.definitionMarkdown);
-      assert.equal(storage.getCharacterCatalogEntry(character.id)?.state, "active");
+      assert.equal(
+        (await storage.getCharacter(character.id))?.definitionMarkdown,
+        character.definitionMarkdown,
+      );
+      assert.equal(
+        storage.getCharacterCatalogEntry(character.id)?.state,
+        "active",
+      );
       release.resolve();
       assert.deepEqual(await refresh, previous);
       await Promise.all([edit, archive]);
-      assert.equal((await storage.getCharacter(character.id))?.definitionMarkdown, changed);
-      assert.equal(storage.getCharacterCatalogEntry(character.id)?.state, "archived");
+      assert.equal(
+        (await storage.getCharacter(character.id))?.definitionMarkdown,
+        changed,
+      );
+      assert.equal(
+        storage.getCharacterCatalogEntry(character.id)?.state,
+        "archived",
+      );
     } finally {
       release.resolve();
       storage.close();
-      await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await rm(temporaryRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
     }
   });
 
@@ -79,6 +112,7 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
   // impact = "Character単位のworkspace operation順序を保つ"
   // distinction = "同一 key は待機し、別 key は待機しないため、全体 provider lock ではなく Character 単位の admission を確認する"
   // @end-test-value
+  /** 別キャラクターは先に完了できる一方、同じキャラクターの後続処理は先行処理の終了を待つ。 */
   it("同じ Character key は直列化し、別 key は並行できる", async () => {
     const coordinator = new CharacterWorkspaceOperationCoordinator();
     const firstEntered = deferred();
@@ -104,7 +138,12 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
     assert.deepEqual(events, ["first-enter", "other-key"]);
     releaseFirst.resolve();
     await Promise.all([first, sameKey]);
-    assert.deepEqual(events, ["first-enter", "other-key", "first-exit", "same-key"]);
+    assert.deepEqual(events, [
+      "first-enter",
+      "other-key",
+      "first-exit",
+      "same-key",
+    ]);
   });
 
   // @test-value v2
@@ -119,6 +158,7 @@ describe("CharacterWorkspaceOperationCoordinator", () => {
   // impact = "maintenanceとworkspace operationの順序を保証する"
   // distinction = "maintenance 開始後に呼んだ write は待機せず拒否され、完了後だけ再び受け付ける"
   // @end-test-value
+  /** 保守開始後の新規書き込みは拒否し、受理済みの書き込みが終わってから保守を実行する。 */
   it("maintenance は既存 write を drain してから実行し、完了後に再受付する", async () => {
     const coordinator = new CharacterWorkspaceOperationCoordinator();
     const entered = deferred();

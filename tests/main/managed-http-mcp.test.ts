@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import type { ProviderAgentRuntimeBindingProjection } from "../../src-electron/providers/agent-runtime-binding.js";
-import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../../src-electron/providers/provider-agent-runtime-binding.js";
+import {
+  buildProviderAgentRuntimeBindingEnv,
+  createProviderAgentRuntimeBindingRedactor,
+  mergeDefinedProviderEnv,
+} from "../../src-electron/providers/provider-agent-runtime-binding.js";
 
 // @test-value v2
 // kind = "invariant"
@@ -16,21 +20,53 @@ import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingR
 // distinction = "型検査と既存binding testはHTTP tokenの独立したenv名や秘匿化を検証しない。通信なしの小さな固定入力で境界を継続確認する"
 // risk_tags = ["privacy", "authentication"]
 // @end-test-value
+/** 当該Codexターンの環境だけにHTTP MCPトークンを渡し、継承した旧値と表示用の値・キーには残さない。 */
 it("HTTP MCP tokenのenv ownershipと投影秘匿化を保つ", () => {
   const binding: ProviderAgentRuntimeBindingProjection = {
-    bindingId: "binding", bindingReference: "reference", providerId: "codex",
-    executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+    bindingId: "binding",
+    bindingReference: "reference",
+    providerId: "codex",
+    executionGeneration: "generation",
+    transport: "env",
+    expiresAt: null,
+    managedMcp: {
+      glossaryUrl: "http://127.0.0.1:47891/glossary",
+      token: "opaque-http-token",
+    },
   };
-  const inherited = { withmate_managed_mcp_token: "previous-turn", THIRD_PARTY_VALUE: "preserved" };
-  const foreground = mergeDefinedProviderEnv(inherited, buildProviderAgentRuntimeBindingEnv(binding));
+  const inherited = {
+    withmate_managed_mcp_token: "previous-turn",
+    THIRD_PARTY_VALUE: "preserved",
+  };
+  const foreground = mergeDefinedProviderEnv(
+    inherited,
+    buildProviderAgentRuntimeBindingEnv(binding),
+  );
   assert.equal(foreground.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
   assert.equal(foreground.withmate_managed_mcp_token, undefined);
-  assert.deepEqual(mergeDefinedProviderEnv(inherited, buildProviderAgentRuntimeBindingEnv(undefined)), { THIRD_PARTY_VALUE: "preserved" });
-  assert.equal(buildProviderAgentRuntimeBindingEnv({ ...binding, providerId: "claude" }).WITHMATE_MANAGED_MCP_TOKEN, undefined);
+  assert.deepEqual(
+    mergeDefinedProviderEnv(
+      inherited,
+      buildProviderAgentRuntimeBindingEnv(undefined),
+    ),
+    { THIRD_PARTY_VALUE: "preserved" },
+  );
+  assert.equal(
+    buildProviderAgentRuntimeBindingEnv({ ...binding, providerId: "claude" })
+      .WITHMATE_MANAGED_MCP_TOKEN,
+    undefined,
+  );
   const redactor = createProviderAgentRuntimeBindingRedactor(binding);
-  assert.equal(redactor.sanitizeText("credential=opaque-http-token"), "credential=[WITHMATE_BINDING_REFERENCE_REDACTED]");
-  assert.deepEqual(redactor.sanitize({ "opaque-http-token": ["opaque-http-token"] }), {
-    "[WITHMATE_BINDING_REFERENCE_REDACTED]": ["[WITHMATE_BINDING_REFERENCE_REDACTED]"],
-  });
+  assert.equal(
+    redactor.sanitizeText("credential=opaque-http-token"),
+    "credential=[WITHMATE_BINDING_REFERENCE_REDACTED]",
+  );
+  assert.deepEqual(
+    redactor.sanitize({ "opaque-http-token": ["opaque-http-token"] }),
+    {
+      "[WITHMATE_BINDING_REFERENCE_REDACTED]": [
+        "[WITHMATE_BINDING_REFERENCE_REDACTED]",
+      ],
+    },
+  );
 });

@@ -9,23 +9,48 @@ import type { ElicitationRecord } from "../../src-shared/session/runtime-state.j
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 
-async function withStore(run: (storage: SessionStorageV6, db: DatabaseSync, incarnationId: string) => void) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-storage-"));
+/** ブックマーク付き履歴と実行中の turn を含む一時 DB を用意し、検証後に閉じて除去する。 */
+async function withStore(
+  run: (
+    storage: SessionStorageV6,
+    db: DatabaseSync,
+    incarnationId: string,
+  ) => void,
+) {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-runtime-storage-"),
+  );
   const dbPath = path.join(directory, "test.db");
   const storage = new SessionStorageV6(dbPath);
   const db = new DatabaseSync(dbPath);
   try {
-    const session = storage.insertSession({ ...buildNewSession({
-      id: "session", taskTitle: "Runtime", workspaceLabel: "workspace", workspacePath: "C:/workspace",
-      branch: "main", characterId: "char-a", character: "A", characterIconPath: "",
-      characterThemeColors: { main: "#123456", sub: "#abcdef" }, approvalMode: DEFAULT_APPROVAL_MODE,
-    }), messages: [{ role: "user", text: "start", isBookmarked: true }], status: "running", runState: "running" });
-    db.prepare(`INSERT INTO session_turns_v6 (session_id, phase, provider_id, model_id,
+    const session = storage.insertSession({
+      ...buildNewSession({
+        id: "session",
+        taskTitle: "Runtime",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#123456", sub: "#abcdef" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      messages: [{ role: "user", text: "start", isBookmarked: true }],
+      status: "running",
+      runState: "running",
+    });
+    db.prepare(
+      `INSERT INTO session_turns_v6 (session_id, phase, provider_id, model_id,
       reasoning_effort, approval_mode, sandbox_mode, thread_id, error_summary, started_at, updated_at)
-      VALUES ('session', 'running', 'codex', '', 'medium', 'never', '', '', '', 'now', 'now')`).run();
+      VALUES ('session', 'running', 'codex', '', 'medium', 'never', '', '', '', 'now', 'now')`,
+    ).run();
     run(storage, db, session.incarnationId!);
   } finally {
-    db.close(); storage.close(); await rm(directory, { recursive: true, force: true });
+    db.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -41,22 +66,57 @@ async function withStore(run: (storage: SessionStorageV6, db: DatabaseSync, inca
 // impact = "会話再表示時に質問の存在が失われるか、古いフォームへ再送できるように見える"
 // distinction = "runtimeとReact単体testではSQLiteの正規化・軽量page経路を通らない"
 // @end-test-value
+/** 終端で未回答の質問だけを失効させ、回答済みの質問とともに表示ページへ残すことを確かめる。 */
 it("質問記録はterminal保存と表示pageを通して保持される", async () => {
   await withStore((storage, _db, incarnationId) => {
     const records: ElicitationRecord[] = [
-      { requestId: "answered", message: "Question", fields: [{ title: "Scope", options: ["Small", "Full"] }], status: "answered" },
-      { requestId: "ended", message: "More", fields: [{ title: "Reason" }], status: "pending" },
+      {
+        requestId: "answered",
+        message: "Question",
+        fields: [{ title: "Scope", options: ["Small", "Full"] }],
+        status: "answered",
+      },
+      {
+        requestId: "ended",
+        message: "More",
+        fields: [{ title: "Reason" }],
+        status: "pending",
+      },
     ];
     storage.appendSessionTerminal({
-      sessionId: "session", incarnationId, expectedMessageCount: 1,
-      assistantMessage: { role: "assistant", text: "done", elicitationRecords: records },
-      metadata: { status: "idle", runState: "idle", threadId: "thread", updatedAt: "terminal" },
-      terminalCommit: { turnId: 1, sessionId: "session", phase: "completed", assistantMessageSeq: 1,
-        threadId: "thread", errorMessage: "", completedAt: "terminal" },
+      sessionId: "session",
+      incarnationId,
+      expectedMessageCount: 1,
+      assistantMessage: {
+        role: "assistant",
+        text: "done",
+        elicitationRecords: records,
+      },
+      metadata: {
+        status: "idle",
+        runState: "idle",
+        threadId: "thread",
+        updatedAt: "terminal",
+      },
+      terminalCommit: {
+        turnId: 1,
+        sessionId: "session",
+        phase: "completed",
+        assistantMessageSeq: 1,
+        threadId: "thread",
+        errorMessage: "",
+        completedAt: "terminal",
+      },
     });
     const expected = [records[0], { ...records[1], status: "expired" }];
-    assert.deepEqual(storage.getSession("session")?.messages.at(-1)?.elicitationRecords, expected);
-    assert.deepEqual(storage.getSessionView("session")?.messages.at(-1)?.elicitationRecords, expected);
+    assert.deepEqual(
+      storage.getSession("session")?.messages.at(-1)?.elicitationRecords,
+      expected,
+    );
+    assert.deepEqual(
+      storage.getSessionView("session")?.messages.at(-1)?.elicitationRecords,
+      expected,
+    );
   });
 });
 
@@ -72,19 +132,55 @@ it("質問記録はterminal保存と表示pageを通して保持される", asyn
 // impact = "Characterのassistant保存確認が別messageを評価する"
 // distinction = "既存page testはraw seqを扱いnormalized full readとの対応を検証しない、小規模実DB testで継続確認する"
 // @end-test-value
+/** 保存番号が飛び、除外行が混じる DB からも、表示順に正しいメッセージを引けることを確かめる。 */
 it("metadataとidentityはnormalized indexを保存seqへ対応付ける", async () => {
   await withStore((storage, db, incarnationId) => {
-    const insert = db.prepare("INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at) VALUES ('session', ?, ?, ?, 'now')");
+    const insert = db.prepare(
+      "INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at) VALUES ('session', ?, ?, ?, 'now')",
+    );
     insert.run(2, "tool", "not JSON");
     insert.run(4, "assistant", "plain legacy assistant");
-    insert.run(7, "system", JSON.stringify({ role: "user", text: "normalized user" }));
-    assert.equal(storage.getSessionMetadata("session")?.messageCount, storage.getSession("session")?.messages.length);
-    assert.deepEqual(storage.getSessionMessageIdentity({ sessionId: "session", incarnationId, messageIndex: 1 }),
-      { role: "assistant", text: "plain legacy assistant", historyIndex: 4 });
-    assert.deepEqual(storage.getSessionMessageIdentity({ sessionId: "session", incarnationId, messageIndex: 2 }),
-      { role: "user", text: "normalized user", historyIndex: 7 });
-    assert.equal(storage.getSessionMessageIdentity({ sessionId: "session", incarnationId: "stale", messageIndex: 0 }), null);
-    assert.equal(storage.getSessionMessageIdentity({ sessionId: "session", incarnationId, messageIndex: 3 }), null);
+    insert.run(
+      7,
+      "system",
+      JSON.stringify({ role: "user", text: "normalized user" }),
+    );
+    assert.equal(
+      storage.getSessionMetadata("session")?.messageCount,
+      storage.getSession("session")?.messages.length,
+    );
+    assert.deepEqual(
+      storage.getSessionMessageIdentity({
+        sessionId: "session",
+        incarnationId,
+        messageIndex: 1,
+      }),
+      { role: "assistant", text: "plain legacy assistant", historyIndex: 4 },
+    );
+    assert.deepEqual(
+      storage.getSessionMessageIdentity({
+        sessionId: "session",
+        incarnationId,
+        messageIndex: 2,
+      }),
+      { role: "user", text: "normalized user", historyIndex: 7 },
+    );
+    assert.equal(
+      storage.getSessionMessageIdentity({
+        sessionId: "session",
+        incarnationId: "stale",
+        messageIndex: 0,
+      }),
+      null,
+    );
+    assert.equal(
+      storage.getSessionMessageIdentity({
+        sessionId: "session",
+        incarnationId,
+        messageIndex: 3,
+      }),
+      null,
+    );
   });
 });
 
@@ -100,24 +196,67 @@ it("metadataとidentityはnormalized indexを保存seqへ対応付ける", async
 // impact = "確定messageの欠落、重複や整理操作の喪失を防ぐ"
 // distinction = "full Session保存testでは対象限定appendとatomic turn失敗を通らず、この実DB testの負担は小さい"
 // @end-test-value
+/** turn 更新を DB で失敗させ、終端メッセージだけが先に確定しないことを確かめる。 */
 it("steerとterminalは非所有データを保ち失敗をatomicに戻す", async () => {
   await withStore((storage, db, incarnationId) => {
     storage.setSessionPinned("session", true);
     const pinOwner = { sessionId: "session", incarnationId };
-    storage.pinSessionFile(pinOwner, { rootKind: "workspace", rootPath: "C:/workspace", relativePath: "file.txt", kind: "file", rootLabel: "workspace" });
+    storage.pinSessionFile(pinOwner, {
+      rootKind: "workspace",
+      rootPath: "C:/workspace",
+      relativePath: "file.txt",
+      kind: "file",
+      rootLabel: "workspace",
+    });
     const pins = storage.listSessionFilePins(pinOwner);
-    const owner = { sessionId: "session", incarnationId, expectedMessageCount: 1 };
-    const steer = { ...owner, turnId: 1, userMessage: { role: "user" as const, text: "steer" }, updatedAt: "later" };
+    const owner = {
+      sessionId: "session",
+      incarnationId,
+      expectedMessageCount: 1,
+    };
+    const steer = {
+      ...owner,
+      turnId: 1,
+      userMessage: { role: "user" as const, text: "steer" },
+      updatedAt: "later",
+    };
     assert.equal(storage.appendSessionSteer(steer).messageCount, 2);
     assert.throws(() => storage.appendSessionSteer(steer));
-    assert.throws(() => storage.appendSessionSteer({ ...steer, incarnationId: "stale", expectedMessageCount: 2 }));
-    const terminal = { ...owner, expectedMessageCount: 2, assistantMessage: { role: "assistant" as const, text: "done" },
-      metadata: { status: "idle" as const, runState: "idle", threadId: "thread", updatedAt: "terminal" },
-      terminalCommit: { turnId: 1, sessionId: "session", phase: "completed" as const, assistantMessageSeq: 2,
-        threadId: "thread", errorMessage: "", completedAt: "terminal" } };
+    assert.throws(() =>
+      storage.appendSessionSteer({
+        ...steer,
+        incarnationId: "stale",
+        expectedMessageCount: 2,
+      }),
+    );
+    const terminal = {
+      ...owner,
+      expectedMessageCount: 2,
+      assistantMessage: { role: "assistant" as const, text: "done" },
+      metadata: {
+        status: "idle" as const,
+        runState: "idle",
+        threadId: "thread",
+        updatedAt: "terminal",
+      },
+      terminalCommit: {
+        turnId: 1,
+        sessionId: "session",
+        phase: "completed" as const,
+        assistantMessageSeq: 2,
+        threadId: "thread",
+        errorMessage: "",
+        completedAt: "terminal",
+      },
+    };
     const before = storage.getSession("session");
-    db.exec("CREATE TRIGGER fail_terminal BEFORE UPDATE OF phase ON session_turns_v6 BEGIN SELECT RAISE(ABORT, 'terminal failure'); END");
-    assert.throws(() => storage.appendSessionTerminal(terminal), /terminal failure/);
+    db.exec(
+      "CREATE TRIGGER fail_terminal BEFORE UPDATE OF phase ON session_turns_v6 BEGIN SELECT RAISE(ABORT, 'terminal failure'); END",
+    );
+    assert.throws(
+      () => storage.appendSessionTerminal(terminal),
+      /terminal failure/,
+    );
     assert.deepEqual(storage.getSession("session"), before);
     db.exec("DROP TRIGGER fail_terminal");
     const result = storage.appendSessionTerminal(terminal);
@@ -125,9 +264,25 @@ it("steerとterminalは非所有データを保ち失敗をatomicに戻す", asy
     assert.equal(result.summary.isPinned, true);
     assert.deepEqual(storage.listSessionFilePins(pinOwner), pins);
     assert.equal(storage.getSession("session")?.messages[0].isBookmarked, true);
-    assert.deepEqual(storage.getSession("session")?.messages.map((message) => message.text), ["start", "steer", "done"]);
-    assert.equal((db.prepare("SELECT phase FROM session_turns_v6 WHERE id = 1").get() as { phase: string }).phase, "completed");
-    assert.throws(() => storage.appendSessionTerminal({ ...terminal, expectedMessageCount: 3, terminalCommit: { ...terminal.terminalCommit, assistantMessageSeq: 3 } }));
+    assert.deepEqual(
+      storage.getSession("session")?.messages.map((message) => message.text),
+      ["start", "steer", "done"],
+    );
+    assert.equal(
+      (
+        db.prepare("SELECT phase FROM session_turns_v6 WHERE id = 1").get() as {
+          phase: string;
+        }
+      ).phase,
+      "completed",
+    );
+    assert.throws(() =>
+      storage.appendSessionTerminal({
+        ...terminal,
+        expectedMessageCount: 3,
+        terminalCommit: { ...terminal.terminalCommit, assistantMessageSeq: 3 },
+      }),
+    );
   });
 });
 
@@ -143,13 +298,27 @@ it("steerとterminalは非所有データを保ち失敗をatomicに戻す", asy
 // impact = "retryやsetup失敗処理が別実行の状態を壊す"
 // distinction = "provider metadata CASはrunStateを扱わずこの条件を検証しない、実DB一件の低コストtestで維持する"
 // @end-test-value
+/** 更新前の所有者と状態が一致する場合に限り、タイトルや履歴を保ったまま実行情報を確定することを確かめる。 */
 it("run checkpointはCASとread-onlyを保護する", async () => {
   await withStore((storage, db, incarnationId) => {
     storage.setSessionTitle("session", incarnationId, "User renamed title");
     storage.setSessionPinned("session", true);
     const before = storage.getSession("session")!;
-    const input = { sessionId: "session", incarnationId, expected: { status: "running" as const, runState: "running", threadId: "" },
-      next: { status: "idle" as const, runState: "error", threadId: "next", updatedAt: "checkpoint" } };
+    const input = {
+      sessionId: "session",
+      incarnationId,
+      expected: {
+        status: "running" as const,
+        runState: "running",
+        threadId: "",
+      },
+      next: {
+        status: "idle" as const,
+        runState: "error",
+        threadId: "next",
+        updatedAt: "checkpoint",
+      },
+    };
     for (const mismatch of [
       { ...input, incarnationId: "stale" },
       { ...input, expected: { ...input.expected, status: "idle" as const } },
@@ -167,12 +336,31 @@ it("run checkpointはCASとread-onlyを保護する", async () => {
     assert.deepEqual(after, { ...before, ...input.next });
     assert.equal(storage.checkpointSessionRunMetadata(input), null);
     assert.deepEqual(storage.getSession("session"), after);
-    db.prepare("UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.accessMode', 'legacy_readonly') WHERE id = 'session'").run();
-    const readonlyInput = { ...input, expected: { status: "idle" as const, runState: "error", threadId: "next" } };
+    db.prepare(
+      "UPDATE sessions_v6 SET runtime_policy_json = json_set(runtime_policy_json, '$.accessMode', 'legacy_readonly') WHERE id = 'session'",
+    ).run();
+    const readonlyInput = {
+      ...input,
+      expected: {
+        status: "idle" as const,
+        runState: "error",
+        threadId: "next",
+      },
+    };
     const readonlyBefore = storage.getSession("session");
     assert.equal(storage.checkpointSessionRunMetadata(readonlyInput), null);
     assert.deepEqual(storage.getSession("session"), readonlyBefore);
-    assert.throws(() => storage.appendSessionSteer({ sessionId: "session", incarnationId, expectedMessageCount: 1,
-      turnId: 1, userMessage: { role: "user", text: "forbidden" }, updatedAt: "later" }), /read-only/);
+    assert.throws(
+      () =>
+        storage.appendSessionSteer({
+          sessionId: "session",
+          incarnationId,
+          expectedMessageCount: 1,
+          turnId: 1,
+          userMessage: { role: "user", text: "forbidden" },
+          updatedAt: "later",
+        }),
+      /read-only/,
+    );
   });
 });

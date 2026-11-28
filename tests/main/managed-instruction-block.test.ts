@@ -9,6 +9,7 @@ import {
   upsertManagedBlockWithMarkerAttributes,
 } from "../../src-electron/skills/managed-instruction-block.js";
 
+/** 管理IDと本文を持つブロックの開始・終了マーカーを含む出力形式を固定する。 */
 test("buildManagedBlock は管理ブロック形式を安定して生成する", () => {
   const block = buildManagedBlock({
     blockId: "mate-profile",
@@ -28,6 +29,7 @@ test("buildManagedBlock は管理ブロック形式を安定して生成する",
   );
 });
 
+/** 管理対象のない文書に、ユーザー本文を残して区切り付きのブロックを追記する。 */
 test("upsertManagedBlock は既存がなければ末尾に追加する", () => {
   const existing = "User note\n";
   const updated = upsertManagedBlock(existing, {
@@ -49,6 +51,7 @@ test("upsertManagedBlock は既存がなければ末尾に追加する", () => {
   );
 });
 
+/** 同じIDのブロックを新本文へ置き換え、前後のユーザー領域を残す。 */
 test("upsertManagedBlock は既存の同一 blockId を差し替える", () => {
   const existing =
     [
@@ -80,26 +83,24 @@ test("upsertManagedBlock は既存の同一 blockId を差し替える", () => {
   );
 });
 
+/** 指定IDの領域だけを除去し、他の管理ブロックやユーザー領域を保つ。 */
 test("removeManagedBlock は blockId を取り除き、他領域を残す", () => {
-  const existing =
-    [
-      "User before",
-      "<!-- WITHMATE:BEGIN mate-profile -->",
-      "## Keep Me",
-      "managed body",
-      "<!-- WITHMATE:END mate-profile -->",
-      "User after",
-      "",
-    ].join("\n");
+  const existing = [
+    "User before",
+    "<!-- WITHMATE:BEGIN mate-profile -->",
+    "## Keep Me",
+    "managed body",
+    "<!-- WITHMATE:END mate-profile -->",
+    "User after",
+    "",
+  ].join("\n");
 
   const updated = removeManagedBlock(existing, "mate-profile");
 
-  assert.equal(
-    updated,
-    ["User before", "", "User after", ""].join("\n"),
-  );
+  assert.equal(updated, ["User before", "", "User after", ""].join("\n"));
 });
 
+/** 生成・更新・削除それぞれが、マーカーに使えないIDを受理しないことを確かめる。 */
 test("無効な blockId はエラーを投げる", () => {
   assert.throws(() => {
     buildManagedBlock({
@@ -120,6 +121,7 @@ test("無効な blockId はエラーを投げる", () => {
   });
 });
 
+/** 削除対象がなくてもユーザー本文を保ち、末尾の余分な改行だけを正規化する。 */
 test("removeManagedBlock は未存在時にユーザー領域を維持して末尾改行を安定化する", () => {
   const existing = "User area\n\n\n";
 
@@ -128,6 +130,7 @@ test("removeManagedBlock は未存在時にユーザー領域を維持して末�
   assert.equal(updated, "User area\n");
 });
 
+/** 属性列の順序に依存せず対象を識別し、新しいブロックと後続の本文を残す。 */
 test("属性付き managed block は属性順が違っても差し替える", () => {
   const existing = [
     "Header",
@@ -152,10 +155,16 @@ test("属性付き managed block は属性順が違っても差し替える", ()
 
   assert.equal(updated.includes("old body"), false);
   assert.equal(updated.includes("new body"), true);
-  assert.equal(updated.includes("provider=codex target=main mode=managed-block block=mate-profile"), true);
+  assert.equal(
+    updated.includes(
+      "provider=codex target=main mode=managed-block block=mate-profile",
+    ),
+    true,
+  );
   assert.equal(updated.includes("Footer"), true);
 });
 
+/** 同じ種類のブロックが併存しても、指定した属性と一致する領域だけを除去する。 */
 test("属性付き managed block は一致する属性の block だけ削除する", () => {
   const existing = [
     "Header",
@@ -185,6 +194,7 @@ test("属性付き managed block は一致する属性の block だけ削除す�
   assert.equal(updated.includes("Footer"), true);
 });
 
+/** 同じ属性集合を持つ候補が複数ある場合に、任意の一件を変更せず例外にする。 */
 test("属性付き managed block が重複すると例外になる", () => {
   const existing = [
     "Header",
@@ -214,6 +224,7 @@ test("属性付き managed block が重複すると例外になる", () => {
   }, /duplicate managed block|重複 managed block/);
 });
 
+/** 対象Providerとtargetが同じでも、管理modeの相違は別対象への変更でなくマーカー不一致として扱う。 */
 test("provider/target が一致する marker の mode mismatch は marker mismatch 例外になる", () => {
   const existing = [
     "Header",
@@ -239,6 +250,7 @@ test("provider/target が一致する marker の mode mismatch は marker mismat
   }, /marker mismatch|mode/);
 });
 
+/** 開始・終了マーカーの属性が一致しないとき、領域を推測して更新せずエラーにする。 */
 test("属性付き managed block の BEGIN/END 不整合は例外になる", () => {
   const existing = [
     "Header",
@@ -261,6 +273,7 @@ test("属性付き managed block の BEGIN/END 不整合は例外になる", () 
   }, /malformed marker|BEGIN/);
 });
 
+/** 属性指定なしの削除では、属性付きの既存領域を誤って対象にしない。 */
 test("空の属性は属性付き block に一致しない", () => {
   const existing = [
     "Header",

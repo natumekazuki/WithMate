@@ -5,12 +5,11 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
-import {
-  createDefaultAppSettings,
-} from "../../src-shared/settings/provider-settings-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
+/** 設定の正規化だけでなく、SQLite の起動処理・保存・再読込・リセットで利用者の選択をどう扱うかを確かめる。 */
 describe("AppSettingsStorage", () => {
   // @test-value v2
   // kind = "contract"
@@ -24,22 +23,36 @@ describe("AppSettingsStorage", () => {
   // risk_tags = ["authorization", "privacy"]
   // distinction = "rendererの初期状態だけでは既存DBと破損保存値を確認できない"
   // @end-test-value
+  /** 明示選択した審査 Provider・Model・推論強度だけが再読込され、未設定、壊れた JSON、リセット後はいずれも Off になる。 */
   it("requires an explicit saved review selection and never enables from a broken row", async () => {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-review-settings-"));
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-review-settings-"),
+    );
     const dbPath = path.join(directory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
       const initial = storage.getSettings();
       assert.equal(initial.withMateAutoReview, null);
-      const selection = { providerId: "codex", model: "chosen", reasoningEffort: "high" } as const;
+      const selection = {
+        providerId: "codex",
+        model: "chosen",
+        reasoningEffort: "high",
+      } as const;
       storage.updateSettings({ ...initial, withMateAutoReview: selection });
       storage.close();
       storage = new AppSettingsStorage(dbPath);
       assert.deepEqual(storage.getSettings().withMateAutoReview, selection);
       const database = new DatabaseSync(dbPath);
-      try { database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?").run("{broken", "withmate_auto_review_json"); }
-      finally { database.close(); }
+      try {
+        database
+          .prepare(
+            "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+          )
+          .run("{broken", "withmate_auto_review_json");
+      } finally {
+        database.close();
+      }
       assert.equal(storage.getSettings().withMateAutoReview, null);
       storage.updateSettings({ ...initial, withMateAutoReview: selection });
       assert.equal(storage.resetSettings().withMateAutoReview, null);
@@ -61,27 +74,47 @@ describe("AppSettingsStorage", () => {
   // impact = "再起動で利用者が無効化したmodelへ送信できるようになる"
   // distinction = "normalizer単体ではSQLite保存・再open・破損行の読込を検証できない"
   // @end-test-value
+  /** 無効化した Model と未知の ID を再起動後も維持し、壊れた保存値を空の無効化設定に見せず、リセットで初めて空に戻す。 */
   it("model無効化設定を独立保存し読込失敗を空設定へ変えない", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-availability-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-model-availability-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
       assert.deepEqual(storage.getSettings().modelAvailability, {});
       const modelAvailability = {
-        opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["openai/model"] },
+        opencode: {
+          disabledServiceIds: ["openai"],
+          disabledModelIds: ["openai/model"],
+        },
         future: { disabledServiceIds: [], disabledModelIds: ["unlisted"] },
       };
       const initial = storage.getSettings();
       storage.updateSettings({ ...initial, modelAvailability });
       storage.close();
       storage = new AppSettingsStorage(dbPath);
-      assert.deepEqual(storage.getSettings().modelAvailability, modelAvailability);
-      assert.deepEqual(storage.getSettings().codingProviderSettings, initial.codingProviderSettings);
+      assert.deepEqual(
+        storage.getSettings().modelAvailability,
+        modelAvailability,
+      );
+      assert.deepEqual(
+        storage.getSettings().codingProviderSettings,
+        initial.codingProviderSettings,
+      );
       const database = new DatabaseSync(dbPath);
       try {
-        for (const invalid of ["{", "null", '{"opencode":{"disabledServiceIds":[],"disabledModelIds":false}}', ""]) {
-          database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        for (const invalid of [
+          "{",
+          "null",
+          '{"opencode":{"disabledServiceIds":[],"disabledModelIds":false}}',
+          "",
+        ]) {
+          database
+            .prepare(
+              "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+            )
             .run(invalid, "model_availability_json");
           assert.throws(() => storage!.getSettings());
         }
@@ -107,8 +140,11 @@ describe("AppSettingsStorage", () => {
   // impact = "廃止したcredentialの保持・再利用や既存provider設定の消失を防ぐ"
   // distinction = "normalizer単体では実SQLiteの起動cleanupと保存境界を検証できない"
   // @end-test-value
+  /** 旧 OpenCode の鍵を起動時に実 DB から除去し、古い設定を再保存しても復活せず、他 Provider・ファイル設定・ログイン時起動は残る。 */
   it("起動と保存でOpenCode credentialだけを除去し他の設定を保持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-opencode-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-opencode-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
@@ -117,20 +153,38 @@ describe("AppSettingsStorage", () => {
       snapshot.launchAtLoginEnabled = true;
       snapshot.codingProviderSettings.codex.apiKey = "codex-fixture";
       snapshot.codingProviderSettings.copilot = {
-        enabled: true, apiKey: "copilot-fixture", skillRootPath: "C:/copilot",
-        skillRelativePath: "skills", instructionRelativePath: "instructions.md",
+        enabled: true,
+        apiKey: "copilot-fixture",
+        skillRootPath: "C:/copilot",
+        skillRelativePath: "skills",
+        instructionRelativePath: "instructions.md",
       };
       snapshot.codingProviderSettings.opencode = {
-        enabled: true, apiKey: "retired-fixture", skillRootPath: "C:/opencode",
-        skillRelativePath: "skills", instructionRelativePath: "AGENTS.md",
+        enabled: true,
+        apiKey: "retired-fixture",
+        skillRootPath: "C:/opencode",
+        skillRelativePath: "skills",
+        instructionRelativePath: "AGENTS.md",
       };
-      storage.updateSettings({ ...snapshot, codingProviderSettings: { ...snapshot.codingProviderSettings, opencode: { ...snapshot.codingProviderSettings.opencode, apiKey: "" } } });
+      storage.updateSettings({
+        ...snapshot,
+        codingProviderSettings: {
+          ...snapshot.codingProviderSettings,
+          opencode: { ...snapshot.codingProviderSettings.opencode, apiKey: "" },
+        },
+      });
       storage.close();
       storage = undefined;
       const database = new DatabaseSync(dbPath);
       try {
-        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
-          .run(JSON.stringify(snapshot.codingProviderSettings), "coding_provider_settings_json");
+        database
+          .prepare(
+            "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+          )
+          .run(
+            JSON.stringify(snapshot.codingProviderSettings),
+            "coding_provider_settings_json",
+          );
       } finally {
         database.close();
       }
@@ -139,13 +193,21 @@ describe("AppSettingsStorage", () => {
         storage = new AppSettingsStorage(dbPath);
         const rawDatabase = new DatabaseSync(dbPath);
         try {
-          const row = rawDatabase.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+          const row = rawDatabase
+            .prepare(
+              "SELECT setting_value FROM app_settings WHERE setting_key = ?",
+            )
             .get("coding_provider_settings_json") as { setting_value: string };
           const raw = JSON.parse(row.setting_value);
           assert.equal(Object.hasOwn(raw.opencode, "apiKey"), false);
           assert.deepEqual(raw, {
             ...snapshot.codingProviderSettings,
-            opencode: { enabled: true, skillRootPath: "C:/opencode", skillRelativePath: "skills", instructionRelativePath: "AGENTS.md" },
+            opencode: {
+              enabled: true,
+              skillRootPath: "C:/opencode",
+              skillRelativePath: "skills",
+              instructionRelativePath: "AGENTS.md",
+            },
           });
         } finally {
           rawDatabase.close();
@@ -160,7 +222,10 @@ describe("AppSettingsStorage", () => {
         });
         const rawDatabaseAfterSave = new DatabaseSync(dbPath);
         try {
-          const row = rawDatabaseAfterSave.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+          const row = rawDatabaseAfterSave
+            .prepare(
+              "SELECT setting_value FROM app_settings WHERE setting_key = ?",
+            )
             .get("coding_provider_settings_json") as { setting_value: string };
           assert.equal(JSON.parse(row.setting_value).opencode.apiKey, "");
         } finally {
@@ -187,22 +252,36 @@ describe("AppSettingsStorage", () => {
   // impact = "承認通知の選択が再起動で失われるか既存利用者に通知されない"
   // distinction = "normalizerやUIだけではSQLiteへの独立key保存と再読込みを検証できない"
   // @end-test-value
+  /** 承認通知の明示的な無効化を turn 通知と独立して保存し、リセットして再度開いた後は既定の有効に戻る。 */
   it("承認通知設定を独立して永続化し既定有効へ戻せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
-      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+      assert.equal(
+        storage.getSettings().sessionApprovalNotificationEnabled,
+        true,
+      );
       const saved = storage.updateSettings({
-        ...storage.getSettings(), sessionApprovalNotificationEnabled: false, sessionTurnNotificationEnabled: true,
+        ...storage.getSettings(),
+        sessionApprovalNotificationEnabled: false,
+        sessionTurnNotificationEnabled: true,
       });
       assert.equal(saved.sessionApprovalNotificationEnabled, false);
       storage.close();
       storage = new AppSettingsStorage(dbPath);
-      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, false);
+      assert.equal(
+        storage.getSettings().sessionApprovalNotificationEnabled,
+        false,
+      );
       assert.equal(storage.getSettings().sessionTurnNotificationEnabled, true);
-      assert.equal(storage.resetSettings().sessionApprovalNotificationEnabled, true);
+      assert.equal(
+        storage.resetSettings().sessionApprovalNotificationEnabled,
+        true,
+      );
       storage.close();
       storage = undefined;
 
@@ -210,16 +289,24 @@ describe("AppSettingsStorage", () => {
         const database = new DatabaseSync(dbPath);
         try {
           if (invalid === null) {
-            database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_approval_notification_enabled");
+            database
+              .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+              .run("session_approval_notification_enabled");
           } else {
-            database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+            database
+              .prepare(
+                "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+              )
               .run(invalid, "session_approval_notification_enabled");
           }
         } finally {
           database.close();
         }
         storage = new AppSettingsStorage(dbPath);
-        assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+        assert.equal(
+          storage.getSettings().sessionApprovalNotificationEnabled,
+          true,
+        );
         storage.close();
         storage = undefined;
       }
@@ -241,21 +328,29 @@ describe("AppSettingsStorage", () => {
   // impact = "利用者のzoom設定が再起動で変わるか、同時保存する他の設定が失われる"
   // distinction = "normalizer単体や型検査では分からない実SQLiteの欠落key補完と再openによる永続化を確認する"
   // @end-test-value
+  /** ズーム刻みがなければ 5 として読み、両端の有効値はショートカットなど別の設定を変えずに再度開いても保持する。 */
   it("preview wheel zoom stepは欠落時5を補い、境界値を再open後も保持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
       assert.equal(storage.getSettings().previewWheelZoomStep, 5);
       const keyboardShortcuts = storage.getSettings().keyboardShortcuts;
-      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.updateSettings({
+        ...storage.getSettings(),
+        launchAtLoginEnabled: true,
+      });
       storage.close();
       storage = undefined;
 
       const database = new DatabaseSync(dbPath);
       try {
-        database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("preview_wheel_zoom_step");
+        database
+          .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+          .run("preview_wheel_zoom_step");
       } finally {
         database.close();
       }
@@ -263,7 +358,10 @@ describe("AppSettingsStorage", () => {
       assert.equal(storage.getSettings().previewWheelZoomStep, 5);
       for (const value of [1, 100]) {
         assert.equal(
-          storage.updateSettings({ ...storage.getSettings(), previewWheelZoomStep: value }).previewWheelZoomStep,
+          storage.updateSettings({
+            ...storage.getSettings(),
+            previewWheelZoomStep: value,
+          }).previewWheelZoomStep,
           value,
         );
         storage.close();
@@ -271,7 +369,10 @@ describe("AppSettingsStorage", () => {
         storage = new AppSettingsStorage(dbPath);
         assert.equal(storage.getSettings().previewWheelZoomStep, value);
         assert.equal(storage.getSettings().launchAtLoginEnabled, true);
-        assert.deepEqual(storage.getSettings().keyboardShortcuts, keyboardShortcuts);
+        assert.deepEqual(
+          storage.getSettings().keyboardShortcuts,
+          keyboardShortcuts,
+        );
       }
     } finally {
       storage?.close();
@@ -291,19 +392,23 @@ describe("AppSettingsStorage", () => {
   // impact = "無効入力が保存済みと表示されるか、既存設定の一部が意図せず変わる"
   // distinction = "normalizer単体では分からないstorage入口の拒否とDB読取りの不正値伝播を有限ケースで確認する"
   // @end-test-value
+  /** 範囲外などの値を保存時に拒み、既存行に直接入れた不正値も正常な読み込み結果に見せない。 */
   it("preview wheel zoom stepの不正な保存値とDB値を拒否する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
       for (const value of [0, 101, 1.5, NaN, Infinity]) {
         assert.throws(
-          () => storage!.updateSettings({
-            ...storage!.getSettings(),
-            launchAtLoginEnabled: true,
-            previewWheelZoomStep: value,
-          }),
+          () =>
+            storage!.updateSettings({
+              ...storage!.getSettings(),
+              launchAtLoginEnabled: true,
+              previewWheelZoomStep: value,
+            }),
           /Preview wheel zoom step must be an integer between 1 and 100/,
         );
         assert.equal(storage.getSettings().previewWheelZoomStep, 5);
@@ -311,10 +416,21 @@ describe("AppSettingsStorage", () => {
       }
       storage.close();
       storage = undefined;
-      for (const value of ["", "invalid", "0", "101", "1.5", "NaN", "Infinity"]) {
+      for (const value of [
+        "",
+        "invalid",
+        "0",
+        "101",
+        "1.5",
+        "NaN",
+        "Infinity",
+      ]) {
         const database = new DatabaseSync(dbPath);
         try {
-          database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+          database
+            .prepare(
+              "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+            )
             .run(value, "preview_wheel_zoom_step");
         } finally {
           database.close();
@@ -333,27 +449,41 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  /** 新規 DB では提案上限が 5 になり、明示した 0 は維持される一方、欠落または破損した保存値は null になる。 */
   it("glossary proactive create limitは初期値5を保存し、0を維持し、欠落・不正値をfallbackしない", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const initialStorage = new AppSettingsStorage(dbPath);
-      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 5);
+      assert.equal(
+        initialStorage.getSettings().glossaryProactiveCreateLimit,
+        5,
+      );
       initialStorage.updateSettings({
         ...initialStorage.getSettings(),
         glossaryProactiveCreateLimit: 0,
       });
-      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 0);
+      assert.equal(
+        initialStorage.getSettings().glossaryProactiveCreateLimit,
+        0,
+      );
       initialStorage.close();
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("invalid", "glossary_proactive_create_limit");
       invalidDatabase.close();
       const invalidStorage = new AppSettingsStorage(dbPath);
-      assert.equal(invalidStorage.getSettings().glossaryProactiveCreateLimit, null);
+      assert.equal(
+        invalidStorage.getSettings().glossaryProactiveCreateLimit,
+        null,
+      );
       invalidStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
@@ -362,7 +492,10 @@ describe("AppSettingsStorage", () => {
         .run("glossary_proactive_create_limit");
       missingDatabase.close();
       const missingStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingStorage.getSettings().glossaryProactiveCreateLimit, null);
+      assert.equal(
+        missingStorage.getSettings().glossaryProactiveCreateLimit,
+        null,
+      );
       missingStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -381,8 +514,11 @@ describe("AppSettingsStorage", () => {
   // impact = "削除対象の旧設定が再利用されるか、他のユーザー設定が失われる"
   // distinction = "廃止値の不在だけでなく、同じDB起動後の既存設定保持を同時に確認する"
   // @end-test-value
+  /** 廃止された microcopy の行を次回起動時に消し、既存のログイン時起動設定は保存されたままにする。 */
   it("起動時に廃止microcopy設定だけを削除する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -394,10 +530,20 @@ describe("AppSettingsStorage", () => {
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
         VALUES (?, ?, ?)
       `);
-      insert.run("user_microcopy_catalog_json", JSON.stringify({ legacy: true }), new Date().toISOString());
-      insert.run("user_microcopy_catalog_english_migrated", "true", new Date().toISOString());
+      insert.run(
+        "user_microcopy_catalog_json",
+        JSON.stringify({ legacy: true }),
+        new Date().toISOString(),
+      );
+      insert.run(
+        "user_microcopy_catalog_english_migrated",
+        "true",
+        new Date().toISOString(),
+      );
       legacyDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("true", "launch_at_login_enabled");
       legacyDatabase.close();
 
@@ -407,7 +553,9 @@ describe("AppSettingsStorage", () => {
 
       const inspectedDatabase = new DatabaseSync(dbPath);
       const obsoleteRows = inspectedDatabase
-        .prepare("SELECT setting_key FROM app_settings WHERE setting_key LIKE 'user_microcopy_catalog_%'")
+        .prepare(
+          "SELECT setting_key FROM app_settings WHERE setting_key LIKE 'user_microcopy_catalog_%'",
+        )
         .all() as Array<{ setting_key: string }>;
       inspectedDatabase.close();
       assert.deepEqual(obsoleteRows, []);
@@ -416,8 +564,11 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  /** 旧右ペインの可視状態から初回だけ context を復元し、後から保存した files を旧値で上書きしない。 */
   it("legacy right pane visibility を canonical side pane へ一度だけ移行する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -425,37 +576,55 @@ describe("AppSettingsStorage", () => {
       initialStorage.close();
 
       const legacyDatabase = new DatabaseSync(dbPath);
-      legacyDatabase.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_side_pane");
       legacyDatabase
-        .prepare(`
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("session_side_pane");
+      legacyDatabase
+        .prepare(
+          `
           INSERT INTO app_settings (setting_key, setting_value, updated_at)
           VALUES (?, ?, ?)
           ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value
-        `)
+        `,
+        )
         .run("session_right_pane_visible", "true", new Date().toISOString());
       legacyDatabase.close();
 
       const migratedStorage = new AppSettingsStorage(dbPath);
-      assert.equal(migratedStorage.getSettings().chatLayoutPreference.sidePane, "context");
-      migratedStorage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      assert.equal(
+        migratedStorage.getSettings().chatLayoutPreference.sidePane,
+        "context",
+      );
+      migratedStorage.updateChatLayoutPreference({
+        target: "sidePane",
+        value: "files",
+      });
       migratedStorage.close();
 
       const staleLegacyDatabase = new DatabaseSync(dbPath);
       staleLegacyDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("false", "session_right_pane_visible");
       staleLegacyDatabase.close();
 
       const reopenedStorage = new AppSettingsStorage(dbPath);
-      assert.equal(reopenedStorage.getSettings().chatLayoutPreference.sidePane, "files");
+      assert.equal(
+        reopenedStorage.getSettings().chatLayoutPreference.sidePane,
+        "files",
+      );
       reopenedStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** 既存 DB の turn 通知行が欠落または不正でも、読み直した設定では通知を有効にする。 */
   it("Session turn notification setting の欠損値と不正値は既定の有効へ戻す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -464,16 +633,21 @@ describe("AppSettingsStorage", () => {
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare(`
+        .prepare(
+          `
           UPDATE app_settings
           SET setting_value = ?
           WHERE setting_key = ?
-        `)
+        `,
+        )
         .run("invalid", "session_turn_notification_enabled");
       invalidDatabase.close();
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      assert.equal(
+        invalidValueStorage.getSettings().sessionTurnNotificationEnabled,
+        true,
+      );
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
@@ -483,15 +657,21 @@ describe("AppSettingsStorage", () => {
       missingDatabase.close();
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      assert.equal(
+        missingValueStorage.getSettings().sessionTurnNotificationEnabled,
+        true,
+      );
       missingValueStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** 既存 DB の応答プレビュー行がないか不正なとき、通知本文を表示する設定には復元しない。 */
   it("Session turn notification response preview setting の欠損値と不正値は既定の無効へ戻す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -500,16 +680,22 @@ describe("AppSettingsStorage", () => {
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare(`
+        .prepare(
+          `
           UPDATE app_settings
           SET setting_value = ?
           WHERE setting_key = ?
-        `)
+        `,
+        )
         .run("invalid", "session_turn_notification_response_preview_enabled");
       invalidDatabase.close();
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      assert.equal(
+        invalidValueStorage.getSettings()
+          .sessionTurnNotificationResponsePreviewEnabled,
+        false,
+      );
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
@@ -519,7 +705,11 @@ describe("AppSettingsStorage", () => {
       missingDatabase.close();
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      assert.equal(
+        missingValueStorage.getSettings()
+          .sessionTurnNotificationResponsePreviewEnabled,
+        false,
+      );
       missingValueStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -538,8 +728,11 @@ describe("AppSettingsStorage", () => {
   // impact = "Settings の次回 turn 反映と既存利用者の注入互換性が崩れる"
   // distinction = "2つのprompt context key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
   // @end-test-value
+  /** Character 定義と現在日付を別々に切り替えられ、閉じて開き直しても明示値を保ち、欠落や不正な DB 値は有効に戻る。 */
   it("foreground prompt context の個別設定を保存・再読込し、欠損と不正値を既定へ戻す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -556,14 +749,20 @@ describe("AppSettingsStorage", () => {
       storage.close();
 
       const reopenedStorage = new AppSettingsStorage(dbPath);
-      assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, false);
+      assert.equal(
+        reopenedStorage.getSettings().characterDefinitionEnabled,
+        false,
+      );
       assert.equal(reopenedStorage.getSettings().currentDateEnabled, false);
       reopenedStorage.updateSettings({
         ...reopenedStorage.getSettings(),
         characterDefinitionEnabled: true,
         currentDateEnabled: false,
       });
-      assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(
+        reopenedStorage.getSettings().characterDefinitionEnabled,
+        true,
+      );
       assert.equal(reopenedStorage.getSettings().currentDateEnabled, false);
       reopenedStorage.close();
 
@@ -575,37 +774,62 @@ describe("AppSettingsStorage", () => {
         const isolatedStorage = new AppSettingsStorage(dbPath);
         isolatedStorage.updateSettings({
           ...isolatedStorage.getSettings(),
-          characterDefinitionEnabled: disabledField === "characterDefinitionEnabled" ? false : true,
-          currentDateEnabled: disabledField === "currentDateEnabled" ? false : true,
+          characterDefinitionEnabled:
+            disabledField === "characterDefinitionEnabled" ? false : true,
+          currentDateEnabled:
+            disabledField === "currentDateEnabled" ? false : true,
         });
         isolatedStorage.close();
 
         const isolatedReloadedStorage = new AppSettingsStorage(dbPath);
         const isolatedSettings = isolatedReloadedStorage.getSettings();
-        assert.equal(isolatedSettings.characterDefinitionEnabled, disabledField !== "characterDefinitionEnabled");
-        assert.equal(isolatedSettings.currentDateEnabled, disabledField !== "currentDateEnabled");
+        assert.equal(
+          isolatedSettings.characterDefinitionEnabled,
+          disabledField !== "characterDefinitionEnabled",
+        );
+        assert.equal(
+          isolatedSettings.currentDateEnabled,
+          disabledField !== "currentDateEnabled",
+        );
         isolatedReloadedStorage.close();
       }
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?)")
-        .run("invalid", "character_definition_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?)",
+        )
+        .run(
+          "invalid",
+          "character_definition_enabled",
+          "conversation_timing_enabled",
+          "tool_call_presence_enabled",
+        );
       invalidDatabase.close();
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(invalidValueStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(
+        invalidValueStorage.getSettings().characterDefinitionEnabled,
+        true,
+      );
       assert.equal(invalidValueStorage.getSettings().currentDateEnabled, true);
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
       missingDatabase
         .prepare("DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)")
-        .run("character_definition_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+        .run(
+          "character_definition_enabled",
+          "conversation_timing_enabled",
+          "tool_call_presence_enabled",
+        );
       missingDatabase.close();
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingValueStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(
+        missingValueStorage.getSettings().characterDefinitionEnabled,
+        true,
+      );
       assert.equal(missingValueStorage.getSettings().currentDateEnabled, true);
       missingValueStorage.close();
     } finally {
@@ -613,8 +837,11 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  /** 送信時の末尾移動は、保存行がない場合と不正値がある場合のどちらも既定有効で読み出せる。 */
   it("send scroll setting の欠損値と不正値は既定の有効へ戻す", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -623,12 +850,17 @@ describe("AppSettingsStorage", () => {
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("invalid", "scroll_to_latest_on_send");
       invalidDatabase.close();
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(invalidValueStorage.getSettings().scrollToLatestOnSend, true);
+      assert.equal(
+        invalidValueStorage.getSettings().scrollToLatestOnSend,
+        true,
+      );
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
@@ -638,7 +870,10 @@ describe("AppSettingsStorage", () => {
       missingDatabase.close();
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingValueStorage.getSettings().scrollToLatestOnSend, true);
+      assert.equal(
+        missingValueStorage.getSettings().scrollToLatestOnSend,
+        true,
+      );
       missingValueStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -657,17 +892,26 @@ describe("AppSettingsStorage", () => {
   // impact = "設定変更が次回起動へ反映されない"
   // distinction = "provider settings と layout projection の保存境界を確認する"
   // @end-test-value
+  /** Codex と Copilot の接続・ファイル設定をほかのアプリ設定と一緒に更新し、DB を開き直した結果全体が保存時と一致する。 */
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new AppSettingsStorage(dbPath);
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.updateChatLayoutPreference({
+        target: "sidePane",
+        value: "context",
+      });
       storage.close();
 
       const layoutReopened = new AppSettingsStorage(dbPath);
-      assert.equal(layoutReopened.getSettings().chatLayoutPreference.sidePane, "context");
+      assert.equal(
+        layoutReopened.getSettings().chatLayoutPreference.sidePane,
+        "context",
+      );
       const updated = layoutReopened.updateSettings({
         ...createDefaultAppSettings(),
         launchAtLoginEnabled: true,
@@ -728,52 +972,68 @@ describe("AppSettingsStorage", () => {
   // impact = "利用中のキー設定が永続値から失われ、再起動後も復元できない"
   // distinction = "rendererの正規化testではDB読込・無関係設定保存・再openのconsumerを確認できない。使い捨てDB1個で3platformを検証する"
   // @end-test-value
+  /** 既存の B/N 割当を読み込みと無関係な設定変更で保ち、末尾移動の割当を追加して再度開いても両者が残る。 */
   it("既存のB/N割当と末尾移動の個別割当を保存・再openで維持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-shortcut-continuity-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-shortcut-continuity-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
-    const oldSettings: KeyboardShortcutSettings = { overrides: {
-      "session.message.toggle-collapse": {
-        windows: { key: "b", ctrlKey: true, shiftKey: true },
-        linux: { key: "b", ctrlKey: true, shiftKey: true },
-        macos: { key: "b", metaKey: true, shiftKey: true },
+    const oldSettings: KeyboardShortcutSettings = {
+      overrides: {
+        "session.message.toggle-collapse": {
+          windows: { key: "b", ctrlKey: true, shiftKey: true },
+          linux: { key: "b", ctrlKey: true, shiftKey: true },
+          macos: { key: "b", metaKey: true, shiftKey: true },
+        },
+        "session.conversation.toggle-target": {
+          windows: { key: "n", ctrlKey: true, shiftKey: true },
+          linux: { key: "n", ctrlKey: true, shiftKey: true },
+          macos: { key: "n", metaKey: true, shiftKey: true },
+        },
       },
-      "session.conversation.toggle-target": {
-        windows: { key: "n", ctrlKey: true, shiftKey: true },
-        linux: { key: "n", ctrlKey: true, shiftKey: true },
-        macos: { key: "n", metaKey: true, shiftKey: true },
-      },
-    } };
+    };
     let storage: AppSettingsStorage | undefined;
     try {
       storage = new AppSettingsStorage(dbPath);
       storage.close();
       const database = new DatabaseSync(dbPath);
       try {
-        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        database
+          .prepare(
+            "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+          )
           .run(JSON.stringify(oldSettings), "keyboard_shortcuts_json");
       } finally {
         database.close();
       }
       storage = new AppSettingsStorage(dbPath);
       assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
-      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.updateSettings({
+        ...storage.getSettings(),
+        launchAtLoginEnabled: true,
+      });
       storage.close();
       storage = new AppSettingsStorage(dbPath);
       assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
-      const assigned: KeyboardShortcutSettings = { overrides: {
-        ...oldSettings.overrides,
-        "session.main.scroll-to-bottom": {
-          windows: { key: "u", ctrlKey: true, shiftKey: true },
-          linux: { key: "u", ctrlKey: true, shiftKey: true },
-          macos: { key: "u", metaKey: true, shiftKey: true },
+      const assigned: KeyboardShortcutSettings = {
+        overrides: {
+          ...oldSettings.overrides,
+          "session.main.scroll-to-bottom": {
+            windows: { key: "u", ctrlKey: true, shiftKey: true },
+            linux: { key: "u", ctrlKey: true, shiftKey: true },
+            macos: { key: "u", metaKey: true, shiftKey: true },
+          },
+          "session.auxiliary.scroll-to-bottom": {
+            windows: { key: "i", ctrlKey: true, shiftKey: true },
+            linux: { key: "i", ctrlKey: true, shiftKey: true },
+            macos: { key: "i", metaKey: true, shiftKey: true },
+          },
         },
-        "session.auxiliary.scroll-to-bottom": {
-          windows: { key: "i", ctrlKey: true, shiftKey: true },
-          linux: { key: "i", ctrlKey: true, shiftKey: true },
-          macos: { key: "i", metaKey: true, shiftKey: true },
-        },
-      } };
-      storage.updateSettings({ ...storage.getSettings(), keyboardShortcuts: assigned });
+      };
+      storage.updateSettings({
+        ...storage.getSettings(),
+        keyboardShortcuts: assigned,
+      });
       storage.close();
       storage = new AppSettingsStorage(dbPath);
       assert.deepEqual(storage.getSettings().keyboardShortcuts, assigned);
@@ -783,8 +1043,11 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  /** 保存済みの platform 別ショートカットを読み込む際、無効な override だけを取り除いて同じ DB の有効な割当を残す。 */
   it("keyboard shortcutの無効なplatform overrideだけを除外して有効値を再loadできる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -793,27 +1056,32 @@ describe("AppSettingsStorage", () => {
 
       const persistedDatabase = new DatabaseSync(dbPath);
       persistedDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
-        .run(JSON.stringify({
-          overrides: {
-            "session.message.toggle-collapse": {
-              windows: { key: "x" },
-              linux: { key: "x", altKey: true, shiftKey: true },
-              macos: { key: "x", metaKey: true, shiftKey: true },
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
+        .run(
+          JSON.stringify({
+            overrides: {
+              "session.message.toggle-collapse": {
+                windows: { key: "x" },
+                linux: { key: "x", altKey: true, shiftKey: true },
+                macos: { key: "x", metaKey: true, shiftKey: true },
+              },
+              "session.composer.submit": {
+                windows: { key: "Enter", altKey: true },
+                linux: { key: "Enter", ctrlKey: true, altKey: true },
+                macos: { key: "Enter", altKey: true },
+              },
+              "session.message.find": {
+                windows: { key: "g", ctrlKey: true },
+              },
+              "unknown.command": {
+                windows: { key: "x", ctrlKey: true, shiftKey: true },
+              },
             },
-            "session.composer.submit": {
-              windows: { key: "Enter", altKey: true },
-              linux: { key: "Enter", ctrlKey: true, altKey: true },
-              macos: { key: "Enter", altKey: true },
-            },
-            "session.message.find": {
-              windows: { key: "g", ctrlKey: true },
-            },
-            "unknown.command": {
-              windows: { key: "x", ctrlKey: true, shiftKey: true },
-            },
-          },
-        }), "keyboard_shortcuts_json");
+          }),
+          "keyboard_shortcuts_json",
+        );
       persistedDatabase.close();
 
       const reopened = new AppSettingsStorage(dbPath);
@@ -847,8 +1115,11 @@ describe("AppSettingsStorage", () => {
   // impact = "window 初期 layout が保存値と乖離する"
   // distinction = "専用 update 経路と通常 settings 保存の干渉を確認する"
   // @end-test-value
+  /** 専用 API でチャット配置の一項目だけを書き換え、残りの配置とログイン時起動を直後と再読込後の両方で保持する。 */
   it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -863,9 +1134,18 @@ describe("AppSettingsStorage", () => {
         ...createDefaultAppSettings(),
         launchAtLoginEnabled: true,
       });
-      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
-      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({
+        target: "header",
+        value: "visible",
+      });
+      storage.updateChatLayoutPreference({
+        target: "actionDock",
+        value: "expanded",
+      });
+      storage.updateChatLayoutPreference({
+        target: "sidePane",
+        value: "files",
+      });
       assert.equal(storage.getSettings().launchAtLoginEnabled, true);
       storage.close();
 
@@ -896,42 +1176,66 @@ describe("AppSettingsStorage", () => {
   // impact = "並行 settings 更新で保存値が破壊される"
   // distinction = "header 更新時の他 layout key 保持を確認する"
   // @end-test-value
+  /** チャット配置の専用更新を実行した DB の行を直接読み、対象ストレージキーだけに変更が加わることを確かめる。 */
   it("chat layout 専用更新は指定された storage key だけを UPSERT する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
     const storage = new AppSettingsStorage(dbPath);
     const directDatabase = new DatabaseSync(dbPath);
 
     try {
       directDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("sentinel-action-dock", "session_action_dock_presentation");
       directDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .prepare(
+          "UPDATE app_settings SET setting_value = ? WHERE setting_key = ?",
+        )
         .run("sentinel-side-pane", "session_side_pane");
 
-      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({
+        target: "header",
+        value: "visible",
+      });
       const rows = directDatabase
-        .prepare(`
+        .prepare(
+          `
           SELECT setting_key, setting_value
           FROM app_settings
           WHERE setting_key IN (?, ?, ?)
           ORDER BY setting_key
-        `)
+        `,
+        )
         .all(
           "session_header_visibility",
           "session_action_dock_presentation",
           "session_side_pane",
         ) as Array<{
-          setting_key: string;
-          setting_value: string;
-        }>;
+        setting_key: string;
+        setting_value: string;
+      }>;
 
-      assert.deepEqual(rows.map((row) => ({ ...row })), [
-        { setting_key: "session_action_dock_presentation", setting_value: "sentinel-action-dock" },
-        { setting_key: "session_header_visibility", setting_value: "visible" },
-        { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
-      ]);
+      assert.deepEqual(
+        rows.map((row) => ({ ...row })),
+        [
+          {
+            setting_key: "session_action_dock_presentation",
+            setting_value: "sentinel-action-dock",
+          },
+          {
+            setting_key: "session_header_visibility",
+            setting_value: "visible",
+          },
+          {
+            setting_key: "session_side_pane",
+            setting_value: "sentinel-side-pane",
+          },
+        ],
+      );
     } finally {
       directDatabase.close();
       storage.close();
@@ -951,17 +1255,29 @@ describe("AppSettingsStorage", () => {
   // impact = "別 window の layout 操作が失われる"
   // distinction = "layout 専用保存と通常 settings 保存の ordering を確認する"
   // @end-test-value
+  /** 配置変更前に取得した全体設定でログイン時起動を更新しても、既に保存したチャット配置は直後も再読込後も戻らない。 */
   it("通常の settings 更新は先に保存された chat layout を stale snapshot で巻き戻さない", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new AppSettingsStorage(dbPath);
       const staleSettings = storage.getSettings();
 
-      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
-      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.updateChatLayoutPreference({
+        target: "header",
+        value: "visible",
+      });
+      storage.updateChatLayoutPreference({
+        target: "actionDock",
+        value: "expanded",
+      });
+      storage.updateChatLayoutPreference({
+        target: "sidePane",
+        value: "context",
+      });
       const updated = storage.updateSettings({
         ...staleSettings,
         launchAtLoginEnabled: true,
@@ -978,7 +1294,10 @@ describe("AppSettingsStorage", () => {
         actionDock: "expanded",
         sidePane: "context",
       });
-      assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
+      assert.deepEqual(
+        loaded.chatLayoutPreference,
+        updated.chatLayoutPreference,
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -996,8 +1315,11 @@ describe("AppSettingsStorage", () => {
   // impact = "設定リセット後の Session layout が不整合になる"
   // distinction = "reset と default projection の canonical shape を確認する"
   // @end-test-value
+  /** 変更した設定一式をリセットすると現行既定値と一致し、再度開いても以前の値は復活しない。 */
   it("resetSettings で app settings を canonical default へ戻し、再読込後も維持される", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-app-settings-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
@@ -1030,7 +1352,10 @@ describe("AppSettingsStorage", () => {
           },
         },
       });
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({
+        target: "sidePane",
+        value: "files",
+      });
 
       const reset = storage.resetSettings();
       storage.close();

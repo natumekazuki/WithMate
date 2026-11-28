@@ -10,6 +10,7 @@ import {
   V2_SESSION_SUMMARY_COLUMNS,
 } from "../../src-electron/storage/database-schema-v2.js";
 
+/** SQLite のスキーマ照会行から、比較に使う名前だけを取り出す型。 */
 type TableInfoRow = {
   name: string;
 };
@@ -41,6 +42,7 @@ const EXPECTED_SESSION_SUMMARY_COLUMNS = [
   "message_count",
 ] as const;
 
+/** メモリー内 SQLite で外部キーを有効にし、V2 の DDL を実行する。 */
 function createV2Schema(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
@@ -50,16 +52,27 @@ function createV2Schema(): DatabaseSync {
   return db;
 }
 
+/** SQLite の内部テーブルを除き、利用側が管理するテーブル名を返す。 */
 function tableNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as TableInfoRow[])
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      )
+      .all() as TableInfoRow[]
+  )
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
 }
 
+/** 実際に作成された列をスキーマ照会で取得する。 */
 function columnNames(db: DatabaseSync, tableName: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[]).map((row) => row.name);
+  return (
+    db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[]
+  ).map((row) => row.name);
 }
 
+/** 後続の移行が前提とする V2 スキーマの識別情報と構成を確認する。 */
 describe("database-schema-v2", () => {
   // @test-value v2
   // kind = "contract"
@@ -73,6 +86,7 @@ describe("database-schema-v2", () => {
   // impact = "対応するV2移行元のschema構成を誤り、通常会話とartifactを後続migrationが読めなくなる"
   // distinction = "型検査ではSQLを実行せずtableの欠落を検出できない。移行のrow保持ではなくV2生成DDLの構成を直接確認する"
   // @end-test-value
+  /** V2 のファイル識別情報と、DDL が生成する七つのテーブルを固定する。 */
   it("withmate-v2.db 用の実装可能 schema として固定する", () => {
     assert.equal(APP_DATABASE_V2_FILENAME, "withmate-v2.db");
     assert.equal(APP_DATABASE_V2_SCHEMA_VERSION, 2);
@@ -106,14 +120,23 @@ describe("database-schema-v2", () => {
   // impact = "V2 sessionのbookmark保存とV2/V3移行が成立しない"
   // distinction = "production storageのroundtripとは別に、schema contractの列有無を直接確認する"
   // @end-test-value
+  /** 一覧用ヘッダー、順序付きメッセージ、成果物本文の保存先が分かれていることを確かめる。 */
   it("sessions は一覧 header と message detail を分離し、legacy JSON を持たない", () => {
     const db = createV2Schema();
     try {
       const sessionColumns = columnNames(db, "sessions");
       const messageColumns = columnNames(db, "session_messages");
 
-      assert.deepEqual(V2_SESSION_SUMMARY_COLUMNS, EXPECTED_SESSION_SUMMARY_COLUMNS);
-      assert.deepEqual(V2_SESSION_SUMMARY_COLUMNS.filter((column) => !sessionColumns.includes(column)), []);
+      assert.deepEqual(
+        V2_SESSION_SUMMARY_COLUMNS,
+        EXPECTED_SESSION_SUMMARY_COLUMNS,
+      );
+      assert.deepEqual(
+        V2_SESSION_SUMMARY_COLUMNS.filter(
+          (column) => !sessionColumns.includes(column),
+        ),
+        [],
+      );
       assert.equal(sessionColumns.includes("messages_json"), false);
       assert.equal(sessionColumns.includes("stream_json"), false);
       assert.ok(messageColumns.includes("session_id"));
@@ -122,7 +145,10 @@ describe("database-schema-v2", () => {
       assert.ok(messageColumns.includes("is_bookmarked"));
       assert.ok(messageColumns.includes("artifact_available"));
       assert.equal(messageColumns.includes("artifact_json"), false);
-      assert.deepEqual(columnNames(db, "session_message_artifacts"), ["message_id", "artifact_json"]);
+      assert.deepEqual(columnNames(db, "session_message_artifacts"), [
+        "message_id",
+        "artifact_json",
+      ]);
     } finally {
       db.close();
     }

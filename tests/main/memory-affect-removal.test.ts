@@ -1,29 +1,56 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { resolveOrMigrateAppDatabasePath } from "../../src-electron/storage/app-database-path.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../../src-electron/storage/database-schema-v1.js";
-import { CREATE_V4_SCHEMA_SQL, isValidV4Database } from "../../src-electron/storage/database-schema-v4.js";
-import { isValidV6Database, REQUIRED_V6_TABLES } from "../../src-electron/storage/database-schema-v6.js";
+import {
+  CREATE_V4_SCHEMA_SQL,
+  isValidV4Database,
+} from "../../src-electron/storage/database-schema-v4.js";
+import {
+  isValidV6Database,
+  REQUIRED_V6_TABLES,
+} from "../../src-electron/storage/database-schema-v6.js";
 import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 
 // 廃止対象を独立に定義する。リリース済み fixture に記録された非公開テーブル 15 個に、
 // 旧精算キューを加える。この期待値はテスト対象の実装から導出しない。
 const EXPECTED_RETIRED_TABLES = [
-  "memory_entries_v6", "memory_entry_tags_v6", "memory_entry_relations_v6",
-  "memory_tag_catalog_v6", "memory_target_tag_stats_v6", "memory_mutation_events_v6",
-  "memory_idempotency_keys_v6", "memory_idempotency_forget_results_v6", "memory_move_events_v6",
-  "memory_protected_objects_v6", "character_affect_events_v6", "character_affect_resets_v6",
-  "character_affect_idempotency_v6", "character_affect_mutations_v6", "character_affect_observations_v6",
+  "memory_entries_v6",
+  "memory_entry_tags_v6",
+  "memory_entry_relations_v6",
+  "memory_tag_catalog_v6",
+  "memory_target_tag_stats_v6",
+  "memory_mutation_events_v6",
+  "memory_idempotency_keys_v6",
+  "memory_idempotency_forget_results_v6",
+  "memory_move_events_v6",
+  "memory_protected_objects_v6",
+  "character_affect_events_v6",
+  "character_affect_resets_v6",
+  "character_affect_idempotency_v6",
+  "character_affect_mutations_v6",
+  "character_affect_observations_v6",
   "character_affect_turn_settlements",
 ] as const;
 
+/** 廃止対象と保持対象を同居させたリリース版DBを作り、保持テーブルの移行前の行を採取する。 */
 async function fixture(t: TestContext) {
-  const root = await mkdtemp(path.join(tmpdir(), "withmate-memory-retirement-"));
+  const root = await mkdtemp(
+    path.join(tmpdir(), "withmate-memory-retirement-"),
+  );
+  /** ケース終了後に、隔離した移行用データディレクトリを取り除く。 */
   t.after(() => rm(root, { recursive: true, force: true }));
   const userData = path.join(root, "data");
   await mkdir(userData);
@@ -67,10 +94,20 @@ async function fixture(t: TestContext) {
       occurred_at,idempotency_key,request_fingerprint,memory_entry_id,created_at)
       VALUES ('event','char','local-user','session','relationship','user','local-user','{}',0.5,'discard','discard','now','key','fingerprint','new','now');
   `);
-  const names = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name);
-  assert.deepEqual(EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)), EXPECTED_RETIRED_TABLES);
-  const shared = Object.fromEntries(REQUIRED_V6_TABLES.filter((name) => name !== "app_settings")
-    .map((name) => [name, db.prepare(`SELECT * FROM ${name}`).all()]));
+  const names = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+    .all()
+    .map((row) => row.name);
+  assert.deepEqual(
+    EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)),
+    EXPECTED_RETIRED_TABLES,
+  );
+  const shared = Object.fromEntries(
+    REQUIRED_V6_TABLES.filter((name) => name !== "app_settings").map((name) => [
+      name,
+      db.prepare(`SELECT * FROM ${name}`).all(),
+    ]),
+  );
   db.close();
   return { root, userData, dbPath, shared };
 }
@@ -91,14 +128,38 @@ async function fixture(t: TestContext) {
 /** リリース版からの更新では、既存の共有値を維持し、追加された Reviewer と Instructions の列をどちらの起動でも初期化する。 */
 test("released data retirement preserves shared storage across repeated bootstrap", async (t) => {
   const f = await fixture(t);
-  const object = path.join(f.userData, "memory-objects", "v6", "aa", "a".repeat(32) + ".bin");
-  const staging = path.join(f.userData, "memory-objects", "v6", ".staging", "pending.tmp");
+  const object = path.join(
+    f.userData,
+    "memory-objects",
+    "v6",
+    "aa",
+    "a".repeat(32) + ".bin",
+  );
+  const staging = path.join(
+    f.userData,
+    "memory-objects",
+    "v6",
+    ".staging",
+    "pending.tmp",
+  );
   const keyring = path.join(f.userData, "memory-keys", "v6-keyring.json");
-  const sharedFile = path.join(f.userData, "characters", "char", "character.md");
-  const exported = path.join(f.userData, "session-files", "memory-exports", "kept.txt");
+  const sharedFile = path.join(
+    f.userData,
+    "characters",
+    "char",
+    "character.md",
+  );
+  const exported = path.join(
+    f.userData,
+    "session-files",
+    "memory-exports",
+    "kept.txt",
+  );
   const v4Source = path.join(f.userData, "withmate-v4.db");
   const source = new DatabaseSync(v4Source);
-  source.exec("CREATE TABLE unrelated_source (body TEXT); INSERT INTO unrelated_source VALUES ('keep V4');");
+  source.exec(
+    "CREATE TABLE unrelated_source (body TEXT); INSERT INTO unrelated_source VALUES ('keep V4');",
+  );
   source.close();
   for (const file of [object, staging, keyring, sharedFile, exported]) {
     await mkdir(path.dirname(file), { recursive: true });
@@ -109,24 +170,61 @@ test("released data retirement preserves shared storage across repeated bootstra
     assert.equal(isValidV6Database(f.dbPath), true);
     const db = new DatabaseSync(f.dbPath, { readOnly: true });
     try {
-      const names = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name);
-      assert.deepEqual(EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)), [], "retired private tables must not survive");
-      assert.deepEqual(db.prepare("SELECT setting_key FROM app_settings ORDER BY setting_key").all().map((row) => row.setting_key),
-        ["companion_removal_completed_at", "session_selection_policy_json", "v4_to_v6_release_data_migrated_at"]);
+      const names = db
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+        .all()
+        .map((row) => row.name);
+      assert.deepEqual(
+        EXPECTED_RETIRED_TABLES.filter((name) => names.includes(name)),
+        [],
+        "retired private tables must not survive",
+      );
+      assert.deepEqual(
+        db
+          .prepare("SELECT setting_key FROM app_settings ORDER BY setting_key")
+          .all()
+          .map((row) => row.setting_key),
+        [
+          "companion_removal_completed_at",
+          "session_selection_policy_json",
+          "v4_to_v6_release_data_migrated_at",
+        ],
+      );
       for (const [table, rows] of Object.entries(f.shared)) {
         const actual = db.prepare(`SELECT * FROM ${table}`).all();
         // 従来と同じく既存の値をすべて比較し、追加された各列の既定値も厳密に比較する。
-        const additions = table === "auxiliary_sessions" ? { withmate_reviewer_explicit: 0, instructions_json: '""' }
-          : table === "sessions_v6" ? { instructions_json: '""' } : {};
-        assert.deepEqual(actual, rows.map((row) => Object.assign(Object.create(null), row, additions)), table);
+        const additions =
+          table === "auxiliary_sessions"
+            ? { withmate_reviewer_explicit: 0, instructions_json: '""' }
+            : table === "sessions_v6"
+              ? { instructions_json: '""' }
+              : {};
+        assert.deepEqual(
+          actual,
+          rows.map((row) => Object.assign(Object.create(null), row, additions)),
+          table,
+        );
       }
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-    } finally { db.close(); }
-    for (const file of [object, staging, keyring]) assert.equal(existsSync(file), false);
-    for (const file of [sharedFile, exported]) assert.equal(await readFile(file, "utf8"), "synthetic file");
+    } finally {
+      db.close();
+    }
+    for (const file of [object, staging, keyring])
+      assert.equal(existsSync(file), false);
+    for (const file of [sharedFile, exported])
+      assert.equal(await readFile(file, "utf8"), "synthetic file");
     const keptSource = new DatabaseSync(v4Source, { readOnly: true });
-    try { assert.deepEqual(keptSource.prepare("SELECT body FROM unrelated_source").all().map((row) => row.body), ["keep V4"]); }
-    finally { keptSource.close(); }
+    try {
+      assert.deepEqual(
+        keptSource
+          .prepare("SELECT body FROM unrelated_source")
+          .all()
+          .map((row) => row.body),
+        ["keep V4"],
+      );
+    } finally {
+      keptSource.close();
+    }
   }
 });
 
@@ -143,6 +241,7 @@ test("released data retirement preserves shared storage across repeated bootstra
 // distinction = "型検査と正常起動testではSQLiteのDDL rollbackとruntime fallbackを検証できない"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 廃止途中のSQLエラーで削除をロールバックし、有効なV4で代用せず、制約除去後には元のV6で再試行できることを確認する。 */
 test("failed retirement rolls back and rejects bootstrap instead of replacing the database", async (t) => {
   const f = await fixture(t);
   const v4Path = path.join(f.userData, "withmate-v4.db");
@@ -152,37 +251,100 @@ test("failed retirement rolls back and rejects bootstrap instead of replacing th
     source.exec(CREATE_APP_SETTINGS_TABLE_SQL);
     source.exec(`INSERT INTO app_settings VALUES ('companion_removal_completed_at','now','now');
       INSERT INTO app_settings VALUES ('launch_at_login_enabled','false','now');`);
-  } finally { source.close(); }
+  } finally {
+    source.close();
+  }
   assert.equal(isValidV4Database(v4Path), true);
   const db = new DatabaseSync(f.dbPath);
   // この廃止処理を別の Companion 後処理から切り分け、V4 をフォールバック候補に残す。
   db.exec(`INSERT INTO app_settings VALUES ('companion_removal_completed_at','now','now');
     INSERT INTO app_settings VALUES ('launch_at_login_enabled','true','now');`);
-  db.exec("CREATE TRIGGER reject_retirement BEFORE DELETE ON app_settings WHEN OLD.setting_key = 'memory_file_quota_bytes' BEGIN SELECT RAISE(ABORT, 'retirement denied'); END;");
+  db.exec(
+    "CREATE TRIGGER reject_retirement BEFORE DELETE ON app_settings WHEN OLD.setting_key = 'memory_file_quota_bytes' BEGIN SELECT RAISE(ABORT, 'retirement denied'); END;",
+  );
   db.close();
-  await assert.rejects(resolveOrMigrateAppDatabasePath(f.userData), /retirement denied/);
+  await assert.rejects(
+    resolveOrMigrateAppDatabasePath(f.userData),
+    /retirement denied/,
+  );
   const check = new DatabaseSync(f.dbPath);
   try {
-    assert.equal(check.prepare("SELECT count(*) AS n FROM memory_entries_v6").get()?.n, 2);
-    assert.equal(check.prepare("SELECT count(*) AS n FROM character_affect_events_v6").get()?.n, 1);
-    assert.equal(check.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'memory_file_quota_bytes'").get()?.setting_value, "1024");
-    assert.equal(check.prepare("SELECT body FROM session_messages_v6").get()?.body, '{"text":"kept history"}');
-    assert.equal(check.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'").get()?.setting_value, "true");
+    assert.equal(
+      check.prepare("SELECT count(*) AS n FROM memory_entries_v6").get()?.n,
+      2,
+    );
+    assert.equal(
+      check
+        .prepare("SELECT count(*) AS n FROM character_affect_events_v6")
+        .get()?.n,
+      1,
+    );
+    assert.equal(
+      check
+        .prepare(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'memory_file_quota_bytes'",
+        )
+        .get()?.setting_value,
+      "1024",
+    );
+    assert.equal(
+      check.prepare("SELECT body FROM session_messages_v6").get()?.body,
+      '{"text":"kept history"}',
+    );
+    assert.equal(
+      check
+        .prepare(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'",
+        )
+        .get()?.setting_value,
+      "true",
+    );
     check.exec("DROP TRIGGER reject_retirement;");
-  } finally { check.close(); }
+  } finally {
+    check.close();
+  }
   assert.equal(isValidV4Database(v4Path), true);
   const keptSource = new DatabaseSync(v4Path, { readOnly: true });
   try {
-    assert.equal(keptSource.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'").get()?.setting_value, "false");
-  } finally { keptSource.close(); }
+    assert.equal(
+      keptSource
+        .prepare(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'",
+        )
+        .get()?.setting_value,
+      "false",
+    );
+  } finally {
+    keptSource.close();
+  }
   assert.equal(await resolveOrMigrateAppDatabasePath(f.userData), f.dbPath);
   const retried = new DatabaseSync(f.dbPath, { readOnly: true });
   const sourceAfterRetry = new DatabaseSync(v4Path, { readOnly: true });
   try {
-    assert.equal(retried.prepare("SELECT body FROM session_messages_v6").get()?.body, '{"text":"kept history"}');
-    assert.equal(retried.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'").get()?.setting_value, "true");
-    assert.equal(sourceAfterRetry.prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'").get()?.setting_value, "false");
-  } finally { retried.close(); sourceAfterRetry.close(); }
+    assert.equal(
+      retried.prepare("SELECT body FROM session_messages_v6").get()?.body,
+      '{"text":"kept history"}',
+    );
+    assert.equal(
+      retried
+        .prepare(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'",
+        )
+        .get()?.setting_value,
+      "true",
+    );
+    assert.equal(
+      sourceAfterRetry
+        .prepare(
+          "SELECT setting_value FROM app_settings WHERE setting_key = 'launch_at_login_enabled'",
+        )
+        .get()?.setting_value,
+      "false",
+    );
+  } finally {
+    retried.close();
+    sourceAfterRetry.close();
+  }
 });
 
 // @test-value v2
@@ -198,6 +360,7 @@ test("failed retirement rolls back and rejects bootstrap instead of replacing th
 // distinction = "path文字列のunit testでは実junction/realpathの包含性と削除の副作用を確認できない"
 // risk_tags = ["irreversible-data-loss", "privacy"]
 // @end-test-value
+/** 廃止対象やDBの祖先がリンクなら起動を中断し、リンク先の内容やDB行を残すことを確認する。 */
 test("linked cleanup targets and linked database ancestors fail without deleting their destinations", async (t) => {
   const f = await fixture(t);
   const outside = path.join(f.root, "outside");
@@ -205,7 +368,11 @@ test("linked cleanup targets and linked database ancestors fail without deleting
   const keep = path.join(outside, "keep.txt");
   await writeFile(keep, "keep outside");
   const kind = process.platform === "win32" ? "junction" : "dir";
-  for (const segments of [["memory-objects"], ["memory-objects", "v6", "aa"], ["memory-keys"]]) {
+  for (const segments of [
+    ["memory-objects"],
+    ["memory-objects", "v6", "aa"],
+    ["memory-keys"],
+  ]) {
     const target = path.join(f.userData, ...segments);
     await mkdir(path.dirname(target), { recursive: true });
     await symlink(outside, target, kind);
@@ -215,7 +382,17 @@ test("linked cleanup targets and linked database ancestors fail without deleting
   }
   const alias = path.join(f.root, "alias");
   await symlink(f.userData, alias, kind);
-  await assert.rejects(resolveOrMigrateAppDatabasePath(alias), /linked|real managed/);
+  await assert.rejects(
+    resolveOrMigrateAppDatabasePath(alias),
+    /linked|real managed/,
+  );
   const db = new DatabaseSync(f.dbPath, { readOnly: true });
-  try { assert.equal(db.prepare("SELECT count(*) AS n FROM memory_entries_v6").get()?.n, 2); } finally { db.close(); }
+  try {
+    assert.equal(
+      db.prepare("SELECT count(*) AS n FROM memory_entries_v6").get()?.n,
+      2,
+    );
+  } finally {
+    db.close();
+  }
 });

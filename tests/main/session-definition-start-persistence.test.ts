@@ -21,54 +21,111 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 // impact = "更新した定義が再開時に失われるか入力中draftと会話metadataが破壊される"
 // distinction = "Mainのincremental storageと異なるAuxiliary CASとlegacy親projectionの実永続化を確認する"
 // @end-test-value
+/** 旧形式の親由来の定義を子に固定し、turn の開始保存で既存会話を壊さないことを確かめる。 */
 test("Auxiliary定義開始保存はlegacy snapshotを固定しdraftと会話identityを守る", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-definition-start-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-definition-start-"),
+  );
   const dbPath = path.join(directory, "withmate-v6.db");
   const parents = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   try {
     const snapshot = {
-      characterId: "char-a", name: "A", description: "saved", iconFilePath: "",
-      theme: { main: "#111111", sub: "#222222" }, definitionMarkdown: "# Old",
-      definitionSha256: "old", definitionByteSize: 5, snapshotAt: "old",
+      characterId: "char-a",
+      name: "A",
+      description: "saved",
+      iconFilePath: "",
+      theme: { main: "#111111", sub: "#222222" },
+      definitionMarkdown: "# Old",
+      definitionSha256: "old",
+      definitionByteSize: 5,
+      snapshotAt: "old",
     };
     const db = new DatabaseSync(dbPath);
     try {
-      db.prepare("INSERT INTO characters (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
-        .run(snapshot.characterId, snapshot.name, "old", "old");
+      db.prepare(
+        "INSERT INTO characters (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+      ).run(snapshot.characterId, snapshot.name, "old", "old");
     } finally {
       db.close();
     }
-    const parent = parents.insertSession(buildNewSession({
-      id: "parent", taskTitle: "Parent", workspaceLabel: "workspace", workspacePath: "C:/workspace",
-      branch: "main", characterId: snapshot.characterId, character: snapshot.name,
-      characterRuntimeSnapshot: snapshot, characterIconPath: "", characterThemeColors: snapshot.theme,
-      approvalMode: "never",
-    }));
+    const parent = parents.insertSession(
+      buildNewSession({
+        id: "parent",
+        taskTitle: "Parent",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: snapshot.characterId,
+        character: snapshot.name,
+        characterRuntimeSnapshot: snapshot,
+        characterIconPath: "",
+        characterThemeColors: snapshot.theme,
+        approvalMode: "never",
+      }),
+    );
     const service = new AuxiliarySessionService({
-      getParentSession: (id) => parents.getSession(id), getStorage: () => auxiliary,
+      /** 旧形式の定義を補うため、親を同じ実 DB から検索する。 */
+      getParentSession: (id) => parents.getSession(id),
+      /** 子の読み書きも同じ DB に保存する。 */
+      getStorage: () => auxiliary,
+      /** この手順では排他待ちを作らず、保存操作を直ちに実行する。 */
       runProviderRuntimeOperationExclusive: async (operation) => operation(),
-      resolveSessionLaunchSelection: async () => { throw new Error("unused"); },
-      listActiveCharacters: () => [], createCharacterRuntimeSnapshot: () => null,
+      /** 既存会話の保存で起動時の選択をやり直した場合は失敗させる。 */
+      resolveSessionLaunchSelection: async () => {
+        throw new Error("unused");
+      },
+      /** 新しいキャラクター候補は供給しない。 */
+      listActiveCharacters: () => [],
+      /** 子の定義は新規生成せず、既存の親スナップショットを使う経路に絞る。 */
+      createCharacterRuntimeSnapshot: () => null,
     });
     const initial = auxiliary.upsertAuxiliarySession({
-      ...parent, id: "aux", parentSessionId: parent.id, title: "Aux",
+      ...parent,
+      id: "aux",
+      parentSessionId: parent.id,
+      title: "Aux",
       runState: "idle",
       createdAt: "2026-01-01T00:00:00.000Z",
-      composerDraft: "keep draft", displayAfterMessageIndex: null,
-      threadId: "keep-thread", characterId: undefined, characterRuntimeSnapshot: undefined,
+      composerDraft: "keep draft",
+      displayAfterMessageIndex: null,
+      threadId: "keep-thread",
+      characterId: undefined,
+      characterRuntimeSnapshot: undefined,
       messages: [{ role: "assistant", text: "bookmarked", isBookmarked: true }],
     });
     const runtime = await service.getAuxiliaryRuntimeSession(initial.id);
     assert.ok(runtime);
     assert.deepEqual(runtime.messages, []);
     assert.equal(runtime.messageCount, 1);
-    const updatedSnapshot = { ...snapshot, definitionMarkdown: "# Updated", definitionSha256: "updated", definitionByteSize: 9, snapshotAt: "later" };
-    const running = { ...runtime, status: "running" as const, runState: "running" as const,
-      updatedAt: "later", characterRuntimeSnapshot: updatedSnapshot,
-      messages: [...runtime.messages, { role: "user" as const, text: "new prompt" }] };
-    await assert.rejects(service.persistRunningTurnStart({ ...running,
-      characterRuntimeSnapshot: { ...updatedSnapshot, name: "changed" } }, 1), /saved Session identity/);
+    const updatedSnapshot = {
+      ...snapshot,
+      definitionMarkdown: "# Updated",
+      definitionSha256: "updated",
+      definitionByteSize: 9,
+      snapshotAt: "later",
+    };
+    const running = {
+      ...runtime,
+      status: "running" as const,
+      runState: "running" as const,
+      updatedAt: "later",
+      characterRuntimeSnapshot: updatedSnapshot,
+      messages: [
+        ...runtime.messages,
+        { role: "user" as const, text: "new prompt" },
+      ],
+    };
+    await assert.rejects(
+      service.persistRunningTurnStart(
+        {
+          ...running,
+          characterRuntimeSnapshot: { ...updatedSnapshot, name: "changed" },
+        },
+        1,
+      ),
+      /saved Session identity/,
+    );
     assert.equal(auxiliary.getAuxiliarySession(initial.id)?.messages.length, 1);
     const stored = await service.persistRunningTurnStart(running, 1);
     assert.deepEqual(stored.characterRuntimeSnapshot, updatedSnapshot);
@@ -76,10 +133,22 @@ test("Auxiliary定義開始保存はlegacy snapshotを固定しdraftと会話ide
     assert.equal(auxiliary.getAuxiliaryDraft(initial.id)?.text, "keep draft");
     assert.deepEqual(stored.messages, [{ role: "user", text: "new prompt" }]);
     assert.equal(stored.messageCount, 2);
-    assert.equal(auxiliary.getAuxiliarySession(initial.id)?.messages[0]?.isBookmarked, true);
-    assert.equal(auxiliary.getAuxiliarySession(initial.id)?.characterId, snapshot.characterId);
-    assert.deepEqual(parents.getSession(parent.id)?.characterRuntimeSnapshot, snapshot);
-    await assert.rejects(service.persistRunningTurnStart(running, 1), /changed before starting/);
+    assert.equal(
+      auxiliary.getAuxiliarySession(initial.id)?.messages[0]?.isBookmarked,
+      true,
+    );
+    assert.equal(
+      auxiliary.getAuxiliarySession(initial.id)?.characterId,
+      snapshot.characterId,
+    );
+    assert.deepEqual(
+      parents.getSession(parent.id)?.characterRuntimeSnapshot,
+      snapshot,
+    );
+    await assert.rejects(
+      service.persistRunningTurnStart(running, 1),
+      /changed before starting/,
+    );
     assert.equal(auxiliary.getAuxiliarySession(initial.id)?.messages.length, 2);
   } finally {
     auxiliary.close();

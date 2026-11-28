@@ -8,7 +8,10 @@ import {
   getLiveCodexAssistantText,
   getLiveCodexReasoningPreview,
 } from "../../src-electron/providers/codex/codex-turn-events.js";
-import { PROVIDER_TEXT_PREVIEW_LIMIT, toProviderTextPreview } from "../../src-electron/session/provider-payload-limits.js";
+import {
+  PROVIDER_TEXT_PREVIEW_LIMIT,
+  toProviderTextPreview,
+} from "../../src-electron/session/provider-payload-limits.js";
 
 // @test-value v2
 // kind = "invariant"
@@ -22,33 +25,68 @@ import { PROVIDER_TEXT_PREVIEW_LIMIT, toProviderTextPreview } from "../../src-el
 // impact = "利用者の進捗本文と最終応答に欠落や順序逆転が生じる"
 // distinction = "型検査では複数itemの置換とpreview境界の文字列結果を検証できず、既存adapter testは両preview APIを検証しない"
 // @end-test-value
+/** 本文と推論の項目に置換・追記・順不同の確定値を適用しても、初出順の原文を保持し、プレビューだけを上限内に収めることを確認する。 */
 test("ordered text cache preserves replacements, deltas and bounded previews", () => {
   const state = createCodexTurnStreamState("thread");
-  const apply = (method: string, params: Record<string, unknown>) => applyCodexTurnEvent(state, {
-    method, params: { threadId: "thread", turnId: "turn", ...params },
-  });
+  /** 同じスレッドとターンに適用するイベントを組み立て、更新内容の差だけを比較できるようにする。 */
+  const apply = (method: string, params: Record<string, unknown>) =>
+    applyCodexTurnEvent(state, {
+      method,
+      params: { threadId: "thread", turnId: "turn", ...params },
+    });
   apply("turn/started", { turn: { id: "turn" } });
   apply("item/started", { item: { id: "a", type: "agentMessage", text: " " } });
-  apply("item/started", { item: { id: "r", type: "reasoning", summary: ["初期"], content: [] } });
-  apply("item/started", { item: { id: "b", type: "agentMessage", text: "後" } });
-  apply("item/started", { item: { id: "s", type: "reasoning", summary: [], content: ["後続"] } });
+  apply("item/started", {
+    item: { id: "r", type: "reasoning", summary: ["初期"], content: [] },
+  });
+  apply("item/started", {
+    item: { id: "b", type: "agentMessage", text: "後" },
+  });
+  apply("item/started", {
+    item: { id: "s", type: "reasoning", summary: [], content: ["後続"] },
+  });
   const first = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 1);
-  apply("item/completed", { item: { id: "a", type: "agentMessage", text: first } });
+  apply("item/completed", {
+    item: { id: "a", type: "agentMessage", text: first },
+  });
   apply("item/agentMessage/delta", { itemId: "b", delta: "続" });
-  apply("item/completed", { item: { id: "r", type: "reasoning", summary: [first], content: [] } });
-  apply("item/reasoning/textDelta", { itemId: "s", contentIndex: 1, delta: "本文" });
+  apply("item/completed", {
+    item: { id: "r", type: "reasoning", summary: [first], content: [] },
+  });
+  apply("item/reasoning/textDelta", {
+    itemId: "s",
+    contentIndex: 1,
+    delta: "本文",
+  });
   const assistant = `${first}\n\n後続`;
   const reasoning = `${first}\n\n後続\n本文`;
   assert.equal(getLiveCodexAssistantText(state), assistant);
   assert.equal(state.reasoningText, reasoning);
-  assert.equal(getLiveCodexAssistantPreview(state), toProviderTextPreview(assistant));
-  assert.equal(getLiveCodexReasoningPreview(state), toProviderTextPreview(reasoning));
-  apply("turn/completed", { turn: { id: "turn", status: "completed", items: [
-    { id: "s", type: "reasoning", summary: ["確定後続"], content: [] },
-    { id: "b", type: "agentMessage", text: "確定後" },
-    { id: "a", type: "agentMessage", text: "確定先" },
-    { id: "r", type: "reasoning", summary: ["確定先行"], content: ["本文"] },
-  ] } });
+  assert.equal(
+    getLiveCodexAssistantPreview(state),
+    toProviderTextPreview(assistant),
+  );
+  assert.equal(
+    getLiveCodexReasoningPreview(state),
+    toProviderTextPreview(reasoning),
+  );
+  apply("turn/completed", {
+    turn: {
+      id: "turn",
+      status: "completed",
+      items: [
+        { id: "s", type: "reasoning", summary: ["確定後続"], content: [] },
+        { id: "b", type: "agentMessage", text: "確定後" },
+        { id: "a", type: "agentMessage", text: "確定先" },
+        {
+          id: "r",
+          type: "reasoning",
+          summary: ["確定先行"],
+          content: ["本文"],
+        },
+      ],
+    },
+  });
   assert.equal(getLiveCodexAssistantText(state), "確定先\n\n確定後");
   assert.equal(state.reasoningText, "確定先行\n本文\n\n確定後続");
   assert.equal(getLiveCodexAssistantPreview(state), "確定先\n\n確定後");
@@ -71,18 +109,28 @@ test("ordered text cache preserves replacements, deltas and bounded previews", (
 // impact = "表示更新の抑制が失われるかerror・terminal表示が更新されない"
 // distinction = "revisionはWorker表示受付の契約であり、型検査や既存adapter応答testでは変更検出の値を確認しない"
 // @end-test-value
+/** 重複・未知・対象外の通知では revision を進めず、エラーの解除や確定時の一括更新では一度だけ進めることを確かめる。 */
 test("revision follows visible changes and preserves scoped error clearing", () => {
   const state = createCodexTurnStreamState("thread");
-  applyCodexTurnEvent(state, { method: "turn/started", params: { threadId: "thread", turn: { id: "turn" } } });
+  applyCodexTurnEvent(state, {
+    method: "turn/started",
+    params: { threadId: "thread", turn: { id: "turn" } },
+  });
   const item = { id: "a", type: "agentMessage", text: "本文" };
-  const accept = { method: "item/started", params: { threadId: "thread", turnId: "turn", item } };
+  const accept = {
+    method: "item/started",
+    params: { threadId: "thread", turnId: "turn", item },
+  };
   applyCodexTurnEvent(state, accept);
   const revision = state.revision;
-  for (const event of [accept, { method: "unknown" },
+  for (const event of [
+    accept,
+    { method: "unknown" },
     { ...accept, params: { ...accept.params, threadId: "other" } },
     { ...accept, params: { ...accept.params, turnId: "other" } },
     { method: "item/agentMessage/delta", params: { itemId: "a", delta: "" } },
-  ]) applyCodexTurnEvent(state, event);
+  ])
+    applyCodexTurnEvent(state, event);
   assert.equal(state.revision, revision);
   const error = { method: "error", params: { error: { message: "retry" } } };
   applyCodexTurnEvent(state, error);
@@ -92,23 +140,42 @@ test("revision follows visible changes and preserves scoped error clearing", () 
   applyCodexTurnEvent(state, accept);
   assert.equal(state.streamErrorMessage, "");
   assert.equal(state.revision, revision + 2);
-  const usage = { method: "thread/tokenUsage/updated", params: { tokenUsage: {
-    total: { inputTokens: 15, outputTokens: 4 }, last: { inputTokens: 5, outputTokens: 2 },
-  } } };
+  const usage = {
+    method: "thread/tokenUsage/updated",
+    params: {
+      tokenUsage: {
+        total: { inputTokens: 15, outputTokens: 4 },
+        last: { inputTokens: 5, outputTokens: 2 },
+      },
+    },
+  };
   applyCodexTurnEvent(state, usage);
   const usageRevision = state.revision;
   applyCodexTurnEvent(state, usage);
   assert.equal(state.revision, usageRevision);
   assert.equal(state.usage?.inputTokens, 5);
-  const terminal = { method: "turn/completed", params: { turn: { id: "turn", status: "failed", error: { message: "terminal" }, items: [
-    { id: "a", type: "agentMessage", text: "確定" },
-    { id: "r", type: "reasoning", summary: ["理由"], content: [] },
-  ] } } };
+  const terminal = {
+    method: "turn/completed",
+    params: {
+      turn: {
+        id: "turn",
+        status: "failed",
+        error: { message: "terminal" },
+        items: [
+          { id: "a", type: "agentMessage", text: "確定" },
+          { id: "r", type: "reasoning", summary: ["理由"], content: [] },
+        ],
+      },
+    },
+  };
   applyCodexTurnEvent(state, terminal);
   assert.equal(state.revision, usageRevision + 1);
   applyCodexTurnEvent(state, terminal);
   assert.equal(state.revision, usageRevision + 1);
-  applyCodexTurnEvent(state, { method: "item/completed", params: { item: { ...item, text: "確定" } } });
+  applyCodexTurnEvent(state, {
+    method: "item/completed",
+    params: { item: { ...item, text: "確定" } },
+  });
   assert.equal(state.streamErrorMessage, "terminal");
   assert.equal(state.revision, usageRevision + 1);
 });
@@ -125,10 +192,18 @@ test("revision follows visible changes and preserves scoped error clearing", () 
 // impact = "不要なstep転送・redactionが発生し、長いcommand出力の省略表示が不正になる"
 // distinction = "既存budget testはdelta後のstep参照の不変性と重複通知の変更検出を確認しない"
 // @end-test-value
+/** 長い出力のコマンドで、重複通知は step の参照を変えず、追記は元の step を変更せずに省略情報のあるプレビューを更新することを確かめる。 */
 test("command updates retain bounded output and stable unchanged steps", () => {
   const state = createCodexTurnStreamState("thread");
   const output = "a".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 1);
-  const item = { type: "commandExecution", id: "command", command: "run", aggregatedOutput: output, exitCode: null, status: "inProgress" };
+  const item = {
+    type: "commandExecution",
+    id: "command",
+    command: "run",
+    aggregatedOutput: output,
+    exitCode: null,
+    status: "inProgress",
+  };
   const event = { method: "item/started", params: { item } };
   applyCodexTurnEvent(state, event);
   const initialStep = state.liveSteps.get("command");
@@ -136,12 +211,21 @@ test("command updates retain bounded output and stable unchanged steps", () => {
   applyCodexTurnEvent(state, event);
   assert.equal(state.liveSteps.get("command"), initialStep);
   assert.equal(state.revision, revision);
-  applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: "command", delta: "後続" } });
-  assert.equal(state.liveSteps.get("command")?.details, toProviderTextPreview(output + "後続"));
+  applyCodexTurnEvent(state, {
+    method: "item/commandExecution/outputDelta",
+    params: { itemId: "command", delta: "後続" },
+  });
+  assert.equal(
+    state.liveSteps.get("command")?.details,
+    toProviderTextPreview(output + "後続"),
+  );
   assert.equal(initialStep?.details, toProviderTextPreview(output));
   assert.equal(state.revision, revision + 1);
   const retained = state.items.get("command");
-  assert.equal(retained?.type === "commandExecution" && retained.aggregatedOutput?.length, PROVIDER_TEXT_PREVIEW_LIMIT);
+  assert.equal(
+    retained?.type === "commandExecution" && retained.aggregatedOutput?.length,
+    PROVIDER_TEXT_PREVIEW_LIMIT,
+  );
 });
 
 // @test-value v2
@@ -156,24 +240,70 @@ test("command updates retain bounded output and stable unchanged steps", () => {
 // impact = "失敗や取消turn内の成功・未確定コマンドを誤表示する"
 // distinction = "型検査と既存本文testはnative個別結果からartifactへの投影を比較しない"
 // @end-test-value
+/** ターン全体が失敗しても、個別操作の順序・状態・終了コード・エラーを履歴に保ち、未完了の操作を失敗に上書きしないことを確認する。 */
 test("Codexは個別操作結果と未確定結果を通常履歴へ投影する", () => {
   const state = createCodexTurnStreamState("thread");
-  applyCodexTurnEvent(state, { method: "item/completed", params: { item: {
-    id: "first", type: "commandExecution", command: "check", status: "completed", exitCode: 0,
-    aggregatedOutput: "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 5),
-  } } });
-  applyCodexTurnEvent(state, { method: "item/completed", params: { item: {
-    id: "second", type: "mcpToolCall", server: "server", tool: "tool", status: "failed",
-    arguments: {}, result: null, error: { message: "tool failure" },
-  } } });
-  applyCodexTurnEvent(state, { method: "item/started", params: { item: {
-    id: "third", type: "commandExecution", command: "pending", status: "inProgress", exitCode: null, aggregatedOutput: null,
-  } } });
-  applyCodexTurnEvent(state, { method: "turn/completed", params: { turn: { id: "turn", status: "failed", items: [], error: { message: "turn failure" } } } });
+  applyCodexTurnEvent(state, {
+    method: "item/completed",
+    params: {
+      item: {
+        id: "first",
+        type: "commandExecution",
+        command: "check",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 5),
+      },
+    },
+  });
+  applyCodexTurnEvent(state, {
+    method: "item/completed",
+    params: {
+      item: {
+        id: "second",
+        type: "mcpToolCall",
+        server: "server",
+        tool: "tool",
+        status: "failed",
+        arguments: {},
+        result: null,
+        error: { message: "tool failure" },
+      },
+    },
+  });
+  applyCodexTurnEvent(state, {
+    method: "item/started",
+    params: {
+      item: {
+        id: "third",
+        type: "commandExecution",
+        command: "pending",
+        status: "inProgress",
+        exitCode: null,
+        aggregatedOutput: null,
+      },
+    },
+  });
+  applyCodexTurnEvent(state, {
+    method: "turn/completed",
+    params: {
+      turn: {
+        id: "turn",
+        status: "failed",
+        items: [],
+        error: { message: "turn failure" },
+      },
+    },
+  });
   const operations = toMessageOperations([...state.items.values()]);
-  assert.deepEqual(operations.map(({ id, status }) => ({ id, status })), [
-    { id: "first", status: "completed" }, { id: "second", status: "failed" }, { id: "third", status: "in_progress" },
-  ]);
+  assert.deepEqual(
+    operations.map(({ id, status }) => ({ id, status })),
+    [
+      { id: "first", status: "completed" },
+      { id: "second", status: "failed" },
+      { id: "third", status: "in_progress" },
+    ],
+  );
   assert.equal(operations[0].exitCode, 0);
   assert.equal(operations[0].truncated, true);
   assert.deepEqual(operations[1].error, { message: "tool failure" });

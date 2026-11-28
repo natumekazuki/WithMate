@@ -17,52 +17,144 @@ import { useStreamedResponseText } from "../../src/chat/conversation/use-streame
 // impact = "通信のdelta頻度で本文の再layout頻度が変わり、応答終了や承認・質問が見えにくくなる。会話切替では別会話の本文が混入する"
 // distinction = "Markdown単体の集約testはSourceや応答ownerのlifetimeを扱わず、型検査もdeadline延期と古いtimerの適用を検出できない。制御clockの小さいhook fixtureで検証する"
 // @end-test-value
+/** 連続受信でも100msの公開期限を延ばさず、完了時は即時反映し、run・owner・表示状態の切替後は旧予約を反映しないことを確認する。 */
 test("stream presentation keeps a bounded cadence and flushes lifecycle changes", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const dom = new JSDOM("<div id='root'></div>");
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, value });
   const root = createRoot(dom.window.document.getElementById("root")!);
-  let owner = "main:inc"; let key = "response-initial"; let text = "already streaming"; let streaming = true; let enabled = true;
+  let owner = "main:inc";
+  let key = "response-initial";
+  let text = "already streaming";
+  let streaming = true;
+  let enabled = true;
   let presented = "";
-  function View() { presented = useStreamedResponseText(owner, key, text, streaming, enabled); return <output>{presented}</output>; }
-  const render = () => act(async () => root.render(<React.StrictMode><View /></React.StrictMode>));
-  const tick = (milliseconds: number) => act(async () => context.mock.timers.tick(milliseconds));
+  /** hook が公開した本文を描画し、テストから読み取れるように保持する。 */
+  function View() {
+    presented = useStreamedResponseText(owner, key, text, streaming, enabled);
+    return <output>{presented}</output>;
+  }
+  /** StrictMode の effect 再実行を含む描画経路で、現在の受信状態を反映する。 */
+  const render = () =>
+    act(async () =>
+      root.render(
+        <React.StrictMode>
+          <View />
+        </React.StrictMode>,
+      ),
+    );
+  /** 仮想時計を進め、タイマーから発生した React の更新を反映する。 */
+  const tick = (milliseconds: number) =>
+    act(async () => context.mock.timers.tick(milliseconds));
   try {
     await render();
-    await tick(99); assert.equal(presented, "");
-    await tick(1); assert.equal(presented, "already streaming", "StrictMode effect replay restarts the initial publication");
-    text = "next delta"; await render();
-    await tick(99); assert.equal(presented, "already streaming");
-    await tick(1); assert.equal(presented, "next delta", "publication continues after the initial mount");
-    key = "response-1"; text = ""; await render();
+    await tick(99);
+    assert.equal(presented, "");
+    await tick(1);
+    assert.equal(
+      presented,
+      "already streaming",
+      "StrictMode effect replay restarts the initial publication",
+    );
+    text = "next delta";
+    await render();
+    await tick(99);
+    assert.equal(presented, "already streaming");
+    await tick(1);
+    assert.equal(
+      presented,
+      "next delta",
+      "publication continues after the initial mount",
+    );
+    key = "response-1";
+    text = "";
+    await render();
     for (const delta of ["first", "other", "third", "four!", "fifth"]) {
-      text = delta; await render();
-      assert.equal(presented, ""); await tick(20);
+      text = delta;
+      await render();
+      assert.equal(presented, "");
+      await tick(20);
     }
-    assert.equal(presented, "fifth", "continuous deltas cannot postpone the original deadline");
-    text = "pending terminal"; await render(); await tick(25);
-    text = "final terminal"; streaming = false; await render();
-    assert.equal(presented, "final terminal", "terminal and strong state changes flush the latest raw text");
-    await tick(100); assert.equal(presented, "final terminal");
-    streaming = true; text = "after approval"; await render();
-    assert.equal(presented, "final terminal", "resuming streaming keeps the already displayed body");
-    await tick(100); assert.equal(presented, "after approval");
-    text = "old run pending"; await render(); await tick(20);
-    key = "response-2"; text = "new run"; await render();
-    assert.equal(presented, ""); await tick(80); assert.equal(presented, "");
-    await tick(20); assert.equal(presented, "new run");
-    text = "late previous owner"; await render(); await tick(20);
-    owner = "aux:inc"; key = "response-3"; text = "auxiliary"; await render();
-    await tick(80); assert.equal(presented, "");
-    await tick(20); assert.equal(presented, "auxiliary");
-    text = "hidden delta"; await render(); enabled = false; await render();
-    await tick(100); assert.equal(presented, "");
-    enabled = true; text = "reopened latest"; await render();
-    assert.equal(presented, ""); await tick(100); assert.equal(presented, "reopened latest");
+    assert.equal(
+      presented,
+      "fifth",
+      "continuous deltas cannot postpone the original deadline",
+    );
+    text = "pending terminal";
+    await render();
+    await tick(25);
+    text = "final terminal";
+    streaming = false;
+    await render();
+    assert.equal(
+      presented,
+      "final terminal",
+      "terminal and strong state changes flush the latest raw text",
+    );
+    await tick(100);
+    assert.equal(presented, "final terminal");
+    streaming = true;
+    text = "after approval";
+    await render();
+    assert.equal(
+      presented,
+      "final terminal",
+      "resuming streaming keeps the already displayed body",
+    );
+    await tick(100);
+    assert.equal(presented, "after approval");
+    text = "old run pending";
+    await render();
+    await tick(20);
+    key = "response-2";
+    text = "new run";
+    await render();
+    assert.equal(presented, "");
+    await tick(80);
+    assert.equal(presented, "");
+    await tick(20);
+    assert.equal(presented, "new run");
+    text = "late previous owner";
+    await render();
+    await tick(20);
+    owner = "aux:inc";
+    key = "response-3";
+    text = "auxiliary";
+    await render();
+    await tick(80);
+    assert.equal(presented, "");
+    await tick(20);
+    assert.equal(presented, "auxiliary");
+    text = "hidden delta";
+    await render();
+    enabled = false;
+    await render();
+    await tick(100);
+    assert.equal(presented, "");
+    enabled = true;
+    text = "reopened latest";
+    await render();
+    assert.equal(presented, "");
+    await tick(100);
+    assert.equal(presented, "reopened latest");
   } finally {
-    await act(async () => root.unmount()); dom.window.close();
-    for (const [name, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); }
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
   }
 });

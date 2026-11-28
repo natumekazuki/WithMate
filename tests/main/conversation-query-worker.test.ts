@@ -6,25 +6,74 @@ import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { ConversationQueryCoordinator } from "../../src-electron/storage/conversation-query-coordinator.js";
 import type { ConversationQuerySnapshot } from "../../src-electron/storage/conversation-query.js";
-import { buildNewSession, type Message } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  type Message,
+} from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
+/** 実ストレージ Worker を起動し、同じ会話履歴を持つ Main と Auxiliary を保存する。 */
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), "withmate-conversation-query-"));
-  const options = { dbPath: join(directory, "withmate-v6.db"), userDataPath: directory,
-    bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json") };
+  const directory = await mkdtemp(
+    join(tmpdir(), "withmate-conversation-query-"),
+  );
+  const options = {
+    dbPath: join(directory, "withmate-v6.db"),
+    userDataPath: directory,
+    bundledModelCatalogPath: join(
+      process.cwd(),
+      "public",
+      "model-catalog.json",
+    ),
+  };
   const bundle = createV6StorageWorkerBundle(options);
   await bundle.initialize();
-  const session = await bundle.stores.session.insertSession({ ...buildNewSession({ taskTitle: "Query", workspaceLabel: "workspace",
-    workspacePath: "C:/workspace", branch: "main", characterId: "char", character: "Character", characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" }),
-    messages: Array.from({ length: 135 }, (_, index): Message => ({ role: index === 0 ? "user" : "assistant",
-      text: index === 3 ? "**needle** needle ![hidden](hidden.png) [filename](C:/users/admin/documents/sample.md)" : `message ${index} needle`, isBookmarked: index === 4 })) });
-  const auxiliary: AuxiliarySession = { ...session, id: "query-aux", parentSessionId: session.id, runState: "idle",
-    title: "Query aux", preview: "", composerDraft: "", displayAfterMessageIndex: null,
-    createdAt: "2026-10-10T00:00:00.000Z", updatedAt: "2026-10-10T00:00:00.000Z" };
+  const session = await bundle.stores.session.insertSession({
+    ...buildNewSession({
+      taskTitle: "Query",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char",
+      character: "Character",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: "never",
+    }),
+    messages: Array.from({ length: 135 }, (_, index): Message => ({
+      role: index === 0 ? "user" : "assistant",
+      text:
+        index === 3
+          ? "**needle** needle ![hidden](hidden.png) [filename](C:/users/admin/documents/sample.md)"
+          : `message ${index} needle`,
+      isBookmarked: index === 4,
+    })),
+  });
+  const auxiliary: AuxiliarySession = {
+    ...session,
+    id: "query-aux",
+    parentSessionId: session.id,
+    runState: "idle",
+    title: "Query aux",
+    preview: "",
+    composerDraft: "",
+    displayAfterMessageIndex: null,
+    createdAt: "2026-10-10T00:00:00.000Z",
+    updatedAt: "2026-10-10T00:00:00.000Z",
+  };
   await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
-  return { directory, options, bundle, session, auxiliary, close: async () => { await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
+  return {
+    directory,
+    options,
+    bundle,
+    session,
+    auxiliary,
+    /** Worker の接続を閉じてから一時データベースを取り除く。 */ close:
+      async () => {
+        await bundle.client.close();
+        await rm(directory, { recursive: true, force: true });
+      },
+  };
 }
 
 // @test-value v2
@@ -39,38 +88,96 @@ async function fixture() {
 // impact = "無関係な本文が見つかる、古い発言やブックマークへ到達できない"
 // distinction = "既存の全履歴検索のpagingやrenderer fixtureでは、同じWorkerに異なる所属範囲の継続を渡した際の境界を確認しない"
 // @end-test-value
+/** 指定した枠の検索やブックマーク一覧で、表示末尾より前の正本メッセージ番号と範囲を維持することを確認する。 */
 test("scoped Find and Messages pages retain canonical indexes outside the tail", async () => {
   const f = await fixture();
   try {
     const { id } = f.session;
     const store = f.bundle.stores.session;
     const messageIndexes = Array.from({ length: 68 }, (_, index) => index * 2);
-    const request = { producerId: "peer-find", requestId: "peer-a", query: "needle", mode: "source" as const, messageIndexes };
+    const request = {
+      producerId: "peer-find",
+      requestId: "peer-a",
+      query: "needle",
+      mode: "source" as const,
+      messageIndexes,
+    };
     const first = await store.searchConversation(id, request);
     if (first.status !== "complete") throw new Error("No scoped Find results");
     assert.equal(first.totalCount, 68);
     assert.equal(first.items[0].messageIndex, 0);
-    const next = await store.searchConversation(id, { ...request, offset: 64, stamp: first.stamp });
-    if (next.status !== "complete") throw new Error("No scoped continuation");
-    assert.deepEqual(next.items.map(({ messageIndex }) => messageIndex), [128, 130, 132, 134]);
-    assert.equal((await store.searchConversation(id, { ...request, offset: 64, stamp: first.stamp, messageIndexes: [3] })).status, "invalidated");
-    const navRequest = { producerId: "peer-nav-all", requestId: "peer-a", filter: "all" as const, messageIndexes };
-    const navFirst = await store.listConversationNavigator(id, navRequest);
-    if (navFirst.status !== "complete") throw new Error("No scoped Messages results");
-    const navNext = await store.listConversationNavigator(id, { ...navRequest, offset: 64, stamp: navFirst.stamp });
-    if (navNext.status !== "complete") throw new Error("No scoped Messages continuation");
-    assert.deepEqual(navNext.items.map(({ messageIndex }) => messageIndex), [128, 130, 132, 134]);
-    assert.equal((await store.listConversationNavigator(id, { ...navRequest, offset: 64, stamp: navFirst.stamp, messageIndexes: [3] })).status, "invalidated");
-    const navigator = (scope: number[], requestId: string) => store.listConversationNavigator(id, {
-      producerId: "peer-nav", requestId, filter: "bookmarks", messageIndexes: scope,
+    const next = await store.searchConversation(id, {
+      ...request,
+      offset: 64,
+      stamp: first.stamp,
     });
+    if (next.status !== "complete") throw new Error("No scoped continuation");
+    assert.deepEqual(
+      next.items.map(({ messageIndex }) => messageIndex),
+      [128, 130, 132, 134],
+    );
+    assert.equal(
+      (
+        await store.searchConversation(id, {
+          ...request,
+          offset: 64,
+          stamp: first.stamp,
+          messageIndexes: [3],
+        })
+      ).status,
+      "invalidated",
+    );
+    const navRequest = {
+      producerId: "peer-nav-all",
+      requestId: "peer-a",
+      filter: "all" as const,
+      messageIndexes,
+    };
+    const navFirst = await store.listConversationNavigator(id, navRequest);
+    if (navFirst.status !== "complete")
+      throw new Error("No scoped Messages results");
+    const navNext = await store.listConversationNavigator(id, {
+      ...navRequest,
+      offset: 64,
+      stamp: navFirst.stamp,
+    });
+    if (navNext.status !== "complete")
+      throw new Error("No scoped Messages continuation");
+    assert.deepEqual(
+      navNext.items.map(({ messageIndex }) => messageIndex),
+      [128, 130, 132, 134],
+    );
+    assert.equal(
+      (
+        await store.listConversationNavigator(id, {
+          ...navRequest,
+          offset: 64,
+          stamp: navFirst.stamp,
+          messageIndexes: [3],
+        })
+      ).status,
+      "invalidated",
+    );
+    /** 枠のメッセージ番号だけを対象としたブックマーク一覧を要求する。 */
+    const navigator = (scope: number[], requestId: string) =>
+      store.listConversationNavigator(id, {
+        producerId: "peer-nav",
+        requestId,
+        filter: "bookmarks",
+        messageIndexes: scope,
+      });
     const included = await navigator([4, 134], "included");
     if (included.status !== "complete") throw new Error("No bookmark results");
-    assert.deepEqual(included.items.map(({ messageIndex }) => messageIndex), [4]);
+    assert.deepEqual(
+      included.items.map(({ messageIndex }) => messageIndex),
+      [4],
+    );
     const excluded = await navigator([3, 134], "excluded");
     if (excluded.status !== "complete") throw new Error("No bookmark result");
     assert.equal(excluded.totalCount, 0);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -85,35 +192,77 @@ test("scoped Find and Messages pages retain canonical indexes outside the tail",
 // impact = "mode切替で別の出現へ移動してしまうことを防ぐ"
 // distinction = "parserのoffset testでは全履歴の累積ordinalとproducerに保持したanchorの継続page伝播を確認できない。既存の小SQLite fixtureを使う"
 // @end-test-value
+/** 同じ原文位置を、Main と Auxiliary のそれぞれの検索表示モードで一致位置へ解決する。 */
 test("全履歴検索はraw-source anchorをmode別ordinalへ解決する", async () => {
   const f = await fixture();
   try {
     const text = "[label](needle) needle";
-    const messages: Message[] = Array.from({ length: 135 }, () => ({ role: "assistant", text }));
+    const messages: Message[] = Array.from({ length: 135 }, () => ({
+      role: "assistant",
+      text,
+    }));
     await f.bundle.stores.session.upsertSession({ ...f.session, messages });
-    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, messages });
-    for (const [store, id] of [[f.bundle.stores.session, f.session.id], [f.bundle.stores.auxiliary, f.auxiliary.id]] as const) {
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.auxiliary,
+      messages,
+    });
+    for (const [store, id] of [
+      [f.bundle.stores.session, f.session.id],
+      [f.bundle.stores.auxiliary, f.auxiliary.id],
+    ] as const) {
       for (const mode of ["preview", "source"] as const) {
         // プレビューでは表示される一致が生のリンク先より先に列挙され、ソース表示では元データの順序になる。
-        for (const [startOffset, expectedOccurrence] of [[8, mode === "source" ? 0 : 1], [16, mode === "source" ? 1 : 0]] as const) {
-          const request = { producerId: id, requestId: `${mode}-${startOffset}`, query: "needle", mode };
-          const first = await store.searchConversation(id, { ...request, anchor: { messageIndex: 100, startOffset, endOffset: startOffset + 6 } });
-          if (first.status !== "complete") throw new Error("missing anchored page");
+        for (const [startOffset, expectedOccurrence] of [
+          [8, mode === "source" ? 0 : 1],
+          [16, mode === "source" ? 1 : 0],
+        ] as const) {
+          const request = {
+            producerId: id,
+            requestId: `${mode}-${startOffset}`,
+            query: "needle",
+            mode,
+          };
+          const first = await store.searchConversation(id, {
+            ...request,
+            anchor: {
+              messageIndex: 100,
+              startOffset,
+              endOffset: startOffset + 6,
+            },
+          });
+          if (first.status !== "complete")
+            throw new Error("missing anchored page");
           const expectedOrdinal = 200 + expectedOccurrence;
           assert.equal(first.anchorOrdinal, expectedOrdinal);
           assert.equal(first.items.length, 64);
-          const target = await store.searchConversation(id, { ...request, offset: expectedOrdinal, stamp: first.stamp });
-          if (target.status !== "complete") throw new Error("missing anchor target page");
+          const target = await store.searchConversation(id, {
+            ...request,
+            offset: expectedOrdinal,
+            stamp: first.stamp,
+          });
+          if (target.status !== "complete")
+            throw new Error("missing anchor target page");
           assert.equal(target.anchorOrdinal, expectedOrdinal);
-          assert.deepEqual(target.items[0], { messageIndex: 100, occurrenceIndex: expectedOccurrence });
+          assert.deepEqual(target.items[0], {
+            messageIndex: 100,
+            occurrenceIndex: expectedOccurrence,
+          });
         }
-        const missing = await store.searchConversation(id, { producerId: id, requestId: `${mode}-missing`, query: "needle", mode,
-          anchor: { messageIndex: 100, startOffset: 9, endOffset: 15 } });
-        if (missing.status !== "complete") throw new Error("missing complete search");
+        const missing = await store.searchConversation(id, {
+          producerId: id,
+          requestId: `${mode}-missing`,
+          query: "needle",
+          mode,
+          anchor: { messageIndex: 100, startOffset: 9, endOffset: 15 },
+        });
+        if (missing.status !== "complete")
+          throw new Error("missing complete search");
         assert.equal(missing.anchorOrdinal, undefined);
       }
     }
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -128,22 +277,41 @@ test("全履歴検索はraw-source anchorをmode別ordinalへ解決する", asyn
 // impact = "壊れたrenderer要求から不正な選択解決を返すことを防ぐ"
 // distinction = "型検査ではruntime入力の数値境界を検証できず、IPC単体testではstorage公開入口のvalidationを通らない"
 // @end-test-value
+/** 原文アンカーの位置が非整数・範囲外・逆順などの場合に検索入力を拒否する。 */
 test("storage検索は不正なraw-source anchorを拒否する", async () => {
   const f = await fixture();
   try {
     for (const anchor of [
       { messageIndex: -1, startOffset: 0, endOffset: 1 },
       { messageIndex: 0.5, startOffset: 0, endOffset: 1 },
-      { messageIndex: Number.MAX_SAFE_INTEGER + 1, startOffset: 0, endOffset: 1 },
+      {
+        messageIndex: Number.MAX_SAFE_INTEGER + 1,
+        startOffset: 0,
+        endOffset: 1,
+      },
       { messageIndex: 0, startOffset: -1, endOffset: 1 },
       { messageIndex: 0, startOffset: 0.5, endOffset: 1 },
-      { messageIndex: 0, startOffset: 0, endOffset: Number.MAX_SAFE_INTEGER + 1 },
+      {
+        messageIndex: 0,
+        startOffset: 0,
+        endOffset: Number.MAX_SAFE_INTEGER + 1,
+      },
       { messageIndex: 0, startOffset: 1, endOffset: 1 },
     ]) {
-      await assert.rejects(f.bundle.stores.session.searchConversation(f.session.id,
-        { producerId: "invalid", requestId: "invalid", query: "needle", mode: "source", anchor }), /anchor is invalid/);
+      await assert.rejects(
+        f.bundle.stores.session.searchConversation(f.session.id, {
+          producerId: "invalid",
+          requestId: "invalid",
+          query: "needle",
+          mode: "source",
+          anchor,
+        }),
+        /anchor is invalid/,
+      );
     }
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -158,29 +326,61 @@ test("storage検索は不正なraw-source anchorを拒否する", async () => {
 // impact = "表示と全履歴検索の一致が崩れ、誤った検索結果や要約を返す"
 // distinction = "共有parser testと型検査ではDB ownerからCPU Workerまでの伝播を通らない。小さい2ownerのSQLite fixtureでCodex／非Codexの配置を入れ替えて確認する"
 // @end-test-value
+/** Main と Auxiliary で異なるプロバイダーを使うとき、それぞれ自身のルールで同じ本文を投影する。 */
 test("全履歴投影は会話ownerごとのproviderを使う", async () => {
   const text = 'visualize{"path":"/work/chart.html","title":"Hidden Title"}';
-  for (const [mainProvider, auxiliaryProvider] of [["codex", "claude"], ["claude", "codex"]] as const) {
+  for (const [mainProvider, auxiliaryProvider] of [
+    ["codex", "claude"],
+    ["claude", "codex"],
+  ] as const) {
     const f = await fixture();
     try {
-      await f.bundle.stores.session.upsertSession({ ...f.session, provider: mainProvider, messages: [{ role: "assistant", text }] });
-      await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, provider: auxiliaryProvider, messages: [{ role: "assistant", text }] });
+      await f.bundle.stores.session.upsertSession({
+        ...f.session,
+        provider: mainProvider,
+        messages: [{ role: "assistant", text }],
+      });
+      await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+        ...f.auxiliary,
+        provider: auxiliaryProvider,
+        messages: [{ role: "assistant", text }],
+      });
       for (const [store, id, isCodex] of [
         [f.bundle.stores.session, f.session.id, mainProvider === "codex"],
-        [f.bundle.stores.auxiliary, f.auxiliary.id, auxiliaryProvider === "codex"],
+        [
+          f.bundle.stores.auxiliary,
+          f.auxiliary.id,
+          auxiliaryProvider === "codex",
+        ],
       ] as const) {
         for (const mode of ["preview", "source"] as const) {
-          const result = await store.searchConversation(id, { producerId: id, requestId: `${id}-${mode}`, query: "Hidden Title", mode });
+          const result = await store.searchConversation(id, {
+            producerId: id,
+            requestId: `${id}-${mode}`,
+            query: "Hidden Title",
+            mode,
+          });
           assert.equal(result.status, "complete");
-          if (result.status !== "complete") throw new Error("missing provider search result");
+          if (result.status !== "complete")
+            throw new Error("missing provider search result");
           assert.equal(result.totalCount, 1);
         }
-        const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
+        const navigator = await store.listConversationNavigator(id, {
+          producerId: id,
+          requestId: `${id}-navigator`,
+          filter: "all",
+        });
         assert.equal(navigator.status, "complete");
-        if (navigator.status !== "complete") throw new Error("missing provider navigator result");
-        assert.equal(navigator.items[0]?.preview, isCodex ? "chart.html" : text);
+        if (navigator.status !== "complete")
+          throw new Error("missing provider navigator result");
+        assert.equal(
+          navigator.items[0]?.preview,
+          isCodex ? "chart.html" : text,
+        );
       }
-    } finally { await f.close(); }
+    } finally {
+      await f.close();
+    }
   }
 });
 
@@ -196,51 +396,113 @@ test("全履歴投影は会話ownerごとのproviderを使う", async () => {
 // impact = "過去検索とBookmark移動の欠落、Rendererへの巨大結果転送を防ぐ"
 // distinction = "同期page storage testや型検査ではCPU Worker・専用command・全履歴paged query結果を観測できない。小SQLite fixtureの実Workerを利用する"
 // @end-test-value
+/** 実 Worker の検索が末尾だけでなく全履歴を対象にし、結果を有限のページで返すことを確認する。 */
 test("実Worker検索は全履歴の意味と有限pageを維持する", async () => {
   const f = await fixture();
   try {
-    for (const [store, id] of [[f.bundle.stores.session, f.session.id], [f.bundle.stores.auxiliary, f.auxiliary.id]] as const) {
-      const req = { requestId: `find-${id}`, producerId: `window-1:${id}`, query: "needle", mode: "preview" as const };
+    for (const [store, id] of [
+      [f.bundle.stores.session, f.session.id],
+      [f.bundle.stores.auxiliary, f.auxiliary.id],
+    ] as const) {
+      const req = {
+        requestId: `find-${id}`,
+        producerId: `window-1:${id}`,
+        query: "needle",
+        mode: "preview" as const,
+      };
       const first = await store.searchConversation(id, req);
       assert.equal(first.status, "complete");
       if (first.status !== "complete") throw new Error("missing query page");
       assert.equal(first.messageCount, 135);
       assert.equal(first.totalCount, 136);
       assert.equal(first.items.length, 64);
-      assert.deepEqual(first.items.slice(3, 5), [{ messageIndex: 3, occurrenceIndex: 0 }, { messageIndex: 3, occurrenceIndex: 1 }]);
-      const tail = await store.searchConversation(id, { ...req, offset: 130, stamp: first.stamp });
+      assert.deepEqual(first.items.slice(3, 5), [
+        { messageIndex: 3, occurrenceIndex: 0 },
+        { messageIndex: 3, occurrenceIndex: 1 },
+      ]);
+      const tail = await store.searchConversation(id, {
+        ...req,
+        offset: 130,
+        stamp: first.stamp,
+      });
       assert.equal(tail.status, "complete");
       if (tail.status !== "complete") throw new Error("missing tail page");
       assert.deepEqual(tail.stamp, first.stamp);
       assert.equal(tail.items.length, 6);
       assert.equal(tail.items.at(-1)?.messageIndex, 134);
-      const neighbors = await Promise.all([0, 64, 128].map((offset) => store.searchConversation(id, { ...req, offset, stamp: first.stamp })));
-      assert.deepEqual(neighbors.map((page) => page.status), ["complete", "complete", "complete"]);
-      assert.deepEqual(neighbors.map((page) => page.status === "complete" ? page.items.length : 0), [64, 64, 8]);
-      const again = await store.searchConversation(id, { ...req, stamp: first.stamp });
+      const neighbors = await Promise.all(
+        [0, 64, 128].map((offset) =>
+          store.searchConversation(id, { ...req, offset, stamp: first.stamp }),
+        ),
+      );
+      assert.deepEqual(
+        neighbors.map((page) => page.status),
+        ["complete", "complete", "complete"],
+      );
+      assert.deepEqual(
+        neighbors.map((page) =>
+          page.status === "complete" ? page.items.length : 0,
+        ),
+        [64, 64, 8],
+      );
+      const again = await store.searchConversation(id, {
+        ...req,
+        stamp: first.stamp,
+      });
       assert.deepEqual(again, first);
-      const unicode = await store.searchConversation(id, { ...req, requestId: "unicode", query: "MESSAGE", mode: "source" });
+      const unicode = await store.searchConversation(id, {
+        ...req,
+        requestId: "unicode",
+        query: "MESSAGE",
+        mode: "source",
+      });
       assert.equal(unicode.status, "complete");
       if (unicode.status === "complete") assert.equal(unicode.totalCount, 134);
       for (const mode of ["source", "preview"] as const) {
-        const hidden = await store.searchConversation(id, { ...req, requestId: `hidden-${mode}`, query: "hidden", mode });
+        const hidden = await store.searchConversation(id, {
+          ...req,
+          requestId: `hidden-${mode}`,
+          query: "hidden",
+          mode,
+        });
         assert.equal(hidden.status, "complete");
         if (hidden.status === "complete") assert.equal(hidden.totalCount, 2);
-        const path = await store.searchConversation(id, { ...req, requestId: `path-${mode}`, query: "sample.md", mode });
+        const path = await store.searchConversation(id, {
+          ...req,
+          requestId: `path-${mode}`,
+          query: "sample.md",
+          mode,
+        });
         assert.equal(path.status, "complete");
         if (path.status === "complete") {
           assert.equal(path.totalCount, 1);
-          assert.deepEqual(path.items, [{ messageIndex: 3, occurrenceIndex: 0 }]);
+          assert.deepEqual(path.items, [
+            { messageIndex: 3, occurrenceIndex: 0 },
+          ]);
         }
       }
-      const bookmarks = await store.listConversationNavigator(id, { producerId: req.producerId, requestId: "bookmarks", filter: "bookmarks" });
+      const bookmarks = await store.listConversationNavigator(id, {
+        producerId: req.producerId,
+        requestId: "bookmarks",
+        filter: "bookmarks",
+      });
       assert.equal(bookmarks.status, "complete");
       if (bookmarks.status === "complete") {
         assert.equal(bookmarks.totalCount, 1);
-        assert.deepEqual(bookmarks.items, [{ messageIndex: 4, role: "assistant", preview: "message 4 needle", accent: false, isBookmarked: true }]);
+        assert.deepEqual(bookmarks.items, [
+          {
+            messageIndex: 4,
+            role: "assistant",
+            preview: "message 4 needle",
+            accent: false,
+            isBookmarked: true,
+          },
+        ]);
       }
     }
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -255,18 +517,42 @@ test("実Worker検索は全履歴の意味と有限pageを維持する", async (
 // impact = "検索による保存・一覧・別操作のhead-of-line待ちを防ぐ"
 // distinction = "型検査と同期store testはWorker tailの占有を検出しない。実Workerで完了順序を確認するため機器速度の閾値を必要としない"
 // @end-test-value
+/** 全履歴検索の処理中でも、無関係なタイトル更新が検索完了を待たずに進むことを確認する。 */
 test("query全体は通常DB commandのtailを占有しない", async () => {
   const f = await fixture();
   try {
     const events: string[] = [];
-    const search = f.bundle.stores.session.searchConversation(f.session.id,
-      { producerId: "window-1:isolation", requestId: "isolation", query: "needle", mode: "preview" }).then((result) => { events.push("query"); return result; });
-    const update = f.bundle.stores.session.setSessionTitle(f.session.id, f.session.incarnationId!, "Independent metadata").then(() => { events.push("metadata"); });
+    const search = f.bundle.stores.session
+      .searchConversation(f.session.id, {
+        producerId: "window-1:isolation",
+        requestId: "isolation",
+        query: "needle",
+        mode: "preview",
+      })
+      .then((result) => {
+        events.push("query");
+        return result;
+      });
+    const update = f.bundle.stores.session
+      .setSessionTitle(
+        f.session.id,
+        f.session.incarnationId!,
+        "Independent metadata",
+      )
+      .then(() => {
+        events.push("metadata");
+      });
     const [result] = await Promise.all([search, update]);
     assert.equal(result.status, "complete");
     assert.deepEqual(events, ["metadata", "query"]);
-    assert.equal((await f.bundle.stores.session.getSessionSummary(f.session.id))?.taskTitle, "Independent metadata");
-  } finally { await f.close(); }
+    assert.equal(
+      (await f.bundle.stores.session.getSessionSummary(f.session.id))
+        ?.taskTitle,
+      "Independent metadata",
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -281,25 +567,56 @@ test("query全体は通常DB commandのtailを占有しない", async () => {
 // impact = "長い会話の検索漏れとpreviewの文字破損、巨大結果転送を防ぐ"
 // distinction = "135件の小本文fixtureはbyte上限超過も一本文内の大量matchも検証しない。実Workerで1MiBのsourceを利用し巨大match配列をoracleに作らない"
 // @end-test-value
+/** 大きな一つの本文を途中で切らずに検索しながら、応答に含む一致件数は上限内に収める。 */
 test("巨大な単独本文を切らず大量matchを有限pageで返す", async () => {
   const f = await fixture();
   try {
-    await f.bundle.stores.session.upsertSession({ ...f.session, messages: [{ role: "user", text: "😀".repeat(200) },
-      { role: "assistant", text: "a".repeat(1024 * 1024) }] });
-    const req = { producerId: "window-1:large", requestId: "large", query: "a", mode: "source" as const };
-    const first = await f.bundle.stores.session.searchConversation(f.session.id, req);
+    await f.bundle.stores.session.upsertSession({
+      ...f.session,
+      messages: [
+        { role: "user", text: "😀".repeat(200) },
+        { role: "assistant", text: "a".repeat(1024 * 1024) },
+      ],
+    });
+    const req = {
+      producerId: "window-1:large",
+      requestId: "large",
+      query: "a",
+      mode: "source" as const,
+    };
+    const first = await f.bundle.stores.session.searchConversation(
+      f.session.id,
+      req,
+    );
     if (first.status !== "complete") throw new Error("missing large page");
     assert.equal(first.totalCount, 1024 * 1024);
     assert.equal(first.items.length, 64);
-    const tail = await f.bundle.stores.session.searchConversation(f.session.id, { ...req, offset: 1024 * 1024 - 3, stamp: first.stamp });
+    const tail = await f.bundle.stores.session.searchConversation(
+      f.session.id,
+      { ...req, offset: 1024 * 1024 - 3, stamp: first.stamp },
+    );
     if (tail.status !== "complete") throw new Error("missing large tail");
-    assert.deepEqual(tail.items, [0, 1, 2].map((index) => ({ messageIndex: 1, occurrenceIndex: 1024 * 1024 - 3 + index })));
-    const nav = await f.bundle.stores.session.listConversationNavigator(f.session.id,
-      { producerId: "window-1:nav", requestId: "unicode-preview", filter: "all" });
+    assert.deepEqual(
+      tail.items,
+      [0, 1, 2].map((index) => ({
+        messageIndex: 1,
+        occurrenceIndex: 1024 * 1024 - 3 + index,
+      })),
+    );
+    const nav = await f.bundle.stores.session.listConversationNavigator(
+      f.session.id,
+      {
+        producerId: "window-1:nav",
+        requestId: "unicode-preview",
+        filter: "all",
+      },
+    );
     if (nav.status !== "complete") throw new Error("missing Unicode preview");
     assert.equal(Array.from(nav.items[0].preview).length, 160);
     assert.equal(nav.items[0].preview, `${"😀".repeat(159)}…`);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -314,37 +631,125 @@ test("巨大な単独本文を切らず大量matchを有限pageで返す", async
 // impact = "実行中の別会話による検索取消と古い会話結果への移動を防ぐ"
 // distinction = "SQL保存testや型検査はquery cacheのtarget revisionとgeneration寿命を観測しない。実Workerの操作結果を確認する"
 // @end-test-value
+/** 対象会話と保存世代の更新だけが検索スタンプを失効させ、メタデータや別会話の更新では維持する。 */
 test("query stampは対象revisionとgenerationだけに従う", async () => {
   const f = await fixture();
   try {
     const store = f.bundle.stores.session;
-    const req = { requestId: "revision", producerId: "window-1:find", query: "needle", mode: "source" as const };
+    const req = {
+      requestId: "revision",
+      producerId: "window-1:find",
+      query: "needle",
+      mode: "source" as const,
+    };
     const first = await store.searchConversation(f.session.id, req);
     if (first.status !== "complete") throw new Error("missing query page");
-    await store.setSessionTitle(f.session.id, f.session.incarnationId!, "Metadata only");
-    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, messages: [{ role: "user", text: "unrelated change" }] });
-    assert.equal((await store.searchConversation(f.session.id, { ...req, stamp: first.stamp })).status, "complete");
-    await store.upsertSession({ ...f.session, taskTitle: "Metadata write", runState: "running" });
-    assert.equal((await store.searchConversation(f.session.id, { ...req, stamp: first.stamp })).status, "complete");
-    await store.setSessionMessageBookmark(f.session.id, f.session.incarnationId!, 3, true);
-    assert.deepEqual(await store.searchConversation(f.session.id, { ...req, stamp: first.stamp }), { status: "invalidated" });
-    const next = await store.searchConversation(f.session.id, { ...req, requestId: "next" });
+    await store.setSessionTitle(
+      f.session.id,
+      f.session.incarnationId!,
+      "Metadata only",
+    );
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.auxiliary,
+      messages: [{ role: "user", text: "unrelated change" }],
+    });
+    assert.equal(
+      (
+        await store.searchConversation(f.session.id, {
+          ...req,
+          stamp: first.stamp,
+        })
+      ).status,
+      "complete",
+    );
+    await store.upsertSession({
+      ...f.session,
+      taskTitle: "Metadata write",
+      runState: "running",
+    });
+    assert.equal(
+      (
+        await store.searchConversation(f.session.id, {
+          ...req,
+          stamp: first.stamp,
+        })
+      ).status,
+      "complete",
+    );
+    await store.setSessionMessageBookmark(
+      f.session.id,
+      f.session.incarnationId!,
+      3,
+      true,
+    );
+    assert.deepEqual(
+      await store.searchConversation(f.session.id, {
+        ...req,
+        stamp: first.stamp,
+      }),
+      { status: "invalidated" },
+    );
+    const next = await store.searchConversation(f.session.id, {
+      ...req,
+      requestId: "next",
+    });
     if (next.status !== "complete") throw new Error("missing replacement page");
-    await store.upsertSession({ ...f.session, messages: [{ role: "user", text: "replacement" }] });
-    assert.equal((await store.searchConversation(f.session.id, { ...req, requestId: "next", stamp: next.stamp })).status, "invalidated");
-    const auxReq = { ...req, producerId: "window-1:aux", requestId: "aux-revision" };
-    const auxFirst = await f.bundle.stores.auxiliary.searchConversation(f.auxiliary.id, auxReq);
+    await store.upsertSession({
+      ...f.session,
+      messages: [{ role: "user", text: "replacement" }],
+    });
+    assert.equal(
+      (
+        await store.searchConversation(f.session.id, {
+          ...req,
+          requestId: "next",
+          stamp: next.stamp,
+        })
+      ).status,
+      "invalidated",
+    );
+    const auxReq = {
+      ...req,
+      producerId: "window-1:aux",
+      requestId: "aux-revision",
+    };
+    const auxFirst = await f.bundle.stores.auxiliary.searchConversation(
+      f.auxiliary.id,
+      auxReq,
+    );
     if (auxFirst.status !== "complete") throw new Error("missing aux page");
-    await f.bundle.stores.auxiliary.deleteAuxiliarySessionsForParent(f.session.id);
+    await f.bundle.stores.auxiliary.deleteAuxiliarySessionsForParent(
+      f.session.id,
+    );
     await f.bundle.stores.auxiliary.upsertAuxiliarySession(f.auxiliary);
-    assert.equal((await f.bundle.stores.auxiliary.searchConversation(f.auxiliary.id, { ...auxReq, stamp: auxFirst.stamp })).status, "invalidated");
+    assert.equal(
+      (
+        await f.bundle.stores.auxiliary.searchConversation(f.auxiliary.id, {
+          ...auxReq,
+          stamp: auxFirst.stamp,
+        })
+      ).status,
+      "invalidated",
+    );
     await f.bundle.client.close();
     const reopened = createV6StorageWorkerBundle(f.options);
     try {
       await reopened.initialize();
-      assert.equal((await reopened.stores.session.searchConversation(f.session.id, { ...req, stamp: first.stamp })).status, "invalidated");
-    } finally { await reopened.client.close(); }
-  } finally { await f.close(); }
+      assert.equal(
+        (
+          await reopened.stores.session.searchConversation(f.session.id, {
+            ...req,
+            stamp: first.stamp,
+          })
+        ).status,
+        "invalidated",
+      );
+    } finally {
+      await reopened.client.close();
+    }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -359,73 +764,182 @@ test("query stampは対象revisionとgenerationだけに従う", async () => {
 // impact = "実行中の追加入力と確定応答が検索から欠落すること、本文不変の更新による不要な検索取消を防ぐ"
 // distinction = "full upsertやBookmarkのquery testはmetadata-only runtimeのappend経路を通らず、append保存testはquery cacheの寿命を観測しない。小SQLite fixtureで実Workerの結果を検査する"
 // @end-test-value
+/** Main と Auxiliary の本文追記では検索が失効し、本文を変えないチェックポイントでは検索を継続できる。 */
 test("runtime appendはqueryを失効させcheckpointは維持する", async () => {
   const f = await fixture();
   try {
-    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary,
-      characterId: undefined, characterRuntimeSnapshot: undefined, characterRuntimeSnapshotInvalid: false });
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.auxiliary,
+      characterId: undefined,
+      characterRuntimeSnapshot: undefined,
+      characterRuntimeSnapshotInvalid: false,
+    });
     for (const kind of ["main", "auxiliary"] as const) {
       const isMain = kind === "main";
-      const store = isMain ? f.bundle.stores.session : f.bundle.stores.auxiliary;
+      const store = isMain
+        ? f.bundle.stores.session
+        : f.bundle.stores.auxiliary;
       const id = isMain ? f.session.id : f.auxiliary.id;
       let requestIndex = 0;
-      const request = () => ({ producerId: `window-1:append-${kind}`, requestId: `append-${requestIndex++}`,
-        query: "needle", mode: "source" as const });
-      const assertAppendInvalidates = async (append: () => Promise<unknown>) => {
+      /** 会話別の発行元を固定し、連続した検索には別々の要求 ID を割り当てる。 */
+      const request = () => ({
+        producerId: `window-1:append-${kind}`,
+        requestId: `append-${requestIndex++}`,
+        query: "needle",
+        mode: "source" as const,
+      });
+      /** 追記前のスタンプでの検索が失効し、新しい要求では追記分を取得できることを確認する。 */
+      const assertAppendInvalidates = async (
+        append: () => Promise<unknown>,
+      ) => {
         const req = request();
         const before = await store.searchConversation(id, req);
-        if (before.status !== "complete") throw new Error("missing pre-append query");
+        if (before.status !== "complete")
+          throw new Error("missing pre-append query");
         assert.ok(await append());
-        assert.deepEqual(await store.searchConversation(id, { ...req, stamp: before.stamp }), { status: "invalidated" });
+        assert.deepEqual(
+          await store.searchConversation(id, { ...req, stamp: before.stamp }),
+          { status: "invalidated" },
+        );
         const afterReq = request();
-        const after = await store.searchConversation(id, { ...afterReq, offset: before.totalCount });
-        if (after.status !== "complete") throw new Error("missing post-append query");
+        const after = await store.searchConversation(id, {
+          ...afterReq,
+          offset: before.totalCount,
+        });
+        if (after.status !== "complete")
+          throw new Error("missing post-append query");
         assert.equal(after.totalCount, before.totalCount + 1);
         assert.equal(after.messageCount, before.messageCount + 1);
-        assert.deepEqual(after.items, [{ messageIndex: before.messageCount, occurrenceIndex: 0 }]);
+        assert.deepEqual(after.items, [
+          { messageIndex: before.messageCount, occurrenceIndex: 0 },
+        ]);
       };
-      const auxiliaryOwner = { auxiliarySessionId: id, parentSessionId: f.session.id,
-        createdAt: f.auxiliary.createdAt, updatedAt: f.auxiliary.updatedAt };
-      const mainOwner = { sessionId: id, incarnationId: f.session.incarnationId! };
-      await assertAppendInvalidates(() => isMain
-        ? f.bundle.stores.session.appendRunningTurnStart({ ...mainOwner, expectedMessageCount: 135,
-          userMessage: { role: "user", text: "start needle" }, updatedAt: f.auxiliary.updatedAt })
-        : f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...auxiliaryOwner, expectedMessageCount: 135,
-          userMessage: { role: "user", text: "start needle" } }));
-      const turn = await f.bundle.stores.turn.createSessionTurn({ sessionId: id, phase: "running",
-        provider: f.session.provider, model: f.session.model, reasoningEffort: f.session.reasoningEffort,
-        approvalMode: f.session.approvalMode, userMessageSeq: 135, threadId: "", errorMessage: "", createdAt: f.auxiliary.updatedAt });
+      const auxiliaryOwner = {
+        auxiliarySessionId: id,
+        parentSessionId: f.session.id,
+        createdAt: f.auxiliary.createdAt,
+        updatedAt: f.auxiliary.updatedAt,
+      };
+      const mainOwner = {
+        sessionId: id,
+        incarnationId: f.session.incarnationId!,
+      };
+      await assertAppendInvalidates(() =>
+        isMain
+          ? f.bundle.stores.session.appendRunningTurnStart({
+              ...mainOwner,
+              expectedMessageCount: 135,
+              userMessage: { role: "user", text: "start needle" },
+              updatedAt: f.auxiliary.updatedAt,
+            })
+          : f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+              ...auxiliaryOwner,
+              expectedMessageCount: 135,
+              userMessage: { role: "user", text: "start needle" },
+            }),
+      );
+      const turn = await f.bundle.stores.turn.createSessionTurn({
+        sessionId: id,
+        phase: "running",
+        provider: f.session.provider,
+        model: f.session.model,
+        reasoningEffort: f.session.reasoningEffort,
+        approvalMode: f.session.approvalMode,
+        userMessageSeq: 135,
+        threadId: "",
+        errorMessage: "",
+        createdAt: f.auxiliary.updatedAt,
+      });
       const checkpointReq = request();
       const checkpointQuery = await store.searchConversation(id, checkpointReq);
-      if (checkpointQuery.status !== "complete") throw new Error("missing checkpoint query");
+      if (checkpointQuery.status !== "complete")
+        throw new Error("missing checkpoint query");
       if (isMain) {
-        assert.ok(await f.bundle.stores.session.checkpointSessionRunMetadata({ ...mainOwner,
-          expected: { status: "running", runState: "running", threadId: "" },
-          next: { status: "running", runState: "running", threadId: "checkpoint", updatedAt: f.auxiliary.updatedAt } }));
+        assert.ok(
+          await f.bundle.stores.session.checkpointSessionRunMetadata({
+            ...mainOwner,
+            expected: { status: "running", runState: "running", threadId: "" },
+            next: {
+              status: "running",
+              runState: "running",
+              threadId: "checkpoint",
+              updatedAt: f.auxiliary.updatedAt,
+            },
+          }),
+        );
       } else {
-        assert.ok(await f.bundle.stores.auxiliary.checkpointAuxiliaryRuntimeMetadata({ ...auxiliaryOwner,
-          expectedMessageCount: 136, provider: f.auxiliary.provider, expectedThreadId: "", expectedRunState: "running",
-          threadId: "checkpoint", runState: "running" }));
+        assert.ok(
+          await f.bundle.stores.auxiliary.checkpointAuxiliaryRuntimeMetadata({
+            ...auxiliaryOwner,
+            expectedMessageCount: 136,
+            provider: f.auxiliary.provider,
+            expectedThreadId: "",
+            expectedRunState: "running",
+            threadId: "checkpoint",
+            runState: "running",
+          }),
+        );
       }
-      const unchanged = await store.searchConversation(id, { ...checkpointReq, stamp: checkpointQuery.stamp });
+      const unchanged = await store.searchConversation(id, {
+        ...checkpointReq,
+        stamp: checkpointQuery.stamp,
+      });
       assert.equal(unchanged.status, "complete");
-      if (unchanged.status === "complete") assert.deepEqual(unchanged.stamp, checkpointQuery.stamp);
-      await assertAppendInvalidates(() => isMain
-        ? f.bundle.stores.session.appendSessionSteer({ ...mainOwner, expectedMessageCount: 136,
-          userMessage: { role: "user", text: "steer needle" }, turnId: turn.id, updatedAt: f.auxiliary.updatedAt })
-        : f.bundle.stores.auxiliary.appendAuxiliarySteer({ ...auxiliaryOwner, expectedMessageCount: 136,
-          userMessage: { role: "user", text: "steer needle" }, turnId: turn.id }));
-      const terminalCommit = { sessionId: id, turnId: turn.id, phase: "completed" as const, assistantMessageSeq: 137,
-        threadId: "checkpoint", completedAt: f.auxiliary.updatedAt, errorMessage: "" };
-      await assertAppendInvalidates(() => isMain
-        ? f.bundle.stores.session.appendSessionTerminal({ ...mainOwner, expectedMessageCount: 137,
-          assistantMessage: { role: "assistant", text: "terminal needle" }, terminalCommit,
-          metadata: { status: "saved", runState: "idle", threadId: "checkpoint", updatedAt: f.auxiliary.updatedAt } })
-        : f.bundle.stores.auxiliary.appendAuxiliaryTerminal({ ...auxiliaryOwner, expectedMessageCount: 137,
-          assistantMessage: { role: "assistant", text: "terminal needle" }, terminalCommit,
-          runState: "idle", threadId: "checkpoint", preview: "terminal needle" }));
+      if (unchanged.status === "complete")
+        assert.deepEqual(unchanged.stamp, checkpointQuery.stamp);
+      await assertAppendInvalidates(() =>
+        isMain
+          ? f.bundle.stores.session.appendSessionSteer({
+              ...mainOwner,
+              expectedMessageCount: 136,
+              userMessage: { role: "user", text: "steer needle" },
+              turnId: turn.id,
+              updatedAt: f.auxiliary.updatedAt,
+            })
+          : f.bundle.stores.auxiliary.appendAuxiliarySteer({
+              ...auxiliaryOwner,
+              expectedMessageCount: 136,
+              userMessage: { role: "user", text: "steer needle" },
+              turnId: turn.id,
+            }),
+      );
+      const terminalCommit = {
+        sessionId: id,
+        turnId: turn.id,
+        phase: "completed" as const,
+        assistantMessageSeq: 137,
+        threadId: "checkpoint",
+        completedAt: f.auxiliary.updatedAt,
+        errorMessage: "",
+      };
+      await assertAppendInvalidates(() =>
+        isMain
+          ? f.bundle.stores.session.appendSessionTerminal({
+              ...mainOwner,
+              expectedMessageCount: 137,
+              assistantMessage: { role: "assistant", text: "terminal needle" },
+              terminalCommit,
+              metadata: {
+                status: "saved",
+                runState: "idle",
+                threadId: "checkpoint",
+                updatedAt: f.auxiliary.updatedAt,
+              },
+            })
+          : f.bundle.stores.auxiliary.appendAuxiliaryTerminal({
+              ...auxiliaryOwner,
+              expectedMessageCount: 137,
+              assistantMessage: { role: "assistant", text: "terminal needle" },
+              terminalCommit,
+              runState: "idle",
+              threadId: "checkpoint",
+              preview: "terminal needle",
+            }),
+      );
     }
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -440,24 +954,85 @@ test("runtime appendはqueryを失効させcheckpointは維持する", async () 
 // impact = "入力変更・Window閉鎖後のobsolete検索による長時間待ちを防ぐ"
 // distinction = "通常の高速Markdown fixtureではhard-stop期限とlatest集約の欠陥を検出できない。専用CPU-only fixtureを実Workerとして使用する"
 // @end-test-value
-test("latestとcancelはobsolete CPU Workerを停止して後継を進める", { timeout: 10000 }, async () => {
-  const snapshot: ConversationQuerySnapshot = { ownerIdentity: "test-owner", provider: "codex", incarnationId: "test-incarnation", messageCount: 1 };
-  const reader = { getConversationQuerySnapshot: () => snapshot,
-    readConversationQueryBatch: (_id: string, after: number) => after < 0 ? [{ seq: 0, role: "user", body: JSON.stringify({ text: "needle" }) }] : [] };
-  const coordinator = new ConversationQueryCoordinator("test-generation", { session_messages_v6: reader, auxiliary_session_messages: reader },
-    new URL("./fixtures/conversation-obsolete-cpu-worker.ts", import.meta.url));
-  try {
-    const old = coordinator.request("session_messages_v6", "main", { requestId: "old", producerId: "window-1:find", query: "obsolete", mode: "preview" }, "search", async (read) => read());
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    const latest = coordinator.request("session_messages_v6", "main", { requestId: "latest", producerId: "window-1:find", query: "needle", mode: "source" }, "search", async (read) => read());
-    coordinator.cancel({ requestId: "old", producerId: "window-1:find" });
-    assert.deepEqual(await old, { status: "cancelled" });
-    const result = await latest;
-    assert.equal(result.status, "complete");
-    if (result.status === "complete") assert.deepEqual(result.items, [{ messageIndex: 0, occurrenceIndex: 0 }]);
-    const active = coordinator.request("session_messages_v6", "main", { requestId: "close", producerId: "window-1:find", query: "obsolete", mode: "preview" }, "search", async (read) => read());
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await coordinator.close();
-    assert.deepEqual(await active, { status: "invalidated" });
-  } finally { await coordinator.close(); }
-});
+/** 同じ発行元の古い検索を取り消して計算 Worker を停止し、後続の検索が完了できることを確認する。 */
+test(
+  "latestとcancelはobsolete CPU Workerを停止して後継を進める",
+  { timeout: 10000 },
+  async () => {
+    const snapshot: ConversationQuerySnapshot = {
+      ownerIdentity: "test-owner",
+      provider: "codex",
+      incarnationId: "test-incarnation",
+      messageCount: 1,
+    };
+    const reader = {
+      /** 会話の所有者と件数を固定した検索スナップショットを返す。 */ getConversationQuerySnapshot:
+        () => snapshot,
+      /** 最初の読み取りにだけ一致する本文を一件返し、後続には終端を返す。 */
+      readConversationQueryBatch: (_id: string, after: number) =>
+        after < 0
+          ? [{ seq: 0, role: "user", body: JSON.stringify({ text: "needle" }) }]
+          : [],
+    };
+    const coordinator = new ConversationQueryCoordinator(
+      "test-generation",
+      { session_messages_v6: reader, auxiliary_session_messages: reader },
+      new URL(
+        "./fixtures/conversation-obsolete-cpu-worker.ts",
+        import.meta.url,
+      ),
+    );
+    try {
+      const old = coordinator.request(
+        "session_messages_v6",
+        "main",
+        {
+          requestId: "old",
+          producerId: "window-1:find",
+          query: "obsolete",
+          mode: "preview",
+        },
+        "search",
+        async (read) => read(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const latest = coordinator.request(
+        "session_messages_v6",
+        "main",
+        {
+          requestId: "latest",
+          producerId: "window-1:find",
+          query: "needle",
+          mode: "source",
+        },
+        "search",
+        async (read) => read(),
+      );
+      coordinator.cancel({ requestId: "old", producerId: "window-1:find" });
+      assert.deepEqual(await old, { status: "cancelled" });
+      const result = await latest;
+      assert.equal(result.status, "complete");
+      if (result.status === "complete")
+        assert.deepEqual(result.items, [
+          { messageIndex: 0, occurrenceIndex: 0 },
+        ]);
+      const active = coordinator.request(
+        "session_messages_v6",
+        "main",
+        {
+          requestId: "close",
+          producerId: "window-1:find",
+          query: "obsolete",
+          mode: "preview",
+        },
+        "search",
+        async (read) => read(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await coordinator.close();
+      assert.deepEqual(await active, { status: "invalidated" });
+    } finally {
+      await coordinator.close();
+    }
+  },
+);

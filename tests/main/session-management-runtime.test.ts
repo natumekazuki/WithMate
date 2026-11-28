@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { createSessionManagementScopeReader, SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
+import {
+  createSessionManagementScopeReader,
+  SessionManagementRuntimeService,
+} from "../../src-electron/session/session-management-runtime-service.js";
 import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
 import { getSessionAgentRuntimeOperations } from "../../src-shared/session/session-management-contract.js";
 import { fixtureSessionManagementScope } from "./fixtures/session-management-scope.js";
@@ -16,6 +19,7 @@ import { fixtureSessionManagementScope } from "./fixtures/session-management-sco
 // scope = "session-management-runtime"
 // lifecycle = "permanent"
 // @end-test-value
+/** 保存主体を読んでいる間にストアやバインディングが失効すると、自己情報を返さないことを確認する。 */
 test("normal runtime requires captured saved identity and active provider Turn", async () => {
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
@@ -32,6 +36,7 @@ test("normal runtime requires captured saved identity and active provider Turn",
     },
   });
   const turn = turns.begin({ actorSessionId: "actual", providerId: "codex" });
+  /** 自己情報の取得に関係ない依存が呼ばれた場合はテストを失敗させる。 */
   const unused = async () => {
     throw new Error("read only");
   };
@@ -56,16 +61,24 @@ test("normal runtime requires captured saved identity and active provider Turn",
       workspacePath: "C:/workspace",
     },
   ]);
-  const readSessionManagementScope: typeof readFixtureScope = async (actor, selection) => {
+  /** 保存データを読み取った後、返却直前に失効条件を差し込めるようにする。 */
+  const readSessionManagementScope: typeof readFixtureScope = async (
+    actor,
+    selection,
+  ) => {
     const scope = await readFixtureScope(actor, selection);
     await beforeScopeReturn?.();
     return scope;
   };
-  let owner = { storageWorker: { stores: { session: { readSessionManagementScope } } } };
+  let owner = {
+    storageWorker: { stores: { session: { readSessionManagementScope } } },
+  };
   const application = new SessionManagementApplication({
     operatingPolicy: unused,
-    getInstructions: unused, setInstructions: unused,
+    getInstructions: unused,
+    setInstructions: unused,
     readSessionScope: createSessionManagementScopeReader(() => owner),
+    /** 認可失敗後に現在のターンを読まないことを呼出回数で確かめる。 */
     currentTurn: async () => {
       currentTurnReads++;
       return { turnId: "withmate-turn", receipt: null, origin: null };
@@ -78,6 +91,7 @@ test("normal runtime requires captured saved identity and active provider Turn",
     stopTurn: unused,
     steer: unused,
     readExecution: unused,
+    /** 保存済み主体に対応する固定のCrewフォルダーを返す。 */
     crewFolder: async () => ({
       rootSessionId: "actual",
       path: "crew-files/actual",
@@ -109,10 +123,14 @@ test("normal runtime requires captured saved identity and active provider Turn",
     (await runtime.route({ ...request, turnCapability: "other-turn" }))?.status,
     401,
   );
+  /** スコープ読取の到達と再開を分け、競合を決まった順序で再現する。 */
   function holdScope() {
     const started = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
-    beforeScopeReturn = () => { started.resolve(); return finish.promise; };
+    beforeScopeReturn = () => {
+      started.resolve();
+      return finish.promise;
+    };
     return { started: started.promise, finish: finish.resolve };
   }
   const storeRead = holdScope();
@@ -125,7 +143,10 @@ test("normal runtime requires captured saved identity and active provider Turn",
   turns.end(turn);
   assert.equal((await runtime.route(request))?.status, 401);
 
-  const nextTurn = turns.begin({ actorSessionId: "actual", providerId: "codex" });
+  const nextTurn = turns.begin({
+    actorSessionId: "actual",
+    providerId: "codex",
+  });
   const boundRead = holdScope();
   const currentRequest = { ...request, turnCapability: nextTurn.capability };
   const inFlight = runtime.route(currentRequest);

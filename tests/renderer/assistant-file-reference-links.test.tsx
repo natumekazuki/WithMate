@@ -6,7 +6,10 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
-import { createMessageSearchProjectionCache, isMessageRenderedSearchTextNode } from "../../src/chat/conversation/message-rendered-search-text.js";
+import {
+  createMessageSearchProjectionCache,
+  isMessageRenderedSearchTextNode,
+} from "../../src/chat/conversation/message-rendered-search-text.js";
 import { createRenderedTextSearchIndex } from "../../src/file-explorer/rendered-text-search.js";
 import { projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
 import { resolveOpenPathTarget } from "../../src-electron/files/open-path.js";
@@ -25,6 +28,7 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 // impact = "複数形式の成果物が同じ応答で閲覧できず、元fileへの操作や会話検索を誤る"
 // distinction = "形式単体testとparser/型検査では、共通anchor入口による混在時の誤分岐と表示・検索の接続を確認できない。小さい静的DOMで保持コストを抑える"
 // @end-test-value
+/** HTML・PDFが共通の外枠にそれぞれ描画され、未対応形式と通常のリンクは元のリンク先を保つことを確認する。 */
 test("mixed visualize formats share their frame without changing ordinary file links", () => {
   const htmlPath = "file:///C:/work/a%20chart.HTM";
   const pdfPath = "C:/work/日本語 report.PDF";
@@ -32,23 +36,84 @@ test("mixed visualize formats share their frame without changing ordinary file l
     `visualize${JSON.stringify({ path: htmlPath, title: "HTML Chart", mode: "wide" })}`,
     `visualize${JSON.stringify({ path: pdfPath, title: "PDF Report" })}`,
     'visualize{"path":"/work/book.xlsx"}',
-    '[Ordinary HTML](/work/plain.html) [Ordinary PDF](/work/plain.pdf)',
+    "[Ordinary HTML](/work/plain.html) [Ordinary PDF](/work/plain.pdf)",
     ':codex-file-citation{path="/work/cited.pdf"}',
   ].join("\n\n");
-  const preview = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" markdownLinkFileContext={{ sessionId: "session" }} />));
-  const source = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" displayMode="source" />));
+  const preview = new JSDOM(
+    renderToStaticMarkup(
+      <MessageRichText
+        text={text}
+        responseProvider="codex"
+        markdownLinkFileContext={{ sessionId: "session" }}
+      />,
+    ),
+  );
+  const source = new JSDOM(
+    renderToStaticMarkup(
+      <MessageRichText
+        text={text}
+        responseProvider="codex"
+        displayMode="source"
+      />,
+    ),
+  );
   try {
-    const frames = [...preview.window.document.querySelectorAll(".message-file-preview")];
-    assert.deepEqual(frames.map((frame) => frame.getAttribute("data-format")), ["html", "pdf"]);
-    assert.deepEqual(frames.map((frame) => frame.getAttribute("aria-label")), ["HTML Chart", "PDF Report"]);
-    assert.deepEqual(frames.map((frame) => frame.querySelector("button")?.getAttribute("aria-label")), ["Reload HTML Preview", "Reload PDF Preview"]);
+    const frames = [
+      ...preview.window.document.querySelectorAll(".message-file-preview"),
+    ];
+    assert.deepEqual(
+      frames.map((frame) => frame.getAttribute("data-format")),
+      ["html", "pdf"],
+    );
+    assert.deepEqual(
+      frames.map((frame) => frame.getAttribute("aria-label")),
+      ["HTML Chart", "PDF Report"],
+    );
+    assert.deepEqual(
+      frames.map((frame) =>
+        frame.querySelector("button")?.getAttribute("aria-label"),
+      ),
+      ["Reload HTML Preview", "Reload PDF Preview"],
+    );
     const links = [...preview.window.document.querySelectorAll("a")];
-    assert.deepEqual(links.map((link) => link.textContent), ["a chart.HTM", "日本語 report.PDF", "book.xlsx", "Ordinary HTML", "Ordinary PDF", "/work/cited.pdf"]);
-    assert.deepEqual(links.map((link) => link.getAttribute("href")), [htmlPath, encodeURI(pdfPath), "/work/book.xlsx", "/work/plain.html", "/work/plain.pdf", "/work/cited.pdf"]);
-    assert.deepEqual(links.slice(0, 2).map((link) => link.title), [htmlPath, pdfPath]);
-    const index = createRenderedTextSearchIndex(preview.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
-    assert.equal(index.normalizedText, projectMessageRenderedSearchText(text, "codex").toLocaleLowerCase());
-    assert.equal(source.window.document.querySelector("pre")?.textContent, text);
+    assert.deepEqual(
+      links.map((link) => link.textContent),
+      [
+        "a chart.HTM",
+        "日本語 report.PDF",
+        "book.xlsx",
+        "Ordinary HTML",
+        "Ordinary PDF",
+        "/work/cited.pdf",
+      ],
+    );
+    assert.deepEqual(
+      links.map((link) => link.getAttribute("href")),
+      [
+        htmlPath,
+        encodeURI(pdfPath),
+        "/work/book.xlsx",
+        "/work/plain.html",
+        "/work/plain.pdf",
+        "/work/cited.pdf",
+      ],
+    );
+    assert.deepEqual(
+      links.slice(0, 2).map((link) => link.title),
+      [htmlPath, pdfPath],
+    );
+    const index = createRenderedTextSearchIndex(
+      preview.window.document.querySelector<HTMLElement>(".rich-text")!,
+      isMessageRenderedSearchTextNode,
+    );
+    assert.equal(
+      index.normalizedText,
+      projectMessageRenderedSearchText(text, "codex").toLocaleLowerCase(),
+    );
+    assert.equal(
+      source.window.document.querySelector("pre")?.textContent,
+      text,
+    );
   } finally {
     preview.window.close();
     source.window.close();
@@ -67,29 +132,63 @@ test("mixed visualize formats share their frame without changing ordinary file l
 // impact = "生成成果物を開けない、誤ったfileへ移動する、明示操作なしで外部動作が起こる"
 // distinction = "parser単体や型検査では通常Markdown link componentへの接続と操作タイミングを観測できない"
 // @end-test-value
+/** ファイル引用がパスを表示し、クリックして初めて元のローカルパスを既存の操作へ渡すことを確認する。 */
 test("assistant citations use the existing explicit link action", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>");
-  const globals = ["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const previous = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  const globals = [
+    "window",
+    "document",
+    "navigator",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const previous = globals.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
   const values = [dom.window, dom.window.document, dom.window.navigator, true];
-  globals.forEach((name, index) => Object.defineProperty(globalThis, name, { configurable: true, value: values[index] }));
+  globals.forEach((name, index) =>
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: values[index],
+    }),
+  );
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const paths = ["C:\\work\\試作 _one_ [1]%20#?.html", "C:/work/Book%20 One#?.xlsx"];
+  const paths = [
+    "C:\\work\\試作 _one_ [1]%20#?.html",
+    "C:/work/Book%20 One#?.xlsx",
+  ];
   const text = `Before :codex-file-citation{path=${JSON.stringify(paths[0])}} after\n\n:codex-file-citation{path="${paths[1]}" artifact_kind="workbook" purpose="output" sheet="Main" range="C27"}`;
   const opened: string[] = [];
   try {
-    await act(async () => root.render(<MessageRichText text={text} responseProvider="codex" onOpenPath={(path) => opened.push(path)} />));
+    await act(async () =>
+      root.render(
+        <MessageRichText
+          text={text}
+          responseProvider="codex"
+          onOpenPath={(path) => opened.push(path)}
+        />,
+      ),
+    );
     const links = [...dom.window.document.querySelectorAll("a")];
-    assert.deepEqual(links.map((link) => link.textContent), paths);
-    assert.deepEqual(links.map((link) => decodeURIComponent(link.getAttribute("href")!)), paths);
+    assert.deepEqual(
+      links.map((link) => link.textContent),
+      paths,
+    );
+    assert.deepEqual(
+      links.map((link) => decodeURIComponent(link.getAttribute("href")!)),
+      paths,
+    );
     assert.deepEqual(opened, []);
     await act(async () => links.forEach((link) => link.click()));
     assert.deepEqual(opened.map(decodeURIComponent), paths);
-    assert.deepEqual(opened.map((target) => resolveOpenPathTarget(target)), paths.map((targetPath) => ({ type: "local-path", targetPath })));
+    assert.deepEqual(
+      opened.map((target) => resolveOpenPathTarget(target)),
+      paths.map((targetPath) => ({ type: "local-path", targetPath })),
+    );
   } finally {
     await act(async () => root.unmount());
     globals.forEach((name, index) => {
-      if (previous[index]) Object.defineProperty(globalThis, name, previous[index]!);
+      if (previous[index])
+        Object.defineProperty(globalThis, name, previous[index]!);
       else Reflect.deleteProperty(globalThis, name);
     });
     dom.window.close();
@@ -108,43 +207,148 @@ test("assistant citations use the existing explicit link action", async () => {
 // impact = "検索位置がずれたり他providerの本文の意味を変える。元応答を参照できなくなる"
 // distinction = "型検査はprovider値による動的な解析選択を検証できない。短い入力で表示・検索・Sourceの公開consumerを比較するため継続負担が小さい"
 // @end-test-value
+/** Codex応答だけにファイル参照を適用し、検索・折りたたみと表示を揃えつつ原文を保持することを確認する。 */
 test("assistant reference search matches preview while source and ordinary Markdown retain the notation", () => {
-  const text = 'Start [visualize{"path":"/work/chart.html","title":"Hidden Title"}] end';
-  const preview = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" />));
-  const source = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider="codex" displayMode="source" />));
-  const ordinary = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} />));
+  const text =
+    'Start [visualize{"path":"/work/chart.html","title":"Hidden Title"}] end';
+  const preview = new JSDOM(
+    renderToStaticMarkup(
+      <MessageRichText text={text} responseProvider="codex" />,
+    ),
+  );
+  const source = new JSDOM(
+    renderToStaticMarkup(
+      <MessageRichText
+        text={text}
+        responseProvider="codex"
+        displayMode="source"
+      />,
+    ),
+  );
+  const ordinary = new JSDOM(
+    renderToStaticMarkup(<MessageRichText text={text} />),
+  );
   try {
     const projected = projectMessageRenderedSearchText(text, "codex");
-    const index = createRenderedTextSearchIndex(preview.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
+    const index = createRenderedTextSearchIndex(
+      preview.window.document.querySelector<HTMLElement>(".rich-text")!,
+      isMessageRenderedSearchTextNode,
+    );
     assert.equal(projected, "Start [chart.html] end");
     assert.equal(index.normalizedText, projected.toLocaleLowerCase());
-    assert.equal(source.window.document.querySelector("pre")?.textContent, text);
+    assert.equal(
+      source.window.document.querySelector("pre")?.textContent,
+      text,
+    );
     assert.equal(source.window.document.querySelector("a"), null);
     assert.equal(ordinary.window.document.querySelector("a"), null);
-    assert.equal(projectMessageRenderedSearchText(text), ordinary.window.document.querySelector(".rich-text")?.textContent);
+    assert.equal(
+      projectMessageRenderedSearchText(text),
+      ordinary.window.document.querySelector(".rich-text")?.textContent,
+    );
 
     const project = createMessageSearchProjectionCache("codex");
-    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "preview", true).map((value) => value.renderedText), [projected, projectMessageRenderedSearchText(text)]);
-    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "source", true).map((value) => value.sourceText), [text, text]);
-    assert.deepEqual(project([{ role: "user", text }], ["a"], "preview", true).map((value) => value.renderedText), [projectMessageRenderedSearchText(text)]);
-    const messages = [{ role: "assistant" as const, text }, { role: "user" as const, text }];
-    const sources = [{ kind: "session" as const, messageIndex: 0 }, { kind: "auxiliary" as const, sessionId: "aux", messageIndex: 1, artifact: undefined }];
-    let summaries = buildMessageCollapseTargets(messages, sources, ["a", "u"], [], "codex");
-    assert.deepEqual(summaries.map((entry) => entry.preview), [projected, text]);
+    assert.deepEqual(
+      project(
+        [
+          { role: "assistant", text },
+          { role: "user", text },
+        ],
+        ["a", "u"],
+        "preview",
+        true,
+      ).map((value) => value.renderedText),
+      [projected, projectMessageRenderedSearchText(text)],
+    );
+    assert.deepEqual(
+      project(
+        [
+          { role: "assistant", text },
+          { role: "user", text },
+        ],
+        ["a", "u"],
+        "source",
+        true,
+      ).map((value) => value.sourceText),
+      [text, text],
+    );
+    assert.deepEqual(
+      project([{ role: "user", text }], ["a"], "preview", true).map(
+        (value) => value.renderedText,
+      ),
+      [projectMessageRenderedSearchText(text)],
+    );
+    const messages = [
+      { role: "assistant" as const, text },
+      { role: "user" as const, text },
+    ];
+    const sources = [
+      { kind: "session" as const, messageIndex: 0 },
+      {
+        kind: "auxiliary" as const,
+        sessionId: "aux",
+        messageIndex: 1,
+        artifact: undefined,
+      },
+    ];
+    let summaries = buildMessageCollapseTargets(
+      messages,
+      sources,
+      ["a", "u"],
+      [],
+      "codex",
+    );
+    assert.deepEqual(
+      summaries.map((entry) => entry.preview),
+      [projected, text],
+    );
     for (const provider of ["claude", "copilot", "unknown", undefined]) {
-      const html = new JSDOM(renderToStaticMarkup(<MessageRichText text={text} responseProvider={provider} />));
+      const html = new JSDOM(
+        renderToStaticMarkup(
+          <MessageRichText text={text} responseProvider={provider} />,
+        ),
+      );
       try {
         assert.equal(html.window.document.querySelector("a"), null);
-        assert.equal(html.window.document.querySelector(".rich-text")?.textContent, text);
+        assert.equal(
+          html.window.document.querySelector(".rich-text")?.textContent,
+          text,
+        );
         assert.equal(projectMessageRenderedSearchText(text, provider), text);
-        assert.deepEqual(createMessageSearchProjectionCache(provider)([{ role: "assistant", text }], ["a"], "preview", true).map((value) => value.renderedText), [text]);
-        summaries = buildMessageCollapseTargets(messages, sources, ["a", "u"], summaries, provider);
-        assert.deepEqual(summaries.map((entry) => entry.preview), [text, text]);
+        assert.deepEqual(
+          createMessageSearchProjectionCache(provider)(
+            [{ role: "assistant", text }],
+            ["a"],
+            "preview",
+            true,
+          ).map((value) => value.renderedText),
+          [text],
+        );
+        summaries = buildMessageCollapseTargets(
+          messages,
+          sources,
+          ["a", "u"],
+          summaries,
+          provider,
+        );
+        assert.deepEqual(
+          summaries.map((entry) => entry.preview),
+          [text, text],
+        );
       } finally {
         html.window.close();
       }
     }
-    assert.deepEqual(buildMessageCollapseTargets(messages, sources, ["a", "u"], summaries, "codex").map((entry) => entry.preview), [projected, text]);
+    assert.deepEqual(
+      buildMessageCollapseTargets(
+        messages,
+        sources,
+        ["a", "u"],
+        summaries,
+        "codex",
+      ).map((entry) => entry.preview),
+      [projected, text],
+    );
   } finally {
     preview.window.close();
     source.window.close();
@@ -164,35 +368,81 @@ test("assistant reference search matches preview while source and ordinary Markd
 // impact = "HTML成果物が会話で利用できず、読込失敗時の回復やpath参照も失う"
 // distinction = "parserや型検査はReact lifecycleとread request、表示・検索の一致を検証できない。短いcomponent testでIPC以降をmockする"
 // @end-test-value
+/** 本文のストリーミングで読込をやり直さず、失敗後の明示的な再読込でプレビューが回復することを確認する。 */
 test("visualize preview preserves its session read across streaming and exposes failure recovery", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>");
-  const globals = ["window", "document", "navigator", "IS_REACT_ACT_ENVIRONMENT", "IntersectionObserver"] as const;
-  const previous = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
-  const values = [dom.window, dom.window.document, dom.window.navigator, true, class {
-    observe() {}
-    disconnect() {}
-  }];
-  globals.forEach((name, index) => Object.defineProperty(globalThis, name, { configurable: true, value: values[index] }));
+  const globals = [
+    "window",
+    "document",
+    "navigator",
+    "IS_REACT_ACT_ENVIRONMENT",
+    "IntersectionObserver",
+  ] as const;
+  const previous = globals.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
+  const values = [
+    dom.window,
+    dom.window.document,
+    dom.window.navigator,
+    true,
+    class {
+      /** ビューポート通知なしで監視を登録できるようにする。 */
+      observe() {}
+      /** テスト用の監視には解除すべき登録がない。 */
+      disconnect() {}
+    },
+  ];
+  globals.forEach((name, index) =>
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: values[index],
+    }),
+  );
   const requests: unknown[] = [];
+  /** 読込要求を受けるまでは失敗させる対象がない。 */
   let rejectRead: (error: Error) => void = () => {};
-  let resolveRead: (result: { html: string; fileName: string }) => void = () => {};
+  /** 読込要求を受けるまでは完了させる対象がない。 */
+  let resolveRead: (result: {
+    html: string;
+    fileName: string;
+  }) => void = () => {};
   dom.window.withmate = {
+    /** 要求を記録し、テストが任意の時点で読込結果を返せるようにする。 */
     readSessionHtmlPreview: (request: unknown) => {
       requests.push(request);
-      return new Promise((resolve, reject) => { resolveRead = resolve; rejectRead = reject; });
+      return new Promise((resolve, reject) => {
+        resolveRead = resolve;
+        rejectRead = reject;
+      });
     },
   } as unknown as WithMateWindowApi;
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const text = 'Start visualize{"path":"/work/chart.html","title":"Chart","mode":"wide"} end';
+  const text =
+    'Start visualize{"path":"/work/chart.html","title":"Chart","mode":"wide"} end';
   const context = { sessionId: "session" };
   const opened: string[] = [];
-  const render = (body: string) => root.render(<MessageRichText text={body} responseProvider="codex" markdownLinkFileContext={context} onOpenPath={(path) => opened.push(path)} />);
+  /** 同じセッションのまま本文を差し替え、ファイルリンクのクリック先を記録する。 */
+  const render = (body: string) =>
+    root.render(
+      <MessageRichText
+        text={body}
+        responseProvider="codex"
+        markdownLinkFileContext={context}
+        onOpenPath={(path) => opened.push(path)}
+      />,
+    );
   try {
     await act(async () => render(text));
-    assert.deepEqual(requests, [{ sessionId: "session", target: "/work/chart.html" }]);
-    const shell = dom.window.document.querySelector('.message-file-preview[data-format="html"]');
+    assert.deepEqual(requests, [
+      { sessionId: "session", target: "/work/chart.html" },
+    ]);
+    const shell = dom.window.document.querySelector(
+      '.message-file-preview[data-format="html"]',
+    );
     assert.ok(shell);
-    const readStatus = '.message-file-preview-content [role="status"][aria-label="Loading HTML preview"]';
+    const readStatus =
+      '.message-file-preview-content [role="status"][aria-label="Loading HTML preview"]';
     const initialStatus = shell.querySelector(readStatus);
     assert.equal(initialStatus?.getAttribute("aria-busy"), "true");
     assert.ok(initialStatus?.querySelector(".loading-indicator-spinner"));
@@ -200,43 +450,92 @@ test("visualize preview preserves its session read across streaming and exposes 
     assert.equal(fileLink.textContent, "chart.html");
     assert.equal(fileLink.title, "/work/chart.html");
     assert.equal(fileLink.getAttribute("aria-label"), "Open /work/chart.html");
-    const reload = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Reload HTML Preview"]')!;
+    const reload = dom.window.document.querySelector<HTMLButtonElement>(
+      '[aria-label="Reload HTML Preview"]',
+    )!;
     assert.equal(reload.disabled, true);
     assert.equal(reload.title, "Reload HTML Preview");
     assert.equal(reload.getAttribute("aria-busy"), null);
-    assert.equal(reload.querySelector(".button-content-spinner, .loading-indicator-spinner"), null);
+    assert.equal(
+      reload.querySelector(
+        ".button-content-spinner, .loading-indicator-spinner",
+      ),
+      null,
+    );
     await act(async () => render(`${text}\n\nMore text`));
-    assert.equal(dom.window.document.querySelector('.message-file-preview[data-format="html"]'), shell);
+    assert.equal(
+      dom.window.document.querySelector(
+        '.message-file-preview[data-format="html"]',
+      ),
+      shell,
+    );
     assert.equal(requests.length, 1);
     await act(async () => rejectRead(new Error("HTML access denied.")));
-    assert.equal(dom.window.document.querySelector('[role="alert"]')?.textContent, "HTML access denied.");
+    assert.equal(
+      dom.window.document.querySelector('[role="alert"]')?.textContent,
+      "HTML access denied.",
+    );
     assert.equal(shell.querySelector(readStatus), null);
     assert.equal(reload.disabled, false);
     assert.equal(dom.window.document.querySelector("p div"), null);
-    const index = createRenderedTextSearchIndex(dom.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
-    assert.equal(index.normalizedText, projectMessageRenderedSearchText(`${text}\n\nMore text`, "codex").toLocaleLowerCase());
-    await act(async () => dom.window.document.querySelector<HTMLAnchorElement>("a")!.click());
+    const index = createRenderedTextSearchIndex(
+      dom.window.document.querySelector<HTMLElement>(".rich-text")!,
+      isMessageRenderedSearchTextNode,
+    );
+    assert.equal(
+      index.normalizedText,
+      projectMessageRenderedSearchText(
+        `${text}\n\nMore text`,
+        "codex",
+      ).toLocaleLowerCase(),
+    );
+    await act(async () =>
+      dom.window.document.querySelector<HTMLAnchorElement>("a")!.click(),
+    );
     assert.deepEqual(opened, ["/work/chart.html"]);
     await act(async () => reload.click());
-    assert.deepEqual(requests.slice(1), [{ sessionId: "session", target: "/work/chart.html" }]);
+    assert.deepEqual(requests.slice(1), [
+      { sessionId: "session", target: "/work/chart.html" },
+    ]);
     assert.equal(reload.disabled, true);
     assert.equal(reload.getAttribute("aria-busy"), "true");
     assert.ok(reload.querySelector(".button-content-spinner"));
-    assert.equal(shell.querySelector(readStatus)?.getAttribute("aria-busy"), "true");
+    assert.equal(
+      shell.querySelector(readStatus)?.getAttribute("aria-busy"),
+      "true",
+    );
     assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
-    await act(async () => resolveRead({ html: "<!doctype html><h1>Chart content</h1>", fileName: "chart.html" }));
-    assert.ok(dom.window.document.querySelector('.html-preview[aria-label="Chart"]'));
+    await act(async () =>
+      resolveRead({
+        html: "<!doctype html><h1>Chart content</h1>",
+        fileName: "chart.html",
+      }),
+    );
+    assert.ok(
+      dom.window.document.querySelector('.html-preview[aria-label="Chart"]'),
+    );
     assert.equal(shell.querySelector(readStatus), null);
     assert.equal(reload.disabled, false);
     assert.equal(reload.getAttribute("aria-busy"), null);
     assert.equal(reload.querySelector(".button-content-spinner"), null);
     assert.equal(dom.window.document.querySelector("h1"), null);
-    assert.equal(dom.window.document.querySelector('.message-file-preview[data-format="html"]'), shell);
+    assert.equal(
+      dom.window.document.querySelector(
+        '.message-file-preview[data-format="html"]',
+      ),
+      shell,
+    );
     await act(async () => reload.click());
     assert.equal(requests.length, 3);
     await act(async () => render('visualize{"path":"/work/book.xlsx"}'));
-    assert.equal(dom.window.document.querySelector("a")?.textContent, "book.xlsx");
-    assert.equal(dom.window.document.querySelector("a")?.getAttribute("href"), "/work/book.xlsx");
+    assert.equal(
+      dom.window.document.querySelector("a")?.textContent,
+      "book.xlsx",
+    );
+    assert.equal(
+      dom.window.document.querySelector("a")?.getAttribute("href"),
+      "/work/book.xlsx",
+    );
     assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
     assert.equal(requests.length, 3);
     await act(async () => rejectRead(new Error("Stale read error.")));
@@ -244,7 +543,8 @@ test("visualize preview preserves its session read across streaming and exposes 
   } finally {
     await act(async () => root.unmount());
     globals.forEach((name, index) => {
-      if (previous[index]) Object.defineProperty(globalThis, name, previous[index]!);
+      if (previous[index])
+        Object.defineProperty(globalThis, name, previous[index]!);
       else Reflect.deleteProperty(globalThis, name);
     });
     dom.window.close();

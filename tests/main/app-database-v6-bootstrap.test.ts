@@ -18,9 +18,13 @@ import {
 } from "../../src-electron/storage/database-schema-v6.js";
 import { APP_DATABASE_V4_FILENAME } from "../../src-electron/storage/database-schema-v4.js";
 
+/** V6データベースの初回作成、既存ファイルの再利用、失敗時の公開防止を検証する。 */
 describe("createOrVerifyV6FreshDatabase", () => {
+  /** V6の既定名とスキーマ版で初期化し、旧V4名のファイルを作らないことを確かめる。 */
   it("userData 配下に fresh V6 DB を作成し、V4 active path には触れない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const result = await createOrVerifyV6FreshDatabase(userDataPath);
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -28,15 +32,21 @@ describe("createOrVerifyV6FreshDatabase", () => {
 
       assert.deepEqual(result, { dbPath: v6Path, created: true });
       assert.equal(isValidV6Database(v6Path), true);
-      assert.equal(readV6DatabaseUserVersion(v6Path), APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(
+        readV6DatabaseUserVersion(v6Path),
+        APP_DATABASE_V6_SCHEMA_VERSION,
+      );
       assert.equal(existsSync(v4Path), false);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
   });
 
+  /** 二回目は同じ有効なパスを返し、新規作成の扱いにしない。 */
   it("既存の valid V6 DB は再作成せず検証だけ行う", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const created = await createOrVerifyV6FreshDatabase(userDataPath);
       const verified = await createOrVerifyV6FreshDatabase(userDataPath);
@@ -59,17 +69,18 @@ describe("createOrVerifyV6FreshDatabase", () => {
   // scope = "createOrVerifyV6FreshDatabase"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 旧Auxiliary構成に不足するturnテーブルを追加し、既存パスのまま有効になることを確認する。 */
   it("既存の旧 V6 foundation DB は additive ensure 後に valid として扱う", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
       const db = new DatabaseSync(v6Path);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
         for (const statement of CREATE_V6_SCHEMA_SQL) {
-          if (
-            statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
-          ) {
+          if (statement === CREATE_V6_SESSION_TURNS_TABLE_SQL) {
             continue;
           }
           if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL) {
@@ -101,13 +112,18 @@ describe("createOrVerifyV6FreshDatabase", () => {
       const verifiedDb = new DatabaseSync(v6Path, { readOnly: true });
       try {
         const tables = new Set(
-          (verifiedDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
-            .map(({ name }) => name),
+          (
+            verifiedDb
+              .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+              .all() as Array<{ name: string }>
+          ).map(({ name }) => name),
         );
-        for (const tableName of [
-          "session_turns_v6",
-        ]) {
-          assert.equal(tables.has(tableName), true, `missing table: ${tableName}`);
+        for (const tableName of ["session_turns_v6"]) {
+          assert.equal(
+            tables.has(tableName),
+            true,
+            `missing table: ${tableName}`,
+          );
         }
       } finally {
         verifiedDb.close();
@@ -117,8 +133,11 @@ describe("createOrVerifyV6FreshDatabase", () => {
     }
   });
 
+  /** SQLiteでない既存ファイルを発見した場合に、初期化で置き換えず例外を返す。 */
   it("既存の invalid V6 DB は上書きしない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
       await writeFile(v6Path, "not sqlite");
@@ -133,18 +152,22 @@ describe("createOrVerifyV6FreshDatabase", () => {
     }
   });
 
+  /** 途中のDDL構文エラーでは正式パスを残さず、正常なSQLで再試行できることを確認する。 */
   it("schema 途中失敗後に final DB を残さず、再実行で正常作成できる", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
 
       await assert.rejects(
-        () => createOrVerifyV6FreshDatabase(userDataPath, {
-          schemaSql: [
-            "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
-            "CREATE TABLE broken (",
-          ],
-        }),
+        () =>
+          createOrVerifyV6FreshDatabase(userDataPath, {
+            schemaSql: [
+              "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
+              "CREATE TABLE broken (",
+            ],
+          }),
         /incomplete input|syntax error/,
       );
       assert.equal(existsSync(v6Path), false);
@@ -157,18 +180,22 @@ describe("createOrVerifyV6FreshDatabase", () => {
     }
   });
 
+  /** SQL自体が成功してもスキーマ不足なら公開せず、一時ファイルやSQLiteの付随ファイルも残さない。 */
   it("validation failure 時に final DB と sidecar を残さない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
 
       await assert.rejects(
-        () => createOrVerifyV6FreshDatabase(userDataPath, {
-          schemaSql: [
-            "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
-            `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
-          ],
-        }),
+        () =>
+          createOrVerifyV6FreshDatabase(userDataPath, {
+            schemaSql: [
+              "CREATE TABLE app_settings (setting_key TEXT PRIMARY KEY);",
+              `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
+            ],
+          }),
         /Failed to create a valid/,
       );
 
@@ -176,15 +203,26 @@ describe("createOrVerifyV6FreshDatabase", () => {
       assert.equal(existsSync(v6Path), false);
       assert.equal(existsSync(`${v6Path}-wal`), false);
       assert.equal(existsSync(`${v6Path}-shm`), false);
-      assert.deepEqual(files.filter((fileName) => fileName.includes("withmate-v6")), []);
-      assert.deepEqual(files.filter((fileName) => fileName.startsWith(".withmate-v6-bootstrap-")), []);
+      assert.deepEqual(
+        files.filter((fileName) => fileName.includes("withmate-v6")),
+        [],
+      );
+      assert.deepEqual(
+        files.filter((fileName) =>
+          fileName.startsWith(".withmate-v6-bootstrap-"),
+        ),
+        [],
+      );
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
   });
 
+  /** 同一路径への並行作成は一方だけが作成者となり、両方が同じ有効なDBを得る。 */
   it("concurrent bootstrap では final DB を1つだけ作成する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-v6-bootstrap-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-v6-bootstrap-"),
+    );
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
 
@@ -194,7 +232,10 @@ describe("createOrVerifyV6FreshDatabase", () => {
       ]);
 
       assert.equal(results.filter((result) => result.created).length, 1);
-      assert.deepEqual(results.map((result) => result.dbPath), [v6Path, v6Path]);
+      assert.deepEqual(
+        results.map((result) => result.dbPath),
+        [v6Path, v6Path],
+      );
       assert.equal(isValidV6Database(v6Path), true);
     } finally {
       await rm(userDataPath, { recursive: true, force: true });

@@ -1,14 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readSessionMonitorPage } from "../../src-electron/session/session-monitor-query.js";
-import { buildNewSession, projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  projectHomeSessionSummary,
+} from "../../src-shared/session/session-state.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 const base = buildNewSession({
-  taskTitle: "Monitor", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
-  characterId: "character", character: "Character", characterIconPath: "",
-  characterThemeColors: { main: "#ffffff", sub: "#222222" }, approvalMode: "untrusted",
+  taskTitle: "Monitor",
+  workspaceLabel: "workspace",
+  workspacePath: "C:/workspace",
+  branch: "main",
+  characterId: "character",
+  character: "Character",
+  characterIconPath: "",
+  characterThemeColors: { main: "#ffffff", sub: "#222222" },
+  approvalMode: "untrusted",
 });
 
 // @test-value v2
@@ -21,41 +30,84 @@ const base = buildNewSession({
 // scope = "session-monitor-query"
 // lifecycle = "permanent"
 // @end-test-value
+/** 100件のページ境界を越えた保持Sessionについて、親の入力待ちとAuxiliaryの取消を最新状態で返すことを確認する。 */
 test("監視対象をbounded pageで取得し閉じた親のMain/Auxiliary状態を返す", async () => {
-  const ids = [...Array.from({ length: 100 }, (_, i) => `open-${String(i).padStart(3, "0")}`), "retained"];
+  const ids = [
+    ...Array.from(
+      { length: 100 },
+      (_, i) => `open-${String(i).padStart(3, "0")}`,
+    ),
+    "retained",
+  ];
   const readIds: string[][] = [];
   const auxiliary: AuxiliarySessionSummary = {
-    ...base, id: "aux", parentSessionId: "retained", title: "Auxiliary", runState: "idle",
-    displayAfterMessageIndex: null, createdAt: "",
+    ...base,
+    id: "aux",
+    parentSessionId: "retained",
+    title: "Auxiliary",
+    runState: "idle",
+    displayAfterMessageIndex: null,
+    createdAt: "",
   };
   let canceling = true;
   const deps = {
+    /** 未読の影響を除き、入力待ちと取消だけを観測する。 */
     hasUnreadResult: () => false,
+    /** 通常の対象100件の直後に保持Sessionを並べ、次ページを作る。 */
     listMonitorSessionIds: () => ids,
+    /** 要求された親IDを記録し、そのページ分の要約だけを返す。 */
     readSummaries: async (sessionIds: string[]) => {
       readIds.push(sessionIds);
       return sessionIds.map((id) => projectHomeSessionSummary({ ...base, id }));
     },
-    readAuxiliarySummaries: async (sessionIds: string[]) => sessionIds.includes("retained") ? [auxiliary] : [],
+    /** 保持Sessionのページにだけ、その子Auxiliaryを含める。 */
+    readAuxiliarySummaries: async (sessionIds: string[]) =>
+      sessionIds.includes("retained") ? [auxiliary] : [],
+    /** 親の質問待ちと子の終了処理を別々に表し、終了処理の消滅も再照会で観測できるようにする。 */
     getLiveSessionRun: (id: string): LiveSessionRunState | null => ({
-      sessionId: id, threadId: "", assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "",
-      runState: "idle", approvalRequest: null, elicitationRequest: null,
-      ...(id === "retained" ? { elicitationRequests: [{ id: "question" } as never] } : {}),
-      ...(id === "aux" && canceling ? { cancellationState: "terminating" as const } : {}),
+      sessionId: id,
+      threadId: "",
+      assistantText: "",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      runState: "idle",
+      approvalRequest: null,
+      elicitationRequest: null,
+      ...(id === "retained"
+        ? { elicitationRequests: [{ id: "question" } as never] }
+        : {}),
+      ...(id === "aux" && canceling
+        ? { cancellationState: "terminating" as const }
+        : {}),
     }),
   };
   const first = await readSessionMonitorPage(deps);
   assert.equal(first.entries.length, 100);
   assert.equal(first.hasMore, true);
   assert.equal(first.nextCursor, "open-099");
-  const second = await readSessionMonitorPage(deps, { cursor: first.nextCursor });
-  assert.deepEqual(second.entries.map((entry) => entry.id), ["retained"]);
+  const second = await readSessionMonitorPage(deps, {
+    cursor: first.nextCursor,
+  });
+  assert.deepEqual(
+    second.entries.map((entry) => entry.id),
+    ["retained"],
+  );
   assert.equal(second.entries[0]!.approvalPending, true);
   assert.equal(second.auxiliarySessions[0]!.cancellationState, "terminating");
   assert.equal(second.hasMore, false);
-  assert.deepEqual(readIds.map((page) => page.length), [100, 1]);
+  assert.deepEqual(
+    readIds.map((page) => page.length),
+    [100, 1],
+  );
   canceling = false;
-  const completed = await readSessionMonitorPage(deps, { cursor: first.nextCursor });
+  const completed = await readSessionMonitorPage(deps, {
+    cursor: first.nextCursor,
+  });
   assert.equal(completed.auxiliarySessions[0]!.cancellationState, undefined);
-  assert.deepEqual(completed.entries.map((entry) => entry.id), ["retained"]);
+  assert.deepEqual(
+    completed.entries.map((entry) => entry.id),
+    ["retained"],
+  );
 });

@@ -10,22 +10,53 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-da
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { StorageWorkerGenerationError } from "../../src-electron/storage/storage-worker-client.js";
 
+/** 一時 V6 DB と実 Storage Worker を初期化し、同じ設定で Worker を作り直せるようにする。 */
 async function fixture() {
-  const userDataPath = await mkdtemp(join(tmpdir(), "withmate-runtime-worker-"));
+  const userDataPath = await mkdtemp(
+    join(tmpdir(), "withmate-runtime-worker-"),
+  );
   const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
-  const options = { dbPath, userDataPath, bundledModelCatalogPath: join(process.cwd(), "public/model-catalog.json"),
-    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-    handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
-    workerOptions: { execArgv: ["--import", "tsx"] } };
+  const options = {
+    dbPath,
+    userDataPath,
+    bundledModelCatalogPath: join(process.cwd(), "public/model-catalog.json"),
+    workerUrl: new URL(
+      "../../src-electron/storage/storage-worker-entry.ts",
+      import.meta.url,
+    ),
+    handlerModule: new URL(
+      "../../src-electron/storage/storage-worker-bundle.ts",
+      import.meta.url,
+    ),
+    workerOptions: { execArgv: ["--import", "tsx"] },
+  };
   const bundle = createV6StorageWorkerBundle(options);
   await bundle.initialize();
-  return { options, bundle, async dispose() { await bundle.client.close(); await rm(userDataPath, { recursive: true, force: true }); } };
+  return {
+    options,
+    bundle,
+    /** 一時 DB を消す前に Worker を閉じて接続を解放する。 */
+    async dispose() {
+      await bundle.client.close();
+      await rm(userDataPath, { recursive: true, force: true });
+    },
+  };
 }
 
+/** 指定 ID で Main Session を組み立て、Worker の挿入と所有者照合に使える初期状態を返す。 */
 function session(id: string) {
-  return buildNewSession({ id, taskTitle: "runtime", workspaceLabel: "workspace", workspacePath: "C:/workspace",
-    branch: "main", characterId: "mate", character: "Mate", characterIconPath: "",
-    characterThemeColors: { main: "#123456", sub: "#abcdef" }, approvalMode: DEFAULT_APPROVAL_MODE });
+  return buildNewSession({
+    id,
+    taskTitle: "runtime",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#123456", sub: "#abcdef" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
 }
 
 // @test-value v2
@@ -40,77 +71,238 @@ function session(id: string) {
 // impact = "非同期永続化境界で確定入力や結果を失い別ownerへ書くことを防ぐ"
 // distinction = "direct storage testはWorker allowlist、clone、async generationを通らず、この一連の実Worker testでのみ接続を確認する"
 // @end-test-value
+/** 実 Worker 上で Main と Auxiliary の開始・steer・checkpoint・終了を通し、不一致の終了は本文と phase を部分更新せず、閉じた世代のハンドルでは再開した DB を操作できないことを確認する。 */
 test("runtime metadata commandは実Workerのownerとatomic境界を保つ", async () => {
   const f = await fixture();
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
     const main = await f.bundle.stores.session.insertSession(session("main"));
     const owner = { sessionId: main.id, incarnationId: main.incarnationId! };
-    const started = await f.bundle.stores.session.appendRunningTurnStart({ ...owner, expectedMessageCount: 0,
-      userMessage: { role: "user", text: "send" }, updatedAt: "start" });
+    const started = await f.bundle.stores.session.appendRunningTurnStart({
+      ...owner,
+      expectedMessageCount: 0,
+      userMessage: { role: "user", text: "send" },
+      updatedAt: "start",
+    });
     assert.equal(started.summary.id, main.id);
-    const mainTurn = await f.bundle.stores.turn.createSessionTurn({ sessionId: main.id, phase: "running", createdAt: "start",
-      provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
-      threadId: "", errorMessage: "", userMessageSeq: 0 });
-    const steered = await f.bundle.stores.session.appendSessionSteer({ ...owner, turnId: mainTurn.id, expectedMessageCount: 1,
-      userMessage: { role: "user", text: "steer" }, updatedAt: "steer" });
+    const mainTurn = await f.bundle.stores.turn.createSessionTurn({
+      sessionId: main.id,
+      phase: "running",
+      createdAt: "start",
+      provider: main.provider,
+      model: main.model,
+      reasoningEffort: main.reasoningEffort,
+      approvalMode: main.approvalMode,
+      threadId: "",
+      errorMessage: "",
+      userMessageSeq: 0,
+    });
+    const steered = await f.bundle.stores.session.appendSessionSteer({
+      ...owner,
+      turnId: mainTurn.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "steer" },
+      updatedAt: "steer",
+    });
     assert.equal(steered.messageCount, 2);
     assert.equal("messages" in steered, false);
-    const checkpoint = await f.bundle.stores.session.checkpointSessionRunMetadata({ ...owner,
-      expected: { status: "running", runState: "running", threadId: "" },
-      next: { status: "running", runState: "running", threadId: "thread", updatedAt: "checkpoint" } });
+    const checkpoint =
+      await f.bundle.stores.session.checkpointSessionRunMetadata({
+        ...owner,
+        expected: { status: "running", runState: "running", threadId: "" },
+        next: {
+          status: "running",
+          runState: "running",
+          threadId: "thread",
+          updatedAt: "checkpoint",
+        },
+      });
     assert.equal(checkpoint?.summary.threadId, "thread");
-    const terminal = { ...owner, expectedMessageCount: 2, assistantMessage: { role: "assistant" as const, text: "done" },
-      metadata: { status: "idle" as const, runState: "idle", threadId: "thread", updatedAt: "terminal" },
-      terminalCommit: { turnId: mainTurn.id, sessionId: main.id, phase: "completed" as const, assistantMessageSeq: 2,
-        threadId: "thread", errorMessage: "", completedAt: "terminal" } };
+    const terminal = {
+      ...owner,
+      expectedMessageCount: 2,
+      assistantMessage: { role: "assistant" as const, text: "done" },
+      metadata: {
+        status: "idle" as const,
+        runState: "idle",
+        threadId: "thread",
+        updatedAt: "terminal",
+      },
+      terminalCommit: {
+        turnId: mainTurn.id,
+        sessionId: main.id,
+        phase: "completed" as const,
+        assistantMessageSeq: 2,
+        threadId: "thread",
+        errorMessage: "",
+        completedAt: "terminal",
+      },
+    };
     await f.bundle.stores.session.appendSessionTerminal(terminal);
-    assert.equal((await f.bundle.stores.session.getSessionMetadata(main.id))?.messageCount, 3);
-    assert.deepEqual(await f.bundle.stores.session.getSessionMessageIdentity({ ...owner, messageIndex: 2 }),
-      { role: "assistant", text: "done", historyIndex: 2 });
-    assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(main.id))?.phase, "completed");
+    assert.equal(
+      (await f.bundle.stores.session.getSessionMetadata(main.id))?.messageCount,
+      3,
+    );
+    assert.deepEqual(
+      await f.bundle.stores.session.getSessionMessageIdentity({
+        ...owner,
+        messageIndex: 2,
+      }),
+      { role: "assistant", text: "done", historyIndex: 2 },
+    );
+    assert.equal(
+      (await f.bundle.stores.turn.getLatestSessionTurn(main.id))?.phase,
+      "completed",
+    );
 
-    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ id: "aux", parentSessionId: main.id,
-      runState: "idle", title: "aux", provider: main.provider, catalogRevision: main.catalogRevision,
-      model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
-      codexSandboxMode: main.codexSandboxMode, codexSpeed: main.codexSpeed, codexReviewer: main.codexReviewer,
-      customAgentName: "", threadId: "", composerDraft: "", messages: [],
-      displayAfterMessageIndex: null, createdAt: "created", updatedAt: "created" });
-    const auxOwner = { auxiliarySessionId: aux.id, parentSessionId: main.id, createdAt: aux.createdAt };
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 0);
-    assert.equal((await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...auxOwner, expectedMessageCount: 0,
-      userMessage: { role: "user", text: "send" }, updatedAt: "start" }))?.messageCount, 1);
-    const auxTurn = await f.bundle.stores.turn.createSessionTurn({ sessionId: aux.id, phase: "running", createdAt: "start",
-      provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
-      threadId: "", errorMessage: "", userMessageSeq: 0 });
-    const auxSteer = await f.bundle.stores.auxiliary.appendAuxiliarySteer({ ...auxOwner, expectedMessageCount: 1,
-      turnId: auxTurn.id, userMessage: { role: "user", text: "steer" }, updatedAt: "steer" });
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      id: "aux",
+      parentSessionId: main.id,
+      runState: "idle",
+      title: "aux",
+      provider: main.provider,
+      catalogRevision: main.catalogRevision,
+      model: main.model,
+      reasoningEffort: main.reasoningEffort,
+      approvalMode: main.approvalMode,
+      codexSandboxMode: main.codexSandboxMode,
+      codexSpeed: main.codexSpeed,
+      codexReviewer: main.codexReviewer,
+      customAgentName: "",
+      threadId: "",
+      composerDraft: "",
+      messages: [],
+      displayAfterMessageIndex: null,
+      createdAt: "created",
+      updatedAt: "created",
+    });
+    const auxOwner = {
+      auxiliarySessionId: aux.id,
+      parentSessionId: main.id,
+      createdAt: aux.createdAt,
+    };
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.messageCount,
+      0,
+    );
+    assert.equal(
+      (
+        await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+          ...auxOwner,
+          expectedMessageCount: 0,
+          userMessage: { role: "user", text: "send" },
+          updatedAt: "start",
+        })
+      )?.messageCount,
+      1,
+    );
+    const auxTurn = await f.bundle.stores.turn.createSessionTurn({
+      sessionId: aux.id,
+      phase: "running",
+      createdAt: "start",
+      provider: main.provider,
+      model: main.model,
+      reasoningEffort: main.reasoningEffort,
+      approvalMode: main.approvalMode,
+      threadId: "",
+      errorMessage: "",
+      userMessageSeq: 0,
+    });
+    const auxSteer = await f.bundle.stores.auxiliary.appendAuxiliarySteer({
+      ...auxOwner,
+      expectedMessageCount: 1,
+      turnId: auxTurn.id,
+      userMessage: { role: "user", text: "steer" },
+      updatedAt: "steer",
+    });
     assert.deepEqual(auxSteer?.messages, []);
     assert.equal(auxSteer?.messageCount, 2);
-    assert.equal((await f.bundle.stores.auxiliary.checkpointAuxiliaryRuntimeMetadata({ ...auxOwner, expectedMessageCount: 2,
-      provider: main.provider, expectedThreadId: "", expectedRunState: "running", threadId: "thread", runState: "running",
-      updatedAt: "checkpoint" }))?.threadId, "thread");
-    const auxTerminal = { ...auxOwner, expectedMessageCount: 2, assistantMessage: { role: "assistant" as const, text: "done" },
-      runState: "idle" as const, threadId: "thread", preview: "done", updatedAt: "terminal",
-      terminalCommit: { ...terminal.terminalCommit, sessionId: aux.id, turnId: auxTurn.id } };
-    await assert.rejects(f.bundle.stores.auxiliary.appendAuxiliaryTerminal({ ...auxTerminal,
-      terminalCommit: { ...auxTerminal.terminalCommit, turnId: mainTurn.id } }), /terminal commit target mismatch/);
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 2);
-    assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(aux.id))?.phase, "running");
-    assert.equal((await f.bundle.stores.auxiliary.appendAuxiliaryTerminal(auxTerminal))?.messageCount, 3);
-    assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(aux.id))?.phase, "completed");
+    assert.equal(
+      (
+        await f.bundle.stores.auxiliary.checkpointAuxiliaryRuntimeMetadata({
+          ...auxOwner,
+          expectedMessageCount: 2,
+          provider: main.provider,
+          expectedThreadId: "",
+          expectedRunState: "running",
+          threadId: "thread",
+          runState: "running",
+          updatedAt: "checkpoint",
+        })
+      )?.threadId,
+      "thread",
+    );
+    const auxTerminal = {
+      ...auxOwner,
+      expectedMessageCount: 2,
+      assistantMessage: { role: "assistant" as const, text: "done" },
+      runState: "idle" as const,
+      threadId: "thread",
+      preview: "done",
+      updatedAt: "terminal",
+      terminalCommit: {
+        ...terminal.terminalCommit,
+        sessionId: aux.id,
+        turnId: auxTurn.id,
+      },
+    };
+    await assert.rejects(
+      f.bundle.stores.auxiliary.appendAuxiliaryTerminal({
+        ...auxTerminal,
+        terminalCommit: { ...auxTerminal.terminalCommit, turnId: mainTurn.id },
+      }),
+      /terminal commit target mismatch/,
+    );
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.messageCount,
+      2,
+    );
+    assert.equal(
+      (await f.bundle.stores.turn.getLatestSessionTurn(aux.id))?.phase,
+      "running",
+    );
+    assert.equal(
+      (await f.bundle.stores.auxiliary.appendAuxiliaryTerminal(auxTerminal))
+        ?.messageCount,
+      3,
+    );
+    assert.equal(
+      (await f.bundle.stores.turn.getLatestSessionTurn(aux.id))?.phase,
+      "completed",
+    );
 
     const oldMain = f.bundle.stores.session;
     const oldAux = f.bundle.stores.auxiliary;
     await f.bundle.client.close();
     reopened = createV6StorageWorkerBundle(f.options);
     await reopened.initialize();
-    await assert.rejects(oldMain.getSessionMetadata(main.id), StorageWorkerGenerationError);
-    await assert.rejects(oldMain.appendSessionTerminal(terminal), StorageWorkerGenerationError);
-    await assert.rejects(oldAux.appendAuxiliaryTerminal(auxTerminal), StorageWorkerGenerationError);
-    assert.equal((await reopened.stores.session.getSessionMetadata(main.id))?.messageCount, 3);
-    assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 3);
-  } finally { if (reopened) await reopened.client.close(); await f.dispose(); }
+    await assert.rejects(
+      oldMain.getSessionMetadata(main.id),
+      StorageWorkerGenerationError,
+    );
+    await assert.rejects(
+      oldMain.appendSessionTerminal(terminal),
+      StorageWorkerGenerationError,
+    );
+    await assert.rejects(
+      oldAux.appendAuxiliaryTerminal(auxTerminal),
+      StorageWorkerGenerationError,
+    );
+    assert.equal(
+      (await reopened.stores.session.getSessionMetadata(main.id))?.messageCount,
+      3,
+    );
+    assert.equal(
+      (await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.messageCount,
+      3,
+    );
+  } finally {
+    if (reopened) await reopened.client.close();
+    await f.dispose();
+  }
 });
 
 // @test-value v2
@@ -125,28 +317,72 @@ test("runtime metadata commandは実Workerのownerとatomic境界を保つ", asy
 // impact = "長い本文を持つ会話でMain Worker転送量とclone負担が増加する"
 // distinction = "direct testとtypecheckでは実Worker ACK転送量を測れず、固定2fixtureのbyte比較は低コストの性能契約確認になる"
 // @end-test-value
+/** 履歴一件の本文だけを 1 KiB から 4 MiB に増やしても、実 Worker の metadata 読取と steer の入力・応答を JSON 化したバイト数が増えない。 */
 test("runtime commandのrequestとACKは保存本文bytesに依存しない", async () => {
   const f = await fixture();
   try {
     const records = [];
-    for (const [id, bodyBytes] of [["sml", 1024], ["big", 4 * 1024 * 1024]] as const) {
-      const main = await f.bundle.stores.session.insertSession({ ...session(id), updatedAt: "created",
-        status: "running", runState: "running", messages: [{ role: "user", text: "fixture" }] });
+    for (const [id, bodyBytes] of [
+      ["sml", 1024],
+      ["big", 4 * 1024 * 1024],
+    ] as const) {
+      const main = await f.bundle.stores.session.insertSession({
+        ...session(id),
+        updatedAt: "created",
+        status: "running",
+        runState: "running",
+        messages: [{ role: "user", text: "fixture" }],
+      });
       const db = new DatabaseSync(f.options.dbPath);
-      try { db.prepare("UPDATE session_messages_v6 SET body = ? WHERE session_id = ?")
-        .run(JSON.stringify({ role: "user", text: "x".repeat(bodyBytes) }), id); } finally { db.close(); }
-      const turn = await f.bundle.stores.turn.createSessionTurn({ sessionId: id, phase: "running", createdAt: "created",
-        provider: main.provider, model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode,
-        threadId: "", errorMessage: "", userMessageSeq: 0 });
+      try {
+        db.prepare(
+          "UPDATE session_messages_v6 SET body = ? WHERE session_id = ?",
+        ).run(
+          JSON.stringify({ role: "user", text: "x".repeat(bodyBytes) }),
+          id,
+        );
+      } finally {
+        db.close();
+      }
+      const turn = await f.bundle.stores.turn.createSessionTurn({
+        sessionId: id,
+        phase: "running",
+        createdAt: "created",
+        provider: main.provider,
+        model: main.model,
+        reasoningEffort: main.reasoningEffort,
+        approvalMode: main.approvalMode,
+        threadId: "",
+        errorMessage: "",
+        userMessageSeq: 0,
+      });
       const metadata = await f.bundle.stores.session.getSessionMetadata(id);
-      const input = { sessionId: id, incarnationId: main.incarnationId!, expectedMessageCount: 1, turnId: turn.id,
-        userMessage: { role: "user" as const, text: "steer" }, updatedAt: "steer" };
+      const input = {
+        sessionId: id,
+        incarnationId: main.incarnationId!,
+        expectedMessageCount: 1,
+        turnId: turn.id,
+        userMessage: { role: "user" as const, text: "steer" },
+        updatedAt: "steer",
+      };
       const ack = await f.bundle.stores.session.appendSessionSteer(input);
-      const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-      records.push({ metadataRequest: bytes([id]), metadataAck: bytes(metadata), appendRequest: bytes([input]), appendAck: bytes(ack) });
-      assert.equal((await f.bundle.stores.session.getSession(id))?.messages[0].text.length, bodyBytes);
+      /** 構造化データを JSON にしたときの UTF-8 バイト数を、本文サイズの異なる二つのケースで比較する。 */
+      const bytes = (value: unknown) =>
+        Buffer.byteLength(JSON.stringify(value));
+      records.push({
+        metadataRequest: bytes([id]),
+        metadataAck: bytes(metadata),
+        appendRequest: bytes([input]),
+        appendAck: bytes(ack),
+      });
+      assert.equal(
+        (await f.bundle.stores.session.getSession(id))?.messages[0].text.length,
+        bodyBytes,
+      );
       assert.equal(ack.messageCount, 2);
     }
     assert.deepEqual(records[0], records[1]);
-  } finally { await f.dispose(); }
+  } finally {
+    await f.dispose();
+  }
 });

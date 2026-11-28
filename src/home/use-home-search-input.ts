@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/** 入力欄を即時に更新し、検索は入力確定後にまとめる。IME 変換中は検索せず、空欄への戻しは即時反映する。 */
 export function useHomeSearchInput() {
   const [inputText, setInputText] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -14,36 +15,51 @@ export function useHomeSearchInput() {
 
   useEffect(() => cancelPending, [cancelPending]);
 
-  const applyAfterInput = useCallback((value: string) => {
-    cancelPending();
-    if (value === "") {
-      setSearchText("");
-      return;
-    }
-    timerRef.current = setTimeout(() => {
-      timerRef.current = undefined;
-      setSearchText(value);
-    }, 300);
-  }, [cancelPending]);
+  const applyAfterInput = useCallback(
+    (value: string) => {
+      cancelPending();
+      if (value === "") {
+        setSearchText("");
+        return;
+      }
+      timerRef.current = setTimeout(() => {
+        timerRef.current = undefined;
+        setSearchText(value);
+      }, 300);
+    },
+    [cancelPending],
+  );
 
-  const onChangeInputText = useCallback((value: string) => {
-    if (inputTextRef.current === value) return;
-    inputTextRef.current = value;
-    setInputText(value);
-    if (!composingRef.current) applyAfterInput(value);
-  }, [applyAfterInput]);
+  const onChangeInputText = useCallback(
+    (value: string) => {
+      if (inputTextRef.current === value) return;
+      inputTextRef.current = value;
+      setInputText(value);
+      if (!composingRef.current) applyAfterInput(value);
+    },
+    [applyAfterInput],
+  );
 
   const onCompositionStart = useCallback(() => {
     composingRef.current = true;
     cancelPending();
   }, [cancelPending]);
 
-  const onCompositionEnd = useCallback((value: string) => {
-    composingRef.current = false;
-    inputTextRef.current = value;
-    setInputText(value);
-    applyAfterInput(value);
-  }, [applyAfterInput]);
+  const onCompositionEnd = useCallback(
+    (value: string) => {
+      composingRef.current = false;
+      inputTextRef.current = value;
+      setInputText(value);
+      applyAfterInput(value);
+    },
+    [applyAfterInput],
+  );
 
-  return { inputText, searchText, onChangeInputText, onCompositionStart, onCompositionEnd };
+  return {
+    inputText,
+    searchText,
+    onChangeInputText,
+    onCompositionStart,
+    onCompositionEnd,
+  };
 }

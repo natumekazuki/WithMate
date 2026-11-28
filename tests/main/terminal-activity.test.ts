@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { TerminalActivityParser, TerminalActivityTracker } from "../../src-electron/terminal/terminal-activity.js";
+import {
+  TerminalActivityParser,
+  TerminalActivityTracker,
+} from "../../src-electron/terminal/terminal-activity.js";
 import type { TerminalActivity } from "../../src-electron/terminal/terminal-worker-protocol.js";
 
 const marker = "\x1b]633;P;WithMateActivity=test-terminal;";
@@ -17,6 +20,7 @@ const marker = "\x1b]633;P;WithMateActivity=test-terminal;";
 // impact = "通常の終了操作で不要な警告が必ず出る、または実行中作業を確認せず終了する"
 // distinction = "serviceのPTY stubではxterm由来のfocus通知を通らないため、少数の状態遷移を直接検査する"
 // @end-test-value
+/** 単独のフォーカス通知や空入力は直前の状態を変えず、空 Enter で不明になった状態もシェルの busy、idle 通知を経て入力待ちに戻る。 */
 it("preserves shell activity across focus reports and returns to idle after empty Enter", () => {
   const tracker = new TerminalActivityTracker();
   for (const activity of ["unknown", "busy", "idle"] as const) {
@@ -46,8 +50,16 @@ it("preserves shell activity across focus reports and returns to idle after empt
 // impact = "送信済みコマンドや編集中の入力を終了確認なしで失う"
 // distinction = "文字列の分類と通知順序は型検査やservice stubでは保証できず、小さい入力集合で保護境界を検査する"
 // @end-test-value
+/** 実入力やフォーカス通知との混在入力は古い idle 通知を無効にし、新しい busy の後に届く idle だけで入力待ちに戻る。 */
 it("invalidates idle for keyboard or mixed input until the shell returns from read-line", () => {
-  for (const input of ["a", "\r", "\x03", "\x1b[1;5R", "\x1b[Oecho work\r", "echo work\r\x1b[I"]) {
+  for (const input of [
+    "a",
+    "\r",
+    "\x03",
+    "\x1b[1;5R",
+    "\x1b[Oecho work\r",
+    "echo work\r\x1b[I",
+  ]) {
     const tracker = new TerminalActivityTracker();
     tracker.onActivity("idle");
     tracker.onInput(input);
@@ -75,14 +87,20 @@ it("invalidates idle for keyboard or mixed input until the shell returns from re
 // impact = "入力待ちの誤判定または端末出力の欠落"
 // distinction = "型検査は任意位置に分割されるPTY文字列を保証せず、小さいfixtureの境界全走査で検出する"
 // @end-test-value
+/** 文字列をどこで分割しても、自端末の完全なマーカーだけを状態通知に変換し、通常出力・他端末・不正値の文字列は保持する。 */
 it("preserves output and recognizes only complete terminal-scoped activity records across chunks", () => {
   const foreign = "\x1b]633;P;WithMateActivity=another-terminal;idle\x07";
   const malformed = `${marker}unexpected\x07`;
   const source = `before${marker}idle\x07middle${marker}busy\x07${foreign}${malformed}${marker}unknown\x07after`;
   for (let split = 0; split <= source.length; split++) {
     const activities: TerminalActivity[] = [];
-    const parser = new TerminalActivityParser(marker, (activity) => activities.push(activity));
-    const output = parser.push(source.slice(0, split)) + parser.push(source.slice(split)) + parser.flush();
+    const parser = new TerminalActivityParser(marker, (activity) =>
+      activities.push(activity),
+    );
+    const output =
+      parser.push(source.slice(0, split)) +
+      parser.push(source.slice(split)) +
+      parser.flush();
     assert.equal(output, `beforemiddle${foreign}${malformed}after`);
     assert.deepEqual(activities, ["idle", "busy", "unknown"]);
   }
@@ -98,9 +116,12 @@ it("preserves output and recognizes only complete terminal-scoped activity recor
 // scope = "Terminal shell activity incomplete output"
 // lifecycle = "permanent"
 // @end-test-value
+/** 終端のない idle マーカーから状態を通知せず、停止時の最初の flush だけで保留文字列をそのまま返す。 */
 it("keeps incomplete activity records unknown and flushes their text on exit", () => {
   const activities: TerminalActivity[] = [];
-  const parser = new TerminalActivityParser(marker, (activity) => activities.push(activity));
+  const parser = new TerminalActivityParser(marker, (activity) =>
+    activities.push(activity),
+  );
   assert.equal(parser.push(`output${marker}idle`), "output");
   assert.deepEqual(activities, []);
   assert.equal(parser.flush(), `${marker}idle`);

@@ -3,8 +3,21 @@ import test from "node:test";
 import { SessionResultReadService } from "../../src-electron/session/session-result-read-service.js";
 import type { SessionTurnTerminalCommit } from "../../src-electron/session/session-turn-terminal-commit.js";
 
-function commit(sessionId: string, turnId: number, phase: SessionTurnTerminalCommit["phase"] = "completed"): SessionTurnTerminalCommit {
-  return { sessionId, turnId, phase, assistantMessageSeq: turnId * 2, threadId: "", errorMessage: "", completedAt: "2026-10-26T00:00:00Z" };
+/** 会話と turn を区別できる終端レコードを、既定では成功として作る。 */
+function commit(
+  sessionId: string,
+  turnId: number,
+  phase: SessionTurnTerminalCommit["phase"] = "completed",
+): SessionTurnTerminalCommit {
+  return {
+    sessionId,
+    turnId,
+    phase,
+    assistantMessageSeq: turnId * 2,
+    threadId: "",
+    errorMessage: "",
+    completedAt: "2026-10-26T00:00:00Z",
+  };
 }
 
 // @test-value v2
@@ -19,12 +32,16 @@ function commit(sessionId: string, turnId: number, phase: SessionTurnTerminalCom
 // impact = "Monitorで未確認結果を見落とす、または確認済みを再確認させる"
 // distinction = "UIや型検査では検出できない会話間の独立性とturn識別の競合を確認する"
 // @end-test-value
+/** 会話ごとに最新の未読だけを管理し、遅れて届いた操作や結果で上書きしないことを確かめる。 */
 test("最新結果の既読はMain/Auxで独立し、古い要求と重複commitを無視する", () => {
   const changes: string[] = [];
   const service = new SessionResultReadService((id) => changes.push(id));
   service.recordResult(commit("main", 1));
   service.recordResult(commit("aux", 2, "failed"));
-  assert.deepEqual(service.getUnreadResult("main"), { turnId: 1, assistantMessageSeq: 2 });
+  assert.deepEqual(service.getUnreadResult("main"), {
+    turnId: 1,
+    assistantMessageSeq: 2,
+  });
   assert.equal(service.markRead("main", 1), true);
   assert.equal(service.getUnreadResult("main"), null);
   assert.equal(service.getUnreadResult("aux")?.turnId, 2);
@@ -52,13 +69,17 @@ test("最新結果の既読はMain/Auxで独立し、古い要求と重複commit
 // impact = "再起動後に未確認扱いの古い結果が大量に復活する"
 // distinction = "保存型の有無だけでは確認できないruntimeのreset動作を確認する"
 // @end-test-value
+/** インスタンスの新規作成と明示的な消去が、以前の未読を復活させないことを確かめる。 */
 test("起動またはresetで未読を持ち越さず、新規結果から再開する", () => {
   const service = new SessionResultReadService(() => {});
   service.recordResult(commit("main", 10));
   service.clear();
   assert.equal(service.getUnreadResult("main"), null);
   assert.equal(service.markRead("main", 10), false);
-  assert.equal(new SessionResultReadService(() => {}).getUnreadResult("main"), null);
+  assert.equal(
+    new SessionResultReadService(() => {}).getUnreadResult("main"),
+    null,
+  );
   service.recordResult(commit("main", 1));
   assert.equal(service.getUnreadResult("main")?.turnId, 1);
 });

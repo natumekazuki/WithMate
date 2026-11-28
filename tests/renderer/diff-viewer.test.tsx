@@ -6,7 +6,9 @@ import { createRoot } from "react-dom/client";
 
 import { DiffViewer } from "../../src/ui/DiffViewer.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -20,23 +22,49 @@ import { DiffViewer } from "../../src/ui/DiffViewer.js";
 // impact = "支援技術を使う利用者が現在の差分表示方式を判断できない問題を防ぐ"
 // distinction = "CSS/static checkでは検証できない実componentのmode切替と選択通知の同期を小さなDOM testで守る"
 // @end-test-value
+/** 差分の表示方式を往復して、押下状態の通知と表示ペインが常に一致することを確かめる。 */
 test("DiffViewer は現在の表示方式を同期して通知する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const previousResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
-  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  const previousDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
+  const previousResizeObserver = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "ResizeObserver",
+  );
+  Object.defineProperty(globalThis, "window", {
+    value: dom.window,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "document", {
+    value: dom.window.document,
+    configurable: true,
+  });
   Object.defineProperty(globalThis, "ResizeObserver", {
-    value: class { observe() {} disconnect() {} },
+    value: class {
+      observe /** 表示方式の検証ではサイズ変更を通知しない。 */() {}
+      disconnect /** 試験用のサイズ監視には登録解除が不要。 */() {}
+    },
     configurable: true,
   });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<DiffViewer file={{ kind: "edit", path: "test.txt", summary: "", diffRows: [] }} />));
-    const buttons = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Diff view mode"] button')];
+    await act(async () =>
+      root.render(
+        <DiffViewer
+          file={{ kind: "edit", path: "test.txt", summary: "", diffRows: [] }}
+        />,
+      ),
+    );
+    const buttons = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="Diff view mode"] button',
+      ),
+    ];
     const [split, inline] = buttons;
     assert.equal(split.textContent?.trim(), "Side By Side");
     assert.equal(inline.textContent?.trim(), "Inline");
@@ -54,11 +82,18 @@ test("DiffViewer は現在の表示方式を同期して通知する", async () 
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    if (previousWindow)
+      Object.defineProperty(globalThis, "window", previousWindow);
     else Reflect.deleteProperty(globalThis, "window");
-    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    if (previousDocument)
+      Object.defineProperty(globalThis, "document", previousDocument);
     else Reflect.deleteProperty(globalThis, "document");
-    if (previousResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", previousResizeObserver);
+    if (previousResizeObserver)
+      Object.defineProperty(
+        globalThis,
+        "ResizeObserver",
+        previousResizeObserver,
+      );
     else Reflect.deleteProperty(globalThis, "ResizeObserver");
   }
 });

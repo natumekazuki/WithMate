@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { buildNewSession, projectSessionSummary, type Session } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  projectSessionSummary,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
 
+/** 通常の Session を土台に、開始・クリア前後の差分だけを上書きできるようにする。 */
 function createSession(overrides?: Partial<Session>): Session {
   return {
     ...buildNewSession({
@@ -34,6 +39,7 @@ function createSession(overrides?: Partial<Session>): Session {
 // lifecycle = "permanent"
 // distinction = "storage atomicityではなく三状態DTOのnull伝播とcommit後のcanonical result合成を観測する"
 // @end-test-value
+/** 開始時の明示 null を専用ストレージへ渡し、確定結果の同時更新済みタイトルと pin を戻り値・キャッシュに反映したうえで対象 ID だけを通知する。 */
 it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反映してbroadcastする", async () => {
   const oldSnapshot = {
     characterId: "char-a",
@@ -68,14 +74,23 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
   const broadcasts: string[][] = [];
   let genericUpsertCalled = false;
   const service = new SessionPersistenceService({
+    /** 現在の summary の配列を返す。 */
     getSessions: () => cachedSessions,
-    setSessions: (next) => { cachedSessions = next; },
-    getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+    /** 開始結果から作り直された summary を読み出せるよう保持する。 */
+    setSessions: (next) => {
+      cachedSessions = next;
+    },
+    /** メモリ上の Session を ID で特定する。 */
+    getSession: (sessionId) =>
+      cachedSessions.find((session) => session.id === sessionId) ?? null,
+    /** 開始済みの実行が存在する前提を設定する。 */
     isSessionRunInFlight: () => true,
+    /** 全体保存への誤った分岐をフラグで検出する。 */
     upsertStoredSession: (next) => {
       genericUpsertCalled = true;
       return next;
     },
+    /** 入力メッセージと明示 null を照合し、永続側で同時に変わったタイトルと pin を返す。 */
     appendStoredRunningTurnStart(input) {
       assert.equal(input.expectedMessageCount, 1);
       assert.deepEqual(input.userMessage, { role: "user", text: "new prompt" });
@@ -89,16 +104,25 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
         characterRuntimeSnapshot: running.characterRuntimeSnapshot,
       };
     },
+    /** 対象外の一括置換は副作用を起こさない。 */
     replaceStoredSessions: () => undefined,
+    /** 開始前の永続 Session を一覧として返す。 */
     listStoredSessions: () => [initial],
+    /** 開始パスの設定参照に既定値を供給する。 */
     getAppSettings: () => normalizeAppSettings({}),
+    /** 設定検証に不要な Provider 候補を増やさない。 */
     getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
 
+    /** この開始テストではテレメトリを持たない。 */
     clearSessionContextTelemetry: () => undefined,
 
+    /** 実 Provider のスレッドにはアクセスしない。 */
     invalidateProviderSessionThread: () => undefined,
+    /** ウィンドウの生存状態は開始テストの観測対象外とする。 */
     closeSessionWindow: () => undefined,
-    broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+    /** 開始の確定後に通知された Session ID を控える。 */
+    broadcastSessions: (sessionIds) =>
+      broadcasts.push(Array.from(sessionIds ?? [])),
   });
 
   const stored = await service.persistRunningTurnStart(running, 1);
@@ -127,6 +151,7 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
 // lifecycle = "permanent"
 // distinction = "running開始のnull伝播ではなく、messageを所有しない専用metadata clearのcanonical projectionを観測する"
 // @end-test-value
+/** Authoring の clear は専用保存だけで snapshot と thread を消し、既存履歴を保った戻り値と summary キャッシュを作り、対象だけを通知する。 */
 it("authoring runtime clearは専用storageだけを使いcanonical resultをcacheへ反映する", async () => {
   const oldSnapshot = {
     characterId: "char-a",
@@ -152,18 +177,28 @@ it("authoring runtime clearは専用storageだけを使いcanonical resultをcac
   let genericUpsertCalled = false;
   let runningStartCalled = false;
   const service = new SessionPersistenceService({
+    /** クリア前の状態または直近の投影を取り出す。 */
     getSessions: () => cachedSessions,
-    setSessions: (next) => { cachedSessions = next; },
-    getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+    /** クリア後の summary を assertion から観測可能にする。 */
+    setSessions: (next) => {
+      cachedSessions = next;
+    },
+    /** 既存の Authoring Session を ID で解決する。 */
+    getSession: (sessionId) =>
+      cachedSessions.find((session) => session.id === sessionId) ?? null,
+    /** 実行前に行うクリアなので実行中の turn はない。 */
     isSessionRunInFlight: () => false,
+    /** 専用クリアが Session 全体の保存へ退行した場合を記録する。 */
     upsertStoredSession: (next) => {
       genericUpsertCalled = true;
       return next;
     },
+    /** クリア中に新規メッセージ保存を呼んだ場合は直ちに失敗させる。 */
     appendStoredRunningTurnStart: () => {
       runningStartCalled = true;
       throw new Error("running start must not run");
     },
+    /** 対象 ID を検査し、永続層が返す確定済みの空 thread と null snapshot を再現する。 */
     clearStoredCharacterAuthoringRuntimeState(input) {
       assert.equal(input.sessionId, initial.id);
       return {
@@ -174,16 +209,25 @@ it("authoring runtime clearは専用storageだけを使いcanonical resultをcac
         characterRuntimeSnapshot: null,
       };
     },
+    /** クリアと無関係な一括置換には永続効果を持たせない。 */
     replaceStoredSessions: () => undefined,
+    /** リセット前の DB 側 Session を固定値で返す。 */
     listStoredSessions: () => [initial],
+    /** アプリ設定に依存しないケースとして既定設定を返す。 */
     getAppSettings: () => normalizeAppSettings({}),
+    /** Model 解決に影響する候補を投入しない。 */
     getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
 
+    /** コンテキストの実テレメトリは用意しない。 */
     clearSessionContextTelemetry: () => undefined,
 
+    /** 実行前クリアのダブルでは Provider への接続を省く。 */
     invalidateProviderSessionThread: () => undefined,
+    /** Authoring ウィンドウを実際には閉じない。 */
     closeSessionWindow: () => undefined,
-    broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+    /** クリアの通知対象を保存して対象外 Session の混入を検出する。 */
+    broadcastSessions: (sessionIds) =>
+      broadcasts.push(Array.from(sessionIds ?? [])),
   });
 
   const stored = await service.clearCharacterAuthoringRuntimeState(resolved);

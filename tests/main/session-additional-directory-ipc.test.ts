@@ -17,26 +17,53 @@ import { WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL } from "../../src-
 // risk_tags = ["authorization"]
 // distinction = "MCPと保存serviceの検証だけではElectron送信元のWindow認可を検査できない"
 // @end-test-value
+/** 登録・解除の両方を対象 Main のウィンドウと完全な識別子に限定することを確認する。 */
 test("directory IPC requires the owning window and exact Main identity", async () => {
-  const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: any[]) => any>();
+  const handlers = new Map<
+    string,
+    (event: IpcMainInvokeEvent, ...args: any[]) => any
+  >();
   const owner = {};
   let currentWindow = owner;
   const calls: unknown[] = [];
   const deps = {
+    /** テスト中に切り替えられる IPC 送信元のウィンドウを返す。 */
     resolveEventWindow: () => currentWindow,
-    resolveSessionWindow: (id: string) => id === "main" ? owner : null,
-    changeSessionAdditionalDirectory: async (request: unknown) => { calls.push(request); },
+    /** 対象の Main だけに所有ウィンドウを対応付ける。 */
+    resolveSessionWindow: (id: string) => (id === "main" ? owner : null),
+    /** 認可を通過して管理処理に渡った要求を記録する。 */
+    changeSessionAdditionalDirectory: async (request: unknown) => {
+      calls.push(request);
+    },
   } as unknown as MainIpcSessionRuntimeDeps;
-  registerSessionRuntimeHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, deps);
-  const invoke = handlers.get(WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL)!;
+  registerSessionRuntimeHandlers(
+    {
+      /** 登録されたハンドラーをチャンネルごとに保存し、直接呼び出せるようにする。 */ handle:
+        (channel, handler) => {
+          handlers.set(channel, handler);
+        },
+    },
+    deps,
+  );
+  const invoke = handlers.get(
+    WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
+  )!;
   const event = {} as IpcMainInvokeEvent;
-  const request = { sessionId: "main", incarnationId: "main-v1", operation: "add", directoryPath: "C:/shared" };
+  const request = {
+    sessionId: "main",
+    incarnationId: "main-v1",
+    operation: "add",
+    directoryPath: "C:/shared",
+  };
   await invoke(event, request);
   await invoke(event, { ...request, operation: "remove" });
   assert.deepEqual(calls, [request, { ...request, operation: "remove" }]);
   currentWindow = {};
   assert.throws(() => invoke(event, request), /target Session window/);
   currentWindow = owner;
-  assert.throws(() => invoke(event, { ...request, incarnationId: "" }), /identity/i);
+  assert.throws(
+    () => invoke(event, { ...request, incarnationId: "" }),
+    /identity/i,
+  );
   assert.equal(calls.length, 2);
 });

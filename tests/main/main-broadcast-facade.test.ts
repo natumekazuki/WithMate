@@ -16,6 +16,7 @@ import { MainBroadcastFacade } from "../../src-electron/app/main-broadcast-facad
 // scope = "tests/main/main-broadcast-facade.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
+/** ファサードが現行カタログや設定を取得し、各ウィンドウ通知へ正しい内容を渡すことを確かめる。 */
 test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService へ委譲する", () => {
   return (async () => {
     const calls: string[] = [];
@@ -26,38 +27,50 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
       windows?: string[];
     } = {};
     const facade = new MainBroadcastFacade({
-    getWindowBroadcastService: () =>
-      ({
-        broadcastSessionInvalidation(payload: SessionSummaryInvalidation) {
-          calls.push(`invalidated:${payload.scope}:${payload.scope === "ids" ? payload.sessionIds.join(",") : "all"}`);
-        },
-        broadcastModelCatalog(payload: ModelCatalogSnapshot) {
-          payloads.catalog = payload;
-          calls.push("catalog");
-        },
-        broadcastAppSettings(payload: AppSettings) {
-          payloads.settings = payload;
-          calls.push("settings");
-        },
-        broadcastPromptTemplates(payload: unknown[]) {
-          payloads.templates = payload;
-          calls.push(`templates:${payload.length}`);
-        },
-        broadcastOpenSessionWindowIds(payload: string[]) {
-          payloads.windows = payload;
-          calls.push(`windows:${payload.length}`);
-        },
-      }) as never,
-    getModelCatalog: async () => ({ providers: [] }),
-    getAppSettings: async () =>
-      ({
-        providers: {},
-        codingProviderSettings: {},
-        memoryExtractionProviderSettings: {},
-        characterReflectionProviderSettings: {},
-      }) as never,
-    listPromptTemplates: async () => [{ id: "template-1" }] as never,
-    listOpenSessionWindowIds: () => ["s-1", "s-2"],
+      /** 各通知の呼び出しと内容を記録する配信先を用意する。 */
+      getWindowBroadcastService: () =>
+        ({
+          /** 無効化の範囲と対象セッション ID を呼び出し履歴に残す。 */
+          broadcastSessionInvalidation(payload: SessionSummaryInvalidation) {
+            calls.push(
+              `invalidated:${payload.scope}:${payload.scope === "ids" ? payload.sessionIds.join(",") : "all"}`,
+            );
+          },
+          /** 取得したモデルカタログがそのまま渡されたか確認できるようにする。 */
+          broadcastModelCatalog(payload: ModelCatalogSnapshot) {
+            payloads.catalog = payload;
+            calls.push("catalog");
+          },
+          /** アプリ設定の全体と通知順を保存する。 */
+          broadcastAppSettings(payload: AppSettings) {
+            payloads.settings = payload;
+            calls.push("settings");
+          },
+          /** テンプレートの一覧と件数を記録する。 */
+          broadcastPromptTemplates(payload: unknown[]) {
+            payloads.templates = payload;
+            calls.push(`templates:${payload.length}`);
+          },
+          /** 開いているウィンドウ ID の一覧と通知件数を記録する。 */
+          broadcastOpenSessionWindowIds(payload: string[]) {
+            payloads.windows = payload;
+            calls.push(`windows:${payload.length}`);
+          },
+        }) as never,
+      /** 取得結果としてプロバイダーのないカタログを返す。 */
+      getModelCatalog: async () => ({ providers: [] }),
+      /** 配信内容と照合する四つのプロバイダー設定区分を用意する。 */
+      getAppSettings: async () =>
+        ({
+          providers: {},
+          codingProviderSettings: {},
+          memoryExtractionProviderSettings: {},
+          characterReflectionProviderSettings: {},
+        }) as never,
+      /** 一つのテンプレートを返し、通知先への引き渡しを確認できるようにする。 */
+      listPromptTemplates: async () => [{ id: "template-1" }] as never,
+      /** 配信に含める二つのウィンドウ ID を返す。 */
+      listOpenSessionWindowIds: () => ["s-1", "s-2"],
     });
 
     facade.broadcastSessions(["s-1"]);
@@ -66,7 +79,13 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
     await facade.broadcastPromptTemplates();
     facade.broadcastOpenSessionWindowIds();
 
-    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog", "settings", "templates:1", "windows:2"]);
+    assert.deepEqual(calls, [
+      "invalidated:ids:s-1",
+      "catalog",
+      "settings",
+      "templates:1",
+      "windows:2",
+    ]);
     assert.deepEqual(payloads.catalog, { providers: [] });
     assert.deepEqual(payloads.settings, {
       providers: {},
@@ -89,19 +108,30 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
 // scope = "tests/main/main-broadcast-facade.test.ts"
 // lifecycle = "permanent"
 // @end-test-value
+/** 通知上限を超える ID 群と空の指定を、どちらも全体無効化として配信する。 */
 test("MainBroadcastFacade は invalidation ID の上限超過を all に収束させる", () => {
   const payloads: SessionSummaryInvalidation[] = [];
   const facade = new MainBroadcastFacade({
-    getWindowBroadcastService: () => ({
-      broadcastSessionInvalidation: (payload: SessionSummaryInvalidation) => payloads.push(payload),
-    }) as never,
+    /** 無効化の内容だけを受け取る配信先を供給する。 */
+    getWindowBroadcastService: () =>
+      ({
+        /** 二回の無効化通知を到着順に蓄積する。 */
+        broadcastSessionInvalidation: (payload: SessionSummaryInvalidation) =>
+          payloads.push(payload),
+      }) as never,
+    /** 無効化では使わないカタログ取得を空データで満たす。 */
     getModelCatalog: () => ({ providers: [] }),
+    /** セッション通知と無関係な設定取得には空オブジェクトを返す。 */
     getAppSettings: () => ({}) as never,
+    /** テンプレート一覧を通知対象に含めないため、空一覧を用意する。 */
     listPromptTemplates: () => [],
+    /** 個別ウィンドウ通知に依存しないよう、一覧は空にする。 */
     listOpenSessionWindowIds: () => [],
   });
 
-  facade.broadcastSessions(Array.from({ length: 257 }, (_, index) => `session-${index}`));
+  facade.broadcastSessions(
+    Array.from({ length: 257 }, (_, index) => `session-${index}`),
+  );
   facade.broadcastSessions([]);
 
   assert.deepEqual(payloads, [{ scope: "all" }, { scope: "all" }]);

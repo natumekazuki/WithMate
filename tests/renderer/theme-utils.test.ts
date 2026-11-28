@@ -9,6 +9,7 @@ import {
   resolveReadableTextColor,
 } from "../../src/ui/theme-utils.js";
 
+/** 背景に合う前景色の選択とキャラクター配色のCSS変数への反映を検証する。 */
 describe("theme utils", () => {
   // @test-value v2
   // kind = "contract"
@@ -20,12 +21,23 @@ describe("theme utils", () => {
   // scope = "resolveReadableTextColorの代表背景入力に対する可読色選択"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 明暗と色相が異なる代表背景に対し、選んだ前景色が4.5対1以上のコントラストを持つことを確認する。 */
   it("背景色に対して WCAG AA を満たす前景色を選ぶ", () => {
-    const samples = ["#ffffff", "#000000", "#6f8cff", "#ffd166", "#1f2937", "#22c55e"];
+    const samples = [
+      "#ffffff",
+      "#000000",
+      "#6f8cff",
+      "#ffd166",
+      "#1f2937",
+      "#22c55e",
+    ];
 
     for (const background of samples) {
       const ink = resolveReadableTextColor(background);
-      assert.ok(contrastRatio(ink, background) >= 4.5, `${background} should meet 4.5:1`);
+      assert.ok(
+        contrastRatio(ink, background) >= 4.5,
+        `${background} should meet 4.5:1`,
+      );
     }
   });
 
@@ -39,6 +51,7 @@ describe("theme utils", () => {
   // scope = "背景#6f8cffでのmuted alpha範囲とpalette出力shape。実描画contrastの検証ではない"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 補助色の透明度が正の有効範囲に収まり、パレットから文字列で取得できることを確認する。 */
   it("muted alphaとpaletteは有効な出力形式を返す", () => {
     const background = "#6f8cff";
     const ink = resolveReadableTextColor(background);
@@ -59,6 +72,7 @@ describe("theme utils", () => {
   // scope = "buildCharacterThemeStyle readable ink"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 配色と淡い背景色がCSS変数に反映され、メイン背景に対する文字色がAA基準を満たすことを確認する。 */
   it("character theme style は readable ink を CSS var へ入れる", () => {
     const style = buildCharacterThemeStyle({ main: "#f8b4d9", sub: "#2563eb" });
     const characterStyle = style as Record<string, string>;
@@ -78,6 +92,8 @@ describe("theme utils", () => {
       },
     );
     assert.ok(typeof characterStyle["--character-main-ink"] === "string");
-    assert.ok(contrastRatio(characterStyle["--character-main-ink"], "#f8b4d9") >= 4.5);
+    assert.ok(
+      contrastRatio(characterStyle["--character-main-ink"], "#f8b4d9") >= 4.5,
+    );
   });
 });

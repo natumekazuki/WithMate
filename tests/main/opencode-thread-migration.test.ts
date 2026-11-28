@@ -1,63 +1,182 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import type { OpenCodeClient, SessionInfo, SessionTransferData } from "@opencode/client";
+import type {
+  OpenCodeClient,
+  SessionInfo,
+  SessionTransferData,
+} from "@opencode/client";
 import { migrateOpenCodeThread } from "../../src-electron/providers/opencode/opencode-thread-migration.js";
 
-const runtimeOwner = { kind: "main" as const, id: "owner", incarnationId: "incarnation" };
+const runtimeOwner = {
+  kind: "main" as const,
+  id: "owner",
+  incarnationId: "incarnation",
+};
 const workspacePath = process.cwd();
 
+/** 同じ workspace と runtime 所有者を持つ OpenCode Session を、指定の親子関係で作る。 */
 function session(id: string, parentID?: string): SessionInfo {
-  return { id, parentID, projectID: "project", location: { directory: workspacePath },
-    metadata: { withmateOwner: { schema: 1, ...runtimeOwner } }, permissions: [{ action: "shell", resource: "*", effect: "ask" }],
-    cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 2 } };
+  return {
+    id,
+    parentID,
+    projectID: "project",
+    location: { directory: workspacePath },
+    metadata: { withmateOwner: { schema: 1, ...runtimeOwner } },
+    permissions: [{ action: "shell", resource: "*", effect: "ask" }],
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 2 },
+  };
 }
 
+/** ページのある親子一覧、移送内容、各種中断をメモリ内の source と target で再現する。 */
 function fixture() {
-  const sourceData = new Map<string, SessionTransferData>(["root", "child", "archived", "grandchild"].map((id) => [id, {
-    info: { ...session(id, id === "root" ? undefined : id === "grandchild" ? "child" : "root"),
-      time: { created: 1, updated: 2, ...(id === "archived" ? { archived: 3 } : {}) } },
-    messages: [{ id: `message-${id}`, type: "user", text: `history-${id}`, time: { created: 1 } }],
-  }]));
+  const sourceData = new Map<string, SessionTransferData>(
+    ["root", "child", "archived", "grandchild"].map((id) => [
+      id,
+      {
+        info: {
+          ...session(
+            id,
+            id === "root" ? undefined : id === "grandchild" ? "child" : "root",
+          ),
+          time: {
+            created: 1,
+            updated: 2,
+            ...(id === "archived" ? { archived: 3 } : {}),
+          },
+        },
+        messages: [
+          {
+            id: `message-${id}`,
+            type: "user",
+            text: `history-${id}`,
+            time: { created: 1 },
+          },
+        ],
+      },
+    ]),
+  );
   const targetData = new Map<string, SessionTransferData>();
   const imports: string[] = [];
   const exports: string[] = [];
-  const pages: Array<{ parentID?: string | null; cursor?: string; archived?: boolean }> = [];
+  const pages: Array<{
+    parentID?: string | null;
+    cursor?: string;
+    archived?: boolean;
+  }> = [];
   let failImport = "";
   let pending = "";
   let active = "";
   let repeatedCursor = false;
-  const source = { session: {
-    get: async ({ sessionID }: { sessionID: string }) => sourceData.get(sessionID)!.info,
-    inbox: { list: async ({ sessionID }: { sessionID: string }) => sessionID === pending ? [{ type: "synthetic" }] : [] },
-    active: async () => active ? { [active]: {} } : {},
-    list: async (query: { parentID?: string | null; cursor?: string; archived?: boolean }) => {
-      pages.push(query);
-      const ids = query.parentID === "root" ? (query.cursor ? ["archived"] : ["child"]) : query.parentID === "child" ? ["grandchild"] : [];
-      return { data: ids.map((id) => sourceData.get(id)!.info), cursor: { next: query.parentID === "root" && (!query.cursor || repeatedCursor) ? "page-2" : undefined } };
+  const source = {
+    session: {
+      /** 移行前チェックに使う source の Session 情報を返す。 */
+      get: async ({ sessionID }: { sessionID: string }) =>
+        sourceData.get(sessionID)!.info,
+      inbox: {
+        /** 指定された子だけに未処理メッセージを置く。 */
+        list: async ({ sessionID }: { sessionID: string }) =>
+          sessionID === pending ? [{ type: "synthetic" }] : [],
+      },
+      /** 走行中と指定した ID があれば一覧に載せる。 */
+      active: async () => (active ? { [active]: {} } : {}),
+      /** ルートの子を二ページに分け、子の子も辿れる一覧を返す。 */
+      list: async (query: {
+        parentID?: string | null;
+        cursor?: string;
+        archived?: boolean;
+      }) => {
+        pages.push(query);
+        const ids =
+          query.parentID === "root"
+            ? query.cursor
+              ? ["archived"]
+              : ["child"]
+            : query.parentID === "child"
+              ? ["grandchild"]
+              : [];
+        return {
+          data: ids.map((id) => sourceData.get(id)!.info),
+          cursor: {
+            next:
+              query.parentID === "root" && (!query.cursor || repeatedCursor)
+                ? "page-2"
+                : undefined,
+          },
+        };
+      },
+      /** サニタイズ指定なしで呼ばれたことを検査し、source を変えないよう複製を渡す。 */
+      export: async ({
+        sessionID,
+        sanitize,
+      }: {
+        sessionID: string;
+        sanitize?: boolean;
+      }) => {
+        assert.equal(sanitize, undefined);
+        exports.push(sessionID);
+        return structuredClone(sourceData.get(sessionID)!);
+      },
     },
-    export: async ({ sessionID, sanitize }: { sessionID: string; sanitize?: boolean }) => {
-      assert.equal(sanitize, undefined);
-      exports.push(sessionID);
-      return structuredClone(sourceData.get(sessionID)!);
+  } as unknown as OpenCodeClient;
+  const target = {
+    session: {
+      /** 再利用すべき移行済み Session を返し、なければ SDK と同じ判別用タグを返す。 */
+      get: async ({ sessionID }: { sessionID: string }) => {
+        if (!targetData.has(sessionID))
+          throw { _tag: "SessionNotFoundError", sessionID, message: "missing" };
+        return targetData.get(sessionID)!.info;
+      },
+      /** 親より先に子を取り込めないようにし、workspace と書き込み順を検査・記録する。 */
+      import: async (
+        data: SessionTransferData & { location: { directory: string } },
+      ) => {
+        if (data.info.id === failImport) throw new Error("interrupted import");
+        assert.ok(!data.info.parentID || targetData.has(data.info.parentID));
+        assert.equal(data.location.directory, workspacePath);
+        imports.push(data.info.id);
+        targetData.set(
+          data.info.id,
+          structuredClone({ info: data.info, messages: data.messages }),
+        );
+        return data.info;
+      },
     },
-  } } as unknown as OpenCodeClient;
-  const target = { session: {
-    get: async ({ sessionID }: { sessionID: string }) => {
-      if (!targetData.has(sessionID)) throw { _tag: "SessionNotFoundError", sessionID, message: "missing" };
-      return targetData.get(sessionID)!.info;
+  } as unknown as OpenCodeClient;
+  return {
+    sourceData,
+    targetData,
+    imports,
+    exports,
+    pages,
+    /** 同じ両端点を使って、取消可能なルート移行を実行する。 */
+    run: (signal?: AbortSignal) =>
+      migrateOpenCodeThread({
+        source,
+        target,
+        rootID: "root",
+        workspacePath,
+        runtimeOwner,
+        signal,
+      }),
+    /** 指定 ID の import を失敗させ、空に戻せば残りを再試行できる。 */
+    fail: (id: string) => {
+      failImport = id;
     },
-    import: async (data: SessionTransferData & { location: { directory: string } }) => {
-      if (data.info.id === failImport) throw new Error("interrupted import");
-      assert.ok(!data.info.parentID || targetData.has(data.info.parentID));
-      assert.equal(data.location.directory, workspacePath);
-      imports.push(data.info.id);
-      targetData.set(data.info.id, structuredClone({ info: data.info, messages: data.messages }));
-      return data.info;
+    /** 移行前に inbox が空でない ID を指定する。 */
+    pending: (id: string) => {
+      pending = id;
     },
-  } } as unknown as OpenCodeClient;
-  return { sourceData, targetData, imports, exports, pages, run: (signal?: AbortSignal) => migrateOpenCodeThread({ source, target, rootID: "root", workspacePath, runtimeOwner, signal }),
-    fail: (id: string) => { failImport = id; }, pending: (id: string) => { pending = id; }, active: (id: string) => { active = id; },
-    repeatCursor: () => { repeatedCursor = true; } };
+    /** 移行開始を拒否すべき稼働中の ID を指定する。 */
+    active: (id: string) => {
+      active = id;
+    },
+    /** 次ページが同じカーソルを返す異常を再現する。 */
+    repeatCursor: () => {
+      repeatedCursor = true;
+    },
+  };
 }
 
 // @test-value v2
@@ -72,14 +191,24 @@ function fixture() {
 // impact = "公開済み会話の継続contextや子会話を失う"
 // distinction = "型検査では検出できない複数Sessionとpaginationの移行をin-memory client境界で低コストに検査する"
 // @end-test-value
+/** 二ページ目のアーカイブ済みの子と子の子も親の後に移し、権限と履歴を含む元データ一式を変更しない。 */
 it("migrates the complete paginated family without changing source data", async () => {
   const scenario = fixture();
   const original = structuredClone(scenario.sourceData);
   assert.equal((await scenario.run()).id, "root");
-  assert.deepEqual(scenario.imports, ["root", "child", "archived", "grandchild"]);
+  assert.deepEqual(scenario.imports, [
+    "root",
+    "child",
+    "archived",
+    "grandchild",
+  ]);
   assert.deepEqual(scenario.targetData, original);
   assert.deepEqual(scenario.sourceData, original);
-  assert.ok(scenario.pages.some((page) => page.parentID === "root" && page.cursor === "page-2"));
+  assert.ok(
+    scenario.pages.some(
+      (page) => page.parentID === "root" && page.cursor === "page-2",
+    ),
+  );
   assert.ok(scenario.pages.every((page) => page.archived === undefined));
 });
 
@@ -93,6 +222,7 @@ it("migrates the complete paginated family without changing source data", async 
 // scope = "OpenCode transfer recovery"
 // lifecycle = "permanent"
 // @end-test-value
+/** Archive の取り込みで中断した後、再実行で残った子だけを保存し、さらに再実行しても既存 ID の二重 import は起こらない。 */
 it("resumes after a partial import without importing existing identities twice", async () => {
   const scenario = fixture();
   scenario.fail("archived");
@@ -101,7 +231,12 @@ it("resumes after a partial import without importing existing identities twice",
   scenario.fail("");
   await scenario.run();
   await scenario.run();
-  assert.deepEqual(scenario.imports, ["root", "child", "archived", "grandchild"]);
+  assert.deepEqual(scenario.imports, [
+    "root",
+    "child",
+    "archived",
+    "grandchild",
+  ]);
   assert.deepEqual(scenario.targetData, scenario.sourceData);
 });
 
@@ -116,13 +251,26 @@ it("resumes after a partial import without importing existing identities twice",
 // lifecycle = "permanent"
 // risk_tags = ["authorization", "privacy"]
 // @end-test-value
+/** ID・所有者・親・workspace が異なる source と既存 target を移行に使わず、衝突した target を書き換えない。 */
 it("rejects foreign source and target identities", async () => {
   const mutations: Array<(info: SessionInfo) => void> = [
-    (info) => { info.id = "wrong"; },
-    (info) => { info.metadata = { withmateOwner: { schema: 2, ...runtimeOwner } }; },
-    (info) => { info.metadata = { withmateOwner: { schema: 1, ...runtimeOwner, incarnationId: "other" } }; },
-    (info) => { info.parentID = "other"; },
-    (info) => { info.location.directory = `${workspacePath}/other`; },
+    (info) => {
+      info.id = "wrong";
+    },
+    (info) => {
+      info.metadata = { withmateOwner: { schema: 2, ...runtimeOwner } };
+    },
+    (info) => {
+      info.metadata = {
+        withmateOwner: { schema: 1, ...runtimeOwner, incarnationId: "other" },
+      };
+    },
+    (info) => {
+      info.parentID = "other";
+    },
+    (info) => {
+      info.location.directory = `${workspacePath}/other`;
+    },
   ];
   for (const mutate of mutations) {
     const source = fixture();
@@ -130,7 +278,10 @@ it("rejects foreign source and target identities", async () => {
     await assert.rejects(source.run(), /does not match/);
     assert.equal(source.imports.length, 0);
     const target = fixture();
-    target.targetData.set("child", structuredClone(target.sourceData.get("child")!));
+    target.targetData.set(
+      "child",
+      structuredClone(target.sourceData.get("child")!),
+    );
     mutate(target.targetData.get("child")!.info);
     const before = structuredClone(target.targetData.get("child"));
     await assert.rejects(target.run(), /does not match/);
@@ -148,6 +299,7 @@ it("rejects foreign source and target identities", async () => {
 // scope = "OpenCode transfer admission"
 // lifecycle = "permanent"
 // @end-test-value
+/** 未処理 inbox、稼働中の子孫、進まない一覧カーソル、事前取消のいずれでも、移行先への書き込みを始めない。 */
 it("rejects pending children, active threads, malformed traversal and cancellation before importing", async () => {
   const pending = fixture();
   pending.pending("child");
@@ -162,6 +314,8 @@ it("rejects pending children, active threads, malformed traversal and cancellati
   await assert.rejects(cursor.run(), /cursor did not advance/);
   assert.equal(cursor.imports.length, 0);
   const canceled = fixture();
-  await assert.rejects(canceled.run(AbortSignal.abort()), { name: "AbortError" });
+  await assert.rejects(canceled.run(AbortSignal.abort()), {
+    name: "AbortError",
+  });
   assert.equal(canceled.imports.length, 0);
 });

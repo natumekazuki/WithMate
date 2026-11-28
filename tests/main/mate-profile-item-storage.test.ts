@@ -9,11 +9,13 @@ import { MateProfileItemStorage } from "../../src-electron/mate/mate-profile-ite
 
 const BASE_TIME = "2026-01-01T00:00:00.000Z";
 
+/** プロフィール項目の参照先となる現在の Mate を実データベースに登録する。 */
 function seedCurrentMate(dbPath: string): void {
   const now = BASE_TIME;
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mate_profile (
         id,
         state,
@@ -30,18 +32,21 @@ function seedCurrentMate(dbPath: string): void {
         updated_at,
         deleted_at
       ) VALUES (?, 'active', 'current', '', '#6f8cff', '#6fb8c7', '', '', 0, NULL, 1, ?, ?, NULL)
-    `).run("current", now, now);
+    `,
+    ).run("current", now, now);
   } finally {
     db.close();
   }
 }
 
+/** 項目と関連付けられるプロジェクト要約を登録し、その識別子を返す。 */
 function seedProjectDigest(dbPath: string): string {
   const now = BASE_TIME;
   const projectDigestId = "pd_1";
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mate_project_digests (
         id,
         mate_id,
@@ -60,7 +65,8 @@ function seedProjectDigest(dbPath: string): string {
         created_at,
         updated_at
       ) VALUES (?, ?, 'git', 'git:example', '/tmp', '', 'example', '/tmp/example.digest', '', 0, NULL, NULL, NULL, NULL, ?, ?)
-    `).run(projectDigestId, "current", now, now);
+    `,
+    ).run(projectDigestId, "current", now, now);
   } finally {
     db.close();
   }
@@ -68,11 +74,13 @@ function seedProjectDigest(dbPath: string): string {
   return projectDigestId;
 }
 
+/** 項目の由来として指定できる学習イベントを登録する。 */
 function seedGrowthEvent(dbPath: string, growthEventId: string): void {
   const now = BASE_TIME;
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mate_growth_events (
         id,
         mate_id,
@@ -96,17 +104,24 @@ function seedGrowthEvent(dbPath: string, growthEventId: string): void {
         created_at,
         updated_at
       ) VALUES (?, 'current', 'system', 'assistant_inference', 'preference', 'core', 'generated', 'generated', '', 'auto', 'new', 'x', 1, 1, 1, 0, 'applied', ?, ?, ?, ?)
-    `).run(growthEventId, now, now, now, now);
+    `,
+    ).run(growthEventId, now, now, now, now);
   } finally {
     db.close();
   }
 }
 
-function seedProfileRevision(dbPath: string, revisionId: string, sequence = 1): void {
+/** 無効化・忘却等の変更を帰属させるプロフィール改訂を連番付きで登録する。 */
+function seedProfileRevision(
+  dbPath: string,
+  revisionId: string,
+  sequence = 1,
+): void {
   const now = BASE_TIME;
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mate_profile_revisions (
         id,
         mate_id,
@@ -123,17 +138,23 @@ function seedProfileRevision(dbPath: string, revisionId: string, sequence = 1): 
         failed_at,
         reverted_by_revision_id
       ) VALUES (?, 'current', ?, NULL, 'ready', 'manual_edit', NULL, 'revision', '', 'system', ?, ?, NULL, NULL)
-    `).run(revisionId, sequence, now, now);
+    `,
+    ).run(revisionId, sequence, now, now);
   } finally {
     db.close();
   }
 }
 
-function seedGrowthApplyRun(dbPath: string, status: "queued" | "applying"): void {
+/** 項目操作と競合する学習適用を、待機中または適用中の状態で登録する。 */
+function seedGrowthApplyRun(
+  dbPath: string,
+  status: "queued" | "applying",
+): void {
   const now = BASE_TIME;
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO mate_growth_runs (
         mate_id,
         source_type,
@@ -143,12 +164,14 @@ function seedGrowthApplyRun(dbPath: string, status: "queued" | "applying"): void
         input_hash,
         started_at
       ) VALUES (?, 'system', 'test', ?, ?, ?, ?)
-    `).run("current", status, `growth-apply:${status}`, `hash-${status}`, now);
+    `,
+    ).run("current", status, `growth-apply:${status}`, `hash-${status}`, now);
   } finally {
     db.close();
   }
 }
 
+/** 学習適用の登録を取り除き、後続の状態遷移を検証できるようにする。 */
 function clearGrowthApplyRuns(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -158,9 +181,13 @@ function clearGrowthApplyRuns(dbPath: string): void {
   }
 }
 
+/** Mate のプロフィール項目の保存・検索・由来・状態遷移を実 SQLite で検証する。 */
 describe("MateProfileItemStorage", () => {
+  /** プロジェクト要約以外では関連 ID を空にし、同じ主張を再保存しても重複せずタグを置き換える。 */
   it("upsert は project_digest を除き project_digest_id を null 化し、同一 claim は上書きしてタグを差し替えます", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -199,7 +226,10 @@ describe("MateProfileItemStorage", () => {
       assert.equal(second.tags.length, 0);
       assert.equal(second.projectDigestId, null);
 
-      const listed = storage.listProfileItems({ sectionKey: "core", state: "active" });
+      const listed = storage.listProfileItems({
+        sectionKey: "core",
+        state: "active",
+      });
       assert.equal(listed.length, 1);
       assert.equal(listed[0].claimKey, "foo");
     } finally {
@@ -208,8 +238,11 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  /** 指定した学習イベントごとのメモリータグを一括取得できることを確認する。 */
   it("listMemoryTagsByGrowthEventIds で対象 growth event の tags をまとめて取得できます", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -222,7 +255,8 @@ describe("MateProfileItemStorage", () => {
       const db = new DatabaseSync(dbPath);
       try {
         const now = BASE_TIME;
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO mate_memory_tags (
             memory_id,
             tag_type,
@@ -230,8 +264,10 @@ describe("MateProfileItemStorage", () => {
             tag_value_normalized,
             created_at
           ) VALUES (?, ?, ?, ?, ?)
-        `).run(growthEventId, "Topic", "work", "work", now);
-        db.prepare(`
+        `,
+        ).run(growthEventId, "Topic", "work", "work", now);
+        db.prepare(
+          `
           INSERT INTO mate_memory_tags (
             memory_id,
             tag_type,
@@ -239,27 +275,30 @@ describe("MateProfileItemStorage", () => {
             tag_value_normalized,
             created_at
           ) VALUES (?, ?, ?, ?, ?)
-        `).run(growthEventId, "Scope", "frontend", "frontend", now);
+        `,
+        ).run(growthEventId, "Scope", "frontend", "frontend", now);
       } finally {
         db.close();
       }
 
-      const tagsByGrowthEventId = storage.listMemoryTagsByGrowthEventIds([growthEventId]);
-      assert.deepEqual(
-        tagsByGrowthEventId.get(growthEventId),
-        [
-          { type: "Topic", value: "work" },
-          { type: "Scope", value: "frontend" },
-        ],
-      );
+      const tagsByGrowthEventId = storage.listMemoryTagsByGrowthEventIds([
+        growthEventId,
+      ]);
+      assert.deepEqual(tagsByGrowthEventId.get(growthEventId), [
+        { type: "Topic", value: "work" },
+        { type: "Scope", value: "frontend" },
+      ]);
     } finally {
       storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** プロジェクト要約の項目には関連先を必須とし、有効な識別子は保存後にも残す。 */
   it("sectionKey=project_digest では projectDigestId を必須にし、保存時に紐付けます", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -302,8 +341,11 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  /** 同じ学習由来を項目の新規作成と既存内容の補強で別の関係として保存する。 */
   it("sourceGrowthEventId がある場合、作成時 created_by / 更新時 reinforced_by を source に保存します", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -326,13 +368,20 @@ describe("MateProfileItemStorage", () => {
       });
 
       const db = new DatabaseSync(dbPath);
-      const linksAfterCreate = db.prepare(`
+      const linksAfterCreate = db
+        .prepare(
+          `
         SELECT link_type
         FROM mate_profile_item_sources
         WHERE profile_item_id = ?
         ORDER BY link_type
-      `).all(created.id) as Array<{ link_type: string }>;
-      assert.deepEqual(linksAfterCreate.map((row) => row.link_type), ["created_by"]);
+      `,
+        )
+        .all(created.id) as Array<{ link_type: string }>;
+      assert.deepEqual(
+        linksAfterCreate.map((row) => row.link_type),
+        ["created_by"],
+      );
 
       storage.upsertProfileItem({
         id: created.id,
@@ -347,23 +396,33 @@ describe("MateProfileItemStorage", () => {
         sourceGrowthEventId: growthEventId,
       });
 
-      const linksAfterUpdate = db.prepare(`
+      const linksAfterUpdate = db
+        .prepare(
+          `
         SELECT link_type
         FROM mate_profile_item_sources
         WHERE profile_item_id = ?
         ORDER BY link_type
-      `).all(created.id) as Array<{ link_type: string }>;
+      `,
+        )
+        .all(created.id) as Array<{ link_type: string }>;
       db.close();
 
-      assert.deepEqual(linksAfterUpdate.map((row) => row.link_type), ["created_by", "reinforced_by"]);
+      assert.deepEqual(
+        linksAfterUpdate.map((row) => row.link_type),
+        ["created_by", "reinforced_by"],
+      );
     } finally {
       storage?.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** 保存項目の一覧を部門・分類・状態・プロジェクト要約の条件で絞り込めることを確認する。 */
   it("listProfileItems で section/category/state/projectDigestId を絞り込めます", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -415,9 +474,18 @@ describe("MateProfileItemStorage", () => {
       });
 
       const allNotes = storage.listProfileItems({ sectionKey: "notes" });
-      const globalNotes = storage.listProfileItems({ sectionKey: "notes", category: "note" });
-      const byState = storage.listProfileItems({ state: "active", category: "work_style" });
-      const byProjectDigest = storage.listProfileItems({ sectionKey: "project_digest", projectDigestId: digestId });
+      const globalNotes = storage.listProfileItems({
+        sectionKey: "notes",
+        category: "note",
+      });
+      const byState = storage.listProfileItems({
+        state: "active",
+        category: "work_style",
+      });
+      const byProjectDigest = storage.listProfileItems({
+        sectionKey: "project_digest",
+        projectDigestId: digestId,
+      });
 
       assert.equal(allNotes.length, 2);
       assert.equal(globalNotes.length, 2);
@@ -430,8 +498,11 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  /** 忘却と無効化のそれぞれで、項目の状態と対応する時刻が更新されることを確認する。 */
   it("forgetProfileItem と disableProfileItem が状態遷移と時刻更新を行います", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -455,13 +526,21 @@ describe("MateProfileItemStorage", () => {
       });
 
       storage.forgetProfileItem(item.id, forgetRevision);
-      const forgotten = storage.listProfileItems({ sectionKey: "core", category: "boundary", state: "forgotten" });
+      const forgotten = storage.listProfileItems({
+        sectionKey: "core",
+        category: "boundary",
+        state: "forgotten",
+      });
       assert.equal(forgotten.length, 1);
       assert.equal(forgotten[0].forgottenRevisionId, forgetRevision);
       assert.equal(forgotten[0].forgottenAt !== null, true);
 
       storage.disableProfileItem(item.id, disableRevision);
-      const disabled = storage.listProfileItems({ sectionKey: "core", category: "boundary", state: "disabled" });
+      const disabled = storage.listProfileItems({
+        sectionKey: "core",
+        category: "boundary",
+        state: "disabled",
+      });
       assert.equal(disabled.length, 1);
       assert.equal(disabled[0].disabledRevisionId, disableRevision);
       assert.equal(disabled[0].disabledAt !== null, true);
@@ -471,8 +550,11 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  /** 忘却したプロフィール項目を再学習の対象にしないため、トランザクション内に抑止記録を保存する。 */
   it("createForgottenTombstoneForProfileItemInTransaction は profile item の再学習抑制 tombstone を保存します", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -510,7 +592,9 @@ describe("MateProfileItemStorage", () => {
         );
         db.exec("COMMIT;");
 
-        const tombstone = db.prepare(`
+        const tombstone = db
+          .prepare(
+            `
           SELECT
             digest_kind,
             category,
@@ -520,14 +604,18 @@ describe("MateProfileItemStorage", () => {
             created_at
           FROM mate_forgotten_tombstones
           WHERE source_profile_item_id = ?
-        `).get(item.id) as {
-          digest_kind: string;
-          category: string;
-          section_key: string;
-          source_profile_item_id: string;
-          redaction_revision_id: string;
-          created_at: string;
-        } | undefined;
+        `,
+          )
+          .get(item.id) as
+          | {
+              digest_kind: string;
+              category: string;
+              section_key: string;
+              source_profile_item_id: string;
+              redaction_revision_id: string;
+              created_at: string;
+            }
+          | undefined;
 
         assert.ok(tombstone);
         assert.equal(tombstone.digest_kind, "normalized_claim");
@@ -545,8 +633,11 @@ describe("MateProfileItemStorage", () => {
     }
   });
 
+  /** 学習の適用中は項目の忘却・無効化を拒否し、項目を有効のまま保持する。 */
   it("growth apply 実行中は forgetProfileItem と disableProfileItem が throw し、active のまま残ります", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-profile-item-storage-"));
+    const tempDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-profile-item-storage-"),
+    );
     const dbPath = path.join(tempDirectory, "withmate-v4.db");
     let storage: MateProfileItemStorage | null = null;
 
@@ -577,7 +668,11 @@ describe("MateProfileItemStorage", () => {
           { message: "Growth apply はすでに実行中です。" },
         );
 
-        const activeItems = storage.listProfileItems({ sectionKey: "core", category: "boundary", state: "active" });
+        const activeItems = storage.listProfileItems({
+          sectionKey: "core",
+          category: "boundary",
+          state: "active",
+        });
         assert.equal(activeItems.length, 1);
         assert.equal(activeItems[0].state, "active");
 
@@ -589,5 +684,3 @@ describe("MateProfileItemStorage", () => {
     }
   });
 });
-
-

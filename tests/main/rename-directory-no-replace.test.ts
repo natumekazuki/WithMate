@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -18,21 +28,28 @@ import { renameDirectoryNoReplace } from "../../src-electron/platform/filesystem
 // impact = "排他的renameがない環境で既存SessionFolderを失う危険を防ぐ"
 // distinction = "実FSの成功系ではnative symbolの欠落を再現できず型検査でもfallbackの実行を検出できない"
 // @end-test-value
+/** ネイティブ操作を読み込めない場合に、通常の改名へ切り替えず元の例外を添えて拒否することを確認する。 */
 test("renameDirectoryNoReplace rejects unavailable native bindings without moving the source", (context) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "withmate-no-replace-"));
+  /** 検証で作成したディレクトリを終了時に取り除く。 */
   context.after(() => rmSync(root, { recursive: true, force: true }));
   const source = path.join(root, "source");
   const destination = path.join(root, "destination");
   mkdirSync(source);
   const cause = new Error("Native rename symbol unavailable");
-  const load = context.mock.method(koffi, "load", () => { throw cause; });
+  const load = context.mock.method(koffi, "load", () => {
+    throw cause;
+  });
   try {
-    assert.throws(() => renameDirectoryNoReplace(source, destination), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.equal((error as NodeJS.ErrnoException).code, "ENOTSUP");
-      assert.equal(error.cause, cause);
-      return true;
-    });
+    assert.throws(
+      () => renameDirectoryNoReplace(source, destination),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as NodeJS.ErrnoException).code, "ENOTSUP");
+        assert.equal(error.cause, cause);
+        return true;
+      },
+    );
     assert.equal(existsSync(source), true);
     assert.equal(existsSync(destination), false);
   } finally {
@@ -50,11 +67,17 @@ test("renameDirectoryNoReplace rejects unavailable native bindings without movin
 // scope = "SessionFolder publishのplatform境界"
 // lifecycle = "permanent"
 // @end-test-value
+/** 未対応の OS では排他的な改名を提供できないことを明示する。 */
 test("renameDirectoryNoReplace explicitly rejects unsupported platforms", () => {
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { ...descriptor, value: "freebsd" });
+  Object.defineProperty(process, "platform", {
+    ...descriptor,
+    value: "freebsd",
+  });
   try {
-    assert.throws(() => renameDirectoryNoReplace("source", "destination"), { code: "ENOTSUP" });
+    assert.throws(() => renameDirectoryNoReplace("source", "destination"), {
+      code: "ENOTSUP",
+    });
   } finally {
     Object.defineProperty(process, "platform", descriptor);
   }
@@ -72,8 +95,10 @@ test("renameDirectoryNoReplace explicitly rejects unsupported platforms", () => 
 // impact = "publish直後のcrashから同じdirectoryを照合して再開する前提を守る"
 // distinction = "型検査やmockではOSのrenameとcopy/deleteのidentity差を検出できない"
 // @end-test-value
+/** 存在しない宛先への改名で、Unicode のパスと中身およびディレクトリの同一性を保つことを確認する。 */
 test("renameDirectoryNoReplace moves into a missing destination without changing directory identity", (context) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "withmate-no-replace-"));
+  /** 改名後の宛先を含む一時領域を片付ける。 */
   context.after(() => rmSync(root, { recursive: true, force: true }));
   const source = path.join(root, "元フォルダー-🌱");
   const destination = path.join(root, "公開フォルダー-🌸");
@@ -87,7 +112,10 @@ test("renameDirectoryNoReplace moves into a missing destination without changing
   const after = lstatSync(destination, { bigint: true });
   assert.equal(after.dev, before.dev);
   assert.equal(after.ino, before.ino);
-  assert.equal(readFileSync(path.join(destination, "content.txt"), "utf8"), "source content");
+  assert.equal(
+    readFileSync(path.join(destination, "content.txt"), "utf8"),
+    "source content",
+  );
 });
 
 // @test-value v2
@@ -103,10 +131,17 @@ test("renameDirectoryNoReplace moves into a missing destination without changing
 // distinction = "通常renameも空directoryを置換できるため実FSでのentry種別別確認が必要"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 宛先の種類を問わず衝突を報告し、改名前の両方の実体と内容を保持することを確認する。 */
 test("renameDirectoryNoReplace preserves every existing destination entry", (context) => {
   const root = mkdtempSync(path.join(os.tmpdir(), "withmate-no-replace-"));
+  /** 衝突の検証で残る元と宛先を一時領域ごと片付ける。 */
   context.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const kind of ["empty-directory", "nonempty-directory", "file", "symlink"]) {
+  for (const kind of [
+    "empty-directory",
+    "nonempty-directory",
+    "file",
+    "symlink",
+  ]) {
     const source = path.join(root, `source-${kind}`);
     const destination = path.join(root, `destination-${kind}`);
     mkdirSync(source);
@@ -117,26 +152,41 @@ test("renameDirectoryNoReplace preserves every existing destination entry", (con
     } else if (kind === "symlink") {
       linkTarget = path.join(root, "link-target");
       mkdirSync(linkTarget);
-      writeFileSync(path.join(linkTarget, "existing.txt"), "destination content");
-      symlinkSync(linkTarget, destination, process.platform === "win32" ? "junction" : "dir");
+      writeFileSync(
+        path.join(linkTarget, "existing.txt"),
+        "destination content",
+      );
+      symlinkSync(
+        linkTarget,
+        destination,
+        process.platform === "win32" ? "junction" : "dir",
+      );
     } else {
       mkdirSync(destination);
-      if (kind === "nonempty-directory") writeFileSync(path.join(destination, "existing.txt"), "destination content");
+      if (kind === "nonempty-directory")
+        writeFileSync(
+          path.join(destination, "existing.txt"),
+          "destination content",
+        );
     }
     const sourceBefore = lstatSync(source, { bigint: true });
     const destinationBefore = lstatSync(destination, { bigint: true });
-    const targetBefore = kind === "symlink" ? readlinkSync(destination) : undefined;
+    const targetBefore =
+      kind === "symlink" ? readlinkSync(destination) : undefined;
 
-    assert.throws(() => renameDirectoryNoReplace(source, destination), (error: unknown) => {
-      assert.ok(error instanceof Error);
-      const nativeError = error as NodeJS.ErrnoException & { dest: string };
-      assert.equal(typeof nativeError.errno, "number");
-      assert.ok(nativeError.errno! > 0);
-      assert.equal(nativeError.path, source);
-      assert.equal(nativeError.dest, destination);
-      assert.ok(nativeError.syscall);
-      return true;
-    });
+    assert.throws(
+      () => renameDirectoryNoReplace(source, destination),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        const nativeError = error as NodeJS.ErrnoException & { dest: string };
+        assert.equal(typeof nativeError.errno, "number");
+        assert.ok(nativeError.errno! > 0);
+        assert.equal(nativeError.path, source);
+        assert.equal(nativeError.dest, destination);
+        assert.ok(nativeError.syscall);
+        return true;
+      },
+    );
 
     const sourceAfter = lstatSync(source, { bigint: true });
     const destinationAfter = lstatSync(destination, { bigint: true });
@@ -144,12 +194,23 @@ test("renameDirectoryNoReplace preserves every existing destination entry", (con
     assert.equal(sourceAfter.ino, sourceBefore.ino);
     assert.equal(destinationAfter.dev, destinationBefore.dev);
     assert.equal(destinationAfter.ino, destinationBefore.ino);
-    assert.equal(readFileSync(path.join(source, "source.txt"), "utf8"), "source content");
-    if (kind === "file") assert.equal(readFileSync(destination, "utf8"), "destination content");
-    if (kind === "nonempty-directory") assert.equal(readFileSync(path.join(destination, "existing.txt"), "utf8"), "destination content");
+    assert.equal(
+      readFileSync(path.join(source, "source.txt"), "utf8"),
+      "source content",
+    );
+    if (kind === "file")
+      assert.equal(readFileSync(destination, "utf8"), "destination content");
+    if (kind === "nonempty-directory")
+      assert.equal(
+        readFileSync(path.join(destination, "existing.txt"), "utf8"),
+        "destination content",
+      );
     if (linkTarget !== undefined) {
       assert.equal(readlinkSync(destination), targetBefore);
-      assert.equal(readFileSync(path.join(linkTarget, "existing.txt"), "utf8"), "destination content");
+      assert.equal(
+        readFileSync(path.join(linkTarget, "existing.txt"), "utf8"),
+        "destination content",
+      );
     }
   }
 });

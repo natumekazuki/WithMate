@@ -14,6 +14,7 @@ import { searchModelPickerOptions } from "../../src/settings/model-search.js";
 // impact = "大量の同名modelから意図した候補を探せなくなる"
 // distinction = "型検査や描画確認では検出できない比較と検索順位を少数の候補で検証する"
 // @end-test-value
+/** 空検索では番号を含む候補名の自然順と同名時の提供元・ID 順を、入力ありでは正規化した語に対する完全一致・前方一致・部分一致・提供元一致の順を確認する。 */
 test("Model search ranks name and ID matches before source and sorts naturally", () => {
   const options = [
     { value: "z", label: "Model 10", sourceLabel: "Beta" },
@@ -21,7 +22,10 @@ test("Model search ranks name and ID matches before source and sorts naturally",
     { value: "a2", label: "Model 2", sourceLabel: "Alpha" },
     { value: "a1", label: "Model 2", sourceLabel: "Alpha" },
   ];
-  assert.deepEqual(searchModelPickerOptions(options, "").map((option) => option.value), ["a1", "a2", "b", "z"]);
+  assert.deepEqual(
+    searchModelPickerOptions(options, "").map((option) => option.value),
+    ["a1", "a2", "b", "z"],
+  );
   const matches = [
     { value: "source", label: "A", sourceLabel: "Model" },
     { value: "substring", label: "My Model" },
@@ -30,5 +34,8 @@ test("Model search ranks name and ID matches before source and sorts naturally",
     { value: "model", label: "Z" },
     { value: "other", label: "Other" },
   ];
-  assert.deepEqual(searchModelPickerOptions(matches, " MoDeL ").map((option) => option.value), ["id", "model", "prefix", "substring", "source"]);
+  assert.deepEqual(
+    searchModelPickerOptions(matches, " MoDeL ").map((option) => option.value),
+    ["id", "model", "prefix", "substring", "source"],
+  );
 });

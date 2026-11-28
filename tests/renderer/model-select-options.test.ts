@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ModelCatalogItem, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type {
+  ModelCatalogItem,
+  ModelCatalogProvider,
+} from "../../src-shared/settings/model-catalog.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -42,6 +45,7 @@ const providerCatalog: ModelCatalogProvider = {
 // impact = "表示候補の選択で別Modelまたは別Depthが保存される"
 // distinction = "型検査では表示値と候補定義の対応値を確認できない"
 // @end-test-value
+/** 選択欄の表示名・値と、選択確定に使う元のモデル定義の対応を確認する。 */
 test("buildModelSelectOptions は model catalog item を select option に変換する", () => {
   assert.deepEqual(buildModelSelectOptions(models), [
     { value: "gpt-test", label: "GPT Test", model: models[0] },
@@ -61,6 +65,7 @@ test("buildModelSelectOptions は model catalog item を select option に変換
 // impact = "現在選択の表示を失うか不正な別候補として再選択させる"
 // distinction = "型検査では候補外値とSDK候補の実際の対応を検出できない"
 // @end-test-value
+/** 現在のカタログになくても保存済みモデルを先頭に残し、元定義は割り当てないことを確認する。 */
 test("buildModelSelectOptions は catalog にない選択中 model を先頭に保持する", () => {
   assert.deepEqual(buildModelSelectOptions(models, "legacy-model"), [
     { value: "legacy-model", label: "legacy-model", model: null },
@@ -81,13 +86,35 @@ test("buildModelSelectOptions は catalog にない選択中 model を先頭に�
 // impact = "取得元の識別または保存済みモデルの再送条件が失われる"
 // distinction = "構造の型検査ではSDK IDと取得元の値が正しく伝わることを確認できない"
 // @end-test-value
+/** 取得元ラベルとSDKに渡す不透明なIDが別々に保持されることを確認する。 */
 test("取得元とopaque model IDを保持して保存済み候補を残す", () => {
-  assert.deepEqual(buildModelSelectOptions([
-    { id: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", reasoningEfforts: [] },
-  ], "saved/model"), [
-    { value: "saved/model", label: "saved/model", model: null },
-    { value: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", model: { id: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", reasoningEfforts: [] } },
-  ]);
+  assert.deepEqual(
+    buildModelSelectOptions(
+      [
+        {
+          id: "vendor/model.v1",
+          label: "Model",
+          sourceLabel: "Vendor",
+          reasoningEfforts: [],
+        },
+      ],
+      "saved/model",
+    ),
+    [
+      { value: "saved/model", label: "saved/model", model: null },
+      {
+        value: "vendor/model.v1",
+        label: "Model",
+        sourceLabel: "Vendor",
+        model: {
+          id: "vendor/model.v1",
+          label: "Model",
+          sourceLabel: "Vendor",
+          reasoningEfforts: [],
+        },
+      },
+    ],
+  );
 });
 
 // @test-value v2
@@ -102,14 +129,22 @@ test("取得元とopaque model IDを保持して保存済み候補を残す", ()
 // impact = "利用者がSendへ渡される現在のDepthを判断できなくなる"
 // distinction = "型検査では保存値と新しい候補一覧の不一致を検出できない"
 // @end-test-value
+/** SDKの候補更新で消えたDepthも現在値として表示できることを確認する。 */
 test("SDK候補にない保存済みDepthを表示候補に保持する", () => {
   const options = buildRuntimeSelectionOptions({
-    providerId: "codex", providerCatalog, models, selectedModel: "gpt-test",
-    selectedReasoningEffort: "sdk-specific-depth", reasoningEfforts: ["low"],
-    selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard",
+    providerId: "codex",
+    providerCatalog,
+    models,
+    selectedModel: "gpt-test",
+    selectedReasoningEffort: "sdk-specific-depth",
+    reasoningEfforts: ["low"],
+    selectedCodexSandboxMode: "workspace-write",
+    selectedCodexSpeed: "standard",
   });
   assert.deepEqual(options.reasoningSelectOptions, [
-    { value: "sdk-specific-depth", label: "sdk-specific-depth" }, { value: "", label: "Default" }, { value: "low", label: "Low" },
+    { value: "sdk-specific-depth", label: "sdk-specific-depth" },
+    { value: "", label: "Default" },
+    { value: "low", label: "Low" },
   ]);
 });
 
@@ -125,17 +160,39 @@ test("SDK候補にない保存済みDepthを表示候補に保持する", () => 
 // impact = "画面の選択DepthとSendへ捕捉される空文字が食い違う"
 // distinction = "型検査ではnative selectが選択option不在時に先頭値を表示する不一致を検出できない"
 // @end-test-value
+/** Depthの未指定を単一のDefaultとして提示し、対応候補がなければ欄を作らないことを確認する。 */
 test("Depthの省略値をDefaultとして一度だけ表示し非対応モデルでは欄を作らない", () => {
   const input = {
-    providerId: "codex", providerCatalog, models, selectedModel: "gpt-test", selectedReasoningEffort: "",
-    selectedCodexSandboxMode: "workspace-write" as const, selectedCodexSpeed: "standard" as const,
+    providerId: "codex",
+    providerCatalog,
+    models,
+    selectedModel: "gpt-test",
+    selectedReasoningEffort: "",
+    selectedCodexSandboxMode: "workspace-write" as const,
+    selectedCodexSpeed: "standard" as const,
   };
-  const expected = [{ value: "", label: "Default" }, { value: "low", label: "Low" }];
-  assert.deepEqual(buildRuntimeSelectionOptions({ ...input, reasoningEfforts: ["low"] }).reasoningSelectOptions, expected);
-  assert.deepEqual(buildRuntimeSelectionOptions({ ...input, reasoningEfforts: ["", "low"] }).reasoningSelectOptions, expected);
-  assert.deepEqual(buildRuntimeSelectionOptions({
-    ...input, selectedReasoningEffort: "saved-depth", reasoningEfforts: [],
-  }).reasoningSelectOptions, []);
+  const expected = [
+    { value: "", label: "Default" },
+    { value: "low", label: "Low" },
+  ];
+  assert.deepEqual(
+    buildRuntimeSelectionOptions({ ...input, reasoningEfforts: ["low"] })
+      .reasoningSelectOptions,
+    expected,
+  );
+  assert.deepEqual(
+    buildRuntimeSelectionOptions({ ...input, reasoningEfforts: ["", "low"] })
+      .reasoningSelectOptions,
+    expected,
+  );
+  assert.deepEqual(
+    buildRuntimeSelectionOptions({
+      ...input,
+      selectedReasoningEffort: "saved-depth",
+      reasoningEfforts: [],
+    }).reasoningSelectOptions,
+    [],
+  );
   assert.equal(input.selectedReasoningEffort, "");
 });
 
@@ -149,18 +206,35 @@ test("Depthの省略値をDefaultとして一度だけ表示し非対応モデ�
 // scope = "reasoning effort select options"
 // lifecycle = "permanent"
 // @end-test-value
+/** 表示用の整形でDepthの保存用IDが変わらないことを確認する。 */
 test("buildReasoningEffortSelectOptions は reasoning effort を select option に変換する", () => {
-  assert.deepEqual(buildReasoningEffortSelectOptions(["low", "medium", "xhigh", "max", "ultra"]), [
-    { value: "low", label: "Low" },
-    { value: "medium", label: "Medium" },
-    { value: "xhigh", label: "X High" },
-    { value: "max", label: "Max" },
-    { value: "ultra", label: "Ultra" },
-  ]);
+  assert.deepEqual(
+    buildReasoningEffortSelectOptions([
+      "low",
+      "medium",
+      "xhigh",
+      "max",
+      "ultra",
+    ]),
+    [
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "xhigh", label: "X High" },
+      { value: "max", label: "Max" },
+      { value: "ultra", label: "Ultra" },
+    ],
+  );
 });
 
+/** 保存モデルを表示するとき、カタログに名前がなければIDを使うことを確認する。 */
 test("resolveModelFallbackLabel は catalog label または model id を返す", () => {
-  assert.equal(resolveModelFallbackLabel(providerCatalog, "gpt-test"), "GPT Test");
-  assert.equal(resolveModelFallbackLabel(providerCatalog, "unknown-model"), "unknown-model");
+  assert.equal(
+    resolveModelFallbackLabel(providerCatalog, "gpt-test"),
+    "GPT Test",
+  );
+  assert.equal(
+    resolveModelFallbackLabel(providerCatalog, "unknown-model"),
+    "unknown-model",
+  );
   assert.equal(resolveModelFallbackLabel(null, "gpt-test"), "gpt-test");
 });

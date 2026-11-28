@@ -17,26 +17,59 @@ import { resolveOpenCodeEnvironment } from "../../src-electron/providers/opencod
 // impact = "既存認証を利用できないか対応外versionで既存DBを変更する"
 // distinction = "CLI応答はruntime境界であり型検査では検出できない。外部processなしで環境選択を検証する"
 // @end-test-value
+/** DB パスは対応版と確認した後に既存環境のまま照会し、対応外の版ではバージョン照会だけで止まることを確かめる。 */
 test("OpenCode checks the CLI version before resolving the unchanged native environment", async () => {
-  const env = { OPENCODE_DB: "relative.sqlite", XDG_DATA_HOME: path.join(process.cwd(), "native-data"), OPENAI_API_KEY: "test-only-key" };
+  const env = {
+    OPENCODE_DB: "relative.sqlite",
+    XDG_DATA_HOME: path.join(process.cwd(), "native-data"),
+    OPENAI_API_KEY: "test-only-key",
+  };
   const calls: string[][] = [];
-  const databasePath = path.join(process.cwd(), "native-data", "opencode", "relative.sqlite");
-  const result = await resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath, env }, {
-    runCommand: async (_executable, args, options) => {
-      calls.push([...args]);
-      assert.deepEqual(options.env, env);
-      return args[0] === "--version" ? "opencode v2.2.5\n" : databasePath + "\n";
+  const databasePath = path.join(
+    process.cwd(),
+    "native-data",
+    "opencode",
+    "relative.sqlite",
+  );
+  const result = await resolveOpenCodeEnvironment(
+    { cwd: process.cwd(), executable: process.execPath, env },
+    {
+      /** 照会順と渡された環境変数を観測し、引数に応じたバージョンまたは DB パスを返す。 */
+      runCommand: async (_executable, args, options) => {
+        calls.push([...args]);
+        assert.deepEqual(options.env, env);
+        return args[0] === "--version"
+          ? "opencode v2.2.5\n"
+          : databasePath + "\n";
+      },
     },
-  });
+  );
   assert.deepEqual(calls, [["--version"], ["debug", "paths", "db"]]);
   assert.equal(result.databasePath, databasePath);
   assert.deepEqual(result.env, env);
   assert.notEqual(result.env, env);
-  for (const version of ["opencode v2.1.4", "opencode v2.2.0", "opencode v2.2.1", "opencode v2.2.6", "2.2.5", "invalid"]) {
+  for (const version of [
+    "opencode v2.1.4",
+    "opencode v2.2.0",
+    "opencode v2.2.1",
+    "opencode v2.2.6",
+    "2.2.5",
+    "invalid",
+  ]) {
     let count = 0;
-    await assert.rejects(resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath }, {
-      runCommand: async () => { count++; return version; },
-    }), /2\.2\.5 is required/u);
+    await assert.rejects(
+      resolveOpenCodeEnvironment(
+        { cwd: process.cwd(), executable: process.execPath },
+        {
+          /** 対応外の出力を返し、DB 照会へ進んだ場合も回数で検出できるようにする。 */
+          runCommand: async () => {
+            count++;
+            return version;
+          },
+        },
+      ),
+      /2\.2\.5 is required/u,
+    );
     assert.equal(count, 1);
   }
 });
@@ -53,16 +86,43 @@ test("OpenCode checks the CLI version before resolving the unchanged native envi
 // impact = "DB排他の対象が実際のDBとずれるか取消済み操作が継続する"
 // distinction = "外部文字列とAbortSignalのruntime保証をprocess起動なしで検証する"
 // @end-test-value
+/** 対応版でも相対パス・空・複数行の DB 出力を拒否し、開始前に取り消された場合は CLI を呼ばないことを確かめる。 */
 test("OpenCode rejects invalid database announcements and pre-aborted lookup", async () => {
-  for (const output of ["relative.sqlite", "", path.join(process.cwd(), "db") + "\nextra"]) {
-    await assert.rejects(resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath }, {
-      runCommand: async (_executable, args) => args[0] === "--version" ? "opencode v2.2.5" : output,
-    }), /absolute database path/u);
+  for (const output of [
+    "relative.sqlite",
+    "",
+    path.join(process.cwd(), "db") + "\nextra",
+  ]) {
+    await assert.rejects(
+      resolveOpenCodeEnvironment(
+        { cwd: process.cwd(), executable: process.execPath },
+        {
+          /** バージョンだけは正常に応答し、後続の DB パス照会に不正な出力を返す。 */
+          runCommand: async (_executable, args) =>
+            args[0] === "--version" ? "opencode v2.2.5" : output,
+        },
+      ),
+      /absolute database path/u,
+    );
   }
   let count = 0;
-  await assert.rejects(resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath, signal: AbortSignal.abort() }, {
-    runCommand: async () => { count++; return ""; },
-  }), { name: "AbortError" });
+  await assert.rejects(
+    resolveOpenCodeEnvironment(
+      {
+        cwd: process.cwd(),
+        executable: process.execPath,
+        signal: AbortSignal.abort(),
+      },
+      {
+        /** 実プロセスを起動せず、取消後に CLI へ到達した回数を記録する。 */
+        runCommand: async () => {
+          count++;
+          return "";
+        },
+      },
+    ),
+    { name: "AbortError" },
+  );
   assert.equal(count, 0);
 });
 
@@ -78,27 +138,54 @@ test("OpenCode rejects invalid database announcements and pre-aborted lookup", a
 // impact = "PCの選択したCLIを無視するかshell経由で想定外commandを実行する"
 // distinction = "一時fixtureとfake commandでPATH探索の契約を検証し、実PCのCLIや認証へ接触しない"
 // @end-test-value
+/** Windows の PATH にある既知の npm shim は対応するネイティブ実行物へ解決し、未知の形式へ変わったら CLI を起動せず拒否することを確かめる。 */
 test("OpenCode resolves the official npm shim but does not bypass unknown Windows commands", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-opencode-path-"));
   try {
     const packageRoot = path.join(root, "node_modules", "@opencode", "cli");
     await mkdir(path.join(packageRoot, "bin"), { recursive: true });
-    await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: "@opencode/cli", bin: { opencode: "./bin/opencode.exe" } }));
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "@opencode/cli",
+        bin: { opencode: "./bin/opencode.exe" },
+      }),
+    );
     const binary = path.join(packageRoot, "bin", "opencode.exe");
     await writeFile(binary, "fixture");
     const shim = path.join(root, "opencode.cmd");
-    await writeFile(shim, '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe"   %*\r\n');
+    await writeFile(
+      shim,
+      '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe"   %*\r\n',
+    );
     let commands = 0;
+    /** shim ではなくネイティブ実行物が指定されたことを照合し、実行せず照会結果を返す。 */
     const runCommand = async (executable: string, args: readonly string[]) => {
       commands++;
       assert.equal(executable, await realpath(binary));
-      return args[0] === "--version" ? "opencode v2.2.5" : path.join(root, "native.sqlite");
+      return args[0] === "--version"
+        ? "opencode v2.2.5"
+        : path.join(root, "native.sqlite");
     };
-    const result = await resolveOpenCodeEnvironment({ cwd: root, env: { Path: root } }, { platform: "win32", runCommand });
+    const result = await resolveOpenCodeEnvironment(
+      { cwd: root, env: { Path: root } },
+      { platform: "win32", runCommand },
+    );
     assert.equal(result.executable, await realpath(binary));
     assert.equal(commands, 2);
-    await writeFile(shim, '@echo off\n"%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe" %*\necho extra');
-    await assert.rejects(resolveOpenCodeEnvironment({ cwd: root, env: { Path: root } }, { platform: "win32", runCommand }), /recognized official npm shim/u);
+    await writeFile(
+      shim,
+      '@echo off\n"%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe" %*\necho extra',
+    );
+    await assert.rejects(
+      resolveOpenCodeEnvironment(
+        { cwd: root, env: { Path: root } },
+        { platform: "win32", runCommand },
+      ),
+      /recognized official npm shim/u,
+    );
     assert.equal(commands, 2);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

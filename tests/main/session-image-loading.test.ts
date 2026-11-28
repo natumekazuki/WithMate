@@ -18,33 +18,71 @@ import { SessionFileExplorerService } from "../../src-electron/files/session-fil
 // impact = "chatとMarkdown/Mermaid previewの共通画像表示が成立しなくなる"
 // distinction = "generic file readのroot制約testでは確認できない画像専用の実filesystem解決を小さいfixtureで確認する"
 // @end-test-value
+/** ワークスペース相対、プレビュー元相対、絶対パス、file URL でルート外の同じ SVG を解決し、識別結果とチャンクが一致することを確認する。 */
 test("local images use workspace or source parent and allow targets outside roots", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-images-"));
   try {
     const workspace = path.join(directory, "workspace");
     await mkdir(path.join(workspace, "docs"), { recursive: true });
     const imagePath = path.join(directory, "image.svg");
-    const image = "<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>";
+    const image =
+      "<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>";
     await writeFile(imagePath, image);
     await writeFile(path.join(workspace, "docs", "source.md"), "source");
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "data"),
+      /** 画像の探索範囲を追加ディレクトリで広げず、相対解決の基準となるワークスペースを返す。 */
       async getSessionContext() {
-        return { workspacePath: workspace, parentSessionId: "session", allowedAdditionalDirectories: [] };
+        return {
+          workspacePath: workspace,
+          parentSessionId: "session",
+          allowedAdditionalDirectories: [],
+        };
       },
     });
     for (const request of [
       { sessionId: "session", target: "../image.svg" },
-      { sessionId: "session", target: "../../image.svg", baseResource: { sessionId: "session", rootId: "workspace", relativePath: "docs/source.md" } },
-      { sessionId: "session", target: "./image.svg", baseResource: { sessionId: "session", absolutePath: imagePath } },
+      {
+        sessionId: "session",
+        target: "../../image.svg",
+        baseResource: {
+          sessionId: "session",
+          rootId: "workspace",
+          relativePath: "docs/source.md",
+        },
+      },
+      {
+        sessionId: "session",
+        target: "./image.svg",
+        baseResource: { sessionId: "session", absolutePath: imagePath },
+      },
       { sessionId: "session", target: imagePath },
       { sessionId: "session", target: pathToFileURL(imagePath).href },
-      { sessionId: "session", target: imagePath, baseResource: { resourceKind: "git-commit-file" as const, sessionId: "session", rootId: "workspace", repositoryId: "repository", commitId: "a".repeat(40), relativePath: "source.md" } },
+      {
+        sessionId: "session",
+        target: imagePath,
+        baseResource: {
+          resourceKind: "git-commit-file" as const,
+          sessionId: "session",
+          rootId: "workspace",
+          repositoryId: "repository",
+          commitId: "a".repeat(40),
+          relativePath: "source.md",
+        },
+      },
     ]) {
       const descriptor = await service.inspectImage(request);
-      assert.equal("absolutePath" in descriptor && descriptor.absolutePath, imagePath);
+      assert.equal(
+        "absolutePath" in descriptor && descriptor.absolutePath,
+        imagePath,
+      );
       assert.equal(descriptor.mimeType, "image/svg+xml");
-      const chunk = await service.readImageChunk({ ...request, offset: 0, length: 1024, expectedRevision: descriptor.revision });
+      const chunk = await service.readImageChunk({
+        ...request,
+        offset: 0,
+        length: 1024,
+        expectedRevision: descriptor.revision,
+      });
       assert.equal(new TextDecoder().decode(chunk.data), image);
       assert.equal(chunk.done, true);
     }
@@ -65,35 +103,71 @@ test("local images use workspace or source parent and allow targets outside root
 // impact = "ブラウザーがdecodeできるUTF-16 SVGがchat・Markdown・Mermaidで表示不能になる、または画像読込が非画像textへ拡大する"
 // distinction = "UTF-8 SVGやgeneric fileの拡張子判定ではBOM decodeを観測できず、2 endianの小さい実filesystem fixtureで両APIを継続確認する"
 // @end-test-value
+/** 両エンディアンの BOM 付き UTF-16 SVG は元のバイト列のまま読み込める一方、同じ拡張子とエンコードを持つ非 SVG は画像として拒否する。 */
 test("local image reads recognize BOM-encoded UTF-16 SVG without accepting non-SVG text", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-utf16-images-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-utf16-images-"),
+  );
   try {
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "data"),
+      /** UTF-16 の画像と対照データを置く一時ディレクトリをワークスペースとして使う。 */
       async getSessionContext() {
-        return { workspacePath: directory, parentSessionId: "session", allowedAdditionalDirectories: [] };
+        return {
+          workspacePath: directory,
+          parentSessionId: "session",
+          allowedAdditionalDirectories: [],
+        };
       },
     });
     for (const endian of ["le", "be"]) {
       const imagePath = path.join(directory, `image-${endian}.svg`);
       const fakePath = path.join(directory, `text-${endian}.svg`);
+      /** 対象のバイト順で BOM と本文を符号化し、LE と BE の検証データを作る。 */
       const encode = (text: string) => {
         const bytes = Buffer.from(`\uFEFF${text}`, "utf16le");
         return endian === "be" ? bytes.swap16() : bytes;
       };
-      const image = encode("<?xml version='1.0' encoding='UTF-16'?><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='red'/></svg>");
+      const image = encode(
+        "<?xml version='1.0' encoding='UTF-16'?><svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='red'/></svg>",
+      );
       await writeFile(imagePath, image);
-      await writeFile(fakePath, encode("<?xml version='1.0' encoding='UTF-16'?><private>not an image</private>"));
+      await writeFile(
+        fakePath,
+        encode(
+          "<?xml version='1.0' encoding='UTF-16'?><private>not an image</private>",
+        ),
+      );
       const request = { sessionId: "session", target: imagePath };
       const descriptor = await service.inspectImage(request);
       assert.equal(descriptor.kind, "svg");
       assert.equal(descriptor.mimeType, "image/svg+xml");
-      const chunk = await service.readImageChunk({ ...request, offset: 0, length: 1024, expectedRevision: descriptor.revision });
+      const chunk = await service.readImageChunk({
+        ...request,
+        offset: 0,
+        length: 1024,
+        expectedRevision: descriptor.revision,
+      });
       assert.deepEqual(Buffer.from(chunk.data), image);
       assert.equal(chunk.done, true);
-      await assert.rejects(service.inspectImage({ sessionId: "session", target: fakePath }), /not a supported image/);
-      const fakeDescriptor = await service.inspectFile({ sessionId: "session", absolutePath: fakePath });
-      await assert.rejects(service.readImageChunk({ sessionId: "session", target: fakePath, offset: 0, length: 1024, expectedRevision: fakeDescriptor.revision }), /not a supported image/);
+      await assert.rejects(
+        service.inspectImage({ sessionId: "session", target: fakePath }),
+        /not a supported image/,
+      );
+      const fakeDescriptor = await service.inspectFile({
+        sessionId: "session",
+        absolutePath: fakePath,
+      });
+      await assert.rejects(
+        service.readImageChunk({
+          sessionId: "session",
+          target: fakePath,
+          offset: 0,
+          length: 1024,
+          expectedRevision: fakeDescriptor.revision,
+        }),
+        /not a supported image/,
+      );
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -112,31 +186,90 @@ test("local image reads recognize BOM-encoded UTF-16 SVG without accepting non-S
 // impact = "画像の自動読込権限が任意text readへ拡大する、または変更途中の画像を表示する"
 // distinction = "typecheckやgeneric read testでは実bytesと画像だけの認可境界を保証できない;小さいfixtureで継続確認する"
 // @end-test-value
+/** PNG の識別を対照に、偽装した非画像、ディレクトリ、未知スキーム、Git プレビュー相対パス、更新前のリビジョンを拒否する。 */
 test("local image reads reject non-image content, schemes, directories and stale revisions", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-image-boundary-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-image-boundary-"),
+  );
   try {
     const imagePath = path.join(directory, "image.png");
     const fakePath = path.join(directory, "secret.png");
-    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
     await writeFile(imagePath, png);
     await writeFile(fakePath, "private text");
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "data"),
+      /** 画像判定とリビジョン検査に使うファイルを一時ワークスペースから参照させる。 */
       async getSessionContext() {
-        return { workspacePath: directory, parentSessionId: "session", allowedAdditionalDirectories: [] };
+        return {
+          workspacePath: directory,
+          parentSessionId: "session",
+          allowedAdditionalDirectories: [],
+        };
       },
     });
-    const descriptor = await service.inspectImage({ sessionId: "session", target: imagePath });
+    const descriptor = await service.inspectImage({
+      sessionId: "session",
+      target: imagePath,
+    });
     assert.equal(descriptor.mimeType, "image/png");
-    await assert.rejects(service.inspectImage({ sessionId: "session", target: fakePath }), /not a supported image/);
-    await assert.rejects(service.readImageChunk({ sessionId: "session", target: fakePath, offset: 0, length: 1024, expectedRevision: (await service.inspectFile({ sessionId: "session", absolutePath: fakePath })).revision }), /not a supported image/);
-    await assert.rejects(service.inspectImage({ sessionId: "session", target: directory }));
-    await assert.rejects(service.inspectImage({ sessionId: "session", target: "custom:image.png" }), /local path or file URL/);
-    await assert.rejects(service.inspectImage({ sessionId: "session", target: "image.png", baseResource: {
-      resourceKind: "git-commit-file", sessionId: "session", rootId: "workspace", repositoryId: "repository", commitId: "a".repeat(40), relativePath: "source.md",
-    } }), /Relative images from a Git commit/);
+    await assert.rejects(
+      service.inspectImage({ sessionId: "session", target: fakePath }),
+      /not a supported image/,
+    );
+    await assert.rejects(
+      service.readImageChunk({
+        sessionId: "session",
+        target: fakePath,
+        offset: 0,
+        length: 1024,
+        expectedRevision: (
+          await service.inspectFile({
+            sessionId: "session",
+            absolutePath: fakePath,
+          })
+        ).revision,
+      }),
+      /not a supported image/,
+    );
+    await assert.rejects(
+      service.inspectImage({ sessionId: "session", target: directory }),
+    );
+    await assert.rejects(
+      service.inspectImage({
+        sessionId: "session",
+        target: "custom:image.png",
+      }),
+      /local path or file URL/,
+    );
+    await assert.rejects(
+      service.inspectImage({
+        sessionId: "session",
+        target: "image.png",
+        baseResource: {
+          resourceKind: "git-commit-file",
+          sessionId: "session",
+          rootId: "workspace",
+          repositoryId: "repository",
+          commitId: "a".repeat(40),
+          relativePath: "source.md",
+        },
+      }),
+      /Relative images from a Git commit/,
+    );
     await writeFile(imagePath, Uint8Array.from([...png, 1]));
-    await assert.rejects(service.readImageChunk({ sessionId: "session", target: imagePath, offset: 0, length: 1024, expectedRevision: descriptor.revision }), /file changed/);
+    await assert.rejects(
+      service.readImageChunk({
+        sessionId: "session",
+        target: imagePath,
+        offset: 0,
+        length: 1024,
+        expectedRevision: descriptor.revision,
+      }),
+      /file changed/,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

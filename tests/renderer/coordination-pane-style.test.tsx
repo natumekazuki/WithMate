@@ -18,16 +18,31 @@ import { readStylesheet } from "../support/read-stylesheet.js";
 // impact = "回答・再取得・一覧移動の操作名を読めず、短い相談で不要な空白を挟んで操作する状態を防ぐ"
 // distinction = "機能DOM testと型検査ではpageごとのCSS cascadeとcommand専用alignmentの流入を検出できない"
 // @end-test-value
+/** 再取得ボタンに Session 共通の暗色向けスタイルが適用され、Coordination の内容が下寄せされないことをマークアップと CSS 宣言で確認する。 */
 test("Coordination toolbar uses the Session button surface and starts at the pane top", async () => {
-  const html = renderToStaticMarkup(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: null }));
+  const html = renderToStaticMarkup(
+    createElement(CoordinationPane, {
+      sessionId: "main",
+      active: true,
+      navigation: null,
+    }),
+  );
   const document = new JSDOM(html).window.document;
-  const refresh = document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!;
+  const refresh = document.querySelector<HTMLButtonElement>(
+    'button[aria-label="Refresh Coordination"]',
+  )!;
   assert.equal(refresh.title, "Refresh Coordination");
   assert.equal(refresh.querySelector('[aria-hidden="true"]')?.textContent, "↻");
   assert.ok(refresh.classList.contains("drawer-toggle"));
   assert.ok(refresh.classList.contains("compact"));
   assert.ok(refresh.classList.contains("secondary"));
   const css = await readStylesheet();
-  assert.match(css, /\.session-page \.drawer-toggle,\s*\.session-page \.browse-button\s*\{[^}]*background:\s*rgba\(255, 255, 255, 0\.06\);[^}]*color:\s*var\(--ink\)/);
-  assert.match(css, /\.command-monitor-stack\.coordination\s*\{[^}]*margin-top:\s*0;/);
+  assert.match(
+    css,
+    /\.session-page \.drawer-toggle,\s*\.session-page \.browse-button\s*\{[^}]*background:\s*rgba\(255, 255, 255, 0\.06\);[^}]*color:\s*var\(--ink\)/,
+  );
+  assert.match(
+    css,
+    /\.command-monitor-stack\.coordination\s*\{[^}]*margin-top:\s*0;/,
+  );
 });

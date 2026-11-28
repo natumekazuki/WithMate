@@ -19,14 +19,28 @@ import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchPro
 // impact = "keyboard利用者がprovider未準備時にもdialogを閉じ、作成待ちでは取消へ到達できる"
 // distinction = "静的markup検査や作成開始後のfocus testでは検出できない、背景triggerから開くeffectとfocus復帰を少数のDOM条件で保持する"
 // @end-test-value
+/** 追加ボタンから開いたダイアログにフォーカスを移し、候補の有無や準備状態に応じて Tab を内部に保ち、Escape で元のボタンに戻す。 */
 test("Auxiliary dialog focuses inside on open and restores its trigger across provider states", async (t) => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost/" });
-  const properties = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = Object.keys(properties).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(properties)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const properties = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = Object.keys(properties).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(properties))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const document = dom.window.document;
   const root = createRoot(document.getElementById("root")!);
+  /** 各シナリオの実行後にマウントとタイマーを片付け、DOM 用に差し替えたグローバルを復元する。 */
   t.after(async () => {
     await act(async () => root.unmount());
     t.mock.timers.reset();
@@ -37,52 +51,102 @@ test("Auxiliary dialog focuses inside on open and restores its trigger across pr
     }
   });
 
-  for (const scenario of ["empty", "loading", "error", "ready", "preparing"] as const) {
+  for (const scenario of [
+    "empty",
+    "loading",
+    "error",
+    "ready",
+    "preparing",
+  ] as const) {
+    /** 指定シナリオの Provider 状態で実ダイアログを開き、閉じたら非表示に戻る起動元のボタンを用意する。 */
     function Harness() {
       const [open, setOpen] = React.useState(false);
-      return <>
-        <button onClick={() => setOpen(true)}>Add Auxiliary</button>
-        <AuxiliaryLaunchProviderDialog
-          open={open}
-          providers={scenario === "empty" ? [] : [{ id: "codex", label: "Codex" }]}
-          selectedProviderId={scenario === "empty" ? null : "codex"}
-          providerLoadStatus={scenario === "loading" || scenario === "error" ? scenario : "loaded"}
-          feedback=""
-          starting={scenario === "preparing"}
-          canCancelCreation={scenario === "preparing"}
-          onCancelCreation={() => {}}
-          onClose={() => setOpen(false)}
-          onSelectProvider={() => {}}
-          onStart={() => {}}
-        />
-      </>;
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Add Auxiliary</button>
+          <AuxiliaryLaunchProviderDialog
+            open={open}
+            providers={
+              scenario === "empty" ? [] : [{ id: "codex", label: "Codex" }]
+            }
+            selectedProviderId={scenario === "empty" ? null : "codex"}
+            providerLoadStatus={
+              scenario === "loading" || scenario === "error"
+                ? scenario
+                : "loaded"
+            }
+            feedback=""
+            starting={scenario === "preparing"}
+            canCancelCreation={scenario === "preparing"}
+            onCancelCreation={() => {}}
+            onClose={() => setOpen(false)}
+            onSelectProvider={() => {}}
+            onStart={() => {}}
+          />
+        </>
+      );
     }
     await act(async () => root.render(<Harness />));
     const trigger = document.querySelector<HTMLButtonElement>("button")!;
     trigger.focus();
     await act(async () => trigger.click());
-    await act(async () => { t.mock.timers.tick(0); });
+    await act(async () => {
+      t.mock.timers.tick(0);
+    });
 
-    const dialog = document.querySelector<HTMLElement>(".auxiliary-launch-dialog")!;
-    const expectedFocus = scenario === "ready"
-      ? dialog.querySelector(".start-session-button")
-      : scenario === "preparing" ? dialog.querySelector(".launch-cancel-button") : dialog;
-    assert.ok(document.activeElement === expectedFocus, `${scenario}: initial focus stays inside`);
+    const dialog = document.querySelector<HTMLElement>(
+      ".auxiliary-launch-dialog",
+    )!;
+    const expectedFocus =
+      scenario === "ready"
+        ? dialog.querySelector(".start-session-button")
+        : scenario === "preparing"
+          ? dialog.querySelector(".launch-cancel-button")
+          : dialog;
+    assert.ok(
+      document.activeElement === expectedFocus,
+      `${scenario}: initial focus stays inside`,
+    );
     for (const shiftKey of [false, true]) {
-      const event = new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
-      await act(async () => { document.activeElement!.dispatchEvent(event); });
+      const event = new dom.window.KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => {
+        document.activeElement!.dispatchEvent(event);
+      });
       assert.equal(event.defaultPrevented, true, `${scenario}: Tab is trapped`);
-      const expectedTabFocus = scenario === "ready" && !shiftKey ? dialog.querySelector("[role=option]") : expectedFocus;
-      assert.ok(document.activeElement === expectedTabFocus, `${scenario}: Tab stays on an available dialog target`);
+      const expectedTabFocus =
+        scenario === "ready" && !shiftKey
+          ? dialog.querySelector("[role=option]")
+          : expectedFocus;
+      assert.ok(
+        document.activeElement === expectedTabFocus,
+        `${scenario}: Tab stays on an available dialog target`,
+      );
     }
 
-    await act(async () => { document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-    assert.equal(document.querySelector("[role=dialog]"), null, `${scenario}: Escape closes the dialog`);
-    assert.ok(document.activeElement === trigger, `${scenario}: closing restores the trigger`);
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
+    });
+    assert.equal(
+      document.querySelector("[role=dialog]"),
+      null,
+      `${scenario}: Escape closes the dialog`,
+    );
+    assert.ok(
+      document.activeElement === trigger,
+      `${scenario}: closing restores the trigger`,
+    );
   }
 });
-
-
 
 // @test-value v2
 // kind = "contract"
@@ -94,6 +158,7 @@ test("Auxiliary dialog focuses inside on open and restores its trigger across pr
 // scope = "auxiliary-launch-dialog"
 // lifecycle = "permanent"
 // @end-test-value
+/** 利用可能な Provider と開始操作を、アクセシブル名のあるダイアログに表示し、推論や Sandbox の選択肢は出さない。 */
 test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として描画する", () => {
   const html = renderToStaticMarkup(
     <AuxiliaryLaunchProviderDialog
@@ -111,7 +176,10 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
     />,
   );
 
-  assert.match(html, /<div class="launch-modal" role="dialog" aria-modal="true" aria-label="Start Auxiliary">/);
+  assert.match(
+    html,
+    /<div class="launch-modal" role="dialog" aria-modal="true" aria-label="Start Auxiliary">/,
+  );
   assert.match(html, /Coding Provider/);
   assert.match(html, /Codex/);
   assert.match(html, /Copilot/);
@@ -132,8 +200,14 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
 // impact = "provider catalogの非同期状態を正しく通知し、選択可能なproviderだけを起動対象にする"
 // distinction = "ready空一覧だけでなくloading/error/ready遷移とprovider選択の契約を同一dialogで検証する"
 // @end-test-value
+/** 読込中と取得失敗を空の取得結果と区別し、候補取得後は選択と起動が可能になることを確認する。 */
 test("AuxiliaryLaunchProviderDialog は provider catalog の loading/error と ready 選択を区別する", () => {
-  const renderDialog = (overrides: Partial<React.ComponentProps<typeof AuxiliaryLaunchProviderDialog>>) =>
+  /** 空一覧を既定とし、取得状態や候補だけを差し替えてダイアログの公開マークアップを比較する。 */
+  const renderDialog = (
+    overrides: Partial<
+      React.ComponentProps<typeof AuxiliaryLaunchProviderDialog>
+    >,
+  ) =>
     renderToStaticMarkup(
       <AuxiliaryLaunchProviderDialog
         open={true}
@@ -162,7 +236,10 @@ test("AuxiliaryLaunchProviderDialog は provider catalog の loading/error と r
   assert.doesNotMatch(errorHtml, /No enabled coding providers\./);
 
   const readyZeroHtml = renderDialog({ providerLoadStatus: "loaded" });
-  assert.equal((readyZeroHtml.match(/No enabled coding providers\./g) ?? []).length, 1);
+  assert.equal(
+    (readyZeroHtml.match(/No enabled coding providers\./g) ?? []).length,
+    1,
+  );
   assert.match(readyZeroHtml, /class="launch-feedback" role="status"><\/p>/);
 
   const readyHtml = renderDialog({
@@ -170,6 +247,12 @@ test("AuxiliaryLaunchProviderDialog は provider catalog の loading/error と r
     providerLoadStatus: "loaded",
   });
   assert.match(readyHtml, /aria-selected="true"[^>]*tabindex="0"/);
-  assert.match(readyHtml, /class="start-session-button"[^>]*aria-disabled="false"/);
-  assert.doesNotMatch(readyHtml, /launch-feedback[^>]*>No enabled coding providers\./);
+  assert.match(
+    readyHtml,
+    /class="start-session-button"[^>]*aria-disabled="false"/,
+  );
+  assert.doesNotMatch(
+    readyHtml,
+    /launch-feedback[^>]*>No enabled coding providers\./,
+  );
 });

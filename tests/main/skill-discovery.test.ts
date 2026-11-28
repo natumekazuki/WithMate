@@ -8,13 +8,21 @@ import { discoverSessionSkills } from "../../src-electron/skills/skill-discovery
 
 const createdDirectories: string[] = [];
 
+/** 探索元ごとに独立した一時ディレクトリを作り、後片付けの対象に登録する。 */
 function createTempDir(): string {
-  const directoryPath = fs.mkdtempSync(path.join(os.tmpdir(), "withmate-skill-discovery-"));
+  const directoryPath = fs.mkdtempSync(
+    path.join(os.tmpdir(), "withmate-skill-discovery-"),
+  );
   createdDirectories.push(directoryPath);
   return directoryPath;
 }
 
-function writeSkill(rootPath: string, skillName: string, description: string): void {
+/** 名前と説明をフロントマターに持つ最小のスキル定義を指定ルートへ置く。 */
+function writeSkill(
+  rootPath: string,
+  skillName: string,
+  description: string,
+): void {
   const skillDirectoryPath = path.join(rootPath, skillName);
   fs.mkdirSync(skillDirectoryPath, { recursive: true });
   fs.writeFileSync(
@@ -31,11 +39,13 @@ function writeSkill(rootPath: string, skillName: string, description: string): v
   );
 }
 
+/** 同一パスでも変更が判別できるよう、ファイルの時刻を明示的に進める。 */
 function touchFile(filePath: string): void {
   const future = new Date(Date.now() + 5000);
   fs.utimesSync(filePath, future, future);
 }
 
+/** 成功・失敗にかかわらず、ケース内で作った探索元だけを取り除く。 */
 afterEach(() => {
   while (createdDirectories.length > 0) {
     const directoryPath = createdDirectories.pop();
@@ -45,7 +55,9 @@ afterEach(() => {
   }
 });
 
+/** スキル探索の候補元、同名時の優先順位、定義の再読込条件を検証する。 */
 describe("discoverSessionSkills", () => {
+  /** workspace と provider の別名スキルが、出所を区別した一覧に共存することを確認する。 */
   it("workspace roots と provider root をまとめて列挙できる", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();
@@ -63,10 +75,15 @@ describe("discoverSessionSkills", () => {
     assert.equal(skills[1]?.source, "provider");
   });
 
+  /** provider にも同名の定義がある場合は、workspace 側のパスを持つ一件だけを残す。 */
   it("同名 skill は workspace を優先する", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();
-    const workspaceSkillRootPath = path.join(workspacePath, ".github", "skills");
+    const workspaceSkillRootPath = path.join(
+      workspacePath,
+      ".github",
+      "skills",
+    );
     fs.mkdirSync(workspaceSkillRootPath, { recursive: true });
     writeSkill(workspaceSkillRootPath, "docs-sync", "workspace version");
     writeSkill(providerRootPath, "docs-sync", "provider version");
@@ -79,10 +96,15 @@ describe("discoverSessionSkills", () => {
     assert.match(skills[0]?.sourcePath ?? "", /\.github\/skills\/docs-sync$/);
   });
 
+  /** 隠しディレクトリ配下の定義も workspace 由来として列挙されることを確認する。 */
   it(".agents/skills の workspace skill を列挙できる", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();
-    const workspaceSkillRootPath = path.join(workspacePath, ".agents", "skills");
+    const workspaceSkillRootPath = path.join(
+      workspacePath,
+      ".agents",
+      "skills",
+    );
     fs.mkdirSync(workspaceSkillRootPath, { recursive: true });
     writeSkill(workspaceSkillRootPath, "docs-sync", "workspace version");
 
@@ -94,6 +116,7 @@ describe("discoverSessionSkills", () => {
     assert.match(skills[0]?.sourcePath ?? "", /\.agents\/skills\/docs-sync$/);
   });
 
+  /** 変更なしで二度探索し、ファイル読込を計数して初回の一度しか発生しないことを確認する。 */
   it("変更がない discovery は Markdown 再読込を避ける", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();
@@ -101,7 +124,9 @@ describe("discoverSessionSkills", () => {
     fs.mkdirSync(workspaceSkillRootPath, { recursive: true });
     writeSkill(workspaceSkillRootPath, "docs-sync", "workspace skill");
 
-    const mutableFsPromises = fs.promises as unknown as { readFile: (...args: any[]) => Promise<any> };
+    const mutableFsPromises = fs.promises as unknown as {
+      readFile: (...args: any[]) => Promise<any>;
+    };
     const originalReadFile = mutableFsPromises.readFile;
     let readCount = 0;
     mutableFsPromises.readFile = async (...args: any[]) => {
@@ -119,23 +144,43 @@ describe("discoverSessionSkills", () => {
     assert.equal(readCount, 1);
   });
 
+  /** 同じファイルの説明と更新時刻を変更すると、次の探索に新しい説明が反映されることを確認する。 */
   it("SKILL.md の mtime 変更で cache を更新する", async () => {
     const workspacePath = createTempDir();
     const providerRootPath = createTempDir();
     const workspaceSkillRootPath = path.join(workspacePath, "skills");
     fs.mkdirSync(workspaceSkillRootPath, { recursive: true });
     writeSkill(workspaceSkillRootPath, "docs-sync", "before");
-    const skillFilePath = path.join(workspaceSkillRootPath, "docs-sync", "SKILL.md");
+    const skillFilePath = path.join(
+      workspaceSkillRootPath,
+      "docs-sync",
+      "SKILL.md",
+    );
 
-    assert.equal((await discoverSessionSkills(workspacePath, providerRootPath))[0]?.description, "before");
+    assert.equal(
+      (await discoverSessionSkills(workspacePath, providerRootPath))[0]
+        ?.description,
+      "before",
+    );
 
     fs.writeFileSync(
       skillFilePath,
-      ["---", "name: docs-sync", "description: after", "---", "", "# docs-sync"].join("\n"),
+      [
+        "---",
+        "name: docs-sync",
+        "description: after",
+        "---",
+        "",
+        "# docs-sync",
+      ].join("\n"),
       "utf8",
     );
     touchFile(skillFilePath);
 
-    assert.equal((await discoverSessionSkills(workspacePath, providerRootPath))[0]?.description, "after");
+    assert.equal(
+      (await discoverSessionSkills(workspacePath, providerRootPath))[0]
+        ?.description,
+      "after",
+    );
   });
 });

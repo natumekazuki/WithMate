@@ -5,7 +5,10 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
-import { HomeCharactersPanel, type HomeCharactersPanelProps } from "../../src/home/HomeCharactersPanel.js";
+import {
+  HomeCharactersPanel,
+  type HomeCharactersPanelProps,
+} from "../../src/home/HomeCharactersPanel.js";
 
 // @test-value v2
 // kind = "contract"
@@ -19,39 +22,70 @@ import { HomeCharactersPanel, type HomeCharactersPanelProps } from "../../src/ho
 // impact = "別Windowから戻った際に閲覧中Characterとkeyboard操作位置を失う"
 // distinction = "型checkや既存New Session testは管理一覧のfocusとscroll保持を検出しない。小さなDOM遷移testで継続的な閲覧契約を確認する"
 // @end-test-value
+/** 既知のキャラクターカードを再取得・エラー中も残し、再試行や正常な空状態への遷移を確認する。 */
 test("Characters keeps the known catalog mounted through refresh and retry", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  const names = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const descriptors = names.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
-  for (const name of names) Object.defineProperty(globalThis, name, {
-    configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
-  });
+  const names = [
+    "window",
+    "document",
+    "HTMLElement",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const descriptors = names.map((name) =>
+    Object.getOwnPropertyDescriptor(globalThis, name),
+  );
+  for (const name of names)
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name],
+    });
   const host = dom.window.document.getElementById("root")!;
   const root = createRoot(host);
   let retries = 0;
   const edited: string[] = [];
   const character: CharacterCatalogEntry = {
-    id: "known", name: "Known Character", description: "Description", iconFilePath: "",
-    theme: { main: "#6f8cff", sub: "#6fb8c7" }, state: "active",
-    createdAt: "", updatedAt: "", archivedAt: null,
+    id: "known",
+    name: "Known Character",
+    description: "Description",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    state: "active",
+    createdAt: "",
+    updatedAt: "",
+    archivedAt: null,
   };
   let props: HomeCharactersPanelProps = {
-    characters: [], searchText: "", characterLoadStatus: "loading",
-    onRetry: () => { retries++; }, onCreateCharacter: () => {}, onEditCharacter: (id) => { edited.push(id); },
+    characters: [],
+    searchText: "",
+    characterLoadStatus: "loading",
+    /** エラー欄の再試行操作を呼出回数で観測する。 */
+    onRetry: () => {
+      retries++;
+    },
+    /** 作成操作は検証対象外のため何もしない。 */
+    onCreateCharacter: () => {},
+    /** クリックされた既知カードのIDを記録する。 */
+    onEditCharacter: (id) => {
+      edited.push(id);
+    },
   };
+  /** 指定した状態だけを更新して同じパネルに描画する。 */
   const render = async (next: Partial<HomeCharactersPanelProps>) => {
     props = { ...props, ...next };
     await act(async () => root.render(<HomeCharactersPanel {...props} />));
   };
   try {
     await render({});
-    assert.ok(host.querySelector('[role="status"][aria-label="Loading characters"]'));
+    assert.ok(
+      host.querySelector('[role="status"][aria-label="Loading characters"]'),
+    );
     assert.equal(host.querySelector('[role="alert"]'), null);
     await render({ characters: [character], characterLoadStatus: "loaded" });
     const list = host.querySelector<HTMLElement>(".home-character-list")!;
     const card = list.querySelector<HTMLButtonElement>("button")!;
     card.focus();
     list.scrollTop = 80;
+    /** 同じ一覧とカードが残り、キーボードのフォーカスとスクロール位置が保持されることを確かめる。 */
     const assertCatalogRetained = () => {
       assert.equal(host.querySelector(".home-character-list"), list);
       assert.equal(list.querySelector("button"), card);
@@ -61,14 +95,26 @@ test("Characters keeps the known catalog mounted through refresh and retry", asy
     await render({ characterLoadStatus: "loading" });
     assert.equal(host.firstElementChild?.getAttribute("aria-busy"), "true");
     assertCatalogRetained();
-    await render({ characterLoadStatus: "error", feedback: "Catalog unavailable" });
+    await render({
+      characterLoadStatus: "error",
+      feedback: "Catalog unavailable",
+    });
     assertCatalogRetained();
-    assert.match(host.querySelector('[role="alert"]')!.textContent!, /Catalog unavailable/);
+    assert.match(
+      host.querySelector('[role="alert"]')!.textContent!,
+      /Catalog unavailable/,
+    );
     await act(async () => card.click());
     assert.deepEqual(edited, ["known"]);
-    await act(async () => host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click(),
+    );
     assert.equal(retries, 1);
-    await render({ characterLoadStatus: "loaded", characters: [], feedback: "" });
+    await render({
+      characterLoadStatus: "loaded",
+      characters: [],
+      feedback: "",
+    });
     assert.equal(list.childElementCount, 0);
     assert.equal(host.querySelector('[role="alert"]'), null);
     assert.equal(host.querySelector('[aria-label="Loading characters"]'), null);
@@ -78,7 +124,8 @@ test("Characters keeps the known catalog mounted through refresh and retry", asy
     dom.window.close();
     names.forEach((name, index) => {
       const descriptor = descriptors[index];
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
     });
   }
 });

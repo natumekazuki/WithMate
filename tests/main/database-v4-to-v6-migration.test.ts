@@ -10,7 +10,10 @@ import {
   createMigrationWriteReport,
   hasV4ToV6ReleaseDataMigrationMarker,
 } from "../../src-electron/storage/migrations/migrate-database-v4-to-v6.js";
-import { CREATE_APP_SETTINGS_TABLE_SQL, CREATE_MODEL_CATALOG_TABLES_SQL } from "../../src-electron/storage/database-schema-v1.js";
+import {
+  CREATE_APP_SETTINGS_TABLE_SQL,
+  CREATE_MODEL_CATALOG_TABLES_SQL,
+} from "../../src-electron/storage/database-schema-v1.js";
 import { CREATE_V4_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
@@ -18,18 +21,26 @@ import {
   isValidV6Database,
 } from "../../src-electron/storage/database-schema-v6.js";
 
-function createFixture(): { dir: string; v4Path: string; v6Path: string; cleanup(): void } {
+/** 移行元と移行先を一つの一時領域に分離し、後片付けまで管理する。 */
+function createFixture(): {
+  dir: string;
+  v4Path: string;
+  v6Path: string;
+  /** fixture 全体を破棄する。 */ cleanup(): void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "withmate-v4-to-v6-"));
   return {
     dir,
     v4Path: join(dir, "withmate-v4.db"),
     v6Path: join(dir, APP_DATABASE_V6_FILENAME),
+    /** この検査が作った DB とディレクトリだけを回収する。 */
     cleanup() {
       rmSync(dir, { recursive: true, force: true });
     },
   };
 }
 
+/** 移行対象と除外対象を混ぜた v4 の SQLite データを保存する。 */
 function createV4FixtureDatabase(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -53,43 +64,54 @@ function createV4FixtureDatabase(dbPath: string): void {
         archived_at TEXT
       );
     `);
-    db.exec("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, task_title TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL);");
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, task_title TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL);",
+    );
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run(
       "coding_provider_settings_json",
-      JSON.stringify({ codex: { enabled: true, apiKey: "secret", skillRootPath: "", skillRelativePath: "", instructionRelativePath: "" } }),
+      JSON.stringify({
+        codex: {
+          enabled: true,
+          apiKey: "secret",
+          skillRootPath: "",
+          skillRelativePath: "",
+          instructionRelativePath: "",
+        },
+      }),
       "2026-06-28T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run(
       "memory_extraction_provider_settings_json",
       "{}",
       "2026-06-28T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run(
       "auto_collapse_action_dock_on_send",
       "true",
       "2026-06-28T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-      "launch_at_login_enabled",
-      "true",
-      "2026-06-28T00:00:00.000Z",
-    );
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-      "session_right_pane_visible",
-      "true",
-      "2026-06-28T00:00:00.000Z",
-    );
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run("launch_at_login_enabled", "true", "2026-06-28T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run("session_right_pane_visible", "true", "2026-06-28T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run(
       "user_microcopy_catalog_json",
       JSON.stringify({ legacy: true }),
       "2026-06-28T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)").run(
-      12,
-      "fixture",
-      "2026-06-28T00:00:00.000Z",
-      1,
-    );
+    db.prepare(
+      "INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)",
+    ).run(12, "fixture", "2026-06-28T00:00:00.000Z", 1);
     db.prepare(
       "INSERT INTO model_catalog_providers (revision, provider_id, label, default_model_id, default_reasoning_effort, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(12, "codex", "Codex", "gpt-5.4", "medium", 1);
@@ -111,13 +133,17 @@ function createV4FixtureDatabase(dbPath: string): void {
       "2026-06-28T00:00:00.000Z",
       null,
     );
-    db.prepare("INSERT INTO sessions (id, task_title, status, updated_at) VALUES (?, ?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO sessions (id, task_title, status, updated_at) VALUES (?, ?, ?, ?)",
+    ).run(
       "session-a",
       "捨てる session",
       "completed",
       "2026-06-28T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO mate_profile (id, state, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO mate_profile (id, state, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(
       "current",
       "active",
       "legacy mate",
@@ -129,37 +155,53 @@ function createV4FixtureDatabase(dbPath: string): void {
   }
 }
 
+/** 移行結果の行数を副作用なしで照合するため、DB を読み取り専用で開く。 */
 function readCount(dbPath: string, tableName: string): number {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as { count: number };
+    const row = db
+      .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+      .get() as { count: number };
     return row.count;
   } finally {
     db.close();
   }
 }
 
+/** 旧テーブルが新しい DB に再作成されていないことをスキーマから判定する。 */
 function tableExists(dbPath: string, tableName: string): boolean {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    return db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) !== undefined;
+    return (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
+        )
+        .get(tableName) !== undefined
+    );
   } finally {
     db.close();
   }
 }
 
+/** 単一の保存値を読み取り、設定が移行されていなければ null を返す。 */
 function readAppSetting(dbPath: string, settingKey: string): string | null {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const row = db.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?").get(settingKey) as {
-      setting_value: string;
-    } | undefined;
+    const row = db
+      .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+      .get(settingKey) as
+      | {
+          setting_value: string;
+        }
+      | undefined;
     return row?.setting_value ?? null;
   } finally {
     db.close();
   }
 }
 
+/** v4 のリリースデータ移行を計画と書き込み後の SQLite の両方から検査する。 */
 describe("migrate-database-v4-to-v6", () => {
   // @test-value v2
   // kind = "contract"
@@ -173,6 +215,7 @@ describe("migrate-database-v4-to-v6", () => {
   // impact = "廃止設定が新DBへ持ち越され、削除契約に反して再利用される"
   // distinction = "V4 fixtureに廃止keyを含め、migration filterの結果を件数として確認する"
   // @end-test-value
+  /** 現行設定とキャラクターを移行予定に数え、廃止設定やセッションを除外として集計する。 */
   it("dry-run で V6 移行対象と skip 対象を分けて返す", () => {
     const fixture = createFixture();
     try {
@@ -204,6 +247,7 @@ describe("migrate-database-v4-to-v6", () => {
   // impact = "V6起動後に廃止customデータが復活し、削除済み設定が再生される"
   // distinction = "dry-runの計画件数に加えて実write後のV6行を確認する"
   // @end-test-value
+  /** 新 DB に現行データと移行マーカーを書き込み、廃止設定や旧テーブルを持ち込まない。 */
   it("write で settings/characters だけを V6 DB へ移行する", async () => {
     const fixture = createFixture();
     try {
@@ -219,21 +263,34 @@ describe("migrate-database-v4-to-v6", () => {
       assert.equal(report.migratedV6Counts.characters, 1);
       assert.equal(isValidV6Database(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
-      assert.equal(readAppSetting(fixture.v6Path, "launch_at_login_enabled"), "true");
-      assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
-      assert.equal(readAppSetting(fixture.v6Path, "user_microcopy_catalog_json"), null);
+      assert.equal(
+        readAppSetting(fixture.v6Path, "launch_at_login_enabled"),
+        "true",
+      );
+      assert.equal(
+        readAppSetting(fixture.v6Path, "session_right_pane_visible"),
+        "true",
+      );
+      assert.equal(
+        readAppSetting(fixture.v6Path, "user_microcopy_catalog_json"),
+        null,
+      );
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "provider_model_cache"), 0);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
       assert.equal(readCount(fixture.v6Path, "sessions_v6"), 0);
       assert.equal(tableExists(fixture.v6Path, "sessions"), false);
       assert.equal(tableExists(fixture.v6Path, "mate_profile"), false);
-      assert.equal(tableExists(fixture.v6Path, "project_memory_entries"), false);
+      assert.equal(
+        tableExists(fixture.v6Path, "project_memory_entries"),
+        false,
+      );
     } finally {
       fixture.cleanup();
     }
   });
 
+  /** v6 スキーマだけがある移行先にも設定とキャラクターを投入できる。 */
   it("既存の empty V6 bootstrap DB にも release data を投入できる", async () => {
     const fixture = createFixture();
     try {
@@ -254,7 +311,10 @@ describe("migrate-database-v4-to-v6", () => {
       });
 
       assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
-      assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
+      assert.equal(
+        readAppSetting(fixture.v6Path, "session_right_pane_visible"),
+        "true",
+      );
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
     } finally {
       fixture.cleanup();

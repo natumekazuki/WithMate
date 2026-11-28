@@ -18,8 +18,11 @@ import { SessionFileExplorerService } from "../../src-electron/files/session-fil
 // impact = "本文から生成済みPDFを閲覧できなくなる"
 // distinction = "generic fileと画像testではPDF限定経路の実filesystem解決を保証できず、小さいfixtureで確認する"
 // @end-test-value
+/** Workspace 外の同じ PDF を基準の異なる相対パス、絶対パス、file URL で指定し、解決先と原本の bytes・revision が一致することを確認する。 */
 test("linked PDF reads resolve local targets and return revision-bound bytes", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-pdf-links-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-pdf-links-"),
+  );
   try {
     const workspace = path.join(directory, "workspace");
     await mkdir(path.join(workspace, "docs"), { recursive: true });
@@ -29,11 +32,26 @@ test("linked PDF reads resolve local targets and return revision-bound bytes", a
     await writeFile(pdfPath, pdf);
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "data"),
-      async getSessionContext() { return { workspacePath: workspace, parentSessionId: "session", allowedAdditionalDirectories: [] }; },
+      /** 相対リンクの基準を Workspace に固定し、追加ディレクトリなしで解決を試す。 */
+      async getSessionContext() {
+        return {
+          workspacePath: workspace,
+          parentSessionId: "session",
+          allowedAdditionalDirectories: [],
+        };
+      },
     });
     for (const request of [
       { sessionId: "session", target: "../result.pdf" },
-      { sessionId: "session", target: "../../result.pdf", baseResource: { sessionId: "session", rootId: "workspace", relativePath: "docs/source.md" } },
+      {
+        sessionId: "session",
+        target: "../../result.pdf",
+        baseResource: {
+          sessionId: "session",
+          rootId: "workspace",
+          relativePath: "docs/source.md",
+        },
+      },
       { sessionId: "session", target: pdfPath },
       { sessionId: "session", target: pathToFileURL(pdfPath).href },
     ]) {
@@ -41,12 +59,19 @@ test("linked PDF reads resolve local targets and return revision-bound bytes", a
       assert.equal(descriptor.kind, "pdf");
       assert.equal(descriptor.mimeType, "application/pdf");
       assert.equal(descriptor.absoluteFilePath, pdfPath);
-      const chunk = await service.readPdfChunk({ ...request, offset: 0, length: 1024, expectedRevision: descriptor.revision });
+      const chunk = await service.readPdfChunk({
+        ...request,
+        offset: 0,
+        length: 1024,
+        expectedRevision: descriptor.revision,
+      });
       assert.equal(new TextDecoder().decode(chunk.data), pdf);
       assert.equal(chunk.done, true);
       assert.equal(chunk.revision, descriptor.revision);
     }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -61,8 +86,11 @@ test("linked PDF reads resolve local targets and return revision-bound bytes", a
 // impact = "本文PDF読込が任意text読込へ拡大する、または変更途中のPDFを返す"
 // distinction = "型検査やgeneric file testでは自動PDF読込のbytes種別と認可を保証できず、小さい実fileで確認する"
 // @end-test-value
+/** PDF 以外の内容、ローカル以外の参照、別セッションや Git を基準にした参照を拒否し、検査後に変更された PDF の bytes も返さないことを確認する。 */
 test("linked PDF reads reject non-PDF targets and stale revisions", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-pdf-boundary-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-pdf-boundary-"),
+  );
   try {
     const pdfPath = path.join(directory, "result.pdf");
     const fakePath = path.join(directory, "private.pdf");
@@ -70,20 +98,87 @@ test("linked PDF reads reject non-PDF targets and stale revisions", async () => 
     await writeFile(fakePath, "private text");
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "data"),
-      async getSessionContext() { return { workspacePath: directory, parentSessionId: "session", allowedAdditionalDirectories: [] }; },
+      /** 拒否理由を Workspace の範囲外ではなく、参照方法・内容・revision の違いに切り分ける。 */
+      async getSessionContext() {
+        return {
+          workspacePath: directory,
+          parentSessionId: "session",
+          allowedAdditionalDirectories: [],
+        };
+      },
     });
     const request = { sessionId: "session", target: pdfPath };
     const descriptor = await service.inspectPdf(request);
-    await assert.rejects(service.inspectPdf({ ...request, target: fakePath }), /not a PDF/);
-    const fake = await service.inspectFile({ sessionId: "session", absolutePath: fakePath });
-    await assert.rejects(service.readPdfChunk({ ...request, target: fakePath, offset: 0, length: 1024, expectedRevision: fake.revision }), /not a PDF/);
-    for (const target of ["https://example.com/result.pdf", "custom:result.pdf"]) {
-      await assert.rejects(service.inspectPdf({ ...request, target }), /local path or file URL/);
-      await assert.rejects(service.readPdfChunk({ ...request, target, offset: 0, length: 1024, expectedRevision: descriptor.revision }), /local path or file URL/);
+    await assert.rejects(
+      service.inspectPdf({ ...request, target: fakePath }),
+      /not a PDF/,
+    );
+    const fake = await service.inspectFile({
+      sessionId: "session",
+      absolutePath: fakePath,
+    });
+    await assert.rejects(
+      service.readPdfChunk({
+        ...request,
+        target: fakePath,
+        offset: 0,
+        length: 1024,
+        expectedRevision: fake.revision,
+      }),
+      /not a PDF/,
+    );
+    for (const target of [
+      "https://example.com/result.pdf",
+      "custom:result.pdf",
+    ]) {
+      await assert.rejects(
+        service.inspectPdf({ ...request, target }),
+        /local path or file URL/,
+      );
+      await assert.rejects(
+        service.readPdfChunk({
+          ...request,
+          target,
+          offset: 0,
+          length: 1024,
+          expectedRevision: descriptor.revision,
+        }),
+        /local path or file URL/,
+      );
     }
-    await assert.rejects(service.inspectPdf({ ...request, baseResource: { sessionId: "other", absolutePath: pdfPath } }), /does not belong/);
-    await assert.rejects(service.inspectPdf({ ...request, target: "result.pdf", baseResource: { resourceKind: "git-commit-file", sessionId: "session", rootId: "workspace", repositoryId: "repository", commitId: "a".repeat(40), relativePath: "source.md" } }), /Relative PDFs/);
+    await assert.rejects(
+      service.inspectPdf({
+        ...request,
+        baseResource: { sessionId: "other", absolutePath: pdfPath },
+      }),
+      /does not belong/,
+    );
+    await assert.rejects(
+      service.inspectPdf({
+        ...request,
+        target: "result.pdf",
+        baseResource: {
+          resourceKind: "git-commit-file",
+          sessionId: "session",
+          rootId: "workspace",
+          repositoryId: "repository",
+          commitId: "a".repeat(40),
+          relativePath: "source.md",
+        },
+      }),
+      /Relative PDFs/,
+    );
     await writeFile(pdfPath, "%PDF-1.7\nchanged fixture");
-    await assert.rejects(service.readPdfChunk({ ...request, offset: 0, length: 1024, expectedRevision: descriptor.revision }), /file changed/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    await assert.rejects(
+      service.readPdfChunk({
+        ...request,
+        offset: 0,
+        length: 1024,
+        expectedRevision: descriptor.revision,
+      }),
+      /file changed/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

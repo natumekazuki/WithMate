@@ -6,7 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
-import { SessionTurnStorageV6, deleteSessionTurnsForTargets } from "../../src-electron/session/session-turn-storage-v6.js";
+import {
+  SessionTurnStorageV6,
+  deleteSessionTurnsForTargets,
+} from "../../src-electron/session/session-turn-storage-v6.js";
 import type { SessionTurnInput } from "../../src-shared/session/session-turn-state.js";
 
 // @test-value v2
@@ -21,6 +24,7 @@ import type { SessionTurnInput } from "../../src-shared/session/session-turn-sta
 // impact = "Latest Commandと取消表示の混線や既確定結果の再分類を防ぐ"
 // distinction = "type/schema checkではowner queryの選択と確定更新guard、削除境界を検証できない"
 // @end-test-value
+/** 最新の実行中ターンを直接の所有者別に取得し、完了結果の再確定や他の所有者による更新を拒否することを確認する。 */
 test("最小turnは直接owner・最新running・一度だけのterminal確定を維持する", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-turn-storage-"));
   try {
@@ -32,33 +36,67 @@ test("最小turnは直接owner・最新running・一度だけのterminal確定�
         VALUES ('main', 'Main', 'active', 'codex', 1, 'model', 'medium', 'untrusted', '{}', '2026-10-01', '2026-10-01', '2026-10-01');
         INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
         VALUES ('aux', 'main', '2026-10-01', '2026-10-01');`);
-    } finally { db.close(); }
+    } finally {
+      db.close();
+    }
     const storage = new SessionTurnStorageV6(dbPath);
     const input: SessionTurnInput = {
-      sessionId: "main", createdAt: "2026-10-01T00:00:00.000Z", phase: "running",
-      provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "untrusted",
-      threadId: "thread", errorMessage: "", userMessageSeq: 0,
+      sessionId: "main",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      phase: "running",
+      provider: "codex",
+      model: "model",
+      reasoningEffort: "medium",
+      approvalMode: "untrusted",
+      threadId: "thread",
+      errorMessage: "",
+      userMessageSeq: 0,
     };
     try {
       for (const phase of ["completed", "failed", "canceled"] as const) {
         const turn = storage.createSessionTurn(input);
-        const terminal = { ...input, phase, assistantMessageSeq: 1, completedAt: "2026-10-01T00:01:00.000Z" };
+        const terminal = {
+          ...input,
+          phase,
+          assistantMessageSeq: 1,
+          completedAt: "2026-10-01T00:01:00.000Z",
+        };
         assert.equal(storage.updateSessionTurn(turn.id, terminal).phase, phase);
-        assert.throws(() => storage.updateSessionTurn(turn.id, { ...input, phase: "failed" }), /owner mismatch/);
+        assert.throws(
+          () =>
+            storage.updateSessionTurn(turn.id, { ...input, phase: "failed" }),
+          /owner mismatch/,
+        );
         assert.equal(storage.getLatestSessionTurn("main")?.phase, phase);
       }
       const running = storage.createSessionTurn(input);
-      const auxiliary = storage.createSessionTurn({ ...input, sessionId: "aux" });
+      const auxiliary = storage.createSessionTurn({
+        ...input,
+        sessionId: "aux",
+      });
       assert.equal(storage.getLatestSessionTurn("main")?.id, running.id);
       assert.equal(storage.getLatestSessionTurn("main")?.phase, "running");
       assert.equal(storage.getLatestSessionTurn("aux")?.id, auxiliary.id);
-      assert.throws(() => storage.updateSessionTurn(running.id, { ...input, sessionId: "aux" }), /owner mismatch/);
+      assert.throws(
+        () =>
+          storage.updateSessionTurn(running.id, { ...input, sessionId: "aux" }),
+        /owner mismatch/,
+      );
       assert.equal(storage.getLatestSessionTurn("missing"), null);
       const cleanupDb = new DatabaseSync(dbPath);
-      try { deleteSessionTurnsForTargets(cleanupDb, { auxiliarySessionIds: ["aux"] }); }
-      finally { cleanupDb.close(); }
+      try {
+        deleteSessionTurnsForTargets(cleanupDb, {
+          auxiliarySessionIds: ["aux"],
+        });
+      } finally {
+        cleanupDb.close();
+      }
       assert.equal(storage.getLatestSessionTurn("aux"), null);
       assert.equal(storage.getLatestSessionTurn("main")?.id, running.id);
-    } finally { storage.close(); }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    } finally {
+      storage.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

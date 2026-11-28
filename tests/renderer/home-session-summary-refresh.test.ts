@@ -6,9 +6,12 @@ import {
   type HomeSessionSummaryRefreshRequest,
 } from "../../src/home/home-session-summary-refresh.js";
 
+/** 最初の再取得を任意の時点まで保留し、通知と適用の順序をテストから制御する。 */
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((done) => { resolve = done; });
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 }
 
@@ -24,6 +27,7 @@ function deferred() {
 // impact = "通知集中で一覧readが増殖するか、最新の一覧・open Sessionの状態が欠落する"
 // distinction = "型やpage helperでは確認できない非同期admissionとscope引継ぎをdeferredで決定論的に観測する"
 // @end-test-value
+/** 初回の再取得を止めて同じ通知を1000回送っても、処理が直列の2回にまとまり、最終要求が両方のIDを含んで新しいcontextだけを適用することを確認する。 */
 test("refreshは1件＋最新pendingへ集約し、scopeと最新contextを引き継ぐ", async () => {
   const gate = deferred();
   const requests: HomeSessionSummaryRefreshRequest[] = [];
@@ -31,20 +35,31 @@ test("refreshは1件＋最新pendingへ集約し、scopeと最新contextを引�
   let context = "old";
   let active = 0;
   let maxActive = 0;
-  const refresher = createHomeSessionSummaryRefresher(async (request, isCurrent) => {
-    const capturedContext = context;
-    requests.push(request);
-    active += 1;
-    maxActive = Math.max(maxActive, active);
-    if (requests.length === 1) await gate.promise;
-    if (isCurrent()) applied.push(capturedContext);
-    active -= 1;
+  const refresher = createHomeSessionSummaryRefresher(
+    async (request, isCurrent) => {
+      const capturedContext = context;
+      requests.push(request);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (requests.length === 1) await gate.promise;
+      if (isCurrent()) applied.push(capturedContext);
+      active -= 1;
+    },
+  );
+  const completion = refresher.refresh({
+    mode: "replace",
+    invalidation: { scope: "ids", sessionIds: ["first"] },
   });
-  const completion = refresher.refresh({ mode: "replace", invalidation: { scope: "ids", sessionIds: ["first"] } });
   await Promise.resolve();
   context = "latest";
   for (let index = 0; index < 1000; index += 1) {
-    assert.equal(refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["second"] } }), completion);
+    assert.equal(
+      refresher.refresh({
+        mode: "preserve",
+        invalidation: { scope: "ids", sessionIds: ["second"] },
+      }),
+      completion,
+    );
   }
   assert.equal(requests.length, 1);
   gate.resolve();
@@ -52,7 +67,10 @@ test("refreshは1件＋最新pendingへ集約し、scopeと最新contextを引�
   assert.equal(maxActive, 1);
   assert.deepEqual(requests, [
     { mode: "replace", invalidation: { scope: "ids", sessionIds: ["first"] } },
-    { mode: "replace", invalidation: { scope: "ids", sessionIds: ["first", "second"] } },
+    {
+      mode: "replace",
+      invalidation: { scope: "ids", sessionIds: ["first", "second"] },
+    },
   ]);
   assert.deepEqual(applied, ["latest"]);
   refresher.dispose();
@@ -70,6 +88,7 @@ test("refreshは1件＋最新pendingへ集約し、scopeと最新contextを引�
 // impact = "通知集中でrenderer保持量が増えるか、超過対象の更新を見落とす"
 // distinction = "schemaは個々の通知しか検査せず、複数通知の和集合の境界を保証しない"
 // @end-test-value
+/** 保留中の通知IDが100件なら列挙を維持し、101件では超過分を捨てずに全体再取得へ切り替える。 */
 test("pending ID集合は100件の境界を超えるとallに昇格する", async () => {
   for (const count of [100, 101]) {
     const gate = deferred();
@@ -78,16 +97,30 @@ test("pending ID集合は100件の境界を超えるとallに昇格する", asyn
       requests.push(request);
       if (requests.length === 1) await gate.promise;
     });
-    const completion = refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["0"] } });
+    const completion = refresher.refresh({
+      mode: "preserve",
+      invalidation: { scope: "ids", sessionIds: ["0"] },
+    });
     await Promise.resolve();
     for (let index = 1; index < count; index += 1) {
-      void refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: [String(index)] } });
+      void refresher.refresh({
+        mode: "preserve",
+        invalidation: { scope: "ids", sessionIds: [String(index)] },
+      });
     }
     gate.resolve();
     await completion;
-    assert.deepEqual(requests[1]?.invalidation, count === 100
-      ? { scope: "ids", sessionIds: Array.from({ length: 100 }, (_, index) => String(index)) }
-      : { scope: "all" });
+    assert.deepEqual(
+      requests[1]?.invalidation,
+      count === 100
+        ? {
+            scope: "ids",
+            sessionIds: Array.from({ length: 100 }, (_, index) =>
+              String(index),
+            ),
+          }
+        : { scope: "all" },
+    );
     refresher.dispose();
   }
 });
@@ -104,24 +137,43 @@ test("pending ID集合は100件の境界を超えるとallに昇格する", asyn
 // impact = "検索入力中に届いたSession更新がopen summaryとCharacter利用履歴へ反映されなくなる"
 // distinction = "通常の通知集約と異なり、検索debounce要求の前に失効中のreadが完了する順序をdeferredで確認する"
 // @end-test-value
+/** 検索条件で実行中の取得を失効させても、実行中と保留中の通知IDが新条件での先頭ページ置換へ引き継がれることを確認する。 */
 test("検索失効は実行中とpendingの通知scopeをdebounce前にも保持する", async () => {
   for (const hasPending of [false, true]) {
     const gate = deferred();
     const requests: HomeSessionSummaryRefreshRequest[] = [];
     const applied: HomeSessionSummaryRefreshRequest[] = [];
-    const refresher = createHomeSessionSummaryRefresher(async (request, isCurrent) => {
-      requests.push(request);
-      if (requests.length === 1) await gate.promise;
-      if (isCurrent()) applied.push(request);
+    const refresher = createHomeSessionSummaryRefresher(
+      async (request, isCurrent) => {
+        requests.push(request);
+        if (requests.length === 1) await gate.promise;
+        if (isCurrent()) applied.push(request);
+      },
+    );
+    const completion = refresher.refresh({
+      mode: "preserve",
+      invalidation: { scope: "ids", sessionIds: ["running"] },
     });
-    const completion = refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["running"] } });
     await Promise.resolve();
-    if (hasPending) void refresher.refresh({ mode: "preserve", invalidation: { scope: "ids", sessionIds: ["pending"] } });
+    if (hasPending)
+      void refresher.refresh({
+        mode: "preserve",
+        invalidation: { scope: "ids", sessionIds: ["pending"] },
+      });
     refresher.invalidate("replace");
-    if (hasPending) void refresher.refresh({ mode: "replace", invalidation: null });
+    if (hasPending)
+      void refresher.refresh({ mode: "replace", invalidation: null });
     gate.resolve();
     await completion;
-    assert.deepEqual(applied, [{ mode: "replace", invalidation: { scope: "ids", sessionIds: hasPending ? ["running", "pending"] : ["running"] } }]);
+    assert.deepEqual(applied, [
+      {
+        mode: "replace",
+        invalidation: {
+          scope: "ids",
+          sessionIds: hasPending ? ["running", "pending"] : ["running"],
+        },
+      },
+    ]);
     await refresher.refresh({ mode: "replace", invalidation: null });
     assert.deepEqual(requests.at(-1), { mode: "replace", invalidation: null });
     refresher.dispose();
@@ -140,17 +192,20 @@ test("検索失効は実行中とpendingの通知scopeをdebounce前にも保持
 // impact = "検索変更やWindow終了後に古いSession一覧を再表示する"
 // distinction = "page queryの取消とは異なるowner lifetimeと未開始pendingの停止を確認する"
 // @end-test-value
+/** 検索条件の失効で古い結果の適用を止め、破棄後は保留中および新規の再取得も開始しないことを確認する。 */
 test("context失効とdisposeは旧結果とpending実行を停止する", async () => {
   const gate = deferred();
   let current!: () => boolean;
   let runs = 0;
   let applied = 0;
-  const refresher = createHomeSessionSummaryRefresher(async (_request, isCurrent) => {
-    current = isCurrent;
-    runs += 1;
-    await gate.promise;
-    if (isCurrent()) applied += 1;
-  });
+  const refresher = createHomeSessionSummaryRefresher(
+    async (_request, isCurrent) => {
+      current = isCurrent;
+      runs += 1;
+      await gate.promise;
+      if (isCurrent()) applied += 1;
+    },
+  );
   const request = { mode: "preserve", invalidation: { scope: "all" } } as const;
   const completion = refresher.refresh(request);
   await Promise.resolve();

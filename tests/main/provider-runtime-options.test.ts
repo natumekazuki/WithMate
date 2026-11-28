@@ -23,14 +23,19 @@ import {
 // distinction = "Provider設定の候補や実行値の型は変換時に選んだSandboxを検証しない"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 非 Codex の親で有効ではない書込み権限を引き継がず、Codex の子の Sandbox が Read Only になることを確認する。 */
 test("非CodexのProvider ControlledはCodexの子でRead Onlyを選ぶ", () => {
   for (const provider of ["claude", "copilot", "opencode"]) {
-    const inherited = resolveChildSessionPermissions(provider, {
-      approvalMode: "on-request",
-      customAgentName: "",
-      codexSandboxMode: "danger-full-access",
-      codexReviewer: "user",
-    }, "codex");
+    const inherited = resolveChildSessionPermissions(
+      provider,
+      {
+        approvalMode: "on-request",
+        customAgentName: "",
+        codexSandboxMode: "danger-full-access",
+        codexReviewer: "user",
+      },
+      "codex",
+    );
     assert.equal(inherited.codexSandboxMode, "read-only", provider);
   }
 });
@@ -48,6 +53,7 @@ test("非CodexのProvider ControlledはCodexの子でRead Onlyを選ぶ", () => 
 // distinction = "送信時の実行値検証は宛先で同名のApprovalが使えても意味の違いを検出しない"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 承認の意味が等価でない旧固有モードは、別 Provider の子へ変換せず継承エラーにすることを確認する。 */
 test("異種の子は旧固有Approvalの継承を拒否する", () => {
   for (const [source, target, approvalMode] of [
     ["claude", "codex", "accept-edits"],
@@ -56,12 +62,21 @@ test("異種の子は旧固有Approvalの継承を拒否する", () => {
     ["codex", "copilot", "untrusted"],
     ["copilot", "codex", "untrusted"],
   ] as const) {
-    assert.throws(() => resolveChildSessionPermissions(source, {
-      approvalMode,
-      customAgentName: "",
-      codexSandboxMode: "danger-full-access",
-      codexReviewer: "user",
-    }, target), /Cannot inherit .* approval mode/, `${source} → ${target}: ${approvalMode}`);
+    assert.throws(
+      () =>
+        resolveChildSessionPermissions(
+          source,
+          {
+            approvalMode,
+            customAgentName: "",
+            codexSandboxMode: "danger-full-access",
+            codexReviewer: "user",
+          },
+          target,
+        ),
+      /Cannot inherit .* approval mode/,
+      `${source} → ${target}: ${approvalMode}`,
+    );
   }
 });
 
@@ -77,9 +92,19 @@ test("異種の子は旧固有Approvalの継承を拒否する", () => {
 // impact = "Claude SDKでサポートされない実行modeの選択・既定利用を防ぐ"
 // distinction = "型は全provider共通のapproval unionを許すため、provider別option/defaultの実値を確認する"
 // @end-test-value
+/** Claude の固有モードが選択肢から漏れず、Claude と Codex がそれぞれの既定の承認方式を維持することを確かめる。 */
 test("Claude preserves accepted internal approval values and the on-request default", () => {
-  assert.deepEqual(new Set(getApprovalOptionsForProvider("claude").map(({ value }) => value)),
-    new Set(["never", "on-request", "accept-edits", "dont-ask", "plan", "safety-focused"]));
+  assert.deepEqual(
+    new Set(getApprovalOptionsForProvider("claude").map(({ value }) => value)),
+    new Set([
+      "never",
+      "on-request",
+      "accept-edits",
+      "dont-ask",
+      "plan",
+      "safety-focused",
+    ]),
+  );
   assert.equal(getDefaultApprovalModeForProvider("claude"), "on-request");
   assert.equal(getDefaultApprovalModeForProvider("codex"), "untrusted");
 });
@@ -96,26 +121,78 @@ test("Claude preserves accepted internal approval values and the on-request defa
 // impact = "選択できても送信できない状態や別providerへの未対応mode送信を防ぐ"
 // distinction = "selector一覧とSDK callback testは送信要求の信頼境界を通らない"
 // @end-test-value
+/** Claude の有効な承認・Reviewer・Speed の指定は送信時に保持し、非対応の組合せや他 Provider 向け固有モードは拒否することを確認する。 */
 test("Claude permission options pass execution validation only for their supported provider", () => {
-  const catalog = { id: "claude", label: "Claude", defaultModelId: "model", defaultReasoningEffort: "high" as const,
-    models: [{ id: "model", label: "Model", reasoningEfforts: ["high" as const] }] };
-  const options = { model: "model", reasoningEffort: "high", approvalMode: "on-request",
-    codexSandboxMode: "workspace-write", codexSpeed: "fast", codexReviewer: "user", customAgentName: "" };
-  for (const approvalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "safety-focused"]) {
-    assert.deepEqual(validateSessionExecutionOptions({ ...options, approvalMode }, catalog), { ...options, approvalMode });
+  const catalog = {
+    id: "claude",
+    label: "Claude",
+    defaultModelId: "model",
+    defaultReasoningEffort: "high" as const,
+    models: [
+      { id: "model", label: "Model", reasoningEfforts: ["high" as const] },
+    ],
+  };
+  const options = {
+    model: "model",
+    reasoningEffort: "high",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "fast",
+    codexReviewer: "user",
+    customAgentName: "",
+  };
+  for (const approvalMode of [
+    "never",
+    "on-request",
+    "accept-edits",
+    "dont-ask",
+    "plan",
+    "safety-focused",
+  ]) {
+    assert.deepEqual(
+      validateSessionExecutionOptions({ ...options, approvalMode }, catalog),
+      { ...options, approvalMode },
+    );
   }
-  assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode: "untrusted" }, catalog), /not supported by this provider/);
+  assert.throws(
+    () =>
+      validateSessionExecutionOptions(
+        { ...options, approvalMode: "untrusted" },
+        catalog,
+      ),
+    /not supported by this provider/,
+  );
   for (const approvalMode of ["never", "on-request"]) {
     const selected = { ...options, approvalMode, codexReviewer: "auto-review" };
-    assert.deepEqual(validateSessionExecutionOptions(selected, catalog), selected);
+    assert.deepEqual(
+      validateSessionExecutionOptions(selected, catalog),
+      selected,
+    );
   }
   for (const approvalMode of ["accept-edits", "dont-ask", "plan"]) {
-    assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode, codexReviewer: "auto-review" }, catalog), /reviewer is not supported with this approval mode/);
+    assert.throws(
+      () =>
+        validateSessionExecutionOptions(
+          { ...options, approvalMode, codexReviewer: "auto-review" },
+          catalog,
+        ),
+      /reviewer is not supported with this approval mode/,
+    );
   }
   for (const provider of ["codex", "copilot"]) {
-    assert.deepEqual(getApprovalOptionsForProvider(provider).map(({ value }) => value), ["never", "on-request", "untrusted", "safety-focused"]);
+    assert.deepEqual(
+      getApprovalOptionsForProvider(provider).map(({ value }) => value),
+      ["never", "on-request", "untrusted", "safety-focused"],
+    );
     for (const approvalMode of ["accept-edits", "dont-ask", "plan"]) {
-      assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode }, { ...catalog, id: provider }), /not supported by this provider/);
+      assert.throws(
+        () =>
+          validateSessionExecutionOptions(
+            { ...options, approvalMode },
+            { ...catalog, id: provider },
+          ),
+        /not supported by this provider/,
+      );
     }
   }
 });
@@ -132,28 +209,42 @@ test("Claude permission options pass execution validation only for their support
 // impact = "承認の意味がnative runtimeと一致せず、意図しない自動実行または実行失敗になる"
 // distinction = "共通approval型は全providerのmodeを許すためprovider固有の許可集合を検出できない"
 // @end-test-value
+/** OpenCode の承認候補に Safety Focused を含めても、既定値は on-request のままであることを確認する。 */
 test("OpenCode accepts Safety Focused without changing the existing approval default", () => {
-  assert.deepEqual(getApprovalOptionsForProvider("opencode").map((option) => option.value), ["never", "on-request", "safety-focused"]);
+  assert.deepEqual(
+    getApprovalOptionsForProvider("opencode").map((option) => option.value),
+    ["never", "on-request", "safety-focused"],
+  );
   assert.equal(getDefaultApprovalModeForProvider("opencode"), "on-request");
 });
 
+/** Codex 向けの候補に Workspace への書込みを許す Sandbox が含まれることを確認する。 */
 test("getSandboxOptionsForProvider は Codex provider に Sandbox 選択肢を返す", () => {
   const codexOptions = getSandboxOptionsForProvider("codex");
 
   assert.ok(codexOptions.some((option) => option.value === "workspace-write"));
 });
 
+/** Copilot または Provider 未選択の状態には Codex 専用の Sandbox 候補を返さないことを確認する。 */
 test("getSandboxOptionsForProvider は非 Codex provider では Sandbox 選択肢を返さない", () => {
   assert.deepEqual(getSandboxOptionsForProvider("copilot"), []);
   assert.deepEqual(getSandboxOptionsForProvider(null), []);
 });
 
+/** Workspace Write が保存済みでも、Copilot 選択時には Sandbox 候補が空のままであることを確かめる。 */
 test("getSandboxOptionsForProviderSelection は非 Codex provider で保存済み値を補完しない", () => {
-  assert.deepEqual(getSandboxOptionsForProviderSelection("copilot", "workspace-write"), []);
+  assert.deepEqual(
+    getSandboxOptionsForProviderSelection("copilot", "workspace-write"),
+    [],
+  );
 });
 
+/** Codex の選択肢から保存済みの Workspace Write が欠落しないことを確認する。 */
 test("getSandboxOptionsForProviderSelection は Codex provider で保存済み値を選択肢に含める", () => {
-  const options = getSandboxOptionsForProviderSelection("codex", "workspace-write");
+  const options = getSandboxOptionsForProviderSelection(
+    "codex",
+    "workspace-write",
+  );
 
   assert.ok(options.some((option) => option.value === "workspace-write"));
 });

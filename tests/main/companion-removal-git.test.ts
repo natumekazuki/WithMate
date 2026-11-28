@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -11,13 +18,19 @@ import { removeCompanionGitAssets } from "../../src-electron/storage/migrations/
 
 const execFileAsync = promisify(execFile);
 
+/** 一時リポジトリを明示して Git を実行し、標準出力を比較用に整える。 */
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const result = await execFileAsync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  const result = await execFileAsync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+  });
   return result.stdout.trim();
 }
 
+/** 移行前の状態を作れるように、独立したリポジトリに基点コミットを作る。 */
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-companion-removal-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-companion-removal-"),
+  );
   await git(root, "init", "-b", "main");
   await git(root, "config", "user.name", "Test");
   await git(root, "config", "user.email", "test@example.invalid");
@@ -40,10 +53,18 @@ async function fixture() {
 // distinction = "build/typecheckでは確認できないGit登録と未コミット変更の削除境界を実Gitで確認する"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 専用の worktree と参照だけを取り除き、通常の worktree・ブランチ・stash は維持する。 */
 test("removes owned assets while preserving target branch, other worktree, and stash", async (t) => {
   const root = await fixture();
+  /** 保全を確認した worktree の登録を外し、このテスト専用のリポジトリを回収する。 */
   t.after(async () => {
-    await git(root, "worktree", "remove", "--force", path.join(root, "userdata", "other-worktree")).catch(() => undefined);
+    await git(
+      root,
+      "worktree",
+      "remove",
+      "--force",
+      path.join(root, "userdata", "other-worktree"),
+    ).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   });
   const base = await git(root, "rev-parse", "HEAD");
@@ -58,14 +79,29 @@ test("removes owned assets while preserving target branch, other worktree, and s
   await git(root, "update-ref", ref, base);
   await git(root, "branch", branch, base);
   await git(root, "worktree", "add", worktree, branch);
-  const registeredWorktrees = (await git(root, "worktree", "list", "--porcelain")).replaceAll("\\", "/");
-  assert.equal(registeredWorktrees.includes(worktree.replaceAll("\\", "/")), true);
-  assert.equal(registeredWorktrees.includes(otherWorktree.replaceAll("\\", "/")), true);
+  const registeredWorktrees = (
+    await git(root, "worktree", "list", "--porcelain")
+  ).replaceAll("\\", "/");
+  assert.equal(
+    registeredWorktrees.includes(worktree.replaceAll("\\", "/")),
+    true,
+  );
+  assert.equal(
+    registeredWorktrees.includes(otherWorktree.replaceAll("\\", "/")),
+    true,
+  );
   await writeFile(path.join(worktree, "uncommitted.txt"), "discard me\n");
   await git(worktree, "add", "uncommitted.txt");
   await git(worktree, "commit", "-m", "unmerged companion change");
   await writeFile(path.join(root, "target.txt"), "keep me\n");
-  await git(root, "stash", "push", "-u", "-m", `WithMate Target Changes session=${sessionId} stash=owned`);
+  await git(
+    root,
+    "stash",
+    "push",
+    "-u",
+    "-m",
+    `WithMate Target Changes session=${sessionId} stash=owned`,
+  );
   await writeFile(path.join(root, "user.txt"), "keep user stash\n");
   await git(root, "stash", "push", "-u", "-m", "user stash");
 
@@ -85,15 +121,47 @@ test("removes owned assets while preserving target branch, other worktree, and s
   assert.equal(result.stashesRemoved, 0);
   assert.equal(await git(root, "rev-parse", "refs/heads/main"), base);
   assert.equal(existsSync(worktree), false);
-  assert.equal(await git(root, "for-each-ref", "--format=%(refname)", `refs/heads/${branch}`, ref), "");
-  const remainingWorktrees = (await git(root, "worktree", "list", "--porcelain")).replaceAll("\\", "/");
-  assert.equal(remainingWorktrees.includes(worktree.replaceAll("\\", "/")), false);
-  assert.equal(remainingWorktrees.includes(otherWorktree.replaceAll("\\", "/")), true);
+  assert.equal(
+    await git(
+      root,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${branch}`,
+      ref,
+    ),
+    "",
+  );
+  const remainingWorktrees = (
+    await git(root, "worktree", "list", "--porcelain")
+  ).replaceAll("\\", "/");
+  assert.equal(
+    remainingWorktrees.includes(worktree.replaceAll("\\", "/")),
+    false,
+  );
+  assert.equal(
+    remainingWorktrees.includes(otherWorktree.replaceAll("\\", "/")),
+    true,
+  );
   assert.equal((await git(root, "stash", "list")).includes("user stash"), true);
-  assert.equal((await git(root, "stash", "list")).includes(`session=${sessionId}`), true);
-  assert.equal(await readFile(path.join(root, "tracked.txt"), "utf8"), "base\n");
-  assert.equal((await readFile(path.join(otherWorktree, "tracked.txt"), "utf8")).replace(/\r\n/g, "\n"), "base\n");
-  assert.equal(await readFile(path.join(root, "target.txt"), "utf8").catch(() => ""), "");
+  assert.equal(
+    (await git(root, "stash", "list")).includes(`session=${sessionId}`),
+    true,
+  );
+  assert.equal(
+    await readFile(path.join(root, "tracked.txt"), "utf8"),
+    "base\n",
+  );
+  assert.equal(
+    (await readFile(path.join(otherWorktree, "tracked.txt"), "utf8")).replace(
+      /\r\n/g,
+      "\n",
+    ),
+    "base\n",
+  );
+  assert.equal(
+    await readFile(path.join(root, "target.txt"), "utf8").catch(() => ""),
+    "",
+  );
 
   const rerun = await removeCompanionGitAssets({
     sessionId,
@@ -105,7 +173,12 @@ test("removes owned assets while preserving target branch, other worktree, and s
     companionBranch: branch,
     worktreePath: worktree,
   });
-  assert.deepEqual(rerun, { worktreeRemoved: false, branchRemoved: false, baseSnapshotRefRemoved: false, stashesRemoved: 0 });
+  assert.deepEqual(rerun, {
+    worktreeRemoved: false,
+    branchRemoved: false,
+    baseSnapshotRefRemoved: false,
+    stashesRemoved: 0,
+  });
 });
 
 // @test-value v2
@@ -121,8 +194,10 @@ test("removes owned assets while preserving target branch, other worktree, and s
 // distinction = "Git登録を失ったdirectoryの撤去と通常branchの保全を実filesystem/Gitで検証する"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** Git の登録が消えていても、廃止済み専用ディレクトリの残りを片付ける。 */
 test("removes an unregistered dedicated path without Git registration", async (t) => {
   const root = await fixture();
+  /** 未登録ディレクトリ検査で作った一時リポジトリを回収する。 */
   t.after(() => rm(root, { recursive: true, force: true }));
   const userDataPath = path.join(root, "userdata");
   const worktree = path.join(userDataPath, "cw", "cs-729");
@@ -130,7 +205,12 @@ test("removes an unregistered dedicated path without Git registration", async (t
   await mkdir(worktree, { recursive: true });
   await writeFile(path.join(worktree, "retired.txt"), "retired\n");
   const base = await git(root, "rev-parse", "HEAD");
-  await git(root, "update-ref", "refs/withmate/companion/companion-session-729/base", base);
+  await git(
+    root,
+    "update-ref",
+    "refs/withmate/companion/companion-session-729/base",
+    base,
+  );
   const result = await removeCompanionGitAssets({
     sessionId: "companion-session-729",
     userDataPath,
@@ -143,7 +223,10 @@ test("removes an unregistered dedicated path without Git registration", async (t
   });
   assert.equal(result.worktreeRemoved, true);
   assert.equal(existsSync(worktree), false);
-  assert.equal(await git(root, "rev-parse", "--verify", "refs/heads/main"), base);
+  assert.equal(
+    await git(root, "rev-parse", "--verify", "refs/heads/main"),
+    base,
+  );
 });
 
 // @test-value v2
@@ -156,8 +239,10 @@ test("removes an unregistered dedicated path without Git registration", async (t
 // scope = "Retired Companion Git removal boundary"
 // lifecycle = "permanent"
 // @end-test-value
+/** リンク先の共有データと別リポジトリの参照を保持し、正規の専用領域だけを片付ける。 */
 test("rejects symlinks and tolerates a missing repo", async (t) => {
   const root = await fixture();
+  /** リンクと欠損リポジトリの検査に使った一時領域を回収する。 */
   t.after(() => rm(root, { recursive: true, force: true }));
   const base = await git(root, "rev-parse", "HEAD");
   const sessionId = "companion-session-safety";
@@ -173,18 +258,36 @@ test("rejects symlinks and tolerates a missing repo", async (t) => {
   const cw = path.join(userDataPath, "cw");
   await mkdir(cw, { recursive: true });
   await symlink(outside, path.join(cw, "cs-safety"), "junction");
-  await assert.rejects(removeCompanionGitAssets({
-    sessionId, userDataPath, repoRoot: root, targetBranch: "main", baseSnapshotRef: ref,
-    baseSnapshotCommit: base, companionBranch: branch, worktreePath: path.join(cw, "cs-safety"),
-  }), /symlink|旧命名/);
-  assert.equal(await readFile(path.join(outside, "keep.txt"), "utf8"), "shared content");
+  await assert.rejects(
+    removeCompanionGitAssets({
+      sessionId,
+      userDataPath,
+      repoRoot: root,
+      targetBranch: "main",
+      baseSnapshotRef: ref,
+      baseSnapshotCommit: base,
+      companionBranch: branch,
+      worktreePath: path.join(cw, "cs-safety"),
+    }),
+    /symlink|旧命名/,
+  );
+  assert.equal(
+    await readFile(path.join(outside, "keep.txt"), "utf8"),
+    "shared content",
+  );
   await rm(cw, { recursive: true, force: true });
 
   const wrongBranch = path.join(userDataPath, "cw", "cs-safety");
   await mkdir(path.dirname(wrongBranch), { recursive: true });
   const result = await removeCompanionGitAssets({
-    sessionId, userDataPath, repoRoot: root, targetBranch: "main", baseSnapshotRef: ref,
-    baseSnapshotCommit: base, companionBranch: branch, worktreePath: wrongBranch,
+    sessionId,
+    userDataPath,
+    repoRoot: root,
+    targetBranch: "main",
+    baseSnapshotRef: ref,
+    baseSnapshotCommit: base,
+    companionBranch: branch,
+    worktreePath: wrongBranch,
   });
   assert.equal(result.branchRemoved, true);
   assert.equal(result.baseSnapshotRefRemoved, true);
@@ -196,12 +299,26 @@ test("rejects symlinks and tolerates a missing repo", async (t) => {
     await mkdir(wrongBranch);
     await writeFile(path.join(wrongBranch, "retired.txt"), "retired worktree");
     const removed = await removeCompanionGitAssets({
-      sessionId, userDataPath, repoRoot: retiredRepo, targetBranch: "main", baseSnapshotRef: ref,
-      baseSnapshotCommit: base, companionBranch: branch, worktreePath: wrongBranch,
+      sessionId,
+      userDataPath,
+      repoRoot: retiredRepo,
+      targetBranch: "main",
+      baseSnapshotRef: ref,
+      baseSnapshotCommit: base,
+      companionBranch: branch,
+      worktreePath: wrongBranch,
     });
-    assert.deepEqual(removed, { worktreeRemoved: true, branchRemoved: false, baseSnapshotRefRemoved: false, stashesRemoved: 0 });
+    assert.deepEqual(removed, {
+      worktreeRemoved: true,
+      branchRemoved: false,
+      baseSnapshotRefRemoved: false,
+      stashesRemoved: 0,
+    });
     assert.equal(existsSync(wrongBranch), false);
-    assert.equal(await readFile(path.join(outside, "keep.txt"), "utf8"), "shared content");
+    assert.equal(
+      await readFile(path.join(outside, "keep.txt"), "utf8"),
+      "shared content",
+    );
     assert.equal(await git(root, "rev-parse", unrelatedRef), base);
   }
 });
@@ -216,8 +333,10 @@ test("rejects symlinks and tolerates a missing repo", async (t) => {
 // scope = "Git removal restart"
 // lifecycle = "permanent"
 // @end-test-value
+/** 専用ブランチの先端が入れ替わっていても撤去でき、もう一度実行しても変化しない。 */
 test("restarts cleanup without requiring saved OIDs", async (t) => {
   const root = await fixture();
+  /** 再開検査のために作成したリポジトリを回収する。 */
   t.after(() => rm(root, { recursive: true, force: true }));
   const base = await git(root, "rev-parse", "HEAD");
   const sessionId = "companion-session-interrupted";
@@ -229,21 +348,57 @@ test("restarts cleanup without requiring saved OIDs", async (t) => {
   await git(root, "update-ref", ref, base);
   await git(root, "branch", branch, base);
   await git(root, "worktree", "add", worktree, branch);
-  const replacement = await git(root, "commit-tree", `${base}^{tree}`, "-m", "replacement");
+  const replacement = await git(
+    root,
+    "commit-tree",
+    `${base}^{tree}`,
+    "-m",
+    "replacement",
+  );
   await git(root, "update-ref", `refs/heads/${branch}`, replacement);
   const result = await removeCompanionGitAssets({
-    sessionId, userDataPath, repoRoot: root, targetBranch: "main", baseSnapshotRef: ref,
-    baseSnapshotCommit: base, companionBranch: branch, worktreePath: worktree,
+    sessionId,
+    userDataPath,
+    repoRoot: root,
+    targetBranch: "main",
+    baseSnapshotRef: ref,
+    baseSnapshotCommit: base,
+    companionBranch: branch,
+    worktreePath: worktree,
   });
   assert.equal(result.worktreeRemoved, true);
   assert.equal(result.branchRemoved, true);
   assert.equal(result.baseSnapshotRefRemoved, true);
-  assert.equal(await git(root, "show-ref", "--verify", ref).then(() => true).catch(() => false), false);
-  assert.equal(await git(root, "for-each-ref", "--format=%(refname)", `refs/heads/${branch}`), "");
+  assert.equal(
+    await git(root, "show-ref", "--verify", ref)
+      .then(() => true)
+      .catch(() => false),
+    false,
+  );
+  assert.equal(
+    await git(
+      root,
+      "for-each-ref",
+      "--format=%(refname)",
+      `refs/heads/${branch}`,
+    ),
+    "",
+  );
   assert.equal(existsSync(worktree), false);
   const rerun = await removeCompanionGitAssets({
-    sessionId, userDataPath, repoRoot: root, targetBranch: "main", baseSnapshotRef: ref,
-    baseSnapshotCommit: "old-commit-no-longer-present", companionBranch: branch, worktreePath: worktree,
+    sessionId,
+    userDataPath,
+    repoRoot: root,
+    targetBranch: "main",
+    baseSnapshotRef: ref,
+    baseSnapshotCommit: "old-commit-no-longer-present",
+    companionBranch: branch,
+    worktreePath: worktree,
   });
-  assert.deepEqual(rerun, { worktreeRemoved: false, branchRemoved: false, baseSnapshotRefRemoved: false, stashesRemoved: 0 });
+  assert.deepEqual(rerun, {
+    worktreeRemoved: false,
+    branchRemoved: false,
+    baseSnapshotRefRemoved: false,
+    stashesRemoved: 0,
+  });
 });

@@ -5,12 +5,18 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import { SessionContextPane, type SessionContextPaneProps } from "../../src/chat/shell/session-context-pane.js";
+import {
+  SessionContextPane,
+  type SessionContextPaneProps,
+} from "../../src/chat/shell/session-context-pane.js";
 import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-projection.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** アシスタント行の読み上げ名に使うキャラクターを用意する。 */
 function createCharacterProfile(): CharacterProfile {
   return {
     id: "char-1",
@@ -39,8 +45,11 @@ function createCharacterProfile(): CharacterProfile {
 // impact = "右Paneからbookmarkを探せず、keyboard利用者の既存jump操作も壊れる"
 // distinction = "filter表示切替と既存Arrow/Enter操作を同じmounted componentで確認し、buildだけでは得られないUI contractを補う"
 // @end-test-value
+/** 全件表示とブックマーク表示の両方で、行の読み上げ名、上下移動、Enterによる移動先を確かめる。 */
 test("Messages navigator はaccessible nameを持つnative rowを上下キーとEnterで操作する", async () => {
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousNavigator = globalThis.navigator;
@@ -49,14 +58,38 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
   const previousDOMRect = globalThis.DOMRect;
   const previousEvent = globalThis.Event;
   const previousMouseEvent = globalThis.MouseEvent;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: dom.window.DOMRect });
-  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
-  Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "DOMRect", {
+    configurable: true,
+    value: dom.window.DOMRect,
+  });
+  Object.defineProperty(globalThis, "Event", {
+    configurable: true,
+    value: dom.window.Event,
+  });
+  Object.defineProperty(globalThis, "MouseEvent", {
+    configurable: true,
+    value: dom.window.MouseEvent,
+  });
 
   const rootElement = dom.window.document.getElementById("root");
   assert.ok(rootElement);
@@ -120,7 +153,9 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
       },
     ],
     messageNavigatorSessionId: "session-test",
+    /** この試験ではメッセージ以外の右ペインへの切替を扱わない。 */
     onCycleContextPaneTab() {},
+    /** Enterで移動対象になった行のキーを押下順に控える。 */
     onJumpToMessage: (key) => jumpedKeys.push(key),
   };
 
@@ -128,26 +163,34 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
     await act(async () => {
       root.render(React.createElement(SessionContextPane, props));
     });
-    const rows = Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".messages-navigator-row"));
+    const rows = Array.from(
+      rootElement.querySelectorAll<HTMLButtonElement>(
+        ".messages-navigator-row",
+      ),
+    );
     assert.equal(rows.length, 3);
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /Test Character/);
     assert.match(rows[1]?.getAttribute("aria-label") ?? "", /Your message/);
     assert.match(rows[0]?.getAttribute("aria-label") ?? "", /assistant first/);
     await act(async () => {
       rows[0]?.focus();
-      rows[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "ArrowDown",
-        bubbles: true,
-        cancelable: true,
-      }));
+      rows[0]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.equal(dom.window.document.activeElement, rows[1]);
     await act(async () => {
-      rows[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "Enter",
-        bubbles: true,
-        cancelable: true,
-      }));
+      rows[1]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.deepEqual(jumpedKeys, ["second"]);
 
@@ -159,34 +202,53 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
       bookmarkFilter.click();
     });
     assert.equal(bookmarkFilter.getAttribute("aria-pressed"), "true");
-    const bookmarkedRows = Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".messages-navigator-row"));
+    const bookmarkedRows = Array.from(
+      rootElement.querySelectorAll<HTMLButtonElement>(
+        ".messages-navigator-row",
+      ),
+    );
     assert.equal(bookmarkedRows.length, 2);
-    assert.equal(bookmarkedRows[0]?.getAttribute("aria-label")?.includes("Bookmark saved"), true);
-    assert.equal(bookmarkedRows[0]?.textContent?.includes("assistant first"), true);
+    assert.equal(
+      bookmarkedRows[0]?.getAttribute("aria-label")?.includes("Bookmark saved"),
+      true,
+    );
+    assert.equal(
+      bookmarkedRows[0]?.textContent?.includes("assistant first"),
+      true,
+    );
     await act(async () => {
       bookmarkedRows[0]?.focus();
-      bookmarkedRows[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "ArrowDown",
-        bubbles: true,
-        cancelable: true,
-      }));
+      bookmarkedRows[0]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.equal(dom.window.document.activeElement, bookmarkedRows[1]);
-    assert.equal(bookmarkedRows[1]?.textContent?.includes("assistant third"), true);
+    assert.equal(
+      bookmarkedRows[1]?.textContent?.includes("assistant third"),
+      true,
+    );
     await act(async () => {
-      bookmarkedRows[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "ArrowUp",
-        bubbles: true,
-        cancelable: true,
-      }));
+      bookmarkedRows[1]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowUp",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.equal(dom.window.document.activeElement, bookmarkedRows[0]);
     await act(async () => {
-      bookmarkedRows[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        key: "Enter",
-        bubbles: true,
-        cancelable: true,
-      }));
+      bookmarkedRows[0]?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
     assert.deepEqual(jumpedKeys, ["second", "first"]);
 
@@ -198,19 +260,46 @@ test("Messages navigator はaccessible nameを持つnative rowを上下キーと
       allFilter.click();
     });
     assert.equal(allFilter.getAttribute("aria-pressed"), "true");
-    assert.equal(rootElement.querySelectorAll(".messages-navigator-row").length, 3);
+    assert.equal(
+      rootElement.querySelectorAll(".messages-navigator-row").length,
+      3,
+    );
   } finally {
     await act(async () => {
       root.unmount();
     });
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: previousDOMRect });
-    Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
-    Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: previousMouseEvent });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "DOMRect", {
+      configurable: true,
+      value: previousDOMRect,
+    });
+    Object.defineProperty(globalThis, "Event", {
+      configurable: true,
+      value: previousEvent,
+    });
+    Object.defineProperty(globalThis, "MouseEvent", {
+      configurable: true,
+      value: previousMouseEvent,
+    });
   }
 });

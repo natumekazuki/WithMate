@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { MessageOperation, ProviderUsage } from "../../src-shared/session/runtime-state.js";
+import type {
+  MessageOperation,
+  ProviderUsage,
+} from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
+import type {
+  ModelCatalogProvider,
+  ResolvedModelSelection,
+} from "../../src-shared/settings/model-catalog.js";
 import { buildArtifactFromOperations } from "../../src-electron/providers/provider-artifact.js";
-import type { SnapshotCaptureStats, WorkspaceSnapshot } from "../../src-electron/platform/snapshot-ignore.js";
+import type {
+  SnapshotCaptureStats,
+  WorkspaceSnapshot,
+} from "../../src-electron/platform/snapshot-ignore.js";
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
@@ -21,16 +30,38 @@ import { normalizeMessage } from "../../src-shared/session/session-state.js";
 // impact = "履歴のコマンド結果を誤表示し再保存時に取得済み詳細を失う"
 // distinction = "型検査では既存JSONの欠損と新JSONの正規化結果を検証できない"
 // @end-test-value
+/** 履歴の正規化で新しい失敗・進行中操作は順序と取得済み詳細を保持し、旧操作には状態や終了コードを付け足さない。 */
 it("履歴の操作結果を保持し旧操作の未記録を補完しない", () => {
   const operations: MessageOperation[] = [
     { type: "command_execution", summary: "old", details: "old detail" },
-    { id: "failed", type: "command_execution", summary: "new", status: "failed", exitCode: 9,
-      error: { message: "failure", code: "E_TOOL" }, truncated: true, details: "partial" },
-    { id: "pending", type: "command_execution", summary: "pending", status: "in_progress" },
+    {
+      id: "failed",
+      type: "command_execution",
+      summary: "new",
+      status: "failed",
+      exitCode: 9,
+      error: { message: "failure", code: "E_TOOL" },
+      truncated: true,
+      details: "partial",
+    },
+    {
+      id: "pending",
+      type: "command_execution",
+      summary: "pending",
+      status: "in_progress",
+    },
   ];
-  const message = normalizeMessage({ role: "assistant", text: "body", artifact: {
-    title: "Result", activitySummary: [], changedFiles: [], runChecks: [], operationTimeline: operations,
-  } })!;
+  const message = normalizeMessage({
+    role: "assistant",
+    text: "body",
+    artifact: {
+      title: "Result",
+      activitySummary: [],
+      changedFiles: [],
+      runChecks: [],
+      operationTimeline: operations,
+    },
+  })!;
   const recorded = message.artifact!.operationTimeline!;
   assert.deepEqual(JSON.parse(JSON.stringify(recorded)), operations);
   assert.equal(recorded[0].status, undefined);
@@ -48,6 +79,7 @@ const EMPTY_SNAPSHOT_STATS: SnapshotCaptureStats = {
   hitTotalBytesLimit: false,
 };
 
+/** Copilot の操作結果を投影するため、実行時の選択と成果物に現れるタスク名を持つ Session を用意する。 */
 function createSession(): Session {
   return {
     id: "session-1",
@@ -83,6 +115,7 @@ function createSession(): Session {
   };
 }
 
+/** Provider の実行結果から、操作履歴・差分・実行情報を成果物へ投影する経路を扱う。 */
 describe("provider artifact", () => {
   // @test-value v2
   // kind = "invariant"
@@ -96,9 +129,12 @@ describe("provider artifact", () => {
   // impact = "turn結果の変更内容を利用者が確認できない"
   // distinction = "Provider SDK設定testではartifact projectionを観測しない"
   // @end-test-value
+  /** 空のスナップショットからファイル一件を追加すると、成果物に追加パス、作成操作、Copilot の実行情報が揃う。 */
   it("operations と snapshot diff から最小 artifact を組み立てる", () => {
     const beforeSnapshot: WorkspaceSnapshot = new Map();
-    const afterSnapshot: WorkspaceSnapshot = new Map([["tmp/output.txt", "hello"]]);
+    const afterSnapshot: WorkspaceSnapshot = new Map([
+      ["tmp/output.txt", "hello"],
+    ]);
     const operations: MessageOperation[] = [
       {
         type: "command_execution",
@@ -149,8 +185,16 @@ describe("provider artifact", () => {
     assert.equal(artifact.changedFiles.length, 1);
     assert.equal(artifact.changedFiles[0]?.path, "tmp/output.txt");
     assert.equal(artifact.changedFiles[0]?.kind, "add");
-    assert.equal(artifact.operationTimeline?.[0]?.summary, "create tmp/output.txt");
-    assert.equal(artifact.runChecks.some((check) => check.label === "provider" && check.value === "GitHub Copilot"), true);
+    assert.equal(
+      artifact.operationTimeline?.[0]?.summary,
+      "create tmp/output.txt",
+    );
+    assert.equal(
+      artifact.runChecks.some(
+        (check) =>
+          check.label === "provider" && check.value === "GitHub Copilot",
+      ),
+      true,
+    );
   });
 });
-

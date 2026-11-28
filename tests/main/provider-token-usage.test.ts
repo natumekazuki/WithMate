@@ -6,7 +6,9 @@ import {
   normalizeCopilotTokenUsage,
 } from "../../src-electron/providers/provider-token-usage.js";
 
+/** Codex と Copilot の使用量を、共通のトークン内訳と合計に揃える契約を検証する。 */
 describe("provider token usage", () => {
+  /** キャッシュ済み入力や推論出力を内訳に残し、合計には入出力を一度ずつ計上する。 */
   it("Codex usage を共通形式へ正規化する", () => {
     assert.deepEqual(
       normalizeCodexTokenUsage({
@@ -25,6 +27,7 @@ describe("provider token usage", () => {
     );
   });
 
+  /** Copilot のキャッシュ読み取り数を共通のキャッシュ済み入力へ割り当て、入出力から合計を補う。 */
   it("Copilot assistant.usage を共通形式へ正規化する", () => {
     assert.deepEqual(
       normalizeCopilotTokenUsage({
@@ -41,6 +44,7 @@ describe("provider token usage", () => {
     );
   });
 
+  /** 空の通知と使用量自体がない通知を、実測値のゼロと区別する。 */
   it("usage event に token 情報がない場合は null にする", () => {
     assert.equal(normalizeCodexTokenUsage({}), null);
     assert.equal(normalizeCopilotTokenUsage({}), null);
@@ -48,6 +52,7 @@ describe("provider token usage", () => {
     assert.equal(normalizeCopilotTokenUsage(null), null);
   });
 
+  /** 両方のキャッシュ欄があるときは共通名の値を優先し、明示された合計を再計算しない。 */
   it("Copilot の新旧 cache token field を受け取れる", () => {
     assert.deepEqual(
       normalizeCopilotTokenUsage({
@@ -66,6 +71,7 @@ describe("provider token usage", () => {
     );
   });
 
+  /** 旧名の推論数を出力の内訳として保持し、未通知のキャッシュ入力数をゼロにする。 */
   it("Copilot の reasoningTokens を共通 reasoningOutputTokens に正規化する", () => {
     assert.deepEqual(
       normalizeCopilotTokenUsage({
@@ -83,6 +89,7 @@ describe("provider token usage", () => {
     );
   });
 
+  /** 旧名のキャッシュ読み取り数と推論数を同時に通知しても、双方の内訳を保持する。 */
   it("Copilot の cacheReadTokens と reasoningTokens を同時に受け取っても reasoningTokens を正規化する", () => {
     assert.deepEqual(
       normalizeCopilotTokenUsage({
@@ -101,6 +108,7 @@ describe("provider token usage", () => {
     );
   });
 
+  /** 旧名と共通名の推論欄が併記されたときは、共通名の値を採用する。 */
   it("Copilot の reasoningOutputTokens がある場合は reasoningTokens より優先する", () => {
     assert.deepEqual(
       normalizeCopilotTokenUsage({

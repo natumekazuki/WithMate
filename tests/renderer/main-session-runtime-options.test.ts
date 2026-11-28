@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runMainRuntimeOptionOperation, type MainRuntimeOption } from "../../src/chat/runtime/main-session-mutation-operations.js";
-import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
+import {
+  runMainRuntimeOptionOperation,
+  type MainRuntimeOption,
+} from "../../src/chat/runtime/main-session-mutation-operations.js";
+import {
+  buildNewSession,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { ConfirmedReviewerChange } from "../../src-shared/session/session-mutation-contract.js";
 
@@ -17,42 +23,176 @@ import type { ConfirmedReviewerChange } from "../../src-shared/session/session-m
 // impact = "次依頼を準備できず、または現在Turnの条件が予期せず変わる"
 // distinction = "service testではRenderer helperのrunning拒否とprovider別分岐を通らない"
 // @end-test-value
+/** 実行中のTurnに捕捉された設定を保持しつつ、次送信用の設定変更に許可条件が適用されることを確認する。 */
 test("実行中Mainは次送信用の対応設定を編集できる", async () => {
-  const session: Session = { ...buildNewSession({ id: "running-options", taskTitle: "Options", approvalMode: "on-request",
-    workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "character",
-    character: "Character", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" } }),
-    status: "running", runState: "running", model: "model-a", reasoningEffort: "medium" };
+  const session: Session = {
+    ...buildNewSession({
+      id: "running-options",
+      taskTitle: "Options",
+      approvalMode: "on-request",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "character",
+      character: "Character",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    }),
+    status: "running",
+    runState: "running",
+    model: "model-a",
+    reasoningEffort: "medium",
+  };
   const captured = captureSessionExecutionOptions(session);
   let writes = 0;
-  const cases: Array<{ option: MainRuntimeOption; field: keyof typeof captured; expected: string }> = [
-    { option: { kind: "approval-mode", value: "never" }, field: "approvalMode", expected: "never" },
-    { option: { kind: "codex-sandbox-mode", value: "danger-full-access" }, field: "codexSandboxMode", expected: "danger-full-access" },
-    { option: { kind: "codex-speed", value: "fast" }, field: "codexSpeed", expected: "fast" },
-    { option: { kind: "codex-reviewer", value: "auto-review" }, field: "codexReviewer", expected: "auto-review" },
-    { option: { kind: "model", value: { id: "model-b", label: "B", reasoningEfforts: ["medium", "high"] } }, field: "model", expected: "model-b" },
-    { option: { kind: "reasoning-effort", value: "high" }, field: "reasoningEffort", expected: "high" },
+  const cases: Array<{
+    option: MainRuntimeOption;
+    field: keyof typeof captured;
+    expected: string;
+  }> = [
+    {
+      option: { kind: "approval-mode", value: "never" },
+      field: "approvalMode",
+      expected: "never",
+    },
+    {
+      option: { kind: "codex-sandbox-mode", value: "danger-full-access" },
+      field: "codexSandboxMode",
+      expected: "danger-full-access",
+    },
+    {
+      option: { kind: "codex-speed", value: "fast" },
+      field: "codexSpeed",
+      expected: "fast",
+    },
+    {
+      option: { kind: "codex-reviewer", value: "auto-review" },
+      field: "codexReviewer",
+      expected: "auto-review",
+    },
+    {
+      option: {
+        kind: "model",
+        value: {
+          id: "model-b",
+          label: "B",
+          reasoningEfforts: ["medium", "high"],
+        },
+      },
+      field: "model",
+      expected: "model-b",
+    },
+    {
+      option: { kind: "reasoning-effort", value: "high" },
+      field: "reasoningEffort",
+      expected: "high",
+    },
   ];
-  const input: Omit<Parameters<typeof runMainRuntimeOptionOperation>[0], "option"> = { session, isReadOnly: false,
-    providerCatalog: { id: "codex", label: "Codex", defaultModelId: "model-a", defaultReasoningEffort: "medium",
-      models: [{ id: "model-a", label: "A", reasoningEfforts: ["medium", "high"] }, { id: "model-b", label: "B", reasoningEfforts: ["medium", "high"] }] },
-    persist: async (next) => { writes += 1; return next; }, createTimestampLabel: () => "now" };
+  const input: Omit<
+    Parameters<typeof runMainRuntimeOptionOperation>[0],
+    "option"
+  > = {
+    session,
+    isReadOnly: false,
+    providerCatalog: {
+      id: "codex",
+      label: "Codex",
+      defaultModelId: "model-a",
+      defaultReasoningEffort: "medium",
+      models: [
+        { id: "model-a", label: "A", reasoningEfforts: ["medium", "high"] },
+        { id: "model-b", label: "B", reasoningEfforts: ["medium", "high"] },
+      ],
+    },
+    /** 変更案をそのまま返し、拒否された操作が保存に到達しないことを件数で区別する。 */
+    persist: async (next) => {
+      writes += 1;
+      return next;
+    },
+    /** 時刻ラベルを固定して設定変更だけを比較する。 */
+    createTimestampLabel: () => "now",
+  };
   for (const { option, field, expected } of cases) {
-    assert.equal((await runMainRuntimeOptionOperation({ ...input, option }))?.[field], expected);
+    assert.equal(
+      (await runMainRuntimeOptionOperation({ ...input, option }))?.[field],
+      expected,
+    );
   }
-  assert.equal((await runMainRuntimeOptionOperation({ ...input, session: { ...session, provider: "copilot" }, option: { kind: "custom-agent", value: "reviewer" } }))?.customAgentName, "reviewer");
-  assert.equal(await runMainRuntimeOptionOperation({ ...input, isReadOnly: true, option: cases[0]!.option }), null);
-  assert.equal(await runMainRuntimeOptionOperation({ ...input, session: { ...session, approvalMode: "never" }, option: { kind: "codex-reviewer", value: "auto-review" } }), null);
+  assert.equal(
+    (
+      await runMainRuntimeOptionOperation({
+        ...input,
+        session: { ...session, provider: "copilot" },
+        option: { kind: "custom-agent", value: "reviewer" },
+      })
+    )?.customAgentName,
+    "reviewer",
+  );
+  assert.equal(
+    await runMainRuntimeOptionOperation({
+      ...input,
+      isReadOnly: true,
+      option: cases[0]!.option,
+    }),
+    null,
+  );
+  assert.equal(
+    await runMainRuntimeOptionOperation({
+      ...input,
+      session: { ...session, approvalMode: "never" },
+      option: { kind: "codex-reviewer", value: "auto-review" },
+    }),
+    null,
+  );
   assert.deepEqual(captureSessionExecutionOptions(session), captured);
-  assert.equal((await runMainRuntimeOptionOperation({ ...input, session: { ...session, provider: "claude", approvalMode: "on-request" }, option: { kind: "codex-reviewer", value: "auto-review" } }))?.codexReviewer, "auto-review");
+  assert.equal(
+    (
+      await runMainRuntimeOptionOperation({
+        ...input,
+        session: { ...session, provider: "claude", approvalMode: "on-request" },
+        option: { kind: "codex-reviewer", value: "auto-review" },
+      })
+    )?.codexReviewer,
+    "auto-review",
+  );
   assert.equal(writes, 8);
   const combined: unknown[] = [];
   const confirmed = { previousApprovalMode: "never" as const };
-  const claude = { ...session, provider: "claude", approvalMode: "never" as const, codexReviewer: "auto-review" as const };
-  const update = { ...input, session: claude, persist: async (next: Session, confirmation?: ConfirmedReviewerChange) => {
-    combined.push([next.approvalMode, next.codexReviewer, confirmation]); return next;
-  } };
-  await runMainRuntimeOptionOperation({ ...update, option: { kind: "approval-mode", value: "plan", confirmedReviewerChange: confirmed } });
+  const claude = {
+    ...session,
+    provider: "claude",
+    approvalMode: "never" as const,
+    codexReviewer: "auto-review" as const,
+  };
+  const update = {
+    ...input,
+    session: claude,
+    /** ApprovalとReviewerが確認情報とともに一回の保存へ渡ることを観測する。 */
+    persist: async (next: Session, confirmation?: ConfirmedReviewerChange) => {
+      combined.push([next.approvalMode, next.codexReviewer, confirmation]);
+      return next;
+    },
+  };
+  await runMainRuntimeOptionOperation({
+    ...update,
+    option: {
+      kind: "approval-mode",
+      value: "plan",
+      confirmedReviewerChange: confirmed,
+    },
+  });
   assert.deepEqual(combined, [["plan", "user", confirmed]]);
-  assert.equal(await runMainRuntimeOptionOperation({ ...update, session: { ...claude, approvalMode: "on-request" }, option: { kind: "approval-mode", value: "plan", confirmedReviewerChange: confirmed } }), null);
+  assert.equal(
+    await runMainRuntimeOptionOperation({
+      ...update,
+      session: { ...claude, approvalMode: "on-request" },
+      option: {
+        kind: "approval-mode",
+        value: "plan",
+        confirmedReviewerChange: confirmed,
+      },
+    }),
+    null,
+  );
   assert.equal(combined.length, 1);
 });

@@ -11,11 +11,23 @@ import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 
-function parentSession(id: string, workspacePath: string, directories: string[]) {
+/** 作業領域と追加ディレクトリの異なる Main を作成できる保存用データを組み立てる。 */
+function parentSession(
+  id: string,
+  workspacePath: string,
+  directories: string[],
+) {
   return buildNewSession({
-    id, taskTitle: id, workspaceLabel: "workspace", workspacePath, branch: "main",
-    characterId: "mate", character: "Mate", characterIconPath: "",
-    characterThemeColors: { main: "#123456", sub: "#abcdef" }, approvalMode: "untrusted",
+    id,
+    taskTitle: id,
+    workspaceLabel: "workspace",
+    workspacePath,
+    branch: "main",
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#123456", sub: "#abcdef" },
+    approvalMode: "untrusted",
     allowedAdditionalDirectories: directories,
   });
 }
@@ -32,57 +44,137 @@ function parentSession(id: string, workspacePath: string, directories: string[])
 // impact = "取消済みのファイル権限の復活や別Sessionへの権限混入を防ぐ"
 // distinction = "projectionやtypeだけでは実DBの二重保存と実行context解決を検証できない"
 // @end-test-value
+/** ディレクトリ許可を Main にだけ保存し、Auxiliary の保存や再接続を経ても現在の親の値を使うことを確認する。 */
 test("DirectoryはMainにだけ保存し全Auxの実行contextで参照する", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-shared-directories-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-shared-directories-"),
+  );
   const dbPath = path.join(directory, "app.db");
   let main = new SessionStorageV6(dbPath);
   let auxiliary = new AuxiliarySessionStorage(dbPath);
-  const roots = ["a-initial", "b-current", "c-other"].map((name) => path.join(directory, name));
+  const roots = ["a-initial", "b-current", "c-other"].map((name) =>
+    path.join(directory, name),
+  );
   const service = new AuxiliarySessionService({
-    getParentSession: (id) => main.getSession(id), getStorage: () => auxiliary,
-    runProviderRuntimeOperationExclusive: async (operation) => await operation(),
-    resolveSessionLaunchSelection: async () => { throw new Error("Creation is not part of this test."); },
-    listActiveCharacters: () => [], createCharacterRuntimeSnapshot: () => null,
+    /** 現在開いている Main のストレージから、指定された親を毎回読み込む。 */
+    getParentSession: (id) => main.getSession(id),
+    /** 再接続後も最新の Auxiliary ストレージを参照させる。 */ getStorage: () =>
+      auxiliary,
+    /** テストでは並行処理を起こさず、渡された操作をその場で実行する。 */
+    runProviderRuntimeOperationExclusive: async (operation) =>
+      await operation(),
+    /** 検証対象外の新規作成処理が呼ばれたら明示的に失敗させる。 */
+    resolveSessionLaunchSelection: async () => {
+      throw new Error("Creation is not part of this test.");
+    },
+    /** 新規 Session 用の有効なキャラクターは用意しない。 */
+    listActiveCharacters: () => [],
+    /** 実行時の親情報の取得に不要なキャラクター生成を使用しない。 */ createCharacterRuntimeSnapshot:
+      () => null,
   });
   try {
-    main.insertSession(parentSession("parent", path.join(directory, "workspace"), [roots[0]!]));
-    main.insertSession(parentSession("other", path.join(directory, "other-workspace"), [roots[2]!]));
-    const active = auxiliary.upsertAuxiliarySession(normalizeAuxiliarySession({
-      id: "active", parentSessionId: "parent", threadId: "provider-thread", composerDraft: "unsent",
-      messages: [{ role: "user", text: "question" }], createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-02T00:00:00.000Z",
-    })!);
-    auxiliary.upsertAuxiliarySession(normalizeAuxiliarySession({ id: "closed", parentSessionId: "parent", status: "closed" })!);
-    auxiliary.upsertAuxiliarySession(normalizeAuxiliarySession({ id: "other-aux", parentSessionId: "other" })!);
+    main.insertSession(
+      parentSession("parent", path.join(directory, "workspace"), [roots[0]!]),
+    );
+    main.insertSession(
+      parentSession("other", path.join(directory, "other-workspace"), [
+        roots[2]!,
+      ]),
+    );
+    const active = auxiliary.upsertAuxiliarySession(
+      normalizeAuxiliarySession({
+        id: "active",
+        parentSessionId: "parent",
+        threadId: "provider-thread",
+        composerDraft: "unsent",
+        messages: [{ role: "user", text: "question" }],
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-02T00:00:00.000Z",
+      })!,
+    );
+    auxiliary.upsertAuxiliarySession(
+      normalizeAuxiliarySession({
+        id: "closed",
+        parentSessionId: "parent",
+        status: "closed",
+      })!,
+    );
+    auxiliary.upsertAuxiliarySession(
+      normalizeAuxiliarySession({ id: "other-aux", parentSessionId: "other" })!,
+    );
     const captured = await service.getAuxiliaryRuntimeSession(active.id);
     assert.deepEqual(captured?.allowedAdditionalDirectories, [roots[0]]);
     const raw = new DatabaseSync(dbPath);
     try {
-      const columns = (table: string) => (raw.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
-      assert.ok(columns("sessions_v6").includes("allowed_additional_directories_json"));
-      assert.ok(!columns("auxiliary_sessions").includes("allowed_additional_directories_json"));
-      const before = raw.prepare("SELECT * FROM auxiliary_sessions ORDER BY id").all();
-      main.updateSession({ ...main.getSession("parent")!, allowedAdditionalDirectories: [roots[1]!] });
-      assert.deepEqual(raw.prepare("SELECT * FROM auxiliary_sessions ORDER BY id").all(), before);
-    } finally { raw.close(); }
+      /** SQLite の列定義から、指定テーブルの実際の列名を取得する。 */
+      const columns = (table: string) =>
+        (
+          raw.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+            name: string;
+          }>
+        ).map((row) => row.name);
+      assert.ok(
+        columns("sessions_v6").includes("allowed_additional_directories_json"),
+      );
+      assert.ok(
+        !columns("auxiliary_sessions").includes(
+          "allowed_additional_directories_json",
+        ),
+      );
+      const before = raw
+        .prepare("SELECT * FROM auxiliary_sessions ORDER BY id")
+        .all();
+      main.updateSession({
+        ...main.getSession("parent")!,
+        allowedAdditionalDirectories: [roots[1]!],
+      });
+      assert.deepEqual(
+        raw.prepare("SELECT * FROM auxiliary_sessions ORDER BY id").all(),
+        before,
+      );
+    } finally {
+      raw.close();
+    }
     assert.deepEqual(captured?.allowedAdditionalDirectories, [roots[0]]);
     for (const id of ["active", "closed"]) {
-      assert.deepEqual((await service.getAuxiliaryRuntimeSession(id))?.allowedAdditionalDirectories, [roots[1]]);
+      assert.deepEqual(
+        (await service.getAuxiliaryRuntimeSession(id))
+          ?.allowedAdditionalDirectories,
+        [roots[1]],
+      );
     }
-    const saved = auxiliary.updateAuxiliarySessionIfMatches({ expectedSession: active,
-      session: { ...active, messages: [...active.messages, { role: "assistant", text: "answer" }] } });
+    const saved = auxiliary.updateAuxiliarySessionIfMatches({
+      expectedSession: active,
+      session: {
+        ...active,
+        messages: [...active.messages, { role: "assistant", text: "answer" }],
+      },
+    });
     assert.ok(saved);
     assert.equal(saved.messages.at(-1)?.text, "answer");
     auxiliary.upsertAuxiliarySession(saved);
-    auxiliary.upsertAuxiliarySession(normalizeAuxiliarySession({ id: "new", parentSessionId: "parent" })!);
+    auxiliary.upsertAuxiliarySession(
+      normalizeAuxiliarySession({ id: "new", parentSessionId: "parent" })!,
+    );
     auxiliary.close();
     main.close();
     main = new SessionStorageV6(dbPath);
     auxiliary = new AuxiliarySessionStorage(dbPath);
-    assert.deepEqual(main.getSession("parent")?.allowedAdditionalDirectories, [roots[1]]);
+    assert.deepEqual(main.getSession("parent")?.allowedAdditionalDirectories, [
+      roots[1],
+    ]);
     for (const id of ["active", "closed", "new"]) {
-      assert.deepEqual((await service.getAuxiliaryRuntimeSession(id))?.allowedAdditionalDirectories, [roots[1]]);
+      assert.deepEqual(
+        (await service.getAuxiliaryRuntimeSession(id))
+          ?.allowedAdditionalDirectories,
+        [roots[1]],
+      );
     }
-    assert.deepEqual((await service.getAuxiliaryRuntimeSession("other-aux"))?.allowedAdditionalDirectories, [roots[2]]);
+    assert.deepEqual(
+      (await service.getAuxiliaryRuntimeSession("other-aux"))
+        ?.allowedAdditionalDirectories,
+      [roots[2]],
+    );
     const restored = auxiliary.getAuxiliarySession("active")!;
     assert.equal(restored.threadId, active.threadId);
     assert.equal(restored.composerDraft, active.composerDraft);

@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { PDF_READER_DOCUMENT_URL, servePdfReaderAsset, shouldBlockPdfReaderNavigation } from "../../src-electron/windows/pdf-reader-assets.js";
+import {
+  PDF_READER_DOCUMENT_URL,
+  servePdfReaderAsset,
+  shouldBlockPdfReaderNavigation,
+} from "../../src-electron/windows/pdf-reader-assets.js";
 
 // @test-value v2
 // kind = "invariant"
@@ -17,20 +21,36 @@ import { PDF_READER_DOCUMENT_URL, servePdfReaderAsset, shouldBlockPdfReaderNavig
 // impact = "PDF表示領域から同梱外のlocalファイルを取得できると情報漏えいになる"
 // distinction = "型やbuildではURL解釈とfilesystem境界の一致を検出できず、数個の一時fileで実配信境界を確認する"
 // @end-test-value
+/** 同梱資材だけを許可し、応答に PDF リーダー専用の CSP と MIME を付けることを確認する。 */
 test("PDF reader assets stay inside their bundle and carry the isolated CSP", async () => {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-pdf-assets-"));
+  const temporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-pdf-assets-"),
+  );
   const root = path.join(temporaryRoot, "reader");
   try {
     await mkdir(root);
     await writeFile(path.join(root, "index.html"), "reader document");
     await writeFile(path.join(temporaryRoot, "secret.html"), "outside bundle");
     await symlink(temporaryRoot, path.join(root, "escape"), "junction");
-    const response = await servePdfReaderAsset({ url: PDF_READER_DOCUMENT_URL, method: "GET" }, root);
+    const response = await servePdfReaderAsset(
+      { url: PDF_READER_DOCUMENT_URL, method: "GET" },
+      root,
+    );
     assert.equal(response.status, 200);
     assert.equal(await response.text(), "reader document");
-    assert.equal(response.headers.get("Content-Type"), "text/html; charset=utf-8");
+    assert.equal(
+      response.headers.get("Content-Type"),
+      "text/html; charset=utf-8",
+    );
     const csp = response.headers.get("Content-Security-Policy")!;
-    for (const directive of ["default-src 'none'", "connect-src 'self'", "frame-src 'none'", "form-action 'none'", "script-src 'self' 'wasm-unsafe-eval'"]) assert.ok(csp.includes(directive));
+    for (const directive of [
+      "default-src 'none'",
+      "connect-src 'self'",
+      "frame-src 'none'",
+      "form-action 'none'",
+      "script-src 'self' 'wasm-unsafe-eval'",
+    ])
+      assert.ok(csp.includes(directive));
     assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
     for (const url of [
       "withmate-pdf://other/index.html",
@@ -44,9 +64,25 @@ test("PDF reader assets stay inside their bundle and carry the isolated CSP", as
       "withmate-pdf://reader/index.html:stream",
       "withmate-pdf://reader/missing.html",
       "withmate-pdf://reader/escape/secret.html",
-    ]) assert.equal((await servePdfReaderAsset({ url, method: "GET" }, root)).status, 404, url);
-    assert.equal((await servePdfReaderAsset({ url: PDF_READER_DOCUMENT_URL, method: "POST" }, root)).status, 405);
-    const head = await servePdfReaderAsset({ url: PDF_READER_DOCUMENT_URL, method: "HEAD" }, root);
+    ])
+      assert.equal(
+        (await servePdfReaderAsset({ url, method: "GET" }, root)).status,
+        404,
+        url,
+      );
+    assert.equal(
+      (
+        await servePdfReaderAsset(
+          { url: PDF_READER_DOCUMENT_URL, method: "POST" },
+          root,
+        )
+      ).status,
+      405,
+    );
+    const head = await servePdfReaderAsset(
+      { url: PDF_READER_DOCUMENT_URL, method: "HEAD" },
+      root,
+    );
     assert.equal(head.status, 200);
     assert.equal(await head.text(), "");
   } finally {
@@ -66,13 +102,65 @@ test("PDF reader assets stay inside their bundle and carry the isolated CSP", as
 // impact = "PDF内action等による自動外部通信と、preload付きmain frameへのreader移動を防ぐ"
 // distinction = "CSP connect-srcはdocument navigationを防がず、buildでもイベント条件の誤りを検出できない"
 // @end-test-value
+/** PDF リーダーは指定の iframe 文書に限定し、一般の画面遷移には制限を広げないことを確認する。 */
 test("PDF navigation is confined to its iframe document without changing normal navigation", () => {
-  assert.equal(shouldBlockPdfReaderNavigation({ url: PDF_READER_DOCUMENT_URL, isMainFrame: false }), false);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: `${PDF_READER_DOCUMENT_URL}#instanceId=current&hostOrigin=file%3A%2F%2F`, isMainFrame: false }), false);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: `${PDF_READER_DOCUMENT_URL}?external=1#instanceId=current`, isMainFrame: false }), true);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: PDF_READER_DOCUMENT_URL, isMainFrame: true }), true);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: "https://example.com/", frameUrl: PDF_READER_DOCUMENT_URL, isMainFrame: false }), true);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: "file:///secret.pdf", initiatorUrl: PDF_READER_DOCUMENT_URL, isMainFrame: false }), true);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: "withmate-pdf://reader/other.html", isMainFrame: false }), true);
-  assert.equal(shouldBlockPdfReaderNavigation({ url: "https://example.com/", frameUrl: "file:///session.html", isMainFrame: true }), false);
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: PDF_READER_DOCUMENT_URL,
+      isMainFrame: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: `${PDF_READER_DOCUMENT_URL}#instanceId=current&hostOrigin=file%3A%2F%2F`,
+      isMainFrame: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: `${PDF_READER_DOCUMENT_URL}?external=1#instanceId=current`,
+      isMainFrame: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: PDF_READER_DOCUMENT_URL,
+      isMainFrame: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: "https://example.com/",
+      frameUrl: PDF_READER_DOCUMENT_URL,
+      isMainFrame: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: "file:///secret.pdf",
+      initiatorUrl: PDF_READER_DOCUMENT_URL,
+      isMainFrame: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: "withmate-pdf://reader/other.html",
+      isMainFrame: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockPdfReaderNavigation({
+      url: "https://example.com/",
+      frameUrl: "file:///session.html",
+      isMainFrame: true,
+    }),
+    false,
+  );
 });

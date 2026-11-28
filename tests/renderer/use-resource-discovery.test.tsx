@@ -18,35 +18,88 @@ import { useResourceDiscovery } from "../../src/chat/use-resource-discovery.js";
 // impact = "選択の途中で候補を失う、または別workspaceのSkillを誤って選べる"
 // distinction = "Skill panelのtestは固定候補を入力にするため、取得hookの候補破棄と遅延応答の混入は検出できない"
 // @end-test-value
+/** 同一ワークスペースでは読み込み中と失敗時に候補を保ち、別ワークスペースへの切替で遅延した旧候補を混入させない。 */
 test("Skill候補は同一対象の再取得で保持し、別workspaceの応答と混ぜない", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>");
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = Object.keys(globals).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
   for (const [key, value] of Object.entries(globals)) {
-    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const requests: { path: string; provider: string; resolve: (items: DiscoveredSkill[]) => void; reject: (error: Error) => void }[] = [];
+  const requests: {
+    path: string;
+    provider: string;
+    resolve: (items: DiscoveredSkill[]) => void;
+    reject: (error: Error) => void;
+  }[] = [];
   const api: NonNullable<Parameters<typeof useResourceDiscovery>[0]["api"]> = {
+    /** カスタムエージェントの取得結果を空に固定し、スキル候補だけを観測する。 */
     listSessionCustomAgents: async () => [],
-    listWorkspaceSkills: (provider, path) => new Promise((resolve, reject) => requests.push({ path, provider, resolve, reject })),
+    /** スキル取得の完了順や失敗をテストから制御できるようにする。 */
+    listWorkspaceSkills: (provider, path) =>
+      new Promise((resolve, reject) =>
+        requests.push({ path, provider, resolve, reject }),
+      ),
   };
+  /** 候補の出所とIDを見分けられるワークスペーススキルを用意する。 */
   const skill = (id: string): DiscoveredSkill => ({
-    id, name: id, description: "Synthetic skill", source: "workspace", sourceLabel: "Workspace", sourcePath: `C:/fixture/${id}/SKILL.md`,
+    id,
+    name: id,
+    description: "Synthetic skill",
+    source: "workspace",
+    sourceLabel: "Workspace",
+    sourcePath: `C:/fixture/${id}/SKILL.md`,
   });
   let current: ReturnType<typeof useResourceDiscovery>;
   const committedCandidates: { workspace: string; ids: string[] }[] = [];
-  function Consumer({ workspace, revision }: { workspace: string; revision: number }) {
-    const discovery = useResourceDiscovery({ api, activeRunSessionId: "session", displayedProvider: "codex",
-      selectedProvider: "codex", selectedWorkspacePath: workspace, auxiliaryProvider: undefined, appSettingsRevision: revision });
+  /** 各描画で公開された候補をワークスペースごとに記録し、一時的な混入も観測する。 */
+  function Consumer({
+    workspace,
+    revision,
+  }: {
+    workspace: string;
+    revision: number;
+  }) {
+    const discovery = useResourceDiscovery({
+      api,
+      activeRunSessionId: "session",
+      displayedProvider: "codex",
+      selectedProvider: "codex",
+      selectedWorkspacePath: workspace,
+      auxiliaryProvider: undefined,
+      appSettingsRevision: revision,
+    });
     useLayoutEffect(() => {
       current = discovery;
-      committedCandidates.push({ workspace, ids: discovery.availableSkills.map(({ id }) => id) });
+      committedCandidates.push({
+        workspace,
+        ids: discovery.availableSkills.map(({ id }) => id),
+      });
     });
     return null;
   }
-  const render = (workspace: string, revision: number) => act(async () => root.render(<Consumer workspace={workspace} revision={revision} />));
-  const read = () => ({ ids: current.availableSkills.map(({ id }) => id), loading: current.isSkillListLoading, error: current.skillListError });
+  /** ワークスペースか設定リビジョンを変え、effect反映まで待つ。 */
+  const render = (workspace: string, revision: number) =>
+    act(async () =>
+      root.render(<Consumer workspace={workspace} revision={revision} />),
+    );
+  /** 現在公開中の候補ID、読み込み状態、取得エラーを取り出す。 */
+  const read = () => ({
+    ids: current.availableSkills.map(({ id }) => id),
+    loading: current.isSkillListLoading,
+    error: current.skillListError,
+  });
   try {
     await render("C:/fixture/a", 0);
     assert.deepEqual(read(), { ids: [], loading: true, error: null });
@@ -57,7 +110,11 @@ test("Skill候補は同一対象の再取得で保持し、別workspaceの応答
     await render("C:/fixture/a", 1);
     assert.deepEqual(read(), { ids: ["a"], loading: true, error: null });
     await act(async () => requests[1]!.reject(new Error("discovery failed")));
-    assert.deepEqual(read(), { ids: ["a"], loading: false, error: "Could not load skills. Check Settings or the workspace." });
+    assert.deepEqual(read(), {
+      ids: ["a"],
+      loading: false,
+      error: "Could not load skills. Check Settings or the workspace.",
+    });
 
     await render("C:/fixture/a", 2);
     await render("C:/fixture/b", 2);
@@ -67,7 +124,16 @@ test("Skill候補は同一対象の再取得で保持し、別workspaceの応答
     await act(async () => requests[3]!.resolve([skill("b")]));
     await act(async () => requests[2]!.resolve([skill("late-a")]));
     assert.deepEqual(read(), { ids: ["b"], loading: false, error: null });
-    assert.deepEqual([...new Set(committedCandidates.filter(({ workspace }) => workspace === "C:/fixture/b").flatMap(({ ids }) => ids))], ["b"]);
+    assert.deepEqual(
+      [
+        ...new Set(
+          committedCandidates
+            .filter(({ workspace }) => workspace === "C:/fixture/b")
+            .flatMap(({ ids }) => ids),
+        ),
+      ],
+      ["b"],
+    );
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

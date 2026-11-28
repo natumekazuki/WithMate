@@ -8,6 +8,7 @@ import {
   MATE_PROFILE_BLOCK_ID,
 } from "../../src-electron/mate/mate-instruction-projection.js";
 
+/** 投影可否やファイルパスを個別に差し替えられる Mate プロファイルを作る。 */
 function createProfile(partial: Partial<MateProfile>): MateProfile {
   return {
     id: "current",
@@ -70,6 +71,7 @@ function createProfile(partial: Partial<MateProfile>): MateProfile {
   };
 }
 
+/** 公開する基本情報と本文をプロバイダー向けの見出し順で並べ、Markdown 全体を固定する。 */
 test("buildMateInstructionContent は MateProfile から安定した Markdown を生成する", () => {
   const profile = createProfile({
     displayName: "Tessa",
@@ -79,7 +81,10 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
     sectionContents: [
       { sectionKey: "core", content: "# Core\n- 穏やかな相棒として振る舞う。" },
       { sectionKey: "bond", content: "# Bond\n- あんた、と呼ぶ。" },
-      { sectionKey: "work_style", content: "# Work Style\n- 変更前に確認する。" },
+      {
+        sectionKey: "work_style",
+        content: "# Work Style\n- 変更前に確認する。",
+      },
     ],
   });
 
@@ -106,11 +111,16 @@ test("buildMateInstructionContent は MateProfile から安定した Markdown �
   );
 });
 
+/** 本文があっても投影を禁止した関係性の節は見出しごと出力しないことを確認する。 */
 test("buildMateInstructionContent は projectionAllowed=false のセクションを除外する", () => {
   const profile = createProfile({});
   const gatedProfile = {
     ...profile,
-    sections: profile.sections.map((section) => (section.sectionKey === "bond" ? { ...section, projectionAllowed: false } : section)),
+    sections: profile.sections.map((section) =>
+      section.sectionKey === "bond"
+        ? { ...section, projectionAllowed: false }
+        : section,
+    ),
   };
   const content = buildMateInstructionContent(gatedProfile, {
     sectionContents: [
@@ -126,15 +136,16 @@ test("buildMateInstructionContent は projectionAllowed=false のセクション
   assert.equal(content.includes("### Work Style"), true);
 });
 
+/** 明示的に投影を許可したメモやプロジェクト要約も、プロバイダーへの固定出力には含めない。 */
 test("buildMateInstructionContent は projectionAllowed=true でも非 provider セクションを除外する", () => {
   const profile = createProfile({});
   const projectedProfile = {
     ...profile,
-    sections: profile.sections.map((section) => (
+    sections: profile.sections.map((section) =>
       section.sectionKey === "notes" || section.sectionKey === "project_digest"
         ? { ...section, projectionAllowed: true }
-        : section
-    )),
+        : section,
+    ),
   };
   const content = buildMateInstructionContent(projectedProfile, {
     sectionContents: [
@@ -150,6 +161,7 @@ test("buildMateInstructionContent は projectionAllowed=true でも非 provider 
   assert.equal(content.includes("mate/project-digest.md"), false);
 });
 
+/** 動的な補助情報やプロファイルの実ファイルへの参照が、本文未指定の指示に混ざらないことを確認する。 */
 test("buildMateInstructionContent は動的な補助情報を含めない", () => {
   const profile = createProfile({
     displayName: "Tessa",
@@ -165,6 +177,7 @@ test("buildMateInstructionContent は動的な補助情報を含めない", () =
   assert.equal(content.includes("mate/core.md"), false);
 });
 
+/** 説明が未設定のときは、空欄の説明ラベルを指示に出力しない。 */
 test("description が空なら description 行を出さない", () => {
   const profile = createProfile({ description: "" });
   const content = buildMateInstructionContent(profile);
@@ -172,6 +185,7 @@ test("description が空なら description 行を出さない", () => {
   assert.equal(content.includes("- **description:**"), false);
 });
 
+/** 管理ブロックがない指示にはユーザーの既存文を保ったまま識別マーカー付きで追記する。 */
 test("upsertMateInstructionBlock は既存テキストを残して managed block を追記する", () => {
   const profile = createProfile({
     displayName: "Tessa",
@@ -191,6 +205,7 @@ test("upsertMateInstructionBlock は既存テキストを残して managed block
   assert.equal(updated, expected);
 });
 
+/** 同じ識別子の管理ブロックだけを更新し、前後のユーザー記述を維持する。 */
 test("upsertMateInstructionBlock は既存 blockId を差し替える", () => {
   const profile = createProfile({
     displayName: "New Name",
@@ -222,12 +237,14 @@ test("upsertMateInstructionBlock は既存 blockId を差し替える", () => {
   );
 });
 
+/** キャラクター本文を出力しても、ローカルの絶対パスや相対パスはプロバイダーへ伝えない。 */
 test("profile file path は provider instruction に出力しない", () => {
   const profile = createProfile({
     sections: [
       {
         sectionKey: "core",
-        filePath: "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md",
+        filePath:
+          "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md",
         sha256: "",
         byteSize: 0,
         updatedByRevisionId: null,
@@ -244,6 +261,7 @@ test("profile file path は provider instruction に出力しない", () => {
   assert.equal(content.includes("- core body"), true);
 });
 
+/** プロバイダー向け指示に固定の優先度ガードを挿入しないことを確認する。 */
 test("buildMateInstructionContent は固定 priority ガードを出力しない", () => {
   const profile = createProfile({ displayName: "Tessa" });
   const content = buildMateInstructionContent(profile);

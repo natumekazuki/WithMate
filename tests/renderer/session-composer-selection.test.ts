@@ -7,6 +7,7 @@ import {
   buildSkillPromptSnippet,
 } from "../../src/chat/composer/session-composer-selection.js";
 
+/** エージェント選択を開くとスキル選択が閉じ、再度切り替えると両方閉じる。 */
 test("buildExclusiveComposerPickerToggleState は agent picker を開くと skill picker を閉じる", () => {
   assert.deepEqual(buildExclusiveComposerPickerToggleState("agent", false), {
     isAgentPickerOpen: true,
@@ -18,6 +19,7 @@ test("buildExclusiveComposerPickerToggleState は agent picker を開くと skil
   });
 });
 
+/** スキル選択を開くとエージェント選択が閉じ、再度切り替えると両方閉じる。 */
 test("buildExclusiveComposerPickerToggleState は skill picker を開くと agent picker を閉じる", () => {
   assert.deepEqual(buildExclusiveComposerPickerToggleState("skill", false), {
     isAgentPickerOpen: false,
@@ -29,14 +31,16 @@ test("buildExclusiveComposerPickerToggleState は skill picker を開くと agen
   });
 });
 
+/** スキル指示に Codex の記号表記と Copilot の自然文を使い分ける。 */
 test("buildSkillPromptSnippet は provider に応じた skill prompt を返す", () => {
   assert.equal(buildSkillPromptSnippet("codex", "review"), "$review");
   assert.equal(
     buildSkillPromptSnippet("copilot", "review"),
-    "Use the skill \"review\" for this task.",
+    'Use the skill "review" for this task.',
   );
 });
 
+/** 空の下書きには末尾改行付きの指示を入れ、カーソルを末尾へ移してスキル選択を閉じる。 */
 test("buildSkillPromptInsertionState は空 draft に snippet と末尾改行を入れる", () => {
   assert.deepEqual(buildSkillPromptInsertionState("codex", "review", ""), {
     draft: "$review\n",
@@ -58,13 +62,17 @@ test("buildSkillPromptInsertionState は空 draft に snippet と末尾改行を
 // impact = "選択したSkill指示と既存入力が一致せず、意図しない依頼になる"
 // distinction = "snippet単体testでは既存draftとの結合と編集位置・picker状態を確認できない"
 // @end-test-value
+/** 既存文の先頭の空白を整理し、前置した指示と既存文の境目にカーソルを移す。 */
 test("buildSkillPromptInsertionState は先頭空白を除いて既存 draft の前に snippet を入れる", () => {
-  assert.deepEqual(buildSkillPromptInsertionState("copilot", "review", "  直して"), {
-    draft: "Use the skill \"review\" for this task.\n\n直して",
-    caret: "Use the skill \"review\" for this task.\n\n直して".length,
-    isActionDockPinnedExpanded: true,
-    isSkillPickerOpen: false,
-  });
+  assert.deepEqual(
+    buildSkillPromptInsertionState("copilot", "review", "  直して"),
+    {
+      draft: 'Use the skill "review" for this task.\n\n直して',
+      caret: 'Use the skill "review" for this task.\n\n直して'.length,
+      isActionDockPinnedExpanded: true,
+      isSkillPickerOpen: false,
+    },
+  );
 });
 
 // @test-value v2
@@ -79,11 +87,26 @@ test("buildSkillPromptInsertionState は先頭空白を除いて既存 draft の
 // impact = "Claudeがユーザー選択のSkill本文を読めず、意図と異なる作業をする"
 // distinction = "型検査ではruntime provider分岐と選択sourcePathが指示文へ届くことを確認できない"
 // @end-test-value
+/** Claude に選んだスキルの実ファイルを示し、他プロバイダーの書式を変えない。 */
 test("Claude Skill prompt は選択元の SKILL.md を明示する", () => {
   const sourcePath = "C:/Skills/custom review";
-  const expected = 'Use the skill "review" from "C:/Skills/custom review/SKILL.md" for this task.';
-  assert.equal(buildSkillPromptSnippet("claude", "review", sourcePath), expected);
-  assert.equal(buildSkillPromptInsertionState("claude", "review", "  fix it", sourcePath).draft, `${expected}\n\nfix it`);
-  assert.equal(buildSkillPromptSnippet("codex", "review", sourcePath), "$review");
-  assert.equal(buildSkillPromptSnippet("copilot", "review", sourcePath), 'Use the skill "review" for this task.');
+  const expected =
+    'Use the skill "review" from "C:/Skills/custom review/SKILL.md" for this task.';
+  assert.equal(
+    buildSkillPromptSnippet("claude", "review", sourcePath),
+    expected,
+  );
+  assert.equal(
+    buildSkillPromptInsertionState("claude", "review", "  fix it", sourcePath)
+      .draft,
+    `${expected}\n\nfix it`,
+  );
+  assert.equal(
+    buildSkillPromptSnippet("codex", "review", sourcePath),
+    "$review",
+  );
+  assert.equal(
+    buildSkillPromptSnippet("copilot", "review", sourcePath),
+    'Use the skill "review" for this task.',
+  );
 });

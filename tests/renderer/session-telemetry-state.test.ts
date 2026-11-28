@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
+import type {
+  ProviderQuotaTelemetry,
+  SessionContextTelemetry,
+} from "../../src-shared/session/runtime-state.js";
 import {
   resolveOwnedProviderQuotaTelemetry,
   resolveOwnedSessionContextTelemetry,
@@ -22,6 +25,7 @@ const sessionTelemetry: SessionContextTelemetry = {
   messagesLength: 3,
 };
 
+/** 利用枠の値は同じproviderを表示する場合にだけ再利用し、選択なしを含む不一致では表示しない。 */
 test("resolveOwnedProviderQuotaTelemetry は owner provider が一致する telemetry だけ返す", () => {
   assert.equal(
     resolveOwnedProviderQuotaTelemetry(
@@ -53,6 +57,7 @@ test("resolveOwnedProviderQuotaTelemetry は owner provider が一致する tele
   );
 });
 
+/** セッションのトークン使用量は一致するセッションでのみ使い、別セッションや選択なしには持ち越さない。 */
 test("resolveOwnedSessionContextTelemetry は owner session が一致する telemetry だけ返す", () => {
   assert.equal(
     resolveOwnedSessionContextTelemetry(

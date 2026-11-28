@@ -51,21 +51,32 @@ const fileSummary = {
   displayName: "trace.png",
   summary: "Trace screenshot",
   originalBytes: 100,
-} satisfies ActiveMemoryEntryDetail["files"] extends (infer FileSummary)[] | undefined ? FileSummary : never;
+} satisfies ActiveMemoryEntryDetail["files"] extends
+  (infer FileSummary)[] | undefined
+  ? FileSummary
+  : never;
 
-function activeEntryWith(overrides: Partial<ActiveMemoryEntryDetail>): ActiveMemoryEntryDetail {
+/** 検索や詳細応答の差を検証できるよう、共通の有効エントリーに指定項目だけを上書きする。 */
+function activeEntryWith(
+  overrides: Partial<ActiveMemoryEntryDetail>,
+): ActiveMemoryEntryDetail {
   return {
     ...baseEntry,
     ...overrides,
   };
 }
 
+/** Memory V6 が公開する応答の形と、内部データを公開しない境界を検証する。 */
 describe("memory-v6 response contract", () => {
+  /** 検索結果のプレビューとページ継続情報を保持し、本文や内部状態を検索応答に含めないことを確認する。 */
   it("search responseはsearch serviceがpagination前に絞ったpreview hitを返し、body/stateを含めない", () => {
-    const response = createMemorySearchResponse([
-      toMemorySearchHit(baseEntry),
-      toMemorySearchHit(activeEntryWith({ id: "mem_2" })),
-    ], "cursor-1");
+    const response = createMemorySearchResponse(
+      [
+        toMemorySearchHit(baseEntry),
+        toMemorySearchHit(activeEntryWith({ id: "mem_2" })),
+      ],
+      "cursor-1",
+    );
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
     assert.equal(response.nextCursor, "cursor-1");
@@ -78,6 +89,7 @@ describe("memory-v6 response contract", () => {
     assert.equal(typed.items[0].preview, baseEntry.preview);
   });
 
+  /** 検索・詳細・追加のどの応答でも、添付の概要から保管パスや鍵情報が漏れないことを確認する。 */
   it("search / get_entry / append responseはfile summaryだけを返し、file pathやkey materialを含めない", () => {
     const entry = activeEntryWith({ files: [fileSummary] });
     const search = createMemorySearchResponse([toMemorySearchHit(entry)]);
@@ -85,7 +97,9 @@ describe("memory-v6 response contract", () => {
     const append = createMemoryAppendResponse(entry, true);
 
     assert.deepEqual(search.items[0].files, [fileSummary]);
-    assert.deepEqual((detail as MemoryGetEntryResponse).entry.files, [fileSummary]);
+    assert.deepEqual((detail as MemoryGetEntryResponse).entry.files, [
+      fileSummary,
+    ]);
     assert.deepEqual(append.entry.files, [fileSummary]);
     const serialized = JSON.stringify({ search, detail, append });
     assert.equal(serialized.includes("trace.png"), true);
@@ -95,12 +109,16 @@ describe("memory-v6 response contract", () => {
     assert.equal(serialized.includes("memory-objects"), false);
   });
 
+  /** 個別取得の有効エントリーに限り、プレビューではなく全文が返ることを確認する。 */
   it("get_entry responseはactive entryのfull bodyを返す", () => {
     const response = createMemoryGetEntryResponse(baseEntry);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
     assert.equal("entry" in response, true);
-    assert.equal((response as MemoryGetEntryResponse).entry.body, baseEntry.body);
+    assert.equal(
+      (response as MemoryGetEntryResponse).entry.body,
+      baseEntry.body,
+    );
   });
 
   // @test-value v2
@@ -113,6 +131,7 @@ describe("memory-v6 response contract", () => {
   // scope = "memory-v6-response-contract"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 忘却済み・置き換え済み・未登録を同じ未検出コードで示し、いずれの応答にも版情報を付ける。 */
   it("get_entry responseはforgotten / superseded / missingをnot found errorにする", () => {
     const forgotten = createMemoryGetEntryResponse({
       ...baseEntry,
@@ -143,6 +162,7 @@ describe("memory-v6 response contract", () => {
   // scope = "memory-v6-response-contract"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 有効と記録されていても後継エントリーを指す矛盾した状態では本文を公開しない。 */
   it("get_entry responseはstate関連fieldが不整合なactive entryをnot found errorにする", () => {
     const inconsistentActive = {
       ...baseEntry,
@@ -156,6 +176,7 @@ describe("memory-v6 response contract", () => {
     assert.equal(response.error.code, "MEMORY_ENTRY_NOT_FOUND");
   });
 
+  /** 追加結果に本文を含めず、作成と再送の有無を応答フィールドで区別する。 */
   it("append responseはentry summaryとcreatedを返し、bodyを含めない", () => {
     const response = createMemoryAppendResponse(baseEntry, true);
     const replay = createMemoryAppendResponse(baseEntry, true, true);
@@ -172,8 +193,11 @@ describe("memory-v6 response contract", () => {
     assert.equal(typed.entry.preview, baseEntry.preview);
   });
 
+  /** タグ一覧に契約のスキーマ版と指定したタグを含める。 */
   it("list_tags responseはschemaVersion付きでtag一覧を返す", () => {
-    const response = createMemoryListTagsResponse([{ type: "topic", value: "memory" }]);
+    const response = createMemoryListTagsResponse([
+      { type: "topic", value: "memory" },
+    ]);
 
     assert.deepEqual(response, {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -181,25 +205,31 @@ describe("memory-v6 response contract", () => {
     });
   });
 
+  /** キャラクター一覧の公開情報を識別子・名前・説明に限定し、ローカルのアイコンやテーマを除く。 */
   it("characters responseはagent-safeなCharacter summaryだけを返す", () => {
-    const response = createMemoryListCharactersResponse([{
-      id: "character-a",
-      name: "Character A",
-      description: "Test",
-      iconFilePath: "C:/Users/example/AppData/Roaming/WithMate/characters/character-a/icon.png",
-      theme: { main: "#111111", sub: "#222222" },
-      state: "active",
-      createdAt: "2026-07-03T00:00:00.000Z",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-      archivedAt: null,
-    }]);
+    const response = createMemoryListCharactersResponse([
+      {
+        id: "character-a",
+        name: "Character A",
+        description: "Test",
+        iconFilePath:
+          "C:/Users/example/AppData/Roaming/WithMate/characters/character-a/icon.png",
+        theme: { main: "#111111", sub: "#222222" },
+        state: "active",
+        createdAt: "2026-07-03T00:00:00.000Z",
+        updatedAt: "2026-07-03T00:00:00.000Z",
+        archivedAt: null,
+      },
+    ]);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-    assert.deepEqual(response.characters, [{
-      id: "character-a",
-      name: "Character A",
-      description: "Test",
-    }]);
+    assert.deepEqual(response.characters, [
+      {
+        id: "character-a",
+        name: "Character A",
+        description: "Test",
+      },
+    ]);
     assert.equal("isDefault" in response.characters[0], false);
     assert.equal("iconFilePath" in response.characters[0], false);
     assert.equal("theme" in response.characters[0], false);
@@ -208,6 +238,7 @@ describe("memory-v6 response contract", () => {
     assert.equal("archivedAt" in response.characters[0], false);
   });
 
+  /** 利用量が上限を超えても残り容量を負数にせず、上限超過を別に通知する。 */
   it("file usage responseはavailable bytesとquota exceededを計算する", () => {
     const response = createMemoryFileUsageResponse({
       quotaBytes: 100,
@@ -231,6 +262,7 @@ describe("memory-v6 response contract", () => {
     });
   });
 
+  /** 容量の大きい記録を識別子・概要・利用量で列挙し、オブジェクトの保管情報を出さない。 */
   it("file usage responseは要求されたlargest entriesを公開情報だけで返す", () => {
     const response = createMemoryFileUsageResponse({
       quotaBytes: 1000,
@@ -239,29 +271,34 @@ describe("memory-v6 response contract", () => {
       pendingDeleteBytes: 0,
       objectCount: 1,
       pendingDeleteCount: 0,
-      largestEntries: [{
+      largestEntries: [
+        {
+          entryId: "mem-large-files",
+          title: "Large files",
+          preview: "Large preview",
+          totalFileBytes: 400,
+          fileCount: 1,
+          updatedAt: "2026-07-04T00:00:00.000Z",
+        },
+      ],
+    });
+
+    assert.deepEqual(response.largestEntries, [
+      {
         entryId: "mem-large-files",
         title: "Large files",
         preview: "Large preview",
         totalFileBytes: 400,
         fileCount: 1,
         updatedAt: "2026-07-04T00:00:00.000Z",
-      }],
-    });
-
-    assert.deepEqual(response.largestEntries, [{
-      entryId: "mem-large-files",
-      title: "Large files",
-      preview: "Large preview",
-      totalFileBytes: 400,
-      fileCount: 1,
-      updatedAt: "2026-07-04T00:00:00.000Z",
-    }]);
+      },
+    ]);
     assert.equal(JSON.stringify(response).includes("objectStorePath"), false);
     assert.equal(JSON.stringify(response).includes("keyId"), false);
     assert.equal(JSON.stringify(response).includes("sha256"), false);
   });
 
+  /** 複数の忘却要求について、成功・処理済み・対象なしをエントリーごとの結果として返す。 */
   it("forget responseは複数entryの結果をentryIdごとに返す", () => {
     const response = createMemoryForgetResponse([
       { entryId: "mem_1", status: "forgotten" },
@@ -270,11 +307,9 @@ describe("memory-v6 response contract", () => {
     ]);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
-    assert.deepEqual(response.results.map((result) => result.status), [
-      "forgotten",
-      "already_forgotten",
-      "not_found",
-    ]);
+    assert.deepEqual(
+      response.results.map((result) => result.status),
+      ["forgotten", "already_forgotten", "not_found"],
+    );
   });
-
 });

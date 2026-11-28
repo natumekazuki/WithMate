@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { it } from "node:test";
-import { composeProviderInput, composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import {
+  composeProviderInput,
+  composeProviderPrompt,
+} from "../../src-electron/providers/provider-prompt.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -11,16 +14,50 @@ import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-ada
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
 import { OpenCodeAdapter } from "../../src-electron/providers/opencode/opencode-adapter.js";
 
+/** 人格スナップショットと通常の実行Roleを持つ、新規Sessionの共通プロンプト素材を組み立てる。 */
 function input(): RunSessionTurnInput {
-  const session = buildNewSession({ id: "sample", taskTitle: "Task", workspacePath: "C:/work", workspaceLabel: "Workspace", branch: "",
-    characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, approvalMode: "on-request" });
+  const session = buildNewSession({
+    id: "sample",
+    taskTitle: "Task",
+    workspacePath: "C:/work",
+    workspaceLabel: "Workspace",
+    branch: "",
+    characterId: "azki",
+    character: "AZKi",
+    characterIconPath: "",
+    characterThemeColors: { main: "#fff", sub: "#000" },
+    approvalMode: "on-request",
+  });
   session.sessionRole = "executor";
-  session.characterRuntimeSnapshot = { characterId: "azki", name: "AZKi", description: "公開紹介", iconFilePath: "", theme: session.characterThemeColors,
-    definitionMarkdown: "---\nschema: withmate.character.v1\nname: AZKi\n---\n# Kernel\n人格の正本文。", definitionSha256: "definition", definitionByteSize: 100, snapshotAt: "2026-11-01T00:00:00Z" };
-  return { session, executionOptions: captureSessionExecutionOptions(session),
-    providerCatalog: { id: "codex", label: "Codex", defaultModelId: session.model, defaultReasoningEffort: session.reasoningEffort, models: [] },
-    appSettings: createDefaultAppSettings(), userMessage: "依頼本文", attachments: [], currentDateTime: "2026-11-01T12:00:00.000+09:00",
-    sessionFolderPath: "C:/session-files/sample", crewFolderPath: "C:/crew-files/sample" };
+  session.characterRuntimeSnapshot = {
+    characterId: "azki",
+    name: "AZKi",
+    description: "公開紹介",
+    iconFilePath: "",
+    theme: session.characterThemeColors,
+    definitionMarkdown:
+      "---\nschema: withmate.character.v1\nname: AZKi\n---\n# Kernel\n人格の正本文。",
+    definitionSha256: "definition",
+    definitionByteSize: 100,
+    snapshotAt: "2026-11-01T00:00:00Z",
+  };
+  return {
+    session,
+    executionOptions: captureSessionExecutionOptions(session),
+    providerCatalog: {
+      id: "codex",
+      label: "Codex",
+      defaultModelId: session.model,
+      defaultReasoningEffort: session.reasoningEffort,
+      models: [],
+    },
+    appSettings: createDefaultAppSettings(),
+    userMessage: "依頼本文",
+    attachments: [],
+    currentDateTime: "2026-11-01T12:00:00.000+09:00",
+    sessionFolderPath: "C:/session-files/sample",
+    crewFolderPath: "C:/crew-files/sample",
+  };
 }
 
 /** 空でない固定指示は前後の空白を除かずシステム側に置き、空文字列の場合はセクション自体を取り除く。 */
@@ -28,11 +65,20 @@ it("composes verbatim Session Instructions or omits the section", () => {
   const base = input();
   const baseline = composeProviderPrompt(base);
   for (const body of [" \r\n手順 🧪\n  ", " \n "]) {
-    const prompt = composeProviderPrompt({ ...base, sessionInstructions: body });
-    assert.equal(prompt.systemBodyText, baseline.systemBodyText + "\n\n# Session Instructions\n\n" + body);
+    const prompt = composeProviderPrompt({
+      ...base,
+      sessionInstructions: body,
+    });
+    assert.equal(
+      prompt.systemBodyText,
+      baseline.systemBodyText + "\n\n# Session Instructions\n\n" + body,
+    );
     assert.equal(prompt.inputBodyText, baseline.inputBodyText);
   }
-  assert.deepEqual(composeProviderPrompt({ ...base, sessionInstructions: "" }), baseline);
+  assert.deepEqual(
+    composeProviderPrompt({ ...base, sessionInstructions: "" }),
+    baseline,
+  );
 });
 
 // @test-value v2
@@ -47,14 +93,39 @@ it("composes verbatim Session Instructions or omits the section", () => {
 // impact = "Agentが過去の別Session指示をユーザーの新規指示と誤認する"
 // distinction = "storage testはProvider向けpromptにおける実行主体と本文の表現を検証しない"
 // @end-test-value
+/** 失敗したSession入力をGUIから再実行しても元送信者を残し、本文を変更した場合だけGUI編集として区別する。 */
 it("Session指示の再実行はGUI操作と元送信者を分ける", () => {
-  const target = { targetSessionId: "recipient", targetIncarnationId: "recipient-inc" };
-  const provenance: NonNullable<RunSessionTurnInput["inputProvenance"]> = { origin: { kind: "gui", operation: "send", ...target }, originalChanged: false,
-    retrySource: { receiptId: "source-receipt", turnId: "12", changedSinceAcceptance: true,
-      origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "5",
-        actorSnapshot: { sessionTitle: "Source", character: { id: "mate", name: "Sender", iconPath: "" } }, ...target } } };
+  const target = {
+    targetSessionId: "recipient",
+    targetIncarnationId: "recipient-inc",
+  };
+  const provenance: NonNullable<RunSessionTurnInput["inputProvenance"]> = {
+    origin: { kind: "gui", operation: "send", ...target },
+    originalChanged: false,
+    retrySource: {
+      receiptId: "source-receipt",
+      turnId: "12",
+      changedSinceAcceptance: true,
+      origin: {
+        kind: "session",
+        operation: "send",
+        actorKind: "main",
+        actorSessionId: "sender",
+        actorIncarnationId: "sender-inc",
+        actorTurnId: "5",
+        actorSnapshot: {
+          sessionTitle: "Source",
+          character: { id: "mate", name: "Sender", iconPath: "" },
+        },
+        ...target,
+      },
+    },
+  };
   const exact = composeProviderInput("元の指示", provenance);
-  const edited = composeProviderInput("今回の指示", { ...provenance, originalChanged: true });
+  const edited = composeProviderInput("今回の指示", {
+    ...provenance,
+    originalChanged: true,
+  });
   for (const text of [exact, edited]) {
     assert.match(text, /Retry requested by: GUI user/);
     assert.match(text, /Original sender: Session/);
@@ -77,20 +148,43 @@ it("Session指示の再実行はGUI操作と元送信者を分ける", () => {
 // scope = "provider共通の新規/継続prompt"
 // lifecycle = "permanent"
 // @end-test-value
+/** 4社のアダプターが新規・継続の両方で人格とRoleをシステム側、現在日時と原依頼を入力側へ分ける。 */
 it("4Providerで新規/継続の共通prompt境界を保つ", () => {
-  for (const adapter of [new CodexAdapter(), new CopilotAdapter(), new ClaudeAdapter(), new OpenCodeAdapter()]) for (const threadId of ["", "saved-thread"]) {
-    const base = input(); base.session.threadId = threadId;
-    const prompt = adapter.composePrompt(base);
-    assert.match(prompt.systemBodyText, /# Kernel\n人格の正本文。/);
-    assert.match(prompt.systemBodyText, /# Session Role\n\nexecutor$/);
-    assert.match(prompt.systemBodyText, /submit a WithMate local PR, wait for user approval in the WithMate GUI, and merge through that PR/);
-    assert.match(prompt.systemBodyText, /application's OS permissions, not in the Provider sandbox/);
-    assert.match(prompt.systemBodyText, /成果物は、明示指定がなければrepository・提出先の文体と形式を優先/);
-    assert.equal(prompt.inputBodyText, "# Current Date\n\n2026-11-01T12:00:00.000+09:00\n\n# User Input\n\n依頼本文");
-    assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
-    assert.equal(prompt.logicalPrompt.composedText, prompt.systemBodyText + "\n\n" + prompt.inputBodyText);
-  }
+  for (const adapter of [
+    new CodexAdapter(),
+    new CopilotAdapter(),
+    new ClaudeAdapter(),
+    new OpenCodeAdapter(),
+  ])
+    for (const threadId of ["", "saved-thread"]) {
+      const base = input();
+      base.session.threadId = threadId;
+      const prompt = adapter.composePrompt(base);
+      assert.match(prompt.systemBodyText, /# Kernel\n人格の正本文。/);
+      assert.match(prompt.systemBodyText, /# Session Role\n\nexecutor$/);
+      assert.match(
+        prompt.systemBodyText,
+        /submit a WithMate local PR, wait for user approval in the WithMate GUI, and merge through that PR/,
+      );
+      assert.match(
+        prompt.systemBodyText,
+        /application's OS permissions, not in the Provider sandbox/,
+      );
+      assert.match(
+        prompt.systemBodyText,
+        /成果物は、明示指定がなければrepository・提出先の文体と形式を優先/,
+      );
+      assert.equal(
+        prompt.inputBodyText,
+        "# Current Date\n\n2026-11-01T12:00:00.000+09:00\n\n# User Input\n\n依頼本文",
+      );
+      assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+      assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
+      assert.equal(
+        prompt.logicalPrompt.composedText,
+        prompt.systemBodyText + "\n\n" + prompt.inputBodyText,
+      );
+    }
 });
 
 // @test-value v2
@@ -103,34 +197,74 @@ it("4Providerで新規/継続の共通prompt境界を保つ", () => {
 // scope = "通常/authoring/neutral/Auxiliaryと個別toggle"
 // lifecycle = "permanent"
 // @end-test-value
+/** 実行先と各フォルダーの出力を保ち、Session種別やトグルに応じてRole・人格・日時の必要な箇所だけを切り替える。 */
 it("Session種別・owner・toggleを適用し作業境界を保つ", () => {
-  const base = input(); base.executionWorkspacePath = "C:/actual"; base.session.allowedAdditionalDirectories = ["C:/external"];
+  const base = input();
+  base.executionWorkspacePath = "C:/actual";
+  base.session.allowedAdditionalDirectories = ["C:/external"];
   const normal = composeProviderPrompt(base);
   assert.match(normal.systemBodyText, /# Workspace\n\nC:\/actual/);
-  assert.match(normal.systemBodyText, /# SessionFolder\n\nC:\/session-files\/sample/);
-  assert.match(normal.systemBodyText, /# Crew Folder\n\nC:\/crew-files\/sample/);
+  assert.match(
+    normal.systemBodyText,
+    /# SessionFolder\n\nC:\/session-files\/sample/,
+  );
+  assert.match(
+    normal.systemBodyText,
+    /# Crew Folder\n\nC:\/crew-files\/sample/,
+  );
   assert.deepEqual(normal.additionalDirectories, [path.resolve("C:/external")]);
-  assert.match(composeProviderPrompt({ ...base, runtimeOwner: { kind: "auxiliary", id: "aux", incarnationId: "v1" } }).systemBodyText, /# Session Role\n\nauxiliary$/);
-  const characterOff = composeProviderPrompt({ ...base, appSettings: { ...base.appSettings, characterDefinitionEnabled: false } });
+  assert.match(
+    composeProviderPrompt({
+      ...base,
+      runtimeOwner: { kind: "auxiliary", id: "aux", incarnationId: "v1" },
+    }).systemBodyText,
+    /# Session Role\n\nauxiliary$/,
+  );
+  const characterOff = composeProviderPrompt({
+    ...base,
+    appSettings: { ...base.appSettings, characterDefinitionEnabled: false },
+  });
   assert.equal(characterOff.inputBodyText, normal.inputBodyText);
-  assert.ok(!characterOff.systemBodyText.includes("# Character Definition Snapshot"));
-  const dateOff = composeProviderPrompt({ ...base, appSettings: { ...base.appSettings, currentDateEnabled: false } });
+  assert.ok(
+    !characterOff.systemBodyText.includes("# Character Definition Snapshot"),
+  );
+  const dateOff = composeProviderPrompt({
+    ...base,
+    appSettings: { ...base.appSettings, currentDateEnabled: false },
+  });
   assert.equal(dateOff.systemBodyText, normal.systemBodyText);
   assert.equal(dateOff.inputBodyText, "# User Input\n\n依頼本文");
-  const authoring = composeProviderPrompt({ ...base, session: { ...base.session, sessionKind: "character-authoring" } });
+  const authoring = composeProviderPrompt({
+    ...base,
+    session: { ...base.session, sessionKind: "character-authoring" },
+  });
   assert.match(authoring.systemBodyText, /# Kernel\n人格の正本文。/);
   assert.equal(authoring.inputBodyText, "# User Input\n\n依頼本文");
   assert.ok(!authoring.systemBodyText.includes("# Session Role"));
   assert.ok(!authoring.systemBodyText.includes("# WithMate Local PR"));
-  const neutral = composeProviderPrompt({ ...base, session: { ...base.session, characterRuntimeSnapshot: null } });
+  const neutral = composeProviderPrompt({
+    ...base,
+    session: { ...base.session, characterRuntimeSnapshot: null },
+  });
   assert.match(neutral.systemBodyText, /# Workspace/);
   assert.match(neutral.systemBodyText, /# Session Role\n\nexecutor$/);
   assert.equal(neutral.inputBodyText, normal.inputBodyText);
   assert.equal(composeProviderInput("  "), "");
-  const nested = composeProviderPrompt({ ...base, session: { ...base.session, characterRuntimeSnapshot: {
-    ...base.session.characterRuntimeSnapshot!, definitionMarkdown: "# Kernel\n```text\n内側の定義\n```",
-  } } });
-  assert.ok(nested.systemBodyText.includes("````markdown\n# Kernel\n```text\n内側の定義\n```\n````"));
+  const nested = composeProviderPrompt({
+    ...base,
+    session: {
+      ...base.session,
+      characterRuntimeSnapshot: {
+        ...base.session.characterRuntimeSnapshot!,
+        definitionMarkdown: "# Kernel\n```text\n内側の定義\n```",
+      },
+    },
+  });
+  assert.ok(
+    nested.systemBodyText.includes(
+      "````markdown\n# Kernel\n```text\n内側の定義\n```\n````",
+    ),
+  );
 });
 
 // @test-value v2
@@ -143,21 +277,57 @@ it("Session種別・owner・toggleを適用し作業境界を保つ", () => {
 // scope = "来歴の表示投影"
 // lifecycle = "permanent"
 // @end-test-value
+/** GUI、Main、Auxiliary、不明の来歴を区別し、送信元の世代・操作や変更判定を本文とは別に保持する。 */
 it("実話者・操作・参照・比較状態をデータとして保持する", () => {
   const target = { targetSessionId: "self", targetIncarnationId: "v1" };
-  const gui = composeProviderInput("依頼", { origin: { kind: "gui", operation: "send", ...target }, originalChanged: false });
-  assert.match(gui, /Sender: GUI user \(local-user\)/); assert.match(gui, /Changed since acceptance: false/);
+  const gui = composeProviderInput("依頼", {
+    origin: { kind: "gui", operation: "send", ...target },
+    originalChanged: false,
+  });
+  assert.match(gui, /Sender: GUI user \(local-user\)/);
+  assert.match(gui, /Changed since acceptance: false/);
   for (const kind of ["main", "auxiliary"] as const) {
-    const text = composeProviderInput("依頼", { origin: { kind: "session", operation: "send", actorKind: kind, actorSessionId: "peer\nID", actorIncarnationId: "v2", actorTurnId: "42", actorMainSessionId: kind === "auxiliary" ? "owner" : undefined,
-      actorSnapshot: { sessionTitle: "Peer", character: { id: "peer", name: "Peer", iconPath: "" } }, ...target }, originalChanged: true });
-    assert.match(text, /Character: "Peer" \/ ID: "peer"/); assert.ok(text.includes('Session: "peer\\nID"'));
-    assert.ok(text.includes('Kind: "' + kind + '"')); assert.match(text, /Incarnation: "v2"\nKind:.*\nSource Turn: "42"/);
+    const text = composeProviderInput("依頼", {
+      origin: {
+        kind: "session",
+        operation: "send",
+        actorKind: kind,
+        actorSessionId: "peer\nID",
+        actorIncarnationId: "v2",
+        actorTurnId: "42",
+        actorMainSessionId: kind === "auxiliary" ? "owner" : undefined,
+        actorSnapshot: {
+          sessionTitle: "Peer",
+          character: { id: "peer", name: "Peer", iconPath: "" },
+        },
+        ...target,
+      },
+      originalChanged: true,
+    });
+    assert.match(text, /Character: "Peer" \/ ID: "peer"/);
+    assert.ok(text.includes('Session: "peer\\nID"'));
+    assert.ok(text.includes('Kind: "' + kind + '"'));
+    assert.match(text, /Incarnation: "v2"\nKind:.*\nSource Turn: "42"/);
     if (kind === "auxiliary") assert.match(text, /Owner Main Session: "owner"/);
     assert.ok(text.endsWith("# Session Input\n\n依頼"));
   }
-  const steer = composeProviderInput("追加指示", { origin: { kind: "session", operation: "steer", actorKind: "main", actorSessionId: "peer", actorIncarnationId: "v2", actorTurnId: "43", ...target }, originalChanged: null });
+  const steer = composeProviderInput("追加指示", {
+    origin: {
+      kind: "session",
+      operation: "steer",
+      actorKind: "main",
+      actorSessionId: "peer",
+      actorIncarnationId: "v2",
+      actorTurnId: "43",
+      ...target,
+    },
+    originalChanged: null,
+  });
   assert.match(steer, /Operation: "steer"\nChanged since acceptance: null/);
-  assert.equal(composeProviderInput("依頼", { origin: null, originalChanged: null }), "# Input Provenance\n\nSender: unknown\nOperation: null\nChanged since acceptance: null\n\n# Queued Input\n\n依頼");
+  assert.equal(
+    composeProviderInput("依頼", { origin: null, originalChanged: null }),
+    "# Input Provenance\n\nSender: unknown\nOperation: null\nChanged since acceptance: null\n\n# Queued Input\n\n依頼",
+  );
 });
 
 // @test-value v2
@@ -170,12 +340,53 @@ it("実話者・操作・参照・比較状態をデータとして保持する"
 // scope = "Coordination入力投影"
 // lifecycle = "permanent"
 // @end-test-value
+/** Sessionが運んだ回答通知でも回答主体はユーザーのまま保持し、通知全体を原回答本文と別に出力する。 */
 it("Coordination通知とユーザー回答者を原値で渡す", () => {
-  const notice = { coordinationId: "c", kind: "decision" as const, consultation: "相談", actor: { kind: "main" as const, sessionId: "peer", incarnationId: "v2", turnId: "42" }, operation: "answer",
-    answer: { id: "a", revision: 2, actor: { kind: "user" as const }, body: "回答", selectedChoices: ["選択"], createdAt: "2026-11-01T00:00:00Z" }, state: "resolved" as const, withdrawalReason: null };
-  const text = composeProviderInput("元の回答本文", { origin: { kind: "session", operation: "send", actorKind: "main", actorSessionId: "peer", actorIncarnationId: "v2", actorTurnId: "42", targetSessionId: "self", targetIncarnationId: "v1" }, originalChanged: false, coordinationOperation: "answer", coordination: notice });
-  assert.match(text, /Sender: Session/); assert.match(text, /Coordination operation: "answer"/);
-  assert.deepEqual(JSON.parse(text.split("Coordination:\n")[1]!.split("\n\n# Session Input")[0]!), notice);
+  const notice = {
+    coordinationId: "c",
+    kind: "decision" as const,
+    consultation: "相談",
+    actor: {
+      kind: "main" as const,
+      sessionId: "peer",
+      incarnationId: "v2",
+      turnId: "42",
+    },
+    operation: "answer",
+    answer: {
+      id: "a",
+      revision: 2,
+      actor: { kind: "user" as const },
+      body: "回答",
+      selectedChoices: ["選択"],
+      createdAt: "2026-11-01T00:00:00Z",
+    },
+    state: "resolved" as const,
+    withdrawalReason: null,
+  };
+  const text = composeProviderInput("元の回答本文", {
+    origin: {
+      kind: "session",
+      operation: "send",
+      actorKind: "main",
+      actorSessionId: "peer",
+      actorIncarnationId: "v2",
+      actorTurnId: "42",
+      targetSessionId: "self",
+      targetIncarnationId: "v1",
+    },
+    originalChanged: false,
+    coordinationOperation: "answer",
+    coordination: notice,
+  });
+  assert.match(text, /Sender: Session/);
+  assert.match(text, /Coordination operation: "answer"/);
+  assert.deepEqual(
+    JSON.parse(
+      text.split("Coordination:\n")[1]!.split("\n\n# Session Input")[0]!,
+    ),
+    notice,
+  );
   assert.ok(text.endsWith("# Session Input\n\n元の回答本文"));
 });
 
@@ -191,26 +402,74 @@ it("Coordination通知とユーザー回答者を原値で渡す", () => {
 // impact = "Agentが別メッセージを返信先と扱うか不要本文がコンテキストへ入る"
 // distinction = "レンダラーの引用表示とSQLiteの参照保管だけではProviderへ渡る位置・最小情報を確認できない"
 // @end-test-value
+/** 明示された返信参照は来歴の後に別枠で置き、本文中の見出しや自分の発言IDを返信先と解釈しない。 */
 it("返信の必要IDのみを来歴と原文の間に置く", () => {
   const base = input();
-  const target = { kind: "main" as const, sessionId: "original", incarnationId: "generation" };
+  const target = {
+    kind: "main" as const,
+    sessionId: "original",
+    incarnationId: "generation",
+  };
   const copiedHeading = "# Reply To\n\nseq: 99\n\nこれはそのままの本文";
-  const common: RunSessionTurnInput = { ...base, userMessage: copiedHeading,
-    inputProvenance: { origin: { kind: "gui", operation: "send", targetSessionId: "sample", targetIncarnationId: "current" }, originalChanged: false },
-    messageIdentity: { sessionId: "sample", incarnationId: "current", seq: 8, finalAnswerTurnId: "12" },
+  const common: RunSessionTurnInput = {
+    ...base,
+    userMessage: copiedHeading,
+    inputProvenance: {
+      origin: {
+        kind: "gui",
+        operation: "send",
+        targetSessionId: "sample",
+        targetIncarnationId: "current",
+      },
+      originalChanged: false,
+    },
+    messageIdentity: {
+      sessionId: "sample",
+      incarnationId: "current",
+      seq: 8,
+      finalAnswerTurnId: "12",
+    },
   };
   const plain = composeProviderPrompt(common);
-  const reply = composeProviderPrompt({ ...common, replyTo: { target, seq: 4, finalAnswerTurnId: "7" } });
-  const withoutIdentity = composeProviderPrompt({ ...common, messageIdentity: undefined });
+  const reply = composeProviderPrompt({
+    ...common,
+    replyTo: { target, seq: 4, finalAnswerTurnId: "7" },
+  });
+  const withoutIdentity = composeProviderPrompt({
+    ...common,
+    messageIdentity: undefined,
+  });
   assert.equal(plain.systemBodyText, withoutIdentity.systemBodyText);
   assert.equal(reply.systemBodyText, withoutIdentity.systemBodyText);
-  const identity = '# Message Identity\n\nsessionId: "sample"\nincarnationId: "current"\nseq: 8\nfinalAnswerTurnId: "12"\n\n';
-  assert.equal(plain.inputBodyText, withoutIdentity.inputBodyText.replace("# Input Provenance", identity + "# Input Provenance"));
-  assert.ok(plain.inputBodyText.endsWith("\n\n# User Input\n\n" + copiedHeading));
-  assert.ok(!plain.inputBodyText.split("# User Input")[0]!.includes("# Reply To"));
-  const replyTo = '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nseq: 4\nfinalAnswerTurnId: "7"\n\n';
-  assert.equal(reply.inputBodyText, plain.inputBodyText.replace("# User Input", replyTo + "# User Input"));
+  const identity =
+    '# Message Identity\n\nsessionId: "sample"\nincarnationId: "current"\nseq: 8\nfinalAnswerTurnId: "12"\n\n';
+  assert.equal(
+    plain.inputBodyText,
+    withoutIdentity.inputBodyText.replace(
+      "# Input Provenance",
+      identity + "# Input Provenance",
+    ),
+  );
+  assert.ok(
+    plain.inputBodyText.endsWith("\n\n# User Input\n\n" + copiedHeading),
+  );
+  assert.ok(
+    !plain.inputBodyText.split("# User Input")[0]!.includes("# Reply To"),
+  );
+  const replyTo =
+    '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nseq: 4\nfinalAnswerTurnId: "7"\n\n';
+  assert.equal(
+    reply.inputBodyText,
+    plain.inputBodyText.replace("# User Input", replyTo + "# User Input"),
+  );
   const receiptId = "11111111-1111-4111-8111-111111111111";
-  const receipt = composeProviderInput("補足", undefined, false, { replyTo: { target, receiptId } });
-  assert.equal(receipt, '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nreceiptId: "' + receiptId + '"\n\n# User Input\n\n補足');
+  const receipt = composeProviderInput("補足", undefined, false, {
+    replyTo: { target, receiptId },
+  });
+  assert.equal(
+    receipt,
+    '# Reply To\n\nsessionId: "original"\nincarnationId: "generation"\nreceiptId: "' +
+      receiptId +
+      '"\n\n# User Input\n\n補足',
+  );
 });

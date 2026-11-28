@@ -3,13 +3,17 @@ import type { ReactNode } from "react";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
 import type { HomeHeaderProps } from "./HomeHeader.js";
-import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
+import type {
+  HomeMonitorAuxiliaryDataState,
+  HomeMonitorEntry,
+} from "./home-session-projection.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
 } from "../../src-shared/window/withmate-window-types.js";
 
+/** Home のヘッダーと右ペインから実行する検索・ウィンドウ・Session・Character の操作。 */
 type HomeRightPaneHandlers = {
   onChangeSearchText: (value: string) => void;
   onSearchCompositionStart?: () => void;
@@ -29,6 +33,7 @@ type HomeRightPaneHandlers = {
   ) => void;
 };
 
+/** ヘッダーと右ペインの共通接続に必要な、入力中と確定の検索値、一覧状態、および操作。 */
 export type HomeRightPanePropsInput = {
   searchText: string;
   searchInputText: string;
@@ -59,6 +64,7 @@ export type HomeRightPanePropsInput = {
   onRetryMateStatus?: () => void;
 };
 
+/** Home の所有状態と操作を、ヘッダーと右ペインが受け取る表示用の引数へまとめる。 */
 export function buildHomeRightPaneProps({
   searchText,
   searchInputText,

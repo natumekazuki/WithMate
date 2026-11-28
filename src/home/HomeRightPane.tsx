@@ -5,7 +5,10 @@ import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
 } from "../../src-shared/window/withmate-window-types.js";
-import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
+import type {
+  HomeMonitorAuxiliaryDataState,
+  HomeMonitorEntry,
+} from "./home-session-projection.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeCrewPanel } from "./HomeCrewPanel.js";
@@ -13,6 +16,7 @@ import type { HomeRightPaneView } from "./HomeHeader.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
 import { HomePreviewsPanel } from "./HomePreviewsPanel.js";
 
+/** 現在の右ペインに表示する検索・監視・Character の状態と、各操作の実行先。 */
 export type HomeRightPaneProps = {
   searchText: string;
   providerQuota?: ReactNode;
@@ -41,6 +45,7 @@ export type HomeRightPaneProps = {
   ) => void;
 };
 
+/** Crew パネルを保持し、選択タブに応じて監視、プレビュー、または Character 一覧を表示する。 */
 export function HomeRightPane({
   searchText,
   providerQuota,
@@ -66,9 +71,17 @@ export function HomeRightPane({
 }: HomeRightPaneProps) {
   return (
     <section className="panel home-right-pane rise-3">
-      <HomeCrewPanel active={rightPaneView === "crew"} searchText={searchText} />
+      <HomeCrewPanel
+        active={rightPaneView === "crew"}
+        searchText={searchText}
+      />
       {rightPaneView === "monitor" ? (
-        <section id="home-panel-monitor" className="home-monitor-panel" role="tabpanel" aria-label="Session monitor">
+        <section
+          id="home-panel-monitor"
+          className="home-monitor-panel"
+          role="tabpanel"
+          aria-label="Session monitor"
+        >
           <HomeMonitorContent
             approvalEntries={approvalMonitorEntries}
             providerQuota={providerQuota}
@@ -86,11 +99,21 @@ export function HomeRightPane({
           />
         </section>
       ) : rightPaneView === "previews" ? (
-        <section id="home-panel-previews" className="home-monitor-panel" role="tabpanel" aria-label="Previews">
+        <section
+          id="home-panel-previews"
+          className="home-monitor-panel"
+          role="tabpanel"
+          aria-label="Previews"
+        >
           <HomePreviewsPanel />
         </section>
       ) : rightPaneView === "characters" ? (
-        <section id="home-panel-characters" className="home-monitor-panel home-characters-panel" role="tabpanel" aria-label="Characters">
+        <section
+          id="home-panel-characters"
+          className="home-monitor-panel home-characters-panel"
+          role="tabpanel"
+          aria-label="Characters"
+        >
           <HomeCharactersPanel
             characters={characterEntries}
             searchText={searchText}

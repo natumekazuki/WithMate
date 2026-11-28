@@ -20,47 +20,83 @@ import { normalizeSessionSummaryInvalidation } from "../../src-shared/session/se
 // impact = "Session一覧のpaging・検索・open ID取得が誤った対象や件数を返す"
 // distinction = "正常な正規化結果と各上限・scope制約の拒否を一つの公開parserで確認する"
 // @end-test-value
+/** 検索語やIDが正規化され、上限超過やopen取得と検索の併用が拒否されることを確認する。 */
 test("Session summary parser は page / query / open ID の上限を守る", () => {
-  assert.deepEqual(parseSessionSummaryPageRequest({
-    scope: "recent",
-    limit: 50,
-    searchText: "  TASK ",
-  }), {
-    scope: "recent",
-    cursor: null,
-    limit: 50,
-    searchText: "task",
-    sessionIds: undefined,
-  });
-  assert.throws(() => parseSessionSummaryPageRequest({ scope: "recent", limit: 51 }), /at most 50/);
-  assert.throws(() => parseSessionSummaryPageRequest({
-    scope: "open",
-    sessionIds: Array.from({ length: 101 }, (_, index) => `session-${index}`),
-  }), /batches of 100/);
-  assert.throws(() => parseSessionSummaryPageRequest({
-    scope: "open",
-    sessionIds: ["session-a", "session-b"],
-    limit: 1,
-  }), /at least the number of requested IDs/);
-  assert.throws(() => parseSessionSummaryPageRequest({
-    scope: "open",
-    sessionIds: ["session-a"],
-    searchText: "literal",
-  }), /do not accept search conditions/);
-  assert.deepEqual(parseSessionSummaryPageRequest({
-    scope: "open",
-    sessionIds: ["session-a", "session-a"],
-    searchText: "",
-  }), {
-    scope: "open",
-    cursor: null,
-    limit: 100,
-    searchText: "",
-    sessionIds: ["session-a"],
-  });
-  assert.equal(parseSessionSummaryPageRequest({ scope: "open", sessionIds: ["session-a"] }).searchText, "");
-  assert.equal(parseSessionSummaryPageRequest({ scope: "pinned", searchText: "literal" }).searchText, "literal");
-  assert.throws(() => parseSessionSummaryPageRequest({ searchText: "x".repeat(121) }), /120 characters or fewer/);
+  assert.deepEqual(
+    parseSessionSummaryPageRequest({
+      scope: "recent",
+      limit: 50,
+      searchText: "  TASK ",
+    }),
+    {
+      scope: "recent",
+      cursor: null,
+      limit: 50,
+      searchText: "task",
+      sessionIds: undefined,
+    },
+  );
+  assert.throws(
+    () => parseSessionSummaryPageRequest({ scope: "recent", limit: 51 }),
+    /at most 50/,
+  );
+  assert.throws(
+    () =>
+      parseSessionSummaryPageRequest({
+        scope: "open",
+        sessionIds: Array.from(
+          { length: 101 },
+          (_, index) => `session-${index}`,
+        ),
+      }),
+    /batches of 100/,
+  );
+  assert.throws(
+    () =>
+      parseSessionSummaryPageRequest({
+        scope: "open",
+        sessionIds: ["session-a", "session-b"],
+        limit: 1,
+      }),
+    /at least the number of requested IDs/,
+  );
+  assert.throws(
+    () =>
+      parseSessionSummaryPageRequest({
+        scope: "open",
+        sessionIds: ["session-a"],
+        searchText: "literal",
+      }),
+    /do not accept search conditions/,
+  );
+  assert.deepEqual(
+    parseSessionSummaryPageRequest({
+      scope: "open",
+      sessionIds: ["session-a", "session-a"],
+      searchText: "",
+    }),
+    {
+      scope: "open",
+      cursor: null,
+      limit: 100,
+      searchText: "",
+      sessionIds: ["session-a"],
+    },
+  );
+  assert.equal(
+    parseSessionSummaryPageRequest({ scope: "open", sessionIds: ["session-a"] })
+      .searchText,
+    "",
+  );
+  assert.equal(
+    parseSessionSummaryPageRequest({ scope: "pinned", searchText: "literal" })
+      .searchText,
+    "literal",
+  );
+  assert.throws(
+    () => parseSessionSummaryPageRequest({ searchText: "x".repeat(121) }),
+    /120 characters or fewer/,
+  );
 });
 
 // @test-value v2
@@ -75,26 +111,48 @@ test("Session summary parser は page / query / open ID の上限を守る", () 
 // impact = "一覧pagingが別の検索条件へ越境し、表示対象が不正になる"
 // distinction = "同じcursorをscope違いとquery違いで検証し、両方の拒否を確認する"
 // @end-test-value
+/** 発行時と同じ一覧範囲・検索語だけがカーソルの位置を復元できることを確認する。 */
 test("Session summary cursor は scope / normalized query の世代を跨がない", () => {
-  const cursor = encodeSessionSummaryCursor("recent", "2026-08-20T00:00:00.000Z", "session-1", "task");
+  const cursor = encodeSessionSummaryCursor(
+    "recent",
+    "2026-08-20T00:00:00.000Z",
+    "session-1",
+    "task",
+  );
 
   assert.equal(cursor.length <= 512, true);
   assert.deepEqual(decodeSessionSummaryCursor(cursor, "recent", "task"), {
     lastActiveAt: "2026-08-20T00:00:00.000Z",
     id: "session-1",
   });
-  assert.throws(() => decodeSessionSummaryCursor(cursor, "recent", "other"), /does not match the current query/);
-  assert.throws(() => decodeSessionSummaryCursor(cursor, "pinned", "task"), /does not match the current query/);
+  assert.throws(
+    () => decodeSessionSummaryCursor(cursor, "recent", "other"),
+    /does not match the current query/,
+  );
+  assert.throws(
+    () => decodeSessionSummaryCursor(cursor, "pinned", "task"),
+    /does not match the current query/,
+  );
 });
 
+/** ID更新通知は空なら省き、重複はまとめ、上限超過なら全件更新に切り替える。 */
 test("Session summary invalidation は 256件を超えたIDを切り捨てず all にする", () => {
-  assert.deepEqual(normalizeSessionSummaryInvalidation({
-    scope: "ids",
-    sessionIds: [" session-1 ", "session-1"],
-  }), { scope: "ids", sessionIds: ["session-1"] });
-  assert.deepEqual(normalizeSessionSummaryInvalidation({
-    scope: "ids",
-    sessionIds: Array.from({ length: 257 }, (_, index) => `session-${index}`),
-  }), { scope: "all" });
-  assert.equal(normalizeSessionSummaryInvalidation({ scope: "ids", sessionIds: [] }), null);
+  assert.deepEqual(
+    normalizeSessionSummaryInvalidation({
+      scope: "ids",
+      sessionIds: [" session-1 ", "session-1"],
+    }),
+    { scope: "ids", sessionIds: ["session-1"] },
+  );
+  assert.deepEqual(
+    normalizeSessionSummaryInvalidation({
+      scope: "ids",
+      sessionIds: Array.from({ length: 257 }, (_, index) => `session-${index}`),
+    }),
+    { scope: "all" },
+  );
+  assert.equal(
+    normalizeSessionSummaryInvalidation({ scope: "ids", sessionIds: [] }),
+    null,
+  );
 });

@@ -7,18 +7,38 @@ import type { MateProfileItem } from "../../src-electron/mate/mate-profile-item-
 import { MateProfileProjectionRefreshService } from "../../src-electron/mate/mate-profile-projection-refresh-service.js";
 import type { ApplyMateProfileFilesInput } from "../../src-electron/mate/mate-storage.js";
 
+/** 対象の忘却と削除記録を同じリビジョンに結び、投影ファイルから対象だけを除く。 */
 test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate files を作る", async () => {
   const profile = createProfile();
-  const targetItem = createItem({ id: "item-forget", claimKey: "nickname", renderedText: "忘れる内容" });
-  const keptItem = createItem({ id: "item-keep", claimKey: "tone", renderedText: "残す内容" });
-  const forgetCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
-  const tombstoneCalls: Array<{ itemId: string; revisionId?: string; now?: string }> = [];
+  const targetItem = createItem({
+    id: "item-forget",
+    claimKey: "nickname",
+    renderedText: "忘れる内容",
+  });
+  const keptItem = createItem({
+    id: "item-keep",
+    claimKey: "tone",
+    renderedText: "残す内容",
+  });
+  const forgetCalls: Array<{
+    itemId: string;
+    revisionId?: string;
+    now?: string;
+  }> = [];
+  const tombstoneCalls: Array<{
+    itemId: string;
+    revisionId?: string;
+    now?: string;
+  }> = [];
   const appliedInputs: ApplyMateProfileFilesInput[] = [];
 
   const service = new MateProfileProjectionRefreshService({
     mateStorage: {
+      /** 更新前のリビジョンを持つプロフィールを返す。 */
       getMateProfile: () => profile,
+      /** 投影先のルートを、実ファイルを作らずに指定する。 */
       getUserDataPath: () => "user-data",
+      /** 生成入力を捕捉し、確定処理に新しいリビジョンと時刻を渡す。 */
       applyProfileFiles: async (input) => {
         appliedInputs.push(input);
         input.finalizeInTransaction?.({
@@ -26,15 +46,28 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
           revisionId: "rev-forget",
           now: "2026-05-10T00:00:00.000Z",
         });
-        return { ...profile, activeRevisionId: "rev-forget", profileGeneration: 2 };
+        return {
+          ...profile,
+          activeRevisionId: "rev-forget",
+          profileGeneration: 2,
+        };
       },
     },
     profileItemStorage: {
+      /** 変異可否は本ケースの対象外なので、忘却の処理を許可する。 */
       assertProfileItemMutationAllowed: () => {},
+      /** 忘却対象と、再投影で保持する項目を返す。 */
       listProfileItems: () => [targetItem, keptItem],
-      createForgottenTombstoneForProfileItemInTransaction: (_db, item, revisionId, now) => {
+      /** 削除記録が対象を正しいリビジョンと時刻に結び付けるか照合できるようにする。 */
+      createForgottenTombstoneForProfileItemInTransaction: (
+        _db,
+        item,
+        revisionId,
+        now,
+      ) => {
         tombstoneCalls.push({ itemId: item.id, revisionId, now });
       },
+      /** 項目の忘却に渡された識別子と確定情報を記録する。 */
       forgetProfileItemInTransaction: (_db, itemId, revisionId, now) => {
         forgetCalls.push({ itemId, revisionId, now });
       },
@@ -46,7 +79,9 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
   assert.equal(appliedInputs.length, 1);
   assert.equal(appliedInputs[0].summary, "forget profile item: nickname");
   assert.equal(appliedInputs[0].files.length, 4);
-  const coreFile = appliedInputs[0].files.find((file) => file.sectionKey === "core");
+  const coreFile = appliedInputs[0].files.find(
+    (file) => file.sectionKey === "core",
+  );
   assert.ok(coreFile);
   assert.match(coreFile.content, /残す内容/);
   assert.doesNotMatch(coreFile.content, /忘れる内容/);
@@ -66,6 +101,7 @@ test("forgetProfileItemAndRefreshProjection は対象 item を除いた Mate fil
   ]);
 });
 
+/** 更新前リビジョンに各セクションがそろった有効な Mate プロフィールを作る。 */
 function createProfile(): MateProfile {
   const now = "2026-05-10T00:00:00.000Z";
   return {
@@ -93,7 +129,11 @@ function createProfile(): MateProfile {
   };
 }
 
-function createSection(sectionKey: MateProfile["sections"][number]["sectionKey"], filePath: string): MateProfile["sections"][number] {
+/** 既存ファイルのパスと更新リビジョンを含むセクションを作る。 */
+function createSection(
+  sectionKey: MateProfile["sections"][number]["sectionKey"],
+  filePath: string,
+): MateProfile["sections"][number] {
   return {
     sectionKey,
     filePath,
@@ -104,6 +144,7 @@ function createSection(sectionKey: MateProfile["sections"][number]["sectionKey"]
   };
 }
 
+/** 指定項目以外は、core に投影できる有効な項目の値で補う。 */
 function createItem(overrides: Partial<MateProfileItem>): MateProfileItem {
   const now = "2026-05-10T00:00:00.000Z";
   return {

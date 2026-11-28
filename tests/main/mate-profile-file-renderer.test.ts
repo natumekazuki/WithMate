@@ -10,6 +10,7 @@ import {
 
 const BASE_TIME = "2026-01-01T00:00:00.000Z";
 
+/** 固定の更新時刻と四つの部門を持つ描画用プロファイルを作る。 */
 function createProfile(partial: Partial<MateProfile> = {}): MateProfile {
   return {
     id: "current",
@@ -36,7 +37,11 @@ function createProfile(partial: Partial<MateProfile> = {}): MateProfile {
   };
 }
 
-function section(sectionKey: MateProfile["sections"][number]["sectionKey"], filePath: string): MateProfile["sections"][number] {
+/** 指定された部門キーとファイルパスを固定の更新時刻で包む。 */
+function section(
+  sectionKey: MateProfile["sections"][number]["sectionKey"],
+  filePath: string,
+): MateProfile["sections"][number] {
   return {
     sectionKey,
     filePath,
@@ -47,7 +52,11 @@ function section(sectionKey: MateProfile["sections"][number]["sectionKey"], file
   };
 }
 
-function createItem(partial: Partial<MateProfileItem> & Pick<MateProfileItem, "id" | "sectionKey" | "category" | "renderedText">): MateProfileItem {
+/** 項目の状態や並び順の指標を指定できる、描画に使う保存項目を作る。 */
+function createItem(
+  partial: Partial<MateProfileItem> &
+    Pick<MateProfileItem, "id" | "sectionKey" | "category" | "renderedText">,
+): MateProfileItem {
   return {
     id: partial.id,
     sectionKey: partial.sectionKey,
@@ -77,6 +86,7 @@ function createItem(partial: Partial<MateProfileItem> & Pick<MateProfileItem, "i
   };
 }
 
+/** 部門ファイルを有効かつ投影可能な項目から再生成し、対象外の項目を残さないことを確認する。 */
 test("renderMateProfileFiles は bond / work_style を active かつ projectionAllowed で完全再生成する", () => {
   const profile = createProfile();
   const files = renderMateProfileFiles(profile, [
@@ -156,87 +166,95 @@ test("renderMateProfileFiles は bond / work_style を active かつ projectionA
   );
   assert.equal(
     workStyle?.content,
-    [
-      "# Work Style",
-      "",
-      "## Work Style",
-      "- 最初に方針を共有する",
-      "",
-    ].join("\n"),
+    ["# Work Style", "", "## Work Style", "- 最初に方針を共有する", ""].join(
+      "\n",
+    ),
   );
   assert.equal(core?.content.includes("これは投影しない"), false);
-  assert.equal(bond?.content.includes("これは差分編集で残ってはいけない"), false);
-  assert.equal(workStyle?.content.includes("これは差分更新で残ってはいけない"), false);
-  assert.equal(files.some((file) => file.content.includes("Project note")), false);
+  assert.equal(
+    bond?.content.includes("これは差分編集で残ってはいけない"),
+    false,
+  );
+  assert.equal(
+    workStyle?.content.includes("これは差分更新で残ってはいけない"),
+    false,
+  );
+  assert.equal(
+    files.some((file) => file.content.includes("Project note")),
+    false,
+  );
 });
 
+/** 指定のプロジェクト要約に属する公開可能な項目だけを、キーと更新時刻で決まる順序に並べる。 */
 test("renderProjectDigestProjectionText は claimKey と updatedAt でソートし、対象条件以外を除外して生成する", () => {
-  const rendered = renderProjectDigestProjectionText("digest-1", { items: [
-    createItem({
-      id: "digest-newer",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "最新",
-      claimKey: "a",
-      updatedAt: "2026-01-02T00:00:00.000Z",
-      projectDigestId: "digest-1",
-    }),
-    createItem({
-      id: "digest-older",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "旧い",
-      claimKey: "a",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      projectDigestId: "digest-1",
-    }),
-    createItem({
-      id: "digest-b",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "別キー",
-      claimKey: "b",
-      updatedAt: "2026-01-03T00:00:00.000Z",
-      projectDigestId: "digest-1",
-    }),
-    createItem({
-      id: "digest-other-digest",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "別プロジェクト",
-      claimKey: "a",
-      updatedAt: "2026-01-03T00:00:00.000Z",
-      projectDigestId: "digest-2",
-    }),
-    createItem({
-      id: "digest-hidden-section",
-      sectionKey: "bond",
-      category: "relationship",
-      renderedText: "bond text",
-      claimKey: "bond-item",
-      projectDigestId: "digest-1",
-    }),
-    createItem({
-      id: "digest-inactive",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "非アクティブ",
-      claimKey: "b",
-      updatedAt: "2026-01-04T00:00:00.000Z",
-      projectDigestId: "digest-1",
-      state: "disabled",
-    }),
-    createItem({
-      id: "digest-hidden",
-      sectionKey: "project_digest",
-      category: "project_context",
-      renderedText: "投影対象外",
-      claimKey: "b",
-      updatedAt: "2026-01-05T00:00:00.000Z",
-      projectDigestId: "digest-1",
-      projectionAllowed: false,
-    }),
-  ]});
+  const rendered = renderProjectDigestProjectionText("digest-1", {
+    items: [
+      createItem({
+        id: "digest-newer",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "最新",
+        claimKey: "a",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        projectDigestId: "digest-1",
+      }),
+      createItem({
+        id: "digest-older",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "旧い",
+        claimKey: "a",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        projectDigestId: "digest-1",
+      }),
+      createItem({
+        id: "digest-b",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "別キー",
+        claimKey: "b",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+        projectDigestId: "digest-1",
+      }),
+      createItem({
+        id: "digest-other-digest",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "別プロジェクト",
+        claimKey: "a",
+        updatedAt: "2026-01-03T00:00:00.000Z",
+        projectDigestId: "digest-2",
+      }),
+      createItem({
+        id: "digest-hidden-section",
+        sectionKey: "bond",
+        category: "relationship",
+        renderedText: "bond text",
+        claimKey: "bond-item",
+        projectDigestId: "digest-1",
+      }),
+      createItem({
+        id: "digest-inactive",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "非アクティブ",
+        claimKey: "b",
+        updatedAt: "2026-01-04T00:00:00.000Z",
+        projectDigestId: "digest-1",
+        state: "disabled",
+      }),
+      createItem({
+        id: "digest-hidden",
+        sectionKey: "project_digest",
+        category: "project_context",
+        renderedText: "投影対象外",
+        claimKey: "b",
+        updatedAt: "2026-01-05T00:00:00.000Z",
+        projectDigestId: "digest-1",
+        projectionAllowed: false,
+      }),
+    ],
+  });
 
   assert.equal(
     rendered,
@@ -249,10 +267,14 @@ test("renderProjectDigestProjectionText は claimKey と updatedAt でソート�
   );
 });
 
+/** 保存された Windows の絶対パスからも、配布可能な mate 配下の相対パスを導く。 */
 test("絶対パスの section path は mate/ からの相対パスに丸める", () => {
   const profile = createProfile({
     sections: [
-      section("core", "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md"),
+      section(
+        "core",
+        "C:\\Users\\example\\AppData\\Roaming\\WithMate\\mate\\core.md",
+      ),
       section("bond", "mate/bond.md"),
       section("work_style", "mate/work-style.md"),
       section("notes", "mate/notes.md"),

@@ -16,24 +16,29 @@ import type { IpcRendererLike } from "./ipc.js";
 import type { LiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import { subscribe } from "./ipc.js";
 
+/** 変更通知で扱うモデル一覧。取得 API と同じ値の形を使う。 */
 type ModelCatalogChangedPayload = Awaited<
   ReturnType<WithMateWindowApi["getModelCatalog"]>
 >;
+/** 実行を所有するウィンドウに渡す Session ID と詳細な実行状態。 */
 type LiveSessionRunPayload = {
   sessionId: string;
   state: Awaited<ReturnType<WithMateWindowApi["getLiveSessionRun"]>>;
 };
 
+/** 監視などへ通知する、Session ID と縮約した実行状態。 */
 type LiveSessionRunStatusPayload = {
   sessionId: string;
   status: LiveSessionRunStatus | null;
 };
+/** プロバイダー単位で識別する利用枠の観測値と、その解除を含む通知。 */
 type ProviderQuotaTelemetryPayload = {
   providerId: string;
   telemetry: Awaited<
     ReturnType<WithMateWindowApi["getProviderQuotaTelemetry"]>
   >;
 };
+/** Session 単位で識別する会話コンテキストの観測結果。 */
 type SessionContextTelemetryPayload = {
   sessionId: string;
   telemetry: Awaited<
@@ -41,28 +46,50 @@ type SessionContextTelemetryPayload = {
   >;
 };
 
+/** 生の IPC イベントを公開せず、画面ごとに必要な更新通知と解除手段を提供する。 */
 export function createSubscriptionApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowSubscriptionApi {
   return {
+    /** 別ウィンドウで開いているファイルプレビューの一覧が変わったことを知らせる。 */
     subscribeSessionFilePreviewWindowsChanged(listener) {
-      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT, () => listener());
+      return subscribe(
+        ipcRenderer,
+        channels.WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT,
+        () => listener(),
+      );
     },
+    /** キューの再取得が必要な Session ID を、空でない文字列の通知だけから受け取る。 */
     onSessionTurnQueueChanged(listener) {
-      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT, (payload: unknown) => {
-        if (typeof payload === "string" && payload) listener(payload);
-      });
+      return subscribe(
+        ipcRenderer,
+        channels.WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT,
+        (payload: unknown) => {
+          if (typeof payload === "string" && payload) listener(payload);
+        },
+      );
     },
+    /** 送信済みの内容に変更があった送信元 Session ID を受け取る。 */
     onSessionSentDeliveriesChanged(listener) {
-      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT, (payload: unknown) => {
-        if (typeof payload === "string" && payload) listener(payload);
-      });
+      return subscribe(
+        ipcRenderer,
+        channels.WITHMATE_SESSION_SENT_DELIVERIES_CHANGED_EVENT,
+        (payload: unknown) => {
+          if (typeof payload === "string" && payload) listener(payload);
+        },
+      );
     },
+    /** 保存済みの Turn が更新された Session ID を受け取る。 */
     onSessionTurnUpdated(listener) {
-      return subscribe(ipcRenderer, channels.WITHMATE_SESSION_TURN_UPDATED_EVENT, (payload: unknown) => {
-        if (typeof payload === "string" && payload) listener(payload);
-      });
+      return subscribe(
+        ipcRenderer,
+        channels.WITHMATE_SESSION_TURN_UPDATED_EVENT,
+        (payload: unknown) => {
+          if (typeof payload === "string" && payload) listener(payload);
+        },
+      );
     },
+    /** ウィンドウ閉鎖またはアプリ終了前に、Main からの下書き保存要求を受け取る。 */
     subscribeSessionDraftFlushRequest(listener) {
       return subscribe(
         ipcRenderer,
@@ -70,6 +97,7 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 保留していた下書き保存操作で入力制限を解除する通知を受け取る。 */
     subscribeSessionDraftFlushRelease(listener) {
       return subscribe(
         ipcRenderer,
@@ -77,15 +105,18 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 保存の確認結果を、元の要求 ID に対応付けて Main へ返す。 */
     acknowledgeSessionDraftFlush(requestId, success) {
       ipcRenderer.send(channels.WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL, {
         requestId,
         success,
       });
     },
+    /** 起動画面が表示する、現在の起動段階と進捗を取得する。 */
     getAppBootStatus() {
       return ipcRenderer.invoke(channels.WITHMATE_GET_APP_BOOT_STATUS_CHANNEL);
     },
+    /** 起動段階の変更通知を購読する。現在状態の取得とは別に行う。 */
     subscribeAppBootStatus(listener) {
       return subscribe(
         ipcRenderer,
@@ -93,6 +124,7 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 開いているファイルプレビューの表示対象を切り替える通知を受け取る。 */
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(
         ipcRenderer,
@@ -100,6 +132,7 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 正規化できる Auxiliary の移動指示だけを、親と対象の識別情報付きで受け取る。 */
     subscribeAuxiliarySessionNavigation(listener) {
       return subscribe(
         ipcRenderer,
@@ -111,6 +144,7 @@ export function createSubscriptionApi(
         },
       );
     },
+    /** 有効な Session 概要の再取得範囲だけを画面に渡す。 */
     subscribeSessionInvalidation(listener) {
       return subscribe(
         ipcRenderer,
@@ -121,6 +155,7 @@ export function createSubscriptionApi(
         },
       );
     },
+    /** 空の通知を除き、更新後のモデル一覧を受け取る。 */
     subscribeModelCatalog(listener) {
       return subscribe(
         ipcRenderer,
@@ -130,6 +165,7 @@ export function createSubscriptionApi(
         },
       );
     },
+    /** 保存を経たアプリ設定の変更を購読する。 */
     subscribeAppSettings(listener) {
       return subscribe(
         ipcRenderer,
@@ -137,6 +173,7 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 所有ウィンドウに届く実行の詳細を受け取る。詳細のない通知は null として渡す。 */
     subscribeLiveSessionRun(listener) {
       return subscribe(
         ipcRenderer,
@@ -145,6 +182,7 @@ export function createSubscriptionApi(
           listener(payload.sessionId, payload.state ?? null),
       );
     },
+    /** Session ごとの稼働状態だけを受け取る。実行本文は受け取らない。 */
     subscribeLiveSessionRunStatus(listener) {
       return subscribe(
         ipcRenderer,
@@ -153,6 +191,7 @@ export function createSubscriptionApi(
           listener(payload.sessionId, payload.status ?? null),
       );
     },
+    /** 親 Session に属する選択済み Auxiliary の変更を、形式を検証して受け取る。 */
     subscribeAuxiliarySessionSelection(listener) {
       return subscribe(
         ipcRenderer,
@@ -163,6 +202,7 @@ export function createSubscriptionApi(
         },
       );
     },
+    /** 利用枠の観測値をプロバイダー ID とともに受け取る。値の解除は null で表す。 */
     subscribeProviderQuotaTelemetry(listener) {
       return subscribe(
         ipcRenderer,
@@ -171,6 +211,7 @@ export function createSubscriptionApi(
           listener(payload.providerId, payload.telemetry ?? null),
       );
     },
+    /** 会話コンテキストの観測結果を Session ID とともに受け取る。 */
     subscribeSessionContextTelemetry(listener) {
       return subscribe(
         ipcRenderer,
@@ -179,6 +220,7 @@ export function createSubscriptionApi(
           listener(payload.sessionId, payload.telemetry ?? null),
       );
     },
+    /** Session 用語集の表示を更新するために変更通知を購読する。 */
     subscribeSessionGlossary(listener) {
       return subscribe(
         ipcRenderer,
@@ -186,6 +228,7 @@ export function createSubscriptionApi(
         listener,
       );
     },
+    /** 開閉集合の変更を受け取る。全件の再取得通知ならページを読み切ってから渡す。 */
     subscribeOpenSessionWindowIds(listener) {
       return subscribe(
         ipcRenderer,
@@ -202,6 +245,7 @@ export function createSubscriptionApi(
         },
       );
     },
+    /** 復元候補の通知を正規化し、不正な通知を画面に流さない。 */
     subscribeSessionWindowRestoreSet(listener) {
       return subscribe(
         ipcRenderer,
@@ -215,6 +259,7 @@ export function createSubscriptionApi(
   };
 }
 
+/** 開いている Session ID の再取得で、各ページの形式とカーソルの前進を確認して重複なく集める。 */
 async function listAllOpenSessionWindowIds(
   ipcRenderer: IpcRendererLike,
 ): Promise<string[]> {
@@ -227,12 +272,13 @@ async function listAllOpenSessionWindowIds(
         { cursor, limit: OPEN_SESSION_WINDOW_IDS_PAGE_MAX },
       ),
     );
-    if (!page)
-      throw new Error("Invalid open Session Window ID page response.");
+    if (!page) throw new Error("Invalid open Session Window ID page response.");
     sessionIds.push(...page.sessionIds);
     if (!page.hasMore) return Array.from(new Set(sessionIds));
     if (page.nextCursor === null || page.nextCursor === cursor)
-      throw new Error("The open Session Window ID page cursor did not advance.");
+      throw new Error(
+        "The open Session Window ID page cursor did not advance.",
+      );
     cursor = page.nextCursor;
   }
 }

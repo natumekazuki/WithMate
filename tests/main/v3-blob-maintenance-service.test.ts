@@ -6,14 +6,23 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { buildNewSession, type MessageArtifact, type Session } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  type MessageArtifact,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v3.js";
 import { SessionStorageV3 } from "../../src-electron/session/session-storage-v3.js";
 import { TextBlobStore } from "../../src-electron/storage/text-blob-store.js";
 import { repairV3Blobs } from "../../src-electron/storage/v3-blob-maintenance-service.js";
 
-async function withTempV3Database<T>(fn: (input: { dbPath: string; blobRootPath: string }) => T | Promise<T>): Promise<T> {
-  const dir = await mkdtemp(path.join(tmpdir(), "withmate-v3-blob-maintenance-"));
+/** 一時領域に V3 DB と blob の保存先を用意し、試験が失敗しても使い終わった領域を削除する。 */
+async function withTempV3Database<T>(
+  fn: (input: { dbPath: string; blobRootPath: string }) => T | Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(
+    path.join(tmpdir(), "withmate-v3-blob-maintenance-"),
+  );
   const dbPath = path.join(dir, "withmate-v3.db");
   const blobRootPath = path.join(dir, "blobs");
   const db = new DatabaseSync(dbPath);
@@ -33,6 +42,7 @@ async function withTempV3Database<T>(fn: (input: { dbPath: string; blobRootPath:
   }
 }
 
+/** 通常の本文と成果物の参照を持つセッションを、試験で指定した ID で組み立てる。 */
 function createSession(id: string): Session {
   const session = buildNewSession({
     taskTitle: "blob maintenance",
@@ -64,6 +74,7 @@ function createSession(id: string): Session {
   };
 }
 
+/** 会話本文と別の blob として保存される成果物の試験データを返す。 */
 function createArtifact(): MessageArtifact {
   return {
     title: "artifact",
@@ -73,16 +84,21 @@ function createArtifact(): MessageArtifact {
   };
 }
 
+/** ファイルの存否とは別に、DB に残った blob_objects 行の ID を確認する。 */
 function readBlobObjectIds(dbPath: string): string[] {
   const db = new DatabaseSync(dbPath);
   try {
-    return (db.prepare("SELECT blob_id FROM blob_objects ORDER BY blob_id").all() as Array<{ blob_id: string }>)
-      .map((row) => row.blob_id);
+    return (
+      db
+        .prepare("SELECT blob_id FROM blob_objects ORDER BY blob_id")
+        .all() as Array<{ blob_id: string }>
+    ).map((row) => row.blob_id);
   } finally {
     db.close();
   }
 }
 
+/** V3 の修復が未参照 blob と保持すべき既存データを区別することを、SQLite と実ファイルで確かめる。 */
 describe("repairV3Blobs", () => {
   // @test-value v2
   // kind = "invariant"
@@ -96,18 +112,24 @@ describe("repairV3Blobs", () => {
   // impact = "現行legacy移行先の会話とartifactを失うかblob maintenanceが停止する"
   // distinction = "SQLite schema・file store・GCの実経路を検証し、型検査で検出できない削除対象の誤分類を検出する"
   // @end-test-value
+  /** Audit 表がなくても通常会話を保持し、未参照 blob は dry run で報告するだけで、書込み時にのみファイルと行を削除することを確認する。 */
   it("DB 参照を live set として orphan file と orphan blob_objects row を cleanup する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const sessionStorage = new SessionStorageV3(dbPath, blobRootPath);
       const blobStore = new TextBlobStore(blobRootPath);
       try {
         await sessionStorage.upsertSession(createSession("session-live"));
-        const storedMessages = (await sessionStorage.getSession("session-live"))?.messages;
+        const storedMessages = (await sessionStorage.getSession("session-live"))
+          ?.messages;
         assert.ok(storedMessages);
-        const orphanRef = await blobStore.putText({ contentType: "text/plain", text: "orphan" });
+        const orphanRef = await blobStore.putText({
+          contentType: "text/plain",
+          text: "orphan",
+        });
         const db = new DatabaseSync(dbPath);
         try {
-          db.prepare(`
+          db.prepare(
+            `
             INSERT INTO blob_objects (
               blob_id,
               codec,
@@ -120,7 +142,8 @@ describe("repairV3Blobs", () => {
               created_at,
               last_verified_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, '')
-          `).run(
+          `,
+          ).run(
             orphanRef.blobId,
             orphanRef.codec,
             orphanRef.contentType,
@@ -134,20 +157,34 @@ describe("repairV3Blobs", () => {
           db.close();
         }
 
-        const dryRun = await repairV3Blobs({ dbPath, blobRootPath, dryRun: true });
+        const dryRun = await repairV3Blobs({
+          dbPath,
+          blobRootPath,
+          dryRun: true,
+        });
         assert.equal(dryRun.dryRun, true);
         assert.deepEqual(dryRun.orphanBlobObjectIds, [orphanRef.blobId]);
         assert.deepEqual(dryRun.garbage.orphanBlobIds, [orphanRef.blobId]);
         assert.equal(await blobStore.getText(orphanRef.blobId), "orphan");
         assert.ok(readBlobObjectIds(dbPath).includes(orphanRef.blobId));
 
-        const cleanup = await repairV3Blobs({ dbPath, blobRootPath, dryRun: false });
+        const cleanup = await repairV3Blobs({
+          dbPath,
+          blobRootPath,
+          dryRun: false,
+        });
         assert.equal(cleanup.dryRun, false);
         assert.deepEqual(cleanup.orphanBlobObjectIds, [orphanRef.blobId]);
         assert.deepEqual(cleanup.garbage.deletedBlobIds, [orphanRef.blobId]);
         assert.equal(await blobStore.stat(orphanRef.blobId), null);
-        assert.equal(readBlobObjectIds(dbPath).includes(orphanRef.blobId), false);
-        assert.deepEqual((await sessionStorage.getSession("session-live"))?.messages, storedMessages);
+        assert.equal(
+          readBlobObjectIds(dbPath).includes(orphanRef.blobId),
+          false,
+        );
+        assert.deepEqual(
+          (await sessionStorage.getSession("session-live"))?.messages,
+          storedMessages,
+        );
       } finally {
         sessionStorage.close();
       }
@@ -167,14 +204,20 @@ describe("repairV3Blobs", () => {
   // distinction = "file欠損と各Audit列の別blobを同時に用い、同じblobの重複参照では隠れる列の読み落としを検出する"
   // risk_tags = ["irreversible-data-loss"]
   // @end-test-value
+  /** 旧 Audit 表の全六列が参照する別々の blob と、本文ファイルが欠損していても参照中の DB 行を修復時に削除しないことを確認する。 */
   it("旧Audit blob参照と参照中 blob の file 欠損を保護する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const db = new DatabaseSync(dbPath);
       const missingBlobId = "a".repeat(64);
       const blobStore = new TextBlobStore(blobRootPath);
-      const auditRefs = await Promise.all(Array.from({ length: 6 }, (_, index) =>
-        blobStore.putText({ contentType: "text/plain", text: `retained audit ${index}` }),
-      ));
+      const auditRefs = await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          blobStore.putText({
+            contentType: "text/plain",
+            text: `retained audit ${index}`,
+          }),
+        ),
+      );
       try {
         db.exec(`
           CREATE TABLE audit_log_details (
@@ -183,16 +226,29 @@ describe("repairV3Blobs", () => {
           );
           CREATE TABLE audit_log_operations (details_blob_id TEXT);
         `);
-        db.prepare("INSERT INTO audit_log_details VALUES (?, ?, ?, ?, ?)").run(...auditRefs.slice(0, 5).map((ref) => ref.blobId));
-        db.prepare("INSERT INTO audit_log_operations VALUES (?)").run(auditRefs[5].blobId);
+        db.prepare("INSERT INTO audit_log_details VALUES (?, ?, ?, ?, ?)").run(
+          ...auditRefs.slice(0, 5).map((ref) => ref.blobId),
+        );
+        db.prepare("INSERT INTO audit_log_operations VALUES (?)").run(
+          auditRefs[5].blobId,
+        );
         for (const ref of auditRefs) {
-          db.prepare(`INSERT INTO blob_objects
+          db.prepare(
+            `INSERT INTO blob_objects
             (blob_id, codec, content_type, original_bytes, stored_bytes, raw_sha256, stored_sha256, state, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 'now')`).run(
-            ref.blobId, ref.codec, ref.contentType, ref.originalBytes, ref.storedBytes, ref.rawSha256, ref.storedSha256,
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 'now')`,
+          ).run(
+            ref.blobId,
+            ref.codec,
+            ref.contentType,
+            ref.originalBytes,
+            ref.storedBytes,
+            ref.rawSha256,
+            ref.storedSha256,
           );
         }
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO blob_objects (
             blob_id,
             codec,
@@ -205,8 +261,15 @@ describe("repairV3Blobs", () => {
             created_at,
             last_verified_at
           ) VALUES (?, 'br', 'text/plain', 1, 1, ?, ?, 'ready', ?, '')
-        `).run(missingBlobId, "b".repeat(64), "c".repeat(64), "2026-05-03T00:00:00.000Z");
-        db.prepare(`
+        `,
+        ).run(
+          missingBlobId,
+          "b".repeat(64),
+          "c".repeat(64),
+          "2026-05-03T00:00:00.000Z",
+        );
+        db.prepare(
+          `
           INSERT INTO sessions (
             id,
             task_title,
@@ -234,7 +297,8 @@ describe("repairV3Blobs", () => {
             message_count,
             last_active_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        `,
+        ).run(
           "session-missing",
           "missing",
           "idle",
@@ -261,7 +325,8 @@ describe("repairV3Blobs", () => {
           1,
           1,
         );
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO session_messages (
             session_id,
             seq,
@@ -274,22 +339,47 @@ describe("repairV3Blobs", () => {
             artifact_available,
             created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run("session-missing", 0, "user", "", missingBlobId, 1, 1, 0, 0, "2026-05-03T00:00:00.000Z");
+        `,
+        ).run(
+          "session-missing",
+          0,
+          "user",
+          "",
+          missingBlobId,
+          1,
+          1,
+          0,
+          0,
+          "2026-05-03T00:00:00.000Z",
+        );
       } finally {
         db.close();
       }
       const missingDirectory = path.join(blobRootPath, "aa", "aa");
       await mkdir(missingDirectory, { recursive: true });
-      await writeFile(path.join(missingDirectory, `${missingBlobId}.json`), Buffer.from("{}"));
+      await writeFile(
+        path.join(missingDirectory, `${missingBlobId}.json`),
+        Buffer.from("{}"),
+      );
 
-      const report = await repairV3Blobs({ dbPath, blobRootPath, dryRun: false });
-      assert.deepEqual(report.referencedBlobIds, [missingBlobId, ...auditRefs.map((ref) => ref.blobId)].sort());
+      const report = await repairV3Blobs({
+        dbPath,
+        blobRootPath,
+        dryRun: false,
+      });
+      assert.deepEqual(
+        report.referencedBlobIds,
+        [missingBlobId, ...auditRefs.map((ref) => ref.blobId)].sort(),
+      );
       assert.deepEqual(report.missingReferencedBlobIds, [missingBlobId]);
       assert.deepEqual(report.orphanBlobObjectIds, []);
       assert.deepEqual(report.garbage.deletedBlobIds, []);
       assert.ok(readBlobObjectIds(dbPath).includes(missingBlobId));
       for (let index = 0; index < auditRefs.length; index += 1) {
-        assert.equal(await blobStore.getText(auditRefs[index].blobId), `retained audit ${index}`);
+        assert.equal(
+          await blobStore.getText(auditRefs[index].blobId),
+          `retained audit ${index}`,
+        );
         assert.ok(readBlobObjectIds(dbPath).includes(auditRefs[index].blobId));
       }
     });

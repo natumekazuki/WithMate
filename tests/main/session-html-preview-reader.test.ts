@@ -6,26 +6,61 @@ import test from "node:test";
 
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 import { readSessionHtmlPreview } from "../../src-electron/files/session-html-preview-reader.js";
-import type { SessionFileChunkResult, SessionFileDescriptor, SessionFilePreviewTargetResolution } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFilePreviewTargetResolution,
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { HTML_PREVIEW_MAX_BYTES } from "../../src-shared/file-explorer/session-html-preview-contract.js";
 
-const resource = { sessionId: "session-1", absolutePath: path.resolve("sample.html") };
+const resource = {
+  sessionId: "session-1",
+  absolutePath: path.resolve("sample.html"),
+};
 
+/** 指定バイト列を、同一リビジョンのローカルファイルとして扱う読み取り用スタブを作る。 */
 function createExplorer(bytes = new TextEncoder().encode("<p>hello</p>")) {
   const descriptor: SessionFileDescriptor = {
-    ...resource, absoluteFilePath: resource.absolutePath, name: "sample.html", kind: "text",
-    byteLength: bytes.byteLength, modifiedAt: "2026-10-24T00:00:00.000Z", mimeType: "text/plain",
-    suggestedEncoding: "utf-8", revision: "revision-1",
+    ...resource,
+    absoluteFilePath: resource.absolutePath,
+    name: "sample.html",
+    kind: "text",
+    byteLength: bytes.byteLength,
+    modifiedAt: "2026-10-24T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8",
+    revision: "revision-1",
   };
   return {
     descriptor,
-    async resolvePreviewTarget(): Promise<SessionFilePreviewTargetResolution> { return { type: "file", resource }; },
-    async inspectFile() { return descriptor; },
-    async readFileChunk(request: { offset: number; length: number; expectedRevision: string }): Promise<SessionFileChunkResult> {
+    /** 既定では対象をローカル HTML ファイルに解決する。 */
+    async resolvePreviewTarget(): Promise<SessionFilePreviewTargetResolution> {
+      return { type: "file", resource };
+    },
+    /** 読み込み前の適格性判定とリビジョン指定に使うメタデータを返す。 */
+    async inspectFile() {
+      return descriptor;
+    },
+    /** 同一リビジョンの要求を受け取り、指定範囲のバイトと次の位置を返す。 */
+    async readFileChunk(request: {
+      offset: number;
+      length: number;
+      expectedRevision: string;
+    }): Promise<SessionFileChunkResult> {
       assert.equal(request.expectedRevision, "revision-1");
-      const data = bytes.slice(request.offset, request.offset + request.length).buffer;
+      const data = bytes.slice(
+        request.offset,
+        request.offset + request.length,
+      ).buffer;
       const nextOffset = request.offset + data.byteLength;
-      return { data, offset: request.offset, nextOffset, totalBytes: bytes.byteLength, done: nextOffset === bytes.byteLength, revision: "revision-1" };
+      return {
+        data,
+        offset: request.offset,
+        nextOffset,
+        totalBytes: bytes.byteLength,
+        done: nextOffset === bytes.byteLength,
+        revision: "revision-1",
+      };
     },
   };
 }
@@ -42,8 +77,11 @@ function createExplorer(bytes = new TextEncoder().encode("<p>hello</p>")) {
 // impact = "チャットにリンクされたローカルHTMLを正しい文字と内容で表示する"
 // distinction = "resolver単体testではHTML readerからのbase引継ぎと復号の結合を確認しない"
 // @end-test-value
+/** 相対リンクと絶対パスが同じ UTF-16 の HTML 本文とファイル名に解決されることを確認する。 */
 test("HTML reader は相対baseとroot外absolute HTMLを既存resolverで読む", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-html-reader-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-html-reader-"),
+  );
   try {
     const workspacePath = path.join(directory, "workspace");
     const outsidePath = path.join(directory, "outside");
@@ -51,17 +89,37 @@ test("HTML reader は相対baseとroot外absolute HTMLを既存resolverで読む
     await mkdir(outsidePath);
     const basePath = path.join(outsidePath, "base.md");
     const htmlPath = path.join(outsidePath, "日本語.HTM");
-    const html = "<!doctype html><p>日本語の本文</p><script>window.value=3</script>";
+    const html =
+      "<!doctype html><p>日本語の本文</p><script>window.value=3</script>";
     await writeFile(basePath, "[preview](日本語.HTM)");
-    await writeFile(htmlPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(html, "utf16le")]));
+    await writeFile(
+      htmlPath,
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(html, "utf16le")]),
+    );
     const service = new SessionFileExplorerService({
       userDataPath: path.join(directory, "user-data"),
-      getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+      /** 追加許可ディレクトリを持たず、ファイルの置き場所とは別の作業ルートを指定する。 */
+      getSessionContext: async () => ({
+        workspacePath,
+        parentSessionId: "session-1",
+        allowedAdditionalDirectories: [],
+      }),
     });
-    assert.deepEqual(await readSessionHtmlPreview(service, {
-      sessionId: "session-1", target: "日本語.HTM", baseResource: { sessionId: "session-1", absolutePath: basePath },
-    }), { html, fileName: "日本語.HTM" });
-    assert.deepEqual(await readSessionHtmlPreview(service, { sessionId: "session-1", target: htmlPath }), { html, fileName: "日本語.HTM" });
+    assert.deepEqual(
+      await readSessionHtmlPreview(service, {
+        sessionId: "session-1",
+        target: "日本語.HTM",
+        baseResource: { sessionId: "session-1", absolutePath: basePath },
+      }),
+      { html, fileName: "日本語.HTM" },
+    );
+    assert.deepEqual(
+      await readSessionHtmlPreview(service, {
+        sessionId: "session-1",
+        target: htmlPath,
+      }),
+      { html, fileName: "日本語.HTM" },
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -79,11 +137,19 @@ test("HTML reader は相対baseとroot外absolute HTMLを既存resolverで読む
 // impact = "大きなHTMLでもscriptと本文を欠落せず表示できる"
 // distinction = "型検査と短いfileのtestではchunk境界による破損を検出しない"
 // @end-test-value
+/** UTF-8 の複数バイト文字がチャンク境界をまたいでも、本文を欠落させずに復号する。 */
 test("HTML reader は複数chunkを結合してから復号する", async () => {
   const html = "a".repeat(1024 * 1024 - 1) + "日本語<p>end</p>";
-  assert.deepEqual(await readSessionHtmlPreview(createExplorer(new TextEncoder().encode(html)), {
-    sessionId: "session-1", target: "sample.html",
-  }), { html, fileName: "sample.html" });
+  assert.deepEqual(
+    await readSessionHtmlPreview(
+      createExplorer(new TextEncoder().encode(html)),
+      {
+        sessionId: "session-1",
+        target: "sample.html",
+      },
+    ),
+    { html, fileName: "sample.html" },
+  );
 });
 
 // @test-value v2
@@ -98,6 +164,7 @@ test("HTML reader は複数chunkを結合してから復号する", async () => 
 // impact = "HTMLでない対象の誤表示と上限を超えるメモリ消費を防ぐ"
 // distinction = "resolverはdirectoryと外部URLも正常な解決結果として返すためreader固有の制限を実行時に確認する"
 // @end-test-value
+/** 適格性とサイズの条件を満たさない対象を拒否し、メタデータで判定可能なら本文を読まない。 */
 test("HTML reader はlocal HTML textと50 MiB上限に制限する", async () => {
   const request = { sessionId: "session-1", target: "sample.html" };
   for (const resolution of [
@@ -110,19 +177,30 @@ test("HTML reader はlocal HTML textと50 MiB上限に制限する", async () =>
     await assert.rejects(readSessionHtmlPreview(explorer, request));
   }
   for (const change of [
-    { name: "sample.txt" }, { kind: "binary" as const }, { byteLength: HTML_PREVIEW_MAX_BYTES + 1 },
+    { name: "sample.txt" },
+    { kind: "binary" as const },
+    { byteLength: HTML_PREVIEW_MAX_BYTES + 1 },
   ]) {
     const explorer = createExplorer();
     Object.assign(explorer.descriptor, change);
     let reads = 0;
-    explorer.readFileChunk = async () => { reads += 1; throw new Error("unexpected read"); };
-    await assert.rejects(readSessionHtmlPreview(explorer, request), /requires a text|size limit/);
+    explorer.readFileChunk = async () => {
+      reads += 1;
+      throw new Error("unexpected read");
+    };
+    await assert.rejects(
+      readSessionHtmlPreview(explorer, request),
+      /requires a text|size limit/,
+    );
     assert.equal(reads, 0);
   }
   const hiddenBinary = new Uint8Array(9000);
   hiddenBinary.fill(65);
   hiddenBinary[8999] = 0;
-  await assert.rejects(readSessionHtmlPreview(createExplorer(hiddenBinary), request), /requires a text/);
+  await assert.rejects(
+    readSessionHtmlPreview(createExplorer(hiddenBinary), request),
+    /requires a text/,
+  );
 });
 
 // @test-value v2
@@ -137,21 +215,43 @@ test("HTML reader はlocal HTML textと50 MiB上限に制限する", async () =>
 // impact = "別revisionのscriptや欠損本文を混在させずreload可能な失敗として扱う"
 // distinction = "型では保証できないchunkの値の対応をservice境界で検証する"
 // @end-test-value
+/** チャンクの位置・サイズ・リビジョンや終端が不一致なら、部分本文を成功扱いしない。 */
 test("HTML reader は不整合chunkと途中更新を拒否する", async () => {
   for (const change of [
-    { revision: "changed" }, { offset: 1 }, { nextOffset: 0 }, { totalBytes: 99 },
-    { nextOffset: 99 }, { data: new ArrayBuffer(0) }, { done: false },
+    { revision: "changed" },
+    { offset: 1 },
+    { nextOffset: 0 },
+    { totalBytes: 99 },
+    { nextOffset: 99 },
+    { data: new ArrayBuffer(0) },
+    { done: false },
   ]) {
     const explorer = createExplorer();
     const read = explorer.readFileChunk;
-    explorer.readFileChunk = async (request) => ({ ...await read(request), ...change });
-    await assert.rejects(readSessionHtmlPreview(explorer, { sessionId: "session-1", target: "sample.html" }), /changed while/);
+    explorer.readFileChunk = async (request) => ({
+      ...(await read(request)),
+      ...change,
+    });
+    await assert.rejects(
+      readSessionHtmlPreview(explorer, {
+        sessionId: "session-1",
+        target: "sample.html",
+      }),
+      /changed while/,
+    );
   }
   const explorer = createExplorer(new Uint8Array(1024 * 1024 + 1).fill(65));
   const read = explorer.readFileChunk;
   explorer.readFileChunk = async (request) => {
-    if (request.offset > 0) throw new Error("The file changed while it was being read.");
+    if (request.offset > 0)
+      throw new Error("The file changed while it was being read.");
     return read(request);
   };
-  await assert.rejects(readSessionHtmlPreview(explorer, { sessionId: "session-1", target: "sample.html" }), /file changed/);
+  await assert.rejects(
+    readSessionHtmlPreview(explorer, {
+      sessionId: "session-1",
+      target: "sample.html",
+    }),
+    /file changed/,
+  );
 });

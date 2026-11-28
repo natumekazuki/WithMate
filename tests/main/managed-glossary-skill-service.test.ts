@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -10,18 +17,21 @@ import {
   WITHMATE_GLOSSARY_SKILL_NAME,
   type ManagedSkillBundleDescriptor,
 } from "../../src-electron/skills/managed-skill-distribution-service.js";
-import {
-  BUNDLED_GLOSSARY_CLI_FILE_NAME,
-} from "../../src-shared/cli/cli-artifacts.js";
+import { BUNDLED_GLOSSARY_CLI_FILE_NAME } from "../../src-shared/cli/cli-artifacts.js";
 import { buildWithMateGlossaryCli } from "../../scripts/build/build-managed-cli.js";
 
-const bundlePath = path.resolve("resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME);
+const bundlePath = path.resolve(
+  "resources",
+  "skills",
+  WITHMATE_GLOSSARY_SKILL_NAME,
+);
 const bundle: ManagedSkillBundleDescriptor = {
   skillName: WITHMATE_GLOSSARY_SKILL_NAME,
   bundledSkillPath: bundlePath,
   documentationRelativePaths: ["SKILL.md", "agents"],
 };
 
+/** 配置検査でファイルやディレクトリにアクセスできるかを判定する。 */
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath);
@@ -31,6 +41,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+/** テスト用ルートだけを探索する、指定 OS の配布サービスを作る。 */
 function createService(rootPath: string, platform: NodeJS.Platform) {
   const settings = createDefaultAppSettings();
   settings.codingProviderSettings.codex = {
@@ -41,29 +52,58 @@ function createService(rootPath: string, platform: NodeJS.Platform) {
     instructionRelativePath: "",
   };
   return new ManagedSkillDistributionService({
+    /** Codex の導入先を一時ルートに限定した設定を渡す。 */
     getAppSettings: () => settings,
+    /** 配布マーカーに使うアプリバージョンを固定する。 */
     getAppVersion: () => "6.3.25-test",
+    /** 開発モードではなく同梱資材を配る経路を選ぶ。 */
     isPackagedApp: () => true,
     platform,
-    shouldSyncDocumentationOnly: (descriptor) => descriptor.skillName !== WITHMATE_GLOSSARY_SKILL_NAME,
+    /** 用語集以外の Skill は文書のみ同期するよう指定する。 */
+    shouldSyncDocumentationOnly: (descriptor) =>
+      descriptor.skillName !== WITHMATE_GLOSSARY_SKILL_NAME,
   });
 }
 
+/** 一時ディレクトリに用語集 Skill を配布し、保有者と OS に応じた配置を確認する。 */
 describe("withmate-glossary managed distribution", () => {
+  /** 初回は同梱資材と管理マーカーを作り、同じ資材の再同期では変更しない。 */
   it("同じdescriptor ownerでprovider配置、version、digest、managed markerを適用する", async () => {
-    const rootPath = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-skill-"));
+    const rootPath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-glossary-skill-"),
+    );
     try {
       const service = createService(rootPath, "linux");
       const first = await service.syncConfiguredProviderSkills(bundle);
       const second = await service.syncConfiguredProviderSkills(bundle);
-      const installedPath = path.join(rootPath, "skills", WITHMATE_GLOSSARY_SKILL_NAME);
+      const installedPath = path.join(
+        rootPath,
+        "skills",
+        WITHMATE_GLOSSARY_SKILL_NAME,
+      );
 
       assert.equal(first[0].status, "installed");
       assert.equal(second[0].status, "unchanged");
-      assert.equal(await pathExists(path.join(installedPath, "SKILL.md")), true);
-      assert.equal(await pathExists(path.join(installedPath, "agents", "openai.yaml")), true);
-      assert.equal(await pathExists(path.join(installedPath, "bin", BUNDLED_GLOSSARY_CLI_FILE_NAME)), true);
-      const marker = JSON.parse(await readFile(path.join(installedPath, ".withmate-managed-skill.json"), "utf8"));
+      assert.equal(
+        await pathExists(path.join(installedPath, "SKILL.md")),
+        true,
+      );
+      assert.equal(
+        await pathExists(path.join(installedPath, "agents", "openai.yaml")),
+        true,
+      );
+      assert.equal(
+        await pathExists(
+          path.join(installedPath, "bin", BUNDLED_GLOSSARY_CLI_FILE_NAME),
+        ),
+        true,
+      );
+      const marker = JSON.parse(
+        await readFile(
+          path.join(installedPath, ".withmate-managed-skill.json"),
+          "utf8",
+        ),
+      );
       assert.equal(marker.skillName, WITHMATE_GLOSSARY_SKILL_NAME);
       assert.match(marker.bundleDigest, /^[a-f0-9]{64}$/);
     } finally {
@@ -71,21 +111,38 @@ describe("withmate-glossary managed distribution", () => {
     }
   });
 
+  /** 手動で導入された定義を保護し、競合解消後の Windows 配置では文書だけを複製する。 */
   it("user-created同名Skillは上書きせず、Windows documentation projectionはCLIを複製しない", async () => {
-    const rootPath = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-skill-"));
+    const rootPath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-glossary-skill-"),
+    );
     try {
-      const userSkillPath = path.join(rootPath, "skills", WITHMATE_GLOSSARY_SKILL_NAME);
+      const userSkillPath = path.join(
+        rootPath,
+        "skills",
+        WITHMATE_GLOSSARY_SKILL_NAME,
+      );
       await mkdir(userSkillPath, { recursive: true });
-      await writeFile(path.join(userSkillPath, "SKILL.md"), "user-owned\n", "utf8");
+      await writeFile(
+        path.join(userSkillPath, "SKILL.md"),
+        "user-owned\n",
+        "utf8",
+      );
       const service = createService(rootPath, "win32");
       const collision = await service.syncConfiguredProviderSkills(bundle);
       assert.equal(collision[0].status, "skipped-collision");
-      assert.equal(await readFile(path.join(userSkillPath, "SKILL.md"), "utf8"), "user-owned\n");
+      assert.equal(
+        await readFile(path.join(userSkillPath, "SKILL.md"), "utf8"),
+        "user-owned\n",
+      );
 
       await rm(userSkillPath, { recursive: true, force: true });
       const installed = await service.syncConfiguredProviderSkills(bundle);
       assert.equal(installed[0].status, "installed");
-      assert.equal(await pathExists(path.join(userSkillPath, "agents", "openai.yaml")), true);
+      assert.equal(
+        await pathExists(path.join(userSkillPath, "agents", "openai.yaml")),
+        true,
+      );
       assert.equal(await pathExists(path.join(userSkillPath, "bin")), false);
     } finally {
       await rm(rootPath, { recursive: true, force: true });
@@ -93,6 +150,7 @@ describe("withmate-glossary managed distribution", () => {
   });
 });
 
+/** 配布する指示、CLI 成果物、Windows インストーラーの宣言を照合する。 */
 describe("withmate-glossary managed bundle contract", () => {
   // @test-value v2
   // kind = "contract"
@@ -106,37 +164,74 @@ describe("withmate-glossary managed bundle contract", () => {
   // distinction = "runtimeの認可testでは保証できないproviderへ配布する判断指示を確認する"
   // impact = "agentがtargetを推定したり保存結果不明のmutationを再送したりする誘導を防ぐ"
   // @end-test-value
+  /** 配布文面に、対象指定・能動操作・結果不明時の再取得の制約があることを確かめる。 */
   it("SkillはCLI/MCP共通契約とproactive・結果不明時の判断を指示する", async () => {
     const skill = await readFile(path.join(bundlePath, "SKILL.md"), "utf8");
-    assert.match(skill, /MCP and CLI use the same operation schemas, runtime authorization, and application service/);
-    assert.match(skill, /Without a Session binding, explicitly supply[^\n]+"kind": "repository"/);
-    assert.match(skill, /Without a Session binding, create and create_batch support only explicit mode/);
+    assert.match(
+      skill,
+      /MCP and CLI use the same operation schemas, runtime authorization, and application service/,
+    );
+    assert.match(
+      skill,
+      /Without a Session binding, explicitly supply[^\n]+"kind": "repository"/,
+    );
+    assert.match(
+      skill,
+      /Without a Session binding, create and create_batch support only explicit mode/,
+    );
     assert.match(skill, /at most one proactive/);
     assert.match(skill, /do not guess, cache, or substitute a fallback limit/);
-    assert.match(skill, /`effect: "unknown"`[^\n]+Do not mutate again automatically\. Read the current value and ask the user/);
+    assert.match(
+      skill,
+      /`effect: "unknown"`[^\n]+Do not mutate again automatically\. Read the current value and ask the user/,
+    );
   });
 
+  /** 同梱 CLI を現在のソースから一時ビルドした内容と照合する。 */
   it("bundled CLIはcanonical sourceから生成されたcurrent artifactである", async () => {
-    const outputDirectoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-cli-build-"));
+    const outputDirectoryPath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-glossary-cli-build-"),
+    );
     try {
       const generatedPath = await buildWithMateGlossaryCli(outputDirectoryPath);
-      const bundledPath = path.join(bundlePath, "bin", BUNDLED_GLOSSARY_CLI_FILE_NAME);
-      assert.equal(await readFile(generatedPath, "utf8"), await readFile(bundledPath, "utf8"));
+      const bundledPath = path.join(
+        bundlePath,
+        "bin",
+        BUNDLED_GLOSSARY_CLI_FILE_NAME,
+      );
+      assert.equal(
+        await readFile(generatedPath, "utf8"),
+        await readFile(bundledPath, "utf8"),
+      );
     } finally {
       await rm(outputDirectoryPath, { recursive: true, force: true });
     }
   });
 
+  /** Windows のコマンド別名を配布に含め、アンインストール時の削除も定義する。 */
   it("packagingはWindows command aliasをinstallとuninstallの両方へ含める", async () => {
-    const packageDocument = JSON.parse(await readFile("package.json", "utf8")) as {
+    const packageDocument = JSON.parse(
+      await readFile("package.json", "utf8"),
+    ) as {
       build: { extraFiles: Array<{ from: string; to: string }> };
     };
-    assert.ok(packageDocument.build.extraFiles.some((entry) =>
-      entry.from === "build/cli/withmate-glossary.cmd" && entry.to === "withmate-glossary.cmd"));
+    assert.ok(
+      packageDocument.build.extraFiles.some(
+        (entry) =>
+          entry.from === "build/cli/withmate-glossary.cmd" &&
+          entry.to === "withmate-glossary.cmd",
+      ),
+    );
 
-    const installer = await readFile(path.join("build", "installer.nsh"), "utf8");
+    const installer = await readFile(
+      path.join("build", "installer.nsh"),
+      "utf8",
+    );
     assert.match(installer, /WITHMATE_GLOSSARY_ALIAS/);
-    assert.match(installer, /skills\\withmate-glossary\\bin\\withmate-glossary\.mjs/);
+    assert.match(
+      installer,
+      /skills\\withmate-glossary\\bin\\withmate-glossary\.mjs/,
+    );
     assert.match(installer, /Delete "\$\{WITHMATE_GLOSSARY_ALIAS\}"/);
   });
 });

@@ -7,6 +7,7 @@ import { HomeMonitorWindowScreen } from "./HomeMonitorWindowScreen.js";
 import { HomeStatusScreen } from "./HomeStatusScreen.js";
 import type { HomeDashboardScreenProps } from "./HomeDashboardScreen.js";
 
+/** 現在の実行環境・ウィンドウ種別と、選択した画面に挿入する内容。 */
 type HomeAppRouterProps = {
   desktopRuntime: boolean;
   homePageClassName: string;
@@ -23,6 +24,7 @@ type HomeAppRouterProps = {
   launchDialog: ReactNode;
 };
 
+/** デスクトップ外では状態案内を出し、設定、Mate 編集、独立 Monitor、Home の順で表示先を決める。 */
 export function HomeAppRouter({
   desktopRuntime,
   homePageClassName,
@@ -39,7 +41,12 @@ export function HomeAppRouter({
   launchDialog,
 }: HomeAppRouterProps) {
   if (!desktopRuntime) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home is available from the Electron desktop app." />;
+    return (
+      <HomeStatusScreen
+        homePageClassName={homePageClassName}
+        message="Home is available from the Electron desktop app."
+      />
+    );
   }
 
   if (isSettingsWindowMode) {
@@ -52,11 +59,21 @@ export function HomeAppRouter({
   }
 
   if (mateProfileEditorOpen) {
-    return <MateProfileScreen homePageClassName={homePageClassName} content={mateSetupContent} />;
+    return (
+      <MateProfileScreen
+        homePageClassName={homePageClassName}
+        content={mateSetupContent}
+      />
+    );
   }
 
   if (isMonitorWindowMode) {
-    return <HomeMonitorWindowScreen homePageClassName={homePageClassName} content={monitorContent} />;
+    return (
+      <HomeMonitorWindowScreen
+        homePageClassName={homePageClassName}
+        content={monitorContent}
+      />
+    );
   }
 
   return (

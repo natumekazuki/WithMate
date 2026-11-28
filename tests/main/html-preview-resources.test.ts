@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,18 +16,37 @@ import { createHtmlPreviewResources } from "../../src-electron/files/html-previe
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 import { FileRootGitChangesService } from "../../src-electron/files/file-root-git-changes-service.js";
 
+/** 追加ディレクトリを許可しない単一Sessionのファイル探索サービスを組み立てる。 */
 function explorerAt(workspacePath: string) {
   return new SessionFileExplorerService({
     userDataPath: path.join(workspacePath, "user-data"),
-    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+    /** fixtureのworkspaceのみを、固定した親Sessionの探索範囲として返す。 */
+    getSessionContext: async () => ({
+      workspacePath,
+      parentSessionId: "session-1",
+      allowedAdditionalDirectories: [],
+    }),
   });
 }
 const noGit = {
-  readHtmlPreviewHistoryFile: async (): Promise<Uint8Array> => { throw new Error("Unexpected Git read"); },
-  resolveHistoryFilePreview: async (): Promise<{ name: string; absoluteFilePath: string }> => { throw new Error("Unexpected Git read"); },
+  /** ローカルプレビュー中の履歴ファイル読取りを検知して失敗させる。 */
+  readHtmlPreviewHistoryFile: async (): Promise<Uint8Array> => {
+    throw new Error("Unexpected Git read");
+  },
+  /** ローカルプレビュー中に履歴側のファイル解決へ分岐した場合に失敗させる。 */
+  resolveHistoryFilePreview: async (): Promise<{
+    name: string;
+    absoluteFilePath: string;
+  }> => {
+    throw new Error("Unexpected Git read");
+  },
 };
-const request = (headers?: HeadersInit) => new Request("https://preview.invalid/", { headers });
-const assetPath = (provider: { pathname: string }, relativePath: string) => new URL(relativePath, `https://preview.invalid${provider.pathname}`).pathname;
+/** 資産応答へ任意のHTTPヘッダーを渡すためのリクエストを作る。 */
+const request = (headers?: HeadersInit) =>
+  new Request("https://preview.invalid/", { headers });
+/** HTMLの配置を基準に相対参照を解決し、providerに渡すURLパスを得る。 */
+const assetPath = (provider: { pathname: string }, relativePath: string) =>
+  new URL(relativePath, `https://preview.invalid${provider.pathname}`).pathname;
 
 // @test-value v2
 // kind = "contract"
@@ -34,35 +60,84 @@ const assetPath = (provider: { pathname: string }, relativePath: string) => new 
 // impact = "nested stylesheet/script references and media seeking remain usable"
 // distinction = "existing file explorer chunk tests do not exercise URL mapping, resource MIME, or HTTP ranges; this small filesystem test covers that boundary"
 // @end-test-value
+/** 符号化が必要なディレクトリでCSSの相対参照、スクリプトのMIME、動画の範囲応答が成立することを確認する。 */
 test("HTML resources preserve nested paths, MIME and ranges", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-html-assets-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-html-assets-"),
+  );
   try {
     await mkdir(path.join(directory, "日本語", "styles"), { recursive: true });
     await writeFile(path.join(directory, "日本語", "index.html"), "original");
-    await writeFile(path.join(directory, "日本語", "styles", "main.css"), "@import './nested.css';");
-    await writeFile(path.join(directory, "日本語", "styles", "nested.css"), "p { color: red }");
-    await writeFile(path.join(directory, "日本語", "app.js"), "window.loaded=true");
+    await writeFile(
+      path.join(directory, "日本語", "styles", "main.css"),
+      "@import './nested.css';",
+    );
+    await writeFile(
+      path.join(directory, "日本語", "styles", "nested.css"),
+      "p { color: red }",
+    );
+    await writeFile(
+      path.join(directory, "日本語", "app.js"),
+      "window.loaded=true",
+    );
     await writeFile(path.join(directory, "日本語", "clip.mp4"), "0123456789");
-    const provider = await createHtmlPreviewResources(explorerAt(directory), noGit,
-      { sessionId: "session-1", rootId: "workspace", relativePath: "日本語/index.html" });
-    assert.ok(provider.pathname.endsWith(`/${encodeURIComponent("日本語")}/index.html`));
-    const cssUrl = new URL("styles/main.css", `https://preview.invalid${provider.pathname}`);
+    const provider = await createHtmlPreviewResources(
+      explorerAt(directory),
+      noGit,
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "日本語/index.html",
+      },
+    );
+    assert.ok(
+      provider.pathname.endsWith(`/${encodeURIComponent("日本語")}/index.html`),
+    );
+    const cssUrl = new URL(
+      "styles/main.css",
+      `https://preview.invalid${provider.pathname}`,
+    );
     const css = await provider.read(cssUrl.pathname, request());
     assert.equal(css.headers.get("Content-Type"), "text/css");
     assert.equal(await css.text(), "@import './nested.css';");
-    assert.equal(await (await provider.read(new URL("nested.css", cssUrl).pathname, request())).text(), "p { color: red }");
-    const script = await provider.read(new URL("app.js", cssUrl.origin + provider.pathname).pathname, request());
+    assert.equal(
+      await (
+        await provider.read(new URL("nested.css", cssUrl).pathname, request())
+      ).text(),
+      "p { color: red }",
+    );
+    const script = await provider.read(
+      new URL("app.js", cssUrl.origin + provider.pathname).pathname,
+      request(),
+    );
     assert.equal(script.headers.get("Content-Type"), "text/javascript");
     assert.equal(await script.text(), "window.loaded=true");
-    const mediaPath = new URL("clip.mp4", cssUrl.origin + provider.pathname).pathname;
-    const media = await provider.read(mediaPath, request({ Range: "bytes=2-5" }));
+    const mediaPath = new URL("clip.mp4", cssUrl.origin + provider.pathname)
+      .pathname;
+    const media = await provider.read(
+      mediaPath,
+      request({ Range: "bytes=2-5" }),
+    );
     assert.equal(media.status, 206);
     assert.equal(media.headers.get("Content-Range"), "bytes 2-5/10");
     assert.equal(await media.text(), "2345");
-    assert.equal(await (await provider.read(mediaPath, request({ Range: "bytes=-2" }))).text(), "89");
-    assert.equal((await provider.read(mediaPath, request({ Range: "bytes=10-" }))).status, 416);
-    assert.equal(await (await provider.read(provider.pathname, request())).text(), "original");
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    assert.equal(
+      await (
+        await provider.read(mediaPath, request({ Range: "bytes=-2" }))
+      ).text(),
+      "89",
+    );
+    assert.equal(
+      (await provider.read(mediaPath, request({ Range: "bytes=10-" }))).status,
+      416,
+    );
+    assert.equal(
+      await (await provider.read(provider.pathname, request())).text(),
+      "original",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -78,34 +153,78 @@ test("HTML resources preserve nested paths, MIME and ranges", async () => {
 // distinction = "existing explorer tests do not cover the provider URL decoder, canonical absolute parent scope, and root lifetime together; small filesystem fixture retains direct coverage"
 // risk_tags = ["authorization", "privacy"]
 // @end-test-value
+/** 許可ルート外やルート差し替え後の読取りを拒み、絶対パス指定でも選択したHTMLの資産範囲を保つことを確認する。 */
 test("HTML resources reject traversal, escaping links and root replacement", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-html-root-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-html-root-"),
+  );
   try {
     const workspace = path.join(directory, "workspace");
     const outside = path.join(directory, "outside");
-    await mkdir(workspace); await mkdir(outside);
+    await mkdir(workspace);
+    await mkdir(outside);
     await writeFile(path.join(workspace, "index.html"), "html");
     await writeFile(path.join(outside, "secret.txt"), "secret");
     await writeFile(path.join(outside, "index.html"), "outside html");
-    await symlink(outside, path.join(workspace, "escape"), process.platform === "win32" ? "junction" : "dir");
+    await symlink(
+      outside,
+      path.join(workspace, "escape"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     const explorer = explorerAt(workspace);
-    const provider = await createHtmlPreviewResources(explorer, noGit,
-      { sessionId: "session-1", rootId: "workspace", relativePath: "index.html" });
-    for (const target of ["/../outside/secret.txt", "/%2e%2e/secret.txt", "/%2fsecret.txt", "/C%3a/secret.txt", assetPath(provider, "escape/secret.txt")]) {
+    const provider = await createHtmlPreviewResources(explorer, noGit, {
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "index.html",
+    });
+    for (const target of [
+      "/../outside/secret.txt",
+      "/%2e%2e/secret.txt",
+      "/%2fsecret.txt",
+      "/C%3a/secret.txt",
+      assetPath(provider, "escape/secret.txt"),
+    ]) {
       await assert.rejects(provider.read(target, request()));
     }
-    const absolute = await createHtmlPreviewResources(explorer, noGit,
-      { sessionId: "session-1", absolutePath: path.join(outside, "index.html") });
-    assert.equal(await (await absolute.read(assetPath(absolute, "secret.txt"), request())).text(), "secret");
-    for (const target of ["../secret.txt", "../_files/secret.txt", "../workspace/index.html"]) {
-      await assert.rejects(absolute.read(assetPath(absolute, target), request()), /outside the file root/);
+    const absolute = await createHtmlPreviewResources(explorer, noGit, {
+      sessionId: "session-1",
+      absolutePath: path.join(outside, "index.html"),
+    });
+    assert.equal(
+      await (
+        await absolute.read(assetPath(absolute, "secret.txt"), request())
+      ).text(),
+      "secret",
+    );
+    for (const target of [
+      "../secret.txt",
+      "../_files/secret.txt",
+      "../workspace/index.html",
+    ]) {
+      await assert.rejects(
+        absolute.read(assetPath(absolute, target), request()),
+        /outside the file root/,
+      );
     }
-    assert.equal(await (await absolute.read(assetPath(absolute, "../outside/secret.txt"), request())).text(), "secret");
+    assert.equal(
+      await (
+        await absolute.read(
+          assetPath(absolute, "../outside/secret.txt"),
+          request(),
+        )
+      ).text(),
+      "secret",
+    );
     await rename(workspace, path.join(directory, "old-workspace"));
     await mkdir(workspace);
     await writeFile(path.join(workspace, "index.html"), "replacement");
-    await assert.rejects(provider.read(provider.pathname, request()), /root changed/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    await assert.rejects(
+      provider.read(provider.pathname, request()),
+      /root changed/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 // @test-value v2
@@ -120,9 +239,16 @@ test("HTML resources reject traversal, escaping links and root replacement", asy
 // impact = "history preview remains reproducible and does not expose current files through commit links"
 // distinction = "existing history tests cover file chunks but not asset URL mapping or regular-blob enforcement; one tiny repository exercises these real Git contracts"
 // @end-test-value
+/** 選択コミットの通常ファイルだけを配信し、現在の作業ツリーやリンクへ解決しないことを確認する。 */
 test("Git HTML resources read selected-commit regular blobs only", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-html-git-"));
-  const git = async (...args: string[]) => (await promisify(execFile)("git", ["-C", directory, ...args], { windowsHide: true })).stdout.trim();
+  /** 隔離した履歴fixtureへGit操作を限定し、その標準出力を次の操作で使える形にする。 */
+  const git = async (...args: string[]) =>
+    (
+      await promisify(execFile)("git", ["-C", directory, ...args], {
+        windowsHide: true,
+      })
+    ).stdout.trim();
   try {
     await git("init", "--quiet");
     await writeFile(path.join(directory, "index.html"), "html");
@@ -130,26 +256,77 @@ test("Git HTML resources read selected-commit regular blobs only", async () => {
     await writeFile(path.join(directory, "link.txt"), "style.css");
     await git("add", ".");
     const linkBlob = await git("hash-object", "link.txt");
-    await git("update-index", "--add", "--cacheinfo", `120000,${linkBlob},link.css`);
-    await git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "fixture");
+    await git(
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `120000,${linkBlob},link.css`,
+    );
+    await git(
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    );
     const commitId = await git("rev-parse", "HEAD");
     await writeFile(path.join(directory, "style.css"), "current css");
     await writeFile(path.join(directory, "new.css"), "current only");
     const history = new FileRootGitChangesService({
+      /** 作業ツリーのルートをfixtureリポジトリに限定する。 */
       resolveRootContext: async () => ({ rootPath: directory }),
-      resolveHistoryRootContexts: async () => [{ rootId: "workspace", label: "Workspace", displayPath: directory, rootPath: directory }],
+      /** 履歴一覧へfixtureリポジトリを唯一のworkspace候補として返す。 */
+      resolveHistoryRootContexts: async () => [
+        {
+          rootId: "workspace",
+          label: "Workspace",
+          displayPath: directory,
+          rootPath: directory,
+        },
+      ],
+      /** 履歴のファイル解決でも同じfixtureルートを使う。 */
       resolveHistoryRootContext: async () => ({ rootPath: directory }),
     });
-    const repositories = await history.listHistoryRepositories({ sessionId: "session-1" });
-    assert.equal(repositories.status, "ok");
-    if (repositories.status !== "ok") throw new Error("Expected Git history repository");
-    const provider = await createHtmlPreviewResources(explorerAt(directory), history, {
-      resourceKind: "git-commit-file", sessionId: "session-1", rootId: "workspace",
-      repositoryId: repositories.repositories[0]!.repositoryId, commitId, relativePath: "index.html",
+    const repositories = await history.listHistoryRepositories({
+      sessionId: "session-1",
     });
-    assert.equal(await (await provider.read(assetPath(provider, "style.css"), request())).text(), "old css");
-    await assert.rejects(provider.read(assetPath(provider, "new.css"), request()), /not previewable/);
-    await assert.rejects(provider.read(assetPath(provider, "link.css"), request()), /symbolic links/);
-    await assert.rejects(provider.read(assetPath(provider, "../_files/style.css"), request()), /outside the file root/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok")
+      throw new Error("Expected Git history repository");
+    const provider = await createHtmlPreviewResources(
+      explorerAt(directory),
+      history,
+      {
+        resourceKind: "git-commit-file",
+        sessionId: "session-1",
+        rootId: "workspace",
+        repositoryId: repositories.repositories[0]!.repositoryId,
+        commitId,
+        relativePath: "index.html",
+      },
+    );
+    assert.equal(
+      await (
+        await provider.read(assetPath(provider, "style.css"), request())
+      ).text(),
+      "old css",
+    );
+    await assert.rejects(
+      provider.read(assetPath(provider, "new.css"), request()),
+      /not previewable/,
+    );
+    await assert.rejects(
+      provider.read(assetPath(provider, "link.css"), request()),
+      /symbolic links/,
+    );
+    await assert.rejects(
+      provider.read(assetPath(provider, "../_files/style.css"), request()),
+      /outside the file root/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

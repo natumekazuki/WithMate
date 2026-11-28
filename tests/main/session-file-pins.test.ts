@@ -1,19 +1,40 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { SessionFileExplorerService } from "../../src-electron/files/session-file-explorer-service.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 
+/** 指定の作業領域を持つファイルピン検証用の Main を組み立てる。 */
 function newSession(id: string, workspacePath: string) {
-  return buildNewSession({ id, taskTitle: "Files Pin", workspaceLabel: "workspace", workspacePath,
-    branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: DEFAULT_APPROVAL_MODE });
+  return buildNewSession({
+    id,
+    taskTitle: "Files Pin",
+    workspaceLabel: "workspace",
+    workspacePath,
+    branch: "main",
+    characterId: "unknown",
+    character: "Unknown",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
 }
 
 // @test-value v2
@@ -28,8 +49,11 @@ function newSession(id: string, workspacePath: string) {
 // impact = "作業目印の喪失とSession間の混入を防ぐ"
 // distinction = "既存Session Pinとは異なるroot参照の永続化と認可変更を実SQLite・filesystemで確認する"
 // @end-test-value
+/** 同じ親の Main と Auxiliary でピンを共有し、再接続や対象ファイルの利用不能を経ても解除できることを確認する。 */
 test("Files Pin は親で共有し保存・利用不可・復帰・解除を維持する", async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-file-pins-"));
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-file-pins-"),
+  );
   const workspace = path.join(temporary, "workspace");
   const additional = path.join(workspace, "Docs");
   const dbPath = path.join(temporary, "withmate-v6.db");
@@ -41,21 +65,46 @@ test("Files Pin は親で共有し保存・利用不可・復帰・解除を維�
     const parent = storage.insertSession(newSession("main", workspace));
     const other = storage.insertSession(newSession("other", workspace));
     let allowed = [additional];
-    const service = new SessionFileExplorerService({ userDataPath: temporary,
+    const service = new SessionFileExplorerService({
+      userDataPath: temporary,
+      /** 再接続後は差し替えたピン用ストレージを返す。 */
       getPinStorage: () => storage!,
+      /** 同じ親を持つ対象と別の親を持つ対象を区別し、現在の許可ディレクトリを返す。 */
       async getSessionContext(id) {
         const owner = id === "aux" ? parent : id === "other" ? other : parent;
-        return { workspacePath: workspace, parentSessionId: owner.id,
-          parentIncarnationId: getSessionIncarnationId(owner), allowedAdditionalDirectories: allowed };
+        return {
+          workspacePath: workspace,
+          parentSessionId: owner.id,
+          parentIncarnationId: getSessionIncarnationId(owner),
+          allowedAdditionalDirectories: allowed,
+        };
       },
-      openFile: async () => { throw new Error("Pin must not read file contents"); },
-      listDirectory: async () => { throw new Error("Pin must not scan directories"); },
+      /** ピンの操作中に本文を読もうとしたら失敗させる。 */
+      openFile: async () => {
+        throw new Error("Pin must not read file contents");
+      },
+      /** ピンを扱う処理がディレクトリを走査していないことを検証する。 */
+      listDirectory: async () => {
+        throw new Error("Pin must not scan directories");
+      },
     });
     const roots = await service.listRoots("main");
     const additionalRoot = roots.find((root) => root.kind === "additional")!;
-    const first = await service.pinSessionFile({ sessionId: "main", rootId: "workspace", relativePath: "Docs/Guide.txt" });
-    await service.pinSessionFile({ sessionId: "aux", rootId: additionalRoot.id, relativePath: "Guide.txt" });
-    await service.pinSessionFile({ sessionId: "main", rootId: "workspace", relativePath: "Docs" });
+    const first = await service.pinSessionFile({
+      sessionId: "main",
+      rootId: "workspace",
+      relativePath: "Docs/Guide.txt",
+    });
+    await service.pinSessionFile({
+      sessionId: "aux",
+      rootId: additionalRoot.id,
+      relativePath: "Guide.txt",
+    });
+    await service.pinSessionFile({
+      sessionId: "main",
+      rootId: "workspace",
+      relativePath: "Docs",
+    });
     assert.equal(first.relativePath, "Docs/Guide.txt");
     assert.equal((await service.listSessionFilePins("aux")).length, 3);
     assert.deepEqual(await service.listSessionFilePins("other"), []);
@@ -64,20 +113,54 @@ test("Files Pin は親で共有し保存・利用不可・復帰・解除を維�
     assert.equal((await service.listSessionFilePins("main")).length, 3);
     allowed = [];
     const withoutRoot = await service.listSessionFilePins("aux");
-    assert.ok(withoutRoot.find((pin) => pin.rootKind === "additional")?.unavailableReason);
-    await service.unpinSessionFile({ sessionId: "aux", ...withoutRoot.find((pin) => pin.rootKind === "additional")! });
-    await rename(path.join(additional, "Guide.txt"), path.join(additional, "Renamed.txt"));
-    const renamed = (await service.listSessionFilePins("main")).find((pin) => pin.kind === "file")!;
+    assert.ok(
+      withoutRoot.find((pin) => pin.rootKind === "additional")
+        ?.unavailableReason,
+    );
+    await service.unpinSessionFile({
+      sessionId: "aux",
+      ...withoutRoot.find((pin) => pin.rootKind === "additional")!,
+    });
+    await rename(
+      path.join(additional, "Guide.txt"),
+      path.join(additional, "Renamed.txt"),
+    );
+    const renamed = (await service.listSessionFilePins("main")).find(
+      (pin) => pin.kind === "file",
+    )!;
     assert.ok(renamed.unavailableReason);
     assert.equal(renamed.relativePath, "Docs/Guide.txt");
-    await rename(path.join(additional, "Renamed.txt"), path.join(additional, "Guide.txt"));
-    assert.equal((await service.listSessionFilePins("aux")).find((pin) => pin.kind === "file")?.unavailableReason, null);
+    await rename(
+      path.join(additional, "Renamed.txt"),
+      path.join(additional, "Guide.txt"),
+    );
+    assert.equal(
+      (await service.listSessionFilePins("aux")).find(
+        (pin) => pin.kind === "file",
+      )?.unavailableReason,
+      null,
+    );
     storage.deleteSession(parent.id);
     const recreated = storage.insertSession(newSession(parent.id, workspace));
-    assert.deepEqual(storage.listSessionFilePins({ sessionId: recreated.id, incarnationId: getSessionIncarnationId(recreated) }), []);
-    const oldOwner = { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) };
-    assert.throws(() => storage!.pinSessionFile(oldOwner, first), /owner session/);
-    assert.throws(() => storage!.unpinSessionFile(oldOwner, first), /owner session/);
+    assert.deepEqual(
+      storage.listSessionFilePins({
+        sessionId: recreated.id,
+        incarnationId: getSessionIncarnationId(recreated),
+      }),
+      [],
+    );
+    const oldOwner = {
+      sessionId: parent.id,
+      incarnationId: getSessionIncarnationId(parent),
+    };
+    assert.throws(
+      () => storage!.pinSessionFile(oldOwner, first),
+      /owner session/,
+    );
+    assert.throws(
+      () => storage!.unpinSessionFile(oldOwner, first),
+      /owner session/,
+    );
   } finally {
     storage?.close();
     await rm(temporary, { recursive: true, force: true });
@@ -97,22 +180,39 @@ test("Files Pin は親で共有し保存・利用不可・復帰・解除を維�
 // impact = "Pin経由のアクセス権拡大と削除したSessionの目印混入を防ぐ"
 // distinction = "既存preview検証にないPin書込遅延・storage errorを注入し保存結果を確認する"
 // @end-test-value
+/** ピン登録での不許可パスと所有者の交代を拒否し、ストレージの失敗を隠さないことを確認する。 */
 test("Files Pin は認可・owner世代・DB失敗の境界を維持する", async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-file-pin-security-"));
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-file-pin-security-"),
+  );
   const workspace = path.join(temporary, "workspace");
   const dbPath = path.join(temporary, "withmate-v6.db");
   let storage: SessionStorageV6 | null = null;
   try {
     await mkdir(workspace);
     await writeFile(path.join(workspace, "file.txt"), "file");
-    await symlink(path.join(workspace, "file.txt"), path.join(workspace, "link.txt"), "file");
+    await symlink(
+      path.join(workspace, "file.txt"),
+      path.join(workspace, "link.txt"),
+      "file",
+    );
     storage = new SessionStorageV6(dbPath);
     let parent = storage.insertSession(newSession("main", workspace));
     let replaceOwner = false;
-    const service = new SessionFileExplorerService({ userDataPath: temporary, getPinStorage: () => storage!,
+    const service = new SessionFileExplorerService({
+      userDataPath: temporary,
+      /** 現在のセッションを保存する SQLite ストレージを使う。 */ getPinStorage:
+        () => storage!,
+      /** 親の現在の世代と、追加ディレクトリを許可しない作業領域を返す。 */
       async getSessionContext() {
-        return { workspacePath: workspace, parentSessionId: parent.id, parentIncarnationId: getSessionIncarnationId(parent), allowedAdditionalDirectories: [] };
+        return {
+          workspacePath: workspace,
+          parentSessionId: parent.id,
+          parentIncarnationId: getSessionIncarnationId(parent),
+          allowedAdditionalDirectories: [],
+        };
       },
+      /** ファイル情報を得た直後に同じ識別子の Main を再作成できるようにして、世代変更を再現する。 */
       async lstatPath(target) {
         const stats = await lstat(target, { bigint: true });
         if (replaceOwner) {
@@ -128,9 +228,19 @@ test("Files Pin は認可・owner世代・DB失敗の境界を維持する", asy
       { rootId: "workspace", relativePath: "link.txt" },
       { rootId: "unavailable", relativePath: "file.txt" },
       { rootId: "workspace", relativePath: "" },
-    ]) await assert.rejects(service.pinSessionFile({ sessionId: "main", ...request }));
+    ])
+      await assert.rejects(
+        service.pinSessionFile({ sessionId: "main", ...request }),
+      );
     replaceOwner = true;
-    await assert.rejects(service.pinSessionFile({ sessionId: "main", rootId: "workspace", relativePath: "file.txt" }), /owner session/);
+    await assert.rejects(
+      service.pinSessionFile({
+        sessionId: "main",
+        rootId: "workspace",
+        relativePath: "file.txt",
+      }),
+      /owner session/,
+    );
     assert.deepEqual(await service.listSessionFilePins("main"), []);
     storage.close();
     await assert.rejects(service.listSessionFilePins("main"));
@@ -153,24 +263,51 @@ test("Files Pin は認可・owner世代・DB失敗の境界を維持する", asy
 // impact = "実アプリのPin主要動作がWorker境界で不成立になることを防ぐ"
 // distinction = "同期storeのtestや型検査では保証しない実Workerのcommand許可とtransportを確認する"
 // @end-test-value
+/** ピンの追加・一覧・解除が実ストレージ Worker のコマンド経由で機能することを確認する。 */
 test("Files Pin は実storage Workerのcommandで保存・取得・解除できる", async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-file-pin-worker-"));
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-file-pin-worker-"),
+  );
   let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
   try {
     const { dbPath } = await createOrVerifyV6FreshDatabase(temporary);
-    bundle = createV6StorageWorkerBundle({ dbPath, userDataPath: temporary,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+    bundle = createV6StorageWorkerBundle({
+      dbPath,
+      userDataPath: temporary,
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
     await bundle.initialize();
-    const parent = await bundle.stores.session.insertSession(newSession("main", temporary));
-    const owner = { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) };
-    const pin = { rootKind: "workspace" as const, rootPath: temporary, relativePath: "file.txt", kind: "file" as const, rootLabel: "Workspace" };
+    const parent = await bundle.stores.session.insertSession(
+      newSession("main", temporary),
+    );
+    const owner = {
+      sessionId: parent.id,
+      incarnationId: getSessionIncarnationId(parent),
+    };
+    const pin = {
+      rootKind: "workspace" as const,
+      rootPath: temporary,
+      relativePath: "file.txt",
+      kind: "file" as const,
+      rootLabel: "Workspace",
+    };
     await bundle.stores.session.pinSessionFile(owner, pin);
-    assert.deepEqual(await bundle.stores.session.listSessionFilePins(owner), [pin]);
+    assert.deepEqual(await bundle.stores.session.listSessionFilePins(owner), [
+      pin,
+    ]);
     await bundle.stores.session.unpinSessionFile(owner, pin);
-    assert.deepEqual(await bundle.stores.session.listSessionFilePins(owner), []);
+    assert.deepEqual(
+      await bundle.stores.session.listSessionFilePins(owner),
+      [],
+    );
   } finally {
     await bundle?.client.close();
     await rm(temporary, { recursive: true, force: true });
@@ -189,21 +326,47 @@ test("Files Pin は実storage Workerのcommandで保存・取得・解除でき�
 // impact = "多数の深いPinでもFiles表示がfilesystem呼出の無制限増加や全走査を引き起こさない"
 // distinction = "型検査や小数正常系では確認できない多数Pinの同時IO上限と対象限定を測定する"
 // @end-test-value
+/** 保存済みの各パスだけを調べ、同時に確認するピンを最大四件に制限することを確認する。 */
 test("Files Pin の参照検査は最大4項目並列で保存pathのみを扱う", async () => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-file-pin-bounded-"));
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-file-pin-bounded-"),
+  );
   try {
     const directory = path.join(temporary, "deep", "nested");
     await mkdir(directory, { recursive: true });
-    const pins = Array.from({ length: 24 }, (_, index) => ({ rootKind: "workspace" as const,
-      rootPath: process.platform === "win32" ? temporary.toLowerCase() : temporary,
-      relativePath: `deep/nested/file-${index}.txt`, kind: "file" as const, rootLabel: "Workspace" }));
-    await Promise.all(pins.map((pin) => writeFile(path.join(temporary, pin.relativePath), "file")));
+    const pins = Array.from({ length: 24 }, (_, index) => ({
+      rootKind: "workspace" as const,
+      rootPath:
+        process.platform === "win32" ? temporary.toLowerCase() : temporary,
+      relativePath: `deep/nested/file-${index}.txt`,
+      kind: "file" as const,
+      rootLabel: "Workspace",
+    }));
+    await Promise.all(
+      pins.map((pin) =>
+        writeFile(path.join(temporary, pin.relativePath), "file"),
+      ),
+    );
     let active = 0;
     let maximum = 0;
     const inspected = new Set<string>();
-    const service = new SessionFileExplorerService({ userDataPath: temporary,
-      getPinStorage: () => ({ listSessionFilePins: () => pins, pinSessionFile: () => {}, unpinSessionFile: () => {} }),
-      getSessionContext: async () => ({ workspacePath: temporary, parentSessionId: "main", parentIncarnationId: "incarnation", allowedAdditionalDirectories: [] }),
+    const service = new SessionFileExplorerService({
+      userDataPath: temporary,
+      /** 一覧表示専用の記録済みピンを供給する。 */
+      getPinStorage: () => ({
+        /** 参照検査に使う保存済みピンの集合を返す。 */ listSessionFilePins:
+          () => pins,
+        /** 一覧検証ではピンの新規保存を行わない。 */ pinSessionFile: () => {},
+        /** 一覧検証ではピンの解除を行わない。 */ unpinSessionFile: () => {},
+      }),
+      /** すべてのピンを一つの作業領域に解決する認可情報を返す。 */
+      getSessionContext: async () => ({
+        workspacePath: temporary,
+        parentSessionId: "main",
+        parentIncarnationId: "incarnation",
+        allowedAdditionalDirectories: [],
+      }),
+      /** 検査したパスと並列実行数を記録し、実ファイルの情報を返す。 */
       async lstatPath(target) {
         active++;
         maximum = Math.max(maximum, active);
@@ -211,16 +374,29 @@ test("Files Pin の参照検査は最大4項目並列で保存pathのみを扱�
         try {
           await new Promise((resolve) => setTimeout(resolve, 2));
           return await lstat(target, { bigint: true });
-        } finally { active--; }
+        } finally {
+          active--;
+        }
       },
-      openFile: async () => { throw new Error("Pin must not read file contents"); },
-      listDirectory: async () => { throw new Error("Pin must not scan directories"); },
+      /** 参照検査でファイル本文を開いた場合は失敗させる。 */
+      openFile: async () => {
+        throw new Error("Pin must not read file contents");
+      },
+      /** 参照検査がディレクトリを列挙して代わりのファイルを探さないことを検証する。 */
+      listDirectory: async () => {
+        throw new Error("Pin must not scan directories");
+      },
     });
     const result = await service.listSessionFilePins("main");
     assert.equal(result.length, pins.length);
     assert.ok(result.every((pin) => pin.unavailableReason === null));
     assert.ok(maximum <= 4);
-    assert.deepEqual([...inspected].sort(), pins.map((pin) => path.join(temporary, ...pin.relativePath.split("/"))).sort());
+    assert.deepEqual(
+      [...inspected].sort(),
+      pins
+        .map((pin) => path.join(temporary, ...pin.relativePath.split("/")))
+        .sort(),
+    );
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

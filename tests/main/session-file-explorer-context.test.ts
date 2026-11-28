@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildNewSession, projectSessionSummary } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  projectSessionSummary,
+} from "../../src-shared/session/session-state.js";
 import { readSessionFileExplorerContext } from "../../src-electron/files/session-file-explorer-context.js";
 
+/** 追加ディレクトリを一つ許可した Main の一覧向け情報を作る。 */
 function mainSummary() {
   return projectSessionSummary({
     ...buildNewSession({
-      id: "main", taskTitle: "Files", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
-      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#abcdef" },
-      approvalMode: "untrusted", allowedAdditionalDirectories: ["C:/main-only"],
+      id: "main",
+      taskTitle: "Files",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#123456", sub: "#abcdef" },
+      approvalMode: "untrusted",
+      allowedAdditionalDirectories: ["C:/main-only"],
     }),
     incarnationId: "owner-1",
   });
@@ -26,31 +38,71 @@ function mainSummary() {
 // impact = "共有一覧で取り消したファイル権限がAuxiliaryで残ることを防ぐ"
 // distinction = "既存Explorer testはcontextを直接注入し、保存metadataからの親とroot集合の選択を通らない"
 // @end-test-value
+/** Main と Auxiliary が現在の親の保存情報を使い、親の不在や読み込み失敗を隠さないことを確認する。 */
 test("Files contextはMainとAuxiliaryで現在の親の許可を使用する", async () => {
   let parent = mainSummary();
   let exists = true;
   const auxiliary = { parentSessionId: "main" };
   const reads = {
+    /** この検証では保存世代を固定する。 */
     assertCurrent() {},
-    getAuxiliaryMetadata: async (id: string) => id === "aux" ? auxiliary : null,
-    getSessionSummary: async (id: string) => exists && id === "main" ? parent : null,
+    /** Auxiliary の識別子から親の識別子を解決する。 */
+    getAuxiliaryMetadata: async (id: string) =>
+      id === "aux" ? auxiliary : null,
+    /** 親の差し替えと削除を反映した Main の保存情報を返す。 */
+    getSessionSummary: async (id: string) =>
+      exists && id === "main" ? parent : null,
   };
   assert.deepEqual(await readSessionFileExplorerContext("main", reads), {
-    workspacePath: "C:/workspace", parentSessionId: "main", parentIncarnationId: "owner-1", crewRootSessionId: "main", allowedAdditionalDirectories: ["C:/main-only"],
+    workspacePath: "C:/workspace",
+    parentSessionId: "main",
+    parentIncarnationId: "owner-1",
+    crewRootSessionId: "main",
+    allowedAdditionalDirectories: ["C:/main-only"],
   });
-  assert.deepEqual((await readSessionFileExplorerContext("aux", reads))?.allowedAdditionalDirectories, ["C:/main-only"]);
-  parent = { ...parent, incarnationId: "owner-2", rootSessionId: "crew-root", parentSessionId: "crew-root", sessionRole: "executor", workspacePath: "C:/replacement", allowedAdditionalDirectories: [] };
+  assert.deepEqual(
+    (await readSessionFileExplorerContext("aux", reads))
+      ?.allowedAdditionalDirectories,
+    ["C:/main-only"],
+  );
+  parent = {
+    ...parent,
+    incarnationId: "owner-2",
+    rootSessionId: "crew-root",
+    parentSessionId: "crew-root",
+    sessionRole: "executor",
+    workspacePath: "C:/replacement",
+    allowedAdditionalDirectories: [],
+  };
   assert.deepEqual(await readSessionFileExplorerContext("aux", reads), {
-    workspacePath: "C:/replacement", parentSessionId: "main", parentIncarnationId: "owner-2", crewRootSessionId: "crew-root", allowedAdditionalDirectories: [],
+    workspacePath: "C:/replacement",
+    parentSessionId: "main",
+    parentIncarnationId: "owner-2",
+    crewRootSessionId: "crew-root",
+    allowedAdditionalDirectories: [],
   });
   exists = false;
   assert.equal(await readSessionFileExplorerContext("aux", reads), null);
-  await assert.rejects(readSessionFileExplorerContext("aux", {
-    ...reads, getAuxiliaryMetadata: async () => { throw new Error("Invalid Character snapshot"); },
-  }), /Invalid Character snapshot/);
-  await assert.rejects(readSessionFileExplorerContext("main", {
-    ...reads, getSessionSummary: async () => { throw new Error("Storage read failed"); },
-  }), /Storage read failed/);
+  await assert.rejects(
+    readSessionFileExplorerContext("aux", {
+      ...reads,
+      /** Auxiliary の保存情報の取得に失敗する状況を作る。 */ getAuxiliaryMetadata:
+        async () => {
+          throw new Error("Invalid Character snapshot");
+        },
+    }),
+    /Invalid Character snapshot/,
+  );
+  await assert.rejects(
+    readSessionFileExplorerContext("main", {
+      ...reads,
+      /** Main の保存情報の取得に失敗する状況を作る。 */ getSessionSummary:
+        async () => {
+          throw new Error("Storage read failed");
+        },
+    }),
+    /Storage read failed/,
+  );
 });
 
 // @test-value v2
@@ -66,17 +118,30 @@ test("Files contextはMainとAuxiliaryで現在の親の許可を使用する", 
 // impact = "DB reset後に旧generationのファイル権限が継続することを防ぐ"
 // distinction = "Explorerのrealpathとfile revision検査はDB owner交換自体を観測しない"
 // @end-test-value
+/** どちらの非同期読み込み中でも所有者の世代が変わった時点で、古い許可を返さず拒否することを確認する。 */
 test("Files contextはどちらのmetadata待機後もgenerationを再確認する", async () => {
-  const parent = { ...mainSummary(), incarnationId: "old-owner", workspacePath: "C:/old" };
+  const parent = {
+    ...mainSummary(),
+    incarnationId: "old-owner",
+    workspacePath: "C:/old",
+  };
   for (const stage of ["auxiliary", "parent"] as const) {
     let active = true;
     const result = readSessionFileExplorerContext("aux", {
-      assertCurrent: () => { if (!active) throw new Error("Storage generation changed"); },
+      /** 一時停止中に失効した保存世代での読み取りを拒否する。 */
+      assertCurrent: () => {
+        if (!active) throw new Error("Storage generation changed");
+      },
+      /** Auxiliary の読み取り中に世代を変えるケースを再現する。 */
       getAuxiliaryMetadata: async () => {
         if (stage === "auxiliary") active = false;
         return { parentSessionId: "main" };
       },
-      getSessionSummary: async () => { active = false; return parent; },
+      /** 古い親の情報を返す直前に保存世代を失効させる。 */
+      getSessionSummary: async () => {
+        active = false;
+        return parent;
+      },
     });
     await assert.rejects(result, /Storage generation changed/);
   }

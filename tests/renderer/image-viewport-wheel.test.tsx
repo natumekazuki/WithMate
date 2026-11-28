@@ -4,10 +4,16 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
-import { ImageViewport, ImageZoomControls, useImageViewport } from "../../src/ui/image-viewport.js";
+import {
+  ImageViewport,
+  ImageZoomControls,
+  useImageViewport,
+} from "../../src/ui/image-viewport.js";
 import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -20,6 +26,7 @@ import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-set
 // lifecycle = "permanent"
 // distinction = "既存のFit計算とbutton testが確認しないnative wheelの接続・連続入力・上下限を小さいDOM fixtureで確認する"
 // @end-test-value
+/** 画像への Ctrl＋ホイールが通常スクロールと区別され、連続入力、設定した刻み、倍率の上下限と低倍率 Fit を守ることを表示とイベントから確かめる。 */
 test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守る", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const previous = Object.getOwnPropertyDescriptors(globalThis);
@@ -29,23 +36,35 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
   });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
+  /** 倍率表示と画像に同じ制御状態を渡し、ホイールの刻みだけを再描画で切り替えられるようにする。 */
   function Harness({ step = 5 }: { step?: number | null }) {
     const controller = useImageViewport("image");
-    return <PreviewWheelZoomStepContext.Provider value={step}>
-      <ImageZoomControls controller={controller} />
-      <ImageViewport controller={controller} src="data:image/png;base64,AAAA" alt="Zoom target" />
-    </PreviewWheelZoomStepContext.Provider>;
+    return (
+      <PreviewWheelZoomStepContext.Provider value={step}>
+        <ImageZoomControls controller={controller} />
+        <ImageViewport
+          controller={controller}
+          src="data:image/png;base64,AAAA"
+          alt="Zoom target"
+        />
+      </PreviewWheelZoomStepContext.Provider>
+    );
   }
   try {
     await act(async () => root.render(<Harness />));
     const viewport = container.querySelector<HTMLElement>(".image-viewport")!;
     const image = container.querySelector<HTMLImageElement>("img")!;
-    const reset = container.querySelector<HTMLButtonElement>('button[aria-label="Reset image zoom to 100%"]')!;
-    const fit = container.querySelector<HTMLButtonElement>('button[aria-label="Fit image to viewport"]')!;
+    const reset = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Reset image zoom to 100%"]',
+    )!;
+    const fit = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Fit image to viewport"]',
+    )!;
     Object.defineProperties(viewport, {
       clientWidth: { configurable: true, value: 800 },
       clientHeight: { configurable: true, value: 450 },
     });
+    /** 自然寸法を設定して load を通知し、指定サイズを使う Fit の更新を待つ。 */
     const loadImage = async (width: number, height: number) => {
       Object.defineProperties(image, {
         naturalWidth: { configurable: true, value: width },
@@ -53,8 +72,14 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
       });
       await act(async () => image.dispatchEvent(new dom.window.Event("load")));
     };
+    /** 画像へネイティブのホイールイベントを送り、呼び出し元で既定動作の抑止を確認できるようにする。 */
     const dispatchWheel = (deltaY: number, ctrlKey = true) => {
-      const event = new dom.window.WheelEvent("wheel", { deltaY, ctrlKey, bubbles: true, cancelable: true });
+      const event = new dom.window.WheelEvent("wheel", {
+        deltaY,
+        ctrlKey,
+        bubbles: true,
+        cancelable: true,
+      });
       image.dispatchEvent(event);
       return event;
     };
@@ -66,21 +91,39 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
     });
     assert.equal(reset.textContent, "60%");
     assert.equal(image.style.zoom, "0.6");
-    await act(async () => { dispatchWheel(100); });
+    await act(async () => {
+      dispatchWheel(100);
+    });
     assert.equal(reset.textContent, "55%");
     assert.equal(image.style.zoom, "0.55");
     assert.equal(fit.getAttribute("aria-pressed"), "false");
     await act(async () => reset.click());
-    await act(async () => { dispatchWheel(-100); });
+    await act(async () => {
+      dispatchWheel(-100);
+    });
     assert.equal(reset.textContent, "105%");
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')!.click());
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')!
+        .click(),
+    );
     assert.equal(reset.textContent, "115%");
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Zoom image out"]')!.click());
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Zoom image out"]',
+        )!
+        .click(),
+    );
     assert.equal(reset.textContent, "105%");
-    await act(async () => { for (let i = 0; i < 160; i++) dispatchWheel(-100); });
+    await act(async () => {
+      for (let i = 0; i < 160; i++) dispatchWheel(-100);
+    });
     assert.equal(reset.textContent, "800%");
     assert.equal(image.style.zoom, "8");
-    await act(async () => { for (let i = 0; i < 160; i++) dispatchWheel(100); });
+    await act(async () => {
+      for (let i = 0; i < 160; i++) dispatchWheel(100);
+    });
     assert.equal(reset.textContent, "10%");
     assert.equal(image.style.zoom, "0.1");
     await act(async () => {
@@ -88,32 +131,46 @@ test("画像のCtrl＋wheelはFitから拡縮し連続入力と上下限を守�
       assert.equal(dispatchWheel(0).defaultPrevented, false);
     });
     assert.equal(reset.textContent, "10%");
-    for (const [width, height, expectedFit] of [[16000, 9000, "5%"], [10000, 5625, "8%"]] as const) {
+    for (const [width, height, expectedFit] of [
+      [16000, 9000, "5%"],
+      [10000, 5625, "8%"],
+    ] as const) {
       await loadImage(width, height);
       await act(async () => fit.click());
       assert.equal(reset.textContent, expectedFit);
-      await act(async () => { assert.equal(dispatchWheel(100).defaultPrevented, true); });
+      await act(async () => {
+        assert.equal(dispatchWheel(100).defaultPrevented, true);
+      });
       assert.equal(reset.textContent, expectedFit);
       assert.equal(fit.getAttribute("aria-pressed"), "true");
-      await act(async () => { dispatchWheel(-100); });
+      await act(async () => {
+        dispatchWheel(-100);
+      });
       assert.equal(reset.textContent, "10%");
       assert.equal(image.style.zoom, "0.1");
     }
     await act(async () => root.render(<Harness step={20} />));
     assert.equal(reset.textContent, "10%");
-    await act(async () => { dispatchWheel(-100); });
+    await act(async () => {
+      dispatchWheel(-100);
+    });
     assert.equal(reset.textContent, "30%");
     await act(async () => root.render(<Harness step={1} />));
     assert.equal(reset.textContent, "30%");
-    await act(async () => { dispatchWheel(-100); });
+    await act(async () => {
+      dispatchWheel(-100);
+    });
     assert.equal(reset.textContent, "31%");
     await act(async () => root.render(<Harness step={null} />));
-    await act(async () => { assert.equal(dispatchWheel(-100).defaultPrevented, true); });
+    await act(async () => {
+      assert.equal(dispatchWheel(-100).defaultPrevented, true);
+    });
     assert.equal(reset.textContent, "31%");
   } finally {
     await act(async () => root.unmount());
     for (const name of ["window", "document"]) {
-      if (previous[name]) Object.defineProperty(globalThis, name, previous[name]);
+      if (previous[name])
+        Object.defineProperty(globalThis, name, previous[name]);
       else Reflect.deleteProperty(globalThis, name);
     }
     dom.window.close();
