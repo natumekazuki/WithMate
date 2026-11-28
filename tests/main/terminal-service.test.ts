@@ -5,36 +5,70 @@ import { describe, it } from "node:test";
 import type { IpcMain, IpcMainEvent } from "electron";
 import { registerTerminalHandlers } from "../../src-electron/ipc/terminal.js";
 import { WITHMATE_RESIZE_TERMINAL_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
-import { resolveTerminalShell, TerminalService, type TerminalOwner } from "../../src-electron/terminal/terminal-service.js";
+import {
+  resolveTerminalShell,
+  TerminalService,
+  type TerminalOwner,
+} from "../../src-electron/terminal/terminal-service.js";
 import type { TerminalPty } from "../../src-electron/terminal/utility-terminal-pty.js";
 
+/** Electron Windowを起動せず、端末の所有者識別とイベントの登録・配送を再現する。 */
 class StubWindow implements TerminalOwner {
   id = 1;
   destroyed = false;
   events: unknown[] = [];
-  listeners = new Map<string, Array<(details: { isMainFrame?: boolean; isSameDocument?: boolean }) => void>>();
+  listeners = new Map<
+    string,
+    Array<
+      (details: { isMainFrame?: boolean; isSameDocument?: boolean }) => void
+    >
+  >();
   webContents = {
+    /** Windowと同じ破棄フラグをwebContentsにも反映する。 */
     isDestroyed: () => this.destroyed,
+    /** 端末イベントをレンダラーへ送らず照合用の配列へ追加する。 */
     send: (_channel: string, event: unknown) => this.events.push(event),
-    on: (name: string, listener: (details: { isMainFrame?: boolean; isSameDocument?: boolean }) => void) => {
+    /** 同じイベントへ複数のリスナーを登録できるようにする。 */
+    on: (
+      name: string,
+      listener: (details: {
+        isMainFrame?: boolean;
+        isSameDocument?: boolean;
+      }) => void,
+    ) => {
       const listeners = this.listeners.get(name) ?? [];
       listeners.push(listener);
       this.listeners.set(name, listeners);
     },
   };
-  isDestroyed(): boolean { return this.destroyed; }
-  on(name: "closed", listener: () => void): void { this.webContents.on(name, listener); }
-  emit(name: string): void { for (const listener of this.listeners.get(name) ?? []) listener({}); }
+  /** 所有者そのものの破棄状態を同期的に返す。 */
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
+  /** Windowのclosed購読を他のイベントと同じリスナー集合に記録する。 */
+  on(name: "closed", listener: () => void): void {
+    this.webContents.on(name, listener);
+  }
+  /** 指定イベントを発火し、登録済みの解放処理を動かす。 */
+  emit(name: string): void {
+    for (const listener of this.listeners.get(name) ?? []) listener({});
+  }
 }
 
 const TERMINAL_ID = "87263983-5b1d-4b5d-8f08-2b04899dbb8d";
 
+/** 端末起動前のWindowsシェル選択について、探索順・有効な探索ルート・失敗伝播を検証する。 */
 describe("resolveTerminalShell", () => {
   const first = "C:\\custom shell\\pwsh.exe";
   const second = "D:\\tools\\pwsh.exe";
   const standard = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
-  const legacy = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-  const env = { Path: ';relative;"C:\\custom shell";D:\\tools', ProgramFiles: "C:\\Program Files", SystemRoot: "C:\\Windows" };
+  const legacy =
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const env = {
+    Path: ';relative;"C:\\custom shell";D:\\tools',
+    ProgramFiles: "C:\\Program Files",
+    SystemRoot: "C:\\Windows",
+  };
 
   // @test-value v2
   // kind = "contract"
@@ -48,21 +82,34 @@ describe("resolveTerminalShell", () => {
   // impact = "導入済み7を使えない、意図しないcwdの実行ファイルを起動する、起動失敗を隠す"
   // distinction = "実機一台では共存・標準配置のみ・5系のみ・不在を同時に維持できず、少数のI/O stubで決定論的に確認する"
   // @end-test-value
+  /** 7系はPATHから標準配置の順に探し、どちらにもなければ5系を選び、全候補不在はエラーにする。 */
   it("selects PATH PowerShell 7, standard PowerShell 7, then Windows PowerShell", async () => {
     const candidates = [first, second, standard, legacy];
     const searchEnv = { ...env, Path: `\\tools;/tools;C:tools;${env.Path}` };
     for (let index = 0; index <= candidates.length; index++) {
       const available = candidates.slice(index);
-      const resolving = resolveTerminalShell("win32", searchEnv, async (file, mode) => {
-        assert.equal(mode, constants.X_OK);
-        assert.ok(candidates.includes(String(file)), `Unexpected search target: ${String(file)}`);
-        if (!available.includes(String(file))) throw Object.assign(new Error("missing"), { code: "ENOENT" });
-      });
+      const resolving = resolveTerminalShell(
+        "win32",
+        searchEnv,
+        async (file, mode) => {
+          assert.equal(mode, constants.X_OK);
+          assert.ok(
+            candidates.includes(String(file)),
+            `Unexpected search target: ${String(file)}`,
+          );
+          if (!available.includes(String(file)))
+            throw Object.assign(new Error("missing"), { code: "ENOENT" });
+        },
+      );
       if (available.length === 0) {
-        await assert.rejects(resolving, /Neither PowerShell 7 .* nor Windows PowerShell .* was found/);
+        await assert.rejects(
+          resolving,
+          /Neither PowerShell 7 .* nor Windows PowerShell .* was found/,
+        );
       } else {
         assert.deepEqual(await resolving, {
-          file: available[0], shellName: "PowerShell",
+          file: available[0],
+          shellName: "PowerShell",
           windowsPty: { buildNumber: Number(release().split(".")[2]) },
         });
       }
@@ -79,18 +126,45 @@ describe("resolveTerminalShell", () => {
   // scope = "Windows shell search environment"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 相対やroot-relativeの標準ルートを無視し、完全修飾パスだけを使い、存在しない親ディレクトリーでは探索を続ける。 */
   it("searches only fully qualified roots and continues past missing directories", async () => {
     for (const directory of ["D:\\tools", "\\\\server\\share\\tools"]) {
-      assert.equal((await resolveTerminalShell("win32", { PATH: directory }, async () => {})).file, `${directory}\\pwsh.exe`);
+      assert.equal(
+        (
+          await resolveTerminalShell(
+            "win32",
+            { PATH: directory },
+            async () => {},
+          )
+        ).file,
+        `${directory}\\pwsh.exe`,
+      );
     }
     for (const root of ["", "relative", "\\tools", "/tools", "C:tools"]) {
-      await assert.rejects(resolveTerminalShell("win32", { ProgramFiles: root, SystemRoot: root }, async () => {
-        assert.fail(`Non-fully-qualified root must not be searched: ${root}`);
-      }), /Neither PowerShell/);
+      await assert.rejects(
+        resolveTerminalShell(
+          "win32",
+          { ProgramFiles: root, SystemRoot: root },
+          async () => {
+            assert.fail(
+              `Non-fully-qualified root must not be searched: ${root}`,
+            );
+          },
+        ),
+        /Neither PowerShell/,
+      );
     }
-    assert.equal((await resolveTerminalShell("win32", env, async (file) => {
-      if (String(file) !== standard) throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
-    })).file, standard);
+    assert.equal(
+      (
+        await resolveTerminalShell("win32", env, async (file) => {
+          if (String(file) !== standard)
+            throw Object.assign(new Error("not a directory"), {
+              code: "ENOTDIR",
+            });
+        })
+      ).file,
+      standard,
+    );
   });
 
   // @test-value v2
@@ -103,61 +177,141 @@ describe("resolveTerminalShell", () => {
   // scope = "Windows shell discovery errors"
   // lifecycle = "permanent"
   // @end-test-value
+  /** アクセス拒否は未導入に置き換えず、その候補で停止して同じエラーを返す。 */
   it("propagates access errors instead of downgrading the shell", async () => {
-    const denied = Object.assign(new Error("access denied"), { code: "EACCES" });
+    const denied = Object.assign(new Error("access denied"), {
+      code: "EACCES",
+    });
     const searched: string[] = [];
-    await assert.rejects(resolveTerminalShell("win32", env, async (file) => {
-      searched.push(String(file));
-      if (String(file) === first) throw denied;
-    }), (error) => error === denied);
+    await assert.rejects(
+      resolveTerminalShell("win32", env, async (file) => {
+        searched.push(String(file));
+        if (String(file) === first) throw denied;
+      }),
+      (error) => error === denied,
+    );
     assert.deepEqual(searched, [first]);
   });
 });
 
+/** 別々の所有Windowと観測可能なPTYを用意し、確認判断・操作・配送の検証を外部プロセスなしで行う。 */
 function setup(confirmClose?: () => Promise<boolean>) {
   const window = new StubWindow();
   const other = new StubWindow();
   other.id = 2;
   const pty = {
     activity: "unknown" as "unknown" | "idle" | "busy",
-    getActivity() { return this.activity; },
+    /** ケースが設定したPTYの稼働判定をそのまま端末サービスに返す。 */
+    getActivity() {
+      return this.activity;
+    },
     writes: [] as string[],
     resizes: [] as Array<[number, number]>,
     kills: 0,
     pauses: 0,
     resumes: 0,
+    /** データリスナー登録前の受け皿として出力を捨てる。 */
     data: (_value: string) => {},
+    /** 終了リスナー登録前に届ける先がないため何も記録しない。 */
     exit: (_value: { exitCode: number; signal?: number }) => {},
+    /** エラー購読がまだ設定されていない場合の空実装。 */
     error: (_value: Error) => {},
-    onData(listener: (value: string) => void) { this.data = listener; return { dispose() {} }; },
-    onExit(listener: (value: { exitCode: number; signal?: number }) => void) { this.exit = listener; return { dispose() {} }; },
-    onError(listener: (error: Error) => void) { this.error = listener; return { dispose() {} }; },
-    write(value: string) { this.writes.push(value); },
-    resize(cols: number, rows: number) { this.resizes.push([cols, rows]); },
-    kill() { this.kills++; },
-    pause() { this.pauses++; },
-    resume() { this.resumes++; },
+    /** テストから出力を注入できるよう、サービスのデータリスナーを保持する。 */
+    onData(listener: (value: string) => void) {
+      this.data = listener;
+      return {
+        /** 実購読を作らないため、データ購読解除は外部リソースを操作しない。 */
+        dispose() {},
+      };
+    },
+    /** テストから自然終了を発火できるよう、終了リスナーを保持する。 */
+    onExit(listener: (value: { exitCode: number; signal?: number }) => void) {
+      this.exit = listener;
+      return {
+        /** 終了購読解除のインターフェースだけを満たす。 */
+        dispose() {},
+      };
+    },
+    /** ホスト障害を模擬できるよう、サービスのエラーリスナーを保持する。 */
+    onError(listener: (error: Error) => void) {
+      this.error = listener;
+      return {
+        /** メモリ上のエラー購読に対して実イベント源の解除を行わない。 */
+        dispose() {},
+      };
+    },
+    /** PTYへ渡された入力文字列と入力順を記録する。 */
+    write(value: string) {
+      this.writes.push(value);
+    },
+    /** ネイティブPTYへ渡す列数・行数を検証用に保存する。 */
+    resize(cols: number, rows: number) {
+      this.resizes.push([cols, rows]);
+    },
+    /** 実プロセスは終了せず、killの要求回数を加算する。 */
+    kill() {
+      this.kills++;
+    },
+    /** 出力抑制が発生した回数を加算する。 */
+    pause() {
+      this.pauses++;
+    },
+    /** 抑制から復帰した回数を加算する。 */
+    resume() {
+      this.resumes++;
+    },
   };
   let confirm = false;
   const spawns: Array<[number, number]> = [];
   const service = new TerminalService({
+    /** 送信元の識別子またはIPCのwebContentsを別々の所有Windowへ解決する。 */
     resolveOwner(sender) {
-      if (sender === "owner" || (sender as { sender?: unknown })?.sender === window.webContents) return { window, sessionId: "session-a", workspacePath: "C:/saved path " };
-      if (sender === "other") return { window: other, sessionId: "session-b", workspacePath: "C:/other" };
+      if (
+        sender === "owner" ||
+        (sender as { sender?: unknown })?.sender === window.webContents
+      )
+        return {
+          window,
+          sessionId: "session-a",
+          workspacePath: "C:/saved path ",
+        };
+      if (sender === "other")
+        return {
+          window: other,
+          sessionId: "session-b",
+          workspacePath: "C:/other",
+        };
       return null;
     },
     confirmClose: confirmClose ?? (async () => confirm),
+    /** 端末イベントを所有Windowの記録へ届ける。 */
     sendEvent: (owner, event) => owner.webContents.send("terminal", event),
+    /** 保存済みcwdの末尾空白が維持されることを確認し、spawn寸法を記録する。 */
     spawn: async (_file, cwd, cols, rows) => {
       assert.equal(cwd, "C:/saved path ");
       spawns.push([cols, rows]);
       return pty as unknown as TerminalPty;
     },
-    resolveShell: async () => ({ file: "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", shellName: "PowerShell" }),
+    /** シェル探索とは独立に固定のWindows PowerShellを返す。 */
+    resolveShell: async () => ({
+      file: "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+      shellName: "PowerShell",
+    }),
   });
-  return { window, other, pty, service, spawns, approveClose: () => { confirm = true; } };
+  return {
+    window,
+    other,
+    pty,
+    service,
+    spawns,
+    /** 差し替えがない場合の確認を承認へ切り替える。 */
+    approveClose: () => {
+      confirm = true;
+    },
+  };
 }
 
+/** 端末の起動・操作・終了について、所有者、確認待機、障害、出力流量制御の契約を検証する。 */
 describe("TerminalService", () => {
   // @test-value v2
   // kind = "contract"
@@ -171,20 +325,44 @@ describe("TerminalService", () => {
   // impact = "本来の起動エラーが隠れ、利用者が期待しないshellで作業する"
   // distinction = "既存のシェル不在testは選択後のspawn拒否と再試行を観測しない。実process不要の低コストな境界test"
   // @end-test-value
+  /** 検出したPowerShell 7の起動に失敗したら5系へ再試行せず、失敗端末の閉じ処理に確認も要求しない。 */
   it("reports a selected PowerShell 7 startup failure without retrying", async () => {
     const { window } = setup();
     const files: string[] = [];
     const failure = new Error("PowerShell 7 could not start");
     const service = new TerminalService({
-      resolveOwner: () => ({ window, sessionId: "a", workspacePath: "C:/workspace" }),
-      confirmClose: async () => { assert.fail("Failed terminals do not require confirmation"); },
+      /** 起動要求に一つの固定Windowと保存済み作業パスを対応させる。 */
+      resolveOwner: () => ({
+        window,
+        sessionId: "a",
+        workspacePath: "C:/workspace",
+      }),
+      /** 失敗端末で確認が呼ばれる回帰を直ちにテスト失敗とする。 */
+      confirmClose: async () => {
+        assert.fail("Failed terminals do not require confirmation");
+      },
+      /** 起動失敗のイベントが出る場合も所有Windowのスタブへ送る。 */
       sendEvent: (owner, event) => owner.webContents.send("terminal", event),
-      resolveShell: () => resolveTerminalShell("win32", {
-        PATH: "C:\\tools", SystemRoot: "C:\\Windows",
-      }, async () => {}),
-      spawn: async (file) => { files.push(file); throw failure; },
+      /** 実探索ロジックに使えるPATHの7系候補を用意する。 */
+      resolveShell: () =>
+        resolveTerminalShell(
+          "win32",
+          {
+            PATH: "C:\\tools",
+            SystemRoot: "C:\\Windows",
+          },
+          async () => {},
+        ),
+      /** 選ばれたシェルのパスを記録してから、起動エラーを返す。 */
+      spawn: async (file) => {
+        files.push(file);
+        throw failure;
+      },
     });
-    await assert.rejects(service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }), (error) => error === failure);
+    await assert.rejects(
+      service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }),
+      (error) => error === failure,
+    );
     assert.deepEqual(files, ["C:\\tools\\pwsh.exe"]);
     assert.equal(service.countLive(window), 0);
     assert.equal(await service.close("owner", TERMINAL_ID), true);
@@ -202,16 +380,24 @@ describe("TerminalService", () => {
   // impact = "Session Window終了で不要な確認が続く、または作業が確認なしで終了する"
   // distinction = "個別closeのtestは複数owner向けWindow集計を通らず、型検査でもactivity別集計を保証できない"
   // @end-test-value
+  /** 起動中・実行中・不明の端末だけを所有Windowの確認対象として数え、入力待ちと自然終了は除外する。 */
   it("counts only the owning Window's terminals requiring confirmation", async () => {
     const { service, pty, window, other } = setup();
-    const creating = service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const creating = service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     assert.equal(service.countRequiringCloseConfirmation(window), 1);
     assert.equal(service.countRequiringCloseConfirmation(other), 0);
     await creating;
     for (const activity of ["idle", "busy", "unknown"] as const) {
       pty.activity = activity;
       assert.equal(service.countLive(window), 1);
-      assert.equal(service.countRequiringCloseConfirmation(window), activity === "idle" ? 0 : 1);
+      assert.equal(
+        service.countRequiringCloseConfirmation(window),
+        activity === "idle" ? 0 : 1,
+      );
       assert.equal(service.countRequiringCloseConfirmation(other), 0);
     }
     pty.exit({ exitCode: 0 });
@@ -231,11 +417,19 @@ describe("TerminalService", () => {
   // impact = "不要な警告の常態化または利用者の実行中作業の消失"
   // distinction = "型検査は状態別の確認判断を保証せず、3状態の小さな実行で分岐を直接検証する"
   // @end-test-value
+  /** idleと判定できるPTYだけ確認を省き、稼働中・不明の場合には確認の取消で端末を残す。 */
   it("only skips confirmation for a known idle shell", async () => {
     for (const activity of ["idle", "busy", "unknown"] as const) {
       let confirmations = 0;
-      const { service, pty, window } = setup(async () => { confirmations++; return false; });
-      await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+      const { service, pty, window } = setup(async () => {
+        confirmations++;
+        return false;
+      });
+      await service.create("owner", {
+        terminalId: TERMINAL_ID,
+        cols: 80,
+        rows: 24,
+      });
       pty.activity = activity;
       const idle = activity === "idle";
       assert.equal(await service.close("owner", TERMINAL_ID), idle);
@@ -257,18 +451,27 @@ describe("TerminalService", () => {
   // impact = "終了確認中に端末出力が止まるか、取消しても作業を失う"
   // distinction = "実ダイアログの応答性は実機で別途確認し、この低コストtestはserviceの保留と取消を決定論的に検証する"
   // @end-test-value
+  /** 同じ端末の複数のcloseは確認を共有し、確認待ちの出力と取消後の入力を止めない。 */
   it("shares a pending confirmation while continuing terminal events and preserves cancellation", async () => {
     let answer!: (close: boolean) => void;
     let confirmations = 0;
     const { service, pty, window } = setup(() => {
       confirmations++;
-      return new Promise<boolean>((resolve) => { answer = resolve; });
+      return new Promise<boolean>((resolve) => {
+        answer = resolve;
+      });
     });
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     const first = service.close("owner", TERMINAL_ID);
     const second = service.close("owner", TERMINAL_ID);
     pty.data("while confirming");
-    assert.deepEqual(window.events, [{ type: "data", terminalId: TERMINAL_ID, data: "while confirming" }]);
+    assert.deepEqual(window.events, [
+      { type: "data", terminalId: TERMINAL_ID, data: "while confirming" },
+    ]);
     assert.equal(confirmations, 1);
     assert.equal(pty.kills, 0);
     answer(false);
@@ -290,14 +493,28 @@ describe("TerminalService", () => {
   // impact = "別の新しい端末の作業を誤って終了する"
   // distinction = "通常の取消testと型検査はawaitを跨ぐ端末identityを保証しない"
   // @end-test-value
+  /** 確認中に解放した端末の遅延承認で、同じIDの作り直した端末を終了しない。 */
   it("does not release a replacement terminal after an old confirmation resolves", async () => {
     let answer!: (close: boolean) => void;
-    const { service, pty, window } = setup(() => new Promise<boolean>((resolve) => { answer = resolve; }));
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const { service, pty, window } = setup(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     const closing = service.close("owner", TERMINAL_ID);
     service.release("owner", TERMINAL_ID);
     assert.equal(pty.kills, 1);
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     answer(true);
     assert.equal(await closing, true);
     assert.equal(pty.kills, 1);
@@ -316,13 +533,25 @@ describe("TerminalService", () => {
   // scope = "Terminal close natural exit race"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 確認の待機中にも自然終了イベントを送り、その後の承認では終了済みPTYを再killしない。 */
   it("handles natural exit while a confirmation is pending", async () => {
     let answer!: (close: boolean) => void;
-    const { service, pty, window } = setup(() => new Promise<boolean>((resolve) => { answer = resolve; }));
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const { service, pty, window } = setup(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     const closing = service.close("owner", TERMINAL_ID);
     pty.exit({ exitCode: 0 });
-    assert.deepEqual(window.events, [{ type: "exit", terminalId: TERMINAL_ID, exitCode: 0 }]);
+    assert.deepEqual(window.events, [
+      { type: "exit", terminalId: TERMINAL_ID, exitCode: 0 },
+    ]);
     answer(true);
     assert.equal(await closing, true);
     assert.equal(pty.kills, 0);
@@ -338,21 +567,47 @@ describe("TerminalService", () => {
   // scope = "terminal-service geometry"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 大きい正常寸法はspawn・resizeへ渡し、範囲外の数値は操作だけ拒否して既存PTYを残す。 */
   it("accepts large fitted dimensions and rejects invalid native coordinates without ending the PTY", async () => {
     const { service, pty, window, spawns } = setup();
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 625, rows: 400 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 625,
+      rows: 400,
+    });
     assert.deepEqual(spawns, [[625, 400]]);
     service.resize("owner", TERMINAL_ID, 1_000, 350);
     service.resize("owner", TERMINAL_ID, 32_767, 1);
-    for (const [cols, rows] of [[0, 24], [80, -1], [80.5, 24], [80, NaN], [Infinity, 24], [32_768, 24], [80, 32_768]]) {
-      assert.throws(() => service.resize("owner", TERMINAL_ID, cols, rows), /Terminal size is invalid/);
+    for (const [cols, rows] of [
+      [0, 24],
+      [80, -1],
+      [80.5, 24],
+      [80, NaN],
+      [Infinity, 24],
+      [32_768, 24],
+      [80, 32_768],
+    ]) {
+      assert.throws(
+        () => service.resize("owner", TERMINAL_ID, cols, rows),
+        /Terminal size is invalid/,
+      );
     }
-    assert.deepEqual(pty.resizes, [[1_000, 350], [32_767, 1]]);
+    assert.deepEqual(pty.resizes, [
+      [1_000, 350],
+      [32_767, 1],
+    ]);
     assert.equal(service.countLive(window), 1);
     service.write("owner", TERMINAL_ID, "still running");
     assert.deepEqual(pty.writes, ["still running"]);
     const rejected = setup();
-    await assert.rejects(rejected.service.create("owner", { terminalId: TERMINAL_ID, cols: 32_768, rows: 24 }), /Terminal size is invalid/);
+    await assert.rejects(
+      rejected.service.create("owner", {
+        terminalId: TERMINAL_ID,
+        cols: 32_768,
+        rows: 24,
+      }),
+      /Terminal size is invalid/,
+    );
     assert.deepEqual(rejected.spawns, []);
   });
 
@@ -366,25 +621,51 @@ describe("TerminalService", () => {
   // scope = "terminal IPC operation failure"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 不正なIPC操作はoperation-errorに留めて後続入力を許し、PTYホスト障害はerrorとして端末を生存数から除く。 */
   it("distinguishes rejected IPC operations from fatal PTY errors", async () => {
     const { service, pty, window } = setup();
-    const listeners = new Map<string, (event: IpcMainEvent, id: string, cols: number, rows: number) => void>();
-    registerTerminalHandlers({
-      handle() {},
-      on(channel, listener) { listeners.set(channel, listener); return this as IpcMain; },
-    } as Pick<IpcMain, "handle" | "on"> as IpcMain, service);
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const listeners = new Map<
+      string,
+      (event: IpcMainEvent, id: string, cols: number, rows: number) => void
+    >();
+    registerTerminalHandlers(
+      {
+        /** このケースで使わない要求応答型の登録は保持しない。 */
+        handle() {},
+        /** 端末操作に使う一方向IPCのリスナーをチャンネル別に記録する。 */
+        on(channel, listener) {
+          listeners.set(channel, listener);
+          return this as IpcMain;
+        },
+      } as Pick<IpcMain, "handle" | "on"> as IpcMain,
+      service,
+    );
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     const resize = listeners.get(WITHMATE_RESIZE_TERMINAL_CHANNEL)!;
     const event = { sender: window.webContents } as unknown as IpcMainEvent;
     resize(event, TERMINAL_ID, 0, 24);
-    assert.deepEqual(window.events, [{ type: "operation-error", terminalId: TERMINAL_ID, message: "Terminal size is invalid." }]);
+    assert.deepEqual(window.events, [
+      {
+        type: "operation-error",
+        terminalId: TERMINAL_ID,
+        message: "Terminal size is invalid.",
+      },
+    ]);
     assert.equal(service.countLive(window), 1);
     resize(event, TERMINAL_ID, 625, 350);
     service.write("owner", TERMINAL_ID, "recovered");
     assert.deepEqual(pty.resizes, [[625, 350]]);
     assert.deepEqual(pty.writes, ["recovered"]);
     pty.error(new Error("host failed"));
-    assert.deepEqual(window.events.at(-1), { type: "error", terminalId: TERMINAL_ID, message: "host failed" });
+    assert.deepEqual(window.events.at(-1), {
+      type: "error",
+      terminalId: TERMINAL_ID,
+      message: "host failed",
+    });
     assert.equal(service.countLive(window), 0);
   });
 
@@ -400,9 +681,14 @@ describe("TerminalService", () => {
   // impact = "別Windowのrendererがユーザーのシェルへ入力・終了できる"
   // distinction = "型検査はIPC senderの実行時所有関係を保証しない"
   // @end-test-value
+  /** 他のSession Windowからは入力、resize、close、releaseを実行できず、所有者のPTYに副作用がない。 */
   it("binds every operation to the sender's Session Window", async () => {
     const { service, pty } = setup();
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     assert.throws(() => service.write("other", TERMINAL_ID, "bad"));
     assert.throws(() => service.resize("other", TERMINAL_ID, 100, 30));
     await assert.rejects(service.close("other", TERMINAL_ID));
@@ -424,9 +710,14 @@ describe("TerminalService", () => {
   // impact = "利用者作業の意図しない停止または孤立したシェルの存続"
   // distinction = "型検査と通常のWindow close testはPTY所有物の解放を観測しない"
   // @end-test-value
+  /** 生存中PTYのcloseを取り消せば保持されるが、レンダラーの破棄では確認を介さず解放される。 */
   it("keeps a cancelled close and releases the PTY when its renderer is destroyed", async () => {
     const { service, pty, window } = setup();
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     assert.equal(await service.close("owner", TERMINAL_ID), false);
     assert.equal(service.countLive(window), 1);
     assert.equal(pty.kills, 0);
@@ -448,9 +739,14 @@ describe("TerminalService", () => {
   // impact = "大量出力でmainのメモリ・応答性が悪化するか端末が詰まる"
   // distinction = "buildと型検査は実際の出力流量制御を確認しない"
   // @end-test-value
+  /** 出力が上限へ達したとき1回だけ停止し、確認済み出力により下限まで減ったときだけ再開する。 */
   it("pauses and resumes only at the output watermarks", async () => {
     const { service, pty, window } = setup();
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     const initialOutput = "x".repeat(99_999);
     pty.data(initialOutput);
     assert.equal(pty.pauses, 0);
@@ -474,7 +770,11 @@ describe("TerminalService", () => {
     pty.data(nextOutput);
     assert.equal(pty.pauses, 2);
     assert.equal(pty.resumes, 1);
-    assert.deepEqual(window.events.at(-1), { type: "data", terminalId: TERMINAL_ID, data: nextOutput });
+    assert.deepEqual(window.events.at(-1), {
+      type: "data",
+      terminalId: TERMINAL_ID,
+      data: nextOutput,
+    });
     service.acknowledge("owner", TERMINAL_ID, 80_002);
     assert.equal(pty.resumes, 2);
   });
@@ -491,17 +791,36 @@ describe("TerminalService", () => {
   // impact = "タブを閉じた後に孤立したシェルが残る"
   // distinction = "通常のclose testではcreate完了前の競合を再現しない"
   // @end-test-value
+  /** 起動待ちのタブを解放した後に届いたPTYをすぐ終了し、作成要求を取消として扱う。 */
   it("kills a PTY spawned after its starting tab is released", async () => {
     const { window, pty } = setup();
     let finishSpawn!: (value: TerminalPty) => void;
     const service = new TerminalService({
-      resolveOwner: (sender) => sender === "owner" ? { window, sessionId: "a", workspacePath: "C:/saved path " } : null,
+      /** ownerの送信元だけを遅延起動の対象Windowへ対応させる。 */
+      resolveOwner: (sender) =>
+        sender === "owner"
+          ? { window, sessionId: "a", workspacePath: "C:/saved path " }
+          : null,
+      /** 確認判断を妨げないよう常に承認を返す。 */
       confirmClose: async () => true,
+      /** 遅延起動中の通知先をWindowの記録に固定する。 */
       sendEvent: (owner, event) => owner.webContents.send("terminal", event),
-      resolveShell: async () => ({ file: "C:/Windows/powershell.exe", shellName: "PowerShell" }),
-      spawn: () => new Promise<TerminalPty>((resolve) => { finishSpawn = resolve; }),
+      /** PTYの起動待ちに到達させるため、解決済みシェルを返す。 */
+      resolveShell: async () => ({
+        file: "C:/Windows/powershell.exe",
+        shellName: "PowerShell",
+      }),
+      /** タブを解放するまでPTYの生成応答を保留する。 */
+      spawn: () =>
+        new Promise<TerminalPty>((resolve) => {
+          finishSpawn = resolve;
+        }),
     });
-    const creating = service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    const creating = service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     await Promise.resolve();
     service.release("owner", TERMINAL_ID);
     finishSpawn(pty as unknown as TerminalPty);
@@ -522,16 +841,34 @@ describe("TerminalService", () => {
   // impact = "操作不能なFailedタブがWindow内に残る"
   // distinction = "型検査は失敗後の端末状態遷移を保証しない"
   // @end-test-value
+  /** シェルが見つからず作成に失敗したタブは、追加確認なしに閉じられる。 */
   it("lets a failed tab close without confirmation", async () => {
     const { window } = setup();
     const service = new TerminalService({
-      resolveOwner: (sender) => sender === "owner" ? { window, sessionId: "a", workspacePath: "C:/saved path " } : null,
-      confirmClose: () => { throw new Error("must not confirm"); },
+      /** 作成と後続closeで同じ固定Windowの所有者を解決する。 */
+      resolveOwner: (sender) =>
+        sender === "owner"
+          ? { window, sessionId: "a", workspacePath: "C:/saved path " }
+          : null,
+      /** シェル解決に失敗した後に確認を求める動作を検出する。 */
+      confirmClose: () => {
+        throw new Error("must not confirm");
+      },
+      /** 端末サービスのイベントを固定Windowのスタブへ届ける。 */
       sendEvent: (owner, event) => owner.webContents.send("terminal", event),
-      resolveShell: async () => { throw new Error("shell missing"); },
-      spawn: async () => { throw new Error("must not spawn"); },
+      /** シェルが見つからずPTY起動に進めない場合を再現する。 */
+      resolveShell: async () => {
+        throw new Error("shell missing");
+      },
+      /** シェル解決失敗後にもspawnした場合にエラーにする。 */
+      spawn: async () => {
+        throw new Error("must not spawn");
+      },
     });
-    await assert.rejects(service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }), /shell missing/);
+    await assert.rejects(
+      service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 }),
+      /shell missing/,
+    );
     assert.equal(await service.close("owner", TERMINAL_ID), true);
   });
 
@@ -547,14 +884,22 @@ describe("TerminalService", () => {
   // impact = "起動済み端末が操作不能でも利用者に失敗理由が表示されない"
   // distinction = "型検査や通常の自然終了testはhost異常経路を確認しない"
   // @end-test-value
+  /** PTY障害を端末ID付きerrorとして所有Windowへ通知し、失敗端末を生存数から除く。 */
   it("reports an isolated host failure as Failed", async () => {
     const { service, pty, window } = setup();
-    await service.create("owner", { terminalId: TERMINAL_ID, cols: 80, rows: 24 });
+    await service.create("owner", {
+      terminalId: TERMINAL_ID,
+      cols: 80,
+      rows: 24,
+    });
     pty.error(new Error("Terminal host exited unexpectedly (code 1)."));
-    assert.deepEqual(window.events, [{
-      type: "error", terminalId: TERMINAL_ID,
-      message: "Terminal host exited unexpectedly (code 1).",
-    }]);
+    assert.deepEqual(window.events, [
+      {
+        type: "error",
+        terminalId: TERMINAL_ID,
+        message: "Terminal host exited unexpectedly (code 1).",
+      },
+    ]);
     assert.equal(service.countLive(window), 0);
     assert.equal(await service.close("owner", TERMINAL_ID), true);
   });

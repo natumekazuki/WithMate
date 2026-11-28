@@ -3,101 +3,431 @@ import { it } from "node:test";
 import path from "node:path";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo, SessionPromptInput, SessionTransferData, FormInfo1 } from "@opencode/client";
+import type {
+  OpenCodeClient,
+  OpenCodeEvent,
+  SessionInfo,
+  SessionMessageInfo,
+  SessionPromptInput,
+  SessionTransferData,
+  FormInfo1,
+} from "@opencode/client";
 import type { OpenCodeTransportOptions } from "../../src-electron/providers/opencode/opencode-transport.js";
-import { OpenCodeAdapter, buildOpenCodePermissions } from "../../src-electron/providers/opencode/opencode-adapter.js";
+import {
+  OpenCodeAdapter,
+  buildOpenCodePermissions,
+} from "../../src-electron/providers/opencode/opencode-adapter.js";
 import { resolveOpenCodeModelRef } from "../../src-electron/providers/opencode/opencode-model.js";
 import { buildOpenCodeElicitation } from "../../src-electron/providers/opencode/opencode-interactions.js";
-import { ProviderTurnError, type ApprovalDecisionSource, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import {
+  ProviderTurnError,
+  type ApprovalDecisionSource,
+  type RunSessionTurnInput,
+} from "../../src-electron/providers/provider-runtime.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
-import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import {
+  ApprovalReviewInputFence,
+  WithMateApprovalReviewTurn,
+} from "../../src-electron/session/withmate-approval-review.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
+/** 新規起動と再開を比較できるよう、同じモデル・作業領域からターン入力を作る。 */
 function input(threadId = ""): RunSessionTurnInput {
-  const session = { ...buildNewSession({ provider: "opencode", taskTitle: "test", workspaceLabel: "test", workspacePath: process.cwd(), branch: "main",
-    characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request",
-    model: "opencode-go/glm-5.3", reasoningEffort: "high", customAgentName: "" }), id: crypto.randomUUID(), threadId };
-  return { session, executionOptions: captureSessionExecutionOptions(session), runtimeOwner: { kind: "main", id: session.id, incarnationId: "incarnation" },
-    providerCatalog: { id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high",
-      models: [{ id: "opencode-go/glm-5.3", label: "GLM", reasoningEfforts: ["low", "high", "max"] }] }, userMessage: "hello", appSettings: createDefaultAppSettings(), attachments: [] };
+  const session = {
+    ...buildNewSession({
+      provider: "opencode",
+      taskTitle: "test",
+      workspaceLabel: "test",
+      workspacePath: process.cwd(),
+      branch: "main",
+      characterId: "character",
+      character: "Character",
+      characterIconPath: "",
+      characterThemeColors: { main: "#112233", sub: "#445566" },
+      approvalMode: "on-request",
+      model: "opencode-go/glm-5.3",
+      reasoningEffort: "high",
+      customAgentName: "",
+    }),
+    id: crypto.randomUUID(),
+    threadId,
+  };
+  return {
+    session,
+    executionOptions: captureSessionExecutionOptions(session),
+    runtimeOwner: {
+      kind: "main",
+      id: session.id,
+      incarnationId: "incarnation",
+    },
+    providerCatalog: {
+      id: "opencode",
+      label: "OpenCode",
+      defaultModelId: "opencode-go/glm-5.3",
+      defaultReasoningEffort: "high",
+      models: [
+        {
+          id: "opencode-go/glm-5.3",
+          label: "GLM",
+          reasoningEfforts: ["low", "high", "max"],
+        },
+      ],
+    },
+    userMessage: "hello",
+    appSettings: createDefaultAppSettings(),
+    attachments: [],
+  };
 }
 
-function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
+/** ネイティブのイベントと同じ包みで、テスト用の型・データ・識別子を渡す。 */
+function event(
+  type: string,
+  data: unknown,
+  id = crypto.randomUUID(),
+): OpenCodeEvent {
+  return { id, created: 1, type, data } as OpenCodeEvent;
+}
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; permissionAction?: string; permissionBurst?: () => AsyncIterable<OpenCodeEvent>; form?: FormInfo1; replyEvent?: "matching" | "different"; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+/** 実プロセスの代わりにSDK応答とイベント列を組み合わせ、切断・対話・終了待ちを差し込めるようにする。 */
+function fixture(
+  turn: RunSessionTurnInput,
+  options: {
+    disconnect?: boolean;
+    unknownInbox?: "synthetic" | "owner-id" | "incarnation";
+    pendingInbox?: boolean;
+    cleanupPending?: boolean;
+    interactions?: boolean;
+    permissionAction?: string;
+    permissionBurst?: () => AsyncIterable<OpenCodeEvent>;
+    form?: FormInfo1;
+    replyEvent?: "matching" | "different";
+    lateInteraction?: "permission" | "form";
+    holdSnapshot?: () => Promise<void>;
+  } = {},
+) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
   let permissionDone!: () => void;
   let formDone!: () => void;
-  const permissionReply = new Promise<void>((resolve) => { permissionDone = resolve; });
-  const formReply = new Promise<void>((resolve) => { formDone = resolve; });
+  const permissionReply = new Promise<void>((resolve) => {
+    permissionDone = resolve;
+  });
+  const formReply = new Promise<void>((resolve) => {
+    formDone = resolve;
+  });
   const formDispatched = Promise.withResolvers<unknown>();
-  const mcpRegistrations: Array<{ server: string; location?: { directory?: string }; config: unknown }> = [];
-  const root: SessionInfo = { id: "root", projectID: "project", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
-    location: { directory: turn.executionWorkspacePath ?? turn.session.workspacePath }, metadata: { withmateOwner: { schema: 1, ...turn.runtimeOwner } } };
+  const mcpRegistrations: Array<{
+    server: string;
+    location?: { directory?: string };
+    config: unknown;
+  }> = [];
+  const root: SessionInfo = {
+    id: "root",
+    projectID: "project",
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 },
+    location: {
+      directory: turn.executionWorkspacePath ?? turn.session.workspacePath,
+    },
+    metadata: { withmateOwner: { schema: 1, ...turn.runtimeOwner } },
+  };
+  /** 配信した入力を含む降順の履歴を返し、最終結果をスナップショットから復元できるようにする。 */
   const messages = (): SessionMessageInfo[] => [
     { id: "idle", type: "idle", outcome: "succeeded", time: { created: 4 } },
-    { id: "assistant", type: "assistant", time: { created: 3 }, agent: "build", model: { providerID: "opencode-go", id: "glm-5.3" }, content: [{ type: "text", text: "final" }], tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 2, write: 0 } } },
-    { id: prompt!.id!, type: "user", text: prompt!.text, metadata: prompt!.metadata, time: { created: 2 } },
+    {
+      id: "assistant",
+      type: "assistant",
+      time: { created: 3 },
+      agent: "build",
+      model: { providerID: "opencode-go", id: "glm-5.3" },
+      content: [{ type: "text", text: "final" }],
+      tokens: {
+        input: 10,
+        output: 5,
+        reasoning: 0,
+        cache: { read: 2, write: 0 },
+      },
+    },
+    {
+      id: prompt!.id!,
+      type: "user",
+      text: prompt!.text,
+      metadata: prompt!.metadata,
+      time: { created: 2 },
+    },
   ];
   const client = {
-    model: { list: async () => ({ data: [{ id: "glm-5.3", modelID: "upstream-glm", providerID: "opencode-go", enabled: true, variants: [{ id: "high" }], capabilities: { input: ["text"], output: ["text"], tools: true }, limit: { context: 1000 } }] }) },
-    session: { create: async ({ location }: { location: { directory: string } }) => { calls.push("create"); root.location = location; return root; }, get: async ({ sessionID }: { sessionID: string }) => sessionID === "child" ? { ...root, id: "child", parentID: "root" } : root,
-      switchModel: async () => {}, update: async () => {},
-      inbox: { list: async () => pending ? [{ id: "old", type: options.unknownInbox === "synthetic" ? "synthetic" : "user", payload: { metadata: {
-        withmateOwner: { schema: 1, ...turn.runtimeOwner, ...(options.unknownInbox === "owner-id" ? { id: "other-session" } : {}), ...(options.unknownInbox === "incarnation" ? { incarnationId: "other-incarnation" } : {}) },
-        withmateRequestID: "old" } } }] : [], cancel: async () => { calls.push("cancel-inbox"); pending = false; } },
-      prompt: async (value: SessionPromptInput) => { calls.push("prompt"); prompt = value; return { id: value.id, sessionID: "root", type: "user", payload: { text: value.text }, delivery: "queue" }; },
-      interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }, requestOptions?: { signal?: AbortSignal }) => {
-        calls.push(`form:${JSON.stringify(answer)}`);
-        if (options.replyEvent) {
-          formDispatched.resolve(answer);
-          await new Promise<void>((_resolve, reject) => requestOptions?.signal?.addEventListener("abort", () => reject(new Error("request aborted")), { once: true }));
-        } else formDone();
-      }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
+    model: {
+      /** 候補のローカルIDと上流のモデルIDが異なるカタログを返す。 */ list: async () => ({
+        data: [
+          {
+            id: "glm-5.3",
+            modelID: "upstream-glm",
+            providerID: "opencode-go",
+            enabled: true,
+            variants: [{ id: "high" }],
+            capabilities: { input: ["text"], output: ["text"], tools: true },
+            limit: { context: 1000 },
+          },
+        ],
+      }),
     },
-    message: { list: async () => { calls.push("snapshot"); await options.holdSnapshot?.(); return { data: messages(), cursor: {} }; } },
-    mcp: { add: async (registration: typeof mcpRegistrations[number]) => { mcpRegistrations.push(registration); }, list: async () => ({ data: mcpRegistrations.map((entry) => ({ name: entry.server, status: { status: "connected" } })) }) },
-    permission: { reply: async ({ decision }: { decision: string }) => { calls.push(`permission:${decision}`); permissionDone(); } },
-    event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {
-      const snapshots = calls.filter((call) => call === "snapshot").length;
-      calls.push("connected"); yield event("server.connected", {});
-      assert.ok(prompt, "event connection must be established before prompt admission");
-      yield event("session.inbox.delivered", { sessionID: "root", inboxID: prompt.id });
-      if (options.permissionBurst) yield* options.permissionBurst();
-      if (options.interactions) {
-        yield event("permission.asked", { id: "permission", sessionID: "child", action: options.permissionAction ?? "bash", resources: ["echo test"] });
-        await permissionReply;
-        yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
-        await formReply;
-      }
-      if (options.lateInteraction === "permission") yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
-      if (options.form) {
-        yield event("form.created", { form: options.form });
-        if (options.replyEvent) {
-          const answer = await formDispatched.promise;
-          yield event("form.replied", { id: options.form.id, sessionID: options.form.sessionID, answer: options.replyEvent === "matching" ? answer : { different: "answer" } });
-        } else await formReply;
-      }
-      if (options.lateInteraction === "form") yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
-      yield event("session.text.delta", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, delta: "partial" });
-      if (options.disconnect) return;
-      yield event("session.execution.succeeded", { sessionID: "child" });
-      assert.equal(calls.filter((call) => call === "snapshot").length, snapshots, "child completion is not root completion");
-      yield event("session.text.ended", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, text: "full" });
-      yield event("session.execution.succeeded", { sessionID: "root" });
-    } }) },
+    session: {
+      /** 起動時に受け取ったネイティブの作業場所を保持する。 */ create: async ({
+        location,
+      }: {
+        location: { directory: string };
+      }) => {
+        calls.push("create");
+        root.location = location;
+        return root;
+      },
+      /** 子IDの照会だけに親を持つ会話を返し、親子のイベント帰属を区別する。 */ get: async ({
+        sessionID,
+      }: {
+        sessionID: string;
+      }) =>
+        sessionID === "child"
+          ? { ...root, id: "child", parentID: "root" }
+          : root,
+      /** 外部モデルの切替を行わず、切替依存を満たす。 */ switchModel:
+        async () => {},
+      /** 共通のフィクスチャでは保存済み会話の設定変更を行わない。 */ update:
+        async () => {},
+      inbox: {
+        /** 未配送の旧項目を、その所有者と種別を切り替えられる形で返す。 */ list: async () =>
+          pending
+            ? [
+                {
+                  id: "old",
+                  type:
+                    options.unknownInbox === "synthetic" ? "synthetic" : "user",
+                  payload: {
+                    metadata: {
+                      withmateOwner: {
+                        schema: 1,
+                        ...turn.runtimeOwner,
+                        ...(options.unknownInbox === "owner-id"
+                          ? { id: "other-session" }
+                          : {}),
+                        ...(options.unknownInbox === "incarnation"
+                          ? { incarnationId: "other-incarnation" }
+                          : {}),
+                      },
+                      withmateRequestID: "old",
+                    },
+                  },
+                },
+              ]
+            : [],
+        /** 旧入力の取消を記録し、次の照会で消えるようにする。 */ cancel:
+          async () => {
+            calls.push("cancel-inbox");
+            pending = false;
+          },
+      },
+      /** ネイティブへ渡した送信内容を保持し、当該入力の受付を返す。 */
+      prompt: async (value: SessionPromptInput) => {
+        calls.push("prompt");
+        prompt = value;
+        return {
+          id: value.id,
+          sessionID: "root",
+          type: "user",
+          payload: { text: value.text },
+          delivery: "queue",
+        };
+      },
+      /** 中断を要求したことを呼出履歴に残す。 */ interrupt: async () => {
+        calls.push("interrupt");
+      },
+      form: {
+        /** フォームへ送った回答を記録し、早着イベントのケースではRPC応答を保留する。 */ reply:
+          async (
+            { answer }: { answer: unknown },
+            requestOptions?: { signal?: AbortSignal },
+          ) => {
+            calls.push(`form:${JSON.stringify(answer)}`);
+            if (options.replyEvent) {
+              formDispatched.resolve(answer);
+              await new Promise<void>((_resolve, reject) =>
+                requestOptions?.signal?.addEventListener(
+                  "abort",
+                  () => reject(new Error("request aborted")),
+                  { once: true },
+                ),
+              );
+            } else formDone();
+          },
+        /** フォームの取消を記録して、イベント列を再開する。 */ cancel:
+          async () => {
+            calls.push("form:cancel");
+            formDone();
+          },
+      },
+    },
+    message: {
+      /** 最終履歴の取得を観測し、必要なケースだけ履歴返却前に待機する。 */ list: async () => {
+        calls.push("snapshot");
+        await options.holdSnapshot?.();
+        return { data: messages(), cursor: {} };
+      },
+    },
+    mcp: {
+      /** 作業場所やターン固有トークンを検査できるようMCP登録を保持する。 */ add: async (
+        registration: (typeof mcpRegistrations)[number],
+      ) => {
+        mcpRegistrations.push(registration);
+      },
+      /** 登録済みの管理サーバーを接続済みとして返す。 */ list: async () => ({
+        data: mcpRegistrations.map((entry) => ({
+          name: entry.server,
+          status: { status: "connected" },
+        })),
+      }),
+    },
+    permission: {
+      /** ネイティブへの承認応答を記録し、次の対話に進むため待機を解除する。 */ reply:
+        async ({ decision }: { decision: string }) => {
+          calls.push(`permission:${decision}`);
+          permissionDone();
+        },
+    },
+    event: {
+      /** ターン開始からルート会話の終了までの合成イベントストリームを返す。 */ subscribe:
+        () => ({
+          /** 入力配信、子会話、本文、ルート終端を決まった順序で通知し、必要に応じて途中で切断する。 */ async *[Symbol.asyncIterator]() {
+            const snapshots = calls.filter(
+              (call) => call === "snapshot",
+            ).length;
+            calls.push("connected");
+            yield event("server.connected", {});
+            assert.ok(
+              prompt,
+              "event connection must be established before prompt admission",
+            );
+            yield event("session.inbox.delivered", {
+              sessionID: "root",
+              inboxID: prompt.id,
+            });
+            if (options.permissionBurst) yield* options.permissionBurst();
+            if (options.interactions) {
+              yield event("permission.asked", {
+                id: "permission",
+                sessionID: "child",
+                action: options.permissionAction ?? "bash",
+                resources: ["echo test"],
+              });
+              await permissionReply;
+              yield event("form.created", {
+                form: {
+                  id: "form",
+                  sessionID: "child",
+                  title: "Choose",
+                  fields: [
+                    {
+                      key: "answer",
+                      type: "string",
+                      options: [{ value: "yes", label: "Yes" }],
+                    },
+                  ],
+                },
+              });
+              await formReply;
+            }
+            if (options.lateInteraction === "permission")
+              yield event("permission.asked", {
+                id: "permission",
+                sessionID: "child",
+                action: "bash",
+                resources: ["echo test"],
+              });
+            if (options.form) {
+              yield event("form.created", { form: options.form });
+              if (options.replyEvent) {
+                const answer = await formDispatched.promise;
+                yield event("form.replied", {
+                  id: options.form.id,
+                  sessionID: options.form.sessionID,
+                  answer:
+                    options.replyEvent === "matching"
+                      ? answer
+                      : { different: "answer" },
+                });
+              } else await formReply;
+            }
+            if (options.lateInteraction === "form")
+              yield event("form.created", {
+                form: {
+                  id: "form",
+                  sessionID: "child",
+                  title: "Choose",
+                  fields: [
+                    {
+                      key: "answer",
+                      type: "string",
+                      options: [{ value: "yes", label: "Yes" }],
+                    },
+                  ],
+                },
+              });
+            yield event("session.text.delta", {
+              sessionID: "root",
+              assistantMessageID: "assistant",
+              ordinal: 0,
+              delta: "partial",
+            });
+            if (options.disconnect) return;
+            yield event("session.execution.succeeded", { sessionID: "child" });
+            assert.equal(
+              calls.filter((call) => call === "snapshot").length,
+              snapshots,
+              "child completion is not root completion",
+            );
+            yield event("session.text.ended", {
+              sessionID: "root",
+              assistantMessageID: "assistant",
+              ordinal: 0,
+              text: "full",
+            });
+            yield event("session.execution.succeeded", { sessionID: "root" });
+          },
+        }),
+    },
   } as unknown as OpenCodeClient;
   let release!: () => void;
-  const closed = new Promise<void>((resolve) => { release = resolve; });
-  const adapter = new OpenCodeAdapter({ executable: path.join(process.cwd(), "unused.exe"), createTransport: () => ({
-    start: async () => client, close: async () => { calls.push("close"); if (options.cleanupPending) throw new Error("cleanup timeout"); release(); }, whenClosed: () => closed,
-  }) });
-  return { adapter, client, calls, getPrompt: () => prompt, mcpRegistrations, release };
+  const closed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const adapter = new OpenCodeAdapter({
+    executable: path.join(process.cwd(), "unused.exe"),
+    /** テストで組み立てたクライアントを使い、外部プロセスを起動しない。 */ createTransport:
+      () => ({
+        /** AdapterにネイティブSDKと同じ窓口のスタブを渡す。 */ start:
+          async () => client,
+        /** 終了要求を記録し、指定時は実際の終了通知より先にタイムアウトさせる。 */ close:
+          async () => {
+            calls.push("close");
+            if (options.cleanupPending) throw new Error("cleanup timeout");
+            release();
+          },
+        /** トランスポートの実終了を、終了要求とは別の待機結果として公開する。 */ whenClosed:
+          () => closed,
+      }),
+  });
+  return {
+    adapter,
+    client,
+    calls,
+    /** 実際にネイティブ側へ渡した最新の入力を返す。 */ getPrompt: () => prompt,
+    mcpRegistrations,
+    release,
+  };
 }
 
 // @test-value v2
@@ -112,101 +442,211 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
 // distinction = "共通FIFOのtestを通っても、OpenCode独自の全要求共通revisionでAを誤って失効できる"
 // risk_tags = ["authorization"]
 // @end-test-value
-it("OpenCode read decisions from the broker reach only their native request", { timeout: 3000 }, async () => {
-  const turn = input();
-  const started = Promise.withResolvers<void>();
-  const arrivals = Promise.withResolvers<void>();
-  const lastReply = Promise.withResolvers<void>();
-  const reviewed: Array<[string, string, string[]]> = [];
-  const replies: Array<[string, string, string]> = [];
-  const sources: Array<[string, ApprovalDecisionSource]> = [];
-  const published: string[] = [];
-  const notified: string[] = [];
-  const manual = Promise.withResolvers<string>();
-  const owner = new AbortController();
-  turn.signal = owner.signal;
-  let state: LiveSessionRunState = { sessionId: turn.session.id, threadId: "", assistantText: "", steps: [],
-    backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
-  const approval = new SessionApprovalService({
-    updateLiveSessionRun(_id, update) {
-      const next = update(state);
-      if (next.approvalRequest && next.approvalRequest !== state.approvalRequest) published.push(next.approvalRequest.summary);
-      return state = next;
-    },
-    notifyApproval(_id, requestId) {
-      notified.push(state.approvalRequest!.summary);
-      manual.resolve(requestId);
-    },
-  });
-  const reviewer = new WithMateApprovalReviewTurn({
-    turnId: "source-turn", source: { kind: "main", sessionId: turn.session.id, incarnationId: "incarnation" },
-    workspacePath: turn.session.workspacePath, signal: owner.signal, inputs: new ApprovalReviewInputFence(), policyCurrent: () => true,
-    open: async () => ({
-      close() {},
-      async review(prompt) {
-        const { pendingOperation } = JSON.parse(prompt);
-        const { id, action, resources } = pendingOperation.operation;
-        reviewed.push([id, action, resources]);
-        if (id === "a") { started.resolve(); await arrivals.promise; return { decision: "allow_once", reason: "Authorized read." }; }
-        if (id === "c") return { decision: "deny", reason: "Not authorized." };
-        if (id === "d") return { decision: "ask_user", reason: "The user must choose this input." };
-        throw new Error("Synthetic reviewer failure");
+/** 要求が重なっても個別のread判定を同じネイティブIDに返し、手動承認は指定された一件だけ公開する。 */
+it(
+  "OpenCode read decisions from the broker reach only their native request",
+  { timeout: 3000 },
+  async () => {
+    const turn = input();
+    const started = Promise.withResolvers<void>();
+    const arrivals = Promise.withResolvers<void>();
+    const lastReply = Promise.withResolvers<void>();
+    const reviewed: Array<[string, string, string[]]> = [];
+    const replies: Array<[string, string, string]> = [];
+    const sources: Array<[string, ApprovalDecisionSource]> = [];
+    const published: string[] = [];
+    const notified: string[] = [];
+    const manual = Promise.withResolvers<string>();
+    const owner = new AbortController();
+    turn.signal = owner.signal;
+    let state: LiveSessionRunState = {
+      sessionId: turn.session.id,
+      threadId: "",
+      assistantText: "",
+      steps: [],
+      backgroundTasks: [],
+      usage: null,
+      errorMessage: "",
+      approvalRequest: null,
+      elicitationRequest: null,
+    };
+    const approval = new SessionApprovalService({
+      /** 有効な承認要求が切り替わったときだけ、公開された要約を記録する。 */
+      updateLiveSessionRun(_id, update) {
+        const next = update(state);
+        if (
+          next.approvalRequest &&
+          next.approvalRequest !== state.approvalRequest
+        )
+          published.push(next.approvalRequest.summary);
+        return (state = next);
       },
-    }),
-  });
-  const run = fixture(turn, {
-    async *permissionBurst() {
-      yield event("permission.asked", { id: "a", sessionID: "child", action: "read", resources: ["a.txt"] });
-      await started.promise;
-      yield event("permission.asked", { id: "b", sessionID: "child", action: "read", resources: ["b.txt"] });
-      yield event("permission.asked", { id: "c", sessionID: "child", action: "read", resources: ["c.txt"] });
-      yield event("permission.asked", { id: "d", sessionID: "child", action: "read", resources: ["d.txt"] });
-      yield event("permission.asked", { id: "e", sessionID: "child", action: "read", resources: ["e.txt"] });
-      yield {
-        id: crypto.randomUUID(),
-        created: 1,
-        type: "permission.replied",
-        data: { requestID: "b", sessionID: "child", reply: "reject" },
-      } satisfies Extract<OpenCodeEvent, { type: "permission.replied" }>;
+      /** 通知された要求を記録し、テスト側からその手動承認を解決できるようにする。 */
+      notifyApproval(_id, requestId) {
+        notified.push(state.approvalRequest!.summary);
+        manual.resolve(requestId);
+      },
+    });
+    const reviewer = new WithMateApprovalReviewTurn({
+      turnId: "source-turn",
+      source: {
+        kind: "main",
+        sessionId: turn.session.id,
+        incarnationId: "incarnation",
+      },
+      workspacePath: turn.session.workspacePath,
+      signal: owner.signal,
+      inputs: new ApprovalReviewInputFence(),
+      /** 審査側のポリシー自体は失効しない条件で、要求ごとの扱いを検証する。 */ policyCurrent:
+        () => true,
+      /** ネイティブ要求IDごとに結果を変える審査窓口を開く。 */
+      open: async () => ({
+        /** この審査スタブには終了時に解放すべき外部リソースがない。 */
+        close() {},
+        /** 受け取った操作ID・対象を記録し、先頭要求だけ後続到着までは審査を保留する。 */
+        async review(prompt) {
+          const { pendingOperation } = JSON.parse(prompt);
+          const { id, action, resources } = pendingOperation.operation;
+          reviewed.push([id, action, resources]);
+          if (id === "a") {
+            started.resolve();
+            await arrivals.promise;
+            return { decision: "allow_once", reason: "Authorized read." };
+          }
+          if (id === "c")
+            return { decision: "deny", reason: "Not authorized." };
+          if (id === "d")
+            return {
+              decision: "ask_user",
+              reason: "The user must choose this input.",
+            };
+          throw new Error("Synthetic reviewer failure");
+        },
+      }),
+    });
+    const run = fixture(turn, {
+      /** 先頭の審査中に別IDの到着と取消を差し込み、応答がすべて返るまで終端へ進ませない。 */
+      async *permissionBurst() {
+        yield event("permission.asked", {
+          id: "a",
+          sessionID: "child",
+          action: "read",
+          resources: ["a.txt"],
+        });
+        await started.promise;
+        yield event("permission.asked", {
+          id: "b",
+          sessionID: "child",
+          action: "read",
+          resources: ["b.txt"],
+        });
+        yield event("permission.asked", {
+          id: "c",
+          sessionID: "child",
+          action: "read",
+          resources: ["c.txt"],
+        });
+        yield event("permission.asked", {
+          id: "d",
+          sessionID: "child",
+          action: "read",
+          resources: ["d.txt"],
+        });
+        yield event("permission.asked", {
+          id: "e",
+          sessionID: "child",
+          action: "read",
+          resources: ["e.txt"],
+        });
+        yield {
+          id: crypto.randomUUID(),
+          created: 1,
+          type: "permission.replied",
+          data: { requestID: "b", sessionID: "child", reply: "reject" },
+        } satisfies Extract<OpenCodeEvent, { type: "permission.replied" }>;
+        arrivals.resolve();
+        await lastReply.promise;
+      },
+    });
+    run.client.permission.reply = async ({
+      sessionID,
+      requestID,
+      decision,
+    }) => {
+      replies.push([sessionID, requestID, decision]);
+      if (requestID === "e") lastReply.resolve();
+    };
+    turn.onApprovalRequest = (request, signal, native) => {
+      assert.ok(signal && native);
+      const { id } = native.operation as { id: string };
+      return approval.waitForLiveApprovalDecision(
+        turn.session.id,
+        request,
+        signal,
+        reviewer.pending(request, native),
+        (source) => {
+          sources.push([id, source]);
+        },
+      );
+    };
+    const result = run.adapter.runSessionTurn(turn, () => {});
+    try {
+      const requestId = await Promise.race([
+        manual.promise,
+        result.then(() =>
+          assert.fail("Turn ended without asking for the current read"),
+        ),
+      ]);
+      assert.deepEqual(reviewed, [
+        ["a", "read", ["a.txt"]],
+        ["c", "read", ["c.txt"]],
+        ["d", "read", ["d.txt"]],
+      ]);
+      assert.deepEqual(sources, [
+        ["a", "reviewer"],
+        ["c", "reviewer"],
+      ]);
+      assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+      assert.deepEqual(replies, [
+        ["child", "a", "once"],
+        ["child", "c", "reject"],
+      ]);
+      approval.resolveLiveApproval(turn.session.id, requestId, "approve");
+      await result;
+      assert.deepEqual(reviewed, [
+        ["a", "read", ["a.txt"]],
+        ["c", "read", ["c.txt"]],
+        ["d", "read", ["d.txt"]],
+        ["e", "read", ["e.txt"]],
+      ]);
+      assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
+      assert.deepEqual(sources, [
+        ["a", "reviewer"],
+        ["c", "reviewer"],
+        ["d", "manual"],
+        ["e", "blocked"],
+      ]);
+      assert.deepEqual(replies, [
+        ["child", "a", "once"],
+        ["child", "c", "reject"],
+        ["child", "d", "once"],
+        ["child", "e", "reject"],
+      ]);
+    } finally {
+      owner.abort();
+      started.resolve();
       arrivals.resolve();
-      await lastReply.promise;
-    },
-  });
-  run.client.permission.reply = async ({ sessionID, requestID, decision }) => {
-    replies.push([sessionID, requestID, decision]);
-    if (requestID === "e") lastReply.resolve();
-  };
-  turn.onApprovalRequest = (request, signal, native) => {
-    assert.ok(signal && native);
-    const { id } = native.operation as { id: string };
-    return approval.waitForLiveApprovalDecision(turn.session.id, request, signal, reviewer.pending(request, native),
-      (source) => { sources.push([id, source]); });
-  };
-  const result = run.adapter.runSessionTurn(turn, () => {});
-  try {
-    const requestId = await Promise.race([manual.promise, result.then(() => assert.fail("Turn ended without asking for the current read"))]);
-    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]], ["d", "read", ["d.txt"]]]);
-    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"]]);
-    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
-    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"]]);
-    approval.resolveLiveApproval(turn.session.id, requestId, "approve");
-    await result;
-    assert.deepEqual(reviewed, [["a", "read", ["a.txt"]], ["c", "read", ["c.txt"]],
-      ["d", "read", ["d.txt"]], ["e", "read", ["e.txt"]]]);
-    assert.deepEqual([published, notified], [["d.txt"], ["d.txt"]]);
-    assert.deepEqual(sources, [["a", "reviewer"], ["c", "reviewer"], ["d", "manual"], ["e", "blocked"]]);
-    assert.deepEqual(replies, [["child", "a", "once"], ["child", "c", "reject"], ["child", "d", "once"], ["child", "e", "reject"]]);
-  } finally {
-    owner.abort();
-    started.resolve();
-    arrivals.resolve();
-    lastReply.resolve();
-    await result.catch(() => undefined);
-  }
-});
+      lastReply.resolve();
+      await result.catch(() => undefined);
+    }
+  },
+);
 
+/** 旧DBと現行環境の別トランスポートを用意し、親子の移行と途中失敗を観測できるようにする。 */
 async function migrationFixture(turn: RunSessionTurnInput) {
-  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "withmate-opencode-migration-"));
+  const temporaryDirectory = await mkdtemp(
+    path.join(tmpdir(), "withmate-opencode-migration-"),
+  );
   const databasePath = path.join(temporaryDirectory, "source.db");
   await writeFile(databasePath, "");
   const run = fixture(turn);
@@ -217,48 +657,129 @@ async function migrationFixture(turn: RunSessionTurnInput) {
   let failing = false;
   const root = await run.client.session.get({ sessionID: "root" });
   const child = { ...root, id: "child", parentID: "root" };
-  const source = { session: {
-    get: async ({ sessionID }: { sessionID: string }) => { calls.push(`source:get:${sessionID}`); return sessionID === "root" ? root : child; },
-    inbox: { list: async ({ sessionID }: { sessionID: string }) => pending && sessionID === "root" ? [{ id: "old", type: "user", payload: { metadata: { withmateOwner: root.metadata!.withmateOwner, withmateRequestID: "old" } } }] : [],
-      cancel: async () => { calls.push("source:cancel"); pending = false; } },
-    active: async () => ({}),
-    list: async ({ parentID }: { parentID?: string | null }) => ({ data: parentID === "root" ? [child] : [], cursor: {} }),
-    export: async ({ sessionID }: { sessionID: string }): Promise<SessionTransferData> => {
-      calls.push(`source:export:${sessionID}`);
-      assert.equal(pending, false, "source preflight precedes export");
-      return { info: sessionID === "root" ? root : child, messages: [{ id: `history-${sessionID}`, type: "user", text: "saved conversation", time: { created: 1 } }] };
+  const source = {
+    session: {
+      /** 旧環境で照会されたIDを記録し、保存された親または子を返す。 */
+      get: async ({ sessionID }: { sessionID: string }) => {
+        calls.push(`source:get:${sessionID}`);
+        return sessionID === "root" ? root : child;
+      },
+      inbox: {
+        /** 未取消の旧入力を、親会話の照会でだけ返す。 */ list: async ({
+          sessionID,
+        }: {
+          sessionID: string;
+        }) =>
+          pending && sessionID === "root"
+            ? [
+                {
+                  id: "old",
+                  type: "user",
+                  payload: {
+                    metadata: {
+                      withmateOwner: root.metadata!.withmateOwner,
+                      withmateRequestID: "old",
+                    },
+                  },
+                },
+              ]
+            : [],
+        /** 旧環境の親会話から入力を取り消し、移行前の準備を記録する。 */
+        cancel: async () => {
+          calls.push("source:cancel");
+          pending = false;
+        },
+      },
+      /** 旧環境には稼働中の操作がないものとして、移行を続行できる状態を返す。 */
+      active: async () => ({}),
+      /** ルートを指定した照会だけに、転送対象の子を返す。 */
+      list: async ({ parentID }: { parentID?: string | null }) => ({
+        data: parentID === "root" ? [child] : [],
+        cursor: {},
+      }),
+      /** 旧入力の取消完了を確かめてから、指定会話の履歴を転送用に返す。 */
+      export: async ({
+        sessionID,
+      }: {
+        sessionID: string;
+      }): Promise<SessionTransferData> => {
+        calls.push(`source:export:${sessionID}`);
+        assert.equal(pending, false, "source preflight precedes export");
+        return {
+          info: sessionID === "root" ? root : child,
+          messages: [
+            {
+              id: `history-${sessionID}`,
+              type: "user",
+              text: "saved conversation",
+              time: { created: 1 },
+            },
+          ],
+        };
+      },
     },
-  } } as unknown as OpenCodeClient;
+  } as unknown as OpenCodeClient;
   run.client.session.get = async ({ sessionID }) => {
-    if (!targetData.has(sessionID)) throw { _tag: "SessionNotFoundError", sessionID, message: "missing" };
+    if (!targetData.has(sessionID))
+      throw { _tag: "SessionNotFoundError", sessionID, message: "missing" };
     return targetData.get(sessionID)!.info;
   };
   run.client.session.import = async (data) => {
     calls.push(`target:import:${data.info.id}`);
-    if (failing && data.info.id === "child") throw new Error("migration unavailable");
-    const stored = structuredClone({ info: data.info, messages: data.messages }) as SessionTransferData;
+    if (failing && data.info.id === "child")
+      throw new Error("migration unavailable");
+    const stored = structuredClone({
+      info: data.info,
+      messages: data.messages,
+    }) as SessionTransferData;
     targetData.set(data.info.id, stored);
     return stored.info;
   };
   const nativePrompt = run.client.session.prompt;
   run.client.session.prompt = async (...args) => {
     calls.push("target:prompt");
-    assert.ok(targetData.has("child"), "the family is transferred before admitting a turn");
+    assert.ok(
+      targetData.has("child"),
+      "the family is transferred before admitting a turn",
+    );
     return nativePrompt(...args);
   };
-  const adapter = new OpenCodeAdapter({ legacyDatabasePath: databasePath, createTransport: (options) => {
-    transports.push(options);
-    const label = options.databasePath ? "source" : "target";
-    return { start: async () => { calls.push(`${label}:start`); return options.databasePath ? source : run.client; },
-      close: async () => { calls.push(`${label}:close`); }, whenClosed: () => Promise.resolve() };
-  } });
-  return { adapter, calls, transports, targetData, getPrompt: run.getPrompt, fail: (value: boolean) => { failing = value; },
-    dispose: () => rm(temporaryDirectory, { recursive: true, force: true }) };
+  const adapter = new OpenCodeAdapter({
+    legacyDatabasePath: databasePath,
+    /** DBパスが付いた旧環境と通常の現行環境を区別し、起動設定を記録する。 */ createTransport:
+      (options) => {
+        transports.push(options);
+        const label = options.databasePath ? "source" : "target";
+        return {
+          /** 起動した環境名を記録し、対応するSDKスタブを返す。 */ start:
+            async () => {
+              calls.push(`${label}:start`);
+              return options.databasePath ? source : run.client;
+            },
+          /** 移行元と移行先それぞれの終了回数を記録する。 */ close:
+            async () => {
+              calls.push(`${label}:close`);
+            },
+          /** 移行検証では終了通知が待たずに得られるようにする。 */ whenClosed:
+            () => Promise.resolve(),
+        };
+      },
+  });
+  return {
+    adapter,
+    calls,
+    transports,
+    targetData,
+    getPrompt: run.getPrompt,
+    /** 次回の移行で子のインポートだけ失敗させるかを切り替える。 */ fail: (
+      value: boolean,
+    ) => {
+      failing = value;
+    },
+    /** 旧DB検出に使った一時ディレクトリを取り除く。 */
+    dispose: () => rm(temporaryDirectory, { recursive: true, force: true }),
+  };
 }
-
-
-
-
 
 // @test-value v2
 // kind = "contract"
@@ -279,11 +800,27 @@ it("OpenCode completes only the current root request and replaces provisional te
   const result = await run.adapter.runSessionTurn(turn);
   assert.equal(run.calls.filter((call) => call === "prompt").length, 1);
   assert.ok(run.calls.indexOf("connected") < run.calls.indexOf("prompt"));
-  assert.equal(run.getPrompt()!.text, run.adapter.composePrompt(turn).logicalPrompt.composedText);
-  assert.match(run.getPrompt()!.text, /# Session Instructions\n\nOpenCode 固定指示 🧭\n\n#/);
-  assert.equal(run.getPrompt()!.metadata?.withmateRequestID, run.getPrompt()!.id);
-  assert.equal(result.threadId, "native:root"); assert.equal(result.assistantText, "final");
-  assert.deepEqual(result.usage, { inputTokens: 12, cachedInputTokens: 2, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 17 });
+  assert.equal(
+    run.getPrompt()!.text,
+    run.adapter.composePrompt(turn).logicalPrompt.composedText,
+  );
+  assert.match(
+    run.getPrompt()!.text,
+    /# Session Instructions\n\nOpenCode 固定指示 🧭\n\n#/,
+  );
+  assert.equal(
+    run.getPrompt()!.metadata?.withmateRequestID,
+    run.getPrompt()!.id,
+  );
+  assert.equal(result.threadId, "native:root");
+  assert.equal(result.assistantText, "final");
+  assert.deepEqual(result.usage, {
+    inputTokens: 12,
+    cachedInputTokens: 2,
+    outputTokens: 5,
+    reasoningOutputTokens: 0,
+    totalTokens: 17,
+  });
   assert.equal(run.calls.at(-1), "close");
 });
 
@@ -299,21 +836,53 @@ it("OpenCode completes only the current root request and replaces provisional te
 // impact = "100件を超えるturnが失敗する、または回答を正しい順序で表示できなくなる"
 // distinction = "単一pageのturn testと型検査では、cursor付き要求のAPI制約とpage間の順序を確認できない"
 // @end-test-value
+/** 降順の最初のページで入力が見つからない場合、次のページをカーソルだけで照会して履歴を復元する。 */
 it("OpenCode continues descending message pages with the cursor alone", async () => {
-  const turn = input(); const run = fixture(turn);
+  const turn = input();
+  const run = fixture(turn);
   const requests: Array<Parameters<typeof run.client.message.list>[0]> = [];
-  const assistant = (id: string, text?: string): SessionMessageInfo => ({ id, type: "assistant", time: { created: 3 }, agent: "build",
-    model: { providerID: "opencode-go", id: "glm-5.3" }, content: text ? [{ type: "text", text }] : [] });
+  /** ページをまたいで取得される応答として、任意の本文を含むアシスタントメッセージを作る。 */
+  const assistant = (id: string, text?: string): SessionMessageInfo => ({
+    id,
+    type: "assistant",
+    time: { created: 3 },
+    agent: "build",
+    model: { providerID: "opencode-go", id: "glm-5.3" },
+    content: text ? [{ type: "text", text }] : [],
+  });
   run.client.message.list = async (request) => {
     requests.push(request);
-    if (!request.cursor) return { data: [
-      { id: "idle", type: "idle", outcome: "succeeded", time: { created: 4 } }, assistant("newest", "final"),
-      ...Array.from({ length: 98 }, (_, index) => assistant(`filler-${index}`)),
-    ], cursor: { next: "next-page" } };
+    if (!request.cursor)
+      return {
+        data: [
+          {
+            id: "idle",
+            type: "idle",
+            outcome: "succeeded",
+            time: { created: 4 },
+          },
+          assistant("newest", "final"),
+          ...Array.from({ length: 98 }, (_, index) =>
+            assistant(`filler-${index}`),
+          ),
+        ],
+        cursor: { next: "next-page" },
+      };
     const prompt = run.getPrompt()!;
-    return { data: [assistant("older", "earlier"),
-      { id: prompt.id!, type: "user", text: prompt.text, metadata: prompt.metadata, time: { created: 2 } },
-      assistant("prior-turn", "must not appear")], cursor: {} };
+    return {
+      data: [
+        assistant("older", "earlier"),
+        {
+          id: prompt.id!,
+          type: "user",
+          text: prompt.text,
+          metadata: prompt.metadata,
+          time: { created: 2 },
+        },
+        assistant("prior-turn", "must not appear"),
+      ],
+      cursor: {},
+    };
   };
   const result = await run.adapter.runSessionTurn(turn);
   assert.deepEqual(requests, [
@@ -335,14 +904,19 @@ it("OpenCode continues descending message pages with the cursor alone", async ()
 // impact = "終了済みturnの結果取得が無限に続く"
 // distinction = "正常なcursorのpage testではcursor停滞時の終了を確認できない"
 // @end-test-value
+/** 後続ページでカーソルが進まない場合に、履歴取得を繰り返さず失敗することを確認する。 */
 it("OpenCode rejects a repeated message cursor", async () => {
-  const turn = input(); const run = fixture(turn);
+  const turn = input();
+  const run = fixture(turn);
   let requests = 0;
   run.client.message.list = async () => {
     if (++requests > 2) throw new Error("Unexpected extra message page");
     return { data: [], cursor: { next: "same-cursor" } };
   };
-  await assert.rejects(run.adapter.runSessionTurn(turn), /messages cursor did not advance/);
+  await assert.rejects(
+    run.adapter.runSessionTurn(turn),
+    /messages cursor did not advance/,
+  );
   assert.equal(requests, 2);
 });
 
@@ -358,20 +932,42 @@ it("OpenCode rejects a repeated message cursor", async () => {
 // impact = "別のmessageを境界として誤認し、今回のturnの結果を誤って確定する"
 // distinction = "正常な複数pageのtestではID以外の帰属照合を確認できない"
 // @end-test-value
+/** 後続ページの項目もIDだけでは現在入力と認めず、種別と要求メタデータを照合する。 */
 it("OpenCode rejects unattributable current input on a later page", async () => {
   for (const mismatch of ["type", "metadata"] as const) {
-    const turn = input(); const run = fixture(turn);
+    const turn = input();
+    const run = fixture(turn);
     let requests = 0;
     run.client.message.list = async (request) => {
       requests++;
       if (!request.cursor) return { data: [], cursor: { next: "next-page" } };
       const prompt = run.getPrompt()!;
-      const message: SessionMessageInfo = mismatch === "type"
-        ? { id: prompt.id!, type: "assistant", time: { created: 2 }, agent: "build", model: { providerID: "opencode-go", id: "glm-5.3" }, content: [] }
-        : { id: prompt.id!, type: "user", text: prompt.text, metadata: { ...prompt.metadata, withmateRequestID: "other-request" }, time: { created: 2 } };
+      const message: SessionMessageInfo =
+        mismatch === "type"
+          ? {
+              id: prompt.id!,
+              type: "assistant",
+              time: { created: 2 },
+              agent: "build",
+              model: { providerID: "opencode-go", id: "glm-5.3" },
+              content: [],
+            }
+          : {
+              id: prompt.id!,
+              type: "user",
+              text: prompt.text,
+              metadata: {
+                ...prompt.metadata,
+                withmateRequestID: "other-request",
+              },
+              time: { created: 2 },
+            };
       return { data: [message], cursor: {} };
     };
-    await assert.rejects(run.adapter.runSessionTurn(turn), /request attribution mismatch/);
+    await assert.rejects(
+      run.adapter.runSessionTurn(turn),
+      /request attribution mismatch/,
+    );
     assert.equal(requests, 2);
   }
 });
@@ -388,10 +984,15 @@ it("OpenCode rejects unattributable current input on a later page", async () => 
 // impact = "切断時の回答消失と入力二重実行を防ぐ"
 // distinction = "正常終端testはEOF経路のpartial保存を通らない"
 // @end-test-value
+/** イベント切断で本文の途中結果とネイティブスレッドを保持し、入力をもう一度送らない。 */
 it("OpenCode preserves partial result and does not resend after stream EOF", async () => {
-  const turn = input("native:root"); const run = fixture(turn, { disconnect: true });
+  const turn = input("native:root");
+  const run = fixture(turn, { disconnect: true });
   await assert.rejects(run.adapter.runSessionTurn(turn), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError); assert.equal(error.partialResult.threadId, "native:root"); assert.equal(error.partialResult.assistantText, "partial"); return true;
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.partialResult.threadId, "native:root");
+    assert.equal(error.partialResult.assistantText, "partial");
+    return true;
   });
   assert.equal(run.calls.filter((call) => call === "prompt").length, 1);
   assert.ok(run.calls.indexOf("interrupt") < run.calls.indexOf("close"));
@@ -411,14 +1012,26 @@ it("OpenCode preserves partial result and does not resend after stream EOF", asy
 // impact = "取消済み入力の遅延実行と別所有入力の破壊を防ぐ"
 // distinction = "通常正常系と型は永続inboxの所有照合を検査しない"
 // @end-test-value
+/** 次の入力前に同一所有者に帰属する旧入力だけを取り消し、帰属不能なら送信前に止める。 */
 it("OpenCode cancels only attributable pending inputs before the next prompt", async () => {
-  const turn = input("native:root"); const known = fixture(turn, { pendingInbox: true });
+  const turn = input("native:root");
+  const known = fixture(turn, { pendingInbox: true });
   await known.adapter.runSessionTurn(turn);
-  assert.ok(known.calls.indexOf("cancel-inbox") < known.calls.indexOf("prompt"));
-  for (const unknownInbox of ["synthetic", "owner-id", "incarnation"] as const) {
+  assert.ok(
+    known.calls.indexOf("cancel-inbox") < known.calls.indexOf("prompt"),
+  );
+  for (const unknownInbox of [
+    "synthetic",
+    "owner-id",
+    "incarnation",
+  ] as const) {
     const unknown = fixture(turn, { unknownInbox });
-    await assert.rejects(unknown.adapter.runSessionTurn(turn), /unknown ownership/);
-    assert.ok(!unknown.calls.includes("cancel-inbox")); assert.ok(!unknown.calls.includes("prompt"));
+    await assert.rejects(
+      unknown.adapter.runSessionTurn(turn),
+      /unknown ownership/,
+    );
+    assert.ok(!unknown.calls.includes("cancel-inbox"));
+    assert.ok(!unknown.calls.includes("prompt"));
   }
 });
 
@@ -434,17 +1047,30 @@ it("OpenCode cancels only attributable pending inputs before the next prompt", a
 // impact = "旧processと次turnの二重実行を防ぐ"
 // distinction = "transport終了testはadapterとruntime間のguard接続を通らない"
 // @end-test-value
+/** 終了要求がタイムアウトしても実プロセスの終了前は同じ作業領域やスレッドで再開しない。 */
 it("OpenCode retains its guard until actual process cleanup", async () => {
-  const turn = input(); const run = fixture(turn, { cleanupPending: true });
-  let pending: Promise<void> | undefined; turn.onCleanupPending = (completion) => { pending = completion; };
-  await run.adapter.runSessionTurn(turn); assert.ok(pending);
+  const turn = input();
+  const run = fixture(turn, { cleanupPending: true });
+  let pending: Promise<void> | undefined;
+  turn.onCleanupPending = (completion) => {
+    pending = completion;
+  };
+  await run.adapter.runSessionTurn(turn);
+  assert.ok(pending);
   await assert.rejects(run.adapter.runSessionTurn(turn), /terminating/);
   const sameWorkspace = input();
-  await assert.rejects(run.adapter.runSessionTurn(sameWorkspace), /workspace or thread is still terminating/);
+  await assert.rejects(
+    run.adapter.runSessionTurn(sameWorkspace),
+    /workspace or thread is still terminating/,
+  );
   const sameThread = input("native:root");
   sameThread.executionWorkspacePath = path.dirname(process.cwd());
-  await assert.rejects(run.adapter.runSessionTurn(sameThread), /workspace or thread is still terminating/);
-  run.release(); await pending;
+  await assert.rejects(
+    run.adapter.runSessionTurn(sameThread),
+    /workspace or thread is still terminating/,
+  );
+  run.release();
+  await pending;
   await run.adapter.runSessionTurn(turn);
 });
 
@@ -461,26 +1087,42 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
 // impact = "別turnまで残るproject権限や質問回答の取り違えを防ぐ"
 // distinction = "共通UIのtestはOpenCode native reply変換と子帰属を通らない"
 // @end-test-value
+/** 子会話の承認とフォームを共通経路に流し、強制拒否の操作に恒久許可を与えない。 */
 it("OpenCode routes child permissions and typed forms without permanent grants", async () => {
   for (const [mode, decision, action, reply, expectedApprovals] of [
-    ["on-request", "approve", "bash", "once", 1], ["on-request", "deny", "bash", "reject", 1],
-    ["never", "deny", "bash", "once", 0], ["safety-focused", "approve", "bash", "reject", 0],
-    ["never", "approve", "subagent", "reject", 0], ["on-request", "approve", "opencode_session_move", "reject", 0],
+    ["on-request", "approve", "bash", "once", 1],
+    ["on-request", "deny", "bash", "reject", 1],
+    ["never", "deny", "bash", "once", 0],
+    ["safety-focused", "approve", "bash", "reject", 0],
+    ["never", "approve", "subagent", "reject", 0],
+    ["on-request", "approve", "opencode_session_move", "reject", 0],
   ] as const) {
-    const turn = input(); turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
+    const turn = input();
+    turn.executionOptions = { ...turn.executionOptions, approvalMode: mode };
     let approvals = 0;
     turn.onApprovalRequest = (request, _signal, review) => {
       approvals++;
       assert.equal(request.provider, "opencode");
-      assert.deepEqual(review?.operation, { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+      assert.deepEqual(review?.operation, {
+        id: "permission",
+        sessionID: "child",
+        action: "bash",
+        resources: ["echo test"],
+      });
       assert.equal(review?.isCurrent?.(), true);
       return decision;
     };
-    turn.onElicitationRequest = (request) => { assert.equal(request.fields[0].name, "answer"); return { action: "accept", content: { answer: "yes" } }; };
+    turn.onElicitationRequest = (request) => {
+      assert.equal(request.fields[0].name, "answer");
+      return { action: "accept", content: { answer: "yes" } };
+    };
     const run = fixture(turn, { interactions: true, permissionAction: action });
     await run.adapter.runSessionTurn(turn);
     assert.equal(approvals, expectedApprovals);
-    assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:")), [`permission:${reply}`]);
+    assert.deepEqual(
+      run.calls.filter((call) => call.startsWith("permission:")),
+      [`permission:${reply}`],
+    );
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
   }
 });
@@ -497,47 +1139,106 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
 // impact = "標準question toolによるturn失敗と回答の欠落を防ぐ"
 // distinction = "共通UI testはOpenCode form.createdからnative replyまでの変換とturn完了を通らず、型検査だけではcustomの拒否を検出しない"
 // @end-test-value
+/** 質問の単一・複数選択と自由入力を元のキーで回答し、受理済みの要求を履歴に通知する。 */
 it("OpenCode completes question forms with selected and custom answers", async () => {
-  const options = [{ value: "a", label: "A", description: "First choice" }, { value: "b", label: "B" }];
-  const single = { key: "q0", title: "Direction", description: "Which direction?", type: "string", options, custom: true } as const;
-  const multiple = { key: "q1", title: "Tools", type: "multiselect", options, custom: true } as const;
-  const cases: Array<{ fields: FormInfo1["fields"]; answer: Record<string, string | string[]> }> = [
+  const options = [
+    { value: "a", label: "A", description: "First choice" },
+    { value: "b", label: "B" },
+  ];
+  const single = {
+    key: "q0",
+    title: "Direction",
+    description: "Which direction?",
+    type: "string",
+    options,
+    custom: true,
+  } as const;
+  const multiple = {
+    key: "q1",
+    title: "Tools",
+    type: "multiselect",
+    options,
+    custom: true,
+  } as const;
+  const cases: Array<{
+    fields: FormInfo1["fields"];
+    answer: Record<string, string | string[]>;
+  }> = [
     { fields: [single], answer: { q0: "a" } },
     { fields: [single], answer: { q0: "Another direction\nwith details" } },
     { fields: [multiple], answer: { q1: ["a", "Another tool\nwith details"] } },
-    { fields: [single, multiple], answer: { q0: "b", q1: ["a", "Custom tool"] } },
-    { fields: [{ ...single, options: [] }, { ...multiple, options: [] }], answer: { q0: "Custom direction", q1: ["Custom tool"] } },
+    {
+      fields: [single, multiple],
+      answer: { q0: "b", q1: ["a", "Custom tool"] },
+    },
+    {
+      fields: [
+        { ...single, options: [] },
+        { ...multiple, options: [] },
+      ],
+      answer: { q0: "Custom direction", q1: ["Custom tool"] },
+    },
   ];
   for (const scenario of cases) {
     const turn = input();
     let questions = 0;
     let displayedRequestId = "";
     const delivered: string[] = [];
-    turn.onElicitationDelivered = (id) => { delivered.push(id); };
+    turn.onElicitationDelivered = (id) => {
+      delivered.push(id);
+    };
     turn.onElicitationRequest = (request) => {
       questions++;
       displayedRequestId = request.requestId;
       assert.equal(request.provider, "opencode");
       assert.equal(request.kind, "question");
       assert.equal(request.blocking, true);
-      assert.deepEqual(request.fields.map((field) => field.name), scenario.fields.map((field) => field.key));
+      assert.deepEqual(
+        request.fields.map((field) => field.name),
+        scenario.fields.map((field) => field.key),
+      );
       for (const field of request.fields) {
         assert.equal(field.required, true);
-        assert.equal(field.type, field.name === "q0" ? "select" : "multi-select");
+        assert.equal(
+          field.type,
+          field.name === "q0" ? "select" : "multi-select",
+        );
         assert.ok(field.type === "select" || field.type === "multi-select");
         assert.equal(field.allowFreeText, true);
-        assert.deepEqual(field.options, "options" in scenario.fields[0] && scenario.fields[0].options?.length ? [{ value: "a", label: "A — First choice" }, { value: "b", label: "B" }] : []);
+        assert.deepEqual(
+          field.options,
+          "options" in scenario.fields[0] && scenario.fields[0].options?.length
+            ? [
+                { value: "a", label: "A — First choice" },
+                { value: "b", label: "B" },
+              ]
+            : [],
+        );
       }
       assert.equal(request.fields[0].title, scenario.fields[0].title);
-      assert.equal(request.fields[0].description, scenario.fields[0].description);
+      assert.equal(
+        request.fields[0].description,
+        scenario.fields[0].description,
+      );
       return { action: "accept", content: scenario.answer };
     };
-    const run = fixture(turn, { form: { id: "form", sessionID: "root", title: "Questions", metadata: { kind: "question" }, fields: scenario.fields } });
+    const run = fixture(turn, {
+      form: {
+        id: "form",
+        sessionID: "root",
+        title: "Questions",
+        metadata: { kind: "question" },
+        fields: scenario.fields,
+      },
+    });
     const result = await run.adapter.runSessionTurn(turn);
     assert.equal(questions, 1);
     assert.deepEqual(delivered, [displayedRequestId]);
     assert.equal(result.assistantText, "final");
-    assert.deepEqual(run.calls.filter((call) => call.startsWith("form:")), [`form:${JSON.stringify(scenario.answer)}`]);
+    assert.deepEqual(
+      run.calls.filter((call) => call.startsWith("form:")),
+      [`form:${JSON.stringify(scenario.answer)}`],
+    );
   }
 });
 
@@ -553,15 +1254,31 @@ it("OpenCode completes question forms with selected and custom answers", async (
 // impact = "送信済み選択を見返せないか、選んでいない回答を表示する"
 // distinction = "通常往復fixtureはnative reply完了がイベントより先に返るため競合を検出しない"
 // @end-test-value
+/** フォームのRPC応答より先に通知が届いても、同じフォームで回答内容が一致した場合にだけ確定する。 */
 it("OpenCode confirms only the matching early form reply", async () => {
   for (const replyEvent of ["matching", "different"] as const) {
     const turn = input();
     const delivered: string[] = [];
     let requestId = "";
-    turn.onElicitationRequest = (request) => { requestId = request.requestId; return { action: "accept", content: { q: "a" } }; };
-    turn.onElicitationDelivered = (id) => { delivered.push(id); };
-    const run = fixture(turn, { replyEvent, form: { id: "form", sessionID: "root", title: "Choose", metadata: { kind: "question" },
-      fields: [{ key: "q", type: "string", options: [{ value: "a", label: "A" }] }] } });
+    turn.onElicitationRequest = (request) => {
+      requestId = request.requestId;
+      return { action: "accept", content: { q: "a" } };
+    };
+    turn.onElicitationDelivered = (id) => {
+      delivered.push(id);
+    };
+    const run = fixture(turn, {
+      replyEvent,
+      form: {
+        id: "form",
+        sessionID: "root",
+        title: "Choose",
+        metadata: { kind: "question" },
+        fields: [
+          { key: "q", type: "string", options: [{ value: "a", label: "A" }] },
+        ],
+      },
+    });
     await run.adapter.runSessionTurn(turn);
     assert.deepEqual(delivered, replyEvent === "matching" ? [requestId] : []);
   }
@@ -578,16 +1295,47 @@ it("OpenCode confirms only the matching early form reply", async () => {
 // lifecycle = "permanent"
 // distinction = "question往復fixtureにはgeneric formのoptionalとnativeの明示制約がなく、型検査は値の保持を検出しない"
 // @end-test-value
+/** 質問固有の必須既定値を一般フォームに広げず、明示的な必須指定や選択制約・既定値を保持する。 */
 it("OpenCode preserves explicit form constraints outside question defaults", () => {
-  const form: FormInfo1 = { id: "form", sessionID: "root", title: "Form", fields: [
-    { key: "text", type: "string" },
-    { key: "choice", type: "string", required: false, custom: false, options: [{ value: "a", label: "A" }], default: "a" },
-    { key: "many", type: "multiselect", required: true, custom: true, options: [{ value: "a", label: "A" }], default: ["a"], minItems: 1, maxItems: 2 },
-  ] };
+  const form: FormInfo1 = {
+    id: "form",
+    sessionID: "root",
+    title: "Form",
+    fields: [
+      { key: "text", type: "string" },
+      {
+        key: "choice",
+        type: "string",
+        required: false,
+        custom: false,
+        options: [{ value: "a", label: "A" }],
+        default: "a",
+      },
+      {
+        key: "many",
+        type: "multiselect",
+        required: true,
+        custom: true,
+        options: [{ value: "a", label: "A" }],
+        default: ["a"],
+        minItems: 1,
+        maxItems: 2,
+      },
+    ],
+  };
   const generic = buildOpenCodeElicitation(form, "generic").fields;
-  assert.deepEqual(generic.map((field) => field.required), [false, false, true]);
-  const question = buildOpenCodeElicitation({ ...form, metadata: { kind: "question" } }, "question").fields;
-  assert.deepEqual(question.map((field) => field.required), [true, false, true]);
+  assert.deepEqual(
+    generic.map((field) => field.required),
+    [false, false, true],
+  );
+  const question = buildOpenCodeElicitation(
+    { ...form, metadata: { kind: "question" } },
+    "question",
+  ).fields;
+  assert.deepEqual(
+    question.map((field) => field.required),
+    [true, false, true],
+  );
   const choice = question[1];
   assert.equal(choice.type, "select");
   assert.ok(choice.type === "select");
@@ -613,12 +1361,26 @@ it("OpenCode preserves explicit form constraints outside question defaults", () 
 // lifecycle = "permanent"
 // distinction = "renderer testと型検査はnative formから制約値が引き継がれることを保証しない"
 // @end-test-value
+/** 選択肢付きの文字列でも自由入力の可否に関係なく、長さと形式を共通フィールドに残す。 */
 it("OpenCode retains native string constraints on selection fields", () => {
   for (const format of ["email", "uri", "date", "date-time"] as const) {
     for (const custom of [true, false]) {
-      const form: FormInfo1 = { id: "form", sessionID: "root", title: "Constrained", fields: [
-        { key: "answer", type: "string", options: [{ value: "preset", label: "Preset" }], custom, minLength: 3, maxLength: 50, format },
-      ] };
+      const form: FormInfo1 = {
+        id: "form",
+        sessionID: "root",
+        title: "Constrained",
+        fields: [
+          {
+            key: "answer",
+            type: "string",
+            options: [{ value: "preset", label: "Preset" }],
+            custom,
+            minLength: 3,
+            maxLength: 50,
+            format,
+          },
+        ],
+      };
       const field = buildOpenCodeElicitation(form, "request").fields[0];
       assert.equal(field.type, "select");
       assert.ok(field.type === "select");
@@ -644,20 +1406,40 @@ it("OpenCode retains native string constraints on selection fields", () => {
 // impact = "終了済みturnの承認がnativeへ届く権限付与と、その拒否による成功結果の失敗化を防ぐ"
 // distinction = "子interaction往復testは終端前に回答が完了し、終端と回答の競合を通らない"
 // @end-test-value
+/** ルート終了後に承認やフォーム回答が届いてもネイティブへ送らず、正常な最終結果を保持する。 */
 it("OpenCode ignores interaction answers resolved after root completion", async () => {
   for (const lateInteraction of ["permission", "form"] as const) {
     const turn = input();
     let resolveRequest: (() => void) | undefined;
-    turn.onApprovalRequest = () => new Promise((resolve) => { resolveRequest = () => resolve("approve"); });
-    turn.onElicitationRequest = () => new Promise((resolve) => { resolveRequest = () => resolve({ action: "accept", content: { answer: "yes" } }); });
-    const run = fixture(turn, { lateInteraction, holdSnapshot: async () => {
-      assert.ok(resolveRequest, `the ${lateInteraction} request is pending when the root completes`);
-      resolveRequest();
-      await new Promise((resolve) => setImmediate(resolve));
-    } });
+    turn.onApprovalRequest = () =>
+      new Promise((resolve) => {
+        resolveRequest = () => resolve("approve");
+      });
+    turn.onElicitationRequest = () =>
+      new Promise((resolve) => {
+        resolveRequest = () =>
+          resolve({ action: "accept", content: { answer: "yes" } });
+      });
+    const run = fixture(turn, {
+      lateInteraction,
+      /** ルート終了後の履歴取得を留め、その間に遅れた対話の回答を解決する。 */ holdSnapshot:
+        async () => {
+          assert.ok(
+            resolveRequest,
+            `the ${lateInteraction} request is pending when the root completes`,
+          );
+          resolveRequest();
+          await new Promise((resolve) => setImmediate(resolve));
+        },
+    });
     const result = await run.adapter.runSessionTurn(turn);
     assert.equal(result.assistantText, "final");
-    assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:") || call.startsWith("form:")), []);
+    assert.deepEqual(
+      run.calls.filter(
+        (call) => call.startsWith("permission:") || call.startsWith("form:"),
+      ),
+      [],
+    );
   }
 });
 
@@ -674,20 +1456,45 @@ it("OpenCode ignores interaction answers resolved after root completion", async 
 // impact = "並行turnが別actorのMCP credentialを使うか異なるnative locationへ接続することを防ぐ"
 // distinction = "managed MCP host側testはnative location登録や並行provider変換を通らない"
 // @end-test-value
+/** 並行ターンは同じ作業場所でも自身のトークンだけを、場所を明示した管理MCP登録へ渡す。 */
 it("OpenCode keeps per-turn managed MCP tokens at an explicit native location", async () => {
   const turns = [input(), input()];
-  turns.forEach((turn, index) => { turn.agentRuntimeBinding = { providerId: "opencode", bindingId: `binding-${index}`, bindingReference: `secret-binding-${index}`, executionGeneration: `generation-${index}`, transport: "env", expiresAt: null,
-    managedMcp: { token: `secret-token-${index}`, glossaryUrl: "http://localhost/glossary", sessionUrl: "http://localhost/session" } }; });
+  turns.forEach((turn, index) => {
+    turn.agentRuntimeBinding = {
+      providerId: "opencode",
+      bindingId: `binding-${index}`,
+      bindingReference: `secret-binding-${index}`,
+      executionGeneration: `generation-${index}`,
+      transport: "env",
+      expiresAt: null,
+      managedMcp: {
+        token: `secret-token-${index}`,
+        glossaryUrl: "http://localhost/glossary",
+        sessionUrl: "http://localhost/session",
+      },
+    };
+  });
   const fixtures = turns.map((turn) => fixture(turn));
-  await Promise.all(fixtures.map((run, index) => run.adapter.runSessionTurn(turns[index])));
+  await Promise.all(
+    fixtures.map((run, index) => run.adapter.runSessionTurn(turns[index])),
+  );
   fixtures.forEach((run, index) => {
     const expectedUrls: Record<string, string> = {
-      "withmate-glossary": "http://localhost/glossary", "withmate-session": "http://localhost/session",
+      "withmate-glossary": "http://localhost/glossary",
+      "withmate-session": "http://localhost/session",
     };
-    assert.deepEqual(run.mcpRegistrations.map((registration) => registration.server).sort(), Object.keys(expectedUrls).sort());
+    assert.deepEqual(
+      run.mcpRegistrations.map((registration) => registration.server).sort(),
+      Object.keys(expectedUrls).sort(),
+    );
     for (const registration of run.mcpRegistrations) {
       assert.deepEqual(registration.location, { directory: process.cwd() });
-      assert.deepEqual(registration.config, { type: "remote", url: expectedUrls[registration.server], headers: { "x-withmate-mcp-token": `secret-token-${index}` }, oauth: false });
+      assert.deepEqual(registration.config, {
+        type: "remote",
+        url: expectedUrls[registration.server],
+        headers: { "x-withmate-mcp-token": `secret-token-${index}` },
+        oauth: false,
+      });
     }
     assert.ok(!JSON.stringify(run.getPrompt()).includes("secret-token"));
     assert.ok(!JSON.stringify(run.getPrompt()).includes("secret-binding"));
@@ -707,20 +1514,44 @@ it("OpenCode keeps per-turn managed MCP tokens at an explicit native location", 
 // impact = "意図しないmodel実行、directory権限拡大、不正な質問回答を防ぐ"
 // distinction = "各native schemaはWithMateからの意味変換を検査しない"
 // @end-test-value
+/** モデルIDとバリアントを分離し、権限の拡大や変換できないフォーム制約を無視しない。 */
 it("OpenCode native conversions preserve model and permission boundaries", () => {
-  assert.deepEqual(resolveOpenCodeModelRef("provider/model/nested", "high"), { providerID: "provider", id: "model/nested", variant: "high" });
+  assert.deepEqual(resolveOpenCodeModelRef("provider/model/nested", "high"), {
+    providerID: "provider",
+    id: "model/nested",
+    variant: "high",
+  });
   assert.throws(() => resolveOpenCodeModelRef("provider/model#high", "high"));
-  assert.throws(() => buildOpenCodePermissions([path.join(process.cwd(), "wild*card")]));
+  assert.throws(() =>
+    buildOpenCodePermissions([path.join(process.cwd(), "wild*card")]),
+  );
   assert.deepEqual(buildOpenCodePermissions([process.cwd()]), [
     { action: "opencode_session_move", resource: "*", effect: "deny" },
     { action: "subagent", resource: "*", effect: "deny" },
-    { action: "external_directory", resource: path.join(process.cwd(), "*"), effect: "allow" },
+    {
+      action: "external_directory",
+      resource: path.join(process.cwd(), "*"),
+      effect: "allow",
+    },
   ]);
-  const form: FormInfo1 = { id: "form", sessionID: "root", title: "question", fields: [{ key: "choice", type: "string", options: [{ value: "a", label: "A" }] }] };
+  const form: FormInfo1 = {
+    id: "form",
+    sessionID: "root",
+    title: "question",
+    fields: [
+      { key: "choice", type: "string", options: [{ value: "a", label: "A" }] },
+    ],
+  };
   const field = buildOpenCodeElicitation(form, "request").fields[0];
   assert.equal(field.type, "select");
-  if (field.type === "select") assert.deepEqual(field.options, [{ value: "a", label: "A" }]);
-  assert.throws(() => buildOpenCodeElicitation({ ...form, fields: [{ key: "x", type: "string", pattern: "a+" }] }, "request"));
+  if (field.type === "select")
+    assert.deepEqual(field.options, [{ value: "a", label: "A" }]);
+  assert.throws(() =>
+    buildOpenCodeElicitation(
+      { ...form, fields: [{ key: "x", type: "string", pattern: "a+" }] },
+      "request",
+    ),
+  );
 });
 
 // @test-value v2
@@ -736,6 +1567,7 @@ it("OpenCode native conversions preserve model and permission boundaries", () =>
 // distinction = "既存の完了・再開testはprompt前のnative権限値を観測せず、権限生成関数だけでは経路漏れを検出できない"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 新規会話と再開のどちらでも、入力前にネイティブ子起動の拒否を設定する。 */
 it("OpenCode passes the native subagent deny when creating and before prompting a resumed session", async () => {
   const expected = { action: "subagent", resource: "*", effect: "deny" };
   for (const thread of ["", "native:root"]) {
@@ -744,10 +1576,15 @@ it("OpenCode passes the native subagent deny when creating and before prompting 
     const create = client.session.create;
     const prompt = client.session.prompt;
     let created = false;
-    let updatedPermissions: Parameters<typeof client.session.update>[0]["permissions"];
+    let updatedPermissions: Parameters<
+      typeof client.session.update
+    >[0]["permissions"];
     client.session.create = async (request) => {
       created = true;
-      assert.deepEqual(request?.permissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      assert.deepEqual(
+        request?.permissions?.filter((rule) => rule.action === "subagent"),
+        [expected],
+      );
       return create(request);
     };
     client.session.update = async ({ sessionID, permissions }) => {
@@ -756,7 +1593,10 @@ it("OpenCode passes the native subagent deny when creating and before prompting 
       updatedPermissions = permissions;
     };
     client.session.prompt = async (...args) => {
-      assert.deepEqual(updatedPermissions?.filter((rule) => rule.action === "subagent"), [expected]);
+      assert.deepEqual(
+        updatedPermissions?.filter((rule) => rule.action === "subagent"),
+        [expected],
+      );
       return prompt(...args);
     };
     await adapter.runSessionTurn(turn);
@@ -776,16 +1616,27 @@ it("OpenCode passes the native subagent deny when creating and before prompting 
 // impact = "公開済みSessionを更新後も同じ会話として続行できる"
 // distinction = "helper単体testではadapterのsource選択、preflightと送信の接続順、保存参照を検査できない"
 // @end-test-value
+/** 旧スレッドの親子と履歴を移行してから入力を渡し、継続用のネイティブ参照を返す。 */
 it("OpenCode migrates raw threads before prompting in the native environment", async (context) => {
   const turn = input("root");
   const run = await migrationFixture(turn);
+  /** 移行成功の検証後に、旧DBの一時領域を破棄する。 */
   context.after(run.dispose);
   const result = await run.adapter.runSessionTurn(turn);
   assert.equal(result.threadId, "native:root");
   assert.equal(result.assistantText, "final");
-  assert.ok(run.calls.indexOf("source:cancel") < run.calls.indexOf("target:import:root"));
-  assert.ok(run.calls.indexOf("target:import:root") < run.calls.indexOf("target:import:child"));
-  assert.ok(run.calls.indexOf("target:import:child") < run.calls.indexOf("target:prompt"));
+  assert.ok(
+    run.calls.indexOf("source:cancel") <
+      run.calls.indexOf("target:import:root"),
+  );
+  assert.ok(
+    run.calls.indexOf("target:import:root") <
+      run.calls.indexOf("target:import:child"),
+  );
+  assert.ok(
+    run.calls.indexOf("target:import:child") <
+      run.calls.indexOf("target:prompt"),
+  );
   assert.equal(run.getPrompt()?.sessionID, "root");
   assert.equal(run.transports[0].databasePath, undefined);
   assert.ok(run.transports[1].databasePath?.endsWith("source.db"));
@@ -805,9 +1656,11 @@ it("OpenCode migrates raw threads before prompting in the native environment", a
 // impact = "失敗後に公開済み会話の続きを失わず再試行できる"
 // distinction = "helper単体testはadapterのerror thread保存、送信停止、process終了を通らない"
 // @end-test-value
+/** 移行失敗では旧参照を保って送信せず両環境を閉じ、再開時に残りだけを移せることを確認する。 */
 it("OpenCode retains raw thread identity and closes both transports after migration failure", async (context) => {
   const turn = input("root");
   const run = await migrationFixture(turn);
+  /** 再試行を含む移行検証の終了時に一時領域を破棄する。 */
   context.after(run.dispose);
   run.fail(true);
   await assert.rejects(run.adapter.runSessionTurn(turn), (error: unknown) => {
@@ -821,7 +1674,10 @@ it("OpenCode retains raw thread identity and closes both transports after migrat
   run.fail(false);
   const result = await run.adapter.runSessionTurn(turn);
   assert.equal(result.threadId, "native:root");
-  assert.equal(run.calls.filter((call) => call === "target:import:root").length, 1);
+  assert.equal(
+    run.calls.filter((call) => call === "target:import:root").length,
+    1,
+  );
   assert.equal(run.calls.filter((call) => call === "target:prompt").length, 1);
   assert.equal(run.calls.filter((call) => call === "source:close").length, 2);
   assert.equal(run.calls.filter((call) => call === "target:close").length, 2);
@@ -838,20 +1694,40 @@ it("OpenCode retains raw thread identity and closes both transports after migrat
 // lifecycle = "permanent"
 // risk_tags = ["authentication"]
 // @end-test-value
+/** モデル探索と通常ターンが同じネイティブ認証環境を使い、保存設定で環境認証を置換しない。 */
 it("OpenCode model discovery and turns preserve the same native authentication environment", async () => {
   const previousKey = process.env.OPENCODE_API_KEY;
   process.env.OPENCODE_API_KEY = "synthetic-native-key";
   try {
     const turn = input();
-    turn.appSettings.codingProviderSettings.opencode = { ...turn.appSettings.codingProviderSettings.opencode, apiKey: "synthetic-saved-key" };
+    turn.appSettings.codingProviderSettings.opencode = {
+      ...turn.appSettings.codingProviderSettings.opencode,
+      apiKey: "synthetic-saved-key",
+    };
     const run = fixture(turn);
-    run.client.model.default = async () => ({ location: { directory: turn.session.workspacePath }, data: (await run.client.model.list()).data[0] });
+    run.client.model.default = async () => ({
+      location: { directory: turn.session.workspacePath },
+      data: (await run.client.model.list()).data[0],
+    });
     const transports: OpenCodeTransportOptions[] = [];
-    const adapter = new OpenCodeAdapter({ createTransport: (options) => {
-      transports.push(options);
-      return { start: async () => run.client, close: async () => {}, whenClosed: () => Promise.resolve() };
-    } });
-    await adapter.listModels({ workspacePath: turn.session.workspacePath, appSettings: turn.appSettings });
+    const adapter = new OpenCodeAdapter({
+      /** 探索とターンが受け取ったトランスポート設定を両方記録する。 */ createTransport:
+        (options) => {
+          transports.push(options);
+          return {
+            /** どちらの用途でも同じネイティブSDKスタブを返す。 */ start:
+              async () => run.client,
+            /** 外部プロセスを起動しないため終了要求に副作用を持たせない。 */ close:
+              async () => {},
+            /** 探索・実行とも終了状態を直ちに確認できるようにする。 */ whenClosed:
+              () => Promise.resolve(),
+          };
+        },
+    });
+    await adapter.listModels({
+      workspacePath: turn.session.workspacePath,
+      appSettings: turn.appSettings,
+    });
     assert.equal((await adapter.runSessionTurn(turn)).threadId, "native:root");
     assert.equal(transports.length, 2);
     for (const options of transports) {

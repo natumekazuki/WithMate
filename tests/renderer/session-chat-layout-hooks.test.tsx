@@ -13,7 +13,10 @@ import {
   useSessionSidePanes,
   useSessionVerticalDockResize,
 } from "../../src/chat/shell/session-chat-layout-hooks.js";
-import type { ChatActionDockMode, ChatHeaderVisibility } from "../../src-shared/settings/chat-layout-preference.js";
+import type {
+  ChatActionDockMode,
+  ChatHeaderVisibility,
+} from "../../src-shared/settings/chat-layout-preference.js";
 import type { SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
 
 // @test-value v2
@@ -28,19 +31,26 @@ import type { SessionSidePane } from "../../src-shared/settings/session-side-pan
 // impact = "ActionDockを利用可能な残余高まで広げながらHeaderとsplitterの操作領域を確保する"
 // distinction = "CSS宣言やpointer経路とは分け、helperへHeader・splitterを渡して直接検証する"
 // @end-test-value
+/** 極端に大きな要求でも、固定 Header と上下二本のスプリッターを引いた残りを Dock の高さ上限にすることを確認する。 */
 test("vertical dock height はHeaderとsplitterを除く残余高を上限にする", () => {
-  assert.equal(clampSessionVerticalDockHeight({
-    requestedHeight: 500,
-    layoutHeight: 420,
-    minHeight: 180,
-    oppositeDockHeight: 64,
-  }), 316);
-  assert.equal(clampSessionVerticalDockHeight({
-    requestedHeight: 10000,
-    layoutHeight: 6000,
-    minHeight: 180,
-    oppositeDockHeight: 64,
-  }), 5896);
+  assert.equal(
+    clampSessionVerticalDockHeight({
+      requestedHeight: 500,
+      layoutHeight: 420,
+      minHeight: 180,
+      oppositeDockHeight: 64,
+    }),
+    316,
+  );
+  assert.equal(
+    clampSessionVerticalDockHeight({
+      requestedHeight: 10000,
+      layoutHeight: 6000,
+      minHeight: 180,
+      oppositeDockHeight: 64,
+    }),
+    5896,
+  );
 });
 
 // @test-value v2
@@ -55,10 +65,16 @@ test("vertical dock height はHeaderとsplitterを除く残余高を上限にす
 // impact = "Window resizeや小さいWindowでdockと中央surfaceの境界がずれる"
 // distinction = "高さclamp helperの上限計算とは分け、実DOMのbox modelからcontent高を測定する境界だけを検証する"
 // @end-test-value
+/** 外枠の上下から padding と border を除き、Dock が使える領域の座標と高さを測ることを確認する。 */
 test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
   const previousWindow = globalThis.window;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"layout\"></div></body></html>");
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="layout"></div></body></html>',
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
 
   try {
     const layout = dom.window.document.getElementById("layout") as HTMLElement;
@@ -75,6 +91,7 @@ test("vertical dock layout は border-box から padding と border を除いた
       left: 0,
       width: 1000,
       height: 600,
+      /** 外枠の座標だけを参照する検査用 DOMRect のシリアライズ口。 */
       toJSON: () => ({}),
     });
 
@@ -82,14 +99,23 @@ test("vertical dock layout は border-box から padding と border を除いた
     assert.deepEqual(bounds, { top: 31, bottom: 606, height: 575 });
   } finally {
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
   }
 });
 
+/** 左右の余白と境界を外枠から除き、サイドペインが使える領域の左右座標と幅を確認する。 */
 test("side pane layout は border-box から padding と border を除いた幅を使う", () => {
   const previousWindow = globalThis.window;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"layout\"></div></body></html>");
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="layout"></div></body></html>',
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
 
   try {
     const layout = dom.window.document.getElementById("layout") as HTMLElement;
@@ -106,6 +132,7 @@ test("side pane layout は border-box から padding と border を除いた幅�
       left: 20,
       width: 1000,
       height: 600,
+      /** 横方向の実測値だけを検査するため、矩形の JSON 表現は使わない。 */
       toJSON: () => ({}),
     });
 
@@ -116,10 +143,14 @@ test("side pane layout は border-box から padding と border を除いた幅�
     });
   } finally {
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
   }
 });
 
+/** JSDOM でポインターの座標・識別子を持つリサイズイベントを送る。 */
 function dispatchPointerEvent(
   dom: JSDOM,
   target: EventTarget,
@@ -151,26 +182,49 @@ function dispatchPointerEvent(
 // impact = "expanded ActionDockが画面外へはみ出すか、縮小操作で操作可能な最小高さへ戻れない"
 // distinction = "pointer gestureからhookの高さ反映までの経路を、上下両方向のclampで検証する"
 // @end-test-value
+/** 実際のスプリッターのドラッグで、Dock の高さが固定 Header と分割領域を侵食せず、最小値も下回らないことを CSS 値で確認する。 */
 test("ActionDock resize は固定 Header と中央領域の高さを残す", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
   });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
   let root: Root | null = null;
 
+  /** 実リサイズフックのレイアウトとポインター操作を、寸法を制御できる最小の Dock に接続する。 */
   function Harness() {
     const {
       sessionDockLayoutRef,
@@ -194,7 +248,10 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
         },
         "data-testid": "layout",
       },
-      React.createElement("div", { className: "session-action-dock-slot", style: { "--session-region-min-height": "296px" } }),
+      React.createElement("div", {
+        className: "session-action-dock-slot",
+        style: { "--session-region-min-height": "296px" },
+      }),
       React.createElement("button", {
         type: "button",
         onPointerDown: handleStartActionDockResize,
@@ -205,11 +262,17 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
       root.render(React.createElement(Harness));
     });
-    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
-    const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
+    const layout = dom.window.document.querySelector<HTMLElement>(
+      '[data-testid="layout"]',
+    );
+    const splitter = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="splitter"]',
+    );
     assert.ok(layout);
     assert.ok(splitter);
     layout.getBoundingClientRect = () => ({
@@ -221,29 +284,66 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
       left: 0,
       width: 1000,
       height: 2000,
+      /** ドラッグ側が読む外枠寸法だけを定義し、未使用の JSON 表現を埋める。 */
       toJSON: () => ({}),
     });
 
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "296px");
+    await act(async () =>
+      dom.window.dispatchEvent(new dom.window.Event("resize")),
+    );
+    assert.equal(
+      layout.style.getPropertyValue("--session-action-dock-height"),
+      "296px",
+    );
 
-    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 1686));
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "1847px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800));
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "296px");
-    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800));
+    await act(async () =>
+      dispatchPointerEvent(dom, splitter, "pointerdown", 0, 1686),
+    );
+    await act(async () =>
+      dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31),
+    );
+    assert.equal(
+      layout.style.getPropertyValue("--session-action-dock-height"),
+      "1847px",
+    );
+    await act(async () =>
+      dispatchPointerEvent(dom, dom.window, "pointermove", 0, 1800),
+    );
+    assert.equal(
+      layout.style.getPropertyValue("--session-action-dock-height"),
+      "296px",
+    );
+    await act(async () =>
+      dispatchPointerEvent(dom, dom.window, "pointerup", 0, 1800),
+    );
   } finally {
     if (root) {
       await act(async () => root?.unmount());
     }
     dom.window.close();
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
   }
 });
 
@@ -257,43 +357,70 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
 // scope = "ActionDock compact height measurement"
 // lifecycle = "permanent"
 // @end-test-value
+/** 折りたたんだ Dock の報告高に、展開時の大きな外枠ではなくコンパクト行とその余白・境界が使われることを確認する。 */
 test("ActionDock compact height は展開時の外枠高ではなく compact row から算出する", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
   });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
-  const previousScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
+  const previousScrollHeight = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLElement.prototype,
+    "scrollHeight",
+  );
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
     configurable: true,
+    /** 展開外枠とコンパクト行で高さを変え、誤った測定先を区別する。 */
     get() {
-      return (this as HTMLElement).classList.contains("session-action-dock") ? 320 : 40;
+      return (this as HTMLElement).classList.contains("session-action-dock")
+        ? 320
+        : 40;
     },
   });
 
   let root: Root | null = null;
 
+  /** 折りたたみ状態のフックへ、外枠・余白・コンパクト行を分けた DOM を渡す。 */
   function Harness() {
-    const {
-      actionDockRef,
-      sessionDockLayoutStyle,
-    } = useSessionVerticalDockResize({
-      ownerKey: "session-1",
-      isHeaderExpanded: true,
-      isActionDockExpanded: false,
-    });
+    const { actionDockRef, sessionDockLayoutStyle } =
+      useSessionVerticalDockResize({
+        ownerKey: "session-1",
+        isHeaderExpanded: true,
+        isActionDockExpanded: false,
+      });
     return React.createElement(
       "div",
       { style: sessionDockLayoutStyle, "data-testid": "layout" },
@@ -304,7 +431,10 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
           "div",
           {
             className: "session-action-dock",
-            style: { borderTop: "1px solid transparent", borderBottom: "1px solid transparent" },
+            style: {
+              borderTop: "1px solid transparent",
+              borderBottom: "1px solid transparent",
+            },
           },
           React.createElement(
             "div",
@@ -312,7 +442,9 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
               className: "session-action-dock-compact-content",
               style: { paddingTop: "4px", paddingBottom: "4px" },
             },
-            React.createElement("div", { className: "session-action-dock-compact-row" }),
+            React.createElement("div", {
+              className: "session-action-dock-compact-row",
+            }),
           ),
         ),
       ),
@@ -321,28 +453,56 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
       root.render(React.createElement(Harness));
     });
-    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
+    const layout = dom.window.document.querySelector<HTMLElement>(
+      '[data-testid="layout"]',
+    );
     assert.ok(layout);
-    assert.equal(layout.style.getPropertyValue("--session-action-dock-compact-height"), "48px");
+    assert.equal(
+      layout.style.getPropertyValue("--session-action-dock-compact-height"),
+      "48px",
+    );
   } finally {
     if (root) {
       await act(async () => root?.unmount());
     }
     if (previousScrollHeight) {
-      Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", previousScrollHeight);
+      Object.defineProperty(
+        dom.window.HTMLElement.prototype,
+        "scrollHeight",
+        previousScrollHeight,
+      );
     } else {
       Reflect.deleteProperty(dom.window.HTMLElement.prototype, "scrollHeight");
     }
     dom.window.close();
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
   }
 });
 
@@ -356,24 +516,46 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 // scope = "useSessionMessageListFollowing"
 // lifecycle = "permanent"
 // @end-test-value
+/** 閲覧中の子ボタン・リンク操作とレイアウト補正を区別し、末尾付近の下向き操作でのみ追従へ戻り、連続補正が同じフレームに重複しないことを確認する。 */
 test("useSessionMessageListFollowing は操作意図とlayout補正を分離する", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
   });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
   let root: Root | null = null;
   let scrollToBottomCount = 0;
@@ -381,21 +563,26 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
   let clientHeight = 200;
   const resizeObservers: TestResizeObserver[] = [];
 
+  /** メッセージ一覧のリサイズ監視対象と通知をテストから確認できるようにする。 */
   class TestResizeObserver {
     readonly targets = new Set<Element>();
 
+    /** 登録コールバックを保持して、テストがその監視インスタンスを探せるようにする。 */
     constructor(readonly callback: ResizeObserverCallback) {
       resizeObservers.push(this);
     }
 
+    /** サイズ通知の対象要素を追加する。 */
     observe(target: Element): void {
       this.targets.add(target);
     }
 
+    /** 監視を終えたインスタンスから全対象を取り除く。 */
     disconnect(): void {
       this.targets.clear();
     }
 
+    /** 個別要素だけを監視から外す。 */
     unobserve(target: Element): void {
       this.targets.delete(target);
     }
@@ -410,7 +597,14 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
     value: TestResizeObserver,
   });
 
-  function Harness({ enabled, scrollSignature }: { enabled: boolean; scrollSignature: string }) {
+  /** 追従フックへ同じ owner の表示切替と本文更新を入力し、一覧と操作群を描画する。 */
+  function Harness({
+    enabled,
+    scrollSignature,
+  }: {
+    enabled: boolean;
+    scrollSignature: string;
+  }) {
     const {
       messageListRef,
       isMessageListFollowing,
@@ -434,44 +628,65 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
           hidden: !enabled,
           "data-testid": "message-list",
         },
-        React.createElement("div", {
-          className: "session-message-list-window",
-        }, React.createElement("div", {
-          className: "message-list-bottom-anchor",
-          ref: (element: HTMLDivElement | null) => {
-            if (element) {
-              element.scrollIntoView = () => {
-                scrollToBottomCount += 1;
-                const owner = element.closest<HTMLElement>("[data-testid=\"message-list\"]");
-                if (owner) {
-                  owner.scrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
-                }
-              };
-            }
+        React.createElement(
+          "div",
+          {
+            className: "session-message-list-window",
           },
-        })),
+          React.createElement("div", {
+            className: "message-list-bottom-anchor",
+            /** 末尾アンカーへの移動を記録し、一覧のスクロール位置を実際の末尾相当へ変える。 */
+            ref: (element: HTMLDivElement | null) => {
+              if (element) {
+                element.scrollIntoView = () => {
+                  scrollToBottomCount += 1;
+                  const owner = element.closest<HTMLElement>(
+                    '[data-testid="message-list"]',
+                  );
+                  if (owner) {
+                    owner.scrollTop = Math.max(
+                      0,
+                      owner.scrollHeight - owner.clientHeight,
+                    );
+                  }
+                };
+              }
+            },
+          }),
+        ),
         React.createElement("input", { "data-testid": "elicitation-input" }),
-        React.createElement("textarea", { "data-testid": "elicitation-textarea" }),
+        React.createElement("textarea", {
+          "data-testid": "elicitation-textarea",
+        }),
         React.createElement(
           "select",
           { "data-testid": "elicitation-select" },
           React.createElement("option", null, "option"),
         ),
-        React.createElement("output", { "data-testid": "following" }, String(isMessageListFollowing)),
+        React.createElement(
+          "output",
+          { "data-testid": "following" },
+          String(isMessageListFollowing),
+        ),
         React.createElement("button", {
           type: "button",
           onClick: followMessageListLatest,
           "data-testid": "jump",
         }),
       ),
-      React.createElement("button", { type: "button", "data-testid": "outside-action" }),
       React.createElement("button", {
         type: "button",
+        "data-testid": "outside-action",
+      }),
+      React.createElement("button", {
+        type: "button",
+        /** 送信後にスクロールしない設定の確定操作を発火する。 */
         onClick: () => captureMessageListSend(false)(),
         "data-testid": "send-with-scroll-disabled",
       }),
       React.createElement("button", {
         type: "button",
+        /** 送信後のスクロールを許可する設定の確定操作を発火する。 */
         onClick: () => captureMessageListSend(true)(),
         "data-testid": "send-with-scroll-enabled",
       }),
@@ -480,18 +695,37 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
 
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(Harness, { enabled: true, scrollSignature: "initial" }));
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
+      root.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "initial",
+        }),
+      );
     });
 
-    const messageList = dom.window.document.querySelector<HTMLElement>("[data-testid=\"message-list\"]");
-    const following = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"following\"]");
+    const messageList = dom.window.document.querySelector<HTMLElement>(
+      '[data-testid="message-list"]',
+    );
+    const following = dom.window.document.querySelector<HTMLOutputElement>(
+      '[data-testid="following"]',
+    );
     assert.ok(messageList);
     assert.ok(following);
     assert.equal(scrollToBottomCount, 0, "既に末尾なら書き込まない");
 
-    Object.defineProperty(messageList, "scrollHeight", { configurable: true, get: () => scrollHeight });
-    Object.defineProperty(messageList, "clientHeight", { configurable: true, get: () => clientHeight });
+    Object.defineProperty(messageList, "scrollHeight", {
+      configurable: true,
+      /** 新着や再配置後の一覧全体の高さを返す。 */
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(messageList, "clientHeight", {
+      configurable: true,
+      /** Dock 開閉などで変化した一覧の可視部分の高さを返す。 */
+      get: () => clientHeight,
+    });
     messageList.scrollTop = scrollHeight - clientHeight;
     messageList.addEventListener("keydown", (event) => event.stopPropagation());
     for (const [testId, key, shiftKey] of [
@@ -499,16 +733,24 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
       ["elicitation-textarea", "Home", false],
       ["elicitation-select", " ", true],
     ] as const) {
-      const formControl = dom.window.document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+      const formControl = dom.window.document.querySelector<HTMLElement>(
+        `[data-testid="${testId}"]`,
+      );
       assert.ok(formControl);
       await act(async () => {
-        formControl.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-          bubbles: true,
-          key,
-          shiftKey,
-        }));
+        formControl.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            bubbles: true,
+            key,
+            shiftKey,
+          }),
+        );
       });
-      assert.equal(following.textContent, "true", `${key} のフォーム操作では追従を止めない`);
+      assert.equal(
+        following.textContent,
+        "true",
+        `${key} のフォーム操作では追従を止めない`,
+      );
     }
 
     const bodyButton = dom.window.document.createElement("button");
@@ -517,242 +759,526 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
     bodyLink.href = "#message";
     bodyLink.textContent = "Message link";
     messageList.append(bodyButton, bodyLink);
-    await act(async () => bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: " ", shiftKey: true })));
-    assert.equal(following.textContent, "true", "buttonのShift+Space操作で追尾を停止しない");
+    await act(async () =>
+      bodyButton.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: " ",
+          shiftKey: true,
+        }),
+      ),
+    );
+    assert.equal(
+      following.textContent,
+      "true",
+      "buttonのShift+Space操作で追尾を停止しない",
+    );
     for (const target of [bodyButton, bodyLink]) {
       for (const key of ["PageUp", "Home", "ArrowUp"]) {
-        await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
+        await act(async () =>
+          dom.window.document
+            .querySelector<HTMLButtonElement>('[data-testid="jump"]')
+            ?.click(),
+        );
         target.focus();
         await act(async () => {
-          target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+          target.dispatchEvent(
+            new dom.window.KeyboardEvent("keydown", { bubbles: true, key }),
+          );
           messageList.scrollTop -= 70;
           messageList.dispatchEvent(new dom.window.Event("scroll"));
-          await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+          await new Promise<void>((resolve) =>
+            dom.window.requestAnimationFrame(() => resolve()),
+          );
         });
-        assert.equal(following.textContent, "false", `${target.tagName} focusの${key}でも読み返しを開始する`);
-        assert.equal(messageList.scrollTop, scrollHeight - clientHeight - 70, "子部品からの読み返しを末尾補正で戻さない");
+        assert.equal(
+          following.textContent,
+          "false",
+          `${target.tagName} focusの${key}でも読み返しを開始する`,
+        );
+        assert.equal(
+          messageList.scrollTop,
+          scrollHeight - clientHeight - 70,
+          "子部品からの読み返しを末尾補正で戻さない",
+        );
       }
     }
     for (const key of [" ", "Enter"]) {
       await act(async () => {
-        bodyButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key }));
+        bodyButton.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", { bubbles: true, key }),
+        );
         messageList.scrollTop = scrollHeight - clientHeight;
         messageList.dispatchEvent(new dom.window.Event("scroll"));
       });
-      assert.equal(following.textContent, "false", `buttonの${JSON.stringify(key)}操作だけでは追尾を再開しない`);
+      assert.equal(
+        following.textContent,
+        "false",
+        `buttonの${JSON.stringify(key)}操作だけでは追尾を再開しない`,
+      );
     }
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-testid="jump"]')
+        ?.click(),
+    );
 
     await act(async () => {
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }),
+      );
       messageList.scrollTop -= 2;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
-      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
     });
     assert.equal(following.textContent, "false");
-    assert.equal(messageList.scrollTop, 798, "停止後は予約済みの末尾補正でも読書位置を動かさない");
+    assert.equal(
+      messageList.scrollTop,
+      798,
+      "停止後は予約済みの末尾補正でも読書位置を動かさない",
+    );
 
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-while-reading" }));
+      root?.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "stream-while-reading",
+        }),
+      );
     });
-    assert.equal(messageList.scrollTop, 798, "stream更新で読書位置を動かさない");
+    assert.equal(
+      messageList.scrollTop,
+      798,
+      "stream更新で読書位置を動かさない",
+    );
 
     await act(async () => {
-      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-disabled\"]")?.click();
+      dom.window.document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="send-with-scroll-disabled"]',
+        )
+        ?.click();
     });
-    assert.equal(following.textContent, "false", "設定OFFの送信では追随を再開しない");
-    assert.equal(messageList.scrollTop, 798, "設定OFFの送信では読書位置を動かさない");
+    assert.equal(
+      following.textContent,
+      "false",
+      "設定OFFの送信では追随を再開しない",
+    );
+    assert.equal(
+      messageList.scrollTop,
+      798,
+      "設定OFFの送信では読書位置を動かさない",
+    );
 
     await act(async () => {
-      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
+      dom.window.document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="send-with-scroll-enabled"]',
+        )
+        ?.click();
     });
-    assert.equal(following.textContent, "true", "設定ONの送信では追随を再開する");
-    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "設定ONの送信では末尾へ移動する");
+    assert.equal(
+      following.textContent,
+      "true",
+      "設定ONの送信では追随を再開する",
+    );
+    assert.equal(
+      messageList.scrollTop,
+      scrollHeight - clientHeight,
+      "設定ONの送信では末尾へ移動する",
+    );
 
     scrollHeight = 1_120;
     await act(async () => {
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "pending-after-send" }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
+      root?.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "pending-after-send",
+        }),
+      );
     });
-    assert.equal(following.textContent, "true", "送信後の待機表示が遅れて追加されても追随を維持する");
-    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
-    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "送信後の待機表示を含む末尾へ移動する");
+    assert.equal(
+      following.textContent,
+      "true",
+      "送信後の待機表示が遅れて追加されても追随を維持する",
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
+    });
+    assert.equal(
+      messageList.scrollTop,
+      scrollHeight - clientHeight,
+      "送信後の待機表示を含む末尾へ移動する",
+    );
 
     await act(async () => {
-      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      dom.window.document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="send-with-scroll-enabled"]',
+        )
+        ?.click();
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }),
+      );
       messageList.scrollTop -= 2;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
     assert.equal(following.textContent, "false");
 
     const readingPositionAfterSend = messageList.scrollTop;
     scrollHeight = 1_240;
     await act(async () => {
-      root?.render(React.createElement(Harness, {
-        enabled: true,
-        scrollSignature: "pending-after-user-scroll",
-      }));
+      root?.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "pending-after-user-scroll",
+        }),
+      );
     });
-    assert.equal(following.textContent, "false", "送信後でも利用者が上へ戻ったら追随予約を破棄する");
-    assert.equal(messageList.scrollTop, readingPositionAfterSend, "破棄後の待機表示で読書位置を動かさない");
+    assert.equal(
+      following.textContent,
+      "false",
+      "送信後でも利用者が上へ戻ったら追随予約を破棄する",
+    );
+    assert.equal(
+      messageList.scrollTop,
+      readingPositionAfterSend,
+      "破棄後の待機表示で読書位置を動かさない",
+    );
 
     const outsideAction = dom.window.document.querySelector<HTMLButtonElement>(
-      "[data-testid=\"outside-action\"]",
+      '[data-testid="outside-action"]',
     );
     assert.ok(outsideAction);
     await act(async () => {
-      const pointerDown = new dom.window.Event("pointerdown", { bubbles: true });
+      const pointerDown = new dom.window.Event("pointerdown", {
+        bubbles: true,
+      });
       Object.defineProperty(pointerDown, "pointerId", { value: 7 });
       outsideAction.dispatchEvent(pointerDown);
       const pointerUp = new dom.window.Event("pointerup");
       Object.defineProperty(pointerUp, "pointerId", { value: 7 });
       dom.window.dispatchEvent(pointerUp);
       messageList.scrollTop = scrollHeight - clientHeight;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
-    assert.equal(following.textContent, "false", "message list外のpointer操作では追従を再開しない");
+    assert.equal(
+      following.textContent,
+      "false",
+      "message list外のpointer操作では追従を再開しない",
+    );
 
     await act(async () => {
-      const pointerDown = new dom.window.Event("pointerdown", { bubbles: true });
+      const pointerDown = new dom.window.Event("pointerdown", {
+        bubbles: true,
+      });
       Object.defineProperty(pointerDown, "pointerId", { value: 8 });
       messageList.dispatchEvent(pointerDown);
       const pointerUp = new dom.window.Event("pointerup");
       Object.defineProperty(pointerUp, "pointerId", { value: 8 });
       dom.window.dispatchEvent(pointerUp);
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
-    assert.equal(following.textContent, "false", "クリックだけでは追従再開を許可しない");
+    assert.equal(
+      following.textContent,
+      "false",
+      "クリックだけでは追従再開を許可しない",
+    );
 
     await act(async () => {
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }),
+      );
       messageList.scrollTop = scrollHeight - clientHeight - 2;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
     assert.equal(following.textContent, "false");
 
     await act(async () => {
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }),
+      );
       messageList.scrollTop = scrollHeight - clientHeight - 24;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
-    assert.equal(following.textContent, "true", "下向き操作で24px以内へ戻れば追尾へ復帰する");
+    assert.equal(
+      following.textContent,
+      "true",
+      "下向き操作で24px以内へ戻れば追尾へ復帰する",
+    );
 
     scrollHeight = 1_120;
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-growing" }));
+      root?.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "stream-growing",
+        }),
+      );
     });
-    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
+    });
     assert.equal(messageList.scrollTop, 920, "stream本文の伸長へ追従する");
 
     scrollHeight = 1_260;
     const correctionsBeforeResize = scrollToBottomCount;
     await act(async () => {
       for (let pass = 0; pass < 3; pass++) {
-        for (const observer of resizeObservers) observer.callback([], observer as unknown as ResizeObserver);
+        for (const observer of resizeObservers)
+          observer.callback([], observer as unknown as ResizeObserver);
       }
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
-      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
     });
-    assert.equal(scrollToBottomCount - correctionsBeforeResize, 1, "resizeとscrollが同frameに重なっても補正は一度");
-    assert.equal(messageList.scrollTop, 1_060, "message高さの非同期変化へ追従する");
+    assert.equal(
+      scrollToBottomCount - correctionsBeforeResize,
+      1,
+      "resizeとscrollが同frameに重なっても補正は一度",
+    );
+    assert.equal(
+      messageList.scrollTop,
+      1_060,
+      "message高さの非同期変化へ追従する",
+    );
 
     clientHeight = 140;
     await act(async () => {
       const viewportResize: ResizeObserverEntry = {
         target: messageList,
         contentRect: messageList.getBoundingClientRect(),
-        borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [],
+        borderBoxSize: [],
+        contentBoxSize: [],
+        devicePixelContentBoxSize: [],
       };
       for (const observer of resizeObservers) {
-        observer.callback([viewportResize], observer as unknown as ResizeObserver);
+        observer.callback(
+          [viewportResize],
+          observer as unknown as ResizeObserver,
+        );
       }
-      assert.equal(messageList.scrollTop, 1_120, "viewport resizeは次のRAFを待たず描画前に末尾を合わせる");
-      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+      assert.equal(
+        messageList.scrollTop,
+        1_120,
+        "viewport resizeは次のRAFを待たず描画前に末尾を合わせる",
+      );
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
     });
-    assert.equal(messageList.scrollTop, 1_120, "ActionDock resize後のviewport末尾へ追従する");
+    assert.equal(
+      messageList.scrollTop,
+      1_120,
+      "ActionDock resize後のviewport末尾へ追従する",
+    );
 
     await act(async () => {
       messageList.scrollTop = scrollHeight - clientHeight - 2;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
-    assert.equal(following.textContent, "true", "幾何変化だけでは追尾を停止しない");
-    await act(async () => { await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve())); });
+    assert.equal(
+      following.textContent,
+      "true",
+      "幾何変化だけでは追尾を停止しない",
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve()),
+      );
+    });
     assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
 
     const nested = dom.window.document.createElement("div");
     nested.style.overflowY = "auto";
-    Object.defineProperties(nested, { scrollHeight: { value: 500 }, clientHeight: { value: 100 } });
+    Object.defineProperties(nested, {
+      scrollHeight: { value: 500 },
+      clientHeight: { value: 100 },
+    });
     nested.scrollTop = 200;
     messageList.append(nested);
     await act(async () => {
-      nested.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 }));
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80, ctrlKey: true }));
+      nested.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 }),
+      );
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", {
+          bubbles: true,
+          deltaY: -80,
+          ctrlKey: true,
+        }),
+      );
     });
-    assert.equal(following.textContent, "true", "子領域のscrollとzoomは会話追尾を変更しない");
+    assert.equal(
+      following.textContent,
+      "true",
+      "子領域のscrollとzoomは会話追尾を変更しない",
+    );
     nested.scrollTop = 0;
-    await act(async () => nested.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 })));
-    assert.equal(following.textContent, "false", "子領域の上端から会話へ伝播する操作は読み返しにする");
+    await act(async () =>
+      nested.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -80 }),
+      ),
+    );
+    assert.equal(
+      following.textContent,
+      "false",
+      "子領域の上端から会話へ伝播する操作は読み返しにする",
+    );
     await act(async () => {
-      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 80 }));
+      messageList.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 80 }),
+      );
       messageList.scrollTop = scrollHeight - clientHeight - 25;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: true }),
+      );
     });
-    assert.equal(following.textContent, "false", "復帰幅の外側では読み返しを維持する");
+    assert.equal(
+      following.textContent,
+      "false",
+      "復帰幅の外側では読み返しを維持する",
+    );
     await act(async () => {
-      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click();
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-testid="jump"]')
+        ?.click();
     });
     assert.equal(following.textContent, "true");
     assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
 
-    const pointer = (target: EventTarget, type: string, pointerType: string, x: number, y: number) => {
-      const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
-      Object.defineProperties(event, { pointerId: { value: 9 }, pointerType: { value: pointerType } });
+    /** スクロールバー操作などを区別するため、座標と入力機器の種類を明示してイベントを送る。 */
+    const pointer = (
+      target: EventTarget,
+      type: string,
+      pointerType: string,
+      x: number,
+      y: number,
+    ) => {
+      const event = new dom.window.MouseEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: x,
+        clientY: y,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 9 },
+        pointerType: { value: pointerType },
+      });
       target.dispatchEvent(event);
     };
-    messageList.getBoundingClientRect = () => new dom.window.DOMRect(0, 0, 400, clientHeight);
+    messageList.getBoundingClientRect = () =>
+      new dom.window.DOMRect(0, 0, 400, clientHeight);
     await act(async () => {
       pointer(messageList, "pointerdown", "mouse", 399, 80);
       messageList.scrollTop -= 100;
       messageList.dispatchEvent(new dom.window.Event("scroll"));
     });
-    assert.equal(following.textContent, "false", "scrollbarを上へ動かすと読み返しを優先する");
+    assert.equal(
+      following.textContent,
+      "false",
+      "scrollbarを上へ動かすと読み返しを優先する",
+    );
     await act(async () => {
       messageList.scrollTop = scrollHeight - clientHeight - 20;
       messageList.dispatchEvent(new dom.window.Event("scroll"));
       pointer(dom.window, "pointerup", "mouse", 399, 120);
     });
-    assert.equal(following.textContent, "true", "scrollbarで末尾付近へ戻すと追尾を再開する");
+    assert.equal(
+      following.textContent,
+      "true",
+      "scrollbarで末尾付近へ戻すと追尾を再開する",
+    );
     await act(async () => {
       pointer(messageList, "pointerdown", "touch", 200, 50);
       pointer(dom.window, "pointermove", "touch", 200, 90);
       pointer(dom.window, "pointerup", "touch", 200, 90);
     });
-    assert.equal(following.textContent, "false", "touchの読み返しで予約済み補正を停止する");
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click());
+    assert.equal(
+      following.textContent,
+      "false",
+      "touchの読み返しで予約済み補正を停止する",
+    );
+    await act(async () =>
+      dom.window.document
+        .querySelector<HTMLButtonElement>('[data-testid="jump"]')
+        ?.click(),
+    );
 
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));
+      root?.render(
+        React.createElement(Harness, {
+          enabled: false,
+          scrollSignature: "preview-update",
+        }),
+      );
     });
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
+      root?.render(
+        React.createElement(Harness, {
+          enabled: true,
+          scrollSignature: "preview-update",
+        }),
+      );
     });
     assert.equal(following.textContent, "true");
     assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
       value: previousResizeObserver,
     });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      previousActEnvironment;
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
 
@@ -768,53 +1294,188 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
 // impact = "排他表示と開いているペインだけの操作契約を維持する"
 // distinction = "閉じたペインの操作無効化と反対側の自動クローズを確認する"
 // @end-test-value
+/** 左右ペインが排他的に開き、閉じた側はドラッグで再開せず、開いた側のサイズ操作も最小幅を守ることを確認する。 */
 test("useSessionSidePanes は左右ペインを排他表示し、閉じたペインを操作対象にしない", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
-  const previousWindow = globalThis.window, previousDocument = globalThis.document;
-  const previousHTMLElement = globalThis.HTMLElement, previousNode = globalThis.Node, previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window,
+    previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement,
+    previousNode = globalThis.Node,
+    previousNavigator = globalThis.navigator;
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    { pretendToBeVisual: true },
+  );
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
   let root: Root | null = null;
   const changes: SessionSidePane[] = [];
-  function Harness({ initialSidePane }: { initialSidePane: SessionSidePane | null }) {
-    const state = useSessionSidePanes({ ownerKey: "session-1", initialSidePane, onSidePaneChange: (value) => changes.push(value) });
-    return React.createElement("div", { ref: state.sessionWorkbenchRef, style: state.sessionWorkbenchStyle, "data-testid": "workbench" },
-      React.createElement("div", { className: "session-left-pane-slot", style: { "--session-region-min-width": "260px", "--session-region-min-height": "200px" } }),
-      React.createElement("div", { className: "session-message-stack", style: { "--session-region-min-width": "360px", "--session-region-min-height": "160px" } }),
-      React.createElement("div", { className: "session-right-pane-slot", style: { "--session-region-min-width": "360px", "--session-region-min-height": "200px" } }),
-      React.createElement("button", { onPointerDown: state.handleStartContextRailResize, onClick: state.handleToggleContextRailVisibility, onKeyDown: state.handleKeyDownContextRailResize, "data-testid": "context-splitter" }),
-      React.createElement("button", { onPointerDown: state.handleStartFilesPaneResize, onClick: state.handleToggleFilesPaneVisibility, onKeyDown: state.handleKeyDownFilesPaneResize, "data-testid": "files-splitter" }),
-      React.createElement("button", { onClick: state.handleToggleFilesPaneVisibility, "data-testid": "files-toggle" }),
-      React.createElement("button", { onClick: state.handleToggleContextRailVisibility, "data-testid": "context-toggle" }),
-      React.createElement("output", { "data-testid": "active-pane" }, state.activeSidePane),
-      React.createElement("output", { "data-testid": "resizing" }, state.isContextRailResizing ? "context" : state.isFilesPaneResizing ? "files" : "idle"),
+  /** サイドペインの実フックに開閉操作とスプリッターを接続し、現在の対象とリサイズ状態を描画する。 */
+  function Harness({
+    initialSidePane,
+  }: {
+    initialSidePane: SessionSidePane | null;
+  }) {
+    const state = useSessionSidePanes({
+      ownerKey: "session-1",
+      initialSidePane,
+      /** サイドペイン選択が外側へ通知された順序を記録する。 */
+      onSidePaneChange: (value) => changes.push(value),
+    });
+    return React.createElement(
+      "div",
+      {
+        ref: state.sessionWorkbenchRef,
+        style: state.sessionWorkbenchStyle,
+        "data-testid": "workbench",
+      },
+      React.createElement("div", {
+        className: "session-left-pane-slot",
+        style: {
+          "--session-region-min-width": "260px",
+          "--session-region-min-height": "200px",
+        },
+      }),
+      React.createElement("div", {
+        className: "session-message-stack",
+        style: {
+          "--session-region-min-width": "360px",
+          "--session-region-min-height": "160px",
+        },
+      }),
+      React.createElement("div", {
+        className: "session-right-pane-slot",
+        style: {
+          "--session-region-min-width": "360px",
+          "--session-region-min-height": "200px",
+        },
+      }),
+      React.createElement("button", {
+        onPointerDown: state.handleStartContextRailResize,
+        onClick: state.handleToggleContextRailVisibility,
+        onKeyDown: state.handleKeyDownContextRailResize,
+        "data-testid": "context-splitter",
+      }),
+      React.createElement("button", {
+        onPointerDown: state.handleStartFilesPaneResize,
+        onClick: state.handleToggleFilesPaneVisibility,
+        onKeyDown: state.handleKeyDownFilesPaneResize,
+        "data-testid": "files-splitter",
+      }),
+      React.createElement("button", {
+        onClick: state.handleToggleFilesPaneVisibility,
+        "data-testid": "files-toggle",
+      }),
+      React.createElement("button", {
+        onClick: state.handleToggleContextRailVisibility,
+        "data-testid": "context-toggle",
+      }),
+      React.createElement(
+        "output",
+        { "data-testid": "active-pane" },
+        state.activeSidePane,
+      ),
+      React.createElement(
+        "output",
+        { "data-testid": "resizing" },
+        state.isContextRailResizing
+          ? "context"
+          : state.isFilesPaneResizing
+            ? "files"
+            : "idle",
+      ),
     );
   }
+  /** サイドペインにポインター操作を送り、閉じた対象で既定動作を抑止したかも確認できるようにする。 */
   const pointer = (target: EventTarget, type: string, clientX: number) => {
-    const event = new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY: clientX });
+    const event = new dom.window.MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX,
+      clientY: clientX,
+    });
     Object.defineProperty(event, "pointerId", { value: 1 });
     target.dispatchEvent(event);
     return event;
   };
   try {
-    await act(async () => { root = createRoot(dom.window.document.getElementById("root") as HTMLElement); root.render(React.createElement(Harness, { initialSidePane: "context" })); });
-    const workbench = dom.window.document.querySelector<HTMLElement>("[data-testid=\"workbench\"]")!;
-    const contextSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"context-splitter\"]")!;
-    const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-splitter\"]")!;
-    const filesToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-toggle\"]")!;
-    const contextToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"context-toggle\"]")!;
-    const active = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"active-pane\"]")!;
-    const resizing = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"resizing\"]")!;
-    let viewportWidth = 1600, workbenchWidth = 1600;
-    Object.defineProperty(dom.window, "innerWidth", { configurable: true, get: () => viewportWidth });
-    workbench.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, right: workbenchWidth, bottom: 800, left: 0, width: workbenchWidth, height: 800, toJSON: () => ({}) });
+    await act(async () => {
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
+      root.render(React.createElement(Harness, { initialSidePane: "context" }));
+    });
+    const workbench = dom.window.document.querySelector<HTMLElement>(
+      '[data-testid="workbench"]',
+    )!;
+    const contextSplitter =
+      dom.window.document.querySelector<HTMLButtonElement>(
+        '[data-testid="context-splitter"]',
+      )!;
+    const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="files-splitter"]',
+    )!;
+    const filesToggle = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="files-toggle"]',
+    )!;
+    const contextToggle = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="context-toggle"]',
+    )!;
+    const active = dom.window.document.querySelector<HTMLOutputElement>(
+      '[data-testid="active-pane"]',
+    )!;
+    const resizing = dom.window.document.querySelector<HTMLOutputElement>(
+      '[data-testid="resizing"]',
+    )!;
+    let viewportWidth = 1600,
+      workbenchWidth = 1600;
+    Object.defineProperty(dom.window, "innerWidth", {
+      configurable: true,
+      /** ウィンドウを縮めた後の幅を、ワークベンチ寸法とは別に設定できるようにする。 */
+      get: () => viewportWidth,
+    });
+    workbench.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: workbenchWidth,
+      bottom: 800,
+      left: 0,
+      width: workbenchWidth,
+      height: 800,
+      /** 利用可能幅の測定には座標だけを提供し、シリアライズは行わない。 */
+      toJSON: () => ({}),
+    });
     assert.equal(active.textContent, "context");
-    await act(async () => contextSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    await act(async () =>
+      contextSplitter.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      ),
+    );
     assert.equal(active.textContent, "none");
     const closed = pointer(filesSplitter, "pointerdown", 500);
     assert.equal(closed.defaultPrevented, false);
@@ -824,22 +1485,45 @@ test("useSessionSidePanes は左右ペインを排他表示し、閉じたペイ
     await act(async () => pointer(contextSplitter, "pointerdown", 420));
     await act(async () => pointer(dom.window, "pointermove", 1000));
     await act(async () => pointer(dom.window, "pointerup", 1000));
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "360px");
+    assert.equal(
+      workbench.style.getPropertyValue("--session-context-rail-width"),
+      "360px",
+    );
     await act(async () => filesToggle.click());
     assert.equal(active.textContent, "files");
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "0px");
+    assert.equal(
+      workbench.style.getPropertyValue("--session-context-rail-width"),
+      "0px",
+    );
     await act(async () => pointer(filesSplitter, "pointerdown", 320));
     assert.equal(resizing.textContent, "files");
     await act(async () => pointer(dom.window, "pointermove", 500));
     await act(async () => pointer(dom.window, "pointerup", 500));
     assert.equal(active.textContent, "files");
-    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "500px");
+    assert.equal(
+      workbench.style.getPropertyValue("--session-file-explorer-width"),
+      "500px",
+    );
     await act(async () => pointer(filesSplitter, "pointerdown", 500));
     await act(async () => pointer(dom.window, "pointermove", -500));
     await act(async () => pointer(dom.window, "pointerup", -500));
-    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "260px");
-    await act(async () => filesSplitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })));
-    assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "260px");
+    assert.equal(
+      workbench.style.getPropertyValue("--session-file-explorer-width"),
+      "260px",
+    );
+    await act(async () =>
+      filesSplitter.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    assert.equal(
+      workbench.style.getPropertyValue("--session-file-explorer-width"),
+      "260px",
+    );
     await new Promise((resolve) => setTimeout(resolve, 120));
     await act(async () => filesToggle.click());
     assert.equal(active.textContent, "none");
@@ -852,16 +1536,37 @@ test("useSessionSidePanes は左右ペインを排他表示し、閉じたペイ
     assert.equal(resizing.textContent, "context");
     await act(async () => pointer(dom.window, "pointermove", 1000));
     await act(async () => pointer(dom.window, "pointerup", 1000));
-    assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "200px");
+    assert.equal(
+      workbench.style.getPropertyValue("--session-context-rail-width"),
+      "200px",
+    );
     assert.deepEqual(changes, ["none", "context", "files", "none", "context"]);
   } finally {
-    await act(async () => root?.unmount()); dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
 
@@ -877,23 +1582,45 @@ test("useSessionSidePanes は左右ペインを排他表示し、閉じたペイ
 // impact = "チャットdockの表示状態がユーザー操作や待機中の明示意図から意図せず変化する"
 // distinction = "priority配置は固定化され、このテストは表示状態の同期契約だけを検証する"
 // @end-test-value
+/** 遅い初期設定で Header の先行操作を巻き戻さず、初期化後の外部値には追従せず、同値の Dock 操作でも古い開閉意図を無効にすることを確認する。 */
 test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設定で巻き戻さず、後続snapshotへ追従しない", async () => {
-  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
-    .IS_REACT_ACT_ENVIRONMENT;
+  const previousActEnvironment = (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
+  (
+    globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+  ).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
   });
-  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
   let root: Root | null = null;
   const headerChanges: ChatHeaderVisibility[] = [];
@@ -903,6 +1630,7 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
     setPinned: undefined as ((value: boolean) => void) | undefined,
   };
 
+  /** 遅延初期値を渡せる表示フックと、Header・Dock を独立に操作するボタンを接続する。 */
   function Harness({
     initialHeader,
     initialActionDock,
@@ -913,7 +1641,9 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
     const state = useChatLayoutPresentation({
       initialHeader,
       initialActionDock,
+      /** Header の表示変更として外へ通知された値を保存する。 */
       onHeaderChange: (value) => headerChanges.push(value),
+      /** ActionDock の表示変更として外へ通知された値を保存する。 */
       onActionDockChange: (value) => actionDockChanges.push(value),
     });
     dockIntent.capture = state.captureActionDockIntent;
@@ -924,14 +1654,21 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
       React.createElement("button", {
         type: "button",
         "data-testid": "header-toggle",
+        /** 利用者の Header 操作を再現するため、現在の展開状態を反転する。 */
         onClick: () => state.setIsHeaderExpanded((current) => !current),
       }),
       React.createElement("button", {
         type: "button",
         "data-testid": "dock-toggle",
-        onClick: () => state.setIsActionDockPinnedExpanded((current) => !current),
+        /** 利用者の Dock 操作を再現するため、現在の固定展開状態を反転する。 */
+        onClick: () =>
+          state.setIsActionDockPinnedExpanded((current) => !current),
       }),
-      React.createElement("output", { "data-testid": "header" }, state.isHeaderExpanded ? "visible" : "hidden"),
+      React.createElement(
+        "output",
+        { "data-testid": "header" },
+        state.isHeaderExpanded ? "visible" : "hidden",
+      ),
       React.createElement(
         "output",
         { "data-testid": "dock" },
@@ -942,16 +1679,28 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
 
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(Harness, {
-        initialHeader: null,
-        initialActionDock: null,
-      }));
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
+      root.render(
+        React.createElement(Harness, {
+          initialHeader: null,
+          initialActionDock: null,
+        }),
+      );
     });
-    const headerToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"header-toggle\"]");
-    const dockToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"dock-toggle\"]");
-    const header = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"header\"]");
-    const dock = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"dock\"]");
+    const headerToggle = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="header-toggle"]',
+    );
+    const dockToggle = dom.window.document.querySelector<HTMLButtonElement>(
+      '[data-testid="dock-toggle"]',
+    );
+    const header = dom.window.document.querySelector<HTMLOutputElement>(
+      '[data-testid="header"]',
+    );
+    const dock = dom.window.document.querySelector<HTMLOutputElement>(
+      '[data-testid="dock"]',
+    );
     assert.ok(headerToggle);
     assert.ok(dockToggle);
     assert.ok(header);
@@ -959,26 +1708,28 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
     const beforeHydration = dockIntent.capture?.();
     assert.ok(beforeHydration);
 
-
-
     await act(async () => headerToggle.click());
     assert.equal(header.textContent, "visible");
 
     await act(async () => {
-      root?.render(React.createElement(Harness, {
-        initialHeader: "hidden",
-        initialActionDock: "expanded",
-      }));
+      root?.render(
+        React.createElement(Harness, {
+          initialHeader: "hidden",
+          initialActionDock: "expanded",
+        }),
+      );
     });
     assert.equal(beforeHydration(), true);
     assert.equal(header.textContent, "visible");
     assert.equal(dock.textContent, "expanded");
 
     await act(async () => {
-      root?.render(React.createElement(Harness, {
-        initialHeader: "hidden",
-        initialActionDock: "compact",
-      }));
+      root?.render(
+        React.createElement(Harness, {
+          initialHeader: "hidden",
+          initialActionDock: "compact",
+        }),
+      );
     });
     assert.equal(header.textContent, "visible");
     assert.equal(dock.textContent, "expanded");
@@ -997,13 +1748,29 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      previousActEnvironment;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
 
@@ -1019,113 +1786,242 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
 // impact = "送信時に読む位置を見失い、手動操作した本文を自動scrollで奪う"
 // distinction = "既存追従testは即時補正のみ。短い制御frame遷移で送信handoffと割込みの契約を検出する"
 // @end-test-value
+/** 送信後は読む位置から末尾へ収束し、新しい送信行だけを一度演出し、手動操作・会話切替・非表示・動きの制限設定で古い移動を続けないことを確認する。 */
 test("送信handoffは位置をつなぎ、手動意図・owner・motion設定を守る", async () => {
-  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
-  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
-  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
-  const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
-  globals.forEach((key, index) => Object.defineProperty(globalThis, key, { configurable: true, value: values[index] }));
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    pretendToBeVisual: true,
+  });
+  const globals = [
+    "window",
+    "document",
+    "HTMLElement",
+    "Node",
+    "navigator",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const previous = globals.map((key) =>
+    Object.getOwnPropertyDescriptor(globalThis, key),
+  );
+  const values = [
+    dom.window,
+    dom.window.document,
+    dom.window.HTMLElement,
+    dom.window.Node,
+    dom.window.navigator,
+    true,
+  ];
+  globals.forEach((key, index) =>
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: values[index],
+    }),
+  );
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   let reducedMotion = false;
+  /** サイズ監視の登録前はテストからの通知を無視する。 */
   let resize = () => {};
-  const timers = new Map<number, { callback: () => void; delay: number | undefined }>();
+  const timers = new Map<
+    number,
+    { callback: () => void; delay: number | undefined }
+  >();
   let timerId = 0;
   dom.window.setTimeout = (callback, delay) => {
     assert.equal(typeof callback, "function");
     timers.set(++timerId, { callback: callback as () => void, delay });
     return timerId;
   };
-  dom.window.clearTimeout = (id) => { if (id !== undefined) timers.delete(id); };
-  dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
-  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
-  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: reducedMotion }) });
-  Object.defineProperty(dom.window, "ResizeObserver", { value: class {
-    constructor(callback: (entries: ResizeObserverEntry[]) => void) { resize = () => callback([]); }
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } });
+  dom.window.clearTimeout = (id) => {
+    if (id !== undefined) timers.delete(id);
+  };
+  dom.window.requestAnimationFrame = (callback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  };
+  dom.window.cancelAnimationFrame = (id) => {
+    frames.delete(id);
+  };
+  Object.defineProperty(dom.window, "matchMedia", {
+    /** 現在の動きの軽減設定を、ブラウザーのメディア照会結果として返す。 */
+    value: () => ({ matches: reducedMotion }),
+  });
+  Object.defineProperty(dom.window, "ResizeObserver", {
+    value: class {
+      /** 後から実寸が変わったタイミングを通知できるよう、コールバックを保持する。 */
+      constructor(callback: (entries: ResizeObserverEntry[]) => void) {
+        resize = () => callback([]);
+      }
+      /** 寸法の監視はテストで明示発火するためブラウザー観測は開始しない。 */
+      observe() {}
+      /** 実ブラウザーの監視対象を持たないため個別解除は処理しない。 */
+      unobserve() {}
+      /** この疑似監視ではブラウザー資源を持たず、全解除は何もしない。 */
+      disconnect() {}
+    },
+  });
   let current!: ReturnType<typeof useSessionMessageListFollowing>;
-  function Harness({ owner = "main", enabled = true }: { owner?: string; enabled?: boolean }) {
-    current = useSessionMessageListFollowing({ ownerKey: owner, enabled, scrollSignature: "tail" });
-    return React.createElement("div", {
-      ref: current.messageListRef, onScroll: current.handleMessageListScroll,
-      "data-message-count": 2, style: { "--session-dock-motion-duration": "300ms" } as React.CSSProperties,
-    }, React.createElement("div", { className: "session-message-list-window" }));
+  /** 追従フックへ切替可能な owner と表示可否を渡し、モーション時間を設定した一覧を描画する。 */
+  function Harness({
+    owner = "main",
+    enabled = true,
+  }: {
+    owner?: string;
+    enabled?: boolean;
+  }) {
+    current = useSessionMessageListFollowing({
+      ownerKey: owner,
+      enabled,
+      scrollSignature: "tail",
+    });
+    return React.createElement(
+      "div",
+      {
+        ref: current.messageListRef,
+        onScroll: current.handleMessageListScroll,
+        "data-message-count": 2,
+        style: {
+          "--session-dock-motion-duration": "300ms",
+        } as React.CSSProperties,
+      },
+      React.createElement("div", { className: "session-message-list-window" }),
+    );
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const render = (owner = "main", enabled = true) => act(async () => root.render(React.createElement(Harness, { owner, enabled })));
-  const frame = (time: number) => act(async () => {
-    const pending = [...frames.values()]; frames.clear();
-    pending.forEach((callback) => callback(time));
-  });
+  /** 指定した会話または非表示状態に描画を切り替える。 */
+  const render = (owner = "main", enabled = true) =>
+    act(async () =>
+      root.render(React.createElement(Harness, { owner, enabled })),
+    );
+  /** 保留中の描画フレームを指定時刻で一度進め、次に予約された処理は次回まで残す。 */
+  const frame = (time: number) =>
+    act(async () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(time));
+    });
   try {
     await render();
     const list = current.messageListRef.current!;
-    let height = 1600, viewport = 400;
+    let height = 1600,
+      viewport = 400;
     Object.defineProperties(list, {
-      scrollHeight: { get: () => height }, clientHeight: { get: () => viewport },
+      scrollHeight: {
+        /** 行を追加するたびに変更した全履歴の高さを測定値として返す。 */ get: () =>
+          height,
+      },
+      clientHeight: {
+        /** Dock の変化で再設定した表示領域の高さを返す。 */ get: () =>
+          viewport,
+      },
     });
     await act(async () => current.followMessageListLatest());
     await frame(0);
     const fades: number[] = [];
+    /** 指定インデックスの仮想行を配置し、演出された行を記録できるようにする。 */
     const addRow = (index: number) => {
       const row = dom.window.document.createElement("div");
       row.className = "session-message-virtual-row";
       row.dataset.index = String(index);
       const message = dom.window.document.createElement("article");
       message.className = "message-row";
-      message.animate = () => { fades.push(index); return {} as Animation; };
-      row.append(message); list.firstElementChild!.append(row);
+      message.animate = () => {
+        fades.push(index);
+        return {} as Animation;
+      };
+      row.append(message);
+      list.firstElementChild!.append(row);
       return row;
     };
     addRow(1);
     const submitted = current.captureMessageListSend(true);
-    height += 160; list.dataset.messageCount = "4";
+    height += 160;
+    list.dataset.messageCount = "4";
     const promptRow = addRow(2);
     await act(async () => submitted());
-    assert.equal(list.scrollTop, 1200, "送信DOMの追加直後に読む位置を飛ばさない");
+    assert.equal(
+      list.scrollTop,
+      1200,
+      "送信DOMの追加直後に読む位置を飛ばさない",
+    );
     assert.deepEqual(fades, [2], "既にmountされた送信文は直ちにfadeする");
     await frame(0);
     await act(async () => {
-      addRow(0); promptRow.remove(); addRow(2);
+      addRow(0);
+      promptRow.remove();
+      addRow(2);
       addRow(3);
       addRow(4);
     });
-    assert.deepEqual(fades, [2, 3], "後からmountする応答枠も一度だけfadeし、既存行の再mountや後続の追加は対象にしない");
-    viewport += 100; height += 20;
+    assert.deepEqual(
+      fades,
+      [2, 3],
+      "後からmountする応答枠も一度だけfadeし、既存行の再mountや後続の追加は対象にしない",
+    );
+    viewport += 100;
+    height += 20;
     await act(async () => resize());
     await frame(150);
-    assert.ok(list.scrollTop > 1100 && list.scrollTop < height - viewport, "途中位置から変化後の末尾へ向かう");
+    assert.ok(
+      list.scrollTop > 1100 && list.scrollTop < height - viewport,
+      "途中位置から変化後の末尾へ向かう",
+    );
     await frame(300);
     assert.equal(list.scrollTop, height - viewport);
-    await act(async () => { submitted(); resize(); });
+    await act(async () => {
+      submitted();
+      resize();
+    });
     await frame(400);
     assert.deepEqual(fades, [2, 3], "受付/保存の追加補正で入場を再実行しない");
 
     list.querySelector('[data-index="4"]')!.remove();
     list.dataset.messageCount = "4";
     const interrupted = current.captureMessageListSend(true);
-    height += 200; list.dataset.messageCount = "6";
+    height += 200;
+    list.dataset.messageCount = "6";
     await act(async () => interrupted());
-    await frame(500); await frame(600);
-    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    await frame(500);
+    await frame(600);
+    await act(async () =>
+      list.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true }),
+      ),
+    );
     const readingTop = list.scrollTop;
-    height += 100; viewport += 50;
-    await act(async () => resize()); await frame(1000);
+    height += 100;
+    viewport += 50;
+    await act(async () => resize());
+    await frame(1000);
     assert.equal(current.isMessageListFollowing, false);
-    assert.equal(list.scrollTop, readingTop, "新着やDockが変化しても手動閲覧位置を上書きしない");
-    await act(async () => { addRow(4); addRow(5); });
-    assert.deepEqual(fades, [2, 3], "手動閲覧で中断した後のmountを古い送信の演出に巻き込まない");
+    assert.equal(
+      list.scrollTop,
+      readingTop,
+      "新着やDockが変化しても手動閲覧位置を上書きしない",
+    );
+    await act(async () => {
+      addRow(4);
+      addRow(5);
+    });
+    assert.deepEqual(
+      fades,
+      [2, 3],
+      "手動閲覧で中断した後のmountを古い送信の演出に巻き込まない",
+    );
     const noScroll = current.captureMessageListSend(false);
     height += 100;
-    await act(async () => noScroll()); await frame(1100);
-    assert.equal(list.scrollTop, readingTop, "Scroll on send OFFは読み返しを解除しない");
+    await act(async () => noScroll());
+    await frame(1100);
+    assert.equal(
+      list.scrollTop,
+      readingTop,
+      "Scroll on send OFFは読み返しを解除しない",
+    );
 
     reducedMotion = true;
     const reduced = current.captureMessageListSend(true);
-    height += 100; list.dataset.messageCount = "7"; addRow(6);
+    height += 100;
+    list.dataset.messageCount = "7";
+    addRow(6);
     await act(async () => reduced());
     assert.equal(list.scrollTop, height - viewport);
     assert.deepEqual(fades, [2, 3], "reduced motionでは新しい行もfadeさせない");
@@ -1133,17 +2029,31 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
     const stale = current.captureMessageListSend(true);
     await render("aux");
     await frame(1200);
-    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    await act(async () =>
+      list.dispatchEvent(
+        new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true }),
+      ),
+    );
     list.scrollTop = 300;
-    await act(async () => stale()); await frame(1250);
-    assert.equal(list.scrollTop, 300, "旧ownerの送信完了を次の会話に適用しない");
+    await act(async () => stale());
+    await frame(1250);
+    assert.equal(
+      list.scrollTop,
+      300,
+      "旧ownerの送信完了を次の会話に適用しない",
+    );
     const hidden = current.captureMessageListSend(true);
     height += 100;
-    await act(async () => hidden()); await frame(1300);
+    await act(async () => hidden());
+    await frame(1300);
     await render("aux", false);
     const hiddenTop = list.scrollTop;
     await frame(1700);
-    assert.equal(list.scrollTop, hiddenTop, "非表示になった会話のmotionを停止する");
+    assert.equal(
+      list.scrollTop,
+      hiddenTop,
+      "非表示になった会話のmotionを停止する",
+    );
 
     await render("aux");
     list.dataset.messageCount = "7";
@@ -1151,13 +2061,22 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
     list.dataset.messageCount = "8";
     await act(async () => expires());
     assert.equal(timers.size, 1);
-    assert.equal([...timers.values()][0].delay, 300, "未mount行の待機は送信handoffの期間に限る");
+    assert.equal(
+      [...timers.values()][0].delay,
+      300,
+      "未mount行の待機は送信handoffの期間に限る",
+    );
     await act(async () => {
-      const pending = [...timers.values()]; timers.clear();
+      const pending = [...timers.values()];
+      timers.clear();
       pending.forEach(({ callback }) => callback());
       addRow(7);
     });
-    assert.deepEqual(fades, [2, 3], "handoff終了後に初めて読む行を遅れて演出しない");
+    assert.deepEqual(
+      fades,
+      [2, 3],
+      "handoff終了後に初めて読む行を遅れて演出しない",
+    );
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

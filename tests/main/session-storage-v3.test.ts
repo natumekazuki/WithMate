@@ -7,7 +7,10 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
-import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
+import type {
+  MessageArtifact,
+  Session,
+} from "../../src-shared/session/session-state.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import {
   CREATE_V3_SCHEMA_SQL,
@@ -17,7 +20,10 @@ import {
 import { SessionStorageV3 } from "../../src-electron/session/session-storage-v3.js";
 import { TextBlobStore } from "../../src-electron/storage/text-blob-store.js";
 
-async function withTempV3Database<T>(fn: (input: { dbPath: string; blobRootPath: string }) => T | Promise<T>): Promise<T> {
+/** V3 の SQLite と外部 blob 用の一時領域を用意し、検証後にまとめて処分する。 */
+async function withTempV3Database<T>(
+  fn: (input: { dbPath: string; blobRootPath: string }) => T | Promise<T>,
+): Promise<T> {
   const dir = await mkdtemp(path.join(tmpdir(), "withmate-session-v3-"));
   const dbPath = path.join(dir, "withmate-v3.db");
   const blobRootPath = path.join(dir, "blobs");
@@ -38,7 +44,12 @@ async function withTempV3Database<T>(fn: (input: { dbPath: string; blobRootPath:
   }
 }
 
-function createSession(input: { id: string; taskTitle: string; workspaceLabel: string }): Session {
+/** タイトルとワークスペースが識別可能なセッションを、V3 の保存テスト用に組み立てる。 */
+function createSession(input: {
+  id: string;
+  taskTitle: string;
+  workspaceLabel: string;
+}): Session {
   const session = buildNewSession({
     taskTitle: input.taskTitle,
     workspaceLabel: input.workspaceLabel,
@@ -58,7 +69,10 @@ function createSession(input: { id: string; taskTitle: string; workspaceLabel: s
   };
 }
 
-function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+/** 通常一覧から除くべき Character のランタイム情報を固定値から作り、必要な項目を上書きできるようにする。 */
+function createCharacterRuntimeSnapshot(
+  overrides?: Partial<CharacterRuntimeSnapshot>,
+): CharacterRuntimeSnapshot {
   return {
     characterId: "char-v3",
     name: "V3",
@@ -73,6 +87,7 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
   };
 }
 
+/** 操作や変更差分を含む成果物を作り、追跡用の値で SQLite と blob の保存先を判別できるようにする。 */
 function createArtifact(sentinel: string): MessageArtifact {
   return {
     title: "V3 artifact",
@@ -107,10 +122,14 @@ function createArtifact(sentinel: string): MessageArtifact {
   };
 }
 
+/** 概要のサイズ制限を超える成果物を作り、長い詳細に追跡用の値を埋め込む。 */
 function createLargeArtifact(sentinel: string): MessageArtifact {
   return {
     title: "Large V3 artifact",
-    activitySummary: Array.from({ length: 120 }, (_, index) => `activity-${index}-${sentinel}`),
+    activitySummary: Array.from(
+      { length: 120 },
+      (_, index) => `activity-${index}-${sentinel}`,
+    ),
     changedFiles: Array.from({ length: 140 }, (_, index) => ({
       kind: "edit",
       path: `src/generated/file-${index}.ts`,
@@ -130,34 +149,60 @@ function createLargeArtifact(sentinel: string): MessageArtifact {
   };
 }
 
-function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T {
+/** SQLite の照会に必要なレコードが存在することを確認してから返す。 */
+function readRequiredRow<T>(
+  db: DatabaseSync,
+  sql: string,
+  ...params: SQLInputValue[]
+): T {
   const row = db.prepare(sql).get(...params) as T | undefined;
   assert.ok(row);
   return row;
 }
 
-function readCount(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): number {
+/** SQLite の照会結果から集計件数を数値にして取り出す。 */
+function readCount(
+  db: DatabaseSync,
+  sql: string,
+  ...params: SQLInputValue[]
+): number {
   const row = readRequiredRow<{ count: number }>(db, sql, ...params);
   return Number(row.count);
 }
 
+/** SQLite の保存内容を横断して検証するため、対象となるテーブル名を列挙する。 */
 function tableNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>)
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      )
+      .all() as Array<{ name: string }>
+  )
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
 }
 
+/** 指定テーブルから本文が混入し得る TEXT 型の列を抽出する。 */
 function textColumnNames(db: DatabaseSync, tableName: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string; type: string }>)
+  return (
+    db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string;
+      type: string;
+    }>
+  )
     .filter((row) => row.type.toUpperCase().includes("TEXT"))
     .map((row) => row.name);
 }
 
+/** 追跡用の本文が SQLite に残っていないことを検証できるよう、テーブルの TEXT 列の値を集める。 */
 function readAllTextValues(db: DatabaseSync): string[] {
   const values: string[] = [];
   for (const tableName of tableNames(db)) {
     for (const columnName of textColumnNames(db, tableName)) {
-      const rows = db.prepare(`SELECT ${columnName} AS value FROM ${tableName}`).all() as Array<{ value: string | null }>;
+      const rows = db
+        .prepare(`SELECT ${columnName} AS value FROM ${tableName}`)
+        .all() as Array<{ value: string | null }>;
       for (const row of rows) {
         if (typeof row.value === "string") {
           values.push(row.value);
@@ -168,25 +213,37 @@ function readAllTextValues(db: DatabaseSync): string[] {
   return values;
 }
 
+/** メッセージ本文と成果物について、指定セッションが参照する blob の ID を取得する。 */
 function readSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
-  const messageRows = db.prepare(`
+  const messageRows = db
+    .prepare(
+      `
     SELECT text_blob_id AS blob_id
     FROM session_messages
     WHERE session_id = ?
       AND text_blob_id IS NOT NULL
-  `).all(sessionId) as Array<{ blob_id: string }>;
-  const artifactRows = db.prepare(`
+  `,
+    )
+    .all(sessionId) as Array<{ blob_id: string }>;
+  const artifactRows = db
+    .prepare(
+      `
     SELECT a.artifact_blob_id AS blob_id
     FROM session_message_artifacts AS a
     INNER JOIN session_messages AS m
       ON m.id = a.message_id
     WHERE m.session_id = ?
       AND a.artifact_blob_id IS NOT NULL
-  `).all(sessionId) as Array<{ blob_id: string }>;
+  `,
+    )
+    .all(sessionId) as Array<{ blob_id: string }>;
 
-  return [...new Set([...messageRows, ...artifactRows].map((row) => row.blob_id))];
+  return [
+    ...new Set([...messageRows, ...artifactRows].map((row) => row.blob_id)),
+  ];
 }
 
+/** V3 の旧形式を使う概要問い合わせと、SQLite・外部 blob 間の保存および削除を検証する。 */
 describe("SessionStorageV3", () => {
   // @test-value v2
   // kind = "contract"
@@ -199,29 +256,39 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** 指定 ID に絞った Home 用ページでは、不要なプロバイダーやスレッド情報を含めず、追加入力がない場合はカーソルも返さない。 */
   it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
       try {
         const session = await storage.upsertSession({
-          ...createSession({ id: "session-v3-home-page", taskTitle: "Home page", workspaceLabel: "workspace-home" }),
+          ...createSession({
+            id: "session-v3-home-page",
+            taskTitle: "Home page",
+            workspaceLabel: "workspace-home",
+          }),
           provider: "copilot",
           model: "hidden-model",
           threadId: "hidden-thread",
           allowedAdditionalDirectories: ["C:/hidden"],
         });
-        const secondSession = await storage.upsertSession(createSession({
-          id: "session-v3-home-page-second",
-          taskTitle: "Another page",
-          workspaceLabel: "workspace-another",
-        }));
+        const secondSession = await storage.upsertSession(
+          createSession({
+            id: "session-v3-home-page-second",
+            taskTitle: "Another page",
+            workspaceLabel: "workspace-another",
+          }),
+        );
 
         const page = await storage.listSessionSummaryPage({
           scope: "open",
           sessionIds: [session.id, "missing", secondSession.id, session.id],
           searchText: "",
         });
-        assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+        assert.deepEqual(
+          page.entries.map((entry) => entry.id).sort(),
+          [session.id, secondSession.id].sort(),
+        );
         assert.equal(page.entries.length, 2);
         assert.equal(page.hasMore, false);
         assert.equal(page.nextCursor, null);
@@ -261,6 +328,7 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** 旧プロバイダー表記を正規化して最新の一致一件だけを返し、実行設定を保持して未登録プロバイダーは空の結果にする。 */
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -307,15 +375,24 @@ describe("SessionStorageV3", () => {
         });
 
         const db = new DatabaseSync(dbPath);
-        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, "codex-old");
-        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(300, "copilot-newest");
-        db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
-          .run("\tcodex\t", 200, "codex-before");
-        db.prepare("UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?")
-          .run("\nCodex\u00a0", 200, "codex-latest");
+        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+          100,
+          "codex-old",
+        );
+        db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+          300,
+          "copilot-newest",
+        );
+        db.prepare(
+          "UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?",
+        ).run("\tcodex\t", 200, "codex-before");
+        db.prepare(
+          "UPDATE sessions SET provider = ?, last_active_at = ? WHERE id = ?",
+        ).run("\nCodex\u00a0", 200, "codex-latest");
         db.close();
 
-        const latest = await storage.getLatestSessionSummaryForProvider("codex");
+        const latest =
+          await storage.getLatestSessionSummaryForProvider("codex");
         assert.equal(latest?.id, "codex-latest");
         assert.equal(latest?.provider, "codex");
         assert.equal(latest?.model, "gpt-latest");
@@ -323,7 +400,10 @@ describe("SessionStorageV3", () => {
         assert.equal(latest?.approvalMode, "never");
         assert.equal(latest?.codexSandboxMode, "danger-full-access");
         assert.equal(latest?.customAgentName, "reviewer");
-        assert.equal(await storage.getLatestSessionSummaryForProvider("missing"), null);
+        assert.equal(
+          await storage.getLatestSessionSummaryForProvider("missing"),
+          null,
+        );
       } finally {
         storage.close();
       }
@@ -342,6 +422,7 @@ describe("SessionStorageV3", () => {
   // impact = "V3 sessionのbookmark filterが再起動後に誤った対象を表示する"
   // distinction = "blob text/artifactの復元と同じ通常経路でbookmark stateを確認し、schema testだけに依存しない"
   // @end-test-value
+  /** 保存した本文と成果物を blob から復元し、ブックマークと Character ランタイム情報を個別取得で保持しつつ一覧に詳細を含めない。 */
   it("upsert -> list summaries -> get で message text と artifact を blob から復元する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -374,7 +455,10 @@ describe("SessionStorageV3", () => {
         });
 
         assert.equal(saved.messages[0]?.text, longText);
-        assert.equal((await storage.listSessions())[0]?.messages[0]?.text, longText);
+        assert.equal(
+          (await storage.listSessions())[0]?.messages[0]?.text,
+          longText,
+        );
 
         const summaries = await storage.listSessionSummaries();
         assert.equal(summaries.length, 1);
@@ -384,14 +468,26 @@ describe("SessionStorageV3", () => {
 
         const loaded = await storage.getSession("session-v3-roundtrip");
         assert.ok(loaded);
-        assert.deepEqual(loaded.characterRuntimeSnapshot, characterRuntimeSnapshot);
+        assert.deepEqual(
+          loaded.characterRuntimeSnapshot,
+          characterRuntimeSnapshot,
+        );
         assert.deepEqual(loaded.stream, []);
-        assert.deepEqual(loaded.messages.map((message) => message.text), [longText, "short assistant reply"]);
+        assert.deepEqual(
+          loaded.messages.map((message) => message.text),
+          [longText, "short assistant reply"],
+        );
         assert.equal(loaded.messages[0]?.accent, true);
         assert.equal(loaded.messages[0]?.isBookmarked, true);
         assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
-        assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
-        assert.deepEqual(await storage.getSessionMessageArtifact("session-v3-roundtrip", 0), createArtifact(sentinel));
+        assert.equal(
+          loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length,
+          0,
+        );
+        assert.deepEqual(
+          await storage.getSessionMessageArtifact("session-v3-roundtrip", 0),
+          createArtifact(sentinel),
+        );
       } finally {
         storage.close();
       }
@@ -408,6 +504,7 @@ describe("SessionStorageV3", () => {
   // scope = "session-storage-v3 raw blob isolation"
   // lifecycle = "permanent"
   // @end-test-value
+  /** SQLite の TEXT 列には本文と詳細の生データを残さず、プレビューと blob の参照を保存し、読み取り時は元の本文・成果物を取得する。 */
   it("raw message text / artifact detail は sqlite text columns に残さず blob からだけ復元する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -434,9 +531,13 @@ describe("SessionStorageV3", () => {
         const loaded = await storage.getSession(session.id);
         assert.ok(loaded);
         assert.equal(loaded.messages[0]?.text, rawText);
-        assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
         assert.equal(
-          (await storage.getSessionMessageArtifact(session.id, 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+          loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length,
+          0,
+        );
+        assert.equal(
+          (await storage.getSessionMessageArtifact(session.id, 0))
+            ?.changedFiles[0]?.diffRows[0]?.rightText,
           `${sentinel}:diff-row`,
         );
       } finally {
@@ -464,7 +565,10 @@ describe("SessionStorageV3", () => {
            WHERE session_id = ?`,
           session.id,
         );
-        assert.equal(messageRow.text_preview.length, V3_TEXT_PREVIEW_MAX_LENGTH);
+        assert.equal(
+          messageRow.text_preview.length,
+          V3_TEXT_PREVIEW_MAX_LENGTH,
+        );
         assert.match(messageRow.text_blob_id, /^[a-f0-9]{64}$/);
         assert.equal(messageRow.text_original_bytes > 0, true);
         assert.equal(messageRow.text_stored_bytes > 0, true);
@@ -497,7 +601,10 @@ describe("SessionStorageV3", () => {
         assert.match(artifactRow.artifact_blob_id, /^[a-f0-9]{64}$/);
         assert.equal(artifactRow.artifact_original_bytes > 0, true);
         assert.equal(artifactRow.artifact_stored_bytes > 0, true);
-        assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 2);
+        assert.equal(
+          readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"),
+          2,
+        );
       } finally {
         db.close();
       }
@@ -515,6 +622,7 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** 大きな成果物の概要が DB の長さ制限内に収まっても、詳細の取得では元の成果物を復元できる。 */
   it("large artifact summary は DB 上限内に丸めつつ full artifact blob を保持する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -535,9 +643,15 @@ describe("SessionStorageV3", () => {
         const loaded = await storage.getSession(session.id);
         assert.ok(loaded);
         assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
-        assert.equal((loaded.messages[0]?.artifact?.changedFiles.length ?? 0) < artifact.changedFiles.length, true);
         assert.equal(
-          (await storage.getSessionMessageArtifact(session.id, 0))?.changedFiles.at(-1)?.diffRows[0]?.rightText,
+          (loaded.messages[0]?.artifact?.changedFiles.length ?? 0) <
+            artifact.changedFiles.length,
+          true,
+        );
+        assert.equal(
+          (
+            await storage.getSessionMessageArtifact(session.id, 0)
+          )?.changedFiles.at(-1)?.diffRows[0]?.rightText,
           `${sentinel}:diff-139`,
         );
       } finally {
@@ -550,7 +664,10 @@ describe("SessionStorageV3", () => {
           db,
           `SELECT artifact_summary_json FROM session_message_artifacts`,
         );
-        assert.equal(row.artifact_summary_json.length <= V3_SUMMARY_JSON_MAX_LENGTH, true);
+        assert.equal(
+          row.artifact_summary_json.length <= V3_SUMMARY_JSON_MAX_LENGTH,
+          true,
+        );
       } finally {
         db.close();
       }
@@ -568,6 +685,7 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** 詳細が省略された概要でセッションを書き直しても、既存 blob の全文と参照が残ることを確認する。 */
   it("summary artifact を含む session rewrite でも既存 full artifact blob を保持する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -592,7 +710,10 @@ describe("SessionStorageV3", () => {
         const loaded = await storage.getSession(session.id);
         assert.ok(loaded);
         assert.equal(loaded.messages[0]?.artifact?.detailAvailable, true);
-        assert.equal(loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length, 0);
+        assert.equal(
+          loaded.messages[0]?.artifact?.changedFiles[0]?.diffRows.length,
+          0,
+        );
 
         await storage.upsertSession({
           ...loaded,
@@ -601,14 +722,24 @@ describe("SessionStorageV3", () => {
         });
 
         assert.equal(
-          (await storage.getSessionMessageArtifact(session.id, 0))?.changedFiles[0]?.diffRows[0]?.rightText,
+          (await storage.getSessionMessageArtifact(session.id, 0))
+            ?.changedFiles[0]?.diffRows[0]?.rightText,
           `${sentinel}:diff-row`,
         );
 
         const db = new DatabaseSync(dbPath, { readOnly: true });
         try {
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM session_message_artifacts"), 1);
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 2);
+          assert.equal(
+            readCount(
+              db,
+              "SELECT COUNT(*) AS count FROM session_message_artifacts",
+            ),
+            1,
+          );
+          assert.equal(
+            readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"),
+            2,
+          );
         } finally {
           db.close();
         }
@@ -629,6 +760,7 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** V3 の DB トランザクションに失敗した場合、コミットされなかった blob のファイルと参照行が残らない。 */
   it("DB transaction が失敗した場合は永続化されなかった blob file を cleanup する", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -651,23 +783,31 @@ describe("SessionStorageV3", () => {
       }
 
       try {
-        await assert.rejects(() => storage.upsertSession({
-          ...session,
-          messages: [
-            {
-              role: "assistant",
-              text: "message that writes a blob before DB insert fails",
-              artifact: createArtifact("SENTINEL_SESSION_V3_ROLLBACK"),
-            },
-          ],
-        }));
+        await assert.rejects(() =>
+          storage.upsertSession({
+            ...session,
+            messages: [
+              {
+                role: "assistant",
+                text: "message that writes a blob before DB insert fails",
+                artifact: createArtifact("SENTINEL_SESSION_V3_ROLLBACK"),
+              },
+            ],
+          }),
+        );
 
         const blobStore = new TextBlobStore(blobRootPath);
-        const report = await blobStore.collectGarbage({ referencedBlobIds: [], dryRun: true });
+        const report = await blobStore.collectGarbage({
+          referencedBlobIds: [],
+          dryRun: true,
+        });
         assert.deepEqual(report.orphanBlobIds, []);
         const db = new DatabaseSync(dbPath);
         try {
-          assert.equal(readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"), 0);
+          assert.equal(
+            readCount(db, "SELECT COUNT(*) AS count FROM blob_objects"),
+            0,
+          );
         } finally {
           db.close();
         }
@@ -688,6 +828,7 @@ describe("SessionStorageV3", () => {
   // lifecycle = "characterization"
   // review_when = "V3移行元の読取りと旧Session store生成経路を廃止する時"
   // @end-test-value
+  /** 削除時は対象専用の blob と行だけを取り除き、共有 blob は別セッションが残る間保持して全消去時に取り除く。 */
   it("deleteSession / clearSessions は未参照になった blob file と blob_objects row を消す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);
@@ -740,8 +881,12 @@ describe("SessionStorageV3", () => {
             db.close();
           }
         })();
-        const sharedBlobIds = targetBlobIds.filter((blobId) => keepBlobIds.includes(blobId));
-        const targetOnlyBlobIds = targetBlobIds.filter((blobId) => !keepBlobIds.includes(blobId));
+        const sharedBlobIds = targetBlobIds.filter((blobId) =>
+          keepBlobIds.includes(blobId),
+        );
+        const targetOnlyBlobIds = targetBlobIds.filter(
+          (blobId) => !keepBlobIds.includes(blobId),
+        );
         assert.equal(sharedBlobIds.length, 1);
         assert.equal(targetOnlyBlobIds.length, 2);
 
@@ -757,10 +902,24 @@ describe("SessionStorageV3", () => {
         const dbAfterDelete = new DatabaseSync(dbPath);
         try {
           for (const blobId of targetOnlyBlobIds) {
-            assert.equal(readCount(dbAfterDelete, "SELECT COUNT(*) AS count FROM blob_objects WHERE blob_id = ?", blobId), 0);
+            assert.equal(
+              readCount(
+                dbAfterDelete,
+                "SELECT COUNT(*) AS count FROM blob_objects WHERE blob_id = ?",
+                blobId,
+              ),
+              0,
+            );
           }
           for (const blobId of sharedBlobIds) {
-            assert.equal(readCount(dbAfterDelete, "SELECT COUNT(*) AS count FROM blob_objects WHERE blob_id = ?", blobId), 1);
+            assert.equal(
+              readCount(
+                dbAfterDelete,
+                "SELECT COUNT(*) AS count FROM blob_objects WHERE blob_id = ?",
+                blobId,
+              ),
+              1,
+            );
           }
         } finally {
           dbAfterDelete.close();
@@ -774,10 +933,31 @@ describe("SessionStorageV3", () => {
 
         const dbAfterClear = new DatabaseSync(dbPath);
         try {
-          assert.equal(readCount(dbAfterClear, "SELECT COUNT(*) AS count FROM sessions"), 0);
-          assert.equal(readCount(dbAfterClear, "SELECT COUNT(*) AS count FROM session_messages"), 0);
-          assert.equal(readCount(dbAfterClear, "SELECT COUNT(*) AS count FROM session_message_artifacts"), 0);
-          assert.equal(readCount(dbAfterClear, "SELECT COUNT(*) AS count FROM blob_objects"), 0);
+          assert.equal(
+            readCount(dbAfterClear, "SELECT COUNT(*) AS count FROM sessions"),
+            0,
+          );
+          assert.equal(
+            readCount(
+              dbAfterClear,
+              "SELECT COUNT(*) AS count FROM session_messages",
+            ),
+            0,
+          );
+          assert.equal(
+            readCount(
+              dbAfterClear,
+              "SELECT COUNT(*) AS count FROM session_message_artifacts",
+            ),
+            0,
+          );
+          assert.equal(
+            readCount(
+              dbAfterClear,
+              "SELECT COUNT(*) AS count FROM blob_objects",
+            ),
+            0,
+          );
         } finally {
           dbAfterClear.close();
         }

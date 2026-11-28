@@ -6,70 +6,220 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
-import { SessionTurnQueueService, type SessionTurnQueueServiceDeps } from "../../src-electron/session/session-turn-queue-service.js";
-import { buildNewSession, getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import {
+  SessionTurnQueueService,
+  type SessionTurnQueueServiceDeps,
+} from "../../src-electron/session/session-turn-queue-service.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type {
+  SessionTurnQueueCapturedInput,
+  SessionTurnQueueReceipt,
+} from "../../src-shared/session/session-turn-queue.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-turn-queue-facade.js";
 
+/** 遅延配送の受付と実行を、専用の一時 SQLite と実ストレージ Worker に接続する。 */
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "withmate-delayed-delivery-"));
-  const options = { dbPath: join(directory, "withmate-v6.db"), userDataPath: directory,
-    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-    handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
-    workerOptions: { execArgv: ["--import", "tsx"] } };
+  const options = {
+    dbPath: join(directory, "withmate-v6.db"),
+    userDataPath: directory,
+    workerUrl: new URL(
+      "../../src-electron/storage/storage-worker-entry.ts",
+      import.meta.url,
+    ),
+    handlerModule: new URL(
+      "../../src-electron/storage/storage-worker-bundle.ts",
+      import.meta.url,
+    ),
+    workerOptions: { execArgv: ["--import", "tsx"] },
+  };
   let bundle = createV6StorageWorkerBundle(options);
   await bundle.initialize();
-  const owner = (session: Session) => ({ sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
-  const create = (id: string) => bundle.stores.session.insertSession(buildNewSession({ id, taskTitle: id,
-    workspaceLabel: "workspace", workspacePath: directory, branch: "main", characterId: "unknown", character: "Unknown",
-    characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#abcdef" }, approvalMode: "on-request" }));
-  const turnInput = (session: Session, userMessageSeq: number) => ({ sessionId: session.id, phase: "running" as const,
-    createdAt: new Date().toISOString(), provider: session.provider, model: session.model, reasoningEffort: session.reasoningEffort,
-    approvalMode: session.approvalMode, sandboxMode: session.codexSandboxMode, threadId: "", errorMessage: "", userMessageSeq });
+  /** 各要求にセッションの ID と現在の incarnation を組み合わせる。 */
+  const owner = (session: Session) => ({
+    sessionId: session.id,
+    incarnationId: getSessionIncarnationId(session),
+  });
+  /** 同じ作業領域に、送信元または宛先として使うセッションを保存する。 */
+  const create = (id: string) =>
+    bundle.stores.session.insertSession(
+      buildNewSession({
+        id,
+        taskTitle: id,
+        workspaceLabel: "workspace",
+        workspacePath: directory,
+        branch: "main",
+        characterId: "unknown",
+        character: "Unknown",
+        characterIconPath: "",
+        characterThemeColors: { main: "#123456", sub: "#abcdef" },
+        approvalMode: "on-request",
+      }),
+    );
+  /** ユーザー発言位置を指定し、セッションの実行設定を持つ実行中 Turn を組み立てる。 */
+  const turnInput = (session: Session, userMessageSeq: number) => ({
+    sessionId: session.id,
+    phase: "running" as const,
+    createdAt: new Date().toISOString(),
+    provider: session.provider,
+    model: session.model,
+    reasoningEffort: session.reasoningEffort,
+    approvalMode: session.approvalMode,
+    sandboxMode: session.codexSandboxMode,
+    threadId: "",
+    errorMessage: "",
+    userMessageSeq,
+  });
+  /** 送信元の入力を先に永続化し、発言位置に対応する実行中 Turn を作る。 */
   async function start(session: Session) {
-    const count = (await bundle.stores.session.getSessionMetadata(session.id))!.messageCount;
-    await bundle.stores.session.appendRunningTurnStart({ ...owner(session), expectedMessageCount: count,
-      userMessage: { role: "user", text: "source work" }, updatedAt: new Date().toISOString() });
+    const count = (await bundle.stores.session.getSessionMetadata(session.id))!
+      .messageCount;
+    await bundle.stores.session.appendRunningTurnStart({
+      ...owner(session),
+      expectedMessageCount: count,
+      userMessage: { role: "user", text: "source work" },
+      updatedAt: new Date().toISOString(),
+    });
     return bundle.stores.turn.createSessionTurn(turnInput(session, count));
   }
-  async function finish(session: Session, turnId: number, phase: "completed" | "failed" | "canceled") {
-    const count = (await bundle.stores.session.getSessionMetadata(session.id))!.messageCount;
+  /** 回答本文と Turn の終端を一緒に確定し、保存済みの配送条件を作る。 */
+  async function finish(
+    session: Session,
+    turnId: number,
+    phase: "completed" | "failed" | "canceled",
+  ) {
+    const count = (await bundle.stores.session.getSessionMetadata(session.id))!
+      .messageCount;
     const time = new Date().toISOString();
-    await bundle.stores.session.appendSessionTerminal({ ...owner(session), expectedMessageCount: count,
+    await bundle.stores.session.appendSessionTerminal({
+      ...owner(session),
+      expectedMessageCount: count,
       assistantMessage: { role: "assistant", text: `saved ${phase}` },
-      metadata: { status: "idle", runState: "idle", threadId: "", updatedAt: time },
-      terminalCommit: { sessionId: session.id, turnId, phase, assistantMessageSeq: count,
-        threadId: "", errorMessage: phase === "failed" ? "source failed" : "", completedAt: time } });
+      metadata: {
+        status: "idle",
+        runState: "idle",
+        threadId: "",
+        updatedAt: time,
+      },
+      terminalCommit: {
+        sessionId: session.id,
+        turnId,
+        phase,
+        assistantMessageSeq: count,
+        threadId: "",
+        errorMessage: phase === "failed" ? "source failed" : "",
+        completedAt: time,
+      },
+    });
   }
-  function input(recipient: Session, source: Session, sourceTurnId: number, timing: "immediate" | "after_source_turn" = "after_source_turn"): SessionTurnQueueCapturedInput {
-    return { request: { clientRequestId: randomUUID(), userMessage: "report", submitSource: "composer",
-      executionOptions: captureSessionExecutionOptions(recipient) }, attachments: [], provider: recipient.provider, workspacePath: directory,
-      origin: { kind: "session", actorKind: "main", actorSessionId: source.id, actorIncarnationId: getSessionIncarnationId(source),
-        actorTurnId: String(sourceTurnId), deliveryTiming: timing, operation: "send", targetSessionId: recipient.id,
-        targetIncarnationId: getSessionIncarnationId(recipient) } };
+  /** 送信元の正確な Turn と宛先 identity を記録する、既定では終端待ちの配送要求を作る。 */
+  function input(
+    recipient: Session,
+    source: Session,
+    sourceTurnId: number,
+    timing: "immediate" | "after_source_turn" = "after_source_turn",
+  ): SessionTurnQueueCapturedInput {
+    return {
+      request: {
+        clientRequestId: randomUUID(),
+        userMessage: "report",
+        submitSource: "composer",
+        executionOptions: captureSessionExecutionOptions(recipient),
+      },
+      attachments: [],
+      provider: recipient.provider,
+      workspacePath: directory,
+      origin: {
+        kind: "session",
+        actorKind: "main",
+        actorSessionId: source.id,
+        actorIncarnationId: getSessionIncarnationId(source),
+        actorTurnId: String(sourceTurnId),
+        deliveryTiming: timing,
+        operation: "send",
+        targetSessionId: recipient.id,
+        targetIncarnationId: getSessionIncarnationId(recipient),
+      },
+    };
   }
-  function service(recipient: Session, dispatched: SessionTurnQueueReceipt[], getUnreleasedSourceTurnIds: () => readonly string[] = () => [],
-    overrides?: Partial<Pick<SessionTurnQueueServiceDeps, "store" | "onChanged">>) {
-    return new SessionTurnQueueService({ store: bundle.stores.queue, isRunInFlight: () => false,
+  /** 実キューストアを使用し、送信元の解放状態やストア障害を各ケースで調整できるようにする。 */
+  function service(
+    recipient: Session,
+    dispatched: SessionTurnQueueReceipt[],
+    getUnreleasedSourceTurnIds: () => readonly string[] = () => [],
+    overrides?: Partial<
+      Pick<SessionTurnQueueServiceDeps, "store" | "onChanged">
+    >,
+  ) {
+    return new SessionTurnQueueService({
+      store: bundle.stores.queue,
+      /** 宛先側は待機中として、送信元の終端条件を独立に検査する。 */
+      isRunInFlight: () => false,
       getUnreleasedSourceTurnIds,
-      sendInput: async () => { throw new Error("Unexpected Provider input."); },
+      /** 配送が通常の新規 Turn でなく実行中への追加入力を使った場合は失敗させる。 */
+      sendInput: async () => {
+        throw new Error("Unexpected Provider input.");
+      },
+      /** 宛先への受付を実際に永続化し、キュー ID と開始位置を通知してから完了まで進める。 */
       dispatch: async (receipt, onStarted) => {
-        const count = (await bundle.stores.session.getSessionMetadata(recipient.id))!.messageCount;
-        const started = await bundle.stores.session.appendRunningTurnStart({ ...owner(recipient), expectedMessageCount: count,
-          userMessage: { role: "user", text: receipt.captured.request.userMessage }, updatedAt: new Date().toISOString(),
-          queuedTurn: { queueId: receipt.id, turn: turnInput(recipient, count) } });
+        const count = (await bundle.stores.session.getSessionMetadata(
+          recipient.id,
+        ))!.messageCount;
+        const started = await bundle.stores.session.appendRunningTurnStart({
+          ...owner(recipient),
+          expectedMessageCount: count,
+          userMessage: {
+            role: "user",
+            text: receipt.captured.request.userMessage,
+          },
+          updatedAt: new Date().toISOString(),
+          queuedTurn: {
+            queueId: receipt.id,
+            turn: turnInput(recipient, count),
+          },
+        });
         assert.ok(started.queuedTurn);
-        await onStarted({ turnId: String(started.queuedTurn.id), userMessageSeq: count });
+        await onStarted({
+          turnId: String(started.queuedTurn.id),
+          userMessageSeq: count,
+        });
         dispatched.push(receipt);
         await finish(recipient, started.queuedTurn.id, "completed");
         return { state: "completed" };
-      }, ...overrides });
+      },
+      ...overrides,
+    });
   }
-  return { get bundle() { return bundle; }, dbPath: options.dbPath, owner, create, start, finish, input, service,
-    async reopen() { await bundle.client.close(); bundle = createV6StorageWorkerBundle(options); await bundle.initialize(); },
-    async close() { await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
+  return {
+    /** Worker を開き直した場合にも、その時点のストアへアクセスする。 */
+    get bundle() {
+      return bundle;
+    },
+    dbPath: options.dbPath,
+    owner,
+    create,
+    start,
+    finish,
+    input,
+    service,
+    /** 同一 DB の保存済み状態を、新たに起動する Worker から読み取れるようにする。 */
+    async reopen() {
+      await bundle.client.close();
+      bundle = createV6StorageWorkerBundle(options);
+      await bundle.initialize();
+    },
+    /** Worker が DB を閉じた後に一時領域を削除する。 */
+    async close() {
+      await bundle.client.close();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
 }
 
 // @test-value v2
@@ -83,6 +233,7 @@ async function fixture() {
 // lifecycle = "permanent"
 // distinction = "fake queue portやschema testでは実SQL条件とWorkerのwake引数転送および保存順を検証できない"
 // @end-test-value
+/** 一致する送信元 Turn の保存まで遅延配送を保留し、後続の即時配送は先に処理する。 */
 test("delayed delivery waits for exact saved source Turn without blocking immediate work", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -99,33 +250,100 @@ test("delayed delivery waits for exact saved source Turn without blocking immedi
     assert.equal(delayed.sourceTurnPhase, "running");
     await queue.waitForPending();
     assert.equal(dispatched.length, 0);
-    assert.equal(await f.bundle.stores.queue.claimNext(f.owner(recipient)), null);
-    await assert.rejects(f.bundle.stores.queue.claimForInput(f.owner(recipient), delayed.id, "any"), /sender Turn/);
-    assert.equal((await queue.enqueue(f.owner(recipient), captured)).id, delayed.id);
-    await assert.rejects(queue.enqueue(f.owner(recipient), { ...captured, origin: { ...captured.origin!, deliveryTiming: "immediate" } }), /different payload/);
-    assert.equal((await f.bundle.stores.queue.listReceipts(f.owner(recipient))).receipts.length, 1);
-    const immediate = await queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id, "immediate"));
+    assert.equal(
+      await f.bundle.stores.queue.claimNext(f.owner(recipient)),
+      null,
+    );
+    await assert.rejects(
+      f.bundle.stores.queue.claimForInput(
+        f.owner(recipient),
+        delayed.id,
+        "any",
+      ),
+      /sender Turn/,
+    );
+    assert.equal(
+      (await queue.enqueue(f.owner(recipient), captured)).id,
+      delayed.id,
+    );
+    await assert.rejects(
+      queue.enqueue(f.owner(recipient), {
+        ...captured,
+        origin: { ...captured.origin!, deliveryTiming: "immediate" },
+      }),
+      /different payload/,
+    );
+    assert.equal(
+      (await f.bundle.stores.queue.listReceipts(f.owner(recipient))).receipts
+        .length,
+      1,
+    );
+    const immediate = await queue.enqueue(
+      f.owner(recipient),
+      f.input(recipient, source, turn.id, "immediate"),
+    );
     assert.equal(immediate.state, "starting");
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map((receipt) => receipt.id), [immediate.id]);
-    assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), delayed.id))?.state, "queued");
+    assert.deepEqual(
+      dispatched.map((receipt) => receipt.id),
+      [immediate.id],
+    );
+    assert.equal(
+      (
+        await f.bundle.stores.queue.getReceiptById(
+          f.owner(recipient),
+          delayed.id,
+        )
+      )?.state,
+      "queued",
+    );
     await f.finish(source, turn.id, "completed");
     await f.start(source);
-    assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(source.id))?.phase, "running");
-    assert.equal((await f.bundle.stores.session.getSession(source.id))?.messages[1]?.text, "saved completed");
+    assert.equal(
+      (await f.bundle.stores.turn.getLatestSessionTurn(source.id))?.phase,
+      "running",
+    );
+    assert.equal(
+      (await f.bundle.stores.session.getSession(source.id))?.messages[1]?.text,
+      "saved completed",
+    );
     await queue.wakeSourceTurnDependents(source.id);
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map((receipt) => receipt.id), [immediate.id, delayed.id]);
-    assert.equal(dispatched[1]?.dispatched?.origin?.sourceTurnPhase, "completed");
+    assert.deepEqual(
+      dispatched.map((receipt) => receipt.id),
+      [immediate.id, delayed.id],
+    );
+    assert.equal(
+      dispatched[1]?.dispatched?.origin?.sourceTurnPhase,
+      "completed",
+    );
     const target = { kind: "main" as const, ...f.owner(recipient) };
-    const execution = executionOperationResultSchemas.get_execution.parse(await f.bundle.stores.execution.execute({
-      target, operation: "get_execution", request: { target, receiptId: delayed.id },
-    }));
+    const execution = executionOperationResultSchemas.get_execution.parse(
+      await f.bundle.stores.execution.execute({
+        target,
+        operation: "get_execution",
+        request: { target, receiptId: delayed.id },
+      }),
+    );
     assert.equal(execution.origin?.deliveryTiming, "after_source_turn");
     assert.equal(execution.origin?.sourceTurnPhase, "completed");
-    assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), delayed.id))?.state, "completed");
-    assert.equal((await f.bundle.stores.session.getSession(recipient.id))?.messages.length, 4);
-  } finally { await queue?.close(); await f.close(); }
+    assert.equal(
+      (
+        await f.bundle.stores.queue.getReceiptById(
+          f.owner(recipient),
+          delayed.id,
+        )
+      )?.state,
+      "completed",
+    );
+    assert.equal(
+      (await f.bundle.stores.session.getSession(recipient.id))?.messages.length,
+      4,
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -140,6 +358,7 @@ test("delayed delivery waits for exact saved source Turn without blocking immedi
 // impact = "受付済みの先行指示より後の依頼が先に実行される"
 // distinction = "通常wakeでのFIFOや適格性のtestでは、受付時claimが同じ選定を使うことを確認できない"
 // @end-test-value
+/** 新しい受け付けと同時に、すでに適格になった先行項目を優先して開始する。 */
 test("admission claims an eligible predecessor before the new send", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -148,17 +367,42 @@ test("admission claims an eligible predecessor before the new send", async () =>
     const recipient = await f.create("recipient");
     const turn = await f.start(source);
     const owner = f.owner(recipient);
-    const previous = await f.bundle.stores.queue.enqueue(owner, f.input(recipient, source, turn.id));
+    const previous = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.input(recipient, source, turn.id),
+    );
     await f.finish(source, turn.id, "completed");
     const dispatched: SessionTurnQueueReceipt[] = [];
-    const snapshots: Array<ReturnType<typeof f.bundle.stores.queue.listActive>> = [];
-    queue = f.service(recipient, dispatched, undefined, { onChanged: () => { snapshots.push(f.bundle.stores.queue.listActive(owner)); } });
-    const incoming = await queue.enqueue(owner, f.input(recipient, source, turn.id, "immediate"));
+    const snapshots: Array<
+      ReturnType<typeof f.bundle.stores.queue.listActive>
+    > = [];
+    queue = f.service(recipient, dispatched, undefined, {
+      /** 受付時の通知に合わせて、先行と新規の項目の状態を保存する。 */
+      onChanged: () => {
+        snapshots.push(f.bundle.stores.queue.listActive(owner));
+      },
+    });
+    const incoming = await queue.enqueue(
+      owner,
+      f.input(recipient, source, turn.id, "immediate"),
+    );
     assert.equal(incoming.state, "queued");
-    assert.deepEqual((await snapshots[0])?.map(({ id, state }) => [id, state]), [[previous.id, "starting"], [incoming.id, "queued"]]);
+    assert.deepEqual(
+      (await snapshots[0])?.map(({ id, state }) => [id, state]),
+      [
+        [previous.id, "starting"],
+        [incoming.id, "queued"],
+      ],
+    );
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map(({ id }) => id), [previous.id, incoming.id]);
-  } finally { await queue?.close(); await f.close(); }
+    assert.deepEqual(
+      dispatched.map(({ id }) => id),
+      [previous.id, incoming.id],
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -173,6 +417,7 @@ test("admission claims an eligible predecessor before the new send", async () =>
 // impact = "開始の結果が不明な依頼を重複実行したり、その成果を前提に後続を実行したりする"
 // distinction = "既存の再起動testは別transactionでclaimしたfixtureであり、受付とclaimの返信が一緒に失われる境界を通らない"
 // @end-test-value
+/** 受付結果を受け取れなかった再送で既存の開始を繰り返さず、後続を回収後に処理する。 */
 test("lost atomic admission reply never dispatches the unknown claim again", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -185,6 +430,7 @@ test("lost atomic admission reply never dispatches the unknown claim again", asy
     const underlying = f.bundle.stores.queue;
     let writes = 0;
     const store = new Proxy(underlying, {
+      /** 受付だけを包んで結果喪失を再現し、他の操作は実キューストアを使う。 */
       get(target, property) {
         if (property !== "admit") return Reflect.get(target, property);
         return async (...args: Parameters<typeof underlying.admit>) => {
@@ -197,12 +443,18 @@ test("lost atomic admission reply never dispatches the unknown claim again", asy
     const dispatched: SessionTurnQueueReceipt[] = [];
     queue = f.service(recipient, dispatched, undefined, { store });
     await assert.rejects(queue.enqueue(owner, capture), /reply lost/);
-    const saved = await underlying.getReceipt(owner, capture.request.clientRequestId);
+    const saved = await underlying.getReceipt(
+      owner,
+      capture.request.clientRequestId,
+    );
     assert.equal(saved?.state, "starting");
     const retried = await queue.enqueue(owner, capture);
     assert.equal(retried.id, saved.id);
     assert.equal(retried.state, "starting");
-    const follower = await queue.enqueue(owner, f.input(recipient, source, turn.id, "immediate"));
+    const follower = await queue.enqueue(
+      owner,
+      f.input(recipient, source, turn.id, "immediate"),
+    );
     assert.equal(follower.state, "queued");
     await queue.waitForPending();
     assert.deepEqual(dispatched, []);
@@ -212,9 +464,18 @@ test("lost atomic admission reply never dispatches the unknown claim again", asy
     queue = f.service(recipient, dispatched);
     await queue.start();
     await queue.waitForPending();
-    assert.equal((await f.bundle.stores.queue.getReceiptById(owner, retried.id))?.state, "failed");
-    assert.deepEqual(dispatched.map(({ id }) => id), [follower.id]);
-  } finally { await queue?.close(); await f.close(); }
+    assert.equal(
+      (await f.bundle.stores.queue.getReceiptById(owner, retried.id))?.state,
+      "failed",
+    );
+    assert.deepEqual(
+      dispatched.map(({ id }) => id),
+      [follower.id],
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -228,6 +489,7 @@ test("lost atomic admission reply never dispatches the unknown claim again", asy
 // lifecycle = "permanent"
 // distinction = "completed正常系では失敗・取消とunknownの違い、identity不一致、取消済みの保持を検出できない"
 // @end-test-value
+/** 失敗と取消の確定で配送を解放する一方、送信元を確認できないものと配送取消済みのものは実行しない。 */
 test("source failure and cancellation release delivery but unknown identities do not", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -239,19 +501,32 @@ test("source failure and cancellation release delivery but unknown identities do
     for (const phase of ["failed", "canceled"] as const) {
       const source = await f.create(phase);
       const turn = await f.start(source);
-      const receipt = await queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id));
+      const receipt = await queue.enqueue(
+        f.owner(recipient),
+        f.input(recipient, source, turn.id),
+      );
       await queue.waitForPending();
       await f.finish(source, turn.id, phase);
       await queue.wakeSourceTurnDependents(source.id);
       await queue.waitForPending();
       assert.equal(dispatched.at(-1)?.id, receipt.id);
-      assert.equal(dispatched.at(-1)?.dispatched?.origin?.sourceTurnPhase, phase);
+      assert.equal(
+        dispatched.at(-1)?.dispatched?.origin?.sourceTurnPhase,
+        phase,
+      );
     }
     const source = await f.create("unknown");
     const turn = await f.start(source);
-    await f.bundle.stores.session.checkpointSessionRunMetadata({ ...f.owner(source),
+    await f.bundle.stores.session.checkpointSessionRunMetadata({
+      ...f.owner(source),
       expected: { status: "running", runState: "running", threadId: "" },
-      next: { status: "idle", runState: "interrupted", threadId: "", updatedAt: new Date().toISOString() } });
+      next: {
+        status: "idle",
+        runState: "interrupted",
+        threadId: "",
+        updatedAt: new Date().toISOString(),
+      },
+    });
     const unknown = f.input(recipient, source, turn.id);
     const stale = f.input(recipient, source, turn.id);
     stale.origin!.actorIncarnationId = "old-incarnation";
@@ -263,16 +538,33 @@ test("source failure and cancellation release delivery but unknown identities do
       assert.equal(receipt.sourceTurnPhase, "unknown");
     }
     await queue.waitForPending();
-    assert.equal(await f.bundle.stores.queue.claimNext(f.owner(recipient)), null);
-    const canceled = await f.bundle.stores.queue.getReceipt(f.owner(recipient), unknown.request.clientRequestId);
+    assert.equal(
+      await f.bundle.stores.queue.claimNext(f.owner(recipient)),
+      null,
+    );
+    const canceled = await f.bundle.stores.queue.getReceipt(
+      f.owner(recipient),
+      unknown.request.clientRequestId,
+    );
     assert.ok(canceled);
     await f.bundle.stores.queue.cancelQueued(f.owner(recipient), canceled.id);
     await f.finish(source, turn.id, "completed");
     await queue.wakeSourceTurnDependents(source.id);
     await queue.waitForPending();
     assert.equal(dispatched.length, 2);
-    assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), canceled.id))?.state, "canceled");
-  } finally { await queue?.close(); await f.close(); }
+    assert.equal(
+      (
+        await f.bundle.stores.queue.getReceiptById(
+          f.owner(recipient),
+          canceled.id,
+        )
+      )?.state,
+      "canceled",
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -286,6 +578,7 @@ test("source failure and cancellation release delivery but unknown identities do
 // lifecycle = "permanent"
 // distinction = "同processのwake正常系は保存済み受付とsource終端の再読込みを確認できない"
 // @end-test-value
+/** Worker を開き直した後、再送なしで保存済みの適格な配送を再開する。 */
 test("reopened Worker resumes saved eligible delayed receipt without another send", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -293,19 +586,50 @@ test("reopened Worker resumes saved eligible delayed receipt without another sen
     const source = await f.create("source");
     const recipient = await f.create("recipient");
     const turn = await f.start(source);
-    const receipt = await f.bundle.stores.queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id));
-    assert.equal(await f.bundle.stores.queue.claimNext(f.owner(recipient)), null);
+    const receipt = await f.bundle.stores.queue.enqueue(
+      f.owner(recipient),
+      f.input(recipient, source, turn.id),
+    );
+    assert.equal(
+      await f.bundle.stores.queue.claimNext(f.owner(recipient)),
+      null,
+    );
     await f.finish(source, turn.id, "completed");
-    assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), receipt.id))?.state, "queued");
+    assert.equal(
+      (
+        await f.bundle.stores.queue.getReceiptById(
+          f.owner(recipient),
+          receipt.id,
+        )
+      )?.state,
+      "queued",
+    );
     await f.reopen();
     const dispatched: SessionTurnQueueReceipt[] = [];
     queue = f.service(recipient, dispatched);
     await queue.start();
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map((item) => item.id), [receipt.id]);
-    assert.equal(dispatched[0]?.dispatched?.origin?.sourceTurnPhase, "completed");
-    assert.equal((await f.bundle.stores.queue.getReceiptById(f.owner(recipient), receipt.id))?.state, "completed");
-  } finally { await queue?.close(); await f.close(); }
+    assert.deepEqual(
+      dispatched.map((item) => item.id),
+      [receipt.id],
+    );
+    assert.equal(
+      dispatched[0]?.dispatched?.origin?.sourceTurnPhase,
+      "completed",
+    );
+    assert.equal(
+      (
+        await f.bundle.stores.queue.getReceiptById(
+          f.owner(recipient),
+          receipt.id,
+        )
+      )?.state,
+      "completed",
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -320,6 +644,7 @@ test("reopened Worker resumes saved eligible delayed receipt without another sen
 // impact = "取消待ちの送信元処理と宛先の成果物確認・変更が同時に走ることを防ぐ"
 // distinction = "runtimeのguard testだけでは実SQLの適格条件・Steer・宛先queueのgateと表示投影を確認できない"
 // @end-test-value
+/** 保存済みの取消と実行の解放を区別し、解放待ちの表示と後続の配送順を確認する。 */
 test("saved cancellation still waits for exact source execution release", async () => {
   const f = await fixture();
   let queue: SessionTurnQueueService | undefined;
@@ -336,30 +661,79 @@ test("saved cancellation still waits for exact source execution release", async 
     const delayed = await queue.enqueue(f.owner(recipient), captured);
     await queue.waitForPending();
     await f.finish(source, turn.id, "canceled");
-    const immediate = await queue.enqueue(f.owner(recipient), f.input(recipient, source, turn.id, "immediate"));
+    const immediate = await queue.enqueue(
+      f.owner(recipient),
+      f.input(recipient, source, turn.id, "immediate"),
+    );
     assert.equal(immediate.state, "starting");
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map((entry) => entry.id), [immediate.id]);
-    await assert.rejects(queue.sendQueuedInput(f.owner(recipient), delayed.id, "receiver-turn"), /still releasing/);
-    const facade = new MainSessionTurnQueueFacade({ store: f.bundle.stores.queue, service: queue,
+    assert.deepEqual(
+      dispatched.map((entry) => entry.id),
+      [immediate.id],
+    );
+    await assert.rejects(
+      queue.sendQueuedInput(f.owner(recipient), delayed.id, "receiver-turn"),
+      /still releasing/,
+    );
+    const facade = new MainSessionTurnQueueFacade({
+      store: f.bundle.stores.queue,
+      service: queue,
+      /** 取り消し後も実行が解放されていない送信元 Turn の一覧を返す。 */
       getUnreleasedSourceTurnIds: () => unreleased,
-      assertActive() {}, assertAccepting() {}, getSession: (id) => f.bundle.stores.session.getSession(id),
-      getAppSettings: async () => { throw new Error("Unused preflight"); },
-      validateWorkspace: async () => {}, validateProvider: async () => { throw new Error("Unused preflight"); },
-      preview: async () => ({ attachments: [], errors: [] }) });
-    const waiting = await facade.getSessionTurnQueueReceipt(recipient.id, captured.request.clientRequestId);
+      /** 稼働中のファサードとして既存受付へアクセスできるようにする。 */
+      assertActive() {},
+      /** 受付停止状態はこの投影の対象外とする。 */
+      assertAccepting() {},
+      /** 宛先の incarnation を実セッションから解決する。 */
+      getSession: (id) => f.bundle.stores.session.getSession(id),
+      /** 受付の前処理ではなく、既存受付の表示だけを観測する。 */
+      getAppSettings: async () => {
+        throw new Error("Unused preflight");
+      },
+      /** 状態表示を検証する間は作業領域の環境条件を持ち込まない。 */
+      validateWorkspace: async () => {},
+      /** 既存の受付照会からプロバイダー事前検査へ進んだら失敗させる。 */
+      validateProvider: async () => {
+        throw new Error("Unused preflight");
+      },
+      /** 投影対象に添付はなく、プレビューのエラーも発生しない。 */
+      preview: async () => ({ attachments: [], errors: [] }),
+    });
+    const waiting = await facade.getSessionTurnQueueReceipt(
+      recipient.id,
+      captured.request.clientRequestId,
+    );
     assert.equal(waiting?.state, "queued");
     assert.equal(waiting?.sourceTurnPhase, "canceled");
     assert.equal(waiting?.sourceTurnPendingRelease, true);
-    assert.equal((await facade.listSessionTurnQueue(recipient.id)).find((entry) => entry.id === delayed.id)?.sourceTurnPendingRelease, true);
+    assert.equal(
+      (await facade.listSessionTurnQueue(recipient.id)).find(
+        (entry) => entry.id === delayed.id,
+      )?.sourceTurnPendingRelease,
+      true,
+    );
     unreleased = [];
     const next = await f.start(source);
     unreleased = [String(next.id)];
     await queue.wakeSourceTurnDependents(source.id);
     await queue.waitForPending();
-    assert.deepEqual(dispatched.map((entry) => entry.id), [immediate.id, delayed.id]);
-    assert.equal((await facade.getSessionTurnQueueReceipt(recipient.id, captured.request.clientRequestId))?.state, "completed");
-  } finally { await queue?.close(); await f.close(); }
+    assert.deepEqual(
+      dispatched.map((entry) => entry.id),
+      [immediate.id, delayed.id],
+    );
+    assert.equal(
+      (
+        await facade.getSessionTurnQueueReceipt(
+          recipient.id,
+          captured.request.clientRequestId,
+        )
+      )?.state,
+      "completed",
+    );
+  } finally {
+    await queue?.close();
+    await f.close();
+  }
 });
 
 // @test-value v2
@@ -372,6 +746,7 @@ test("saved cancellation still waits for exact source execution release", async 
 // scope = "実Storage Workerのstartup recoveryとafter_source_turn queue"
 // lifecycle = "permanent"
 // @end-test-value
+/** 起動回収で終端が確認できた正確な送信元の配送だけを解放し、確認不能な要求は保留する。 */
 test("起動回収が実在する元Turnを確定した場合にだけ遅延配送を開始する", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.dbPath);
@@ -381,22 +756,47 @@ test("起動回収が実在する元Turnを確定した場合にだけ遅延配�
     const recipient = await f.create("recipient");
     const turn = await f.start(source);
     const owner = f.owner(recipient);
-    const exact = await f.bundle.stores.queue.enqueue(owner, f.input(recipient, source, turn.id));
-    const absent = await f.bundle.stores.queue.enqueue(owner, f.input(recipient, source, turn.id + 999));
-    const stale = await f.bundle.stores.queue.enqueue(owner, f.input(recipient, { ...source, incarnationId: "stale" }, turn.id));
+    const exact = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.input(recipient, source, turn.id),
+    );
+    const absent = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.input(recipient, source, turn.id + 999),
+    );
+    const stale = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.input(recipient, { ...source, incarnationId: "stale" }, turn.id),
+    );
     await f.reopen();
     const dispatched: SessionTurnQueueReceipt[] = [];
     service = f.service(recipient, dispatched);
-    db.exec("CREATE TRIGGER fail_recovery BEFORE UPDATE ON session_turns_v6 WHEN NEW.phase = 'failed' BEGIN SELECT RAISE(ABORT, 'recovery refused'); END");
+    db.exec(
+      "CREATE TRIGGER fail_recovery BEFORE UPDATE ON session_turns_v6 WHEN NEW.phase = 'failed' BEGIN SELECT RAISE(ABORT, 'recovery refused'); END",
+    );
     await assert.rejects(service.start(), /recovery refused/);
     assert.equal(dispatched.length, 0);
-    assert.equal((await f.bundle.stores.queue.getReceiptById(owner, exact.id))?.sourceTurnPhase, "running");
-    assert.deepEqual((await f.bundle.stores.session.getSession(source.id))?.messages.map((m) => m.text), ["source work"]);
+    assert.equal(
+      (await f.bundle.stores.queue.getReceiptById(owner, exact.id))
+        ?.sourceTurnPhase,
+      "running",
+    );
+    assert.deepEqual(
+      (await f.bundle.stores.session.getSession(source.id))?.messages.map(
+        (m) => m.text,
+      ),
+      ["source work"],
+    );
     db.exec("DROP TRIGGER fail_recovery");
     await service.start();
     await service.waitForPending();
-    assert.deepEqual(dispatched.map((r) => [r.id, r.dispatched?.origin?.sourceTurnPhase]), [[exact.id, "failed"]]);
-    const savedTurn = await f.bundle.stores.turn.getLatestSessionTurn(source.id);
+    assert.deepEqual(
+      dispatched.map((r) => [r.id, r.dispatched?.origin?.sourceTurnPhase]),
+      [[exact.id, "failed"]],
+    );
+    const savedTurn = await f.bundle.stores.turn.getLatestSessionTurn(
+      source.id,
+    );
     assert.equal(savedTurn?.id, turn.id);
     assert.equal(savedTurn?.phase, "failed");
     assert.ok(savedTurn?.completedAt);
@@ -405,5 +805,9 @@ test("起動回収が実在する元Turnを確定した場合にだけ遅延配�
       assert.equal(found?.state, "queued");
       assert.equal(found?.sourceTurnPhase, "unknown");
     }
-  } finally { db.close(); await service?.close(); await f.close(); }
+  } finally {
+    db.close();
+    await service?.close();
+    await f.close();
+  }
 });

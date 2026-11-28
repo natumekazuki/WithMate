@@ -34,7 +34,9 @@ const userGlobalTarget = {
   scope: "global",
 };
 
+/** Memory V6 の操作入力を正規化する境界と、受け付けない形を検証する。 */
 describe("memory-v6 contract validation", () => {
+  /** 前後の空白を除いた検索語と、重複をまとめた種別・タグを返すことを確認する。 */
   it("valid search request を正規化できる", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -51,9 +53,17 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.ok, true);
     assert.equal(result.value.query, "approval mode");
     assert.deepEqual(result.value.kinds, ["decision", "context"]);
-    assert.deepEqual(result.value.tags, [{ type: "topic", value: "V6", canonicalType: "topic", canonicalValue: "v6" }]);
+    assert.deepEqual(result.value.tags, [
+      {
+        type: "topic",
+        value: "V6",
+        canonicalType: "topic",
+        canonicalValue: "v6",
+      },
+    ]);
   });
 
+  /** 追加時にタイトルと冪等キーの空白を除き、同じ置き換え先を一つにまとめる。 */
   it("valid append request を正規化できる", () => {
     const result = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -73,6 +83,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.value.idempotencyKey, "key-1");
   });
 
+  /** 添付を追加するときは公開用の概要を必須とし、添付情報を契約の形に正規化する。 */
   it("file付きappend request はfile summaryを必須にして正規化する", () => {
     const result = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -82,23 +93,27 @@ describe("memory-v6 contract validation", () => {
       body: "debug trace archive with screenshots.",
       preview: "debug trace archive.",
       tags: [{ type: "topic", value: "debug" }],
-      files: [{
-        path: " C:/trace/screenshot.png ",
-        summary: " スクリーンショットでエラー状態を確認できる。 ",
-        role: "evidence",
-        displayName: " screenshot.png ",
-        contentType: " image/png ",
-      }],
+      files: [
+        {
+          path: " C:/trace/screenshot.png ",
+          summary: " スクリーンショットでエラー状態を確認できる。 ",
+          role: "evidence",
+          displayName: " screenshot.png ",
+          contentType: " image/png ",
+        },
+      ],
     });
 
     assert.equal(result.ok, true);
-    assert.deepEqual(result.value.files, [{
-      path: "C:/trace/screenshot.png",
-      summary: "スクリーンショットでエラー状態を確認できる。",
-      role: "evidence",
-      displayName: "screenshot.png",
-      contentType: "image/png",
-    }]);
+    assert.deepEqual(result.value.files, [
+      {
+        path: "C:/trace/screenshot.png",
+        summary: "スクリーンショットでエラー状態を確認できる。",
+        role: "evidence",
+        displayName: "screenshot.png",
+        contentType: "image/png",
+      },
+    ]);
 
     const missingSummary = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -121,7 +136,13 @@ describe("memory-v6 contract validation", () => {
       body: "debug trace archive.",
       preview: "debug trace archive.",
       tags: [],
-      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", role: "unknown" }],
+      files: [
+        {
+          path: "C:/trace/screenshot.png",
+          summary: "screenshot",
+          role: "unknown",
+        },
+      ],
     });
     assert.equal(invalidRole.ok, false);
     assert.equal(invalidRole.error.field, "files[0].role");
@@ -177,7 +198,13 @@ describe("memory-v6 contract validation", () => {
       body: "debug trace archive.",
       preview: "debug trace archive.",
       tags: [],
-      files: [{ path: "C:/trace/screenshot.png", summary: "screenshot", objectId: "obj-1" }],
+      files: [
+        {
+          path: "C:/trace/screenshot.png",
+          summary: "screenshot",
+          objectId: "obj-1",
+        },
+      ],
     });
     assert.equal(unknownKey.ok, false);
     assert.equal(unknownKey.error.field, "files[0].objectId");
@@ -193,6 +220,7 @@ describe("memory-v6 contract validation", () => {
   // scope = "general-memory-append-input"
   // lifecycle = "permanent"
   // @end-test-value
+  /** タグの省略を空配列と同等に扱い、不正なタグやタイトル・プレビューの欠落は引き続き拒否する。 */
   it("appendでtags省略を空配列へ正規化し、他の入力検証は維持する", () => {
     const request = {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -213,18 +241,27 @@ describe("memory-v6 contract validation", () => {
     assert.equal(emptyTags.ok, true);
     assert.deepEqual(emptyTags.value, missingTags.value);
 
-    for (const tags of [null, "topic", [{ type: "topic", value: "" }], Array.from({ length: 21 }, () => ({ type: "topic", value: "coffee" }))]) {
+    for (const tags of [
+      null,
+      "topic",
+      [{ type: "topic", value: "" }],
+      Array.from({ length: 21 }, () => ({ type: "topic", value: "coffee" })),
+    ]) {
       const invalid = validateMemoryAppendRequest({ ...request, tags });
       assert.equal(invalid.ok, false);
       assert.ok(invalid.error.field?.startsWith("tags"));
     }
     for (const field of ["title", "preview"]) {
-      const missing = validateMemoryAppendRequest({ ...request, [field]: undefined });
+      const missing = validateMemoryAppendRequest({
+        ...request,
+        [field]: undefined,
+      });
       assert.equal(missing.ok, false);
       assert.equal(missing.error.field, field);
     }
   });
 
+  /** 忘却する記録の識別子をトリムして重複を除き、対象と理由を保持する。 */
   it("valid forget request を正規化できる", () => {
     const result = validateMemoryForgetRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -239,6 +276,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.value.reason, "privacy");
   });
 
+  /** 忘却要求で対象が指定されていないとき、対象フィールドの入力エラーを返す。 */
   it("forget request は単一targetを必須にする", () => {
     const result = validateMemoryForgetRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -251,6 +289,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.field, "target");
   });
 
+  /** 個別取得は識別子を正規化し、タグ一覧では単一対象と正規形の継続カーソルだけを認める。 */
   it("valid get_entry / list_tags request を正規化できる", () => {
     const getEntry = validateMemoryGetEntryRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -312,6 +351,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(multipleTargets.error.field, "targets");
   });
 
+  /** 個別取得で記録の識別子があっても取得対象を省略できないことを確認する。 */
   it("get_entry request は単一targetを必須にする", () => {
     const result = validateMemoryGetEntryRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -323,6 +363,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.field, "target");
   });
 
+  /** ユーザー全体の対象指定を検索や追加で使用できることを確認する。 */
   it("user-global target を正規化できる", () => {
     const search = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -345,6 +386,7 @@ describe("memory-v6 contract validation", () => {
     assert.deepEqual(append.value.target, userGlobalTarget);
   });
 
+  /** 互換性のないスキーマ版を指定した検索要求を拒否する。 */
   it("invalid schemaVersion を拒否する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: "withmate-memory-v0",
@@ -356,6 +398,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.code, "MEMORY_INVALID_SCHEMA_VERSION");
   });
 
+  /** 空白を除くと文字のない検索語を拒否する。 */
   it("empty query を拒否する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -367,6 +410,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.field, "query");
   });
 
+  /** 検索範囲が空の要求を暗黙の全対象検索として扱わない。 */
   it("target なしの search を拒否する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -378,6 +422,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.code, "MEMORY_TARGET_REQUIRED");
   });
 
+  /** 所有者の種類と公開範囲の組み合わせが不正な追加要求を拒否する。 */
   it("invalid owner / scope combination を拒否する", () => {
     const result = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -398,6 +443,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.code, "MEMORY_INVALID_TARGET");
   });
 
+  /** 各対象の指定方法に属さないフィールドを混ぜた要求を拒否する。 */
   it("target variant外fieldを拒否する", () => {
     const characterCurrent = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -417,7 +463,9 @@ describe("memory-v6 contract validation", () => {
 
     const projectCurrent = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "current" } }],
+      targets: [
+        { owner: "project", scope: "project", project: { type: "current" } },
+      ],
       query: "test",
     });
     assert.equal(projectCurrent.ok, false);
@@ -442,7 +490,13 @@ describe("memory-v6 contract validation", () => {
 
     const projectIdWithPath = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a", path: "." } }],
+      targets: [
+        {
+          owner: "project",
+          scope: "project",
+          project: { type: "id", id: "project-a", path: "." },
+        },
+      ],
       query: "test",
     });
     assert.equal(projectIdWithPath.ok, false);
@@ -450,34 +504,48 @@ describe("memory-v6 contract validation", () => {
 
     const projectTargetWithCharacter = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{
-        owner: "project",
-        scope: "project",
-        project: { type: "id", id: "project-a" },
-        character: { type: "id", id: "char-a" },
-      }],
+      targets: [
+        {
+          owner: "project",
+          scope: "project",
+          project: { type: "id", id: "project-a" },
+          character: { type: "id", id: "char-a" },
+        },
+      ],
       query: "test",
     });
     assert.equal(projectTargetWithCharacter.ok, false);
-    assert.equal(projectTargetWithCharacter.error.field, "targets[0].character");
+    assert.equal(
+      projectTargetWithCharacter.error.field,
+      "targets[0].character",
+    );
 
     const userGlobalWithProject = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{
-        owner: "user",
-        scope: "global",
-        project: { type: "id", id: "project-a" },
-      }],
+      targets: [
+        {
+          owner: "user",
+          scope: "global",
+          project: { type: "id", id: "project-a" },
+        },
+      ],
       query: "test",
     });
     assert.equal(userGlobalWithProject.ok, false);
     assert.equal(userGlobalWithProject.error.field, "targets[0].project");
   });
 
+  /** パス指定のプロジェクト対象を相対パスから暗黙に解決しない。 */
   it("project.pathは絶対pathだけを受理する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "path", path: "." } }],
+      targets: [
+        {
+          owner: "project",
+          scope: "project",
+          project: { type: "path", path: "." },
+        },
+      ],
       query: "test",
     });
     assert.equal(result.ok, false);
@@ -486,6 +554,7 @@ describe("memory-v6 contract validation", () => {
     assert.match(result.error.message, /absolute path/);
   });
 
+  /** 対象の上限を超える指定や同じ対象を繰り返す検索を拒否する。 */
   it("targets上限とduplicate targetを拒否する", () => {
     const tooManyTargets = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -502,8 +571,16 @@ describe("memory-v6 contract validation", () => {
     const duplicateTargets = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: [
-        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
-        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        {
+          owner: "project",
+          scope: "project",
+          project: { type: "id", id: "project-a" },
+        },
+        {
+          owner: "project",
+          scope: "project",
+          project: { type: "id", id: "project-a" },
+        },
       ],
       query: "test",
     });
@@ -511,6 +588,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(duplicateTargets.error.code, "MEMORY_DUPLICATE_TARGET");
   });
 
+  /** 種別一覧の空配列・重複・件数上限の扱いを固定する。 */
   it("kindsのempty / duplicate / 上限を固定する", () => {
     const emptyKinds = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -540,6 +618,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(tooManyKinds.error.field, "kinds");
   });
 
+  /** タイトル・本文・プレビューのそれぞれの文字数制約を確認する。 */
   it("oversized title / body / preview を拒否する", () => {
     const titleResult = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -578,6 +657,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(previewResult.error.field, "preview");
   });
 
+  /** 追加の文字列に埋め込まれたヌル文字を検出して拒否する。 */
   it("null byte を拒否する", () => {
     const result = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -593,6 +673,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.field, "body");
   });
 
+  /** 孤立したサロゲートを不正な入力として扱い、対になった Unicode 文字は受け付ける。 */
   it("well-formedでないUnicodeを拒否し、valid surrogate pairは許可する", () => {
     const highSurrogate = validateMemoryAppendRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -630,6 +711,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(validPair.ok, true);
   });
 
+  /** タグの照合キーを NFC と小文字で統一し、表示値との区別を保つ。 */
   it("tag canonical keyをNFC lowercaseで固定する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -642,14 +724,17 @@ describe("memory-v6 contract validation", () => {
     });
 
     assert.equal(result.ok, true);
-    assert.deepEqual(result.value.tags, [{
-      type: "Topic",
-      value: "e\u0301",
-      canonicalType: "topic",
-      canonicalValue: "\u00e9",
-    }]);
+    assert.deepEqual(result.value.tags, [
+      {
+        type: "Topic",
+        value: "e\u0301",
+        canonicalType: "topic",
+        canonicalValue: "\u00e9",
+      },
+    ]);
   });
 
+  /** 契約で定めていない忘却理由の指定を拒否する。 */
   it("invalid forget reason を拒否する", () => {
     const result = validateMemoryForgetRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -662,6 +747,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(result.error.field, "reason");
   });
 
+  /** 保守操作では検索語なしの一覧や試行を認め、曖昧な監査対象や不正な移動先を拒否する。 */
   it("maintenance requestはqueryなしlisting、body opt-in、dry-run、move tupleを検証する", () => {
     const targets = validateMemoryListTargetsRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -733,6 +819,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(sameTargetMove.error.field, "to");
   });
 
+  /** 添付の保存と一括書き出しに絶対パスを要求し、相対パスを解決しない。 */
   it("get-file / export-files はabsolute output pathを必須にする", () => {
     const getFile = validateMemoryGetFileRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -771,6 +858,7 @@ describe("memory-v6 contract validation", () => {
     assert.equal(relativeExportFiles.error.field, "outputDirectoryPath");
   });
 
+  /** 特定プロバイダー向けの未定義フィールドが共通の検索要求に混ざったら拒否する。 */
   it("provider-specific unknown field を拒否する", () => {
     const result = validateMemorySearchRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

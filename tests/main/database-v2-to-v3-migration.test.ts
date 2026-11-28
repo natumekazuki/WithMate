@@ -20,7 +20,12 @@ import {
   createMigrationWriteReport,
 } from "../../src-electron/storage/migrations/migrate-database-v2-to-v3.js";
 
-function createV2FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: () => void } {
+/** 移行元と同じ V2 の DDL を使い、独立した一時データベースを作る。 */
+function createV2FixtureDatabase(): {
+  dbPath: string;
+  dirPath: string;
+  cleanup: () => void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "withmate-v2-to-v3-"));
   const dbPath = join(dir, "withmate-v2.db");
   const db = new DatabaseSync(dbPath);
@@ -36,10 +41,12 @@ function createV2FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: 
   return {
     dbPath,
     dirPath: dir,
+    /** 移行結果と移行元を同じ一時領域から取り除く。 */
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
+/** 長い本文とともに移行結果を追跡できる識別文字列を、成果物内の詳細にも埋め込む。 */
 function createArtifact(sentinel: string): MessageArtifact {
   return {
     title: "migration artifact",
@@ -69,39 +76,67 @@ function createArtifact(sentinel: string): MessageArtifact {
   };
 }
 
+/** 移行が特定テーブルを作ったか、SQLite 自身のスキーマから確認する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName);
+  const row = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName);
   return row !== undefined;
 }
 
-function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T {
+/** 移行後に存在が必須の行を、欠落をその場で失敗扱いにして取得する。 */
+function readRequiredRow<T>(
+  db: DatabaseSync,
+  sql: string,
+  ...params: SQLInputValue[]
+): T {
   const row = db.prepare(sql).get(...params) as T | undefined;
   assert.ok(row);
   return row;
 }
 
+/** テーブルの実際の行数を移行報告の件数と比較できる形で取得する。 */
 function readCount(db: DatabaseSync, tableName: string): number {
-  const row = readRequiredRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM ${tableName}`);
+  const row = readRequiredRow<{ count: number }>(
+    db,
+    `SELECT COUNT(*) AS count FROM ${tableName}`,
+  );
   return row.count;
 }
 
+/** DB の内部テーブルを除いて、移行対象候補の名前を一定の順序で返す。 */
 function tableNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>)
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      )
+      .all() as Array<{ name: string }>
+  )
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
 }
 
+/** 本文の識別文字列が残り得る TEXT 宣言の列を列挙する。 */
 function textColumnNames(db: DatabaseSync, tableName: string): string[] {
-  return (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string; type: string }>)
+  return (
+    db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string;
+      type: string;
+    }>
+  )
     .filter((row) => row.type.toUpperCase().includes("TEXT"))
     .map((row) => row.name);
 }
 
+/** すべての TEXT 列の非 NULL 値を集め、本文全体が SQLite に残っていないか調べる。 */
 function readAllTextValues(db: DatabaseSync): string[] {
   const values: string[] = [];
   for (const tableName of tableNames(db)) {
     for (const columnName of textColumnNames(db, tableName)) {
-      const rows = db.prepare(`SELECT ${columnName} AS value FROM ${tableName}`).all() as Array<{ value: string | null }>;
+      const rows = db
+        .prepare(`SELECT ${columnName} AS value FROM ${tableName}`)
+        .all() as Array<{ value: string | null }>;
       for (const row of rows) {
         if (typeof row.value === "string") {
           values.push(row.value);
@@ -112,42 +147,53 @@ function readAllTextValues(db: DatabaseSync): string[] {
   return values;
 }
 
-function readDatabaseSnapshot(db: DatabaseSync): Record<string, Array<Record<string, unknown>>> {
+/** 移行元の各テーブルの行を順序付きで採取し、dry-run 前後を比較できるようにする。 */
+function readDatabaseSnapshot(
+  db: DatabaseSync,
+): Record<string, Array<Record<string, unknown>>> {
   const snapshot: Record<string, Array<Record<string, unknown>>> = {};
   for (const tableName of tableNames(db)) {
-    const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name);
-    snapshot[tableName] = db.prepare(
-      `SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`,
-    ).all() as Array<Record<string, unknown>>;
+    const columns = (
+      db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name);
+    snapshot[tableName] = db
+      .prepare(`SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`)
+      .all() as Array<Record<string, unknown>>;
   }
   return snapshot;
 }
 
+/** 移行対象にアプリ設定と有効なモデルカタログを一組ずつ加える。 */
 function insertAppSettingsAndModelCatalog(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-      "system_prompt_prefix",
-      "prefix-v2",
-      "2026-04-28T00:00:00.000Z",
-    );
-    db.prepare("INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)").run(
-      10,
-      "fixture",
-      "2026-04-28T00:00:00.000Z",
-      1,
-    );
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run("system_prompt_prefix", "prefix-v2", "2026-04-28T00:00:00.000Z");
+    db.prepare(
+      "INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)",
+    ).run(10, "fixture", "2026-04-28T00:00:00.000Z", 1);
     db.prepare(
       "INSERT INTO model_catalog_providers (revision, provider_id, label, default_model_id, default_reasoning_effort, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(10, "codex", "Codex", "gpt-5.4-mini", "medium", 1);
     db.prepare(
       "INSERT INTO model_catalog_models (revision, provider_id, model_id, label, reasoning_efforts_json, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(10, "codex", "gpt-5.4-mini", "GPT 5.4 mini", JSON.stringify(["medium", "high"]), 1);
+    ).run(
+      10,
+      "codex",
+      "gpt-5.4-mini",
+      "GPT 5.4 mini",
+      JSON.stringify(["medium", "high"]),
+      1,
+    );
   } finally {
     db.close();
   }
 }
 
+/** WAL の内容を DB 本体に反映し、サイズ比較の前に一時的な付属ファイルを取り除く。 */
 function checkpointAndRemoveSqliteSidecars(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -159,7 +205,11 @@ function checkpointAndRemoveSqliteSidecars(dbPath: string): void {
   rmSync(`${dbPath}-shm`, { force: true });
 }
 
-function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY"): void {
+/** 長い本文、ブックマーク、成果物を含む会話と設定を実際の V2 保存先に用意する。 */
+function seedV2Storage(
+  dbPath: string,
+  sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY",
+): void {
   const sessionStorage = new SessionStorageV2(dbPath);
   const longMessage = `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`;
   const session = buildNewSession({
@@ -188,7 +238,6 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
         },
       ],
     });
-
   } finally {
     sessionStorage.close();
   }
@@ -196,6 +245,7 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
   insertAppSettingsAndModelCatalog(dbPath);
 }
 
+/** 書き込みを伴わない移行見積りを実 DB で確認する。 */
 describe("V2 to V3 database migration dry-run", () => {
   // @test-value v2
   // kind = "contract"
@@ -207,6 +257,7 @@ describe("V2 to V3 database migration dry-run", () => {
   // scope = "database-v2-to-v3 dry-run"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 移行件数と UTF-8 のバイト見積りを照合し、移行元の内容とファイルサイズが変わらないことを確認する。 */
   it("V2 source を変更せず件数と estimate bytes を返す", () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -214,9 +265,14 @@ describe("V2 to V3 database migration dry-run", () => {
       seedV2Storage(fixture.dbPath, sentinel);
       checkpointAndRemoveSqliteSidecars(fixture.dbPath);
       const sourceStatBefore = statSync(fixture.dbPath);
-      const sourceDbBefore = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      const sourceDbBefore = new DatabaseSync(fixture.dbPath, {
+        readOnly: true,
+      });
       let sessionCountBefore = 0;
-      let sourceSnapshotBefore: Record<string, Array<Record<string, unknown>>> = {};
+      let sourceSnapshotBefore: Record<
+        string,
+        Array<Record<string, unknown>>
+      > = {};
       try {
         sessionCountBefore = readCount(sourceDbBefore, "sessions");
         sourceSnapshotBefore = readDatabaseSnapshot(sourceDbBefore);
@@ -229,15 +285,26 @@ describe("V2 to V3 database migration dry-run", () => {
       assert.equal(report.mode, "dry-run");
       assert.deepEqual(report.plannedV3Counts, report.v2Counts);
       assert.deepEqual(report.estimatedSourceBytes, {
-        sessionMessageText: Buffer.byteLength(`${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`, "utf8")
-          + Buffer.byteLength("assistant reply", "utf8"),
-        sessionMessageArtifactsJson: Buffer.byteLength(JSON.stringify(createArtifact(sentinel)), "utf8"),
+        sessionMessageText:
+          Buffer.byteLength(
+            `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`,
+            "utf8",
+          ) + Buffer.byteLength("assistant reply", "utf8"),
+        sessionMessageArtifactsJson: Buffer.byteLength(
+          JSON.stringify(createArtifact(sentinel)),
+          "utf8",
+        ),
       });
 
-      const sourceDbAfter = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      const sourceDbAfter = new DatabaseSync(fixture.dbPath, {
+        readOnly: true,
+      });
       try {
         assert.equal(readCount(sourceDbAfter, "sessions"), sessionCountBefore);
-        assert.deepEqual(readDatabaseSnapshot(sourceDbAfter), sourceSnapshotBefore);
+        assert.deepEqual(
+          readDatabaseSnapshot(sourceDbAfter),
+          sourceSnapshotBefore,
+        );
       } finally {
         sourceDbAfter.close();
       }
@@ -248,6 +315,7 @@ describe("V2 to V3 database migration dry-run", () => {
   });
 });
 
+/** 実データを V3 の SQLite と Blob 保存先へ書き出す経路を確認する。 */
 describe("V2 to V3 database migration write mode", () => {
   // @test-value v2
   // kind = "invariant"
@@ -261,6 +329,7 @@ describe("V2 to V3 database migration write mode", () => {
   // impact = "既存利用者の保存済みbookmarkがmigration後に失われる"
   // distinction = "単体storageのroundtripとは別に、V2 sourceからV3 targetまでの変換経路を確認する"
   // @end-test-value
+  /** セッション・成果物・設定・カタログが移り、読み取り API から元の会話を復元できることを確かめる。 */
   it("V3 DB と blob store に session/app_settings/model_catalog を移す", async () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -302,12 +371,17 @@ describe("V2 to V3 database migration write mode", () => {
         assert.ok(migratedSession);
         assert.equal(migratedSession.messages.length, 2);
         assert.equal(migratedSession.messages[0]?.isBookmarked, true);
-        assert.equal(migratedSession.messages[0]?.text.includes("SENTINEL_V2_TO_V3_BLOB_ONLY:message-tail"), true);
         assert.equal(
-          (await sessionStorage.getSessionMessageArtifact("session-1", 1))?.changedFiles[0]?.diffRows[0]?.rightText,
+          migratedSession.messages[0]?.text.includes(
+            "SENTINEL_V2_TO_V3_BLOB_ONLY:message-tail",
+          ),
+          true,
+        );
+        assert.equal(
+          (await sessionStorage.getSessionMessageArtifact("session-1", 1))
+            ?.changedFiles[0]?.diffRows[0]?.rightText,
           "SENTINEL_V2_TO_V3_BLOB_ONLY:artifact-diff-tail",
         );
-
       } finally {
         sessionStorage.close();
       }
@@ -326,10 +400,12 @@ describe("V2 to V3 database migration write mode", () => {
   // scope = "database-v2-to-v3 blob payload boundary"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 長い本文と成果物を読み戻せても、それらの末尾が SQLite の TEXT 列には残らないことを確認する。 */
   it("長い message / artifact の sentinel tail を sqlite text columns に残さない", async () => {
     const fixture = createV2FixtureDatabase();
     try {
-      const sentinel = "SENTINEL_SQLITE_TEXT_COLUMNS_MUST_NOT_CONTAIN_THIS_TAIL";
+      const sentinel =
+        "SENTINEL_SQLITE_TEXT_COLUMNS_MUST_NOT_CONTAIN_THIS_TAIL";
       seedV2Storage(fixture.dbPath, sentinel);
       const v3DbPath = join(fixture.dirPath, "withmate-v3.db");
       const blobRootPath = join(fixture.dirPath, "blobs");
@@ -356,12 +432,15 @@ describe("V2 to V3 database migration write mode", () => {
       try {
         const session = await sessionStorage.getSession("session-1");
         assert.ok(session);
-        assert.equal(session.messages[0]?.text.includes(`${sentinel}:message-tail`), true);
         assert.equal(
-          (await sessionStorage.getSessionMessageArtifact("session-1", 1))?.changedFiles[0]?.diffRows[0]?.rightText,
+          session.messages[0]?.text.includes(`${sentinel}:message-tail`),
+          true,
+        );
+        assert.equal(
+          (await sessionStorage.getSessionMessageArtifact("session-1", 1))
+            ?.changedFiles[0]?.diffRows[0]?.rightText,
           `${sentinel}:artifact-diff-tail`,
         );
-
       } finally {
         sessionStorage.close();
       }
@@ -380,12 +459,16 @@ describe("V2 to V3 database migration write mode", () => {
   // scope = "database-v2-to-v3 session ordering"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 移行後も保存済みの最終活動日時を保ち、新しい活動順にセッションが並ぶことを確認する。 */
   it("V2 の last_active_at と session ordering を V3 に保持する", async () => {
     const fixture = createV2FixtureDatabase();
     try {
       const sessionStorage = new SessionStorageV2(fixture.dbPath);
       try {
-        for (const [id, title] of [["session-old", "Old"], ["session-new", "New"]] as const) {
+        for (const [id, title] of [
+          ["session-old", "Old"],
+          ["session-new", "New"],
+        ] as const) {
           sessionStorage.upsertSession({
             ...buildNewSession({
               taskTitle: title,
@@ -406,8 +489,12 @@ describe("V2 to V3 database migration write mode", () => {
       }
       const sourceDb = new DatabaseSync(fixture.dbPath);
       try {
-        sourceDb.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(100, "session-old");
-        sourceDb.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(200, "session-new");
+        sourceDb
+          .prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?")
+          .run(100, "session-old");
+        sourceDb
+          .prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?")
+          .run(200, "session-new");
       } finally {
         sourceDb.close();
       }
@@ -422,7 +509,10 @@ describe("V2 to V3 database migration write mode", () => {
 
       const storage = new SessionStorageV3(v3DbPath, blobRootPath);
       try {
-        assert.deepEqual((await storage.listSessionSummaries()).map((session) => session.id), ["session-new", "session-old"]);
+        assert.deepEqual(
+          (await storage.listSessionSummaries()).map((session) => session.id),
+          ["session-new", "session-old"],
+        );
       } finally {
         storage.close();
       }
@@ -430,11 +520,19 @@ describe("V2 to V3 database migration write mode", () => {
       const targetDb = new DatabaseSync(v3DbPath, { readOnly: true });
       try {
         assert.equal(
-          readRequiredRow<{ last_active_at: number }>(targetDb, "SELECT last_active_at FROM sessions WHERE id = ?", "session-old").last_active_at,
+          readRequiredRow<{ last_active_at: number }>(
+            targetDb,
+            "SELECT last_active_at FROM sessions WHERE id = ?",
+            "session-old",
+          ).last_active_at,
           100,
         );
         assert.equal(
-          readRequiredRow<{ last_active_at: number }>(targetDb, "SELECT last_active_at FROM sessions WHERE id = ?", "session-new").last_active_at,
+          readRequiredRow<{ last_active_at: number }>(
+            targetDb,
+            "SELECT last_active_at FROM sessions WHERE id = ?",
+            "session-new",
+          ).last_active_at,
           200,
         );
       } finally {
@@ -455,6 +553,7 @@ describe("V2 to V3 database migration write mode", () => {
   // scope = "database-v2-to-v3 overwrite policy"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 既存の移行先は既定で保護し、上書き指定がある場合にだけ置き換える。 */
   it("overwrite=false で既存 target があると失敗し、overwrite=true で置き換える", async () => {
     const fixture = createV2FixtureDatabase();
     try {
@@ -470,10 +569,9 @@ describe("V2 to V3 database migration write mode", () => {
 
       const targetBeforeReject = new DatabaseSync(v3DbPath);
       try {
-        targetBeforeReject.prepare("UPDATE sessions SET task_title = ? WHERE id = ?").run(
-          "stale target marker",
-          "session-1",
-        );
+        targetBeforeReject
+          .prepare("UPDATE sessions SET task_title = ? WHERE id = ?")
+          .run("stale target marker", "session-1");
       } finally {
         targetBeforeReject.close();
       }
@@ -491,7 +589,11 @@ describe("V2 to V3 database migration write mode", () => {
       const rejectedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
       try {
         assert.equal(
-          readRequiredRow<{ task_title: string }>(rejectedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          readRequiredRow<{ task_title: string }>(
+            rejectedTarget,
+            "SELECT task_title FROM sessions WHERE id = ?",
+            "session-1",
+          ).task_title,
           "stale target marker",
         );
       } finally {
@@ -512,7 +614,11 @@ describe("V2 to V3 database migration write mode", () => {
       const replacedTarget = new DatabaseSync(v3DbPath, { readOnly: true });
       try {
         assert.equal(
-          readRequiredRow<{ task_title: string }>(replacedTarget, "SELECT task_title FROM sessions WHERE id = ?", "session-1").task_title,
+          readRequiredRow<{ task_title: string }>(
+            replacedTarget,
+            "SELECT task_title FROM sessions WHERE id = ?",
+            "session-1",
+          ).task_title,
           "V2 migration fixture",
         );
       } finally {

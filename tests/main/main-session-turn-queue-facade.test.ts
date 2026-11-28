@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError, type MainSessionTurnQueueFacadeDeps } from "../../src-electron/app/main-session-turn-queue-facade.js";
+import {
+  MainSessionTurnQueueFacade,
+  SessionTurnQueuePreflightRejectedError,
+  type MainSessionTurnQueueFacadeDeps,
+} from "../../src-electron/app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { ComposerPreview, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import type {
+  ComposerPreview,
+  RunSessionTurnRequest,
+} from "../../src-shared/session/runtime-state.js";
+import type {
+  SessionTurnQueueReceipt,
+  SessionTurnQueueStore,
+} from "../../src-shared/session/session-turn-queue.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import { enqueueLocalPrDiscussion } from "../../src-electron/local-pr/local-pr-session-bridge.js";
@@ -15,25 +25,56 @@ const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 /** PR 相談送信の応答が失われても、実際に永続化された GUI 受付記録で結果を確定し、別の Turn は作らない。 */
 test("PR相談の応答喪失は通常Session queueで同じ受付へ収束する", async () => {
   const f = fixture();
-  const input = { prId: requestId, version: 1, target: { kind: "main" as const, sessionId: f.session.id, incarnationId: f.session.incarnationId }, commentIds: [], message: "Review this change", requestId };
+  const input = {
+    prId: requestId,
+    version: 1,
+    target: {
+      kind: "main" as const,
+      sessionId: f.session.id,
+      incarnationId: f.session.incarnationId,
+    },
+    commentIds: [],
+    message: "Review this change",
+    requestId,
+  };
   const queue = {
-    getSessionTurnQueueReceipt: f.facade.getSessionTurnQueueReceipt.bind(f.facade),
-    enqueueSessionTurn: async (...args: Parameters<MainSessionTurnQueueFacade["enqueueSessionTurn"]>) => {
+    getSessionTurnQueueReceipt: f.facade.getSessionTurnQueueReceipt.bind(
+      f.facade,
+    ),
+    /** 実facadeで受付を記録してから応答だけを失わせ、未受付と区別する。 */
+    enqueueSessionTurn: async (
+      ...args: Parameters<MainSessionTurnQueueFacade["enqueueSessionTurn"]>
+    ) => {
       await f.facade.enqueueSessionTurn(...args);
       throw new Error("Reply lost after commit");
     },
   };
   try {
-    const send = (message: string) => enqueueLocalPrDiscussion(queue, input, message, async () => f.session, () => undefined);
+    /** 本文以外は同じPR相談の送信条件を使い、再送時の受付照合に渡す。 */
+    const send = (message: string) =>
+      enqueueLocalPrDiscussion(
+        queue,
+        input,
+        message,
+        async () => f.session,
+        () => undefined,
+      );
     const message = `${input.message}\n\nFixed submission v1`;
     const first = await send(message);
     assert.deepEqual(first, { ok: true, data: { receiptId: f.rows[0]?.id } });
     assert.deepEqual(await send(message), first);
-    assert.deepEqual(await send("Different message"), { ok: false, code: "PR_DISCUSSION_REQUEST_CONFLICT", message: "That request ID belongs to a different Session message.", effect: "none" });
+    assert.deepEqual(await send("Different message"), {
+      ok: false,
+      code: "PR_DISCUSSION_REQUEST_CONFLICT",
+      message: "That request ID belongs to a different Session message.",
+      effect: "none",
+    });
     assert.equal(f.calls.acceptance, 1);
     assert.equal(f.rows[0]?.accepted?.origin?.kind, "gui");
     assert.equal(f.rows[0]?.accepted?.request.userMessage, message);
-  } finally { await f.service.close(); }
+  } finally {
+    await f.service.close();
+  }
 });
 
 // @test-value v2
@@ -48,45 +89,104 @@ test("PR相談の応答喪失は通常Session queueで同じ受付へ収束す�
 // impact = "異なる指示や権限で実行し、外部操作を重複する"
 // distinction = "queue storage単体では元の開始入力とGUI受付を組み合わせるfacadeを通らない"
 // @end-test-value
+/** 実際に開始に使った入力と送信来歴を再試行元とし、GUIの現設定で新たに受付することを確認する。 */
 test("失敗Turnの固定入力を元来歴付きGUI新規受付として一度だけ捕捉する", async () => {
-  for (const [kind, edit] of [["gui", "none"], ["session", "none"], ["session", "message"], ["session", "attachment"]] as const) {
+  for (const [kind, edit] of [
+    ["gui", "none"],
+    ["session", "none"],
+    ["session", "message"],
+    ["session", "attachment"],
+  ] as const) {
     const f = retryFixture(kind);
     try {
-      const [first, second] = await Promise.all([f.facade.retryFailedSessionTurn(f.session.id, f.retry), f.facade.retryFailedSessionTurn(f.session.id, f.retry)]);
+      const [first, second] = await Promise.all([
+        f.facade.retryFailedSessionTurn(f.session.id, f.retry),
+        f.facade.retryFailedSessionTurn(f.session.id, f.retry),
+      ]);
       assert.equal(first.id, second.id);
-      assert.equal(first.captured.request.userMessage, "Dispatched instruction");
+      assert.equal(
+        first.captured.request.userMessage,
+        "Dispatched instruction",
+      );
       assert.deepEqual(first.captured.attachments, f.preview.attachments);
       assert.equal(first.captured.origin?.kind, "gui");
       assert.equal(first.captured.retrySource?.origin.kind, kind);
-      assert.deepEqual(first.captured.retrySource?.origin, f.source.dispatched?.origin);
+      assert.deepEqual(
+        first.captured.retrySource?.origin,
+        f.source.dispatched?.origin,
+      );
       assert.equal(first.captured.retrySource?.receiptId, f.source.id);
       assert.equal(first.captured.retrySource?.turnId, "42");
       assert.equal(first.captured.retrySource?.changedSinceAcceptance, true);
-      assert.deepEqual(first.captured.request.executionOptions, captureSessionExecutionOptions(f.session));
-      assert.notDeepEqual(first.captured.request.executionOptions, f.source.dispatched?.request.executionOptions);
+      assert.deepEqual(
+        first.captured.request.executionOptions,
+        captureSessionExecutionOptions(f.session),
+      );
+      assert.notDeepEqual(
+        first.captured.request.executionOptions,
+        f.source.dispatched?.request.executionOptions,
+      );
       assert.equal(f.calls.acceptance, 1);
       assert.equal(f.calls.preview, 0);
       if (kind === "session") {
-        first.state = "failed"; first.turnId = "43"; first.userMessageSeq = 8;
+        first.state = "failed";
+        first.turnId = "43";
+        first.userMessageSeq = 8;
         first.dispatched = structuredClone(first.captured);
-        if (edit === "message") first.dispatched.request.userMessage = "Replacement by GUI user";
+        if (edit === "message")
+          first.dispatched.request.userMessage = "Replacement by GUI user";
         if (edit === "attachment") first.dispatched.attachments = [];
         const prior = await f.deps.readRetryExecution!(f.retry);
         assert.equal(prior.ok, true);
-        if (!prior.ok || !prior.inputs.entry) throw new Error("Expected saved source execution");
-        f.deps.readRetryExecution = async () => ({ ...prior, receiptId: first.id, turnId: "43", userMessageSeq: 8,
-          inputs: { ...prior.inputs, entry: { ...prior.inputs.entry!, receiptId: first.id, inputSeq: 8 } } });
-        f.deps.validateRetryAttachments = async (_session, attachments) => { assert.deepEqual(attachments, first.dispatched?.attachments); };
-        const again = await f.facade.retryFailedSessionTurn(f.session.id, { ...f.retry, receiptId: first.id, turnId: "43", clientRequestId: "49f27f3e-6436-4a58-831f-f81b28cc0a19" });
-        assert.equal(again.captured.request.userMessage, first.dispatched.request.userMessage);
-        assert.deepEqual(again.captured.attachments, first.dispatched.attachments);
+        if (!prior.ok || !prior.inputs.entry)
+          throw new Error("Expected saved source execution");
+        f.deps.readRetryExecution = async () => ({
+          ...prior,
+          receiptId: first.id,
+          turnId: "43",
+          userMessageSeq: 8,
+          inputs: {
+            ...prior.inputs,
+            entry: { ...prior.inputs.entry!, receiptId: first.id, inputSeq: 8 },
+          },
+        });
+        f.deps.validateRetryAttachments = async (_session, attachments) => {
+          assert.deepEqual(attachments, first.dispatched?.attachments);
+        };
+        const again = await f.facade.retryFailedSessionTurn(f.session.id, {
+          ...f.retry,
+          receiptId: first.id,
+          turnId: "43",
+          clientRequestId: "49f27f3e-6436-4a58-831f-f81b28cc0a19",
+        });
+        assert.equal(
+          again.captured.request.userMessage,
+          first.dispatched.request.userMessage,
+        );
+        assert.deepEqual(
+          again.captured.attachments,
+          first.dispatched.attachments,
+        );
         assert.equal(again.captured.retrySource?.receiptId, first.id);
         assert.equal(again.captured.retrySource?.turnId, "43");
-        assert.equal(again.captured.retrySource.changedSinceAcceptance, edit !== "none");
-        assert.deepEqual(again.captured.retrySource.origin, edit === "none" ? f.source.dispatched?.origin : first.dispatched.origin);
-        assert.deepEqual(first.dispatched.retrySource?.origin, f.source.dispatched?.origin);
+        assert.equal(
+          again.captured.retrySource.changedSinceAcceptance,
+          edit !== "none",
+        );
+        assert.deepEqual(
+          again.captured.retrySource.origin,
+          edit === "none"
+            ? f.source.dispatched?.origin
+            : first.dispatched.origin,
+        );
+        assert.deepEqual(
+          first.dispatched.retrySource?.origin,
+          f.source.dispatched?.origin,
+        );
       }
-    } finally { await f.service.close(); }
+    } finally {
+      await f.service.close();
+    }
   }
 });
 
@@ -103,42 +203,174 @@ test("失敗Turnの固定入力を元来歴付きGUI新規受付として一度�
 // distinction = "表示制御と型検査はrendererを通さない偽造要求や保存内容の欠落を拒否できない"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 確定失敗の開始入力と正しいowner・来歴・添付を確認できない要求は、preflightだけで止める。 */
 test("不確定な失敗と来歴不一致や添付不能をmain側で拒否する", async () => {
-  for (const condition of ["canceled", "interrupted", "missing-origin", "different-owner", "additional", "attachment", "turn-mismatch", "settings-pending", "actor-expired"] as const) {
+  for (const condition of [
+    "canceled",
+    "interrupted",
+    "missing-origin",
+    "different-owner",
+    "additional",
+    "attachment",
+    "turn-mismatch",
+    "settings-pending",
+    "actor-expired",
+  ] as const) {
     const f = retryFixture("session");
     try {
-      if (condition === "canceled" || condition === "interrupted") f.source.state = condition;
-      if (condition === "missing-origin") { delete f.source.dispatched!.origin; }
-      if (condition === "different-owner") f.retry.target.incarnationId = "replaced";
+      if (condition === "canceled" || condition === "interrupted")
+        f.source.state = condition;
+      if (condition === "missing-origin") {
+        delete f.source.dispatched!.origin;
+      }
+      if (condition === "different-owner")
+        f.retry.target.incarnationId = "replaced";
       if (condition === "additional") f.source.inputTurnId = f.retry.turnId;
-      if (condition === "attachment") f.deps.validateRetryAttachments = async () => { throw new Error("attachment unavailable"); };
+      if (condition === "attachment")
+        f.deps.validateRetryAttachments = async () => {
+          throw new Error("attachment unavailable");
+        };
       if (condition === "turn-mismatch") {
         const read = f.deps.readRetryExecution!;
-        f.deps.readRetryExecution = async (request) => { const result = await read(request); return result.ok ? { ...result, turnState: "running" } : result; };
+        f.deps.readRetryExecution = async (request) => {
+          const result = await read(request);
+          return result.ok ? { ...result, turnState: "running" } : result;
+        };
       }
-      if (condition === "settings-pending") f.retry.executionOptions = { ...f.retry.executionOptions, model: "new-selection" };
+      if (condition === "settings-pending")
+        f.retry.executionOptions = {
+          ...f.retry.executionOptions,
+          model: "new-selection",
+        };
       let actorValid = true;
-      if (condition === "actor-expired") f.deps.validateRetryAttachments = async () => { actorValid = false; };
-      await assert.rejects(f.facade.retryFailedSessionTurn(f.session.id, f.retry, () => { if (!actorValid) throw new Error("actor expired"); }));
+      if (condition === "actor-expired")
+        f.deps.validateRetryAttachments = async () => {
+          actorValid = false;
+        };
+      await assert.rejects(
+        f.facade.retryFailedSessionTurn(f.session.id, f.retry, () => {
+          if (!actorValid) throw new Error("actor expired");
+        }),
+      );
       assert.equal(f.calls.acceptance, 0);
-    } finally { await f.service.close(); }
+    } finally {
+      await f.service.close();
+    }
   }
 });
 
+/** 受付後に本文が変わって失敗したTurnと、GUIまたはSessionに由来する再試行元を組み立てる。 */
 function retryFixture(kind: "gui" | "session") {
   const f = fixture();
-  const origin = { kind, operation: "send" as const, targetSessionId: f.session.id, targetIncarnationId: f.session.incarnationId,
-    ...(kind === "session" ? { actorKind: "main" as const, actorSessionId: "parent", actorIncarnationId: "parent-inc", actorTurnId: "12", actorSnapshot: { sessionTitle: "Parent", character: { id: "character-1", name: "Sender", iconPath: "" } } } : {}) };
-  const accepted = { request: { ...f.input, userMessage: "Accepted instruction", clientRequestId: requestId, executionOptions: { ...f.input.executionOptions, model: "old-model", codexSandboxMode: "read-only" as const } }, attachments: f.preview.attachments, provider: f.session.provider, workspacePath: f.session.workspacePath, origin };
-  const dispatched = { ...structuredClone(accepted), request: { ...accepted.request, userMessage: "Dispatched instruction" } };
-  const source: SessionTurnQueueReceipt = { sessionId: f.session.id, incarnationId: f.session.incarnationId, id: "source-receipt", requestId, sequence: 1, queuePosition: 1,
-    state: "failed", captured: dispatched, accepted, dispatched, turnId: "42", inputTurnId: null, userMessageSeq: 5, reason: "failure", releasedAt: null, createdAt: "then", updatedAt: "then" };
+  const origin = {
+    kind,
+    operation: "send" as const,
+    targetSessionId: f.session.id,
+    targetIncarnationId: f.session.incarnationId,
+    ...(kind === "session"
+      ? {
+          actorKind: "main" as const,
+          actorSessionId: "parent",
+          actorIncarnationId: "parent-inc",
+          actorTurnId: "12",
+          actorSnapshot: {
+            sessionTitle: "Parent",
+            character: { id: "character-1", name: "Sender", iconPath: "" },
+          },
+        }
+      : {}),
+  };
+  const accepted = {
+    request: {
+      ...f.input,
+      userMessage: "Accepted instruction",
+      clientRequestId: requestId,
+      executionOptions: {
+        ...f.input.executionOptions,
+        model: "old-model",
+        codexSandboxMode: "read-only" as const,
+      },
+    },
+    attachments: f.preview.attachments,
+    provider: f.session.provider,
+    workspacePath: f.session.workspacePath,
+    origin,
+  };
+  const dispatched = {
+    ...structuredClone(accepted),
+    request: { ...accepted.request, userMessage: "Dispatched instruction" },
+  };
+  const source: SessionTurnQueueReceipt = {
+    sessionId: f.session.id,
+    incarnationId: f.session.incarnationId,
+    id: "source-receipt",
+    requestId,
+    sequence: 1,
+    queuePosition: 1,
+    state: "failed",
+    captured: dispatched,
+    accepted,
+    dispatched,
+    turnId: "42",
+    inputTurnId: null,
+    userMessageSeq: 5,
+    reason: "failure",
+    releasedAt: null,
+    createdAt: "then",
+    updatedAt: "then",
+  };
   f.rows.push(source);
-  f.deps.readRetryExecution = async () => executionOperationResultSchemas.get_execution.parse({ ok: true, origin, receiptId: source.id, receiptState: "failed", turnId: "42", turnState: "failed", resultState: "partial", userMessageSeq: 5, assistantMessageSeq: 6,
-    inputs: { entry: { receiptId: source.id, inputSeq: 5, kind: "start", stage: "fixed", comparison: "changed", detail: { operation: "get_execution_input", receiptId: source.id } }, startChanged: true,
-      additional: { confirmedCount: 1, references: [{ seq: 7 }], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } }, executionSettings: null, output: null });
-  f.deps.validateRetryAttachments = async (_session, attachments) => { assert.deepEqual(attachments, f.preview.attachments); };
-  const retry = { target: { kind: "main" as const, sessionId: f.session.id, incarnationId: f.session.incarnationId }, receiptId: source.id, turnId: "42", clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55", executionOptions: captureSessionExecutionOptions(f.session) };
+  f.deps.readRetryExecution = async () =>
+    executionOperationResultSchemas.get_execution.parse({
+      ok: true,
+      origin,
+      receiptId: source.id,
+      receiptState: "failed",
+      turnId: "42",
+      turnState: "failed",
+      resultState: "partial",
+      userMessageSeq: 5,
+      assistantMessageSeq: 6,
+      inputs: {
+        entry: {
+          receiptId: source.id,
+          inputSeq: 5,
+          kind: "start",
+          stage: "fixed",
+          comparison: "changed",
+          detail: { operation: "get_execution_input", receiptId: source.id },
+        },
+        startChanged: true,
+        additional: {
+          confirmedCount: 1,
+          references: [{ seq: 7 }],
+          referencesNextOffset: null,
+          unresolved: [],
+          unresolvedCount: 0,
+          unresolvedNextOffset: null,
+          notSent: [],
+          notSentCount: 0,
+          notSentNextOffset: null,
+          coverage: "recorded",
+        },
+      },
+      executionSettings: null,
+      output: null,
+    });
+  f.deps.validateRetryAttachments = async (_session, attachments) => {
+    assert.deepEqual(attachments, f.preview.attachments);
+  };
+  const retry = {
+    target: {
+      kind: "main" as const,
+      sessionId: f.session.id,
+      incarnationId: f.session.incarnationId,
+    },
+    receiptId: source.id,
+    turnId: "42",
+    clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55",
+    executionOptions: captureSessionExecutionOptions(f.session),
+  };
   return { ...f, source, retry };
 }
 // @test-value v2
@@ -152,17 +384,33 @@ function retryFixture(kind: "gui" | "session") {
 // lifecycle = "permanent"
 // distinction = "通常Send testはcanonical Coordination本文のatomic保存前に行うcapture-only経路を通らない"
 // @end-test-value
+/** MainとAuxiliaryの宛先を識別して実行条件を用意するが、本文・添付を捕捉した受付は作らないことを確認する。 */
 test("Coordination配送準備はexact宛先へ共通preflightだけを実施する", async () => {
   const f = fixture();
   let changed = false;
   const targets: string[] = [];
-  f.deps.getSessionForCoordination = async (target) => { targets.push(target.kind); return changed ? { ...f.session, incarnationId: "replacement" } : f.session; };
-  f.deps.getSession = async () => { throw new Error("A Coordination target must not use Main-first lookup"); };
+  f.deps.getSessionForCoordination = async (target) => {
+    targets.push(target.kind);
+    return changed ? { ...f.session, incarnationId: "replacement" } : f.session;
+  };
+  f.deps.getSession = async () => {
+    throw new Error("A Coordination target must not use Main-first lookup");
+  };
   try {
     for (const kind of ["main", "auxiliary"] as const) {
-      const capture = await f.facade.prepareCoordinationDelivery({ kind, sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId);
+      const capture = await f.facade.prepareCoordinationDelivery(
+        {
+          kind,
+          sessionId: f.session.id,
+          incarnationId: f.session.incarnationId,
+        },
+        requestId,
+      );
       assert.equal(capture.request.clientRequestId, requestId);
-      assert.deepEqual(capture.request.executionOptions, captureSessionExecutionOptions(f.session));
+      assert.deepEqual(
+        capture.request.executionOptions,
+        captureSessionExecutionOptions(f.session),
+      );
       assert.equal(capture.request.userMessage, "");
       assert.deepEqual(capture.attachments, []);
       assert.equal(capture.origin, undefined);
@@ -170,16 +418,43 @@ test("Coordination配送準備はexact宛先へ共通preflightだけを実施す
     assert.deepEqual(targets, ["main", "main", "auxiliary", "auxiliary"]);
     assert.equal(f.calls.preview, 0);
     assert.equal(f.calls.acceptance, 0);
-    f.deps.validateWorkspace = async () => { changed = true; };
-    await assert.rejects(f.facade.prepareCoordinationDelivery({ kind: "auxiliary", sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId), /target changed/);
+    f.deps.validateWorkspace = async () => {
+      changed = true;
+    };
+    await assert.rejects(
+      f.facade.prepareCoordinationDelivery(
+        {
+          kind: "auxiliary",
+          sessionId: f.session.id,
+          incarnationId: f.session.incarnationId,
+        },
+        requestId,
+      ),
+      /target changed/,
+    );
     changed = false;
     f.deps.validateWorkspace = async () => {};
     const settings = createDefaultAppSettings();
-    settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
+    settings.modelAvailability.codex = {
+      disabledServiceIds: [],
+      disabledModelIds: [f.session.model],
+    };
     f.deps.getAppSettings = async () => settings;
-    await assert.rejects(f.facade.prepareCoordinationDelivery({ kind: "main", sessionId: f.session.id, incarnationId: f.session.incarnationId }, requestId), /disabled/);
+    await assert.rejects(
+      f.facade.prepareCoordinationDelivery(
+        {
+          kind: "main",
+          sessionId: f.session.id,
+          incarnationId: f.session.incarnationId,
+        },
+        requestId,
+      ),
+      /disabled/,
+    );
     assert.equal(f.calls.acceptance, 0);
-  } finally { await f.service.close(); }
+  } finally {
+    await f.service.close();
+  }
 });
 
 // @test-value v2
@@ -193,25 +468,63 @@ test("Coordination配送準備はexact宛先へ共通preflightだけを実施す
 // lifecycle = "permanent"
 // distinction = "GUI retry testは実actorと有効bindingの再検証を通らない"
 // @end-test-value
+/** GUIで受付内容を編集した後も元の入力と実actorで照合でき、失効しても既存受付を失わないことを確かめる。 */
 test("Session送信は編集後も受付原文と実actorで同じreceiptへ収束する", async () => {
   const f = fixture();
-  const origin = { kind: "session" as const, operation: "send" as const, actorSessionId: "parent", actorIncarnationId: "parent-incarnation", actorTurnId: "10", targetSessionId: f.session.id, targetIncarnationId: f.session.incarnationId };
+  const origin = {
+    kind: "session" as const,
+    operation: "send" as const,
+    actorSessionId: "parent",
+    actorIncarnationId: "parent-incarnation",
+    actorTurnId: "10",
+    targetSessionId: f.session.id,
+    targetIncarnationId: f.session.incarnationId,
+  };
   let valid = true;
-  const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
+  /** 認可状態を後から切り替え、同一送信者でも失効後は拒否できるようにする。 */
+  const assertActor = () => {
+    if (!valid) throw new Error("Actor binding expired");
+  };
   try {
-    const accepted = await f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor);
+    const accepted = await f.facade.enqueueSessionTurn(
+      f.session.id,
+      f.input,
+      origin,
+      assertActor,
+    );
     accepted.captured.request.userMessage = "GUI edited";
-    const retried = await f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor);
+    const retried = await f.facade.enqueueSessionTurn(
+      f.session.id,
+      f.input,
+      origin,
+      assertActor,
+    );
     assert.equal(retried.id, accepted.id);
     assert.equal(retried.captured.request.userMessage, "GUI edited");
-    assert.equal(retried.accepted?.request.userMessage, f.input.userMessage.trim());
-    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, { ...origin, actorSessionId: "another" }, assertActor), /different input or actor/);
+    assert.equal(
+      retried.accepted?.request.userMessage,
+      f.input.userMessage.trim(),
+    );
+    await assert.rejects(
+      f.facade.enqueueSessionTurn(
+        f.session.id,
+        f.input,
+        { ...origin, actorSessionId: "another" },
+        assertActor,
+      ),
+      /different input or actor/,
+    );
     valid = false;
-    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor), /binding expired/);
+    await assert.rejects(
+      f.facade.enqueueSessionTurn(f.session.id, f.input, origin, assertActor),
+      /binding expired/,
+    );
     assert.equal(f.rows.length, 1);
     assert.equal(f.rows[0]?.state, "queued");
     assert.equal(f.calls.acceptance, 1);
-  } finally { await f.service.close(); }
+  } finally {
+    await f.service.close();
+  }
 });
 
 // @test-value v2
@@ -225,14 +538,25 @@ test("Session送信は編集後も受付原文と実actorで同じreceiptへ収�
 // lifecycle = "permanent"
 // distinction = "storage型とGUI受付testはruntime binding失効の時点を再現しない"
 // @end-test-value
+/** 入力検証の待機中にactorが失効した場合、受付の永続化へ進まないことを確認する。 */
 test("preflight中のactor失効は保存前に拒否する", async () => {
   const f = fixture();
   let valid = true;
-  f.deps.preview = async () => { valid = false; return f.preview; };
+  f.deps.preview = async () => {
+    valid = false;
+    return f.preview;
+  };
   try {
-    await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input, undefined, () => { if (!valid) throw new Error("Actor binding expired"); }), /binding expired/);
+    await assert.rejects(
+      f.facade.enqueueSessionTurn(f.session.id, f.input, undefined, () => {
+        if (!valid) throw new Error("Actor binding expired");
+      }),
+      /binding expired/,
+    );
     assert.equal(f.calls.acceptance, 0);
-  } finally { await f.service.close(); }
+  } finally {
+    await f.service.close();
+  }
 });
 
 // @test-value v2
@@ -247,76 +571,204 @@ test("preflight中のactor失効は保存前に拒否する", async () => {
 // impact = "再作成または参照専用会話の変更と受付済み指示の変質を防ぐ"
 // distinction = "storage testは公開facadeでのread-onlyと要求incarnation検証を通らない"
 // @end-test-value
+/** 現行ownerのまま並び替えを委譲し、本文と添付の再解決をせず、競合を返すことを確認する。 */
 test("順変更facadeはownerを照合して捕捉内容を再解決しない", async () => {
   const f = fixture();
   let calls = 0;
   f.deps.store.reorderQueued = async (owner, before, after) => {
     calls += 1;
-    assert.deepEqual(owner, { sessionId: f.session.id, incarnationId: f.session.incarnationId });
+    assert.deepEqual(owner, {
+      sessionId: f.session.id,
+      incarnationId: f.session.incarnationId,
+    });
     assert.deepEqual(before, ["a", "b"]);
     assert.deepEqual(after, ["b", "a"]);
     return { outcome: "conflict", receipts: [] };
   };
-  const request = { incarnationId: f.session.incarnationId, expectedQueuedIds: ["a", "b"], queuedIds: ["b", "a"] };
-  assert.deepEqual(await f.facade.reorderQueuedSessionTurns(f.session.id, request), { outcome: "conflict", receipts: [] });
-  await assert.rejects(f.facade.reorderQueuedSessionTurns(f.session.id, { ...request, incarnationId: "old" }), /identity changed/);
-  f.deps.getSession = async () => ({ ...f.session, accessMode: "legacy_readonly" });
-  await assert.rejects(f.facade.reorderQueuedSessionTurns(f.session.id, request), /read-only/);
+  const request = {
+    incarnationId: f.session.incarnationId,
+    expectedQueuedIds: ["a", "b"],
+    queuedIds: ["b", "a"],
+  };
+  assert.deepEqual(
+    await f.facade.reorderQueuedSessionTurns(f.session.id, request),
+    { outcome: "conflict", receipts: [] },
+  );
+  await assert.rejects(
+    f.facade.reorderQueuedSessionTurns(f.session.id, {
+      ...request,
+      incarnationId: "old",
+    }),
+    /identity changed/,
+  );
+  f.deps.getSession = async () => ({
+    ...f.session,
+    accessMode: "legacy_readonly",
+  });
+  await assert.rejects(
+    f.facade.reorderQueuedSessionTurns(f.session.id, request),
+    /read-only/,
+  );
   assert.equal(calls, 1);
-  assert.deepEqual(f.calls, { preview: 0, provider: 0, workspace: 0, acceptance: 0 });
+  assert.deepEqual(f.calls, {
+    preview: 0,
+    provider: 0,
+    workspace: 0,
+    acceptance: 0,
+  });
   await f.service.close();
 });
 
+/** 本体facadeにメモリ受付と決定的なpreflight依存を接続し、各段階の呼び出し回数を観測する。 */
 function fixture() {
   const session = {
-    ...buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace",
-      branch: "main", characterId: "character", character: "Character", characterIconPath: "",
-      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }),
+    ...buildNewSession({
+      taskTitle: "Queue",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "character",
+      character: "Character",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: "on-request",
+    }),
     incarnationId: "current-owner",
     model: "discovered-model",
     reasoningEffort: "high",
   };
   const rows: SessionTurnQueueReceipt[] = [];
   const calls = { preview: 0, provider: 0, workspace: 0, acceptance: 0 };
-  const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
+  /** 受付や照会以外のキュー処理に進んだ場合は、想定外の動作として失敗させる。 */
+  const unexpected = async (): Promise<never> => {
+    throw new Error("Unexpected queue operation");
+  };
   const store: SessionTurnQueueStore = {
     updateQueued: unexpected,
     reorderQueued: unexpected,
+    /** 受付時の内容と編集用の現在値を別々に複製し、受付件数を記録する。 */
     admit: async (owner, captured) => {
       calls.acceptance += 1;
-      const receipt: SessionTurnQueueReceipt = { ...owner, id: "durable-id", requestId: captured.request.clientRequestId,
-        sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), accepted: structuredClone(captured), dispatched: null, turnId: null, userMessageSeq: null,
-        reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
+      const receipt: SessionTurnQueueReceipt = {
+        ...owner,
+        id: "durable-id",
+        requestId: captured.request.clientRequestId,
+        sequence: 1,
+        queuePosition: 1,
+        state: "queued",
+        captured: structuredClone(captured),
+        accepted: structuredClone(captured),
+        dispatched: null,
+        turnId: null,
+        userMessageSeq: null,
+        reason: null,
+        releasedAt: null,
+        createdAt: "now",
+        updatedAt: "now",
+      };
       rows.push(receipt);
       return { receipt, claimed: null };
     },
-    getReceipt: async (owner, id) => rows.find((row) => row.requestId === id && row.incarnationId === owner.incarnationId) ?? null,
-    getReceiptById: async (owner, id) => rows.find((row) => row.id === id && row.incarnationId === owner.incarnationId) ?? null,
-    listActive: unexpected, listReceipts: unexpected, listPendingOwners: unexpected,
-    claimNext: async () => null, markStarted: unexpected, settle: unexpected, cancelQueued: unexpected,
+    /** クライアント要求IDとownerのincarnationで既存受付を照合する。 */
+    getReceipt: async (owner, id) =>
+      rows.find(
+        (row) =>
+          row.requestId === id && row.incarnationId === owner.incarnationId,
+      ) ?? null,
+    /** 内部受付IDとownerのincarnationで開始元を参照する。 */
+    getReceiptById: async (owner, id) =>
+      rows.find(
+        (row) => row.id === id && row.incarnationId === owner.incarnationId,
+      ) ?? null,
+    listActive: unexpected,
+    listReceipts: unexpected,
+    listPendingOwners: unexpected,
+    /** 受付条件だけを検証し、受理済み要求を実行へ取り出さない。 */
+    claimNext: async () => null,
+    markStarted: unexpected,
+    settle: unexpected,
+    cancelQueued: unexpected,
     recoverInterrupted: unexpected,
-    claimForInput: unexpected, restoreQueuedInput: unexpected,
+    claimForInput: unexpected,
+    restoreQueuedInput: unexpected,
   };
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: unexpected });
-  const preview: ComposerPreview = { errors: [], attachments: [{ id: "path", kind: "file", source: "text",
-    absolutePath: "C:/workspace/input.txt", displayPath: "input.txt", workspaceRelativePath: "input.txt", isOutsideWorkspace: false }] };
+  const service = new SessionTurnQueueService({
+    store,
+    /** 実行中の状態に固定して、新規受付をdispatchせずに滞留させる。 */
+    isRunInFlight: () => true,
+    dispatch: unexpected,
+  });
+  const preview: ComposerPreview = {
+    errors: [],
+    attachments: [
+      {
+        id: "path",
+        kind: "file",
+        source: "text",
+        absolutePath: "C:/workspace/input.txt",
+        displayPath: "input.txt",
+        workspaceRelativePath: "input.txt",
+        isOutsideWorkspace: false,
+      },
+    ],
+  };
   const deps: MainSessionTurnQueueFacadeDeps = {
-    assertActive() {}, assertAccepting() {}, getSession: async () => session,
+    /** 既定のfixtureはfacadeが稼働中とする。 */
+    assertActive() {},
+    /** 既定のfixtureは新規受付を許可し、停止条件は各ケースで差し替える。 */
+    assertAccepting() {},
+    /** 現在のownerと実行先を同じSessionから解決する。 */
+    getSession: async () => session,
+    /** 検証用のアプリ設定はホスト環境から読まず、既定値を返す。 */
     getAppSettings: async () => createDefaultAppSettings(),
-    validateWorkspace: async () => { calls.workspace += 1; },
+    /** 実際にworkspaceの新規検証が発生した回数を数える。 */
+    validateWorkspace: async () => {
+      calls.workspace += 1;
+    },
+    /** モデル検証回数を記録し、fixtureのモデルと推論レベルを利用できるProviderを返す。 */
     validateProvider: async () => {
       calls.provider += 1;
-      return { provider: { id: "codex", label: "Codex", defaultModelId: session.model,
-        defaultReasoningEffort: session.reasoningEffort,
-        models: [{ id: session.model, label: "Model", reasoningEfforts: [session.reasoningEffort] }] } };
+      return {
+        provider: {
+          id: "codex",
+          label: "Codex",
+          defaultModelId: session.model,
+          defaultReasoningEffort: session.reasoningEffort,
+          models: [
+            {
+              id: session.model,
+              label: "Model",
+              reasoningEfforts: [session.reasoningEffort],
+            },
+          ],
+        },
+      };
     },
-    preview: async () => { calls.preview += 1; return preview; }, store, service,
+    /** 添付のプレビュー回数を記録し、元の要求から解決済みのdescriptorを返す。 */
+    preview: async () => {
+      calls.preview += 1;
+      return preview;
+    },
+    store,
+    service,
   };
   const input: RunSessionTurnRequest & { incarnationId: string } = {
-    userMessage: "  Inspect @input.txt  ", clientRequestId: requestId, submitSource: "composer",
-    executionOptions: captureSessionExecutionOptions(session), incarnationId: session.incarnationId,
+    userMessage: "  Inspect @input.txt  ",
+    clientRequestId: requestId,
+    submitSource: "composer",
+    executionOptions: captureSessionExecutionOptions(session),
+    incarnationId: session.incarnationId,
   };
-  return { session, rows, calls, service, preview, deps, input, facade: new MainSessionTurnQueueFacade(deps) };
+  return {
+    session,
+    rows,
+    calls,
+    service,
+    preview,
+    deps,
+    input,
+    facade: new MainSessionTurnQueueFacade(deps),
+  };
 }
 
 // @test-value v2
@@ -331,23 +783,43 @@ function fixture() {
 // impact = "古いUIやMCPの指定で無効Modelが実行待ちに入り、再試行が重複受付になる"
 // distinction = "共有判定testは受付の非同期待機と既知要求の順序を通らない"
 // @end-test-value
+/** 受付直前で無効になったモデルは新規受付しないが、受付済み要求は設定変更後も再照会できることを確認する。 */
 test("受付は最新のModel無効化を適用し既知receiptは保持する", async () => {
   const f = fixture();
   const settings = createDefaultAppSettings();
   f.deps.getAppSettings = async () => settings;
   f.deps.preview = async () => {
-    settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
+    settings.modelAvailability.codex = {
+      disabledServiceIds: [],
+      disabledModelIds: [f.session.model],
+    };
     return f.preview;
   };
-  await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input),
-    (error) => error instanceof SessionTurnQueuePreflightRejectedError && /disabled/.test(error.message));
+  await assert.rejects(
+    f.facade.enqueueSessionTurn(f.session.id, f.input),
+    (error) =>
+      error instanceof SessionTurnQueuePreflightRejectedError &&
+      /disabled/.test(error.message),
+  );
   assert.equal(f.calls.acceptance, 0);
   settings.modelAvailability = {};
   f.deps.preview = async () => f.preview;
   const accepted = await f.facade.enqueueSessionTurn(f.session.id, f.input);
-  settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
-  assert.equal(await f.facade.enqueueSessionTurn(f.session.id, f.input), accepted);
-  await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, { ...f.input, clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55" }), /disabled/);
+  settings.modelAvailability.codex = {
+    disabledServiceIds: [],
+    disabledModelIds: [f.session.model],
+  };
+  assert.equal(
+    await f.facade.enqueueSessionTurn(f.session.id, f.input),
+    accepted,
+  );
+  await assert.rejects(
+    f.facade.enqueueSessionTurn(f.session.id, {
+      ...f.input,
+      clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55",
+    }),
+    /disabled/,
+  );
   assert.equal(f.calls.acceptance, 1);
   await f.service.close();
 });
@@ -364,10 +836,16 @@ test("受付は最新のModel無効化を適用し既知receiptは保持する",
 // impact = "保存済み下書きと予約が原子的に対応せず重複送信または下書き損失になる"
 // distinction = "storage testはpublic facadeによるAux fieldsの脱落を検出できない"
 // @end-test-value
+/** Auxiliaryのドラフト版と表示アンカーを受付に残し、既存要求の再送で再捕捉しないことを確かめる。 */
 test("Aux queue受付はdraft identityとanchorを保持する", async () => {
   const { facade, session, input, calls, service } = fixture();
   session.id = "aux-1";
-  const request = { ...input, auxiliaryDraftIncarnation: "draft-1", auxiliaryDraftDurableRevision: 7, displayAnchorParentMessageCount: 3 };
+  const request = {
+    ...input,
+    auxiliaryDraftIncarnation: "draft-1",
+    auxiliaryDraftDurableRevision: 7,
+    displayAnchorParentMessageCount: 3,
+  };
   const receipt = await facade.enqueueSessionTurn(session.id, request);
   assert.equal(receipt.sessionId, "aux-1");
   assert.equal(receipt.captured.request.auxiliaryDraftIncarnation, "draft-1");
@@ -391,28 +869,70 @@ test("Aux queue受付はdraft identityとanchorを保持する", async () => {
 // impact = "送信時と異なる入力で実行したり同じ送信を二重受付する"
 // distinction = "service/store testはfacadeの再preview・catalog検証省略を通らない"
 // @end-test-value
+/** 正規化後に同じ要求となる並行送信と後続再送を、受付停止時も既存の一件へまとめる。 */
 test("再送は正規化済みrequestのreceiptを返し再捕捉しない", async () => {
   const { facade, deps, input, calls, service, session } = fixture();
   const [receipt, concurrent] = await Promise.all([
     facade.enqueueSessionTurn(session.id, input),
-    facade.enqueueSessionTurn(session.id, { ...input, userMessage: "Inspect @input.txt" }),
+    facade.enqueueSessionTurn(session.id, {
+      ...input,
+      userMessage: "Inspect @input.txt",
+    }),
   ]);
   assert.equal(concurrent, receipt);
-  deps.preview = async () => { throw new Error("Attachment disappeared"); };
-  deps.validateProvider = async () => { throw new Error("Catalog changed"); };
-  deps.validateWorkspace = async () => { throw new Error("Workspace unavailable"); };
-  const retry = await facade.enqueueSessionTurn(session.id, { ...input, userMessage: "Inspect @input.txt" });
+  deps.preview = async () => {
+    throw new Error("Attachment disappeared");
+  };
+  deps.validateProvider = async () => {
+    throw new Error("Catalog changed");
+  };
+  deps.validateWorkspace = async () => {
+    throw new Error("Workspace unavailable");
+  };
+  const retry = await facade.enqueueSessionTurn(session.id, {
+    ...input,
+    userMessage: "Inspect @input.txt",
+  });
   assert.equal(retry, receipt);
   assert.equal(retry.id, "durable-id");
-  assert.deepEqual(calls, { preview: 1, provider: 1, workspace: 1, acceptance: 1 });
-  await assert.rejects(facade.enqueueSessionTurn(session.id, { ...input, userMessage: "Different" }), /different input/);
-  await assert.rejects(facade.enqueueSessionTurn(session.id, { ...input, executionOptions: { ...input.executionOptions, model: "other" } }), /different input/);
-  await assert.rejects(facade.enqueueSessionTurn(session.id, { ...input, submitSource: "retry" }), /different input/);
+  assert.deepEqual(calls, {
+    preview: 1,
+    provider: 1,
+    workspace: 1,
+    acceptance: 1,
+  });
+  await assert.rejects(
+    facade.enqueueSessionTurn(session.id, {
+      ...input,
+      userMessage: "Different",
+    }),
+    /different input/,
+  );
+  await assert.rejects(
+    facade.enqueueSessionTurn(session.id, {
+      ...input,
+      executionOptions: { ...input.executionOptions, model: "other" },
+    }),
+    /different input/,
+  );
+  await assert.rejects(
+    facade.enqueueSessionTurn(session.id, { ...input, submitSource: "retry" }),
+    /different input/,
+  );
   assert.equal(calls.acceptance, 1);
-  deps.assertAccepting = () => { throw new Error("closing"); };
+  deps.assertAccepting = () => {
+    throw new Error("closing");
+  };
   assert.equal(await facade.enqueueSessionTurn(session.id, input), receipt);
-  await assert.rejects(facade.enqueueSessionTurn(session.id, { ...input, clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55" }),
-    (error) => error instanceof SessionTurnQueuePreflightRejectedError && error.message === "closing");
+  await assert.rejects(
+    facade.enqueueSessionTurn(session.id, {
+      ...input,
+      clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55",
+    }),
+    (error) =>
+      error instanceof SessionTurnQueuePreflightRejectedError &&
+      error.message === "closing",
+  );
   assert.equal(calls.acceptance, 1);
   await service.close();
 });
@@ -428,11 +948,17 @@ test("再送は正規化済みrequestのreceiptを返し再捕捉しない", asy
 // lifecycle = "permanent"
 // distinction = "service/storeはfacadeがどの時点の入力を渡すか確認できない"
 // @end-test-value
+/** 非同期プレビューの間にコンポーザーを編集しても、送信時点の本文・設定・添付を保存する。 */
 test("受付は本文と設定と添付path descriptorを捕捉する", async () => {
   const { facade, deps, input, preview, session, service } = fixture();
   const options = {
-    model: "captured-model", reasoningEffort: "high", approvalMode: "on-request",
-    codexSandboxMode: "workspace-write-network", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "captured-agent",
+    model: "captured-model",
+    reasoningEffort: "high",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write-network",
+    codexSpeed: "fast",
+    codexReviewer: "auto-review",
+    customAgentName: "captured-agent",
   } as const;
   input.executionOptions = { ...options };
   session.model = options.model;
@@ -441,7 +967,10 @@ test("受付は本文と設定と添付path descriptorを捕捉する", async ()
   deps.preview = async (_, message) => {
     assert.equal(message, "Inspect @input.txt");
     input.userMessage = "Edited after submit";
-    input.executionOptions = { ...input.executionOptions, model: "edited-model" };
+    input.executionOptions = {
+      ...input.executionOptions,
+      model: "edited-model",
+    };
     return preview;
   };
   const receipt = await facade.enqueueSessionTurn(session.id, input);
@@ -465,19 +994,36 @@ test("受付は本文と設定と添付path descriptorを捕捉する", async ()
 // impact = "古いSessionの要求を新しいownerや別workspaceに実行する"
 // distinction = "storeは現ownerだけ検証しfacadeのpreflight前後のidentityを比較しない"
 // @end-test-value
+/** 古いownerや、検証途中で実行先が変わった要求を永続化しないことを確認する。 */
 test("旧incarnationとpreflight中の実行先変更を拒否する", async () => {
   const old = fixture();
-  await assert.rejects(old.facade.enqueueSessionTurn(old.session.id, { ...old.input, incarnationId: "old" }), /identity changed/);
+  await assert.rejects(
+    old.facade.enqueueSessionTurn(old.session.id, {
+      ...old.input,
+      incarnationId: "old",
+    }),
+    /identity changed/,
+  );
   assert.equal(old.calls.preview, 0);
   assert.equal(old.rows.length, 0);
   await old.service.close();
-  for (const changes of [{ incarnationId: "replacement" }, { provider: "copilot" }, { workspacePath: "C:/other" }]) {
+  for (const changes of [
+    { incarnationId: "replacement" },
+    { provider: "copilot" },
+    { workspacePath: "C:/other" },
+  ]) {
     const context = fixture();
     context.deps.preview = async () => {
-      context.deps.getSession = async () => ({ ...context.session, ...changes });
+      context.deps.getSession = async () => ({
+        ...context.session,
+        ...changes,
+      });
       return context.preview;
     };
-    await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, context.input), /identity changed/);
+    await assert.rejects(
+      context.facade.enqueueSessionTurn(context.session.id, context.input),
+      /identity changed/,
+    );
     assert.equal(context.rows.length, 0);
     await context.service.close();
   }
@@ -494,23 +1040,54 @@ test("旧incarnationとpreflight中の実行先変更を拒否する", async () 
 // lifecycle = "permanent"
 // distinction = "service/storeはworkspaceやcatalogやattachment previewを検証しない"
 // @end-test-value
+/** workspace、provider、プレビューや入力の検証で失敗した場合に、受付件数が増えないことを確認する。 */
 test("preflight失敗は全て未受付で返す", async () => {
   for (const stage of ["workspace", "catalog", "preview"] as const) {
     const context = fixture();
     const failure = new Error(`${stage} failed`);
-    if (stage === "workspace") context.deps.validateWorkspace = async () => { throw failure; };
-    if (stage === "catalog") context.deps.validateProvider = async () => { throw failure; };
-    if (stage === "preview") context.deps.preview = async () => ({ attachments: [], errors: [failure.message] });
-    await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, context.input), (error) => error instanceof SessionTurnQueuePreflightRejectedError && error.message === failure.message);
+    if (stage === "workspace")
+      context.deps.validateWorkspace = async () => {
+        throw failure;
+      };
+    if (stage === "catalog")
+      context.deps.validateProvider = async () => {
+        throw failure;
+      };
+    if (stage === "preview")
+      context.deps.preview = async () => ({
+        attachments: [],
+        errors: [failure.message],
+      });
+    await assert.rejects(
+      context.facade.enqueueSessionTurn(context.session.id, context.input),
+      (error) =>
+        error instanceof SessionTurnQueuePreflightRejectedError &&
+        error.message === failure.message,
+    );
     assert.equal(context.rows.length, 0);
     assert.equal(context.calls.acceptance, 0);
     await context.service.close();
   }
-  for (const invalid of [{ clientRequestId: "not-a-uuid" }, { submitSource: undefined }, { userMessage: "  " }]) {
+  for (const invalid of [
+    { clientRequestId: "not-a-uuid" },
+    { submitSource: undefined },
+    { userMessage: "  " },
+  ]) {
     const context = fixture();
-    await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, { ...context.input, ...invalid }), /message, request identity, and submit source/);
+    await assert.rejects(
+      context.facade.enqueueSessionTurn(context.session.id, {
+        ...context.input,
+        ...invalid,
+      }),
+      /message, request identity, and submit source/,
+    );
     assert.equal(context.rows.length, 0);
-    assert.deepEqual(context.calls, { preview: 0, provider: 0, workspace: 0, acceptance: 0 });
+    assert.deepEqual(context.calls, {
+      preview: 0,
+      provider: 0,
+      workspace: 0,
+      acceptance: 0,
+    });
     await context.service.close();
   }
 });
@@ -527,23 +1104,45 @@ test("preflight失敗は全て未受付で返す", async () => {
 // impact = "受付済み要求が未受付扱いとなり再実行や下書き復元を誤る"
 // distinction = "store/service testはfacadeの専用preflight型へのerror分類を通らない"
 // @end-test-value
+/** 照会エラーと保存後の応答エラーを未受付確定と区別し、後者は再照会で同じ受付に解決する。 */
 test("lookupとcommit返信の不明結果はknown rejectへ変換しない", async () => {
   for (const stage of ["lookup", "commit-reply"] as const) {
     const context = fixture();
     const failure = new Error(`${stage} unknown`);
-    if (stage === "lookup") context.deps.store.getReceipt = async () => { throw failure; };
+    if (stage === "lookup")
+      context.deps.store.getReceipt = async () => {
+        throw failure;
+      };
     else {
       const admit = context.deps.store.admit;
-      context.deps.store.admit = async (...args) => { await admit(...args); throw failure; };
+      context.deps.store.admit = async (...args) => {
+        await admit(...args);
+        throw failure;
+      };
     }
-    await assert.rejects(context.facade.enqueueSessionTurn(context.session.id, context.input),
-      (error) => error === failure && !(error instanceof SessionTurnQueuePreflightRejectedError));
+    await assert.rejects(
+      context.facade.enqueueSessionTurn(context.session.id, context.input),
+      (error) =>
+        error === failure &&
+        !(error instanceof SessionTurnQueuePreflightRejectedError),
+    );
     if (stage === "lookup") {
       assert.equal(context.rows.length, 0);
-      assert.deepEqual(context.calls, { preview: 0, provider: 0, workspace: 0, acceptance: 0 });
+      assert.deepEqual(context.calls, {
+        preview: 0,
+        provider: 0,
+        workspace: 0,
+        acceptance: 0,
+      });
     } else {
       assert.equal(context.rows.length, 1);
-      assert.equal(await context.facade.enqueueSessionTurn(context.session.id, context.input), context.rows[0]);
+      assert.equal(
+        await context.facade.enqueueSessionTurn(
+          context.session.id,
+          context.input,
+        ),
+        context.rows[0],
+      );
       assert.equal(context.calls.acceptance, 1);
     }
     await context.service.close();

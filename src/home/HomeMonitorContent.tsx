@@ -1,4 +1,11 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -15,6 +22,7 @@ import { ChatDockSplitter } from "../chat/chat-window.js";
 import { HomeSessionCard } from "./HomeSessionCard.js";
 import { useCoordinationMonitor } from "../coordination/use-coordination-monitor.js";
 
+/** 監視対象の分類と取得状態、利用枠や再試行、各 Session とメニューを開く操作。 */
 export type HomeMonitorContentProps = {
   approvalEntries: HomeMonitorEntry[];
   providerQuota?: ReactNode;
@@ -35,41 +43,62 @@ export type HomeMonitorContentProps = {
   ) => void;
 };
 
-function fitSectionWeights(weights: number[], closed: boolean[], height: number): number[] {
+/** 開いている行に使える高さを重みで分配し、小さすぎる行は下限を先に確保する。 */
+function fitSectionWeights(
+  weights: number[],
+  closed: boolean[],
+  height: number,
+): number[] {
   if (height <= 0) return weights;
-  const active = weights.map((_, index) => index).filter((index) => !closed[index]);
+  const active = weights
+    .map((_, index) => index)
+    .filter((index) => !closed[index]);
   const minimum = Math.min(48, height / active.length);
   const next = [...weights];
   let remaining = height;
   let pending = active;
   while (pending.length) {
     const total = pending.reduce((sum, index) => sum + weights[index]!, 0);
-    const small = pending.filter((index) => remaining * weights[index]! / total < minimum);
+    const small = pending.filter(
+      (index) => (remaining * weights[index]!) / total < minimum,
+    );
     if (!small.length) {
-      for (const index of pending) next[index] = remaining * weights[index]! / total;
+      for (const index of pending)
+        next[index] = (remaining * weights[index]!) / total;
       break;
     }
-    for (const index of small) { next[index] = minimum; remaining -= minimum; }
+    for (const index of small) {
+      next[index] = minimum;
+      remaining -= minimum;
+    }
     pending = pending.filter((index) => !small.includes(index));
   }
   return next;
 }
 
+/** 監視項目の種類と Session ID から、分類が変わっても使える展開キーを作る。 */
 function getEntryKey(entry: HomeMonitorEntry): string {
   return `${entry.kind}:${entry.session.id}`;
 }
 
+/** カードの実寸を測り、列ごとに縦方向へ詰めて一覧全体の高さを更新する。 */
 function layoutMonitorCards(list: HTMLElement) {
-  const cards = [...list.querySelectorAll<HTMLElement>(":scope > .home-monitor-card")];
+  const cards = [
+    ...list.querySelectorAll<HTMLElement>(":scope > .home-monitor-card"),
+  ];
   const styles = list.ownerDocument.defaultView!.getComputedStyle(list);
-  const columns = Number(styles.getPropertyValue("--home-monitor-columns")) || 1;
+  const columns =
+    Number(styles.getPropertyValue("--home-monitor-columns")) || 1;
   const gap = parseFloat(styles.rowGap) || 0;
   const midpoint = Math.ceil(cards.length / columns);
   const cardHeights = cards.map((card) => card.getBoundingClientRect().height);
   const heights = [0, 0];
   cards.forEach((card, index) => {
     const column = index < midpoint ? 0 : 1;
-    const left = column === 0 ? "0px" : "calc((100% + var(--home-monitor-column-gap)) / 2)";
+    const left =
+      column === 0
+        ? "0px"
+        : "calc((100% + var(--home-monitor-column-gap)) / 2)";
     const top = `${heights[column]}px`;
     if (card.style.left !== left) card.style.left = left;
     if (card.style.top !== top) card.style.top = top;
@@ -79,6 +108,7 @@ function layoutMonitorCards(list: HTMLElement) {
   if (list.style.height !== height) list.style.height = height;
 }
 
+/** 承認待ちを相談待ちや実行中より優先して表示し、折りたたみ可能な Monitor の領域にまとめる。 */
 export function HomeMonitorContent({
   approvalEntries,
   providerQuota,
@@ -94,124 +124,279 @@ export function HomeMonitorContent({
   onOpenSession,
   onShowContextMenu,
 }: HomeMonitorContentProps) {
-  const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
+  const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const coordination = useCoordinationMonitor();
   const { entriesBySection, coordinationBySession } = useMemo(() => {
-    const entries = new Map([...approvalEntries, ...runningEntries, ...nonRunningEntries].map(entry => [entry.session.id, entry]));
-    const attentionIds = new Set(approvalEntries.map(entry => entry.session.id));
-    const runningIds = new Set(runningEntries.map(entry => entry.session.id));
-    const pending = new Map(coordination.groups.map(group => [group.mainSessionId, group]));
+    const entries = new Map(
+      [...approvalEntries, ...runningEntries, ...nonRunningEntries].map(
+        (entry) => [entry.session.id, entry],
+      ),
+    );
+    const attentionIds = new Set(
+      approvalEntries.map((entry) => entry.session.id),
+    );
+    const runningIds = new Set(runningEntries.map((entry) => entry.session.id));
+    const pending = new Map(
+      coordination.groups.map((group) => [group.mainSessionId, group]),
+    );
     const sections: HomeMonitorEntry[][] = [[], [], [], []];
     for (const entry of entries.values()) {
       const sessionId = entry.session.id;
-      const section = attentionIds.has(sessionId) ? 0 : pending.has(sessionId) ? 1 : runningIds.has(sessionId) ? 2 : 3;
+      const section = attentionIds.has(sessionId)
+        ? 0
+        : pending.has(sessionId)
+          ? 1
+          : runningIds.has(sessionId)
+            ? 2
+            : 3;
       sections[section]!.push(entry);
     }
     return { entriesBySection: sections, coordinationBySession: pending };
   }, [approvalEntries, runningEntries, nonRunningEntries, coordination.groups]);
   const [closedRows, setClosedRows] = useState([false, false, false]);
-  const closedSections = [closedRows[0]!, closedRows[0]!, closedRows[1]!, closedRows[2]!];
-  const [smallSections, setSmallSections] = useState([false, false, false, false]);
+  const closedSections = [
+    closedRows[0]!,
+    closedRows[0]!,
+    closedRows[1]!,
+    closedRows[2]!,
+  ];
+  const [smallSections, setSmallSections] = useState([
+    false,
+    false,
+    false,
+    false,
+  ]);
   const [sectionWeights, setSectionWeights] = useState([1, 1, 1]);
   const [availableHeight, setAvailableHeight] = useState(0);
   const [isQuotaExpanded, setIsQuotaExpanded] = useState(true);
   const sectionsRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number[] | null>(null);
   const id = useId();
-  const sectionCounts = entriesBySection.map(entries => entries.length);
+  const sectionCounts = entriesBySection.map((entries) => entries.length);
   const rowLabels = ["Attention and Coordination", "Running", "Stopped"];
-  const rowCounts = [sectionCounts[0]! + sectionCounts[1]!, sectionCounts[2]!, sectionCounts[3]!];
-  const rowContentIds = [`${id}-content-0 ${id}-content-1`, `${id}-content-2`, `${id}-content-3`];
+  const rowCounts = [
+    sectionCounts[0]! + sectionCounts[1]!,
+    sectionCounts[2]!,
+    sectionCounts[3]!,
+  ];
+  const rowContentIds = [
+    `${id}-content-0 ${id}-content-1`,
+    `${id}-content-2`,
+    `${id}-content-3`,
+  ];
 
+  /** スプリッターと閉じた行の高さを引き、開いている行に分けられる高さを得る。 */
   const getAvailableHeight = () => {
     const container = sectionsRef.current;
     if (!container) return 0;
-    return container.getBoundingClientRect().height
-      - [...container.querySelectorAll<HTMLElement>(":scope > .home-monitor-splitter")].reduce((sum, item) => sum + item.getBoundingClientRect().height, 0)
-      - [...container.querySelectorAll<HTMLElement>(":scope > .home-monitor-row")].reduce((sum, item, index) => sum + (closedRows[index] ? item.getBoundingClientRect().height : 0), 0);
+    return (
+      container.getBoundingClientRect().height -
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          ":scope > .home-monitor-splitter",
+        ),
+      ].reduce((sum, item) => sum + item.getBoundingClientRect().height, 0) -
+      [
+        ...container.querySelectorAll<HTMLElement>(
+          ":scope > .home-monitor-row",
+        ),
+      ].reduce(
+        (sum, item, index) =>
+          sum + (closedRows[index] ? item.getBoundingClientRect().height : 0),
+        0,
+      )
+    );
   };
 
   useLayoutEffect(() => {
     const container = sectionsRef.current;
     if (!container) return;
-    const sections = [...container.querySelectorAll<HTMLElement>(".home-monitor-section")];
+    const sections = [
+      ...container.querySelectorAll<HTMLElement>(".home-monitor-section"),
+    ];
+    /** 全カードと各領域を再計測し、隠れる領域にフォーカスがあればスプリッターへ移す。 */
     const update = () => {
-      for (const list of container.querySelectorAll<HTMLElement>(".home-monitor-list-items")) layoutMonitorCards(list);
+      for (const list of container.querySelectorAll<HTMLElement>(
+        ".home-monitor-list-items",
+      ))
+        layoutMonitorCards(list);
       setAvailableHeight(getAvailableHeight());
       const small = sections.map((section, index) => {
         if (closedSections[index]) return false;
-        const content = section.querySelector<HTMLElement>(".home-monitor-section-content");
-        const card = content?.querySelector<HTMLElement>(".home-monitor-parent-row");
-        return Boolean(content && card && content.getBoundingClientRect().height < card.getBoundingClientRect().height);
+        const content = section.querySelector<HTMLElement>(
+          ".home-monitor-section-content",
+        );
+        const card = content?.querySelector<HTMLElement>(
+          ".home-monitor-parent-row",
+        );
+        return Boolean(
+          content &&
+          card &&
+          content.getBoundingClientRect().height <
+            card.getBoundingClientRect().height,
+        );
       });
       sections.forEach((section, index) => {
-        if ((closedSections[index] || small[index]) && section.querySelector(".home-monitor-section-content")?.contains(container.ownerDocument.activeElement)) {
-          container.querySelectorAll<HTMLButtonElement>(":scope > .home-monitor-splitter")[index < 2 ? 0 : 1]?.focus({ preventScroll: true });
+        if (
+          (closedSections[index] || small[index]) &&
+          section
+            .querySelector(".home-monitor-section-content")
+            ?.contains(container.ownerDocument.activeElement)
+        ) {
+          container
+            .querySelectorAll<HTMLButtonElement>(
+              ":scope > .home-monitor-splitter",
+            )
+            [index < 2 ? 0 : 1]?.focus({ preventScroll: true });
         }
       });
-      setSmallSections((current) => current.every((value, index) => value === small[index]) ? current : small);
+      setSmallSections((current) =>
+        current.every((value, index) => value === small[index])
+          ? current
+          : small,
+      );
     };
     update();
     const Observer = container.ownerDocument.defaultView?.ResizeObserver;
     if (!Observer) return;
     const observer = new Observer(update);
     observer.observe(container);
-    for (const row of container.querySelectorAll(":scope > .home-monitor-row")) observer.observe(row);
+    for (const row of container.querySelectorAll(":scope > .home-monitor-row"))
+      observer.observe(row);
     for (const section of sections) {
       observer.observe(section);
-      for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-card, .home-monitor-list-items")) observer.observe(item);
+      for (const item of section.querySelectorAll(
+        ".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-card, .home-monitor-list-items",
+      ))
+        observer.observe(item);
     }
     return () => observer.disconnect();
-  }, [closedRows, approvalEntries, coordination.groups, runningEntries, nonRunningEntries, expandedEntryKeys]);
+  }, [
+    closedRows,
+    approvalEntries,
+    coordination.groups,
+    runningEntries,
+    nonRunningEntries,
+    expandedEntryKeys,
+  ]);
 
+  /** 開いた隣接二行だけの高さを取り分け、下限を守った配分を重みへ反映する。 */
   const resizePair = (index: number, start: number[], delta: number) => {
     if (closedRows[index] || closedRows[index + 1]) return;
     const total = start[index]! + start[index + 1]!;
     const minimum = Math.min(48, total / 2);
-    const first = Math.max(minimum, Math.min(total - minimum, start[index]! + delta));
+    const first = Math.max(
+      minimum,
+      Math.min(total - minimum, start[index]! + delta),
+    );
     setAvailableHeight(getAvailableHeight());
     setSectionWeights((weights) => {
-      const activeWeight = weights.reduce((sum, value, i) => sum + (closedRows[i] ? 0 : value), 0);
-      const activeHeight = start.reduce((sum, value, i) => sum + (closedRows[i] ? 0 : value), 0);
+      const activeWeight = weights.reduce(
+        (sum, value, i) => sum + (closedRows[i] ? 0 : value),
+        0,
+      );
+      const activeHeight = start.reduce(
+        (sum, value, i) => sum + (closedRows[i] ? 0 : value),
+        0,
+      );
       if (activeHeight <= 0) return weights;
-      const next = start.map((value, i) => closedRows[i] ? weights[i]! : value * activeWeight / activeHeight);
-      next[index] = first * activeWeight / activeHeight;
-      next[index + 1] = (total - first) * activeWeight / activeHeight;
+      const next = start.map((value, i) =>
+        closedRows[i] ? weights[i]! : (value * activeWeight) / activeHeight,
+      );
+      next[index] = (first * activeWeight) / activeHeight;
+      next[index + 1] = ((total - first) * activeWeight) / activeHeight;
       return next;
     });
   };
 
+  /** 隣接行の調整を描画し、閉じた行の復元を優先する。両方開いていれば件数で折りたたむ側を選ぶ。 */
   const renderSplitter = (index: number) => {
     const nextIndex = index + 1;
     const restore = closedRows[index] || closedRows[nextIndex];
-    const target = closedRows[index] ? index : closedRows[nextIndex] ? nextIndex
-      : rowCounts[index]! < rowCounts[nextIndex]! ? index : nextIndex;
+    const target = closedRows[index]
+      ? index
+      : closedRows[nextIndex]
+        ? nextIndex
+        : rowCounts[index]! < rowCounts[nextIndex]!
+          ? index
+          : nextIndex;
     const action = `${restore ? "Expand" : "Collapse"} ${rowLabels[target]}`;
-    const weights = fitSectionWeights(sectionWeights, closedRows, getAvailableHeight());
-    const sectionElements = sectionsRef.current?.querySelectorAll<HTMLElement>(":scope > .home-monitor-row");
-    const heights = weights.map((value, i) => closedRows[i] ? sectionElements?.[i]?.getBoundingClientRect().height ?? 0 : value);
+    const weights = fitSectionWeights(
+      sectionWeights,
+      closedRows,
+      getAvailableHeight(),
+    );
+    const sectionElements = sectionsRef.current?.querySelectorAll<HTMLElement>(
+      ":scope > .home-monitor-row",
+    );
+    const heights = weights.map((value, i) =>
+      closedRows[i]
+        ? (sectionElements?.[i]?.getBoundingClientRect().height ?? 0)
+        : value,
+    );
     const total = heights.reduce((sum, value) => sum + value, 0);
-    return <ChatDockSplitter edge={target === index ? "top" : "bottom"} className="home-monitor-splitter"
-      ariaLabel={`${action}; resize ${rowLabels[index]} and ${rowLabels[nextIndex]}`}
-      ariaControls={rowContentIds[target]}
-      ariaOrientation="horizontal" ariaValueNow={Math.round(heights.slice(0, nextIndex).reduce((sum, value) => sum + value, 0) / total * 100)}
-      isPanelExpanded={!restore} title={`${action}; drag or use Up/Down arrows to resize`}
-      onTogglePanel={() => setClosedRows((current) => current.map((value, i) => i === target ? !restore : value))}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        dragStartRef.current = fitSectionWeights(sectionWeights, closedRows, getAvailableHeight());
-      }}
-      onDrag={(_event, delta) => { if (dragStartRef.current) resizePair(index, dragStartRef.current, delta.y); }}
-      onPointerEnd={() => { dragStartRef.current = null; }}
-      onKeyDown={(event) => {
-        if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-        event.preventDefault();
-        const start = fitSectionWeights(sectionWeights, closedRows, getAvailableHeight());
-        resizePair(index, start, event.key === "Home" ? -Infinity : event.key === "End" ? Infinity : event.key === "ArrowDown" ? 24 : -24);
-      }}
-    />;
+    return (
+      <ChatDockSplitter
+        edge={target === index ? "top" : "bottom"}
+        className="home-monitor-splitter"
+        ariaLabel={`${action}; resize ${rowLabels[index]} and ${rowLabels[nextIndex]}`}
+        ariaControls={rowContentIds[target]}
+        ariaOrientation="horizontal"
+        ariaValueNow={Math.round(
+          (heights.slice(0, nextIndex).reduce((sum, value) => sum + value, 0) /
+            total) *
+            100,
+        )}
+        isPanelExpanded={!restore}
+        title={`${action}; drag or use Up/Down arrows to resize`}
+        onTogglePanel={() =>
+          setClosedRows((current) =>
+            current.map((value, i) => (i === target ? !restore : value)),
+          )
+        }
+        onPointerDown={(event) => {
+          event.preventDefault();
+          dragStartRef.current = fitSectionWeights(
+            sectionWeights,
+            closedRows,
+            getAvailableHeight(),
+          );
+        }}
+        onDrag={(_event, delta) => {
+          if (dragStartRef.current)
+            resizePair(index, dragStartRef.current, delta.y);
+        }}
+        onPointerEnd={() => {
+          dragStartRef.current = null;
+        }}
+        onKeyDown={(event) => {
+          if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key))
+            return;
+          event.preventDefault();
+          const start = fitSectionWeights(
+            sectionWeights,
+            closedRows,
+            getAvailableHeight(),
+          );
+          resizePair(
+            index,
+            start,
+            event.key === "Home"
+              ? -Infinity
+              : event.key === "End"
+                ? Infinity
+                : event.key === "ArrowDown"
+                  ? 24
+                  : -24,
+          );
+        }}
+      />
+    );
   };
 
+  /** 指定した項目の Auxiliary だけを展開または折りたたむ。 */
   const toggleEntry = (entry: HomeMonitorEntry) => {
     const key = getEntryKey(entry);
     setExpandedEntryKeys((current) => {
@@ -225,53 +410,83 @@ export function HomeMonitorContent({
     });
   };
 
-  const renderMonitorEntries = (entries: HomeMonitorEntry[]) => entries.map((entry) => {
-    const pending = coordinationBySession.get(entry.session.id);
-    const coordinationPrimary = pending && !entriesBySection[0]!.some(candidate => candidate.session.id === entry.session.id);
-    const entryKey = getEntryKey(entry);
-    const openParent = () => {
-      if (coordinationPrimary) void coordination.open(pending);
-      else onOpenSession(entry.session.id);
-    };
+  /** 分類内の各 Session を、Main と Auxiliary の独立した移動先を持つカードにする。 */
+  const renderMonitorEntries = (entries: HomeMonitorEntry[]) =>
+    entries.map((entry) => {
+      const pending = coordinationBySession.get(entry.session.id);
+      const coordinationPrimary =
+        pending &&
+        !entriesBySection[0]!.some(
+          (candidate) => candidate.session.id === entry.session.id,
+        );
+      const entryKey = getEntryKey(entry);
+      /** 相談への対応が優先されるカードは相談を開き、それ以外は Main Session を開く。 */
+      const openParent = () => {
+        if (coordinationPrimary) void coordination.open(pending);
+        else onOpenSession(entry.session.id);
+      };
 
-    return (
-      <HomeSessionCard
-        key={entryKey}
-        session={entry.session}
-        mainState={entry.mainState}
-        auxiliarySessions={entry.auxiliarySessions}
-        auxiliaryExpanded={expandedEntryKeys.has(entryKey)}
-        coordinationPrimary={Boolean(coordinationPrimary)}
-        onToggleAuxiliary={() => toggleEntry(entry)}
-        onOpenMain={openParent}
-        onOpenAuxiliary={(auxiliarySessionId) => onOpenSession(entry.session.id, auxiliarySessionId)}
-        onShowContextMenu={(point) => onShowContextMenu(entry.kind, entry.session.id, point)}
-      />
-    );
-  });
+      return (
+        <HomeSessionCard
+          key={entryKey}
+          session={entry.session}
+          mainState={entry.mainState}
+          auxiliarySessions={entry.auxiliarySessions}
+          auxiliaryExpanded={expandedEntryKeys.has(entryKey)}
+          coordinationPrimary={Boolean(coordinationPrimary)}
+          onToggleAuxiliary={() => toggleEntry(entry)}
+          onOpenMain={openParent}
+          onOpenAuxiliary={(auxiliarySessionId) =>
+            onOpenSession(entry.session.id, auxiliarySessionId)
+          }
+          onShowContextMenu={(point) =>
+            onShowContextMenu(entry.kind, entry.session.id, point)
+          }
+        />
+      );
+    });
 
-  const isLoading = sessionWindowsDataState === "loading" || auxiliaryDataState === "loading";
+  const isLoading =
+    sessionWindowsDataState === "loading" || auxiliaryDataState === "loading";
   const isBusy = isLoading || auxiliaryRefreshing;
-  const loadingMessage = sessionWindowsDataState === "loading"
-    ? "Loading open sessions…"
-    : "Loading Auxiliary sessions…";
-  const statusFeedback = feedback || (
-    sessionWindowsDataState === "error"
+  const loadingMessage =
+    sessionWindowsDataState === "loading"
+      ? "Loading open sessions…"
+      : "Loading Auxiliary sessions…";
+  const statusFeedback =
+    feedback ||
+    (sessionWindowsDataState === "error"
       ? "Could not load open sessions."
       : auxiliaryDataState === "error"
         ? "Could not load Auxiliary sessions."
-        : ""
-  );
-  const hasReadError = sessionWindowsDataState === "error" || auxiliaryDataState === "error";
-  const showEmptyState = sessionWindowsDataState !== "loading" && sessionWindowsDataState !== "error";
-  const renderMonitorList = (entries: HomeMonitorEntry[], emptyMessage = "") => {
-    return <div className="home-monitor-list">
-      {entries.length > 0 ? (
-        <div className="home-monitor-list-items">{renderMonitorEntries(entries)}</div>
-      ) : showEmptyState && emptyMessage ? <p className="home-monitor-empty">{emptyMessage}</p> : null}
-    </div>;
+        : "");
+  const hasReadError =
+    sessionWindowsDataState === "error" || auxiliaryDataState === "error";
+  const showEmptyState =
+    sessionWindowsDataState !== "loading" &&
+    sessionWindowsDataState !== "error";
+  /** 一覧が空のときの案内は、取得中・取得失敗と区別して表示できる場合だけ出す。 */
+  const renderMonitorList = (
+    entries: HomeMonitorEntry[],
+    emptyMessage = "",
+  ) => {
+    return (
+      <div className="home-monitor-list">
+        {entries.length > 0 ? (
+          <div className="home-monitor-list-items">
+            {renderMonitorEntries(entries)}
+          </div>
+        ) : showEmptyState && emptyMessage ? (
+          <p className="home-monitor-empty">{emptyMessage}</p>
+        ) : null}
+      </div>
+    );
   };
-  const fittedWeights = fitSectionWeights(sectionWeights, closedRows, availableHeight);
+  const fittedWeights = fitSectionWeights(
+    sectionWeights,
+    closedRows,
+    availableHeight,
+  );
 
   return (
     <div
@@ -280,60 +495,130 @@ export function HomeMonitorContent({
     >
       {providerQuota ? (
         <div className="home-monitor-quota">
-          <div id={`${id}-quota`} hidden={!isQuotaExpanded}>{providerQuota}</div>
-          <ChatDockSplitter edge="top" className="home-monitor-quota-splitter"
-            isPanelExpanded={isQuotaExpanded} ariaControls={`${id}-quota`}
-            ariaLabel={isQuotaExpanded ? "Collapse Provider Quotas" : "Expand Provider Quotas"}
-            onTogglePanel={() => setIsQuotaExpanded((current) => !current)} />
+          <div id={`${id}-quota`} hidden={!isQuotaExpanded}>
+            {providerQuota}
+          </div>
+          <ChatDockSplitter
+            edge="top"
+            className="home-monitor-quota-splitter"
+            isPanelExpanded={isQuotaExpanded}
+            ariaControls={`${id}-quota`}
+            ariaLabel={
+              isQuotaExpanded
+                ? "Collapse Provider Quotas"
+                : "Expand Provider Quotas"
+            }
+            onTogglePanel={() => setIsQuotaExpanded((current) => !current)}
+          />
         </div>
       ) : null}
-      {statusFeedback ? hasReadError ? (
-        <LoadError message={statusFeedback} onRetry={onRetry} retryBusy={isBusy} className="home-session-list-feedback" />
-      ) : (
-        <div className="home-session-list-feedback">
-          <p className="settings-feedback" role="status" aria-live="polite">{statusFeedback}</p>
-          {onRetry ? (
-            <button className="launch-toggle home-session-retry-button" type="button" disabled={isBusy} aria-busy={isBusy || undefined} onClick={onRetry}>
-              <ButtonContent busy={isBusy} busyLabel="Retrying">Retry</ButtonContent>
-            </button>
-          ) : null}
-        </div>
+      {statusFeedback ? (
+        hasReadError ? (
+          <LoadError
+            message={statusFeedback}
+            onRetry={onRetry}
+            retryBusy={isBusy}
+            className="home-session-list-feedback"
+          />
+        ) : (
+          <div className="home-session-list-feedback">
+            <p className="settings-feedback" role="status" aria-live="polite">
+              {statusFeedback}
+            </p>
+            {onRetry ? (
+              <button
+                className="launch-toggle home-session-retry-button"
+                type="button"
+                disabled={isBusy}
+                aria-busy={isBusy || undefined}
+                onClick={onRetry}
+              >
+                <ButtonContent busy={isBusy} busyLabel="Retrying">
+                  Retry
+                </ButtonContent>
+              </button>
+            ) : null}
+          </div>
+        )
       ) : null}
-      {!feedback && isLoading && (auxiliaryDataState === "loading" || (approvalEntries.length === 0 && runningEntries.length === 0 && nonRunningEntries.length === 0)) ? (
-        <LoadingIndicator label={loadingMessage.replace(/…$/, "")} className="home-session-list-load-status" />
+      {!feedback &&
+      isLoading &&
+      (auxiliaryDataState === "loading" ||
+        (approvalEntries.length === 0 &&
+          runningEntries.length === 0 &&
+          nonRunningEntries.length === 0)) ? (
+        <LoadingIndicator
+          label={loadingMessage.replace(/…$/, "")}
+          className="home-session-list-load-status"
+        />
       ) : null}
       <div
         ref={sectionsRef}
         className="home-monitor-sections"
-        style={{ gridTemplateRows: fittedWeights.map((weight, index) => closedRows[index] ? "max-content" : `minmax(48px, ${weight}fr)`).join(" var(--session-dock-splitter-size) ") }}
+        style={{
+          gridTemplateRows: fittedWeights
+            .map((weight, index) =>
+              closedRows[index] ? "max-content" : `minmax(48px, ${weight}fr)`,
+            )
+            .join(" var(--session-dock-splitter-size) "),
+        }}
       >
-        <div className={`home-monitor-row home-monitor-top-row${closedRows[0] ? " is-closed" : ""}`}>
-          <section className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`} aria-labelledby="home-monitor-approval">
+        <div
+          className={`home-monitor-row home-monitor-top-row${closedRows[0] ? " is-closed" : ""}`}
+        >
+          <section
+            className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`}
+            aria-labelledby="home-monitor-approval"
+          >
             <div className="home-monitor-section-head">
               <h3 id="home-monitor-approval">Attention</h3>
               <span className="home-monitor-count">{sectionCounts[0]}</span>
             </div>
-            <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>
+            <div
+              id={`${id}-content-0`}
+              className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`}
+              inert={closedSections[0] || smallSections[0]}
+              aria-hidden={closedSections[0] || smallSections[0]}
+            >
               {renderMonitorList(entriesBySection[0]!)}
             </div>
           </section>
 
           <ChatDockSplitter edge="left" className="home-monitor-top-divider" />
 
-          <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-coordination">
+          <section
+            className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`}
+            aria-labelledby="home-monitor-coordination"
+          >
             <div className="home-monitor-section-head">
               <h3 id="home-monitor-coordination">Coordination</h3>
               <span
                 className="home-monitor-count"
                 aria-hidden={!coordination.hasSnapshot || undefined}
-                aria-label={coordination.hasSnapshot ? `${sectionCounts[1]} Main session groups` : undefined}
+                aria-label={
+                  coordination.hasSnapshot
+                    ? `${sectionCounts[1]} Main session groups`
+                    : undefined
+                }
               >
                 {coordination.hasSnapshot ? sectionCounts[1] : null}
               </span>
             </div>
-            <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
-              {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
-              {coordination.error ? <LoadError message={coordination.error} onRetry={coordination.retry} /> : null}
+            <div
+              id={`${id}-content-1`}
+              className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`}
+              inert={closedSections[1] || smallSections[1]}
+              aria-hidden={closedSections[1] || smallSections[1]}
+            >
+              {coordination.loading ? (
+                <LoadingIndicator label="Loading Coordination" />
+              ) : null}
+              {coordination.error ? (
+                <LoadError
+                  message={coordination.error}
+                  onRetry={coordination.retry}
+                />
+              ) : null}
               {renderMonitorList(entriesBySection[1]!)}
             </div>
           </section>
@@ -341,24 +626,40 @@ export function HomeMonitorContent({
 
         {renderSplitter(0)}
 
-        <section className={`home-monitor-row home-monitor-section${closedSections[2] ? " is-closed" : ""}`} aria-labelledby="home-monitor-running">
+        <section
+          className={`home-monitor-row home-monitor-section${closedSections[2] ? " is-closed" : ""}`}
+          aria-labelledby="home-monitor-running"
+        >
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
             <span className="home-monitor-count">{sectionCounts[2]}</span>
           </div>
-          <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
+          <div
+            id={`${id}-content-2`}
+            className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`}
+            inert={closedSections[2] || smallSections[2]}
+            aria-hidden={closedSections[2] || smallSections[2]}
+          >
             {renderMonitorList(entriesBySection[2]!, runningEmptyMessage)}
           </div>
         </section>
 
         {renderSplitter(1)}
 
-        <section className={`home-monitor-row home-monitor-section${closedSections[3] ? " is-closed" : ""}`} aria-labelledby="home-monitor-inactive">
+        <section
+          className={`home-monitor-row home-monitor-section${closedSections[3] ? " is-closed" : ""}`}
+          aria-labelledby="home-monitor-inactive"
+        >
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{sectionCounts[3]}</span>
           </div>
-          <div id={`${id}-content-3`} className={`home-monitor-section-content${closedSections[3] || smallSections[3] ? " is-hidden" : ""}`} inert={closedSections[3] || smallSections[3]} aria-hidden={closedSections[3] || smallSections[3]}>
+          <div
+            id={`${id}-content-3`}
+            className={`home-monitor-section-content${closedSections[3] || smallSections[3] ? " is-hidden" : ""}`}
+            inert={closedSections[3] || smallSections[3]}
+            aria-hidden={closedSections[3] || smallSections[3]}
+          >
             {renderMonitorList(entriesBySection[3]!, nonRunningEmptyMessage)}
           </div>
         </section>

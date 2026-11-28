@@ -4,17 +4,25 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
-import { buildNewSession, type MessageArtifact } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  type MessageArtifact,
+} from "../../src-shared/session/session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { SessionContextFeature } from "../../src/chat/runtime/session-context-feature.js";
 
+/** このコンテキスト表示で使わない通知や購読解除の副作用を省く。 */
 const noop = () => {};
 
+/** ターンや添付情報の読取結果を待たせ、指定のタイミングで成功または失敗させる。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 
@@ -30,40 +38,168 @@ function deferred<T>() {
 // impact = "一時読取障害だけで既知の実行結果と回復導線を失い、旧結果を新turnの結果と誤認する"
 // distinction = "同期projectionやowner切替testでは再取得状態との共存、live/Sessionで新turnを認識した後の読取障害を観測できない。短いdeferred API応答で実feature境界を検証する"
 // @end-test-value
+/** 同じ処理の再取得失敗では取得済みコマンドを残し、新規ターンでだけ旧履歴を消す。 */
 test("ContextFeature retains acquired commands through refresh failures and exposes Retry", async () => {
   const dom = new JSDOM("<div id='root'></div>");
-  const previous = { window: globalThis.window, document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame };
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; }, IS_REACT_ACT_ENVIRONMENT: true });
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+  };
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    /** 表示処理を実時間に依存させず、次フレームのコールバックを同期実行する。 */ requestAnimationFrame:
+      (callback: FrameRequestCallback) => {
+        callback(0);
+        return 0;
+      },
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
-  let session = buildNewSession({ id: "main", provider: "codex", taskTitle: "Context test", workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "main", characterId: "fixture-character", character: "Fixture", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" });
-  let turn: SessionTurnRecord = { id: 1, sessionId: session.id, phase: "completed", createdAt: "now", provider: "codex", model: "model", reasoningEffort: "medium", approvalMode: "never", threadId: "thread", errorMessage: "", assistantMessageSeq: 3 };
-  let nextTurn: ReturnType<typeof deferred<SessionTurnRecord | null>> | null = null;
+  let session = buildNewSession({
+    id: "main",
+    provider: "codex",
+    taskTitle: "Context test",
+    workspaceLabel: "fixture",
+    workspacePath: "C:/fixture",
+    branch: "main",
+    characterId: "fixture-character",
+    character: "Fixture",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: "never",
+  });
+  let turn: SessionTurnRecord = {
+    id: 1,
+    sessionId: session.id,
+    phase: "completed",
+    createdAt: "now",
+    provider: "codex",
+    model: "model",
+    reasoningEffort: "medium",
+    approvalMode: "never",
+    threadId: "thread",
+    errorMessage: "",
+    assistantMessageSeq: 3,
+  };
+  let nextTurn: ReturnType<typeof deferred<SessionTurnRecord | null>> | null =
+    null;
   let latestLoadError: Error | null = null;
-  let nextArtifact: ReturnType<typeof deferred<MessageArtifact | null>> | null = null;
-  const saved: MessageArtifact = { title: "Result", runChecks: [], activitySummary: [], changedFiles: [], operationTimeline: [{ type: "command_execution", summary: "npm test", status: "completed", details: "acquired output", exitCode: 0 }] };
+  let nextArtifact: ReturnType<typeof deferred<MessageArtifact | null>> | null =
+    null;
+  const saved: MessageArtifact = {
+    title: "Result",
+    runChecks: [],
+    activitySummary: [],
+    changedFiles: [],
+    operationTimeline: [
+      {
+        type: "command_execution",
+        summary: "npm test",
+        status: "completed",
+        details: "acquired output",
+        exitCode: 0,
+      },
+    ],
+  };
   const listeners = new Set<(id: string) => void>();
-  const liveListeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+  const liveListeners = new Set<
+    (id: string, state: LiveSessionRunState | null) => void
+  >();
   let running = false;
   const api = {
+    /** 初回表示には実行中のライブ状態を提供しない。 */
     getLiveSessionRun: async () => null,
-    subscribeLiveSessionRun: (listener: (id: string, state: LiveSessionRunState | null) => void) => { liveListeners.add(listener); return () => liveListeners.delete(listener); },
-    getLatestSessionTurn: async () => { if (latestLoadError) throw latestLoadError; const pending = nextTurn; nextTurn = null; return pending ? pending.promise : turn; },
-    onSessionTurnUpdated: (listener: (id: string) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-    getSessionMessageArtifact: async () => { const pending = nextArtifact; nextArtifact = null; return pending ? pending.promise : saved; },
+    /** 実行通知を任意に発行するためリスナーを登録し、解除に応じて外す。 */
+    subscribeLiveSessionRun: (
+      listener: (id: string, state: LiveSessionRunState | null) => void,
+    ) => {
+      liveListeners.add(listener);
+      return () => liveListeners.delete(listener);
+    },
+    /** 最新ターンを返す通常経路に、一度限りの遅延応答と継続的な失敗を組み込む。 */
+    getLatestSessionTurn: async () => {
+      if (latestLoadError) throw latestLoadError;
+      const pending = nextTurn;
+      nextTurn = null;
+      return pending ? pending.promise : turn;
+    },
+    /** 保持済みコマンドを更新するターン通知のリスナーを管理する。 */
+    onSessionTurnUpdated: (listener: (id: string) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** コマンド詳細の保存結果を返し、次の取得だけ必要に応じて保留する。 */
+    getSessionMessageArtifact: async () => {
+      const pending = nextArtifact;
+      nextArtifact = null;
+      return pending ? pending.promise : saved;
+    },
+    /** プロバイダーの使用枠を表示しない。 */
     getProviderQuotaTelemetry: async () => null,
+    /** 使用枠の更新はこの履歴検証では配信しない。 */
     subscribeProviderQuotaTelemetry: () => noop,
+    /** コンテキスト使用量の初回値を提供しない。 */
     getSessionContextTelemetry: async () => null,
+    /** コンテキスト使用量の変化は発生させない。 */
     subscribeSessionContextTelemetry: () => noop,
+    /** Glossary 変更を配信せず、コマンド履歴の更新に集中する。 */
     subscribeSessionGlossary: () => noop,
-    getSessionGlossaryProjection: async () => ({ sessionId: session.id, sequence: 1, scopeRevision: "fixture", checkout: { repositoryName: "fixture", branch: "main", pathLabel: "fixture" }, state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null } }),
+    /** 現在の会話に Glossary ファイルがない状態を返す。 */
+    getSessionGlossaryProjection: async () => ({
+      sessionId: session.id,
+      sequence: 1,
+      scopeRevision: "fixture",
+      checkout: {
+        repositoryName: "fixture",
+        branch: "main",
+        pathLabel: "fixture",
+      },
+      state: {
+        status: "missing",
+        relativePath: ".withmate/glossary.yaml",
+        revision: null,
+      },
+    }),
   } as unknown as WithMateWindowApi;
-  const render = async () => { await act(async () => root.render(<SessionContextFeature api={api} selectedSession={session} displayedSession={session} activeRunSessionId={session.id} renderedIsRunning={running} visible availableReasoningEfforts={["medium"]} navigator={{}} onShowContextRail={noop} onAnnotationMatcherChange={noop} />)); };
-  const publish = async () => { await act(async () => { for (const listener of listeners) listener(session.id); }); };
-  const command = () => container.querySelector("[aria-label='Executed command']")?.textContent ?? "";
+  /** 現在の Session と実行中フラグを実コンテキスト表示へ渡す。 */
+  const render = async () => {
+    await act(async () =>
+      root.render(
+        <SessionContextFeature
+          api={api}
+          selectedSession={session}
+          displayedSession={session}
+          activeRunSessionId={session.id}
+          renderedIsRunning={running}
+          visible
+          availableReasoningEfforts={["medium"]}
+          navigator={{}}
+          onShowContextRail={noop}
+          onAnnotationMatcherChange={noop}
+        />,
+      ),
+    );
+  };
+  /** 表示中 Session のターン更新を通知する。 */
+  const publish = async () => {
+    await act(async () => {
+      for (const listener of listeners) listener(session.id);
+    });
+  };
+  /** 現在表示されるコマンドの内容を、未表示なら空文字として読む。 */
+  const command = () =>
+    container.querySelector("[aria-label='Executed command']")?.textContent ??
+    "";
+  /** 展開可能なコマンド詳細の本文を読む。 */
   const details = () => container.querySelector("details")?.textContent ?? "";
+  /** 既存コマンドの近くにある再試行ボタンを操作する。 */
   const retry = async () => {
-    const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Retry");
+    const button = [
+      ...container.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((item) => item.textContent === "Retry");
     assert.ok(button, "Retry remains available beside the acquired command");
     await act(async () => button.click());
   };
@@ -75,14 +211,22 @@ test("ContextFeature retains acquired commands through refresh failures and expo
       const pending = deferred<SessionTurnRecord | null>();
       nextTurn = pending;
       if (trigger === "notification") await publish();
-      else { session = { ...session, updatedAt: "refresh revision" }; await render(); }
+      else {
+        session = { ...session, updatedAt: "refresh revision" };
+        await render();
+      }
       assert.match(command(), /npm test/, trigger);
       assert.match(details(), /Command Details.*acquired output/, trigger);
       assert.ok(container.querySelector("[aria-busy='true']"));
-      await act(async () => pending.reject(new Error("temporary turn read failed")));
+      await act(async () =>
+        pending.reject(new Error("temporary turn read failed")),
+      );
       assert.match(command(), /npm test/);
       assert.match(details(), /Command Details.*acquired output/);
-      assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /temporary turn read failed/);
+      assert.match(
+        container.querySelector("[role='alert']")!.textContent ?? "",
+        /temporary turn read failed/,
+      );
       const retryTurn = deferred<SessionTurnRecord | null>();
       nextTurn = retryTurn;
       await retry();
@@ -97,10 +241,15 @@ test("ContextFeature retains acquired commands through refresh failures and expo
     assert.match(command(), /npm test/);
     assert.match(details(), /Command Details.*acquired output/);
     assert.ok(container.querySelector("[aria-busy='true']"));
-    await act(async () => artifactRead.reject(new Error("temporary artifact read failed")));
+    await act(async () =>
+      artifactRead.reject(new Error("temporary artifact read failed")),
+    );
     assert.match(command(), /npm test/);
     assert.match(details(), /Command Details.*acquired output/);
-    assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /temporary artifact read failed/);
+    assert.match(
+      container.querySelector("[role='alert']")!.textContent ?? "",
+      /temporary artifact read failed/,
+    );
     const retryArtifact = deferred<MessageArtifact | null>();
     nextArtifact = retryArtifact;
     await retry();
@@ -112,7 +261,20 @@ test("ContextFeature retains acquired commands through refresh failures and expo
       latestLoadError = new Error("new turn start read failed");
       await act(async () => {
         if (source === "Session") running = true;
-        else for (const listener of liveListeners) listener(session.id, { sessionId: session.id, threadId: "thread", runState: "running", assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
+        else
+          for (const listener of liveListeners)
+            listener(session.id, {
+              sessionId: session.id,
+              threadId: "thread",
+              runState: "running",
+              assistantText: "",
+              steps: [],
+              backgroundTasks: [],
+              usage: null,
+              errorMessage: "",
+              approvalRequest: null,
+              elicitationRequest: null,
+            });
         for (const listener of listeners) listener(session.id);
       });
       await render();
@@ -126,15 +288,27 @@ test("ContextFeature retains acquired commands through refresh failures and expo
       await render();
       assert.equal(command(), "", source);
       assert.equal(details(), "", source);
-      assert.match(container.querySelector("[role='alert']")!.textContent ?? "", /new turn end read failed/);
-      turn = { ...turn, id: turn.id + 1, assistantMessageSeq: turn.assistantMessageSeq! + 1 };
+      assert.match(
+        container.querySelector("[role='alert']")!.textContent ?? "",
+        /new turn end read failed/,
+      );
+      turn = {
+        ...turn,
+        id: turn.id + 1,
+        assistantMessageSeq: turn.assistantMessageSeq! + 1,
+      };
       latestLoadError = null;
       await retry();
       assert.match(command(), /npm test/);
       assert.match(details(), /Command Details.*acquired output/);
       assert.equal(container.querySelector("[role='alert']"), null);
     }
-    turn = { ...turn, id: turn.id + 1, phase: "running", assistantMessageSeq: undefined };
+    turn = {
+      ...turn,
+      id: turn.id + 1,
+      phase: "running",
+      assistantMessageSeq: undefined,
+    };
     await publish();
     assert.equal(command(), "");
     turn = { ...turn, phase: "completed", assistantMessageSeq: 4 };
@@ -142,7 +316,9 @@ test("ContextFeature retains acquired commands through refresh failures and expo
     nextArtifact = newArtifact;
     await publish();
     assert.equal(command(), "");
-    await act(async () => newArtifact.resolve({ ...saved, operationTimeline: [] }));
+    await act(async () =>
+      newArtifact.resolve({ ...saved, operationTimeline: [] }),
+    );
     assert.equal(command(), "");
     assert.equal(container.querySelector("[role='alert']"), null);
   } finally {
@@ -164,58 +340,223 @@ test("ContextFeature retains acquired commands through refresh failures and expo
 // impact = "正常完了・失敗・取消後に取得済み操作を読めないか、前turnの結果を実行中の結果と誤認する"
 // distinction = "hookへ手動のhistory gateを渡さず実ContextFeatureのsubscriptionからterminal保持snapshotを供給する"
 // @end-test-value
+/** 終了時にコマンド履歴を復元し、残った Reasoning や Tasks と、実行中・取消中の表示を区別する。 */
 test("ContextFeature restores terminal history while retaining reasoning and tasks", async () => {
   const dom = new JSDOM("<div id='root'></div>");
-  const previous = { window: globalThis.window, document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame };
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 0; }, IS_REACT_ACT_ENVIRONMENT: true });
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    requestAnimationFrame: globalThis.requestAnimationFrame,
+  };
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    /** 描画のフレーム待ちを同期実行に置き換え、テスト時刻に依存させない。 */ requestAnimationFrame:
+      (callback: FrameRequestCallback) => {
+        callback(0);
+        return 0;
+      },
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   const container = dom.window.document.getElementById("root")!;
   let root = createRoot(container);
-  let session = buildNewSession({ id: "main", provider: "copilot", taskTitle: "Context test", workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "main", characterId: "fixture-character", character: "Fixture", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" });
+  let session = buildNewSession({
+    id: "main",
+    provider: "copilot",
+    taskTitle: "Context test",
+    workspaceLabel: "fixture",
+    workspacePath: "C:/fixture",
+    branch: "main",
+    characterId: "fixture-character",
+    character: "Fixture",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: "never",
+  });
   let running = true;
-  let live: LiveSessionRunState = { sessionId: session.id, threadId: "thread", runState: "running", assistantText: "", reasoningText: "retained reasoning", steps: [], backgroundTasks: [{ id: "task", kind: "shell", status: "running", title: "retained task", updatedAt: "now" }], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
-  let turn: SessionTurnRecord = { id: 1, sessionId: session.id, phase: "completed", createdAt: "now", provider: "copilot", model: "model", reasoningEffort: "medium", approvalMode: "never", threadId: "thread", errorMessage: "", assistantMessageSeq: 3 };
-  let artifact: MessageArtifact = { title: "Result", runChecks: [], activitySummary: [], changedFiles: [], operationTimeline: [] };
-  const liveListeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+  let live: LiveSessionRunState = {
+    sessionId: session.id,
+    threadId: "thread",
+    runState: "running",
+    assistantText: "",
+    reasoningText: "retained reasoning",
+    steps: [],
+    backgroundTasks: [
+      {
+        id: "task",
+        kind: "shell",
+        status: "running",
+        title: "retained task",
+        updatedAt: "now",
+      },
+    ],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  };
+  let turn: SessionTurnRecord = {
+    id: 1,
+    sessionId: session.id,
+    phase: "completed",
+    createdAt: "now",
+    provider: "copilot",
+    model: "model",
+    reasoningEffort: "medium",
+    approvalMode: "never",
+    threadId: "thread",
+    errorMessage: "",
+    assistantMessageSeq: 3,
+  };
+  let artifact: MessageArtifact = {
+    title: "Result",
+    runChecks: [],
+    activitySummary: [],
+    changedFiles: [],
+    operationTimeline: [],
+  };
+  const liveListeners = new Set<
+    (id: string, state: LiveSessionRunState | null) => void
+  >();
   const turnListeners = new Set<(id: string) => void>();
   const reads: Array<[string, number]> = [];
   const api = {
+    /** 現在のライブ状態を初回取得または再マウントに返す。 */
     getLiveSessionRun: async () => live,
-    subscribeLiveSessionRun: (listener: (id: string, state: LiveSessionRunState | null) => void) => { liveListeners.add(listener); return () => liveListeners.delete(listener); },
+    /** ライブ状態を切り替えた際に通知するため、リスナーを保持する。 */
+    subscribeLiveSessionRun: (
+      listener: (id: string, state: LiveSessionRunState | null) => void,
+    ) => {
+      liveListeners.add(listener);
+      return () => liveListeners.delete(listener);
+    },
+    /** その時点の最新ターンの状態を返す。 */
     getLatestSessionTurn: async () => turn,
-    onSessionTurnUpdated: (listener: (id: string) => void) => { turnListeners.add(listener); return () => turnListeners.delete(listener); },
-    getSessionMessageArtifact: async (id: string, seq: number) => { reads.push([id, seq]); return artifact; },
+    /** 最新ターンの再取得を発火させる通知先を登録する。 */
+    onSessionTurnUpdated: (listener: (id: string) => void) => {
+      turnListeners.add(listener);
+      return () => turnListeners.delete(listener);
+    },
+    /** 履歴読取の会話 ID とメッセージ位置を記録し、現在の保存結果を返す。 */
+    getSessionMessageArtifact: async (id: string, seq: number) => {
+      reads.push([id, seq]);
+      return artifact;
+    },
+    /** 終了時の履歴表示に無関係な使用枠は空にする。 */
     getProviderQuotaTelemetry: async () => null,
+    /** プロバイダー使用枠の購読では更新イベントを出さない。 */
     subscribeProviderQuotaTelemetry: () => noop,
+    /** コンテキスト使用量そのものは返さない。 */
     getSessionContextTelemetry: async () => null,
+    /** コンテキスト使用量の購読を通知なしで設定する。 */
     subscribeSessionContextTelemetry: () => noop,
+    /** Glossary の更新は履歴タブの切替に混ぜない。 */
     subscribeSessionGlossary: () => noop,
-    getSessionGlossaryProjection: async () => ({ sessionId: session.id, sequence: 1, scopeRevision: "fixture", checkout: { repositoryName: "fixture", branch: "main", pathLabel: "fixture" }, state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null } }),
+    /** 表示中の会話に対し、用語集を持たない checkout を返す。 */
+    getSessionGlossaryProjection: async () => ({
+      sessionId: session.id,
+      sequence: 1,
+      scopeRevision: "fixture",
+      checkout: {
+        repositoryName: "fixture",
+        branch: "main",
+        pathLabel: "fixture",
+      },
+      state: {
+        status: "missing",
+        relativePath: ".withmate/glossary.yaml",
+        revision: null,
+      },
+    }),
   } as unknown as WithMateWindowApi;
-  const render = async () => { await act(async () => root.render(<SessionContextFeature api={api} selectedSession={session} displayedSession={session} activeRunSessionId={session.id} renderedIsRunning={running} visible availableReasoningEfforts={["medium"]} navigator={{}} onShowContextRail={noop} onAnnotationMatcherChange={noop} />)); };
-  const publish = async () => { await act(async () => { for (const listener of liveListeners) listener(session.id, live); for (const listener of turnListeners) listener(session.id); }); await render(); };
+  /** その時点の会話と実行状態で、コンテキスト表示を描き直す。 */
+  const render = async () => {
+    await act(async () =>
+      root.render(
+        <SessionContextFeature
+          api={api}
+          selectedSession={session}
+          displayedSession={session}
+          activeRunSessionId={session.id}
+          renderedIsRunning={running}
+          visible
+          availableReasoningEfforts={["medium"]}
+          navigator={{}}
+          onShowContextRail={noop}
+          onAnnotationMatcherChange={noop}
+        />,
+      ),
+    );
+  };
+  /** ライブとターンの更新を同じ会話へ配信してから、最新の実行状態を描画する。 */
+  const publish = async () => {
+    await act(async () => {
+      for (const listener of liveListeners) listener(session.id, live);
+      for (const listener of turnListeners) listener(session.id);
+    });
+    await render();
+  };
+  /** 表示切替を開き、指定ラベルに対応するパネルを実際に選択する。 */
   const select = async (label: string) => {
-    await act(async () => container.querySelector<HTMLButtonElement>(".session-switcher-current")!.click());
-    const option = [...container.querySelectorAll<HTMLButtonElement>("[role=option]")].find((item) => item.textContent === label);
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(".session-switcher-current")!
+        .click(),
+    );
+    const option = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role=option]"),
+    ].find((item) => item.textContent === label);
     assert.ok(option, label);
     await act(async () => option.click());
   };
-  const content = () => container.querySelector(".command-monitor-content")!.textContent ?? "";
+  /** 選択中のコマンドモニターパネルに表示された本文を読む。 */
+  const content = () =>
+    container.querySelector(".command-monitor-content")!.textContent ?? "";
   try {
     for (const phase of ["completed", "failed", "canceled"] as const) {
       running = true;
-      live = { ...live, runState: "running", cancellationState: undefined, steps: [] };
-      artifact = { ...artifact, operationTimeline: [{ type: "command_execution", summary: `saved-${phase}`, status: phase, details: "acquired output", exitCode: 2, error: { message: "acquired error" }, truncated: true }] };
+      live = {
+        ...live,
+        runState: "running",
+        cancellationState: undefined,
+        steps: [],
+      };
+      artifact = {
+        ...artifact,
+        operationTimeline: [
+          {
+            type: "command_execution",
+            summary: `saved-${phase}`,
+            status: phase,
+            details: "acquired output",
+            exitCode: 2,
+            error: { message: "acquired error" },
+            truncated: true,
+          },
+        ],
+      };
       turn = { ...turn, id: turn.id + 1, phase, assistantMessageSeq: 3 };
       await publish();
       assert.doesNotMatch(content(), /saved-/);
       running = false;
-      live = { ...live, runState: phase === "failed" ? "error" : "idle", steps: [] };
+      live = {
+        ...live,
+        runState: phase === "failed" ? "error" : "idle",
+        steps: [],
+      };
       await publish();
       assert.match(content(), new RegExp(`saved-${phase}`));
       assert.match(content(), /Exit Code: 2/);
       assert.match(content(), /acquired error/);
       assert.match(content(), /Output Truncated/);
-      assert.match(content(), phase === "completed" ? /Completed/ : phase === "failed" ? /Failed/ : /Canceled/);
+      assert.match(
+        content(),
+        phase === "completed"
+          ? /Completed/
+          : phase === "failed"
+            ? /Failed/
+            : /Canceled/,
+      );
       await select("Reasoning");
       assert.match(content(), /retained reasoning/);
       await select("Tasks");
@@ -230,7 +571,17 @@ test("ContextFeature restores terminal history while retaining reasoning and tas
       live = { ...live, cancellationState, steps: [] };
       await publish();
       assert.doesNotMatch(content(), /saved-/);
-      live = { ...live, steps: [{ id: "active", type: "command_execution", status: "in_progress", summary: `live-${cancellationState}` }] };
+      live = {
+        ...live,
+        steps: [
+          {
+            id: "active",
+            type: "command_execution",
+            status: "in_progress",
+            summary: `live-${cancellationState}`,
+          },
+        ],
+      };
       await publish();
       assert.match(content(), new RegExp(`live-${cancellationState}`));
       assert.doesNotMatch(content(), /saved-/);
@@ -244,7 +595,21 @@ test("ContextFeature restores terminal history while retaining reasoning and tas
     session = { ...session, incarnationId: "new-incarnation" };
     await render();
     assert.doesNotMatch(content(), /saved-|live-/);
-    await act(async () => { for (const listener of liveListeners) listener("auxiliary", { ...live, sessionId: "auxiliary", steps: [{ id: "wrong-owner", type: "command_execution", status: "in_progress", summary: "wrong-owner-command" }] }); });
+    await act(async () => {
+      for (const listener of liveListeners)
+        listener("auxiliary", {
+          ...live,
+          sessionId: "auxiliary",
+          steps: [
+            {
+              id: "wrong-owner",
+              type: "command_execution",
+              status: "in_progress",
+              summary: "wrong-owner-command",
+            },
+          ],
+        });
+    });
     assert.doesNotMatch(content(), /wrong-owner-command/);
   } finally {
     await act(async () => root.unmount());

@@ -6,7 +6,10 @@ import test from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
@@ -14,6 +17,7 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 const FIRST_TIME = "2026-09-19T00:00:00.000Z";
 const SECOND_TIME = "2026-09-19T00:01:00.000Z";
 
+/** 本文と旧スレッドを持ち、任意の上書きで競合条件を組み立てられるMainセッションを作る。 */
 function createSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
     ...buildNewSession({
@@ -39,7 +43,10 @@ function createSession(id: string, overrides: Partial<Session> = {}): Session {
   };
 }
 
-function createAuxiliary(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+/** スレッド更新で消えてはならない会話本文と入力下書きを持つAuxiliaryを作る。 */
+function createAuxiliary(
+  overrides: Partial<AuxiliarySession> = {},
+): AuxiliarySession {
   return {
     id: "aux-1",
     parentSessionId: "parent-1",
@@ -64,6 +71,7 @@ function createAuxiliary(overrides: Partial<AuxiliarySession> = {}): AuxiliarySe
   };
 }
 
+/** 隔離DBのパスを貸し出し、検証の成功・失敗にかかわらず一時領域を除去する。 */
 async function withTempDb<T>(run: (dbPath: string) => Promise<T>): Promise<T> {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-thread-patch-"));
   try {
@@ -85,6 +93,7 @@ async function withTempDb<T>(run: (dbPath: string) => Promise<T>): Promise<T> {
 // impact = "古いprovider応答が別の会話へ混入し、本文や実行ポリシーを壊す"
 // distinction = "通常upsertではなく実SessionStorageV6の条件付きthread更新SQLを通り、削除・同ID再作成境界まで確認する"
 // @end-test-value
+/** Mainのスレッドだけを更新し、別処理の本文や設定を保持して所有条件不一致を拒否する。 */
 test("SessionStorageV6 thread patchはowner条件を満たすとthreadだけ更新する", async () => {
   await withTempDb(async (dbPath) => {
     const storage = new SessionStorageV6(dbPath);
@@ -103,9 +112,20 @@ test("SessionStorageV6 thread patchはowner条件を満たすとthreadだけ更�
       assert.equal(patched?.updatedAt, SECOND_TIME);
       assert.deepEqual(storage.getSession(first.id)?.messages, first.messages);
       assert.equal(storage.getSession(first.id)?.model, first.model);
-      assert.equal(storage.getSession(first.id)?.codexSandboxMode, first.codexSandboxMode);
-      assert.equal(storage.getSession(first.id)?.characterId, first.characterId);
-      const reset = storage.updateSessionThreadIfMatches({ ...input, expectedThreadId: "thread-new", nextThreadId: "", updatedAt: "2026-09-19T00:02:00.000Z" });
+      assert.equal(
+        storage.getSession(first.id)?.codexSandboxMode,
+        first.codexSandboxMode,
+      );
+      assert.equal(
+        storage.getSession(first.id)?.characterId,
+        first.characterId,
+      );
+      const reset = storage.updateSessionThreadIfMatches({
+        ...input,
+        expectedThreadId: "thread-new",
+        nextThreadId: "",
+        updatedAt: "2026-09-19T00:02:00.000Z",
+      });
       assert.equal(reset?.threadId, "");
       const changedElsewhere = storage.updateSession({
         ...storage.getSession(first.id)!,
@@ -121,10 +141,33 @@ test("SessionStorageV6 thread patchはowner条件を満たすとthreadだけ更�
       });
       assert.equal(reversed?.threadId, "thread-new");
       assert.equal(storage.getSession(first.id)?.model, changedElsewhere.model);
-      assert.deepEqual(storage.getSession(first.id)?.messages.map((message) => message.text), ["newer body"]);
-      assert.equal(storage.updateSessionThreadIfMatches({ ...input, expectedThreadId: "wrong" }), null);
-      assert.equal(storage.updateSessionThreadIfMatches({ ...input, provider: "copilot", expectedThreadId: "thread-new" }), null);
-      assert.equal(storage.updateSessionThreadIfMatches({ ...input, incarnationId: "old-incarnation", expectedThreadId: "thread-new" }), null);
+      assert.deepEqual(
+        storage.getSession(first.id)?.messages.map((message) => message.text),
+        ["newer body"],
+      );
+      assert.equal(
+        storage.updateSessionThreadIfMatches({
+          ...input,
+          expectedThreadId: "wrong",
+        }),
+        null,
+      );
+      assert.equal(
+        storage.updateSessionThreadIfMatches({
+          ...input,
+          provider: "copilot",
+          expectedThreadId: "thread-new",
+        }),
+        null,
+      );
+      assert.equal(
+        storage.updateSessionThreadIfMatches({
+          ...input,
+          incarnationId: "old-incarnation",
+          expectedThreadId: "thread-new",
+        }),
+        null,
+      );
 
       storage.deleteSession(first.id);
       const recreated = storage.insertSession(createSession(first.id));
@@ -149,6 +192,7 @@ test("SessionStorageV6 thread patchはowner条件を満たすとthreadだけ更�
 // impact = "古いAuxiliary応答が別親の会話へ混入し、ユーザーの本文や入力中draftを失う"
 // distinction = "個別取得と一覧に同じthread更新が反映され、並行保存後の本文/draftがDBで保持されることを検証する"
 // @end-test-value
+/** Auxiliaryのスレッド変更を詳細と一覧に反映し、本文・下書きは保ち、対象条件不一致を拒否する。 */
 test("AuxiliarySessionStorage thread patchはmetadata更新を個別取得と一覧に反映する", async () => {
   await withTempDb(async (dbPath) => {
     const storage = new AuxiliarySessionStorage(dbPath);
@@ -167,9 +211,18 @@ test("AuxiliarySessionStorage thread patchはmetadata更新を個別取得と一
         createdAt: current.createdAt,
       });
       assert.equal(patched?.threadId, "aux-thread-new");
-      assert.equal(storage.getAuxiliarySession(stored.id)?.messages[0]?.text, stored.messages[0]?.text);
-      assert.equal(storage.getAuxiliarySession(stored.id)?.composerDraft, stored.composerDraft);
-      assert.equal(storage.listAuxiliarySessions(stored.parentSessionId)[0]?.threadId, "aux-thread-new");
+      assert.equal(
+        storage.getAuxiliarySession(stored.id)?.messages[0]?.text,
+        stored.messages[0]?.text,
+      );
+      assert.equal(
+        storage.getAuxiliarySession(stored.id)?.composerDraft,
+        stored.composerDraft,
+      );
+      assert.equal(
+        storage.listAuxiliarySessions(stored.parentSessionId)[0]?.threadId,
+        "aux-thread-new",
+      );
       const reset = storage.updateAuxiliarySessionThreadIfMatches({
         auxiliarySessionId: stored.id,
         parentSessionId: stored.parentSessionId,
@@ -187,14 +240,17 @@ test("AuxiliarySessionStorage thread patchはmetadata更新を個別取得と一
         updatedAt: "2026-09-19T00:03:00.000Z",
       });
       const newerDraft = storage.getAuxiliaryDraft(stored.id)!;
-      assert.equal(storage.saveAuxiliaryDraft({
-        auxiliarySessionId: stored.id,
-        parentSessionId: stored.parentSessionId,
-        incarnation: newerDraft.incarnation,
-        expectedDurableRevision: newerDraft.durableRevision,
-        text: "newer draft",
-        updatedAt: "2026-09-19T00:03:00.000Z",
-      }).outcome, "saved");
+      assert.equal(
+        storage.saveAuxiliaryDraft({
+          auxiliarySessionId: stored.id,
+          parentSessionId: stored.parentSessionId,
+          incarnation: newerDraft.incarnation,
+          expectedDurableRevision: newerDraft.durableRevision,
+          text: "newer draft",
+          updatedAt: "2026-09-19T00:03:00.000Z",
+        }).outcome,
+        "saved",
+      );
       const reversed = storage.updateAuxiliarySessionThreadIfMatches({
         auxiliarySessionId: stored.id,
         parentSessionId: stored.parentSessionId,
@@ -205,55 +261,81 @@ test("AuxiliarySessionStorage thread patchはmetadata更新を個別取得と一
         createdAt: stored.createdAt,
       });
       assert.equal(reversed?.threadId, "aux-thread-new");
-      assert.deepEqual(storage.getAuxiliarySession(stored.id)?.messages.map((message) => message.text), ["newer auxiliary body"]);
-      assert.equal(storage.getAuxiliarySession(stored.id)?.composerDraft, "newer draft");
-      assert.equal(storage.listAuxiliarySessions(stored.parentSessionId)[0]?.threadId, "aux-thread-new");
-      assert.equal(storage.updateAuxiliarySessionThreadIfMatches({
-        auxiliarySessionId: stored.id,
-        parentSessionId: stored.parentSessionId,
-        provider: stored.provider,
-        expectedThreadId: "wrong-thread",
-        nextThreadId: "wrong-expected",
-        updatedAt: SECOND_TIME,
-        createdAt: stored.createdAt,
-      }), null);
-      assert.equal(storage.updateAuxiliarySessionThreadIfMatches({
-        auxiliarySessionId: stored.id,
-        parentSessionId: "other-parent",
-        provider: stored.provider,
-        expectedThreadId: "aux-thread-new",
-        nextThreadId: "wrong-parent",
-        updatedAt: SECOND_TIME,
-        createdAt: stored.createdAt,
-      }), null);
-      assert.equal(storage.updateAuxiliarySessionThreadIfMatches({
-        auxiliarySessionId: stored.id,
-        parentSessionId: stored.parentSessionId,
-        provider: "copilot",
-        expectedThreadId: "aux-thread-new",
-        nextThreadId: "wrong-provider",
-        updatedAt: SECOND_TIME,
-        createdAt: stored.createdAt,
-      }), null);
-      assert.equal(storage.updateAuxiliarySessionThreadIfMatches({
-        auxiliarySessionId: stored.id,
-        parentSessionId: stored.parentSessionId,
-        provider: stored.provider,
-        expectedThreadId: "aux-thread-new",
-        nextThreadId: "wrong-created",
-        updatedAt: SECOND_TIME,
-        createdAt: "wrong-created-at",
-      }), null);
+      assert.deepEqual(
+        storage
+          .getAuxiliarySession(stored.id)
+          ?.messages.map((message) => message.text),
+        ["newer auxiliary body"],
+      );
+      assert.equal(
+        storage.getAuxiliarySession(stored.id)?.composerDraft,
+        "newer draft",
+      );
+      assert.equal(
+        storage.listAuxiliarySessions(stored.parentSessionId)[0]?.threadId,
+        "aux-thread-new",
+      );
+      assert.equal(
+        storage.updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: stored.id,
+          parentSessionId: stored.parentSessionId,
+          provider: stored.provider,
+          expectedThreadId: "wrong-thread",
+          nextThreadId: "wrong-expected",
+          updatedAt: SECOND_TIME,
+          createdAt: stored.createdAt,
+        }),
+        null,
+      );
+      assert.equal(
+        storage.updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: stored.id,
+          parentSessionId: "other-parent",
+          provider: stored.provider,
+          expectedThreadId: "aux-thread-new",
+          nextThreadId: "wrong-parent",
+          updatedAt: SECOND_TIME,
+          createdAt: stored.createdAt,
+        }),
+        null,
+      );
+      assert.equal(
+        storage.updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: stored.id,
+          parentSessionId: stored.parentSessionId,
+          provider: "copilot",
+          expectedThreadId: "aux-thread-new",
+          nextThreadId: "wrong-provider",
+          updatedAt: SECOND_TIME,
+          createdAt: stored.createdAt,
+        }),
+        null,
+      );
+      assert.equal(
+        storage.updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: stored.id,
+          parentSessionId: stored.parentSessionId,
+          provider: stored.provider,
+          expectedThreadId: "aux-thread-new",
+          nextThreadId: "wrong-created",
+          updatedAt: SECOND_TIME,
+          createdAt: "wrong-created-at",
+        }),
+        null,
+      );
       storage.deleteAuxiliarySessionsForParent(stored.parentSessionId);
-      assert.equal(storage.updateAuxiliarySessionThreadIfMatches({
-        auxiliarySessionId: stored.id,
-        parentSessionId: stored.parentSessionId,
-        provider: stored.provider,
-        expectedThreadId: "aux-thread-new",
-        nextThreadId: "after-delete",
-        updatedAt: SECOND_TIME,
-        createdAt: stored.createdAt,
-      }), null);
+      assert.equal(
+        storage.updateAuxiliarySessionThreadIfMatches({
+          auxiliarySessionId: stored.id,
+          parentSessionId: stored.parentSessionId,
+          provider: stored.provider,
+          expectedThreadId: "aux-thread-new",
+          nextThreadId: "after-delete",
+          updatedAt: SECOND_TIME,
+          createdAt: stored.createdAt,
+        }),
+        null,
+      );
     } finally {
       storage.close();
       parentStorage.close();
@@ -273,6 +355,7 @@ test("AuxiliarySessionStorage thread patchはmetadata更新を個別取得と一
 // impact = "画面上に消えた会話が復活し、provider thread応答が別のcache状態へ混入する"
 // distinction = "単体storageではなくproduction SessionPersistenceServiceのdeferred adapter経路を一時V6 DBとcontrolled cache mutationで確認する"
 // @end-test-value
+/** 保存後の応答待ちにキャッシュが更新・削除されても、スレッド投影で新しい本文や削除状態を巻き戻さない。 */
 test("SessionPersistenceService deferred thread patchはcacheを安全に投影する", async () => {
   await withTempDb(async (dbPath) => {
     const storage = new SessionStorageV6(dbPath);
@@ -281,14 +364,29 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
       let cached = [initial];
       let release!: () => void;
       let reached!: () => void;
-      const barrier = new Promise<void>((resolve) => { release = resolve; });
-      const reachedPromise = new Promise<void>((resolve) => { reached = resolve; });
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const reachedPromise = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
       const service = new SessionPersistenceService({
+        /** 応答反映前に差し替えられる、現在のキャッシュ一覧を返す。 */
         getSessions: () => cached,
-        setSessions: (next) => { cached = next; },
-        getSession: (sessionId) => cached.find((session) => session.id === sessionId) ?? null,
+        /** 永続化サービスが投影したキャッシュを後から検査できるようにする。 */
+        setSessions: (next) => {
+          cached = next;
+        },
+        /** キャッシュから削除された項目を欠落として返し、DBからの補完は行わない。 */
+        getSession: (sessionId) =>
+          cached.find((session) => session.id === sessionId) ?? null,
+        /** 実行中条件を除外し、保存応答とキャッシュ更新の競合に絞る。 */
         isSessionRunInFlight: () => false,
-        upsertStoredSession: async () => { throw new Error("unused"); },
+        /** スレッド更新が行全体の上書きへ迂回したら失敗とする。 */
+        upsertStoredSession: async () => {
+          throw new Error("unused");
+        },
+        /** 実DBの更新を済ませてから応答を止め、キャッシュ側の状態を先に変えられるようにする。 */
         updateStoredSessionThreadIfMatches: async (input) => {
           const stored = storage.updateSessionThreadIfMatches(input);
           reached();
@@ -301,16 +399,26 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
           }
           return stored;
         },
+        /** スレッド更新に使わない一括保存依存を、ストレージに接続しない。 */
         replaceStoredSessions: async () => undefined,
+        /** 一覧を要求する場合は同じ実DBを参照する。 */
         listStoredSessions: async () => storage.listSessions(),
-        deleteStoredSessions: async (sessionIds) => storage.deleteSessions(sessionIds),
+        /** 削除依存にはテスト用の実DBを接続する。 */
+        deleteStoredSessions: async (sessionIds) =>
+          storage.deleteSessions(sessionIds),
+        /** この経路で設定を使わないため、空の設定を返す。 */
         getAppSettings: () => ({}) as never,
+        /** モデル選択の影響を除くため、空カタログを返す。 */
         getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
 
+        /** スレッド変更の検証に付随するテレメトリ処理を実行しない。 */
         clearSessionContextTelemetry: () => undefined,
 
+        /** 外部Providerの無効化を実行せず、保存と投影の挙動を切り分ける。 */
         invalidateProviderSessionThread: async () => undefined,
+        /** 実ウィンドウを作らないため閉じる要求を受け流す。 */
         closeSessionWindow: () => undefined,
+        /** 通知の配信は行わず、メモリ上の投影結果を直接検査する。 */
         broadcastSessions: () => undefined,
       });
       const update = service.updateSessionThreadIfMatches({
@@ -329,9 +437,14 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
       release();
       assert.equal((await update)?.threadId, "service-thread-new");
       assert.deepEqual(cached, []);
-      assert.equal(storage.getSession(initial.id)?.threadId, "service-thread-new");
+      assert.equal(
+        storage.getSession(initial.id)?.threadId,
+        "service-thread-new",
+      );
 
-      const surviving = storage.insertSession(createSession("service-surviving"));
+      const surviving = storage.insertSession(
+        createSession("service-surviving"),
+      );
       cached = [surviving];
       const successful = await service.updateSessionThreadIfMatches({
         sessionId: surviving.id,
@@ -342,9 +455,15 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
         updatedAt: SECOND_TIME,
       });
       assert.equal(successful?.threadId, "service-thread-success");
-      assert.deepEqual(cached[0]?.messages.map((message) => message.text), ["newer cached response"]);
+      assert.deepEqual(
+        cached[0]?.messages.map((message) => message.text),
+        ["newer cached response"],
+      );
       assert.equal(cached[0]?.threadId, "service-thread-success");
-      assert.equal(storage.getSession(surviving.id)?.threadId, "service-thread-success");
+      assert.equal(
+        storage.getSession(surviving.id)?.threadId,
+        "service-thread-success",
+      );
     } finally {
       storage.close();
     }

@@ -3,10 +3,14 @@ import test from "node:test";
 
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
-import type { LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type {
+  LiveApprovalRequest,
+  LiveSessionRunState,
+} from "../../src-shared/session/runtime-state.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { SessionTurnNotificationService } from "../../src-electron/session/session-turn-notification-service.js";
 
+/** 承認も質問も保持していない実行状態を一件作る。 */
 function createLiveRunState(): LiveSessionRunState {
   return {
     sessionId: "session-1",
@@ -21,13 +25,23 @@ function createLiveRunState(): LiveSessionRunState {
   };
 }
 
+/** 重複時に ID で対応を比較できるよう、直接判断型の承認要求を用意する。 */
 function approval(requestId: string): LiveApprovalRequest {
-  return { requestId, provider: "copilot", kind: "tool", title: "Permission", summary: requestId, decisionMode: "direct-decision" };
+  return {
+    requestId,
+    provider: "copilot",
+    kind: "tool",
+    title: "Permission",
+    summary: requestId,
+    decisionMode: "direct-decision",
+  };
 }
 
+/** 待機要求が表示状態に出て、手動承認の確定後に消えることを確かめる。 */
 test("SessionApprovalService は承認待ちを live run に反映し、resolve 後に片付ける", async () => {
   let state = createLiveRunState();
   const service = new SessionApprovalService({
+    /** サービスの公開更新を、テスト側で確認できる実行状態へ適用する。 */
     updateLiveSessionRun: (_sessionId, recipe) => {
       state = recipe(state);
       return state;
@@ -65,10 +79,12 @@ test("SessionApprovalService は承認待ちを live run に反映し、resolve 
 // impact = "取消済み処理が承認待機のまま終了できない"
 // distinction = "通常の承認解決とは異なるsignal経路での後片付けを確認する"
 // @end-test-value
+/** 実行の中止信号だけで承認を拒否し、画面に待機を残さないことを確かめる。 */
 test("SessionApprovalService は abort 時に deny を返す", async () => {
   let state = createLiveRunState();
   const controller = new AbortController();
   const service = new SessionApprovalService({
+    /** 中止時の表示解除を観測できるよう、同じ実行状態を更新する。 */
     updateLiveSessionRun: (_sessionId, recipe) => {
       state = recipe(state);
       return state;
@@ -105,6 +121,7 @@ test("SessionApprovalService は abort 時に deny を返す", async () => {
 // impact = "操作済み要求の通知が残るか、通知障害でProviderがユーザー判断を受け取れない"
 // distinction = "両serviceの単体testだけではrequest公開と通知signalの有効期間の接続を確認できない"
 // @end-test-value
+/** 表示後だけ通知し、解決経路や OS 通知の成否にかかわらず本来の判断を返す。 */
 test("承認公開から解決までを通知の有効期間とし通知失敗を判断へ伝播させない", async () => {
   for (const settlement of ["approve", "deny", "abort", "reset"] as const) {
     for (const failure of ["none", "show", "close"] as const) {
@@ -112,42 +129,98 @@ test("承認公開から解決までを通知の有効期間とし通知失敗�
       let shown = 0;
       let closed = 0;
       const session = buildNewSession({
-        taskTitle: "Approval lifecycle", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
-        characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#223344", sub: "#88bbcc" },
+        taskTitle: "Approval lifecycle",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "mate",
+        character: "Mate",
+        characterIconPath: "",
+        characterThemeColors: { main: "#223344", sub: "#88bbcc" },
         approvalMode: "on-request",
       });
       const notificationService = new SessionTurnNotificationService({
-        platform: "win32", isNotificationSupported: () => true,
-        isNotificationEnabled: () => false, isApprovalNotificationEnabled: () => true,
-        isResponsePreviewEnabled: () => false, isSessionWindowOpen: () => true,
-        isSessionWindowFocused: () => false, loadCharacterIcon: () => null,
+        platform: "win32",
+        /** テストプラットフォーム上で通知機能が使える前提にする。 */ isNotificationSupported:
+          () => true,
+        /** 通常の応答通知を無効にして、承認通知だけを検証する。 */
+        isNotificationEnabled: () => false,
+        /** 一般通知の設定とは別に、承認通知を有効にする。 */ isApprovalNotificationEnabled:
+          () => true,
+        /** 通知本文に応答のプレビューを付けない。 */
+        isResponsePreviewEnabled: () => false,
+        /** 会話ウィンドウは既に開かれている状態にする。 */ isSessionWindowOpen:
+          () => true,
+        /** 対象ウィンドウが前面ではないため、通知を表示できる状態にする。 */
+        isSessionWindowFocused: () => false,
+        /** 通知アイコンのファイル取得を省略する。 */ loadCharacterIcon: () =>
+          null,
+        /** 表示と撤去それぞれの例外を注入できる通知を用意する。 */
         createNotification: () => ({
-          show: () => { shown += 1; if (failure === "show") throw new Error("delivery failed"); },
-          close: () => { closed += 1; if (failure === "close") throw new Error("dismissal failed"); },
-          onClick: () => {}, onClose: () => {}, onFailed: () => {},
+          /** 表示回数を記録し、配送に失敗するケースでは例外を送出する。 */
+          show: () => {
+            shown += 1;
+            if (failure === "show") throw new Error("delivery failed");
+          },
+          /** 撤去回数を記録し、撤去自体が失敗する経路も再現する。 */
+          close: () => {
+            closed += 1;
+            if (failure === "close") throw new Error("dismissal failed");
+          },
+          /** 通知をクリックする経路はこの検証では使わない。 */
+          onClick: () => {},
+          /** OS 経由の閉じるイベントは発火させない。 */ onClose: () => {},
+          /** 失敗イベントの代わりに表示と撤去の呼び出しから例外を発生させる。 */ onFailed:
+            () => {},
         }),
-        getSession: () => session, openSessionWindow: () => {}, openAuxiliarySessionWindow: () => {},
-        openHomeWindow: () => {}, logWarning: () => {},
+        /** 承認の対象として同じ保存会話を返す。 */
+        getSession: () => session,
+        /** 通知から Main の画面を開く操作は模擬せず、通知の寿命に絞る。 */ openSessionWindow:
+          () => {},
+        /** Auxiliary の画面を開く副作用は持たせない。 */ openAuxiliarySessionWindow:
+          () => {},
+        /** Home を開く実際の UI 操作は行わない。 */
+        openHomeWindow: () => {},
+        /** 通知障害を想定した試験中は警告を外へ出さない。 */ logWarning:
+          () => {},
       });
       const deliveries: Promise<boolean>[] = [];
       const service = new SessionApprovalService({
-        updateLiveSessionRun: (_id, recipe) => { state = recipe(state); return state; },
+        /** 承認の公開済み状態を、通知コールバックから参照できるようにする。 */
+        updateLiveSessionRun: (_id, recipe) => {
+          state = recipe(state);
+          return state;
+        },
+        /** 公開された ID を確認したうえで、実際の通知サービスへ同じ寿命の信号を渡す。 */
         notifyApproval: (_id, requestId, signal) => {
           assert.equal(state.approvalRequest?.requestId, requestId);
-          deliveries.push(notificationService.notifyApproval(session, requestId, signal));
+          deliveries.push(
+            notificationService.notifyApproval(session, requestId, signal),
+          );
         },
       });
       const controller = new AbortController();
-      const pending = service.waitForLiveApprovalDecision("session-1", {
-        requestId: "approval", provider: "copilot", kind: "tool", title: "Permission",
-        summary: "Private command", decisionMode: "direct-decision",
-      }, controller.signal);
+      const pending = service.waitForLiveApprovalDecision(
+        "session-1",
+        {
+          requestId: "approval",
+          provider: "copilot",
+          kind: "tool",
+          title: "Permission",
+          summary: "Private command",
+          decisionMode: "direct-decision",
+        },
+        controller.signal,
+      );
       await Promise.all(deliveries);
       assert.equal(shown, 1);
       if (settlement === "abort") controller.abort();
       else if (settlement === "reset") service.reset();
       else service.resolveLiveApproval("session-1", "approval", settlement);
-      assert.equal(await pending, settlement === "approve" ? "approve" : "deny");
+      assert.equal(
+        await pending,
+        settlement === "approve" ? "approve" : "deny",
+      );
       assert.equal(state.approvalRequest, null);
       assert.equal(closed, failure === "show" ? 0 : 1);
     }
@@ -166,22 +239,45 @@ test("承認公開から解決までを通知の有効期間とし通知失敗�
 // impact = "操作できない要求へ通知されるかProviderに承認判断が返らない"
 // distinction = "通知service内部の配送失敗とは異なる、公開境界のhook例外を検証する"
 // @end-test-value
+/** 公開されなかった旧形式の要求は通知せず、観測フックに失敗しても判断は返す。 */
 test("未公開の承認を通知せずhook例外でも公開済みの判断を受け付ける", async () => {
-  for (const [publish, observe] of [[false, false], [false, true], [true, true]] as const) {
+  for (const [publish, observe] of [
+    [false, false],
+    [false, true],
+    [true, true],
+  ] as const) {
     let state = createLiveRunState();
     let notifications = 0;
     const sources: ApprovalDecisionSource[] = [];
     const service = new SessionApprovalService({
-      updateLiveSessionRun: (_id, recipe) => publish ? (state = recipe(state)) : null,
-      notifyApproval: () => { notifications += 1; throw new Error("notification hook failed"); },
+      /** ケースに応じて表示更新を拒み、サービスが公開の成否を区別できるようにする。 */
+      updateLiveSessionRun: (_id, recipe) =>
+        publish ? (state = recipe(state)) : null,
+      /** 通知が試みられた回数を数え、公開済みでも通知側は失敗し得る状況を作る。 */
+      notifyApproval: () => {
+        notifications += 1;
+        throw new Error("notification hook failed");
+      },
     });
-    const pending = service.waitForLiveApprovalDecision("session-1", {
-      requestId: "approval", provider: "codex", kind: "tool", title: "Permission",
-      summary: "Request", decisionMode: "direct-decision",
-    }, new AbortController().signal, undefined, observe ? (source) => {
-      sources.push(source);
-      throw new Error("decision observer failed");
-    } : undefined);
+    const pending = service.waitForLiveApprovalDecision(
+      "session-1",
+      {
+        requestId: "approval",
+        provider: "codex",
+        kind: "tool",
+        title: "Permission",
+        summary: "Request",
+        decisionMode: "direct-decision",
+      },
+      new AbortController().signal,
+      undefined,
+      observe
+        ? (source) => {
+            sources.push(source);
+            throw new Error("decision observer failed");
+          }
+        : undefined,
+    );
     assert.equal(notifications, publish ? 1 : 0);
     service.resolveLiveApproval("session-1", "approval", "approve");
     assert.equal(await pending, "approve");
@@ -203,46 +299,108 @@ test("未公開の承認を通知せずhook例外でも公開済みの判断を�
 // distinction = "単一要求testでは同時要求の保持順序と全callbackの決着を確認できない"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 会話ごとに先頭だけを公開し、重複した待機だけが同じ判断と通知元を共有する。 */
 test("承認FIFOは重複callbackの判断を共有しMainとAuxを独立に進める", async () => {
-  const states = new Map(["main", "aux"].map((id) => [id, { ...createLiveRunState(), sessionId: id }]));
+  const states = new Map(
+    ["main", "aux"].map((id) => [
+      id,
+      { ...createLiveRunState(), sessionId: id },
+    ]),
+  );
   const published: string[] = [];
   const notified: Array<{ id: string; signal: AbortSignal }> = [];
   const service = new SessionApprovalService({
+    /** Main と Auxiliary の状態を分け、公開された順序を会話 ID とともに保存する。 */
     updateLiveSessionRun: (id, recipe) => {
       const next = recipe(states.get(id)!);
       states.set(id, next);
       published.push(`${id}:${next.approvalRequest?.requestId ?? "none"}`);
       return next;
     },
-    notifyApproval: (_id, id, signal) => { notified.push({ id, signal }); },
+    /** 通知された要求と信号を保存し、先頭交代で古い通知が失効したか調べる。 */
+    notifyApproval: (_id, id, signal) => {
+      notified.push({ id, signal });
+    },
   });
   const sources: string[] = [];
-  const firstObserver = async (source: ApprovalDecisionSource) => { sources.push(`first:${source}`); throw new Error("observer rejected"); };
-  const first = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal, undefined, firstObserver);
-  const second = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal, undefined,
-    (source) => { sources.push(`second:${source}`); });
-  const queuedDuplicate = service.waitForLiveApprovalDecision("main", approval("second"), new AbortController().signal, undefined,
-    (source) => { sources.push(`queued-duplicate:${source}`); });
-  const duplicate = service.waitForLiveApprovalDecision("main", approval("first"), new AbortController().signal, undefined, firstObserver);
-  const auxiliary = service.waitForLiveApprovalDecision("aux", approval("auxiliary"), new AbortController().signal);
+  /** 同じ観測先の重複登録と、観測後に拒否された非同期処理の影響を確かめる。 */
+  const firstObserver = async (source: ApprovalDecisionSource) => {
+    sources.push(`first:${source}`);
+    throw new Error("observer rejected");
+  };
+  const first = service.waitForLiveApprovalDecision(
+    "main",
+    approval("first"),
+    new AbortController().signal,
+    undefined,
+    firstObserver,
+  );
+  const second = service.waitForLiveApprovalDecision(
+    "main",
+    approval("second"),
+    new AbortController().signal,
+    undefined,
+    (source) => {
+      sources.push(`second:${source}`);
+    },
+  );
+  const queuedDuplicate = service.waitForLiveApprovalDecision(
+    "main",
+    approval("second"),
+    new AbortController().signal,
+    undefined,
+    (source) => {
+      sources.push(`queued-duplicate:${source}`);
+    },
+  );
+  const duplicate = service.waitForLiveApprovalDecision(
+    "main",
+    approval("first"),
+    new AbortController().signal,
+    undefined,
+    firstObserver,
+  );
+  const auxiliary = service.waitForLiveApprovalDecision(
+    "aux",
+    approval("auxiliary"),
+    new AbortController().signal,
+  );
   assert.equal(first, duplicate);
   assert.equal(second, queuedDuplicate);
   assert.deepEqual(published, ["main:first", "aux:auxiliary"]);
-  assert.deepEqual(notified.map((item) => item.id), ["first", "auxiliary"]);
+  assert.deepEqual(
+    notified.map((item) => item.id),
+    ["first", "auxiliary"],
+  );
   assert.deepEqual(sources, []);
-  assert.throws(() => service.resolveLiveApproval("main", "second", "approve"), /no longer exists/);
+  assert.throws(
+    () => service.resolveLiveApproval("main", "second", "approve"),
+    /no longer exists/,
+  );
   service.resolveLiveApproval("main", "first", "approve");
   assert.equal(states.get("main")!.approvalRequest?.requestId, "second");
   assert.deepEqual(published, ["main:first", "aux:auxiliary", "main:second"]);
   assert.equal(notified[0].signal.aborted, true);
   assert.equal(notified[2].signal.aborted, false);
-  assert.throws(() => service.resolveLiveApproval("main", "first", "approve"), /no longer exists/);
+  assert.throws(
+    () => service.resolveLiveApproval("main", "first", "approve"),
+    /no longer exists/,
+  );
   service.resolveLiveApproval("aux", "auxiliary", "deny");
   assert.equal(states.get("main")!.approvalRequest?.requestId, "second");
   service.resolveLiveApproval("main", "second", "deny");
-  assert.deepEqual(await Promise.all([first, duplicate, second, queuedDuplicate, auxiliary]), ["approve", "approve", "deny", "deny", "deny"]);
-  assert.deepEqual(sources, ["first:manual", "second:manual", "queued-duplicate:manual"]);
-  assert.ok([...states.values()].every((state) => state.approvalRequest === null));
+  assert.deepEqual(
+    await Promise.all([first, duplicate, second, queuedDuplicate, auxiliary]),
+    ["approve", "approve", "deny", "deny", "deny"],
+  );
+  assert.deepEqual(sources, [
+    "first:manual",
+    "second:manual",
+    "queued-duplicate:manual",
+  ]);
+  assert.ok(
+    [...states.values()].every((state) => state.approvalRequest === null),
+  );
   assert.ok(notified.every((item) => item.signal.aborted));
 });
 
@@ -258,26 +416,53 @@ test("承認FIFOは重複callbackの判断を共有しMainとAuxを独立に進�
 // impact = "不要になった操作を承認させるか有効な後続処理を停止する"
 // distinction = "共有turn取消とは異なる個別要求の取消と残るFIFOを検証する"
 // @end-test-value
+/** 取消対象以外の先頭を守り、古い信号が次の通知に影響しないことを確かめる。 */
 test("個別abortはqueued要求と重複先頭だけを取消し後続通知へ干渉しない", async () => {
   let state = createLiveRunState();
   const notifications: Array<{ id: string; signal: AbortSignal }> = [];
   const service = new SessionApprovalService({
+    /** 取消後の表示から、次に有効な先頭が選ばれたかを観測する。 */
     updateLiveSessionRun: (_id, recipe) => (state = recipe(state)),
-    notifyApproval: (_id, id, signal) => { notifications.push({ id, signal }); },
+    /** 取消済み要求が通知されていないことと、現行の通知が生きていることを調べる。 */
+    notifyApproval: (_id, id, signal) => {
+      notifications.push({ id, signal });
+    },
   });
   const controllers = Array.from({ length: 4 }, () => new AbortController());
-  const first = service.waitForLiveApprovalDecision("session-1", approval("first"), controllers[0].signal);
-  const queued = service.waitForLiveApprovalDecision("session-1", approval("queued"), controllers[1].signal);
-  const next = service.waitForLiveApprovalDecision("session-1", approval("next"), controllers[2].signal);
-  const duplicate = service.waitForLiveApprovalDecision("session-1", approval("first"), controllers[3].signal);
+  const first = service.waitForLiveApprovalDecision(
+    "session-1",
+    approval("first"),
+    controllers[0].signal,
+  );
+  const queued = service.waitForLiveApprovalDecision(
+    "session-1",
+    approval("queued"),
+    controllers[1].signal,
+  );
+  const next = service.waitForLiveApprovalDecision(
+    "session-1",
+    approval("next"),
+    controllers[2].signal,
+  );
+  const duplicate = service.waitForLiveApprovalDecision(
+    "session-1",
+    approval("first"),
+    controllers[3].signal,
+  );
   controllers[1].abort();
   assert.equal(await queued, "deny");
   assert.equal(state.approvalRequest?.requestId, "first");
-  assert.deepEqual(notifications.map((item) => item.id), ["first"]);
+  assert.deepEqual(
+    notifications.map((item) => item.id),
+    ["first"],
+  );
   controllers[3].abort();
   assert.deepEqual(await Promise.all([first, duplicate]), ["deny", "deny"]);
   assert.equal(state.approvalRequest?.requestId, "next");
-  assert.deepEqual(notifications.map((item) => item.id), ["first", "next"]);
+  assert.deepEqual(
+    notifications.map((item) => item.id),
+    ["first", "next"],
+  );
   controllers[0].abort();
   assert.equal(state.approvalRequest?.requestId, "next");
   assert.equal(notifications[1].signal.aborted, false);
@@ -298,23 +483,44 @@ test("個別abortはqueued要求と重複先頭だけを取消し後続通知へ
 // impact = "取消したProvider処理が終了せず、失効要求への通知が残る"
 // distinction = "通常の先頭解決と個別abortで保証しない一括終了を検証する"
 // @end-test-value
+/** 会話単位の中止や全体リセットで待機をすべて回収し、終了途中の候補を公開しない。 */
 test("会話取消とresetは全承認を通知せず回収し次の会話利用を妨げない", async () => {
   for (const action of ["cancel", "abort", "reset"] as const) {
-    const states = new Map(["main", "aux"].map((id) => [id, { ...createLiveRunState(), sessionId: id }]));
+    const states = new Map(
+      ["main", "aux"].map((id) => [
+        id,
+        { ...createLiveRunState(), sessionId: id },
+      ]),
+    );
     const published: string[] = [];
     const notified: string[] = [];
     const service = new SessionApprovalService({
+      /** 会話ごとの状態を更新し、終了中に新たに公開された要求がないかを記録する。 */
       updateLiveSessionRun: (id, recipe) => {
         const next = recipe(states.get(id)!);
         states.set(id, next);
-        if (next.approvalRequest) published.push(next.approvalRequest.requestId);
+        if (next.approvalRequest)
+          published.push(next.approvalRequest.requestId);
         return next;
       },
-      notifyApproval: (_id, id) => { notified.push(id); },
+      /** 公開済みの要求だけが通知されたことを記録から確認する。 */
+      notifyApproval: (_id, id) => {
+        notified.push(id);
+      },
     });
     const controller = new AbortController();
-    const pending = ["first", "second", "third"].map((id) => service.waitForLiveApprovalDecision("main", approval(id), controller.signal));
-    const other = service.waitForLiveApprovalDecision("aux", approval("other"), new AbortController().signal);
+    const pending = ["first", "second", "third"].map((id) =>
+      service.waitForLiveApprovalDecision(
+        "main",
+        approval(id),
+        controller.signal,
+      ),
+    );
+    const other = service.waitForLiveApprovalDecision(
+      "aux",
+      approval("other"),
+      new AbortController().signal,
+    );
     if (action === "cancel") service.cancelSession("main");
     else if (action === "abort") controller.abort();
     else service.reset();
@@ -331,9 +537,17 @@ test("会話取消とresetは全承認を通知せず回収し次の会話利用
     controller.abort();
     service.cancelSession("main");
     service.reset();
-    const alreadyCanceled = service.waitForLiveApprovalDecision("main", approval("expired"), controller.signal);
+    const alreadyCanceled = service.waitForLiveApprovalDecision(
+      "main",
+      approval("expired"),
+      controller.signal,
+    );
     assert.equal(await alreadyCanceled, "deny");
-    const fresh = service.waitForLiveApprovalDecision("main", approval("fresh"), new AbortController().signal);
+    const fresh = service.waitForLiveApprovalDecision(
+      "main",
+      approval("fresh"),
+      new AbortController().signal,
+    );
     service.resolveLiveApproval("main", "fresh", "approve");
     assert.equal(await fresh, "approve");
   }
@@ -352,27 +566,55 @@ test("会話取消とresetは全承認を通知せず回収し次の会話利用
 // distinction = "新規要求の事前abortとjoin後abortでは検出できないidentity再入時の失効を確認する"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** 既に中止された同一要求が加わると、その共有判断だけを拒否で確定する。 */
 test("事前abort済みの重複要求はheadとqueuedの共有判断をdenyで失効させる", async () => {
   for (const target of ["first", "second"]) {
     let state = createLiveRunState();
     const notified: string[] = [];
     const service = new SessionApprovalService({
+      /** 中止対象に応じて公開中の要求が残るか交代するかを確認できるようにする。 */
       updateLiveSessionRun: (_id, recipe) => (state = recipe(state)),
-      notifyApproval: (_id, id) => { notified.push(id); },
+      /** 対象が先頭か待機中かによって通知列が変わるので、要求 ID を記録する。 */
+      notifyApproval: (_id, id) => {
+        notified.push(id);
+      },
     });
-    const first = service.waitForLiveApprovalDecision("session-1", approval("first"), new AbortController().signal);
-    const second = service.waitForLiveApprovalDecision("session-1", approval("second"), new AbortController().signal);
+    const first = service.waitForLiveApprovalDecision(
+      "session-1",
+      approval("first"),
+      new AbortController().signal,
+    );
+    const second = service.waitForLiveApprovalDecision(
+      "session-1",
+      approval("second"),
+      new AbortController().signal,
+    );
     const aborted = new AbortController();
     aborted.abort();
-    const duplicate = service.waitForLiveApprovalDecision("session-1", approval(target), aborted.signal);
+    const duplicate = service.waitForLiveApprovalDecision(
+      "session-1",
+      approval(target),
+      aborted.signal,
+    );
     assert.equal(duplicate, target === "first" ? first : second);
     assert.equal(await duplicate, "deny");
     const remaining = target === "first" ? "second" : "first";
     assert.equal(state.approvalRequest?.requestId, remaining);
-    assert.deepEqual(notified, target === "first" ? ["first", "second"] : ["first"]);
-    assert.throws(() => service.resolveLiveApproval("session-1", target, "approve"), /no longer exists/);
+    assert.deepEqual(
+      notified,
+      target === "first" ? ["first", "second"] : ["first"],
+    );
+    assert.throws(
+      () => service.resolveLiveApproval("session-1", target, "approve"),
+      /no longer exists/,
+    );
     service.resolveLiveApproval("session-1", remaining, "approve");
-    assert.deepEqual(await Promise.all([first, second, duplicate]), target === "first" ? ["deny", "approve", "deny"] : ["approve", "deny", "deny"]);
+    assert.deepEqual(
+      await Promise.all([first, second, duplicate]),
+      target === "first"
+        ? ["deny", "approve", "deny"]
+        : ["approve", "deny", "deny"],
+    );
     assert.equal(state.approvalRequest, null);
   }
 });

@@ -1,15 +1,18 @@
+/** Session の更新日範囲と、削除候補とする通常ファイルの最小サイズ（MiB）。空の日付はその側の範囲を制限しない。 */
 export type SessionFolderCleanupRequest = {
   fromDate: string;
   toDate: string;
   minimumFileSizeMiB: number;
 };
 
+/** 走査または削除でスキップ・失敗した箇所。パスは対象の Session Folder を基準とする。 */
 export type SessionFolderCleanupIssue = {
   sessionId: string;
   relativePath: string;
   message: string;
   kind: "skipped" | "failed";
 };
+/** 削除前の走査結果。通常ファイル全体と削除候補を別に集計し、実行時に照合する走査 ID を返す。 */
 export type SessionFolderCleanupScan = {
   scanId: string;
   request: SessionFolderCleanupRequest;
@@ -23,6 +26,7 @@ export type SessionFolderCleanupScan = {
   skippedLinkCount: number;
   issues: SessionFolderCleanupIssue[];
 };
+/** 走査後の削除で実際に削除したファイル・ディレクトリと、スキップ・失敗したファイルの集計。 */
 export type SessionFolderCleanupResult = {
   deletedFileCount: number;
   deletedBytes: number;
@@ -32,6 +36,7 @@ export type SessionFolderCleanupResult = {
   issues: SessionFolderCleanupIssue[];
 };
 
+/** 日付の制限なしを表す空文字を許し、それ以外は YYYY-MM-DD 形式の実在する日付に限る。 */
 function parseDate(value: unknown): string {
   if (value === "") return "";
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -51,6 +56,7 @@ function parseDate(value: unknown): string {
   return value;
 }
 
+/** 走査条件の境界検証。逆転した日付範囲や、バイト換算で扱える範囲を超える最小サイズを拒否する。 */
 export function parseSessionFolderCleanupRequest(
   value: unknown,
 ): SessionFolderCleanupRequest {
@@ -75,6 +81,7 @@ export function parseSessionFolderCleanupRequest(
   return { fromDate, toDate, minimumFileSizeMiB };
 }
 
+/** 削除要求から空白のみではない走査 ID を取り出す。該当する走査の確認は呼び出し側が行う。 */
 export function parseSessionFolderCleanupRunRequest(value: unknown): {
   scanId: string;
 } {
@@ -88,6 +95,7 @@ export function parseSessionFolderCleanupRunRequest(value: unknown): {
   return { scanId: (value as { scanId: string }).scanId };
 }
 
+/** Session の更新日時をローカル日付に直し、指定された開始日・終了日を両端含めて照合する。無効な日時は対象外とする。 */
 export function isSessionFolderCleanupDateMatch(
   updatedAt: string,
   request: SessionFolderCleanupRequest,

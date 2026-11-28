@@ -1,49 +1,102 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
-import type { LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type {
+  LiveApprovalRequest,
+  LiveSessionRunState,
+} from "../../src-shared/session/runtime-state.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
-import { ApprovalReviewInputFence, WithMateApprovalReviewTurn } from "../../src-electron/session/withmate-approval-review.js";
+import {
+  ApprovalReviewInputFence,
+  WithMateApprovalReviewTurn,
+} from "../../src-electron/session/withmate-approval-review.js";
 import type { ApprovalDecisionSource } from "../../src-electron/providers/provider-runtime.js";
 
-const source = { kind: "main", sessionId: "source", incarnationId: "source-generation" } as const;
-const allow = { decision: "allow_once", reason: "The saved request authorizes this operation." };
-const deny = { decision: "deny", reason: "The saved request prohibits this operation." };
-const ask = { decision: "ask_user", reason: "The user must choose between two authorized options." };
+const source = {
+  kind: "main",
+  sessionId: "source",
+  incarnationId: "source-generation",
+} as const;
+const allow = {
+  decision: "allow_once",
+  reason: "The saved request authorizes this operation.",
+};
+const deny = {
+  decision: "deny",
+  reason: "The saved request prohibits this operation.",
+};
+const ask = {
+  decision: "ask_user",
+  reason: "The user must choose between two authorized options.",
+};
 
-function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeoutMs?: number, provider: {
-  open?(signal: AbortSignal): Promise<void>;
-  close?(): Promise<void>;
-  publish?: boolean;
-} = {}) {
+/** 実承認サービスと審査Turnに制御可能なProviderを接続し、公開・通知・判定元・開閉を別々に観測する。 */
+function fixture(
+  review: (prompt: string, signal: AbortSignal) => unknown,
+  timeoutMs?: number,
+  provider: {
+    /** 起動を任意に待機させ、開始中の取消signalを観測する。 */
+    open?(signal: AbortSignal): Promise<void>;
+    /** 審査セッションの終了確認を任意のタイミングまで保留できるようにする。 */
+    close?(): Promise<void>;
+    publish?: boolean;
+  } = {},
+) {
   const inputs = new ApprovalReviewInputFence();
   const stats = { opened: 0, closed: 0 };
-  let state: LiveSessionRunState = { sessionId: source.sessionId, threadId: "", assistantText: "", steps: [], backgroundTasks: [],
-    usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+  let state: LiveSessionRunState = {
+    sessionId: source.sessionId,
+    threadId: "",
+    assistantText: "",
+    steps: [],
+    backgroundTasks: [],
+    usage: null,
+    errorMessage: "",
+    approvalRequest: null,
+    elicitationRequest: null,
+  };
   const publications: string[] = [];
   const notifications: string[] = [];
   const sources: Array<[string, ApprovalDecisionSource]> = [];
   const approvals = new SessionApprovalService({
+    /** 手動承認の公開を記録し、ケースによっては状態を更新せず公開不可を再現する。 */
     updateLiveSessionRun(_id, update) {
       if (provider.publish === false) return null;
       const next = update(state);
-      if (next.approvalRequest && next.approvalRequest !== state.approvalRequest) {
+      if (
+        next.approvalRequest &&
+        next.approvalRequest !== state.approvalRequest
+      ) {
         publications.push(next.approvalRequest.requestId);
       }
-      return state = next;
+      return (state = next);
     },
-    notifyApproval: (_id, requestId) => { notifications.push(requestId); },
+    /** 手動承認として通知した要求IDを公開とは別に記録する。 */
+    notifyApproval: (_id, requestId) => {
+      notifications.push(requestId);
+    },
   });
+  /** 共通Session内に、独立した取消・方針・操作鮮度を持つ審査Turnを作る。 */
   function run(turnId: string) {
     const owner = new AbortController();
     let policyCurrent = true;
     let operationCurrent = true;
+    /** 元Turnの識別と鮮度を保持する実審査インスタンスを組み立てる。 */
     const turn = new WithMateApprovalReviewTurn({
-      turnId, source, signal: owner.signal, workspacePath: "workspace", inputs, policyCurrent: () => policyCurrent, timeoutMs,
+      turnId,
+      source,
+      signal: owner.signal,
+      workspacePath: "workspace",
+      inputs,
+      /** 判定待ちの間に保存された方針が失効した状態を返せるようにする。 */
+      policyCurrent: () => policyCurrent,
+      timeoutMs,
+      /** 開始を記録して、停止前に起動完了が遅れるケースも再現できる会話を返す。 */
       open: async (signal) => {
         stats.opened++;
         await provider.open?.(signal);
         let stopped: { confirmed: Promise<void> | void } | undefined;
+        /** signalでの取消と明示closeが重なっても、同じ終了確認を一度だけ開始する。 */
         const close = () => {
           if (!stopped) {
             stats.closed++;
@@ -53,24 +106,75 @@ function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeo
         };
         if (signal.aborted) close();
         else signal.addEventListener("abort", close, { once: true });
-        return { review: async (prompt) => review(prompt, signal), close };
+        return {
+          /** 模擬Providerへ入力と会話の取消signalを渡す。 */
+          review: async (prompt) => review(prompt, signal),
+          close,
+        };
       },
     });
     return {
-      wait(id: string, signal?: AbortSignal, automatic: boolean | null = true, operation: unknown = { command: `echo ${id}`, target: "workspace" }) {
-        const request: LiveApprovalRequest = { requestId: id, kind: "shell", provider: "copilot", title: "Run", summary: "Test operation", decisionMode: "direct-decision" };
-        const native = { operation, isCurrent: () => operationCurrent };
-        return approvals.waitForLiveApprovalDecision(source.sessionId, request,
+      /** 実承認サービスに要求を渡し、自動審査・手動・経路不成立を切り替えて判定元を記録する。 */
+      wait(
+        id: string,
+        signal?: AbortSignal,
+        automatic: boolean | null = true,
+        operation: unknown = { command: `echo ${id}`, target: "workspace" },
+      ) {
+        const request: LiveApprovalRequest = {
+          requestId: id,
+          kind: "shell",
+          provider: "copilot",
+          title: "Run",
+          summary: "Test operation",
+          decisionMode: "direct-decision",
+        };
+        const native = {
+          operation,
+          /** 判定前に元のProvider要求が無効になった状態を再現する。 */
+          isCurrent: () => operationCurrent,
+        };
+        return approvals.waitForLiveApprovalDecision(
+          source.sessionId,
+          request,
           signal ? AbortSignal.any([owner.signal, signal]) : owner.signal,
-          automatic ? turn.pending(request, native) : automatic === null ? null : undefined,
-          (kind) => { sources.push([id, kind]); });
+          automatic
+            ? turn.pending(request, native)
+            : automatic === null
+              ? null
+              : undefined,
+          (kind) => {
+            sources.push([id, kind]);
+          },
+        );
       },
-      cancel: () => owner.abort(), close: () => turn.close(),
-      changePolicy: () => { policyCurrent = false; }, supersedeNativeRequest: () => { operationCurrent = false; },
+      /** 元Turn全体の中止を伝える。 */
+      cancel: () => owner.abort(),
+      /** Turnの終了時にReviewer会話を解放する。 */
+      close: () => turn.close(),
+      /** Reviewerが参照した承認方針を失効させる。 */
+      changePolicy: () => {
+        policyCurrent = false;
+      },
+      /** 元のProvider要求を差し替えた状態にする。 */
+      supersedeNativeRequest: () => {
+        operationCurrent = false;
+      },
     };
   }
-  return { run, stats, inputs, publications, notifications, sources, head: () => state.approvalRequest?.requestId,
-    manual: (id: string, decision: "approve" | "deny") => approvals.resolveLiveApproval(source.sessionId, id, decision) };
+  return {
+    run,
+    stats,
+    inputs,
+    publications,
+    notifications,
+    sources,
+    /** 現在ユーザーへ公開されている要求のIDを返す。 */
+    head: () => state.approvalRequest?.requestId,
+    /** 要求IDで手動応答を試み、公開された先頭にだけ返せることを観測する。 */
+    manual: (id: string, decision: "approve" | "deny") =>
+      approvals.resolveLiveApproval(source.sessionId, id, decision),
+  };
 }
 
 // @test-value v2
@@ -86,9 +190,13 @@ function fixture(review: (prompt: string, signal: AbortSignal) => unknown, timeo
 // distinction = "キューやProvider単体testではTurnに束縛した再利用・解放と最終決定を一緒に確認できない"
 // risk_tags = ["authorization", "privacy"]
 // @end-test-value
+/** 最初の実要求までReviewerを開かず、同Turn内では会話だけを再利用し、判定と会話を後続Turnへ流用しないことを確かめる。 */
 test("approval review reuses only conversation context inside a source turn", async () => {
   const prompts: string[] = [];
-  const run = fixture((prompt) => { prompts.push(prompt); return prompts.length === 2 ? deny : allow; });
+  const run = fixture((prompt) => {
+    prompts.push(prompt);
+    return prompts.length === 2 ? deny : allow;
+  });
   const first = run.run("42");
   assert.equal(run.stats.opened, 0);
   assert.equal(await first.wait("a"), "approve");
@@ -99,10 +207,22 @@ test("approval review reuses only conversation context inside a source turn", as
   assert.equal(await second.wait("c"), "approve");
   second.cancel();
   assert.deepEqual(run.stats, { opened: 2, closed: 2 });
-  assert.deepEqual(prompts.map((prompt) => {
-    const input = JSON.parse(prompt);
-    return [input.source, input.turnId, input.pendingOperation.requestId, input.pendingOperation.operation.command];
-  }), [[source, "42", "a", "echo a"], [source, "42", "b", "echo b"], [source, "43", "c", "echo c"]]);
+  assert.deepEqual(
+    prompts.map((prompt) => {
+      const input = JSON.parse(prompt);
+      return [
+        input.source,
+        input.turnId,
+        input.pendingOperation.requestId,
+        input.pendingOperation.operation.command,
+      ];
+    }),
+    [
+      [source, "42", "a", "echo a"],
+      [source, "42", "b", "echo b"],
+      [source, "43", "c", "echo c"],
+    ],
+  );
 });
 
 // @test-value v2
@@ -117,58 +237,103 @@ test("approval review reuses only conversation context inside a source turn", as
 // distinction = "結果schemaや終端のdecisionだけでは公開・通知を開始するタイミングと手動認可境界を確認できない"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("unusable review outcomes block without publishing the request", { timeout: 2000 }, async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const cases = [
-    () => "allow_once",
-    () => ({ ...allow, extra: "not in contract" }),
-    () => ({ ...ask, reason: " " }),
-    () => { throw new Error("Provider failed"); },
-  ];
-  for (const review of cases) {
-    const finish = Promise.withResolvers<void>();
-    const run = fixture(async () => { await finish.promise; return review(); });
+/** 審査不能や証拠不足を公開しない拒否として扱い、未公開の要求は手動で許可できないことを確認する。 */
+test(
+  "unusable review outcomes block without publishing the request",
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const cases = [
+      () => "allow_once",
+      () => ({ ...allow, extra: "not in contract" }),
+      () => ({ ...ask, reason: " " }),
+      () => {
+        throw new Error("Provider failed");
+      },
+    ];
+    for (const review of cases) {
+      const finish = Promise.withResolvers<void>();
+      const run = fixture(async () => {
+        await finish.promise;
+        return review();
+      });
+      const turn = run.run("42");
+      const decision = turn.wait("pending");
+      await setImmediate();
+      assert.deepEqual([run.publications, run.notifications], [[], []]);
+      assert.throws(() => run.manual("pending", "approve"), /no longer exists/);
+      finish.resolve();
+      assert.equal(await decision, "deny");
+      assert.deepEqual(
+        [run.publications, run.notifications, run.sources],
+        [[], [], [["pending", "blocked"]]],
+      );
+      turn.close();
+    }
+    const unavailable = fixture(
+      () => assert.fail("Unavailable reviewer cannot review"),
+      undefined,
+      {
+        /** Reviewerを起動できなかったときの拒否経路を再現する。 */
+        open: async () => {
+          throw new Error("Reviewer unavailable");
+        },
+      },
+    );
+    const unavailableTurn = unavailable.run("42");
+    const unavailableDecision = unavailableTurn.wait("unavailable");
+    assert.equal(await unavailableDecision, "deny");
+    assert.deepEqual(
+      [
+        unavailable.publications,
+        unavailable.notifications,
+        unavailable.sources,
+      ],
+      [[], [], [["unavailable", "blocked"]]],
+    );
+    unavailableTurn.close();
+    const missing = fixture(() =>
+      assert.fail("Missing operation cannot be reviewed"),
+    );
+    const missingTurn = missing.run("42");
+    assert.equal(
+      await missingTurn.wait("missing", undefined, true, null),
+      "deny",
+    );
+    assert.equal(missing.stats.opened, 0);
+    assert.deepEqual(
+      [missing.publications, missing.notifications, missing.sources],
+      [[], [], [["missing", "blocked"]]],
+    );
+    missingTurn.close();
+    const unpublishable = fixture(() => ask, undefined, { publish: false });
+    const unpublishableTurn = unpublishable.run("42");
+    assert.equal(await unpublishableTurn.wait("unpublishable"), "deny");
+    assert.deepEqual(
+      [
+        unpublishable.publications,
+        unpublishable.notifications,
+        unpublishable.sources,
+      ],
+      [[], [], [["unpublishable", "blocked"]]],
+    );
+    unpublishableTurn.close();
+    const closed = Promise.withResolvers<void>();
+    const run = fixture(() => closed.promise, 100);
     const turn = run.run("42");
-    const decision = turn.wait("pending");
+    const decision = turn.wait("timeout");
     await setImmediate();
     assert.deepEqual([run.publications, run.notifications], [[], []]);
-    assert.throws(() => run.manual("pending", "approve"), /no longer exists/);
-    finish.resolve();
+    t.mock.timers.tick(100);
     assert.equal(await decision, "deny");
-    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["pending", "blocked"]]]);
-    turn.close();
-  }
-  const unavailable = fixture(() => assert.fail("Unavailable reviewer cannot review"), undefined, {
-    open: async () => { throw new Error("Reviewer unavailable"); },
-  });
-  const unavailableTurn = unavailable.run("42");
-  const unavailableDecision = unavailableTurn.wait("unavailable");
-  assert.equal(await unavailableDecision, "deny");
-  assert.deepEqual([unavailable.publications, unavailable.notifications, unavailable.sources], [[], [], [["unavailable", "blocked"]]]);
-  unavailableTurn.close();
-  const missing = fixture(() => assert.fail("Missing operation cannot be reviewed"));
-  const missingTurn = missing.run("42");
-  assert.equal(await missingTurn.wait("missing", undefined, true, null), "deny");
-  assert.equal(missing.stats.opened, 0);
-  assert.deepEqual([missing.publications, missing.notifications, missing.sources], [[], [], [["missing", "blocked"]]]);
-  missingTurn.close();
-  const unpublishable = fixture(() => ask, undefined, { publish: false });
-  const unpublishableTurn = unpublishable.run("42");
-  assert.equal(await unpublishableTurn.wait("unpublishable"), "deny");
-  assert.deepEqual([unpublishable.publications, unpublishable.notifications, unpublishable.sources], [[], [], [["unpublishable", "blocked"]]]);
-  unpublishableTurn.close();
-  const closed = Promise.withResolvers<void>();
-  const run = fixture(() => closed.promise, 100);
-  const turn = run.run("42");
-  const decision = turn.wait("timeout");
-  await setImmediate();
-  assert.deepEqual([run.publications, run.notifications], [[], []]);
-  t.mock.timers.tick(100);
-  assert.equal(await decision, "deny");
-  assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["timeout", "blocked"]]]);
-  assert.equal(run.stats.closed, 1);
-  closed.resolve();
-});
+    assert.deepEqual(
+      [run.publications, run.notifications, run.sources],
+      [[], [], [["timeout", "blocked"]]],
+    );
+    assert.equal(run.stats.closed, 1);
+    closed.resolve();
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -182,37 +347,58 @@ test("unusable review outcomes block without publishing the request", { timeout:
 // risk_tags = ["authorization"]
 // distinction = "承認キューの手動FIFO検査では審査結果が非同期で解決する順序を観測できない"
 // @end-test-value
-test("stale verdicts block without exposing an invalidated request", { timeout: 2000 }, async () => {
-  for (const race of ["cancel", "input", "settings", "native"] as const) {
-    const result = Promise.withResolvers<unknown>();
-    const started = Promise.withResolvers<void>();
-    const reviewed: string[] = [];
-    const run = fixture((prompt) => {
-      reviewed.push(JSON.parse(prompt).pendingOperation.requestId);
-      started.resolve();
-      return result.promise;
-    });
-    const turn = run.run("42");
-    const first = turn.wait("a");
-    await started.promise;
-    if (race === "cancel") {
-      const queuedAuto = turn.wait("b");
-      const queuedManual = turn.wait("c", undefined, false);
-      turn.cancel();
-      assert.deepEqual(await Promise.all([first, queuedAuto, queuedManual]), ["deny", "deny", "deny"]);
+/** 取消や方針・入力・操作鮮度の変更後に届いた判定を、公開にも許可にも使わないことを確認する。 */
+test(
+  "stale verdicts block without exposing an invalidated request",
+  { timeout: 2000 },
+  async () => {
+    for (const race of ["cancel", "input", "settings", "native"] as const) {
+      const result = Promise.withResolvers<unknown>();
+      const started = Promise.withResolvers<void>();
+      const reviewed: string[] = [];
+      const run = fixture((prompt) => {
+        reviewed.push(JSON.parse(prompt).pendingOperation.requestId);
+        started.resolve();
+        return result.promise;
+      });
+      const turn = run.run("42");
+      const first = turn.wait("a");
+      await started.promise;
+      if (race === "cancel") {
+        const queuedAuto = turn.wait("b");
+        const queuedManual = turn.wait("c", undefined, false);
+        turn.cancel();
+        assert.deepEqual(await Promise.all([first, queuedAuto, queuedManual]), [
+          "deny",
+          "deny",
+          "deny",
+        ]);
+      }
+      if (race === "input") await run.inputs.during(() => undefined);
+      if (race === "settings") turn.changePolicy();
+      if (race === "native") turn.supersedeNativeRequest();
+      result.resolve(race === "input" || race === "cancel" ? ask : allow);
+      assert.equal(await first, "deny");
+      await setImmediate();
+      assert.deepEqual(
+        [run.publications, run.notifications, reviewed],
+        [[], [], ["a"]],
+      );
+      assert.deepEqual(
+        run.sources,
+        race === "cancel"
+          ? [
+              ["a", "blocked"],
+              ["b", "blocked"],
+              ["c", "blocked"],
+            ]
+          : [["a", "blocked"]],
+      );
+      if (race === "cancel") assert.equal(run.stats.closed, 1);
+      turn.close();
     }
-    if (race === "input") await run.inputs.during(() => undefined);
-    if (race === "settings") turn.changePolicy();
-    if (race === "native") turn.supersedeNativeRequest();
-    result.resolve(race === "input" || race === "cancel" ? ask : allow);
-    assert.equal(await first, "deny");
-    await setImmediate();
-    assert.deepEqual([run.publications, run.notifications, reviewed], [[], [], ["a"]]);
-    assert.deepEqual(run.sources, race === "cancel" ? [["a", "blocked"], ["b", "blocked"], ["c", "blocked"]] : [["a", "blocked"]]);
-    if (race === "cancel") assert.equal(run.stats.closed, 1);
-    turn.close();
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -226,57 +412,91 @@ test("stale verdicts block without exposing an invalidated request", { timeout: 
 // distinction = "Aの終了後にBを新規追加する検査と異なり、Aの審査中にB/Cの両方をキューへ入れる"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("queued reviews retain the current decision despite later arrivals and queued cancellation", { timeout: 2000 }, async () => {
-  for (const [result, cancelB] of [[allow, false], [deny, true]] as const) {
-    const aResult = Promise.withResolvers<unknown>();
-    const bResult = Promise.withResolvers<unknown>();
-    const b = new AbortController();
-    const calls: string[] = [];
-    const run = fixture((prompt) => {
-      const id = JSON.parse(prompt).pendingOperation.requestId as string;
-      calls.push(id);
-      return id === "a" ? aResult.promise : id === "b" ? bResult.promise : deny;
-    });
-    const turn = run.run("42");
-    try {
-      const first = turn.wait("a");
-      const decisions: string[] = [];
-      void first.then((decision) => { decisions.push(decision); });
-      await setImmediate();
-      assert.deepEqual(calls, ["a"]);
-      const second = turn.wait("b", b.signal);
-      const third = turn.wait("c");
-      if (cancelB) {
-        b.abort();
-        assert.equal(await second, "deny");
-      }
-      await setImmediate();
-      assert.deepEqual([...decisions], []);
-      assert.deepEqual([...calls], ["a"]);
-      assert.equal(run.stats.closed, 0);
-      aResult.resolve(result);
-      await setImmediate();
-      assert.deepEqual({ decisions: [...decisions], calls: [...calls], publications: run.publications, notifications: run.notifications }, {
-        decisions: [result === allow ? "approve" : "deny"],
-        calls: cancelB ? ["a", "c"] : ["a", "b"],
-        publications: [], notifications: [],
+/** 後続要求の追加や取消で審査中の判定を失わず、残った要求を到着順に処理することを確認する。 */
+test(
+  "queued reviews retain the current decision despite later arrivals and queued cancellation",
+  { timeout: 2000 },
+  async () => {
+    for (const [result, cancelB] of [
+      [allow, false],
+      [deny, true],
+    ] as const) {
+      const aResult = Promise.withResolvers<unknown>();
+      const bResult = Promise.withResolvers<unknown>();
+      const b = new AbortController();
+      const calls: string[] = [];
+      const run = fixture((prompt) => {
+        const id = JSON.parse(prompt).pendingOperation.requestId as string;
+        calls.push(id);
+        return id === "a"
+          ? aResult.promise
+          : id === "b"
+            ? bResult.promise
+            : deny;
       });
-      bResult.resolve(allow);
-      assert.equal(await second, cancelB ? "deny" : "approve");
-      assert.equal(await third, "deny");
-      assert.deepEqual(calls, cancelB ? ["a", "c"] : ["a", "b", "c"]);
-      assert.deepEqual(run.sources, cancelB
-        ? [["b", "blocked"], ["a", "reviewer"], ["c", "reviewer"]]
-        : [["a", "reviewer"], ["b", "reviewer"], ["c", "reviewer"]]);
-      assert.deepEqual(run.stats, { opened: 1, closed: 0 });
-      assert.deepEqual(run.publications, []);
-      assert.deepEqual(run.notifications, []);
-    } finally {
-      b.abort();
-      turn.cancel();
+      const turn = run.run("42");
+      try {
+        const first = turn.wait("a");
+        const decisions: string[] = [];
+        void first.then((decision) => {
+          decisions.push(decision);
+        });
+        await setImmediate();
+        assert.deepEqual(calls, ["a"]);
+        const second = turn.wait("b", b.signal);
+        const third = turn.wait("c");
+        if (cancelB) {
+          b.abort();
+          assert.equal(await second, "deny");
+        }
+        await setImmediate();
+        assert.deepEqual([...decisions], []);
+        assert.deepEqual([...calls], ["a"]);
+        assert.equal(run.stats.closed, 0);
+        aResult.resolve(result);
+        await setImmediate();
+        assert.deepEqual(
+          {
+            decisions: [...decisions],
+            calls: [...calls],
+            publications: run.publications,
+            notifications: run.notifications,
+          },
+          {
+            decisions: [result === allow ? "approve" : "deny"],
+            calls: cancelB ? ["a", "c"] : ["a", "b"],
+            publications: [],
+            notifications: [],
+          },
+        );
+        bResult.resolve(allow);
+        assert.equal(await second, cancelB ? "deny" : "approve");
+        assert.equal(await third, "deny");
+        assert.deepEqual(calls, cancelB ? ["a", "c"] : ["a", "b", "c"]);
+        assert.deepEqual(
+          run.sources,
+          cancelB
+            ? [
+                ["b", "blocked"],
+                ["a", "reviewer"],
+                ["c", "reviewer"],
+              ]
+            : [
+                ["a", "reviewer"],
+                ["b", "reviewer"],
+                ["c", "reviewer"],
+              ],
+        );
+        assert.deepEqual(run.stats, { opened: 1, closed: 0 });
+        assert.deepEqual(run.publications, []);
+        assert.deepEqual(run.notifications, []);
+      } finally {
+        b.abort();
+        turn.cancel();
+      }
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -289,52 +509,85 @@ test("queued reviews retain the current decision despite later arrivals and queu
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("only a valid ask_user holds the head for a human decision", { timeout: 2000 }, async () => {
-  for (const blocker of ["ineligible", "stale input", "ask_user", "ask_user canceled"] as const) {
-    const aResult = Promise.withResolvers<unknown>();
-    const calls: string[] = [];
-    const asks = blocker.startsWith("ask_user");
-    const b = new AbortController();
-    const run = fixture((prompt) => {
-      const id = JSON.parse(prompt).pendingOperation.requestId as string;
-      calls.push(id);
-      return id === "a" ? aResult.promise : id === "b" ? ask : allow;
-    });
-    const turn = run.run("42");
-    try {
-      const manualPredecessor = blocker === "stale input";
-      const first = turn.wait("a", undefined, !manualPredecessor);
-      await setImmediate();
-      const second = turn.wait("b", b.signal, blocker === "ineligible" ? null : true);
-      if (blocker === "stale input") run.inputs.invalidate();
-      const third = turn.wait("c");
-      if (manualPredecessor) run.manual("a", "deny");
-      else aResult.resolve(deny);
-      assert.equal(await first, "deny");
-      await setImmediate();
-      const expectedCalls = asks ? ["a", "b"] : manualPredecessor ? [] : ["a"];
-      const expectedPublications = asks ? ["b"] : manualPredecessor ? ["a"] : [];
-      if (asks) {
-        assert.deepEqual({ head: run.head(), calls }, { head: "b", calls: expectedCalls }, blocker);
-        assert.deepEqual([run.publications, run.notifications], [["b"], ["b"]]);
-        assert.deepEqual(run.sources, [["a", "reviewer"]]);
-        assert.throws(() => run.manual("c", "approve"), /no longer exists/);
-        if (blocker === "ask_user canceled") b.abort();
-        else run.manual("b", "approve");
+/** 有効な本人確認だけを先頭で公開し、解決まで後続の審査や手動応答を進めないことを確認する。 */
+test(
+  "only a valid ask_user holds the head for a human decision",
+  { timeout: 2000 },
+  async () => {
+    for (const blocker of [
+      "ineligible",
+      "stale input",
+      "ask_user",
+      "ask_user canceled",
+    ] as const) {
+      const aResult = Promise.withResolvers<unknown>();
+      const calls: string[] = [];
+      const asks = blocker.startsWith("ask_user");
+      const b = new AbortController();
+      const run = fixture((prompt) => {
+        const id = JSON.parse(prompt).pendingOperation.requestId as string;
+        calls.push(id);
+        return id === "a" ? aResult.promise : id === "b" ? ask : allow;
+      });
+      const turn = run.run("42");
+      try {
+        const manualPredecessor = blocker === "stale input";
+        const first = turn.wait("a", undefined, !manualPredecessor);
+        await setImmediate();
+        const second = turn.wait(
+          "b",
+          b.signal,
+          blocker === "ineligible" ? null : true,
+        );
+        if (blocker === "stale input") run.inputs.invalidate();
+        const third = turn.wait("c");
+        if (manualPredecessor) run.manual("a", "deny");
+        else aResult.resolve(deny);
+        assert.equal(await first, "deny");
+        await setImmediate();
+        const expectedCalls = asks
+          ? ["a", "b"]
+          : manualPredecessor
+            ? []
+            : ["a"];
+        const expectedPublications = asks
+          ? ["b"]
+          : manualPredecessor
+            ? ["a"]
+            : [];
+        if (asks) {
+          assert.deepEqual(
+            { head: run.head(), calls },
+            { head: "b", calls: expectedCalls },
+            blocker,
+          );
+          assert.deepEqual(
+            [run.publications, run.notifications],
+            [["b"], ["b"]],
+          );
+          assert.deepEqual(run.sources, [["a", "reviewer"]]);
+          assert.throws(() => run.manual("c", "approve"), /no longer exists/);
+          if (blocker === "ask_user canceled") b.abort();
+          else run.manual("b", "approve");
+        }
+        assert.equal(await second, blocker === "ask_user" ? "approve" : "deny");
+        assert.equal(await third, "approve");
+        assert.deepEqual(calls, [...expectedCalls, "c"], blocker);
+        assert.deepEqual(
+          [run.publications, run.notifications],
+          [expectedPublications, expectedPublications],
+        );
+        assert.deepEqual(run.sources, [
+          ["a", manualPredecessor ? "manual" : "reviewer"],
+          ["b", blocker === "ask_user" ? "manual" : "blocked"],
+          ["c", "reviewer"],
+        ]);
+      } finally {
+        turn.cancel();
       }
-      assert.equal(await second, blocker === "ask_user" ? "approve" : "deny");
-      assert.equal(await third, "approve");
-      assert.deepEqual(calls, [...expectedCalls, "c"], blocker);
-      assert.deepEqual([run.publications, run.notifications], [expectedPublications, expectedPublications]);
-      assert.deepEqual(run.sources, [
-        ["a", manualPredecessor ? "manual" : "reviewer"],
-        ["b", blocker === "ask_user" ? "manual" : "blocked"], ["c", "reviewer"],
-      ]);
-    } finally {
-      turn.cancel();
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -347,39 +600,58 @@ test("only a valid ask_user holds the head for a human decision", { timeout: 200
 // lifecycle = "permanent"
 // distinction = "停止待ち中ではなく、実行中のProvider審査そのものの期限切れと失敗を検証する"
 // @end-test-value
-test("review timeout and failure do not disable the next head in the same turn", { timeout: 2000 }, async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const failure of ["timeout", "provider error"] as const) {
-    const aResult = Promise.withResolvers<unknown>();
-    const stopped = Promise.withResolvers<void>();
-    const calls: string[] = [];
-    const run = fixture((prompt) => {
-      const id = JSON.parse(prompt).pendingOperation.requestId as string;
-      calls.push(id);
-      return id === "a" ? aResult.promise : allow;
-    }, 100, { close: () => stopped.promise });
-    const turn = run.run("42");
-    try {
-      const first = turn.wait("a");
-      await setImmediate();
-      const second = turn.wait("b");
-      if (failure === "timeout") t.mock.timers.tick(100);
-      else aResult.reject(new Error("Provider failed"));
-      await setImmediate();
-      assert.equal(await first, "deny");
-      assert.deepEqual({ head: run.head(), calls, closed: run.stats.closed }, { head: undefined, calls: ["a"], closed: 1 }, failure);
-      assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"]]]);
-      stopped.resolve();
-      await setImmediate();
-      assert.deepEqual(calls, ["a", "b"], failure);
-      assert.equal(await second, "approve");
-    } finally {
-      turn.cancel();
-      stopped.resolve();
-      aResult.resolve(deny);
+/** 審査失敗や期限切れを公開しない拒否で終え、旧会話が停止してから同Turn内の次の要求を審査する。 */
+test(
+  "review timeout and failure do not disable the next head in the same turn",
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const failure of ["timeout", "provider error"] as const) {
+      const aResult = Promise.withResolvers<unknown>();
+      const stopped = Promise.withResolvers<void>();
+      const calls: string[] = [];
+      const run = fixture(
+        (prompt) => {
+          const id = JSON.parse(prompt).pendingOperation.requestId as string;
+          calls.push(id);
+          return id === "a" ? aResult.promise : allow;
+        },
+        100,
+        {
+          /** 旧会話の停止を確認するまで、後続審査を開始できないようにする。 */
+          close: () => stopped.promise,
+        },
+      );
+      const turn = run.run("42");
+      try {
+        const first = turn.wait("a");
+        await setImmediate();
+        const second = turn.wait("b");
+        if (failure === "timeout") t.mock.timers.tick(100);
+        else aResult.reject(new Error("Provider failed"));
+        await setImmediate();
+        assert.equal(await first, "deny");
+        assert.deepEqual(
+          { head: run.head(), calls, closed: run.stats.closed },
+          { head: undefined, calls: ["a"], closed: 1 },
+          failure,
+        );
+        assert.deepEqual(
+          [run.publications, run.notifications, run.sources],
+          [[], [], [["a", "blocked"]]],
+        );
+        stopped.resolve();
+        await setImmediate();
+        assert.deepEqual(calls, ["a", "b"], failure);
+        assert.equal(await second, "approve");
+      } finally {
+        turn.cancel();
+        stopped.resolve();
+        aResult.resolve(deny);
+      }
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -392,69 +664,100 @@ test("review timeout and failure do not disable the next head in the same turn",
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("review shutdown remains a fence across turns in the same session", { timeout: 2000 }, async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const action of ["confirm", "timeout", "cancel"] as const) {
-    const aResult = Promise.withResolvers<unknown>();
-    const bResult = Promise.withResolvers<unknown>();
-    const stopped = Promise.withResolvers<void>();
-    const calls: string[] = [];
-    let closes = 0;
-    const run = fixture((prompt) => {
-      const id = JSON.parse(prompt).pendingOperation.requestId as string;
-      calls.push(id);
-      return id === "a" ? aResult.promise : id === "b" ? bResult.promise : deny;
-    }, 100, { close: () => ++closes === 1 ? stopped.promise : Promise.resolve() });
-    const old = run.run("old");
-    const current = run.run("current");
-    const nextRequest = new AbortController();
-    try {
-      const first = old.wait("a");
-      await setImmediate();
-      old.cancel();
-      assert.equal(await first, "deny");
-      const second = current.wait("b", nextRequest.signal);
-      const decisions: string[] = [];
-      void second.then((decision) => { decisions.push(decision); });
-      await setImmediate();
-      assert.deepEqual({ head: run.head(), calls, ...run.stats },
-        { head: undefined, calls: ["a"], opened: 1, closed: 1 }, action);
-      if (action === "timeout") {
-        t.mock.timers.tick(100);
-        assert.equal(await second, "deny");
+/** 同一Session内でTurnが交代しても旧会話の停止待ちを維持し、待機の取消や期限切れを後から覆さないことを確認する。 */
+test(
+  "review shutdown remains a fence across turns in the same session",
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const action of ["confirm", "timeout", "cancel"] as const) {
+      const aResult = Promise.withResolvers<unknown>();
+      const bResult = Promise.withResolvers<unknown>();
+      const stopped = Promise.withResolvers<void>();
+      const calls: string[] = [];
+      let closes = 0;
+      const run = fixture(
+        (prompt) => {
+          const id = JSON.parse(prompt).pendingOperation.requestId as string;
+          calls.push(id);
+          return id === "a"
+            ? aResult.promise
+            : id === "b"
+              ? bResult.promise
+              : deny;
+        },
+        100,
+        {
+          /** 先行Turnの会話だけ停止確認を保留し、後続Turnはすぐ解放できるようにする。 */
+          close: () => (++closes === 1 ? stopped.promise : Promise.resolve()),
+        },
+      );
+      const old = run.run("old");
+      const current = run.run("current");
+      const nextRequest = new AbortController();
+      try {
+        const first = old.wait("a");
+        await setImmediate();
+        old.cancel();
+        assert.equal(await first, "deny");
+        const second = current.wait("b", nextRequest.signal);
+        const decisions: string[] = [];
+        void second.then((decision) => {
+          decisions.push(decision);
+        });
+        await setImmediate();
+        assert.deepEqual(
+          { head: run.head(), calls, ...run.stats },
+          { head: undefined, calls: ["a"], opened: 1, closed: 1 },
+          action,
+        );
+        if (action === "timeout") {
+          t.mock.timers.tick(100);
+          assert.equal(await second, "deny");
+          assert.deepEqual([run.publications, run.notifications], [[], []]);
+        } else if (action === "cancel") {
+          nextRequest.abort();
+          assert.equal(await second, "deny");
+        }
+        stopped.resolve();
+        await setImmediate();
+        aResult.resolve(allow);
+        await setImmediate();
+        if (action === "confirm") {
+          assert.deepEqual(
+            { head: run.head(), calls },
+            { head: undefined, calls: ["a", "b"] },
+          );
+          assert.deepEqual([...decisions], []);
+          bResult.resolve(deny);
+          assert.equal(await second, "deny");
+        } else {
+          assert.deepEqual(calls, ["a"]);
+          assert.equal(run.head(), undefined);
+          assert.equal(await second, "deny");
+        }
+        assert.equal(await current.wait("c"), "deny");
+        assert.deepEqual(
+          calls,
+          action === "confirm" ? ["a", "b", "c"] : ["a", "c"],
+        );
         assert.deepEqual([run.publications, run.notifications], [[], []]);
-      } else if (action === "cancel") {
+        assert.deepEqual(run.sources, [
+          ["a", "blocked"],
+          ["b", action === "confirm" ? "reviewer" : "blocked"],
+          ["c", "reviewer"],
+        ]);
+      } finally {
+        old.cancel();
+        current.cancel();
         nextRequest.abort();
-        assert.equal(await second, "deny");
-      }
-      stopped.resolve();
-      await setImmediate();
-      aResult.resolve(allow);
-      await setImmediate();
-      if (action === "confirm") {
-        assert.deepEqual({ head: run.head(), calls }, { head: undefined, calls: ["a", "b"] });
-        assert.deepEqual([...decisions], []);
+        stopped.resolve();
+        aResult.resolve(allow);
         bResult.resolve(deny);
-        assert.equal(await second, "deny");
-      } else {
-        assert.deepEqual(calls, ["a"]);
-        assert.equal(run.head(), undefined);
-        assert.equal(await second, "deny");
       }
-      assert.equal(await current.wait("c"), "deny");
-      assert.deepEqual(calls, action === "confirm" ? ["a", "b", "c"] : ["a", "c"]);
-      assert.deepEqual([run.publications, run.notifications], [[], []]);
-      assert.deepEqual(run.sources, [["a", "blocked"], ["b", action === "confirm" ? "reviewer" : "blocked"], ["c", "reviewer"]]);
-    } finally {
-      old.cancel();
-      current.cancel();
-      nextRequest.abort();
-      stopped.resolve();
-      aResult.resolve(allow);
-      bResult.resolve(deny);
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -468,57 +771,94 @@ test("review shutdown remains a fence across turns in the same session", { timeo
 // impact = "後続の対象要求が手動待ちに固定されるか、審査が重複する"
 // distinction = "古い許可の不採用だけでは停止伝播と後続の審査開始を検出できない"
 // @end-test-value
-test("canceling a request stops its review and releases only its conversation", { timeout: 2000 }, async () => {
-  for (const lateResult of ["allow", "error"] as const) {
-    const oldResult = Promise.withResolvers<unknown>();
-    const newResult = Promise.withResolvers<unknown>();
-    const oldStopped = Promise.withResolvers<void>();
-    const calls: Array<{ id: string; signal: AbortSignal }> = [];
-    let closes = 0;
-    const run = fixture((prompt, signal) => {
-      const id = JSON.parse(prompt).pendingOperation.requestId as string;
-      calls.push({ id, signal });
-      return id === "a" ? oldResult.promise : id === "b" ? newResult.promise : allow;
-    }, undefined, { close: () => ++closes === 1 ? oldStopped.promise : Promise.resolve() });
-    const turn = run.run("42");
-    try {
-      const request = new AbortController();
-      const first = turn.wait("a", request.signal);
-      await setImmediate();
-      assert.deepEqual(calls.map(({ id }) => id), ["a"]);
+/** 要求の取消はその要求の会話を停止し、遅れて返る旧判定が新会話や後続要求に干渉しないことを確かめる。 */
+test(
+  "canceling a request stops its review and releases only its conversation",
+  { timeout: 2000 },
+  async () => {
+    for (const lateResult of ["allow", "error"] as const) {
+      const oldResult = Promise.withResolvers<unknown>();
+      const newResult = Promise.withResolvers<unknown>();
+      const oldStopped = Promise.withResolvers<void>();
+      const calls: Array<{ id: string; signal: AbortSignal }> = [];
+      let closes = 0;
+      const run = fixture(
+        (prompt, signal) => {
+          const id = JSON.parse(prompt).pendingOperation.requestId as string;
+          calls.push({ id, signal });
+          return id === "a"
+            ? oldResult.promise
+            : id === "b"
+              ? newResult.promise
+              : allow;
+        },
+        undefined,
+        {
+          /** 取り消した要求の旧会話だけ終了確認を遅らせる。 */
+          close: () =>
+            ++closes === 1 ? oldStopped.promise : Promise.resolve(),
+        },
+      );
+      const turn = run.run("42");
+      try {
+        const request = new AbortController();
+        const first = turn.wait("a", request.signal);
+        await setImmediate();
+        assert.deepEqual(
+          calls.map(({ id }) => id),
+          ["a"],
+        );
 
-      const next = turn.wait("b");
-      const decisions: string[] = [];
-      void next.then((decision) => { decisions.push(decision); });
-      request.abort();
-      assert.equal(await first, "deny");
-      await setImmediate();
-      const beforeStop = { calls: calls.map(({ id }) => id), aborted: calls[0].signal.aborted };
-      oldStopped.resolve();
-      await setImmediate();
-      assert.deepEqual({ beforeStop, afterStop: calls.map(({ id }) => id) },
-        { beforeStop: { calls: ["a"], aborted: true }, afterStop: ["a", "b"] }, lateResult);
-      assert.notEqual(calls[0].signal, calls[1].signal);
-      if (lateResult === "error") oldResult.reject(new Error("Late failure from the canceled reviewer"));
-      else oldResult.resolve(allow);
-      await setImmediate();
-      assert.deepEqual([run.publications, run.notifications], [[], []]);
-      assert.deepEqual([...decisions], []);
-      assert.equal(calls[1].signal.aborted, false);
-      newResult.resolve(deny);
-      assert.equal(await next, "deny");
-      assert.equal(await turn.wait("c"), "approve");
-      assert.deepEqual(calls.map(({ id }) => id), ["a", "b", "c"]);
-      assert.equal(calls[2].signal, calls[1].signal);
-      assert.deepEqual(run.stats, { opened: 2, closed: 1 });
-    } finally {
-      turn.cancel();
-      oldStopped.resolve();
-      oldResult.resolve(allow);
-      newResult.resolve(deny);
+        const next = turn.wait("b");
+        const decisions: string[] = [];
+        void next.then((decision) => {
+          decisions.push(decision);
+        });
+        request.abort();
+        assert.equal(await first, "deny");
+        await setImmediate();
+        const beforeStop = {
+          calls: calls.map(({ id }) => id),
+          aborted: calls[0].signal.aborted,
+        };
+        oldStopped.resolve();
+        await setImmediate();
+        assert.deepEqual(
+          { beforeStop, afterStop: calls.map(({ id }) => id) },
+          {
+            beforeStop: { calls: ["a"], aborted: true },
+            afterStop: ["a", "b"],
+          },
+          lateResult,
+        );
+        assert.notEqual(calls[0].signal, calls[1].signal);
+        if (lateResult === "error")
+          oldResult.reject(
+            new Error("Late failure from the canceled reviewer"),
+          );
+        else oldResult.resolve(allow);
+        await setImmediate();
+        assert.deepEqual([run.publications, run.notifications], [[], []]);
+        assert.deepEqual([...decisions], []);
+        assert.equal(calls[1].signal.aborted, false);
+        newResult.resolve(deny);
+        assert.equal(await next, "deny");
+        assert.equal(await turn.wait("c"), "approve");
+        assert.deepEqual(
+          calls.map(({ id }) => id),
+          ["a", "b", "c"],
+        );
+        assert.equal(calls[2].signal, calls[1].signal);
+        assert.deepEqual(run.stats, { opened: 2, closed: 1 });
+      } finally {
+        turn.cancel();
+        oldStopped.resolve();
+        oldResult.resolve(allow);
+        newResult.resolve(deny);
+      }
     }
-  }
-});
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -531,45 +871,62 @@ test("canceling a request stops its review and releases only its conversation", 
 // lifecycle = "permanent"
 // distinction = "審査入力到達後の取消だけでは、起動途中で失効する経路を検出できない"
 // @end-test-value
-test("cancellation during reviewer startup cannot leak the stale conversation into the next request", { timeout: 2000 }, async () => {
-  const oldOpened = Promise.withResolvers<void>();
-  const oldStopped = Promise.withResolvers<void>();
-  const signals: AbortSignal[] = [];
-  const calls: string[] = [];
-  const run = fixture((prompt) => { calls.push(JSON.parse(prompt).pendingOperation.requestId); return allow; }, undefined, {
-    open: async (signal) => {
-      signals.push(signal);
-      if (signals.length === 1) await oldOpened.promise;
-    },
-    close: () => oldStopped.promise,
-  });
-  const turn = run.run("42");
-  try {
-    const request = new AbortController();
-    const first = turn.wait("a", request.signal);
-    await setImmediate();
-    request.abort();
-    const next = turn.wait("b");
-    assert.equal(await first, "deny");
-    await setImmediate();
-    assert.deepEqual({ opened: signals.length, aborted: signals[0]?.aborted }, { opened: 1, aborted: true });
-    assert.deepEqual(calls, []);
-    oldOpened.resolve();
-    await setImmediate();
-    assert.deepEqual(run.stats, { opened: 1, closed: 1 });
-    assert.deepEqual(calls, []);
-    oldStopped.resolve();
-    await setImmediate();
-    assert.deepEqual(calls, ["b"]);
-    assert.equal(await next, "approve");
-    assert.deepEqual(run.stats, { opened: 2, closed: 1 });
-    assert.equal(signals[1].aborted, false);
-  } finally {
-    turn.cancel();
-    oldOpened.resolve();
-    oldStopped.resolve();
-  }
-});
+/** Reviewer起動中の取消を伝え、遅れて起動した旧会話の終了を待ってから次の要求を処理する。 */
+test(
+  "cancellation during reviewer startup cannot leak the stale conversation into the next request",
+  { timeout: 2000 },
+  async () => {
+    const oldOpened = Promise.withResolvers<void>();
+    const oldStopped = Promise.withResolvers<void>();
+    const signals: AbortSignal[] = [];
+    const calls: string[] = [];
+    const run = fixture(
+      (prompt) => {
+        calls.push(JSON.parse(prompt).pendingOperation.requestId);
+        return allow;
+      },
+      undefined,
+      {
+        /** 起動時に受け取ったsignalを収集し、最初の会話だけ起動完了を保留する。 */
+        open: async (signal) => {
+          signals.push(signal);
+          if (signals.length === 1) await oldOpened.promise;
+        },
+        /** 取消済みの旧会話が閉じたと確認できる時点をテストから決める。 */
+        close: () => oldStopped.promise,
+      },
+    );
+    const turn = run.run("42");
+    try {
+      const request = new AbortController();
+      const first = turn.wait("a", request.signal);
+      await setImmediate();
+      request.abort();
+      const next = turn.wait("b");
+      assert.equal(await first, "deny");
+      await setImmediate();
+      assert.deepEqual(
+        { opened: signals.length, aborted: signals[0]?.aborted },
+        { opened: 1, aborted: true },
+      );
+      assert.deepEqual(calls, []);
+      oldOpened.resolve();
+      await setImmediate();
+      assert.deepEqual(run.stats, { opened: 1, closed: 1 });
+      assert.deepEqual(calls, []);
+      oldStopped.resolve();
+      await setImmediate();
+      assert.deepEqual(calls, ["b"]);
+      assert.equal(await next, "approve");
+      assert.deepEqual(run.stats, { opened: 2, closed: 1 });
+      assert.equal(signals[1].aborted, false);
+    } finally {
+      turn.cancel();
+      oldOpened.resolve();
+      oldStopped.resolve();
+    }
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -582,48 +939,84 @@ test("cancellation during reviewer startup cannot leak the stale conversation in
 // lifecycle = "permanent"
 // distinction = "停止が期限内に確認される場合だけでは、未確認時の拒否と後続の回復を観測できない"
 // @end-test-value
-test("unconfirmed reviewer shutdown blocks the expired request but not later reviews", { timeout: 2000 }, async (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  const oldResult = Promise.withResolvers<unknown>();
-  const oldStopped = Promise.withResolvers<void>();
-  const calls: string[] = [];
-  const run = fixture((prompt) => {
-    const id = JSON.parse(prompt).pendingOperation.requestId as string;
-    calls.push(id);
-    return id === "a" ? oldResult.promise : allow;
-  }, 100, { close: () => oldStopped.promise });
-  const turn = run.run("42");
-  const request = new AbortController();
-  try {
-    const first = turn.wait("a", request.signal);
-    await setImmediate();
-    request.abort();
-    assert.equal(await first, "deny");
-    const next = turn.wait("b");
-    const decisions: string[] = [];
-    void next.then((decision) => { decisions.push(decision); });
-    await setImmediate();
-    assert.deepEqual([decisions, calls, run.publications, run.notifications, run.sources],
-      [[], ["a"], [], [], [["a", "blocked"]]]);
-    t.mock.timers.tick(100);
-    assert.equal(await next, "deny");
-    assert.equal(run.head(), undefined);
-    assert.deepEqual(calls, ["a"]);
-    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"], ["b", "blocked"]]]);
-    oldStopped.resolve();
-    await setImmediate();
-    assert.deepEqual(calls, ["a"]);
-    assert.equal(run.head(), undefined);
-    assert.deepEqual([run.publications, run.notifications, run.sources], [[], [], [["a", "blocked"], ["b", "blocked"]]]);
+/** 停止確認を待って期限切れになった要求は公開せず、その後の新しい要求では審査を再開できることを確かめる。 */
+test(
+  "unconfirmed reviewer shutdown blocks the expired request but not later reviews",
+  { timeout: 2000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const oldResult = Promise.withResolvers<unknown>();
+    const oldStopped = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    const run = fixture(
+      (prompt) => {
+        const id = JSON.parse(prompt).pendingOperation.requestId as string;
+        calls.push(id);
+        return id === "a" ? oldResult.promise : allow;
+      },
+      100,
+      {
+        /** 後続要求の期限と旧会話の実際の停止時点を分けて再現する。 */
+        close: () => oldStopped.promise,
+      },
+    );
+    const turn = run.run("42");
+    const request = new AbortController();
+    try {
+      const first = turn.wait("a", request.signal);
+      await setImmediate();
+      request.abort();
+      assert.equal(await first, "deny");
+      const next = turn.wait("b");
+      const decisions: string[] = [];
+      void next.then((decision) => {
+        decisions.push(decision);
+      });
+      await setImmediate();
+      assert.deepEqual(
+        [decisions, calls, run.publications, run.notifications, run.sources],
+        [[], ["a"], [], [], [["a", "blocked"]]],
+      );
+      t.mock.timers.tick(100);
+      assert.equal(await next, "deny");
+      assert.equal(run.head(), undefined);
+      assert.deepEqual(calls, ["a"]);
+      assert.deepEqual(
+        [run.publications, run.notifications, run.sources],
+        [
+          [],
+          [],
+          [
+            ["a", "blocked"],
+            ["b", "blocked"],
+          ],
+        ],
+      );
+      oldStopped.resolve();
+      await setImmediate();
+      assert.deepEqual(calls, ["a"]);
+      assert.equal(run.head(), undefined);
+      assert.deepEqual(
+        [run.publications, run.notifications, run.sources],
+        [
+          [],
+          [],
+          [
+            ["a", "blocked"],
+            ["b", "blocked"],
+          ],
+        ],
+      );
 
-    const later = turn.wait("c");
-    await setImmediate();
-    assert.deepEqual(calls, ["a", "c"]);
-    assert.equal(await later, "approve");
-  } finally {
-    request.abort();
-    turn.cancel();
-    oldResult.resolve(allow);
-    oldStopped.resolve();
-  }
-});
+      const later = turn.wait("c");
+      await setImmediate();
+      assert.deepEqual(calls, ["a", "c"]);
+      assert.equal(await later, "approve");
+    } finally {
+      request.abort();
+      turn.cancel();
+      oldResult.resolve(allow);
+      oldStopped.resolve();
+    }
+  },
+);

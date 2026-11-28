@@ -6,66 +6,147 @@ import type { Session, WebContents, WebFrameMain } from "electron";
 import type { HtmlPreviewPermissionPrompt } from "../../src-electron/files/html-preview-permissions.js";
 import { HTML_PREVIEW_SCHEME } from "../../src-shared/window/html-preview.js";
 
+/** フレームの所属と破棄通知を制御できる、権限要求元の代役。 */
 class Contents extends EventEmitter {
-  readonly mainFrame = { url: "https://preview.test/page", detached: false, framesInSubtree: [] as unknown[] };
+  readonly mainFrame = {
+    url: "https://preview.test/page",
+    detached: false,
+    framesInSubtree: [] as unknown[],
+  };
   focusedFrame = this.mainFrame;
   destroyed = false;
-  isDestroyed() { return this.destroyed; }
+  /** 破棄イベントを受けた後は、以降の照会でも破棄済みと返す。 */
+  isDestroyed() {
+    return this.destroyed;
+  }
+  /** メインフレームをフレーム木へ登録し、破棄をストア内の状態に反映する。 */
   constructor() {
     super();
     this.mainFrame.framesInSubtree.push(this.mainFrame);
-    this.on("destroyed", () => { this.destroyed = true; });
+    this.on("destroyed", () => {
+      this.destroyed = true;
+    });
   }
 }
 
+/** インストールされた権限処理を保持し、Electron の画面や機器なしで呼び出せるようにする。 */
 class TestSession extends EventEmitter {
   request: Parameters<Session["setPermissionRequestHandler"]>[0] = null;
   check: Parameters<Session["setPermissionCheckHandler"]>[0] = null;
   display: Parameters<Session["setDisplayMediaRequestHandler"]>[0] = null;
-  setPermissionRequestHandler(handler: typeof this.request) { this.request = handler; }
-  setPermissionCheckHandler(handler: typeof this.check) { this.check = handler; }
-  setDisplayMediaRequestHandler(handler: typeof this.display) { this.display = handler; }
+  /** 要求ハンドラの登録と解除をテストから観測できるようにする。 */
+  setPermissionRequestHandler(handler: typeof this.request) {
+    this.request = handler;
+  }
+  /** 現在の権限を照会するハンドラを差し替える。 */
+  setPermissionCheckHandler(handler: typeof this.check) {
+    this.check = handler;
+  }
+  /** 画面共有要求を受けるハンドラを差し替える。 */
+  setDisplayMediaRequestHandler(handler: typeof this.display) {
+    this.display = handler;
+  }
 }
 
-async function harness(sources = Promise.resolve([{ id: "screen:1", name: "First screen" }, { id: "window:2", name: "Second window" }])) {
+/** 合成のフレームと画面候補を使い、承認と取り消しを個別に操作できる検証環境を作る。 */
+async function harness(
+  sources = Promise.resolve([
+    { id: "screen:1", name: "First screen" },
+    { id: "window:2", name: "Second window" },
+  ]),
+) {
   const contents = new Contents();
   const session = new TestSession();
   const prompts: HtmlPreviewPermissionPrompt[] = [];
   const signals: AbortSignal[] = [];
   const replies: ((choice: number | null) => void)[] = [];
   const state = { active: true, owned: true };
-  Object.assign(globalThis, { __previewPermissionContents: contents, __previewPermissionSources: sources });
+  Object.assign(globalThis, {
+    __previewPermissionContents: contents,
+    __previewPermissionSources: sources,
+  });
   const hooks = registerHooks({
+    /** テスト中に限り Electron の参照を合成モジュールへ向け、他の解決は委譲する。 */
     resolve(specifier, context, next) {
-      return specifier === "electron" ? { url: "withmate:test-permissions-electron", shortCircuit: true } : next(specifier, context);
+      return specifier === "electron"
+        ? { url: "withmate:test-permissions-electron", shortCircuit: true }
+        : next(specifier, context);
     },
+    /** 合成モジュールだけを、テストのフレームと非同期画面候補を返す実装で読み込む。 */
     load(url, context, next) {
-      return url === "withmate:test-permissions-electron" ? {
-        format: "module", shortCircuit: true,
-        source: `export const webContents = { fromFrame: () => globalThis.__previewPermissionContents };
+      return url === "withmate:test-permissions-electron"
+        ? {
+            format: "module",
+            shortCircuit: true,
+            source: `export const webContents = { fromFrame: () => globalThis.__previewPermissionContents };
           export const desktopCapturer = { getSources: () => globalThis.__previewPermissionSources };`,
-      } : next(url, context);
+          }
+        : next(url, context);
     },
   });
-  const { installHtmlPreviewPermissions } = await import("../../src-electron/files/html-preview-permissions.js");
+  const { installHtmlPreviewPermissions } =
+    await import("../../src-electron/files/html-preview-permissions.js");
   const cleanup = installHtmlPreviewPermissions(session as unknown as Session, {
+    /** マウント終了後の判定を、実ウィンドウを閉じずに再現する。 */
     isActive: () => state.active,
-    ownsContents: (candidate) => state.owned && candidate === contents as unknown as WebContents,
-    ask: (prompt, signal) => { prompts.push(prompt); signals.push(signal); return new Promise((resolve) => replies.push(resolve)); },
+    /** 有効な所有状態かつ一致するフレームのコンテンツだけを認める。 */
+    ownsContents: (candidate) =>
+      state.owned && candidate === (contents as unknown as WebContents),
+    /** 確認文面と中止シグナルを保存し、回答の時機はテスト側に委ねる。 */
+    ask: (prompt, signal) => {
+      prompts.push(prompt);
+      signals.push(signal);
+      return new Promise((resolve) => replies.push(resolve));
+    },
   });
   cleanup.attachContents(contents as unknown as WebContents);
-  const request = (permission: "media" | "geolocation", mediaTypes: ("audio" | "video")[] = []) => new Promise<boolean>((resolve) => {
-    session.request!(contents as unknown as WebContents, permission, resolve, {
-      requestingUrl: contents.mainFrame.url, isMainFrame: true, mediaTypes,
+  /** メインフレームからの要求を作り、Electron へ返す許否を待つ。 */
+  const request = (
+    permission: "media" | "geolocation",
+    mediaTypes: ("audio" | "video")[] = [],
+  ) =>
+    new Promise<boolean>((resolve) => {
+      session.request!(
+        contents as unknown as WebContents,
+        permission,
+        resolve,
+        {
+          requestingUrl: contents.mainFrame.url,
+          isMainFrame: true,
+          mediaTypes,
+        },
+      );
     });
-  });
-  const check = (mediaType: "audio" | "video") => session.check!(contents as unknown as WebContents, "media", "https://preview.test", {
-    requestingUrl: contents.mainFrame.url, isMainFrame: true, mediaType,
-  });
-  return { contents, session, state, prompts, signals, replies, cleanup, request, check, close() {
-    cleanup(); hooks.deregister(); Reflect.deleteProperty(globalThis, "__previewPermissionContents");
-    Reflect.deleteProperty(globalThis, "__previewPermissionSources");
-  } };
+  /** メインフレームに対する現時点の許可を、音声と映像で別々に調べる。 */
+  const check = (mediaType: "audio" | "video") =>
+    session.check!(
+      contents as unknown as WebContents,
+      "media",
+      "https://preview.test",
+      {
+        requestingUrl: contents.mainFrame.url,
+        isMainFrame: true,
+        mediaType,
+      },
+    );
+  return {
+    contents,
+    session,
+    state,
+    prompts,
+    signals,
+    replies,
+    cleanup,
+    request,
+    check,
+    /** 権限処理、モジュール置換、グローバルの試験データを取り除く。 */
+    close() {
+      cleanup();
+      hooks.deregister();
+      Reflect.deleteProperty(globalThis, "__previewPermissionContents");
+      Reflect.deleteProperty(globalThis, "__previewPermissionSources");
+    },
+  };
 }
 
 // @test-value v2
@@ -80,6 +161,7 @@ async function harness(sources = Promise.resolve([{ id: "screen:1", name: "First
 // impact = "意図していないカメラ・マイク利用や遷移先への許可移転を防ぐ"
 // distinction = "型検査は非同期承認とnavigationの競合やmedia種別の承認範囲を検出できず、小さなhandler testで直接確認する"
 // @end-test-value
+/** カメラだけの許可がマイクへ波及せず、遷移やマウント終了後に古い回答が効かないことを確かめる。 */
 test("permission approval remains frame- and media-specific and expires with the mount", async () => {
   const h = await harness();
   try {
@@ -111,7 +193,9 @@ test("permission approval remains frame- and media-specific and expires with the
     h.replies.shift()!(0);
     assert.equal(h.session.request, null);
     assert.equal(h.session.check, null);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 // @test-value v2
@@ -126,42 +210,102 @@ test("permission approval remains frame- and media-specific and expires with the
 // impact = "意図していない画面の漏えい・機器アクセスを防ぐ"
 // distinction = "型検査や一般permission testではsource選択とnavigation後のcallback値を検出できない"
 // @end-test-value
+/** 画面と機器を利用者の選択どおりに返し、遷移後の選択は無効にすることを確かめる。 */
 test("display and device handlers require explicit selection and cancel stale choices", async () => {
   const h = await harness();
   try {
-    const capture = new Promise<Electron.Streams | null>((resolve) => h.session.display!({
-      frame: h.contents.mainFrame as unknown as WebFrameMain, securityOrigin: "https://preview.test",
-      userGesture: true, videoRequested: true, audioRequested: false,
-    }, resolve));
+    const capture = new Promise<Electron.Streams | null>((resolve) =>
+      h.session.display!(
+        {
+          frame: h.contents.mainFrame as unknown as WebFrameMain,
+          securityOrigin: "https://preview.test",
+          userGesture: true,
+          videoRequested: true,
+          audioRequested: false,
+        },
+        resolve,
+      ),
+    );
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(h.prompts.length, 1);
     h.replies.shift()!(1);
     const stream = await capture;
     assert.ok(stream);
-    assert.equal("id" in stream.video! ? stream.video.id : undefined, "window:2");
+    assert.equal(
+      "id" in stream.video! ? stream.video.id : undefined,
+      "window:2",
+    );
     let prevented = false;
-    const device = new Promise<string>((resolve) => h.session.emit("select-usb-device", { preventDefault() { prevented = true; } }, {
-      frame: h.contents.mainFrame, deviceList: [{ deviceId: "a", productName: "First USB" }, { deviceId: "b", productName: "Second USB" }],
-    }, resolve));
+    const device = new Promise<string>((resolve) =>
+      h.session.emit(
+        "select-usb-device",
+        {
+          /** Electron の既定選択が止められたことを記録する。 */
+          preventDefault() {
+            prevented = true;
+          },
+        },
+        {
+          frame: h.contents.mainFrame,
+          deviceList: [
+            { deviceId: "a", productName: "First USB" },
+            { deviceId: "b", productName: "Second USB" },
+          ],
+        },
+        resolve,
+      ),
+    );
     assert.equal(prevented, true);
     h.replies.shift()!(1);
     assert.equal(await device, "b");
-    h.contents.mainFrame.framesInSubtree.push({ url: "https://embedded.test/frame", detached: false });
-    const port = new Promise<string>((resolve) => h.session.emit("select-serial-port", { preventDefault() {} },
-      [{ portId: "port-a", portName: "COM1" }], h.contents, resolve));
-    assert.match(h.prompts.at(-1)!.detail, /Requesting page \(including embedded frames\): https:\/\/preview.test/);
-    assert.match(h.prompts.at(-1)!.detail, /Embedded origins: https:\/\/embedded.test/);
+    h.contents.mainFrame.framesInSubtree.push({
+      url: "https://embedded.test/frame",
+      detached: false,
+    });
+    const port = new Promise<string>((resolve) =>
+      h.session.emit(
+        "select-serial-port",
+        {
+          /** 要求元を確認するケースなので、既定選択の停止自体は記録しない。 */
+          preventDefault() {},
+        },
+        [{ portId: "port-a", portName: "COM1" }],
+        h.contents,
+        resolve,
+      ),
+    );
+    assert.match(
+      h.prompts.at(-1)!.detail,
+      /Requesting page \(including embedded frames\): https:\/\/preview.test/,
+    );
+    assert.match(
+      h.prompts.at(-1)!.detail,
+      /Embedded origins: https:\/\/embedded.test/,
+    );
     h.replies.shift()!(0);
     assert.equal(await port, "port-a");
-    const canceled = new Promise<string>((resolve) => h.session.emit("select-usb-device", { preventDefault() {} }, {
-      frame: h.contents.mainFrame, deviceList: [{ deviceId: "c", productName: "USB" }],
-    }, resolve));
+    const canceled = new Promise<string>((resolve) =>
+      h.session.emit(
+        "select-usb-device",
+        {
+          /** 組み込みの選択処理は使わず、遷移による取り消しを観測する。 */
+          preventDefault() {},
+        },
+        {
+          frame: h.contents.mainFrame,
+          deviceList: [{ deviceId: "c", productName: "USB" }],
+        },
+        resolve,
+      ),
+    );
     const canceledSignal = h.signals.at(-1)!;
     h.contents.emit("did-start-navigation");
     assert.equal(await canceled, "");
     assert.equal(canceledSignal.aborted, true);
     h.replies.shift()!(0);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 // @test-value v2
@@ -176,13 +320,20 @@ test("display and device handlers require explicit selection and cancel stale ch
 // impact = "終了済みdocumentの確認が後続操作を遮ったり不要な許可を与えることを防ぐ"
 // distinction = "型検査はcontents終了と非同期Allowの競合を検出できず、小さなmock handler testで取消通知を直接確認する"
 // @end-test-value
+/** 要求元が破棄された時点で一度だけ拒否し、後から承認しても結果が変わらないことを確かめる。 */
 test("destroying requesting contents aborts its permission prompt and settles once", async () => {
   const h = await harness();
   try {
     const results: boolean[] = [];
-    h.session.request!(h.contents as unknown as WebContents, "geolocation", (allowed) => results.push(allowed), {
-      requestingUrl: h.contents.mainFrame.url, isMainFrame: true,
-    });
+    h.session.request!(
+      h.contents as unknown as WebContents,
+      "geolocation",
+      (allowed) => results.push(allowed),
+      {
+        requestingUrl: h.contents.mainFrame.url,
+        isMainFrame: true,
+      },
+    );
     const signal = h.signals[0]!;
     h.contents.emit("destroyed");
     assert.equal(signal.aborted, true);
@@ -190,7 +341,9 @@ test("destroying requesting contents aborts its permission prompt and settles on
     h.replies.shift()!(0);
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(results, [false]);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 // @test-value v2
@@ -205,22 +358,35 @@ test("destroying requesting contents aborts its permission prompt and settles on
 // impact = "利用できない古い確認によるhost確認queueの閉塞を防ぐ"
 // distinction = "通常の選択取消testはsource取得完了後であり、非同期取得前の取消を観測できない。遅延Promiseのみで安価に確認する"
 // @end-test-value
+/** 候補の列挙中に遷移したら、候補が届いても古い画面共有確認を作らない。 */
 test("canceled display source discovery cannot enqueue a stale prompt", async () => {
   let resolveSources!: (sources: { id: string; name: string }[]) => void;
-  const h = await harness(new Promise((resolve) => { resolveSources = resolve; }));
+  const h = await harness(
+    new Promise((resolve) => {
+      resolveSources = resolve;
+    }),
+  );
   try {
     const streams: (Electron.Streams | null)[] = [];
-    h.session.display!({
-      frame: h.contents.mainFrame as unknown as WebFrameMain, securityOrigin: "https://preview.test",
-      userGesture: true, videoRequested: true, audioRequested: false,
-    }, (stream) => streams.push(stream));
+    h.session.display!(
+      {
+        frame: h.contents.mainFrame as unknown as WebFrameMain,
+        securityOrigin: "https://preview.test",
+        userGesture: true,
+        videoRequested: true,
+        audioRequested: false,
+      },
+      (stream) => streams.push(stream),
+    );
     h.contents.emit("did-start-navigation");
     assert.deepEqual(streams, [{}]);
     resolveSources([{ id: "screen:1", name: "First screen" }]);
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(streams, [{}]);
     assert.equal(h.prompts.length, 0);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
 });
 
 // @test-value v2
@@ -235,12 +401,21 @@ test("canceled display source discovery cannot enqueue a stale prompt", async ()
 // impact = "USB/HID選択を利用可能に保ちながら、他mount・終了済みpageへchooser入口を開放しない"
 // distinction = "型検査とframe付き選択testではnativeのnull contents経路を検出できない。小さなhandler呼出のみでorigin境界を継続確認する"
 // @end-test-value
+/** 要求元コンテンツが渡らない機器選択でも、現に所有するフレームの有効なオリジンだけを許可する。 */
 test("null device chooser checks require a live owned mount origin", async () => {
   const h = await harness();
   try {
     const handler = h.session.check!;
-    const check = (requestingOrigin: string, permission: "usb" | "hid" | "serial" | "fileSystem" = "usb", securityOrigin?: string) =>
-      handler(null, permission, requestingOrigin, { isMainFrame: false, ...(securityOrigin ? { securityOrigin } : {}) });
+    /** コンテンツがない機器照会に、要求元と明示的なセキュリティオリジンを別々に渡す。 */
+    const check = (
+      requestingOrigin: string,
+      permission: "usb" | "hid" | "serial" | "fileSystem" = "usb",
+      securityOrigin?: string,
+    ) =>
+      handler(null, permission, requestingOrigin, {
+        isMainFrame: false,
+        ...(securityOrigin ? { securityOrigin } : {}),
+      });
     for (const permission of ["usb", "hid"] as const) {
       assert.equal(check("https://preview.test", permission), true);
       assert.equal(check("https://foreign.test", permission), false);
@@ -250,7 +425,10 @@ test("null device chooser checks require a live owned mount origin", async () =>
     }
     assert.equal(check("https://preview.test", "serial"), false);
     assert.equal(check("https://preview.test", "fileSystem"), false);
-    assert.equal(check("https://foreign.test", "hid", "https://preview.test"), true);
+    assert.equal(
+      check("https://foreign.test", "hid", "https://preview.test"),
+      true,
+    );
     h.state.owned = false;
     assert.equal(check("https://preview.test"), false);
     h.state.owned = true;
@@ -266,7 +444,10 @@ test("null device chooser checks require a live owned mount origin", async () =>
     h.contents.mainFrame.url = "https://next.test/next";
     assert.equal(check("https://preview.test"), false);
     assert.equal(check("https://next.test"), true);
-    h.contents.mainFrame.framesInSubtree.push({ url: "https://embedded.test/frame", detached: false });
+    h.contents.mainFrame.framesInSubtree.push({
+      url: "https://embedded.test/frame",
+      detached: false,
+    });
     assert.equal(check("https://embedded.test", "hid"), true);
     h.contents.mainFrame.url = `${HTML_PREVIEW_SCHEME}://mount-token/page.html`;
     assert.equal(check(`${HTML_PREVIEW_SCHEME}://mount-token`), true);
@@ -278,13 +459,31 @@ test("null device chooser checks require a live owned mount origin", async () =>
     h.cleanup();
     assert.equal(check("https://embedded.test"), false);
     assert.equal(h.session.check, null);
-  } finally { h.close(); }
+  } finally {
+    h.close();
+  }
   const fresh = await harness();
   try {
-    assert.equal(fresh.session.check!(null, "usb", `${HTML_PREVIEW_SCHEME}://mount-token`, { isMainFrame: false }), false);
+    assert.equal(
+      fresh.session.check!(
+        null,
+        "usb",
+        `${HTML_PREVIEW_SCHEME}://mount-token`,
+        { isMainFrame: false },
+      ),
+      false,
+    );
     const freshHandler = fresh.session.check!;
-    assert.equal(freshHandler(null, "hid", "https://preview.test", { isMainFrame: false }), true);
+    assert.equal(
+      freshHandler(null, "hid", "https://preview.test", { isMainFrame: false }),
+      true,
+    );
     fresh.cleanup();
-    assert.equal(freshHandler(null, "hid", "https://preview.test", { isMainFrame: false }), false);
-  } finally { fresh.close(); }
+    assert.equal(
+      freshHandler(null, "hid", "https://preview.test", { isMainFrame: false }),
+      false,
+    );
+  } finally {
+    fresh.close();
+  }
 });

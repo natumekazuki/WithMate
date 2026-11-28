@@ -8,23 +8,61 @@ import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import type { CodexProjectionRequest } from "../../src-electron/providers/codex/codex-projection-protocol.js";
 import { CodexProjectionClient } from "../../src-electron/providers/codex/codex-projection-client.js";
-import type { CodexProjectionCommand, CodexProjectionProgress } from "../../src-electron/providers/codex/codex-projection-protocol.js";
-import { _setWalkDirectoryStatOverrideForTesting, captureWorkspaceSnapshotPaths, createWorkspaceSnapshotIndex, refreshWorkspaceSnapshotIndex } from "../../src-electron/platform/snapshot-ignore.js";
+import type {
+  CodexProjectionCommand,
+  CodexProjectionProgress,
+} from "../../src-electron/providers/codex/codex-projection-protocol.js";
+import {
+  _setWalkDirectoryStatOverrideForTesting,
+  captureWorkspaceSnapshotPaths,
+  createWorkspaceSnapshotIndex,
+  refreshWorkspaceSnapshotIndex,
+} from "../../src-electron/platform/snapshot-ignore.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type { ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
+import type {
+  ModelCatalogProvider,
+  ModelReasoningEffort,
+} from "../../src-shared/settings/model-catalog.js";
 import { CodexAdapter } from "../../src-electron/providers/codex/codex-adapter.js";
-import { ProviderTurnError, type RunSessionTurnInput, type RunSessionTurnProgressChanges } from "../../src-electron/providers/provider-runtime.js";
-import { applyCodexTurnEvent, createCodexTurnStreamState, getLiveCodexAssistantText } from "../../src-electron/providers/codex/codex-turn-events.js";
-import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
-import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
-import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
-import { WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
-import type { LiveElicitationRequest, LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import {
+  ProviderTurnError,
+  type RunSessionTurnInput,
+  type RunSessionTurnProgressChanges,
+} from "../../src-electron/providers/provider-runtime.js";
+import {
+  applyCodexTurnEvent,
+  createCodexTurnStreamState,
+  getLiveCodexAssistantText,
+} from "../../src-electron/providers/codex/codex-turn-events.js";
+import {
+  CodexAppServerTransport,
+  CodexAppServerRpcError,
+  type CodexProtocolEvent,
+} from "../../src-electron/providers/codex/app-server-transport.js";
+import {
+  PROVIDER_RAW_ITEMS_JSON_LIMIT,
+  PROVIDER_TEXT_PREVIEW_LIMIT,
+} from "../../src-electron/session/provider-payload-limits.js";
+import {
+  buildCodexStableRawItems,
+  toMessageOperations,
+} from "../../src-electron/providers/codex/codex-event-projection.js";
+import {
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV,
+} from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
+import type {
+  LiveElicitationRequest,
+  LiveRunStep,
+} from "../../src-shared/session/runtime-state.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
-type CodexLog = Parameters<NonNullable<ConstructorParameters<typeof CodexAdapter>[0]>>[0];
+/** Adapter の logger が受け取る診断レコード型を、実際のコンストラクター引数から取得する。 */
+type CodexLog = Parameters<
+  NonNullable<ConstructorParameters<typeof CodexAdapter>[0]>
+>[0];
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -49,6 +87,7 @@ const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   ],
 };
 
+/** Codex の既定 Session を組み立て、個別ケースでは再開 ID や実行ポリシーを上書きできるようにする。 */
 function createSession(options?: {
   threadId?: string;
   model?: string;
@@ -93,8 +132,10 @@ function createSession(options?: {
   };
 }
 
-
-function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnInput {
+/** 指定 workspace での送信 DTO を作り、Session から捕捉した実行設定と基準カタログを含める。 */
+function createCodexRunSessionTurnInput(
+  workspacePath: string,
+): RunSessionTurnInput {
   const session = { ...createSession({ threadId: "" }), workspacePath };
   return {
     session,
@@ -106,7 +147,7 @@ function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnIn
   };
 }
 
-
+/** 記録可能な RPC と手動で進められる通知列を備え、App Server の成功・拒否・待機をインメモリで再現する。 */
 class FakeTransport {
   calls: Array<{ method: string; params: unknown }> = [];
   events: CodexProtocolEvent[] = [];
@@ -117,33 +158,54 @@ class FakeTransport {
   steerResponse: Promise<{ turnId: string }> | null = null;
   loginError: Error | null = null;
   loginType = "apiKey";
+  /** 子プロセスを起動せず、利用可能な transport として開始を完了する。 */
   async start() {}
+  /** RPC の送信順と引数を控え、認証・thread・turn の固定応答またはテスト指定の steer 応答を返す。 */
   async request<T>(method: string, params?: unknown): Promise<T> {
     this.calls.push({ method, params });
     if (method === "account/login/start") {
       if (this.loginError) throw this.loginError;
       return { type: this.loginType } as T;
     }
-    if (method === "thread/start" || method === "thread/resume") return { thread: { id: "thread-1" } } as T;
+    if (method === "thread/start" || method === "thread/resume")
+      return { thread: { id: "thread-1" } } as T;
     if (method === "turn/start") return { turn: { id: "turn-1" } } as T;
-    if (method === "turn/steer") return (await (this.steerResponse ?? Promise.resolve({ turnId: "turn-1" }))) as T;
+    if (method === "turn/steer")
+      return (await (this.steerResponse ??
+        Promise.resolve({ turnId: "turn-1" }))) as T;
     return {} as T;
   }
+  /** キューを先に読み、空なら新着・切断・失敗のいずれかまで受信を待つ。 */
   async nextEvent(): Promise<CodexProtocolEvent> {
     const event = this.events.shift();
     if (event) return event;
     if (this.failure) throw this.failure;
     if (this.closed) throw new Error("Codex transport closed.");
-    return new Promise((resolve, reject) => { this.waiter = resolve; this.rejectWaiter = reject; });
+    return new Promise((resolve, reject) => {
+      this.waiter = resolve;
+      this.rejectWaiter = reject;
+    });
   }
-  push(event: CodexProtocolEvent) { if (this.waiter) { const waiter = this.waiter; this.waiter = null; this.rejectWaiter = null; waiter(event); } else this.events.push(event); }
+  /** 受信待ちがあれば通知を直接渡し、まだ読者がいなければ到着順にキューへ積む。 */
+  push(event: CodexProtocolEvent) {
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      this.rejectWaiter = null;
+      waiter(event);
+    } else this.events.push(event);
+  }
+  /** 閉鎖を記録し、待機中の読者に設定された原因または汎用の切断エラーを返す。 */
   async close() {
     this.closed = true;
     this.rejectWaiter?.(this.failure ?? new Error("Codex transport closed."));
     this.waiter = null;
     this.rejectWaiter = null;
   }
-  whenClosed(): Promise<void> { return Promise.resolve(); }
+  /** 標準のダブルには実プロセスがないため、終了確認を即時完了させる。 */
+  whenClosed(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 // @test-value v2
@@ -158,25 +220,46 @@ class FakeTransport {
 // risk_tags = ["authorization"]
 // distinction = "子作成試験でadapter入力が正しくても、その先のRPCで取り違えた場合を検出する"
 // @end-test-value
-it("sends the captured public approval and independent sandbox to the first Codex turn", async () => workspace(async (directory) => {
-  for (const [approvalMode, codexReviewer, policy, reviewer] of [
-    ["never", "user", "never", "user"], ["on-request", "user", "on-request", "user"],
-    ["on-request", "auto-review", "on-request", "auto_review"], ["safety-focused", "auto-review", "on-request", "user"],
-  ] as const) {
-    const input = createCodexRunSessionTurnInput(directory);
-    input.executionOptions = { ...input.executionOptions, approvalMode, codexReviewer, codexSandboxMode: "read-only" };
-    const transport = new FakeTransport();
-    transport.events = [completed([])];
-    await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input);
-    for (const method of ["thread/start", "turn/start"]) {
-      const native = transport.calls.find((call) => call.method === method)?.params as Record<string, unknown>;
-      assert.ok(native, method);
-      assert.deepEqual([native.approvalPolicy, native.approvalsReviewer], [policy, reviewer]);
-      if (method === "thread/start") assert.equal(native.sandbox, "read-only");
-      else assert.deepEqual(native.sandboxPolicy, { type: "readOnly", networkAccess: false });
+/** 公開承認の四つの選択を初回の thread と turn でそれぞれ native policy と Reviewer へ変換し、独立の読み取り専用 Sandbox は維持する。 */
+it("sends the captured public approval and independent sandbox to the first Codex turn", async () =>
+  workspace(async (directory) => {
+    for (const [approvalMode, codexReviewer, policy, reviewer] of [
+      ["never", "user", "never", "user"],
+      ["on-request", "user", "on-request", "user"],
+      ["on-request", "auto-review", "on-request", "auto_review"],
+      ["safety-focused", "auto-review", "on-request", "user"],
+    ] as const) {
+      const input = createCodexRunSessionTurnInput(directory);
+      input.executionOptions = {
+        ...input.executionOptions,
+        approvalMode,
+        codexReviewer,
+        codexSandboxMode: "read-only",
+      };
+      const transport = new FakeTransport();
+      transport.events = [completed([])];
+      await new CodexAdapter(undefined, {
+        /** 各承認モードで観測する RPC を、この反復専用の transport に流す。 */
+        createTransport: () => transport,
+      }).runSessionTurn(input);
+      for (const method of ["thread/start", "turn/start"]) {
+        const native = transport.calls.find((call) => call.method === method)
+          ?.params as Record<string, unknown>;
+        assert.ok(native, method);
+        assert.deepEqual(
+          [native.approvalPolicy, native.approvalsReviewer],
+          [policy, reviewer],
+        );
+        if (method === "thread/start")
+          assert.equal(native.sandbox, "read-only");
+        else
+          assert.deepEqual(native.sandboxPolicy, {
+            type: "readOnly",
+            networkAccess: false,
+          });
+      }
     }
-  }
-}));
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -188,16 +271,29 @@ it("sends the captured public approval and independent sandbox to the first Code
 // scope = "Codex turn Depth forwarding"
 // lifecycle = "permanent"
 // @end-test-value
+/** thread 設定と turn 要求の両方で、未知の native Depth はそのまま送り、空を明示値として送信しない。 */
 it("Codex native Depthは保持し未指定effortはRPCへ送らない", async () => {
   for (const effort of ["", "persistent"]) {
     const request = createCodexRunSessionTurnInput(process.cwd());
-    request.executionOptions = { ...request.executionOptions, reasoningEffort: effort };
+    request.executionOptions = {
+      ...request.executionOptions,
+      reasoningEffort: effort,
+    };
     const transport = new FakeTransport();
     transport.events = [completed([])];
-    await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(request);
-    const thread = transport.calls.find((call) => call.method === "thread/start")?.params as { config: Record<string, unknown> };
-    const turn = transport.calls.find((call) => call.method === "turn/start")?.params as Record<string, unknown>;
-    assert.equal(Object.hasOwn(thread.config, "model_reasoning_effort"), Boolean(effort));
+    await new CodexAdapter(undefined, {
+      /** 推論強度の指定有無が現れた RPC 引数を transport に残す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(request);
+    const thread = transport.calls.find(
+      (call) => call.method === "thread/start",
+    )?.params as { config: Record<string, unknown> };
+    const turn = transport.calls.find((call) => call.method === "turn/start")
+      ?.params as Record<string, unknown>;
+    assert.equal(
+      Object.hasOwn(thread.config, "model_reasoning_effort"),
+      Boolean(effort),
+    );
     assert.equal(thread.config.model_reasoning_effort, effort || undefined);
     assert.equal(Object.hasOwn(turn, "effort"), Boolean(effort));
     assert.equal(turn.effort, effort || undefined);
@@ -217,6 +313,7 @@ it("Codex native Depthは保持し未指定effortはRPCへ送らない", async (
 // distinction = "RPC列とabort時cleanupは型検査で保証できず、短いfake transportで検証する"
 // risk_tags = ["authentication", "billing"]
 // @end-test-value
+/** Quota 取得は読み取り RPC 一件に限り、成功・失敗・取消で transport を閉じ、API key があれば別の認証先を試さない。 */
 it("Codex quotaはread専用RPCとcleanupを守りAPI keyを別認証へfallbackしない", async () => {
   const previousKey = process.env.CODEX_API_KEY;
   delete process.env.CODEX_API_KEY;
@@ -226,37 +323,81 @@ it("Codex quotaはread専用RPCとcleanupを守りAPI keyを別認証へfallback
       let requestSignal: AbortSignal | undefined;
       const calls: string[] = [];
       let closed = false;
-      const adapter = new CodexAdapter(undefined, { createTransport: () => ({
-        async start(signal) { assert.equal(signal?.aborted, false); },
-        async request<T>(method: string, _params?: unknown, options?: { signal?: AbortSignal }): Promise<T> {
-          calls.push(method);
-          requestSignal = options?.signal;
-          if (mode === "failure") throw new Error("private-token-in-error");
-          if (mode === "cancel") {
-            controller.abort();
-            options?.signal?.throwIfAborted();
-          }
-          return { rateLimits: { primary: { usedPercent: 25 } } } as T;
-        },
-        async nextEvent() { throw new Error("No event reader expected"); },
-        async close() { closed = true; },
-        async whenClosed() {},
-      }) });
-      const operation = adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: createDefaultAppSettings(), signal: controller.signal });
-      if (mode === "success") assert.equal((await operation)?.rateLimits?.[0].usedPercentage, 25);
-      else await assert.rejects(operation, /^Error: Codex quota could not be retrieved$/);
+      const adapter = new CodexAdapter(undefined, {
+        /** 取得結果・障害・取消を切り替えられる読み取り専用 transport を作る。 */
+        createTransport: () => ({
+          /** Quota の起動時点で受け取った signal がまだ取り消されていないことを検査する。 */
+          async start(signal) {
+            assert.equal(signal?.aborted, false);
+          },
+          /** 実行した method と signal を記録し、ケースに応じて取得・例外・取消を再現する。 */
+          async request<T>(
+            method: string,
+            _params?: unknown,
+            options?: { signal?: AbortSignal },
+          ): Promise<T> {
+            calls.push(method);
+            requestSignal = options?.signal;
+            if (mode === "failure") throw new Error("private-token-in-error");
+            if (mode === "cancel") {
+              controller.abort();
+              options?.signal?.throwIfAborted();
+            }
+            return { rateLimits: { primary: { usedPercent: 25 } } } as T;
+          },
+          /** Quota の経路が turn のイベント受信を始めた場合にテストを失敗させる。 */
+          async nextEvent() {
+            throw new Error("No event reader expected");
+          },
+          /** 取得の結果にかかわらず後処理を呼んだことを記録する。 */
+          async close() {
+            closed = true;
+          },
+          /** 読み取り専用のダブルではクローズ後に待つ実プロセスがない。 */
+          async whenClosed() {},
+        }),
+      });
+      const operation = adapter.getProviderQuotaTelemetry({
+        providerId: "codex",
+        appSettings: createDefaultAppSettings(),
+        signal: controller.signal,
+      });
+      if (mode === "success")
+        assert.equal((await operation)?.rateLimits?.[0].usedPercentage, 25);
+      else
+        await assert.rejects(
+          operation,
+          /^Error: Codex quota could not be retrieved$/,
+        );
       assert.deepEqual(calls, ["account/rateLimits/read"]);
       assert.equal(closed, true);
       assert.ok(requestSignal);
       if (mode === "cancel") assert.equal(requestSignal.aborted, true);
     }
-    const adapter = new CodexAdapter(undefined, { createTransport: () => { throw new Error("Must not start another account"); } });
+    const adapter = new CodexAdapter(undefined, {
+      /** API key 選択中に別アカウント用 transport を要求した場合は失敗させる。 */
+      createTransport: () => {
+        throw new Error("Must not start another account");
+      },
+    });
     const settings = createDefaultAppSettings();
     settings.codingProviderSettings.codex.apiKey = "settings-api-key";
-    assert.equal(await adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: settings }), null);
+    assert.equal(
+      await adapter.getProviderQuotaTelemetry({
+        providerId: "codex",
+        appSettings: settings,
+      }),
+      null,
+    );
     settings.codingProviderSettings.codex.apiKey = "";
     process.env.CODEX_API_KEY = "environment-api-key";
-    assert.equal(await adapter.getProviderQuotaTelemetry({ providerId: "codex", appSettings: settings }), null);
+    assert.equal(
+      await adapter.getProviderQuotaTelemetry({
+        providerId: "codex",
+        appSettings: settings,
+      }),
+      null,
+    );
   } finally {
     if (previousKey === undefined) delete process.env.CODEX_API_KEY;
     else process.env.CODEX_API_KEY = previousKey;
@@ -275,26 +416,57 @@ it("Codex quotaはread専用RPCとcleanupを守りAPI keyを別認証へfallback
 // impact = "未終了processが孤立し、重複起動で資源と認証操作が累積する"
 // distinction = "非同期process終了と再取得間の所有権は型検査で保証されない"
 // @end-test-value
+/** レート値が取得できても後処理に失敗すれば取得失敗となり、元のプロセスが実終了するまで二つ目を作らない。 */
 it("Codex quotaはcleanup失敗後も実終了までprocess所有権を保持する", async () => {
   const previousKey = process.env.CODEX_API_KEY;
   delete process.env.CODEX_API_KEY;
   let finishClose!: () => void;
-  const closed = new Promise<void>(resolve => { finishClose = resolve; });
+  const closed = new Promise<void>((resolve) => {
+    finishClose = resolve;
+  });
   let created = 0;
+  /** Quota 応答は成功するが、終了要求と実終了を分けて扱う必要がある transport。 */
   class QuotaCleanupFailure extends FakeTransport {
-    override async request<T>(): Promise<T> { return { rateLimits: { primary: { usedPercent: 25 } } } as T; }
-    override async close() { throw new Error("private-cleanup-details"); }
-    override whenClosed() { return closed; }
+    /** 後処理より前の quota 読取には有効なレート値を返す。 */
+    override async request<T>(): Promise<T> {
+      return { rateLimits: { primary: { usedPercent: 25 } } } as T;
+    }
+    /** 内部の詳細を持つ終了エラーを作り、公開失敗との分離を確認できるようにする。 */
+    override async close() {
+      throw new Error("private-cleanup-details");
+    }
+    /** 終了要求に失敗しても、テストが解除するまでは実終了を報告しない。 */
+    override whenClosed() {
+      return closed;
+    }
   }
-  const adapter = new CodexAdapter(undefined, { createTransport: () => { created++; return new QuotaCleanupFailure(); } });
-  const input = { providerId: "codex", appSettings: createDefaultAppSettings() };
+  const adapter = new CodexAdapter(undefined, {
+    /** 再取得が新しいプロセスを要求した回数を数える。 */
+    createTransport: () => {
+      created++;
+      return new QuotaCleanupFailure();
+    },
+  });
+  const input = {
+    providerId: "codex",
+    appSettings: createDefaultAppSettings(),
+  };
   try {
-    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /^Error: Codex quota process cleanup failed$/);
-    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /cleanup is still pending/);
+    await assert.rejects(
+      adapter.getProviderQuotaTelemetry(input),
+      /^Error: Codex quota process cleanup failed$/,
+    );
+    await assert.rejects(
+      adapter.getProviderQuotaTelemetry(input),
+      /cleanup is still pending/,
+    );
     assert.equal(created, 1);
     finishClose();
     await closed;
-    await assert.rejects(adapter.getProviderQuotaTelemetry(input), /quota process cleanup failed/);
+    await assert.rejects(
+      adapter.getProviderQuotaTelemetry(input),
+      /quota process cleanup failed/,
+    );
     assert.equal(created, 2);
   } finally {
     finishClose();
@@ -316,59 +488,95 @@ it("Codex quotaはcleanup失敗後も実終了までprocess所有権を保持す
 // distinction = "型検査ではnative通知のscope・重複・非blocking lifecycleとruntime秘匿化を確認できない。合成transportの短い1turnで検証する"
 // risk_tags = ["privacy"]
 // @end-test-value
-it("Codex async質問を重複なく非blockingで配信しturn終了で失効する", async () => workspace(async (directory) => {
-  const secret = "synthetic-question-api-key";
-  const first = { ...message("ask-1", "ordinary text"), delivery: "async", questions: [
-    { title: "Which? " + secret, options: ["One " + secret, "Two"] },
-    { title: "Details?", options: [] }, { title: "Anything else?", options: null }, { title: "Final detail?" },
-  ] };
-  const second = { ...message("ask-2", ""), delivery: "async", questions: [{ title: "Independent?" }] };
-  const transport = new FakeTransport();
-  transport.events = [
-    notification("item/started", { item: first, threadId: "other-thread" }),
-    notification("item/completed", { item: first, turnId: "other-turn" }),
-    notification("item/started", { item: message("plain", "Should I proceed?") }),
-    notification("item/started", { item: { ...first, delivery: "sync" } }),
-    notification("item/started", { item: first }), notification("item/completed", { item: first }),
-    notification("item/completed", { item: second }),
-    completed([first, second, { ...second, id: "snapshot-only" }]),
-  ];
-  const input = createCodexRunSessionTurnInput(directory);
-  input.signal = AbortSignal.timeout(10_000);
-  input.appSettings.codingProviderSettings.codex.apiKey = secret;
-  const requests: LiveElicitationRequest[] = [];
-  const signals: AbortSignal[] = [];
-  input.onElicitationRequest = (request, signal) => {
-    assert.ok(signal);
-    requests.push(request); signals.push(signal);
-    if (request.requestId.endsWith(":ask-2")) return { action: "accept", content: { "question-1": "answer" } };
-    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("expired")), { once: true }));
-  };
-  await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input);
-  assert.deepEqual(requests.map(request => request.requestId), ["async:turn-1:ask-1", "async:turn-1:ask-2"]);
-  assert.ok(signals.every(signal => signal.aborted));
-  const request = requests[0];
-  assert.equal(request.delivery, "user-message");
-  assert.equal(request.turnId, "turn-1");
-  assert.equal(request.kind, "question");
-  assert.equal(request.mode, "form");
-  assert.equal(request.blocking, false);
-  assert.equal(request.message, "Codex has a question");
-  assert.deepEqual(request.fields.map(field => [field.name, field.type]), [
-    ["question-1", "select"], ["question-2", "text"], ["question-3", "text"], ["question-4", "text"],
-  ]);
-  const choice = request.fields[0];
-  assert.equal(choice.type, "select");
-  if (choice.type !== "select") throw new Error("Expected select");
-  assert.equal(choice.allowFreeText, true);
-  assert.equal(choice.defaultValue, choice.options[0].value);
-  assert.equal(choice.options[1].value, "Two");
-  assert.equal(request.fields[1].title, "Details?");
-  assert.match(choice.title, /REDACTED/);
-  assert.match(choice.options[0].label, /REDACTED/);
-  assert.ok(!JSON.stringify(requests).includes(secret));
-  assert.equal(transport.calls.some(call => call.method === "turn/steer"), false);
-}));
+/** 現在 turn に属する非同期質問だけを一度ずつ通知し、機密を除去した選択肢を返しつつ、未回答であっても turn 終了時に signal を失効させる。 */
+it("Codex async質問を重複なく非blockingで配信しturn終了で失効する", async () =>
+  workspace(async (directory) => {
+    const secret = "synthetic-question-api-key";
+    const first = {
+      ...message("ask-1", "ordinary text"),
+      delivery: "async",
+      questions: [
+        { title: "Which? " + secret, options: ["One " + secret, "Two"] },
+        { title: "Details?", options: [] },
+        { title: "Anything else?", options: null },
+        { title: "Final detail?" },
+      ],
+    };
+    const second = {
+      ...message("ask-2", ""),
+      delivery: "async",
+      questions: [{ title: "Independent?" }],
+    };
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("item/started", { item: first, threadId: "other-thread" }),
+      notification("item/completed", { item: first, turnId: "other-turn" }),
+      notification("item/started", {
+        item: message("plain", "Should I proceed?"),
+      }),
+      notification("item/started", { item: { ...first, delivery: "sync" } }),
+      notification("item/started", { item: first }),
+      notification("item/completed", { item: first }),
+      notification("item/completed", { item: second }),
+      completed([first, second, { ...second, id: "snapshot-only" }]),
+    ];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.signal = AbortSignal.timeout(10_000);
+    input.appSettings.codingProviderSettings.codex.apiKey = secret;
+    const requests: LiveElicitationRequest[] = [];
+    const signals: AbortSignal[] = [];
+    input.onElicitationRequest = (request, signal) => {
+      assert.ok(signal);
+      requests.push(request);
+      signals.push(signal);
+      if (request.requestId.endsWith(":ask-2"))
+        return { action: "accept", content: { "question-1": "answer" } };
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("expired")), {
+          once: true,
+        }),
+      );
+    };
+    await new CodexAdapter(undefined, {
+      /** 質問の開始・完了・snapshot の通知順を制御する transport を渡す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(input);
+    assert.deepEqual(
+      requests.map((request) => request.requestId),
+      ["async:turn-1:ask-1", "async:turn-1:ask-2"],
+    );
+    assert.ok(signals.every((signal) => signal.aborted));
+    const request = requests[0];
+    assert.equal(request.delivery, "user-message");
+    assert.equal(request.turnId, "turn-1");
+    assert.equal(request.kind, "question");
+    assert.equal(request.mode, "form");
+    assert.equal(request.blocking, false);
+    assert.equal(request.message, "Codex has a question");
+    assert.deepEqual(
+      request.fields.map((field) => [field.name, field.type]),
+      [
+        ["question-1", "select"],
+        ["question-2", "text"],
+        ["question-3", "text"],
+        ["question-4", "text"],
+      ],
+    );
+    const choice = request.fields[0];
+    assert.equal(choice.type, "select");
+    if (choice.type !== "select") throw new Error("Expected select");
+    assert.equal(choice.allowFreeText, true);
+    assert.equal(choice.defaultValue, choice.options[0].value);
+    assert.equal(choice.options[1].value, "Two");
+    assert.equal(request.fields[1].title, "Details?");
+    assert.match(choice.title, /REDACTED/);
+    assert.match(choice.options[0].label, /REDACTED/);
+    assert.ok(!JSON.stringify(requests).includes(secret));
+    assert.equal(
+      transport.calls.some((call) => call.method === "turn/steer"),
+      false,
+    );
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -382,21 +590,38 @@ it("Codex async質問を重複なく非blockingで配信しturn終了で失効�
 // impact = "質問表示の失敗が利用者へ伝わらずsessionが実行中のまま残る"
 // distinction = "既存のRPC interaction testは応答不要のasync質問callbackを通らない。同期とPromiseの2ケースで失敗伝播を確認する"
 // @end-test-value
-it("Codex async質問callbackの失敗をturnエラーとして伝える", async () => workspace(async (directory) => {
-  for (const synchronous of [true, false]) {
-    const transport = new FakeTransport();
-    transport.events = [notification("item/started", { item: { ...message("ask", ""), delivery: "async", questions: [{ title: "Question?" }] } })];
-    const input = createCodexRunSessionTurnInput(directory);
-    input.signal = AbortSignal.timeout(10_000);
-    input.onElicitationRequest = () => {
-      if (synchronous) throw new Error("question delivery failed");
-      return Promise.reject(new Error("question delivery failed"));
-    };
-    await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input),
-      (error: unknown) => error instanceof ProviderTurnError && /question delivery failed/.test(error.message));
-    assert.equal(transport.closed, true);
-  }
-}));
+/** 質問の通知先が同期例外でも Promise 拒否でも turn を失敗で終え、transport を残さない。 */
+it("Codex async質問callbackの失敗をturnエラーとして伝える", async () =>
+  workspace(async (directory) => {
+    for (const synchronous of [true, false]) {
+      const transport = new FakeTransport();
+      transport.events = [
+        notification("item/started", {
+          item: {
+            ...message("ask", ""),
+            delivery: "async",
+            questions: [{ title: "Question?" }],
+          },
+        }),
+      ];
+      const input = createCodexRunSessionTurnInput(directory);
+      input.signal = AbortSignal.timeout(10_000);
+      input.onElicitationRequest = () => {
+        if (synchronous) throw new Error("question delivery failed");
+        return Promise.reject(new Error("question delivery failed"));
+      };
+      await assert.rejects(
+        new CodexAdapter(undefined, {
+          /** 質問一件を配信した後のエラー処理を同じ transport で観測する。 */
+          createTransport: () => transport,
+        }).runSessionTurn(input),
+        (error: unknown) =>
+          error instanceof ProviderTurnError &&
+          /question delivery failed/.test(error.message),
+      );
+      assert.equal(transport.closed, true);
+    }
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -410,23 +635,37 @@ it("Codex async質問callbackの失敗をturnエラーとして伝える", async
 // impact = "取消済みturnの質問を回答できる状態が残り誤った追加入力を誘発する"
 // distinction = "既存のturn cancel testには非同期質問のsignalがない。合成質問1件でcancelとの接続を検証する"
 // @end-test-value
-it("Codex async質問の待機を外部cancelと連動する", async () => workspace(async (directory) => {
-  const controller = new AbortController();
-  const transport = new FakeTransport();
-  transport.events = [notification("item/started", { item: { ...message("ask", ""), delivery: "async", questions: [{ title: "Question?" }] } })];
-  const input = createCodexRunSessionTurnInput(directory);
-  input.signal = controller.signal;
-  let questionSignal: AbortSignal | undefined;
-  input.onElicitationRequest = (_request, signal) => {
-    questionSignal = signal;
-    controller.abort();
-    return Promise.reject(new Error("canceled question"));
-  };
-  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input),
-    (error: unknown) => error instanceof ProviderTurnError && error.canceled);
-  assert.equal(questionSignal?.aborted, true);
-}));
-
+/** 非同期質問を表示中に外から turn を取り消すと、取消結果が返り、質問の待機 signal も失効する。 */
+it("Codex async質問の待機を外部cancelと連動する", async () =>
+  workspace(async (directory) => {
+    const controller = new AbortController();
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("item/started", {
+        item: {
+          ...message("ask", ""),
+          delivery: "async",
+          questions: [{ title: "Question?" }],
+        },
+      }),
+    ];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.signal = controller.signal;
+    let questionSignal: AbortSignal | undefined;
+    input.onElicitationRequest = (_request, signal) => {
+      questionSignal = signal;
+      controller.abort();
+      return Promise.reject(new Error("canceled question"));
+    };
+    await assert.rejects(
+      new CodexAdapter(undefined, {
+        /** 取消を受ける質問を一件だけ投入した transport を使う。 */
+        createTransport: () => transport,
+      }).runSessionTurn(input),
+      (error: unknown) => error instanceof ProviderTurnError && error.canceled,
+    );
+    assert.equal(questionSignal?.aborted, true);
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -440,71 +679,164 @@ it("Codex async質問の待機を外部cancelと連動する", async () => works
 // impact = "利用者が取得済みtool結果をDetailsで読めない、入力を結果と誤認する、またはcredentialを公開する"
 // distinction = "projection単体や型検査ではadapterの成功・partial artifact接続と実Worker redactionを確認できない。短い合成通知の3終端ケースで接続を維持する"
 // @end-test-value
-it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持する", async () => workspace(async (directory) => {
-  const secret = "synthetic-mcp-api-secret";
-  for (const terminal of ["completed", "failed", "interrupted"] as const) {
-    const base = { type: "mcpToolCall", server: "fixture", tool: "lookup", arguments: { query: "synthetic input" }, error: null, status: "completed" };
-    const items = [
-      { ...base, id: "content", result: { structuredContent: null, content: [{ type: "text", text: "synthetic acquired result" }] } },
-      { ...base, id: "structured", result: { structuredContent: { answer: "structured acquired result" }, content: [{ type: "text", text: "not selected" }] } },
-      { ...base, id: "false", result: { structuredContent: false, content: [] } },
-      { ...base, id: "zero", result: { structuredContent: 0, content: [] } },
-      { ...base, id: "empty", result: { structuredContent: null, content: [] } },
-      { ...base, id: "unavailable", result: null, status: "inProgress" },
-      { ...base, id: "partial", result: { structuredContent: null, content: [{ type: "text", text: "partial acquired result" }] }, error: { message: "tool failure " + secret }, status: "failed" },
-      { ...base, id: "large", result: { structuredContent: null, content: [{ type: "text", text: "protected " + secret + " " + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 20) }] } },
-    ];
-    const transport = new FakeTransport();
-    transport.events = [
-      ...items.map(item => notification(item.status === "inProgress" ? "item/started" : "item/completed", { item })),
-      notification("turn/completed", { turn: { id: "turn-1", status: terminal, items, error: terminal === "failed" ? { message: "turn failure" } : null } }),
-    ];
-    const input = createCodexRunSessionTurnInput(directory);
-    input.appSettings.codingProviderSettings.codex.apiKey = secret;
-    const live = new Map<string, LiveRunStep>();
-    let rejected = false;
-    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, (_state, changes) => {
-      for (const id of changes.steps.removes) live.delete(id);
-      for (const step of changes.steps.upserts) live.set(step.id, step);
-    }).catch((error: unknown) => {
-      rejected = true;
-      assert.notEqual(terminal, "completed");
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.canceled, terminal === "interrupted");
-      return error.partialResult;
-    });
-    assert.equal(rejected, terminal !== "completed");
-    const operations = result.artifact!.operationTimeline!;
-    assert.deepEqual(operations.map(operation => operation.id), items.map(item => item.id));
-    const expectedDetails = [
-      '[{"type":"text","text":"synthetic acquired result"}]',
-      '{"answer":"structured acquired result"}', "false", "0", "[]", undefined,
-      '[{"type":"text","text":"partial acquired result"}]',
-    ];
-    for (const [index, item] of items.entries()) {
-      const operation = operations[index];
-      const step = live.get(item.id);
-      assert.ok(step, `${terminal}: missing live ${item.id}`);
-      assert.ok(step.details === operation.details, `${terminal}: inconsistent live/artifact ${item.id}`);
-      if (item.id !== "large") assert.equal(operation.details, expectedDetails[index]);
-      assert.equal(operation.status, item.status === "inProgress" ? "in_progress" : item.status);
-      assert.equal(step.status, operation.status);
-      assert.equal(operation.exitCode, undefined);
-      assert.equal(step.exitCode, undefined);
-      assert.deepEqual(step.error, operation.error);
+/** 取得済み MCP 結果の false・0・空と未取得を区別し、秘匿・省略済みの表示値を live と成功・失敗・取消の成果物で一致させる。 */
+it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持する", async () =>
+  workspace(async (directory) => {
+    const secret = "synthetic-mcp-api-secret";
+    for (const terminal of ["completed", "failed", "interrupted"] as const) {
+      const base = {
+        type: "mcpToolCall",
+        server: "fixture",
+        tool: "lookup",
+        arguments: { query: "synthetic input" },
+        error: null,
+        status: "completed",
+      };
+      const items = [
+        {
+          ...base,
+          id: "content",
+          result: {
+            structuredContent: null,
+            content: [{ type: "text", text: "synthetic acquired result" }],
+          },
+        },
+        {
+          ...base,
+          id: "structured",
+          result: {
+            structuredContent: { answer: "structured acquired result" },
+            content: [{ type: "text", text: "not selected" }],
+          },
+        },
+        {
+          ...base,
+          id: "false",
+          result: { structuredContent: false, content: [] },
+        },
+        { ...base, id: "zero", result: { structuredContent: 0, content: [] } },
+        {
+          ...base,
+          id: "empty",
+          result: { structuredContent: null, content: [] },
+        },
+        { ...base, id: "unavailable", result: null, status: "inProgress" },
+        {
+          ...base,
+          id: "partial",
+          result: {
+            structuredContent: null,
+            content: [{ type: "text", text: "partial acquired result" }],
+          },
+          error: { message: "tool failure " + secret },
+          status: "failed",
+        },
+        {
+          ...base,
+          id: "large",
+          result: {
+            structuredContent: null,
+            content: [
+              {
+                type: "text",
+                text:
+                  "protected " +
+                  secret +
+                  " " +
+                  "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 20),
+              },
+            ],
+          },
+        },
+      ];
+      const transport = new FakeTransport();
+      transport.events = [
+        ...items.map((item) =>
+          notification(
+            item.status === "inProgress" ? "item/started" : "item/completed",
+            { item },
+          ),
+        ),
+        notification("turn/completed", {
+          turn: {
+            id: "turn-1",
+            status: terminal,
+            items,
+            error: terminal === "failed" ? { message: "turn failure" } : null,
+          },
+        }),
+      ];
+      const input = createCodexRunSessionTurnInput(directory);
+      input.appSettings.codingProviderSettings.codex.apiKey = secret;
+      const live = new Map<string, LiveRunStep>();
+      let rejected = false;
+      const result = await new CodexAdapter(undefined, {
+        /** 終端ごとに組んだ MCP item 列を同じ Adapter と投影 Worker に渡す。 */
+        createTransport: () => transport,
+      })
+        .runSessionTurn(input, (_state, changes) => {
+          for (const id of changes.steps.removes) live.delete(id);
+          for (const step of changes.steps.upserts) live.set(step.id, step);
+        })
+        .catch((error: unknown) => {
+          rejected = true;
+          assert.notEqual(terminal, "completed");
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, terminal === "interrupted");
+          return error.partialResult;
+        });
+      assert.equal(rejected, terminal !== "completed");
+      const operations = result.artifact!.operationTimeline!;
+      assert.deepEqual(
+        operations.map((operation) => operation.id),
+        items.map((item) => item.id),
+      );
+      const expectedDetails = [
+        '[{"type":"text","text":"synthetic acquired result"}]',
+        '{"answer":"structured acquired result"}',
+        "false",
+        "0",
+        "[]",
+        undefined,
+        '[{"type":"text","text":"partial acquired result"}]',
+      ];
+      for (const [index, item] of items.entries()) {
+        const operation = operations[index];
+        const step = live.get(item.id);
+        assert.ok(step, `${terminal}: missing live ${item.id}`);
+        assert.ok(
+          step.details === operation.details,
+          `${terminal}: inconsistent live/artifact ${item.id}`,
+        );
+        if (item.id !== "large")
+          assert.equal(operation.details, expectedDetails[index]);
+        assert.equal(
+          operation.status,
+          item.status === "inProgress" ? "in_progress" : item.status,
+        );
+        assert.equal(step.status, operation.status);
+        assert.equal(operation.exitCode, undefined);
+        assert.equal(step.exitCode, undefined);
+        assert.deepEqual(step.error, operation.error);
+      }
+      const partial = operations.find(
+        (operation) => operation.id === "partial",
+      )!;
+      assert.ok(partial.error);
+      assert.ok(partial.error.message.startsWith("tool failure "));
+      assert.match(partial.error.message, /REDACTED/);
+      const large = operations.find(
+        (operation) => operation.id === "large",
+      )!.details!;
+      assert.ok(large.length <= PROVIDER_TEXT_PREVIEW_LIMIT + 100);
+      assert.match(large, /truncated/);
+      assert.match(large, /REDACTED/);
+      assert.ok(
+        !JSON.stringify([...live.values(), operations]).includes(secret),
+      );
+      assert.equal(transport.closed, true);
     }
-    const partial = operations.find(operation => operation.id === "partial")!;
-    assert.ok(partial.error);
-    assert.ok(partial.error.message.startsWith("tool failure "));
-    assert.match(partial.error.message, /REDACTED/);
-    const large = operations.find(operation => operation.id === "large")!.details!;
-    assert.ok(large.length <= PROVIDER_TEXT_PREVIEW_LIMIT + 100);
-    assert.match(large, /truncated/);
-    assert.match(large, /REDACTED/);
-    assert.ok(!JSON.stringify([...live.values(), operations]).includes(secret));
-    assert.equal(transport.closed, true);
-  }
-}));
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -519,47 +851,92 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 // distinction = "既存env testはHTTP tokenを扱わず、SDK型はnested native設定の存在依存やWorker越しの秘匿化を検査できない。fake transportでモデル通信せず確認する"
 // risk_tags = ["privacy", "authentication"]
 // @end-test-value
-it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async () => workspace(async (directory) => {
-  const input = createCodexRunSessionTurnInput(directory);
-  input.agentRuntimeBinding = {
-    bindingId: "binding", bindingReference: "reference", providerId: "codex",
-    executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
-  };
-  const transport = new FakeTransport();
-  const request = transport.request.bind(transport);
-  transport.request = async <T>(method: string, params?: unknown): Promise<T> => {
-    if (method === "config/read") {
-      transport.calls.push({ method, params });
-      return { config: { mcp_servers: {
-        "withmate-glossary": { command: "glossary-fixture" },
-        "withmate-session": { command: "session-fixture" },
-        "third-party": { command: "third-party-fixture" },
-      } } } as T;
-    }
-    return request<T>(method, params);
-  };
-  transport.events = [completed([message("http", "echo opaque-http-token")])];
-  let options: { env?: NodeJS.ProcessEnv; arguments?: readonly string[] } | undefined;
-  const adapter = new CodexAdapter(undefined, { createTransport: (value) => { options = value; return transport; } });
-  const output = await adapter.runSessionTurn(input);
-  assert.equal(options?.env?.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
-  const argumentsText = options!.arguments!.join("\n");
-  assert.match(argumentsText, /mcp_servers.withmate-glossary-http=.*env_http_headers/);
-  assert.match(argumentsText, /mcp_servers.withmate-session-http=.*env_http_headers/);
-  assert.doesNotMatch(argumentsText, /opaque-http-token/);
-  assert.deepEqual(transport.calls.find((call) => call.method === "config/read")?.params, { cwd: directory, includeLayers: false });
-  const thread = transport.calls.find((call) => call.method === "thread/start")!.params as { config: { mcp_servers: unknown } };
-  assert.deepEqual(thread.config.mcp_servers, {
-    "withmate-glossary": { enabled: false },
-    "withmate-session": { enabled: false },
-    "withmate-glossary-http": { url: "http://127.0.0.1:47891/glossary", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
-    "withmate-session-http": { url: "http://127.0.0.1:47891/session", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
-  });
-  assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
-  assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);
-  assert.doesNotMatch(JSON.stringify(output), /opaque-http-token/);
-}));
+/** HTTP MCP の token はプロセス環境のみに渡し、既存 managed 設定だけを無効化する。取得結果に echo された token も投影で秘匿する。 */
+it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async () =>
+  workspace(async (directory) => {
+    const input = createCodexRunSessionTurnInput(directory);
+    input.agentRuntimeBinding = {
+      bindingId: "binding",
+      bindingReference: "reference",
+      providerId: "codex",
+      executionGeneration: "generation",
+      transport: "env",
+      expiresAt: null,
+      managedMcp: {
+        glossaryUrl: "http://127.0.0.1:47891/glossary",
+        sessionUrl: "http://127.0.0.1:47891/session",
+        token: "opaque-http-token",
+      },
+    };
+    const transport = new FakeTransport();
+    const request = transport.request.bind(transport);
+    transport.request = async <T>(
+      method: string,
+      params?: unknown,
+    ): Promise<T> => {
+      if (method === "config/read") {
+        transport.calls.push({ method, params });
+        return {
+          config: {
+            mcp_servers: {
+              "withmate-glossary": { command: "glossary-fixture" },
+              "withmate-session": { command: "session-fixture" },
+              "third-party": { command: "third-party-fixture" },
+            },
+          },
+        } as T;
+      }
+      return request<T>(method, params);
+    };
+    transport.events = [completed([message("http", "echo opaque-http-token")])];
+    let options:
+      { env?: NodeJS.ProcessEnv; arguments?: readonly string[] } | undefined;
+    const adapter = new CodexAdapter(undefined, {
+      /** 子プロセスに渡される環境と引数を取り出し、MCP 資格情報の置き場所を検査できるようにする。 */
+      createTransport: (value) => {
+        options = value;
+        return transport;
+      },
+    });
+    const output = await adapter.runSessionTurn(input);
+    assert.equal(options?.env?.WITHMATE_MANAGED_MCP_TOKEN, "opaque-http-token");
+    const argumentsText = options!.arguments!.join("\n");
+    assert.match(
+      argumentsText,
+      /mcp_servers.withmate-glossary-http=.*env_http_headers/,
+    );
+    assert.match(
+      argumentsText,
+      /mcp_servers.withmate-session-http=.*env_http_headers/,
+    );
+    assert.doesNotMatch(argumentsText, /opaque-http-token/);
+    assert.deepEqual(
+      transport.calls.find((call) => call.method === "config/read")?.params,
+      { cwd: directory, includeLayers: false },
+    );
+    const thread = transport.calls.find(
+      (call) => call.method === "thread/start",
+    )!.params as { config: { mcp_servers: unknown } };
+    assert.deepEqual(thread.config.mcp_servers, {
+      "withmate-glossary": { enabled: false },
+      "withmate-session": { enabled: false },
+      "withmate-glossary-http": {
+        url: "http://127.0.0.1:47891/glossary",
+        env_http_headers: {
+          "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN",
+        },
+      },
+      "withmate-session-http": {
+        url: "http://127.0.0.1:47891/session",
+        env_http_headers: {
+          "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN",
+        },
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
+    assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);
+    assert.doesNotMatch(JSON.stringify(output), /opaque-http-token/);
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -573,44 +950,101 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
 // impact = "多数operationの履歴増幅と制御応答の遅延を防ぐ"
 // distinction = "共有map単体や型検査ではnative eventからcallbackへの変更情報とevent-loop接続を確認できない"
 // @end-test-value
-it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする", { timeout: 10_000 }, async () => workspace(async (directory) => {
-  let readEvents = 0;
-  let readEventsAtYield = -1;
-  let burstProbe: Promise<void> | undefined;
-  let initialStepsDelivered!: () => void;
-  const initialDelivery = new Promise<void>(resolve => { initialStepsDelivered = resolve; });
-  class BurstTransport extends FakeTransport {
-    override async nextEvent() {
-      readEvents += 1;
-      if (readEvents === 3) await initialDelivery;
-      if (readEvents > 3 && !burstProbe) burstProbe = new Promise<void>((resolve) => {
-        setImmediate(() => { readEventsAtYield = readEvents; resolve(); });
+/** 通知バーストの途中で予約した macrotask が実行され、live には一件の変更を未変更の step と一緒に再送しない。 */
+it(
+  "Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする",
+  { timeout: 10_000 },
+  async () =>
+    workspace(async (directory) => {
+      let readEvents = 0;
+      let readEventsAtYield = -1;
+      let burstProbe: Promise<void> | undefined;
+      let initialStepsDelivered!: () => void;
+      const initialDelivery = new Promise<void>((resolve) => {
+        initialStepsDelivered = resolve;
       });
-      return super.nextEvent();
-    }
-  }
-  const transport = new BurstTransport();
-  transport.events = [
-    notification("item/started", { item: { type: "commandExecution", id: "one", command: "one", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
-    notification("item/started", { item: { type: "commandExecution", id: "two", command: "two", aggregatedOutput: "", exitCode: null, status: "inProgress" } }),
-    notification("item/commandExecution/outputDelta", { itemId: "one", delta: "changed" }),
-    ...Array.from({ length: 100 }, () => notification("thread/status/changed", { status: "active" })),
-    completed(),
-  ];
-  const changes: RunSessionTurnProgressChanges[] = [];
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  await adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, change) => {
-    changes.push(change);
-    if (change.steps.upserts.some(step => step.id === "one") && change.steps.upserts.some(step => step.id === "two")) initialStepsDelivered();
-  });
-  assert.ok(burstProbe);
-  await burstProbe;
-  assert.deepEqual(changes.flatMap(change => change.steps.upserts.map(step => ({ id: step.id, details: step.details }))), [
-    { id: "one", details: "" }, { id: "two", details: "" }, { id: "one", details: "changed" },
-  ]);
-  assert.ok(changes.every(change => change.steps.removes.length === 0));
-  assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
-}));
+      /** 初期 step が配信されるまで後続通知を待ち、その後に読み進んだ位置と macrotask 実行位置を比較する transport。 */
+      class BurstTransport extends FakeTransport {
+        /** 初期配信を待つ三件目を境に、バースト中に予約した処理がいつ走るかを記録して通常の通知を返す。 */
+        override async nextEvent() {
+          readEvents += 1;
+          if (readEvents === 3) await initialDelivery;
+          if (readEvents > 3 && !burstProbe)
+            burstProbe = new Promise<void>((resolve) => {
+              setImmediate(() => {
+                readEventsAtYield = readEvents;
+                resolve();
+              });
+            });
+          return super.nextEvent();
+        }
+      }
+      const transport = new BurstTransport();
+      transport.events = [
+        notification("item/started", {
+          item: {
+            type: "commandExecution",
+            id: "one",
+            command: "one",
+            aggregatedOutput: "",
+            exitCode: null,
+            status: "inProgress",
+          },
+        }),
+        notification("item/started", {
+          item: {
+            type: "commandExecution",
+            id: "two",
+            command: "two",
+            aggregatedOutput: "",
+            exitCode: null,
+            status: "inProgress",
+          },
+        }),
+        notification("item/commandExecution/outputDelta", {
+          itemId: "one",
+          delta: "changed",
+        }),
+        ...Array.from({ length: 100 }, () =>
+          notification("thread/status/changed", { status: "active" }),
+        ),
+        completed(),
+      ];
+      const changes: RunSessionTurnProgressChanges[] = [];
+      const adapter = new CodexAdapter(undefined, {
+        /** 受信のバーストと yield を測る transport を使う。 */
+        createTransport: () => transport,
+      });
+      await adapter.runSessionTurn(
+        createCodexRunSessionTurnInput(directory),
+        (_state, change) => {
+          changes.push(change);
+          if (
+            change.steps.upserts.some((step) => step.id === "one") &&
+            change.steps.upserts.some((step) => step.id === "two")
+          )
+            initialStepsDelivered();
+        },
+      );
+      assert.ok(burstProbe);
+      await burstProbe;
+      assert.deepEqual(
+        changes.flatMap((change) =>
+          change.steps.upserts.map((step) => ({
+            id: step.id,
+            details: step.details,
+          })),
+        ),
+        [
+          { id: "one", details: "" },
+          { id: "two", details: "" },
+          { id: "one", details: "changed" },
+        ],
+      );
+      assert.ok(changes.every((change) => change.steps.removes.length === 0));
+      assert.ok(readEventsAtYield > 0 && readEventsAtYield < readEvents);
+    }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -624,48 +1058,102 @@ it("Codexは変更stepだけを渡しevent burst中にもmacrotaskへyieldする
 // impact = "Main snapshotと取消時Detailsに取得済み操作が欠落するか失敗を成功と誤認する"
 // distinction = "通常取消testはWorkerが変更を消費した後からcallbackまでのsignal競合を固定せず、final consumer拒否とは別の配送境界。2件の短いfixtureで確認する"
 // @end-test-value
-it("live応答と取消の交差でも変更を届けlive拒否時は終端flushする", { timeout: 10_000 }, async (context) => workspace(async (directory) => {
-  for (const scenario of ["cancel", "live-failure"] as const) {
-    const transport = new FakeTransport();
-    const command = { id: "one", type: "commandExecution", command: "one", aggregatedOutput: "acquired output", exitCode: 0, status: "completed" };
-    transport.events = [notification("item/completed", { item: command })];
-    const controller = new AbortController();
-    const call = CodexProjectionClient.prototype.call;
-    let intercepted = false;
-    let eventsApplied = false;
-    const spy = context.mock.method(CodexProjectionClient.prototype, "call", async function<T>(this: CodexProjectionClient, id: string, request: CodexProjectionCommand): Promise<T> {
-      if (scenario === "live-failure" && request.type === "live" && !request.force && eventsApplied && !intercepted) {
-        intercepted = true;
-        throw new Error("live response failed");
+/** live 応答が消費済みなら取消と交差しても変更を一度届け、応答が拒否された場合は終端 flush で操作詳細を回収する。 */
+it(
+  "live応答と取消の交差でも変更を届けlive拒否時は終端flushする",
+  { timeout: 10_000 },
+  async (context) =>
+    workspace(async (directory) => {
+      for (const scenario of ["cancel", "live-failure"] as const) {
+        const transport = new FakeTransport();
+        const command = {
+          id: "one",
+          type: "commandExecution",
+          command: "one",
+          aggregatedOutput: "acquired output",
+          exitCode: 0,
+          status: "completed",
+        };
+        transport.events = [notification("item/completed", { item: command })];
+        const controller = new AbortController();
+        const call = CodexProjectionClient.prototype.call;
+        let intercepted = false;
+        let eventsApplied = false;
+        const spy = context.mock.method(
+          CodexProjectionClient.prototype,
+          "call",
+          async function <T>(
+            this: CodexProjectionClient,
+            id: string,
+            request: CodexProjectionCommand,
+          ): Promise<T> {
+            if (
+              scenario === "live-failure" &&
+              request.type === "live" &&
+              !request.force &&
+              eventsApplied &&
+              !intercepted
+            ) {
+              intercepted = true;
+              throw new Error("live response failed");
+            }
+            const result = (await call.call(this, id, request)) as T;
+            if (request.type === "events") eventsApplied = true;
+            if (
+              scenario === "cancel" &&
+              request.type === "live" &&
+              (result as CodexProjectionProgress | null)?.changes.steps.upserts
+                .length &&
+              !intercepted
+            ) {
+              intercepted = true;
+              controller.abort();
+            }
+            return result;
+          },
+        );
+        const delivered: LiveRunStep[] = [];
+        try {
+          await assert.rejects(
+            new CodexAdapter(undefined, {
+              /** 同じ command 通知を使用し、取消と live 要求失敗の差を Worker 境界でのみ作る。 */
+              createTransport: () => transport,
+            }).runSessionTurn(
+              {
+                ...createCodexRunSessionTurnInput(directory),
+                signal: controller.signal,
+              },
+              (state, changes) => {
+                assert.equal(changes.snapshot, false);
+                if (intercepted) assert.equal(state.inputAvailable, false);
+                delivered.push(...changes.steps.upserts);
+              },
+            ),
+            (error: unknown) => {
+              assert.ok(error instanceof ProviderTurnError);
+              assert.equal(error.canceled, scenario === "cancel");
+              if (scenario === "live-failure")
+                assert.match(error.message, /live response failed/);
+              assert.equal(
+                error.partialResult.artifact?.operationTimeline?.[0].details,
+                "acquired output",
+              );
+              return true;
+            },
+          );
+          assert.equal(intercepted, true);
+          assert.deepEqual(
+            delivered.map((step) => [step.id, step.details]),
+            [["one", "acquired output"]],
+          );
+          assert.equal(transport.closed, true);
+        } finally {
+          spy.mock.restore();
+          controller.abort();
+        }
       }
-      const result = await call.call(this, id, request) as T;
-      if (request.type === "events") eventsApplied = true;
-      if (scenario === "cancel" && request.type === "live" && (result as CodexProjectionProgress | null)?.changes.steps.upserts.length && !intercepted) {
-        intercepted = true;
-        controller.abort();
-      }
-      return result;
-    });
-    const delivered: LiveRunStep[] = [];
-    try {
-      await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
-        { ...createCodexRunSessionTurnInput(directory), signal: controller.signal }, (state, changes) => {
-          assert.equal(changes.snapshot, false);
-          if (intercepted) assert.equal(state.inputAvailable, false);
-          delivered.push(...changes.steps.upserts);
-        }), (error: unknown) => {
-          assert.ok(error instanceof ProviderTurnError);
-          assert.equal(error.canceled, scenario === "cancel");
-          if (scenario === "live-failure") assert.match(error.message, /live response failed/);
-          assert.equal(error.partialResult.artifact?.operationTimeline?.[0].details, "acquired output");
-          return true;
-        });
-      assert.equal(intercepted, true);
-      assert.deepEqual(delivered.map(step => [step.id, step.details]), [["one", "acquired output"]]);
-      assert.equal(transport.closed, true);
-    } finally { spy.mock.restore(); controller.abort(); }
-  }
-}));
+    }),
+);
 // @test-value v2
 // kind = "invariant"
 // claim = "cleanup失敗はnative completed/failed/interruptedの結果を変えず診断を残し実終了まで競合実行を拒否する"
@@ -678,57 +1166,100 @@ it("live応答と取消の交差でも変更を届けlive拒否時は終端flush
 // impact = "完了結果の喪失と同一workspaceでのprocess競合を防止する"
 // distinction = "transport単体ではnative結果とadapterの再実行入口の組合せを確認できない"
 // @end-test-value
-it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否する", async () => workspace(async (directory) => {
-  for (const status of ["completed", "failed", "interrupted"]) {
-    let release!: () => void;
-    const termination = new Promise<void>((resolve) => { release = resolve; });
-    class CleanupFailure extends FakeTransport {
-      override async close() { throw new Error("cleanup failure"); }
-      override whenClosed() { return termination; }
+/** native の完了・失敗・中断を後処理エラーで置き換えず、実終了まで同一 Session・workspace・thread の実行を拒む。 */
+it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否する", async () =>
+  workspace(async (directory) => {
+    for (const status of ["completed", "failed", "interrupted"]) {
+      let release!: () => void;
+      const termination = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      /** 終了操作の例外とプロセスの実終了を別々に発生させる。 */
+      class CleanupFailure extends FakeTransport {
+        /** 終了要求に失敗した状況を再現し、待機中の所有権検証へ進ませる。 */
+        override async close() {
+          throw new Error("cleanup failure");
+        }
+        /** テストが解除する終了待機を返す。 */
+        override whenClosed() {
+          return termination;
+        }
+      }
+      let first = true;
+      const transport = new CleanupFailure();
+      transport.events = [completed([message("answer", "retained")], status)];
+      const adapter = new CodexAdapter(undefined, {
+        /** 初回だけ終了失敗を返す transport、実終了後の再試行には通常完了する別の transport を選ぶ。 */
+        createTransport: () => {
+          if (first) {
+            first = false;
+            return transport;
+          }
+          const next = new FakeTransport();
+          next.events = [completed([message("answer", "next")])];
+          return next;
+        },
+      });
+      const input = createCodexRunSessionTurnInput(directory);
+      let cleanup: Promise<void> | undefined;
+      input.onCleanupPending = (completion) => {
+        cleanup = completion;
+      };
+      let rejected = false;
+      const result = await adapter
+        .runSessionTurn(input)
+        .catch((error: unknown) => {
+          rejected = true;
+          assert.ok(error instanceof ProviderTurnError);
+          assert.notEqual(status, "completed");
+          assert.equal(error.canceled, status === "interrupted");
+          assert.equal(
+            error.message,
+            status === "failed" ? "provider failed" : "Codex turn interrupted",
+          );
+          return error.partialResult;
+        });
+      assert.equal(rejected, status !== "completed");
+      assert.equal(result.assistantText, "retained");
+      assert.ok(
+        result.providerMetadata?.some(
+          (item) => item.source === "codex-adapter.process-cleanup",
+        ),
+      );
+      assert.match(JSON.stringify(result.providerMetadata), /cleanup failure/);
+      assert.ok(cleanup);
+      await assert.rejects(
+        adapter.runSessionTurn(input),
+        /cleanup is still pending/,
+      );
+      const sameSession = createCodexRunSessionTurnInput(
+        path.join(directory, "other"),
+      );
+      sameSession.session.id = input.session.id;
+      await assert.rejects(
+        adapter.runSessionTurn(sameSession),
+        /cleanup is still pending/,
+      );
+      const sameWorkspace = createCodexRunSessionTurnInput(directory);
+      sameWorkspace.session.id = "other-session";
+      await assert.rejects(
+        adapter.runSessionTurn(sameWorkspace),
+        /cleanup is still pending/,
+      );
+      const sameThread = createCodexRunSessionTurnInput(
+        path.join(directory, "other"),
+      );
+      sameThread.session.id = "other-thread-session";
+      sameThread.session.threadId = "thread-1";
+      await assert.rejects(
+        adapter.runSessionTurn(sameThread),
+        /cleanup is still pending/,
+      );
+      release();
+      await cleanup;
+      assert.equal((await adapter.runSessionTurn(input)).assistantText, "next");
     }
-    let first = true;
-    const transport = new CleanupFailure();
-    transport.events = [completed([message("answer", "retained")], status)];
-    const adapter = new CodexAdapter(undefined, { createTransport: () => {
-      if (first) { first = false; return transport; }
-      const next = new FakeTransport();
-      next.events = [completed([message("answer", "next")])];
-      return next;
-    } });
-    const input = createCodexRunSessionTurnInput(directory);
-    let cleanup: Promise<void> | undefined;
-    input.onCleanupPending = (completion) => { cleanup = completion; };
-    let rejected = false;
-    const result = await adapter.runSessionTurn(input).catch((error: unknown) => {
-      rejected = true;
-      assert.ok(error instanceof ProviderTurnError);
-      assert.notEqual(status, "completed");
-      assert.equal(error.canceled, status === "interrupted");
-      assert.equal(error.message, status === "failed" ? "provider failed" : "Codex turn interrupted");
-      return error.partialResult;
-    });
-    assert.equal(rejected, status !== "completed");
-    assert.equal(result.assistantText, "retained");
-    assert.ok(result.providerMetadata?.some((item) => item.source === "codex-adapter.process-cleanup"));
-    assert.match(JSON.stringify(result.providerMetadata), /cleanup failure/);
-    assert.ok(cleanup);
-    await assert.rejects(adapter.runSessionTurn(input), /cleanup is still pending/);
-    const sameSession = createCodexRunSessionTurnInput(path.join(directory, "other"));
-    sameSession.session.id = input.session.id;
-    await assert.rejects(adapter.runSessionTurn(sameSession), /cleanup is still pending/);
-    const sameWorkspace = createCodexRunSessionTurnInput(directory);
-    sameWorkspace.session.id = "other-session";
-    await assert.rejects(adapter.runSessionTurn(sameWorkspace), /cleanup is still pending/);
-    const sameThread = createCodexRunSessionTurnInput(path.join(directory, "other"));
-    sameThread.session.id = "other-thread-session";
-    sameThread.session.threadId = "thread-1";
-    await assert.rejects(adapter.runSessionTurn(sameThread), /cleanup is still pending/);
-    release();
-    await cleanup;
-    assert.equal((await adapter.runSessionTurn(input)).assistantText, "next");
-  }
-}));
-
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -742,41 +1273,102 @@ it("cleanup失敗をoutcomeから分離し実終了まで再実行を拒否す�
 // impact = "turn中の指示変更を履歴できず、秘密情報や過大なpayloadが保存されることを防ぐ"
 // distinction = "共有履歴helperではACK確認とnative steer送信内容の関連付けを検査できない"
 // @end-test-value
-it("受理steerの本文と添付を秘匿してbounded履歴へ残す", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  const input = createCodexRunSessionTurnInput(directory);
-  input.appSettings.codingProviderSettings.codex.apiKey = "fake-steer-key";
-  let ready!: () => void;
-  const available = new Promise<void>((resolve) => { ready = resolve; });
-  const run = adapter.runSessionTurn(input, (state) => { if (state.inputAvailable) ready(); });
-  await available;
-  const attachments: RunSessionTurnInput["attachments"] = [
-    { id: "file", kind: "file", source: "text", displayPath: "note.txt", workspaceRelativePath: "note.txt", isOutsideWorkspace: false, absolutePath: path.join(directory, "note.txt") },
-    { id: "image", kind: "image", source: "markdown-image", displayPath: "image.png", workspaceRelativePath: "image.png", isOutsideWorkspace: false, absolutePath: path.join(directory, "image.png") },
-  ];
-  await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "修正して fake-steer-key", attachments });
-  transport.steerResponse = Promise.resolve({ turnId: "wrong-turn" });
-  await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "unaccepted-marker", attachments: [] }), /unexpected turn/);
-  transport.steerResponse = null;
-  for (let index = 0; index < 10; index += 1) await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "large " + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2), attachments: [] });
-  transport.push(completed([message("answer", "done")]));
-  const result = await run;
-  const raw = result.providerMetadata!.map((metadata) => metadata.payload) as Array<{ type: string; data: any }>;
-  const accepted = raw.find((item) => item.type === "withmate.accepted_steer")!;
-  assert.equal(accepted.data.turnId, "turn-1");
-  assert.equal(accepted.data.threadId, "thread-1");
-  assert.match(accepted.data.input[0].text, /修正して/);
-  assert.ok(accepted.data.input[0].text.includes(attachments[0].absolutePath));
-  assert.deepEqual(accepted.data.input[1], { type: "localImage", path: attachments[1].absolutePath });
-  assert.ok(!JSON.stringify(result.providerMetadata).includes("fake-steer-key"));
-  assert.ok(!JSON.stringify(result.providerMetadata).includes("unaccepted-marker"));
-  assert.match(JSON.stringify(result.providerMetadata), /truncated/i);
-  assert.ok(JSON.stringify(result.providerMetadata).length <= PROVIDER_RAW_ITEMS_JSON_LIMIT + 10000);
-  const sent = transport.calls.find((call) => call.method === "turn/steer")!.params as any;
-  assert.ok(sent.input[0].text.includes("fake-steer-key"));
-  assert.equal(result.assistantText, "done");
-}));
+/** 一致 ACK を得た steer の本文・添付は対応 turn の履歴に残るが、秘密値や拒否された入力を保存せず、巨大な入力も上限付きにする。 */
+it("受理steerの本文と添付を秘匿してbounded履歴へ残す", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    const adapter = new CodexAdapter(undefined, {
+      /** steer の native 引数と受理 ACK を同じ通話の中で観測する。 */
+      createTransport: () => transport,
+    });
+    const input = createCodexRunSessionTurnInput(directory);
+    input.appSettings.codingProviderSettings.codex.apiKey = "fake-steer-key";
+    let ready!: () => void;
+    const available = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const run = adapter.runSessionTurn(input, (state) => {
+      if (state.inputAvailable) ready();
+    });
+    await available;
+    const attachments: RunSessionTurnInput["attachments"] = [
+      {
+        id: "file",
+        kind: "file",
+        source: "text",
+        displayPath: "note.txt",
+        workspaceRelativePath: "note.txt",
+        isOutsideWorkspace: false,
+        absolutePath: path.join(directory, "note.txt"),
+      },
+      {
+        id: "image",
+        kind: "image",
+        source: "markdown-image",
+        displayPath: "image.png",
+        workspaceRelativePath: "image.png",
+        isOutsideWorkspace: false,
+        absolutePath: path.join(directory, "image.png"),
+      },
+    ];
+    await adapter.steerSessionTurn({
+      sessionId: input.session.id,
+      expectedTurnId: "turn-1",
+      userMessage: "修正して fake-steer-key",
+      attachments,
+    });
+    transport.steerResponse = Promise.resolve({ turnId: "wrong-turn" });
+    await assert.rejects(
+      adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "turn-1",
+        userMessage: "unaccepted-marker",
+        attachments: [],
+      }),
+      /unexpected turn/,
+    );
+    transport.steerResponse = null;
+    for (let index = 0; index < 10; index += 1)
+      await adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "turn-1",
+        userMessage: "large " + "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2),
+        attachments: [],
+      });
+    transport.push(completed([message("answer", "done")]));
+    const result = await run;
+    const raw = result.providerMetadata!.map(
+      (metadata) => metadata.payload,
+    ) as Array<{ type: string; data: any }>;
+    const accepted = raw.find(
+      (item) => item.type === "withmate.accepted_steer",
+    )!;
+    assert.equal(accepted.data.turnId, "turn-1");
+    assert.equal(accepted.data.threadId, "thread-1");
+    assert.match(accepted.data.input[0].text, /修正して/);
+    assert.ok(
+      accepted.data.input[0].text.includes(attachments[0].absolutePath),
+    );
+    assert.deepEqual(accepted.data.input[1], {
+      type: "localImage",
+      path: attachments[1].absolutePath,
+    });
+    assert.ok(
+      !JSON.stringify(result.providerMetadata).includes("fake-steer-key"),
+    );
+    assert.ok(
+      !JSON.stringify(result.providerMetadata).includes("unaccepted-marker"),
+    );
+    assert.match(JSON.stringify(result.providerMetadata), /truncated/i);
+    assert.ok(
+      JSON.stringify(result.providerMetadata).length <=
+        PROVIDER_RAW_ITEMS_JSON_LIMIT + 10000,
+    );
+    const sent = transport.calls.find((call) => call.method === "turn/steer")!
+      .params as any;
+    assert.ok(sent.input[0].text.includes("fake-steer-key"));
+    assert.equal(result.assistantText, "done");
+  }));
 // @test-value v2
 // kind = "contract"
 // claim = "terminal control callbackが非同期未完了の間はCodex turnを成功にせず、解決は正常結果、拒否はpartial付きfailureとして返す"
@@ -789,59 +1381,108 @@ it("受理steerの本文と添付を秘匿してbounded履歴へ残す", async (
 // impact = "consumerの未完了・失敗を成功へ置換して終了後の状態と保存結果を誤認する"
 // distinction = "既存slow live testは通常snapshotを止めるだけで、独立したcontrol callbackのPromiseを止めない"
 // @end-test-value
-it("Codexは非同期control callbackの完了と拒否をturn結果へ反映する", { timeout: 10_000 }, async () => workspace(async (directory) => {
-  for (const outcome of ["resolve", "reject"] as const) {
-    const transport = new FakeTransport();
-    transport.events = [completed([message("answer", "retained answer")])];
-    let resolveControl!: () => void;
-    let rejectControl!: (error: Error) => void;
-    const controlGate = new Promise<void>((resolve, reject) => { resolveControl = resolve; rejectControl = reject; });
-    let sawControl!: () => void;
-    const controlStarted = new Promise<void>((resolve) => { sawControl = resolve; });
-    let held = false;
-    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
-      createCodexRunSessionTurnInput(directory), (state) => {
-        if (!state.inputAvailable && !held) { held = true; sawControl(); return controlGate; }
-      },
-    );
-    const settled = operation.then(() => "resolved", () => "rejected");
-    let pendingGuard: NodeJS.Timeout | undefined;
-    try {
-      await controlStarted;
-      const beforeRelease = await Promise.race([settled, new Promise<string>((resolve) => {
-        pendingGuard = setTimeout(() => resolve("pending"), 250);
-      })]);
-      assert.equal(beforeRelease, "pending");
-      if (outcome === "resolve") {
-        resolveControl();
-        assert.equal((await operation).assistantText, "retained answer");
-      } else {
-        rejectControl(new Error("control consumer failed"));
-        await assert.rejects(operation, (error: unknown) => {
-          assert.ok(error instanceof ProviderTurnError);
-          assert.equal(error.canceled, false);
-          assert.match(error.message, /control consumer failed/);
-          assert.equal(error.partialResult.assistantText, "retained answer");
-          return true;
+/** 入力閉鎖の非同期通知が完了するまで turn の結果を決めず、解決なら本文、拒否なら本文を含む部分結果とエラーを返す。 */
+it(
+  "Codexは非同期control callbackの完了と拒否をturn結果へ反映する",
+  { timeout: 10_000 },
+  async () =>
+    workspace(async (directory) => {
+      for (const outcome of ["resolve", "reject"] as const) {
+        const transport = new FakeTransport();
+        transport.events = [completed([message("answer", "retained answer")])];
+        let resolveControl!: () => void;
+        let rejectControl!: (error: Error) => void;
+        const controlGate = new Promise<void>((resolve, reject) => {
+          resolveControl = resolve;
+          rejectControl = reject;
         });
+        let sawControl!: () => void;
+        const controlStarted = new Promise<void>((resolve) => {
+          sawControl = resolve;
+        });
+        let held = false;
+        const operation = new CodexAdapter(undefined, {
+          /** 完了通知を一件送った状態で、consumer の保留だけをテストから操作する。 */
+          createTransport: () => transport,
+        }).runSessionTurn(
+          createCodexRunSessionTurnInput(directory),
+          (state) => {
+            if (!state.inputAvailable && !held) {
+              held = true;
+              sawControl();
+              return controlGate;
+            }
+          },
+        );
+        const settled = operation.then(
+          () => "resolved",
+          () => "rejected",
+        );
+        let pendingGuard: NodeJS.Timeout | undefined;
+        try {
+          await controlStarted;
+          const beforeRelease = await Promise.race([
+            settled,
+            new Promise<string>((resolve) => {
+              pendingGuard = setTimeout(() => resolve("pending"), 250);
+            }),
+          ]);
+          assert.equal(beforeRelease, "pending");
+          if (outcome === "resolve") {
+            resolveControl();
+            assert.equal((await operation).assistantText, "retained answer");
+          } else {
+            rejectControl(new Error("control consumer failed"));
+            await assert.rejects(operation, (error: unknown) => {
+              assert.ok(error instanceof ProviderTurnError);
+              assert.equal(error.canceled, false);
+              assert.match(error.message, /control consumer failed/);
+              assert.equal(
+                error.partialResult.assistantText,
+                "retained answer",
+              );
+              return true;
+            });
+          }
+        } finally {
+          clearTimeout(pendingGuard);
+          resolveControl();
+          await settled;
+        }
       }
-    } finally {
-      clearTimeout(pendingGuard);
-      resolveControl();
-      await settled;
-    }
-  }
-}));
+    }),
+);
 
-function notification(method: string, params: Record<string, unknown>): CodexProtocolEvent {
+/** 既定 thread・turn に属する native 通知を作る。使用量の fixture では累計がなければ最終応答の値を使う。 */
+function notification(
+  method: string,
+  params: Record<string, unknown>,
+): CodexProtocolEvent {
   if (method === "thread/tokenUsage/updated") {
     const usage = params.tokenUsage as Record<string, unknown>;
     params = { ...params, tokenUsage: { total: usage.last, ...usage } };
   }
-  return { kind: "notification", method, params: { threadId: "thread-1", turnId: "turn-1", ...params } };
+  return {
+    kind: "notification",
+    method,
+    params: { threadId: "thread-1", turnId: "turn-1", ...params },
+  };
 }
-function message(id: string, text: string) { return { type: "agentMessage", id, text, phase: null }; }
-function completed(items: unknown[] = [], status = "completed") { return notification("turn/completed", { turn: { id: "turn-1", status, items, error: status === "failed" ? { message: "provider failed" } : null } }); }
+/** ストリームと終端の両方へ投入できる、固定型の assistant メッセージを組み立てる。 */
+function message(id: string, text: string) {
+  return { type: "agentMessage", id, text, phase: null };
+}
+/** 同じ turn に対する終端通知を、指定 item と失敗時のエラー情報付きで組み立てる。 */
+function completed(items: unknown[] = [], status = "completed") {
+  return notification("turn/completed", {
+    turn: {
+      id: "turn-1",
+      status,
+      items,
+      error: status === "failed" ? { message: "provider failed" } : null,
+    },
+  });
+}
 
 // @test-value v2
 // kind = "contract"
@@ -855,31 +1496,108 @@ function completed(items: unknown[] = [], status = "completed") { return notific
 // risk_tags = ["authorization", "privacy"]
 // distinction = "共通審査のキューtestと通常Codex turnのtestは、構造化審査のApp Server往復と審査役の操作との区別を検出しない"
 // @end-test-value
+/** 一つの native Auto Review thread へ審査を連続送信し、現 turn の構造化回答だけを採用して別モデルへの変更や手動介入を拒む。 */
 it("runs each Codex approval review on the same native Auto Review thread", async () => {
-  const results = [{ decision: "allow_once", reason: "Authorized." }, { decision: "deny", reason: "Scope changed." }];
+  const results = [
+    { decision: "allow_once", reason: "Authorized." },
+    { decision: "deny", reason: "Scope changed." },
+  ];
   let turns = 0;
   let interactionAnswered = false;
+  /** 審査用の thread を模擬し、過去 turn の応答、当該 turn の回答、モデル変更、手動要求を段階的に返す。 */
   class ReviewTransport extends FakeTransport {
-    constructor(private readonly reviewer = "auto_review") { super(); }
+    /** native Reviewer の初期値を Auto Review とし、実際には User が返る拒否ケースも作れるようにする。 */
+    constructor(private readonly reviewer = "auto_review") {
+      super();
+    }
+    /** 審査 RPC を記録し、各 turn 専用の識別子とシナリオに対応する native イベントを返す。 */
     override async request<T>(method: string, params?: unknown): Promise<T> {
       await super.request(method, params);
-      if (method === "config/read") return { config: { mcp_servers: { "withmate-session": { command: "legacy" } } } } as T;
-      if (method === "thread/start") return { thread: { id: "thread-1" }, model: "chosen-codex",
-        reasoningEffort: "high", approvalPolicy: "on-request", approvalsReviewer: this.reviewer } as T;
+      if (method === "config/read")
+        return {
+          config: {
+            mcp_servers: { "withmate-session": { command: "legacy" } },
+          },
+        } as T;
+      if (method === "thread/start")
+        return {
+          thread: { id: "thread-1" },
+          model: "chosen-codex",
+          reasoningEffort: "high",
+          approvalPolicy: "on-request",
+          approvalsReviewer: this.reviewer,
+        } as T;
       if (method === "turn/start") {
         const turnId = `review-${turns++}`;
         if (turns <= 2) {
-          this.push(notification("item/completed", { turnId: "previous", item: { type: "agentMessage", phase: "final_answer", text: "{}" } }));
-          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "commentary", text: "I might allow." } }));
-          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "final_answer", text: JSON.stringify(results[turns - 1]) } }));
-          this.push(notification("turn/completed", { turn: { id: turnId, status: "completed" } }));
+          this.push(
+            notification("item/completed", {
+              turnId: "previous",
+              item: { type: "agentMessage", phase: "final_answer", text: "{}" },
+            }),
+          );
+          this.push(
+            notification("item/completed", {
+              turnId,
+              item: {
+                type: "agentMessage",
+                phase: "commentary",
+                text: "I might allow.",
+              },
+            }),
+          );
+          this.push(
+            notification("item/completed", {
+              turnId,
+              item: {
+                type: "agentMessage",
+                phase: "final_answer",
+                text: JSON.stringify(results[turns - 1]),
+              },
+            }),
+          );
+          this.push(
+            notification("turn/completed", {
+              turn: { id: turnId, status: "completed" },
+            }),
+          );
         } else if (turns === 3) {
-          this.push(notification("model/rerouted", { turnId, toModel: "replacement-model" }));
-          this.push(notification("item/completed", { turnId, item: { type: "agentMessage", phase: "final_answer", text: JSON.stringify(results[0]) } }));
-          this.push(notification("turn/completed", { turn: { id: turnId, status: "completed" } }));
+          this.push(
+            notification("model/rerouted", {
+              turnId,
+              toModel: "replacement-model",
+            }),
+          );
+          this.push(
+            notification("item/completed", {
+              turnId,
+              item: {
+                type: "agentMessage",
+                phase: "final_answer",
+                text: JSON.stringify(results[0]),
+              },
+            }),
+          );
+          this.push(
+            notification("turn/completed", {
+              turn: { id: turnId, status: "completed" },
+            }),
+          );
         } else {
-          this.push({ kind: "serverRequest", id: 4, method: "item/commandExecution/requestApproval",
-            params: { threadId: "thread-1", turnId }, async respond() { interactionAnswered = true; }, async reject() { interactionAnswered = true; } });
+          this.push({
+            kind: "serverRequest",
+            id: 4,
+            method: "item/commandExecution/requestApproval",
+            params: { threadId: "thread-1", turnId },
+            /** 審査側の手動要求に許可応答したかを記録する。 */
+            async respond() {
+              interactionAnswered = true;
+            },
+            /** 手動要求に拒否応答した場合も、応答した事実を検出できるようにする。 */
+            async reject() {
+              interactionAnswered = true;
+            },
+          });
         }
         return { turn: { id: turnId } } as T;
       }
@@ -888,48 +1606,147 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
   }
   const transport = new ReviewTransport();
   const controller = new AbortController();
-  const adapter = new CodexAdapter(undefined, { createTransport: ({ env, arguments: args }) => {
-    assert.equal(env?.WITHMATE_MANAGED_MCP_TOKEN, "session-secret");
-    assert.doesNotMatch(JSON.stringify(args), /session-secret/);
-    return transport;
-  } });
+  const adapter = new CodexAdapter(undefined, {
+    /** 審査プロセスへ渡す MCP token が環境にあり引数にはないことを確認してから transport を返す。 */
+    createTransport: ({ env, arguments: args }) => {
+      assert.equal(env?.WITHMATE_MANAGED_MCP_TOKEN, "session-secret");
+      assert.doesNotMatch(JSON.stringify(args), /session-secret/);
+      return transport;
+    },
+  });
   const input = {
-    selection: { providerId: "codex", model: "chosen-codex", reasoningEffort: "high" },
-    workspacePath: process.cwd(), appSettings: createDefaultAppSettings(), signal: controller.signal,
-    binding: { bindingId: "id", bindingReference: "ref", transport: "env", providerId: "copilot", executionGeneration: "gen", expiresAt: null,
-      managedMcp: { sessionUrl: "http://127.0.0.1/session", glossaryUrl: "http://127.0.0.1/glossary", token: "session-secret" } },
+    selection: {
+      providerId: "codex",
+      model: "chosen-codex",
+      reasoningEffort: "high",
+    },
+    workspacePath: process.cwd(),
+    appSettings: createDefaultAppSettings(),
+    signal: controller.signal,
+    binding: {
+      bindingId: "id",
+      bindingReference: "ref",
+      transport: "env",
+      providerId: "copilot",
+      executionGeneration: "gen",
+      expiresAt: null,
+      managedMcp: {
+        sessionUrl: "http://127.0.0.1/session",
+        glossaryUrl: "http://127.0.0.1/glossary",
+        token: "session-secret",
+      },
+    },
   } as const;
   const inactiveNativeReview = new ReviewTransport("user");
-  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => inactiveNativeReview }).openApprovalReviewer(input), /native Auto Review conversation/);
+  await assert.rejects(
+    new CodexAdapter(undefined, {
+      /** native Reviewer が User を返す専用 transport で起動拒否を観測する。 */
+      createTransport: () => inactiveNativeReview,
+    }).openApprovalReviewer(input),
+    /native Auto Review conversation/,
+  );
   assert.equal(inactiveNativeReview.closed, true);
   const reviewer = await adapter.openApprovalReviewer(input);
   try {
-    const starts = transport.calls.filter(({ method }) => method === "thread/start");
+    const starts = transport.calls.filter(
+      ({ method }) => method === "thread/start",
+    );
     assert.equal(starts.length, 1);
-    const start = starts[0].params as { model: string; approvalPolicy: string; approvalsReviewer: string; ephemeral: boolean;
-      allowProviderModelFallback: boolean; developerInstructions: string; config: { model_reasoning_effort: string; mcp_servers: unknown } };
-    assert.deepEqual([start.model, start.approvalPolicy, start.approvalsReviewer, start.config.model_reasoning_effort],
-      ["chosen-codex", "on-request", "auto_review", "high"]);
+    const start = starts[0].params as {
+      model: string;
+      approvalPolicy: string;
+      approvalsReviewer: string;
+      ephemeral: boolean;
+      allowProviderModelFallback: boolean;
+      developerInstructions: string;
+      config: { model_reasoning_effort: string; mcp_servers: unknown };
+    };
+    assert.deepEqual(
+      [
+        start.model,
+        start.approvalPolicy,
+        start.approvalsReviewer,
+        start.config.model_reasoning_effort,
+      ],
+      ["chosen-codex", "on-request", "auto_review", "high"],
+    );
     assert.equal(start.ephemeral, true);
     assert.equal(start.allowProviderModelFallback, false);
-    assert.match(start.developerInstructions, /do not execute it.*Skip routine development steps.*WithMate history/s);
-    assert.match(start.developerInstructions, /Return deny if [^.]*missing or cannot be retrieved/);
-    assert.match(start.developerInstructions, /Return ask_user only when the evidence is available and the remaining choice requires the user's judgment/);
-    assert.match(JSON.stringify(start.config.mcp_servers), /withmate-session-http.*127\.0\.0\.1\/session/);
+    assert.match(
+      start.developerInstructions,
+      /do not execute it.*Skip routine development steps.*WithMate history/s,
+    );
+    assert.match(
+      start.developerInstructions,
+      /Return deny if [^.]*missing or cannot be retrieved/,
+    );
+    assert.match(
+      start.developerInstructions,
+      /Return ask_user only when the evidence is available and the remaining choice requires the user's judgment/,
+    );
+    assert.match(
+      JSON.stringify(start.config.mcp_servers),
+      /withmate-session-http.*127\.0\.0\.1\/session/,
+    );
     assert.doesNotMatch(JSON.stringify(start), /session-secret/);
     assert.deepEqual(await reviewer.review("first operation"), results[0]);
     assert.deepEqual(await reviewer.review("second operation"), results[1]);
-    await assert.rejects(reviewer.review("operation routed to another model"), /model changed/);
-    await assert.rejects(reviewer.review("operation requiring reviewer interaction"), /requires user interaction/);
+    await assert.rejects(
+      reviewer.review("operation routed to another model"),
+      /model changed/,
+    );
+    await assert.rejects(
+      reviewer.review("operation requiring reviewer interaction"),
+      /requires user interaction/,
+    );
     assert.equal(interactionAnswered, false);
-    const requests = transport.calls.filter(({ method }) => method === "turn/start");
-    assert.deepEqual(requests.map(({ params }) => {
-      const { threadId, approvalsReviewer, approvalPolicy, model, effort, outputSchema, input } = params as {
-        threadId: string; approvalsReviewer: string; approvalPolicy: string; model: string; effort: string;
-        outputSchema: { required: string[] }; input: Array<{ text: string }> };
-      return [threadId, approvalPolicy, approvalsReviewer, model, effort, outputSchema.required, input[0].text];
-    }), ["first operation", "second operation", "operation routed to another model", "operation requiring reviewer interaction"].map((operation) =>
-      ["thread-1", "on-request", "auto_review", "chosen-codex", "high", ["decision", "reason"], operation]));
+    const requests = transport.calls.filter(
+      ({ method }) => method === "turn/start",
+    );
+    assert.deepEqual(
+      requests.map(({ params }) => {
+        const {
+          threadId,
+          approvalsReviewer,
+          approvalPolicy,
+          model,
+          effort,
+          outputSchema,
+          input,
+        } = params as {
+          threadId: string;
+          approvalsReviewer: string;
+          approvalPolicy: string;
+          model: string;
+          effort: string;
+          outputSchema: { required: string[] };
+          input: Array<{ text: string }>;
+        };
+        return [
+          threadId,
+          approvalPolicy,
+          approvalsReviewer,
+          model,
+          effort,
+          outputSchema.required,
+          input[0].text,
+        ];
+      }),
+      [
+        "first operation",
+        "second operation",
+        "operation routed to another model",
+        "operation requiring reviewer interaction",
+      ].map((operation) => [
+        "thread-1",
+        "on-request",
+        "auto_review",
+        "chosen-codex",
+        "high",
+        ["decision", "reason"],
+        operation,
+      ]),
+    );
   } finally {
     controller.abort();
     assert.equal(transport.closed, true);
@@ -948,39 +1765,72 @@ it("runs each Codex approval review on the same native Auto Review thread", asyn
 // impact = "正常な未対応通知を利用者が調査できず、または実行の成功失敗を誤認する"
 // distinction = "Worker単体testではMain loggerへの配線、callbackなしの経路、失敗時のbatch回収を検出できない"
 // @end-test-value
-it("未対応通知を既存loggerへ出しterminal結果とpartialを維持する", async () => workspace(async (directory) => {
-  for (const status of ["completed", "failed"]) {
-    const transport = new FakeTransport();
-    transport.events = [
-      notification("future/display", { value: "synthetic text", sequence: 1 }),
-      notification("future/display", { value: "synthetic text", sequence: 2 }),
-      notification("future/foreign", { threadId: "other" }),
-      notification("future/foreign", { turnId: "other" }),
-      notification("serverRequest/resolved", { requestId: "synthetic-request" }),
-      notification("item/agentMessage/delta", { itemId: "missing", delta: "noop" }),
-      completed([message("answer", "done")], status),
-    ];
-    const logs: CodexLog[] = [];
-    const input = createCodexRunSessionTurnInput(directory);
-    const run = new CodexAdapter((entry) => logs.push(entry), { createTransport: () => transport })
-      .runSessionTurn(input, status === "failed" ? () => {} : undefined);
-    if (status === "completed") assert.equal((await run).assistantText, "done");
-    else await assert.rejects(run, (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.match(error.message, /provider failed/);
-      assert.equal(error.partialResult.assistantText, "done");
-      return true;
-    });
-    const diagnostics = logs.filter(entry => entry.kind === "codex.run.unhandled-notification");
-    assert.equal(diagnostics.length, 2);
-    assert.deepEqual(diagnostics.map(entry => entry.level), ["info", "info"]);
-    assert.deepEqual(diagnostics.map(entry => entry.data), [1, 2].map(sequence => ({
-      sessionId: input.session.id, threadId: "thread-1", turnId: "turn-1", method: "future/display",
-      params: { threadId: "thread-1", turnId: "turn-1", value: "synthetic text", sequence },
-    })));
-    assert.equal(transport.closed, true);
-  }
-}));
+/** 現在 scope の未対応通知だけを受信順に logger へ渡し、progress callback の有無に関係なく確定結果または失敗部分の本文を保持する。 */
+it("未対応通知を既存loggerへ出しterminal結果とpartialを維持する", async () =>
+  workspace(async (directory) => {
+    for (const status of ["completed", "failed"]) {
+      const transport = new FakeTransport();
+      transport.events = [
+        notification("future/display", {
+          value: "synthetic text",
+          sequence: 1,
+        }),
+        notification("future/display", {
+          value: "synthetic text",
+          sequence: 2,
+        }),
+        notification("future/foreign", { threadId: "other" }),
+        notification("future/foreign", { turnId: "other" }),
+        notification("serverRequest/resolved", {
+          requestId: "synthetic-request",
+        }),
+        notification("item/agentMessage/delta", {
+          itemId: "missing",
+          delta: "noop",
+        }),
+        completed([message("answer", "done")], status),
+      ];
+      const logs: CodexLog[] = [];
+      const input = createCodexRunSessionTurnInput(directory);
+      const run = new CodexAdapter((entry) => logs.push(entry), {
+        /** 診断生成に使う模擬通知をこの反復の transport から供給する。 */
+        createTransport: () => transport,
+      }).runSessionTurn(input, status === "failed" ? () => {} : undefined);
+      if (status === "completed")
+        assert.equal((await run).assistantText, "done");
+      else
+        await assert.rejects(run, (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.match(error.message, /provider failed/);
+          assert.equal(error.partialResult.assistantText, "done");
+          return true;
+        });
+      const diagnostics = logs.filter(
+        (entry) => entry.kind === "codex.run.unhandled-notification",
+      );
+      assert.equal(diagnostics.length, 2);
+      assert.deepEqual(
+        diagnostics.map((entry) => entry.level),
+        ["info", "info"],
+      );
+      assert.deepEqual(
+        diagnostics.map((entry) => entry.data),
+        [1, 2].map((sequence) => ({
+          sessionId: input.session.id,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          method: "future/display",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            value: "synthetic text",
+            sequence,
+          },
+        })),
+      );
+      assert.equal(transport.closed, true);
+    }
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -994,41 +1844,86 @@ it("未対応通知を既存loggerへ出しterminal結果とpartialを維持す�
 // impact = "取消不能なturnと切断時の取得済み結果消失を防ぐ"
 // distinction = "既存terminal失敗とabort callback失敗はidle受信を単独で解除した元原因とDetailsを確認しない。短い2ケースを実Workerで処理する"
 // @end-test-value
-it("idle受信の取消とtransport失敗を元原因・partial付きで解除する", { timeout: 10_000 }, async () => workspace(async (directory) => {
-  for (const mode of ["cancel", "transport"] as const) {
-    const transport = new FakeTransport();
-    transport.events = [
-      notification("item/completed", { item: message("answer", "acquired body") }),
-      notification("item/completed", { item: { type: "commandExecution", id: "command", command: "check", aggregatedOutput: "acquired details", exitCode: 0, status: "completed" } }),
-    ];
-    const controller = new AbortController();
-    let bodySeen!: () => void;
-    const projected = new Promise<void>(resolve => { bodySeen = resolve; });
-    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(
-      { ...createCodexRunSessionTurnInput(directory), signal: controller.signal },
-      (state, changes) => { if (state.assistantText && changes.steps.upserts.length) bodySeen(); },
-    );
-    void operation.catch(() => undefined);
-    try {
-      await projected;
-      assert.ok(transport.waiter, "turn must be idle before failure/cancel");
-      const cause = new Error(`idle ${mode} cause`);
-      if (mode === "cancel") controller.abort(cause);
-      else { transport.failure = cause; await transport.close(); }
-      await assert.rejects(operation, error => {
-        assert.ok(error instanceof ProviderTurnError);
-        assert.equal(error.message, cause.message);
-        assert.equal(error.canceled, mode === "cancel");
-        assert.equal(error.partialResult.assistantText, "acquired body");
-        assert.equal(error.partialResult.artifact?.operationTimeline?.find(item => item.type === "command_execution")?.details, "acquired details");
-        return true;
-      });
-      assert.equal(transport.calls.some(call => call.method === "turn/interrupt"), mode === "cancel");
-      assert.equal(transport.closed, true);
-      assert.equal(transport.waiter, null);
-    } finally { controller.abort(); await transport.close(); await operation.catch(() => undefined); }
-  }
-}));
+/** 受信が idle のときの外部取消と切断で元の待機を解除し、原因と取得済み本文・操作詳細を部分結果に残す。 */
+it(
+  "idle受信の取消とtransport失敗を元原因・partial付きで解除する",
+  { timeout: 10_000 },
+  async () =>
+    workspace(async (directory) => {
+      for (const mode of ["cancel", "transport"] as const) {
+        const transport = new FakeTransport();
+        transport.events = [
+          notification("item/completed", {
+            item: message("answer", "acquired body"),
+          }),
+          notification("item/completed", {
+            item: {
+              type: "commandExecution",
+              id: "command",
+              command: "check",
+              aggregatedOutput: "acquired details",
+              exitCode: 0,
+              status: "completed",
+            },
+          }),
+        ];
+        const controller = new AbortController();
+        let bodySeen!: () => void;
+        const projected = new Promise<void>((resolve) => {
+          bodySeen = resolve;
+        });
+        const operation = new CodexAdapter(undefined, {
+          /** 本文を渡したあと受信待ちへ移る transport を使い、取消または切断を注入できるようにする。 */
+          createTransport: () => transport,
+        }).runSessionTurn(
+          {
+            ...createCodexRunSessionTurnInput(directory),
+            signal: controller.signal,
+          },
+          (state, changes) => {
+            if (state.assistantText && changes.steps.upserts.length) bodySeen();
+          },
+        );
+        void operation.catch(() => undefined);
+        try {
+          await projected;
+          assert.ok(
+            transport.waiter,
+            "turn must be idle before failure/cancel",
+          );
+          const cause = new Error(`idle ${mode} cause`);
+          if (mode === "cancel") controller.abort(cause);
+          else {
+            transport.failure = cause;
+            await transport.close();
+          }
+          await assert.rejects(operation, (error) => {
+            assert.ok(error instanceof ProviderTurnError);
+            assert.equal(error.message, cause.message);
+            assert.equal(error.canceled, mode === "cancel");
+            assert.equal(error.partialResult.assistantText, "acquired body");
+            assert.equal(
+              error.partialResult.artifact?.operationTimeline?.find(
+                (item) => item.type === "command_execution",
+              )?.details,
+              "acquired details",
+            );
+            return true;
+          });
+          assert.equal(
+            transport.calls.some((call) => call.method === "turn/interrupt"),
+            mode === "cancel",
+          );
+          assert.equal(transport.closed, true);
+          assert.equal(transport.waiter, null);
+        } finally {
+          controller.abort();
+          await transport.close();
+          await operation.catch(() => undefined);
+        }
+      }
+    }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -1042,41 +1937,70 @@ it("idle受信の取消とtransport失敗を元原因・partial付きで解除�
 // impact = "Worker故障でturnが停止し取消・再実行できなくなることを防ぐ"
 // distinction = "projection client単体ではadapterのidle受信解除と原因選択を通らない。実Workerの一要求を保持してerror eventを注入する短いケース"
 // @end-test-value
-it("idle受信中のWorker失敗を元原因で返してWorkerを解放する", { timeout: 10_000 }, async context => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [notification("probe/fail", {})];
-  let worker!: Worker;
-  let dispatched!: () => void;
-  const pending = new Promise<void>(resolve => { dispatched = resolve; });
-  const postMessage = Worker.prototype.postMessage;
-  context.mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
-    if ((args[0] as CodexProjectionRequest).command.type === "events") { worker = this; dispatched(); return; }
-    return postMessage.apply(this, args);
-  });
-  let termination: Promise<number> | undefined;
-  const terminate = Worker.prototype.terminate;
-  context.mock.method(Worker.prototype, "terminate", function (this: Worker) {
-    termination = terminate.call(this);
-    return termination;
-  });
-  const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
-  void operation.catch(() => undefined);
-  try {
-    await pending;
-    assert.ok(transport.waiter, "turn must be idle with a pending Worker request");
-    worker.emit("error", new Error("injected Worker failure"));
-    await assert.rejects(operation, error => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.message, "Codex projection Worker failed.");
-      assert.equal(error.canceled, false);
-      return true;
-    });
-    assert.equal(transport.closed, true);
-    assert.ok(termination);
-    await termination;
-    assert.equal(worker.threadId, -1);
-  } finally { await transport.close(); await operation.catch(() => undefined); }
-}));
+/** 実投影 Worker の処理待ちと transport の idle 受信が重なっても、Worker 障害を原因として turn を閉じ、Worker 自体も終了する。 */
+it(
+  "idle受信中のWorker失敗を元原因で返してWorkerを解放する",
+  { timeout: 10_000 },
+  async (context) =>
+    workspace(async (directory) => {
+      const transport = new FakeTransport();
+      transport.events = [notification("probe/fail", {})];
+      let worker!: Worker;
+      let dispatched!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        dispatched = resolve;
+      });
+      const postMessage = Worker.prototype.postMessage;
+      context.mock.method(
+        Worker.prototype,
+        "postMessage",
+        function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+          if ((args[0] as CodexProjectionRequest).command.type === "events") {
+            worker = this;
+            dispatched();
+            return;
+          }
+          return postMessage.apply(this, args);
+        },
+      );
+      let termination: Promise<number> | undefined;
+      const terminate = Worker.prototype.terminate;
+      context.mock.method(
+        Worker.prototype,
+        "terminate",
+        function (this: Worker) {
+          termination = terminate.call(this);
+          return termination;
+        },
+      );
+      const operation = new CodexAdapter(undefined, {
+        /** Worker 障害の注入後、受信待ちが解除されることを観測できる transport を渡す。 */
+        createTransport: () => transport,
+      }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+      void operation.catch(() => undefined);
+      try {
+        await pending;
+        assert.ok(
+          transport.waiter,
+          "turn must be idle with a pending Worker request",
+        );
+        worker.emit("error", new Error("injected Worker failure"));
+        await assert.rejects(operation, (error) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.message, "Codex projection Worker failed.");
+          assert.equal(error.canceled, false);
+          return true;
+        });
+        assert.equal(transport.closed, true);
+        assert.ok(termination);
+        await termination;
+        assert.equal(worker.threadId, -1);
+      } finally {
+        await transport.close();
+        await operation.catch(() => undefined);
+      }
+    }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -1090,9 +2014,14 @@ it("idle受信中のWorker失敗を元原因で返してWorkerを解放する", 
 // impact = "Providerが出力後に切断した場合の正常結果と取得済みpartialの消失を防ぐ"
 // distinction = "FakeTransportのterminal testは実EOFとACK前FIFOを通らずtransport単体はWorkerの最終投影を確認しない。2つの短いローカルNode processのみ使う"
 // @end-test-value
-it("実stdioのEOF前completedと取得済み本文・Detailsを保持する", { timeout: 10_000 }, async () => workspace(async directory => {
-  for (const terminal of [true, false]) {
-    const fixture = String.raw`
+/** 実 stdio が EOF になる前に受信した本文・操作詳細を順に適用し、終端通知があった場合だけ成功とする。 */
+it(
+  "実stdioのEOF前completedと取得済み本文・Detailsを保持する",
+  { timeout: 10_000 },
+  async () =>
+    workspace(async (directory) => {
+      for (const terminal of [true, false]) {
+        const fixture = String.raw`
 import { createInterface } from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 createInterface({ input: process.stdin }).on('line', line => {
@@ -1109,28 +2038,44 @@ createInterface({ input: process.stdin }).on('line', line => {
 });
 setInterval(() => {}, 1000);
 `;
-    let transport!: CodexAppServerTransport;
-    const adapter = new CodexAdapter(undefined, { createTransport: options => {
-      transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
-      return transport;
-    } });
-    const operation = adapter.runSessionTurn({ ...createCodexRunSessionTurnInput(directory), signal: AbortSignal.timeout(5_000) });
-    let result: Awaited<typeof operation> | undefined;
-    if (terminal) result = await operation;
-    else await assert.rejects(operation, error => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.match(error.message, /stdout disconnected/);
-      assert.equal(error.canceled, false);
-      result = error.partialResult;
-      return true;
-    });
-    assert.ok(result);
-    assert.equal(result.assistantText, "before EOF");
-    assert.equal(result.artifact?.operationTimeline?.find(item => item.type === "command_execution")?.details, "EOF details");
-    assert.equal(transport.state, "closed");
-  }
-}));
-
+        let transport!: CodexAppServerTransport;
+        const adapter = new CodexAdapter(undefined, {
+          /** EOF の前に書き出す順序を制御する短い Node fixture を実 stdio transport に接続する。 */
+          createTransport: (options) => {
+            transport = new CodexAppServerTransport({
+              ...options,
+              executable: process.execPath,
+              arguments: ["--input-type=module", "-e", fixture],
+            });
+            return transport;
+          },
+        });
+        const operation = adapter.runSessionTurn({
+          ...createCodexRunSessionTurnInput(directory),
+          signal: AbortSignal.timeout(5_000),
+        });
+        let result: Awaited<typeof operation> | undefined;
+        if (terminal) result = await operation;
+        else
+          await assert.rejects(operation, (error) => {
+            assert.ok(error instanceof ProviderTurnError);
+            assert.match(error.message, /stdout disconnected/);
+            assert.equal(error.canceled, false);
+            result = error.partialResult;
+            return true;
+          });
+        assert.ok(result);
+        assert.equal(result.assistantText, "before EOF");
+        assert.equal(
+          result.artifact?.operationTimeline?.find(
+            (item) => item.type === "command_execution",
+          )?.details,
+          "EOF details",
+        );
+        assert.equal(transport.state, "closed");
+      }
+    }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -1144,34 +2089,66 @@ setInterval(() => {}, 1000);
 // impact = "再接続中の一時失敗を利用者が確認できず原因把握できないこととsecret漏洩を防ぐ"
 // distinction = "state単体のerror解除testはWorker応答とadapterの33ms coalescing間の通知消失を観測しない"
 // @end-test-value
-it("Codexはlive timer前に一時errorを通知して回復時に解除する", async (context) => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  const secret = "synthetic-transient-error-key";
-  transport.events = [
-    notification("error", { threadId: "other", error: { message: "outside scope" } }),
-    notification("error", { error: { message: `retry ${secret}` }, willRetry: true }),
-    notification("item/completed", { item: message("answer", "recovered") }),
-    completed(),
-  ];
-  const input = createCodexRunSessionTurnInput(directory);
-  input.appSettings.codingProviderSettings.codex.apiKey = secret;
-  const progress: Array<{ error: string; assistant: string; upserts: number }> = [];
-  try {
-    const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, (state, changes) => {
-      if (progress.length === 0) context.mock.timers.enable({ apis: ["setTimeout"] });
-      progress.push({ error: state.errorMessage, assistant: state.assistantText, upserts: changes?.steps.upserts.length ?? 0 });
-    });
-    const errorIndex = progress.findIndex((frame) => frame.error === "retry [WITHMATE_BINDING_REFERENCE_REDACTED]");
-    assert.ok(errorIndex >= 0);
-    assert.equal(progress[errorIndex].assistant, "");
-    assert.equal(progress[errorIndex].upserts, 0);
-    assert.ok(progress.slice(errorIndex + 1).some((frame) => frame.error === ""));
-    assert.ok(progress.every((frame) => !frame.error.includes(secret) && frame.error !== "outside scope"));
-    assert.equal(progress.at(-1)?.assistant, "recovered");
-    assert.equal(progress.at(-1)?.error, "");
-    assert.equal(result.assistantText, "recovered");
-  } finally { context.mock.timers.reset(); }
-}));
+/** live timer を止めても現在 thread の一時エラーだけが即時に秘匿表示され、正常な item の到着で表示が解除される。 */
+it("Codexはlive timer前に一時errorを通知して回復時に解除する", async (context) =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    const secret = "synthetic-transient-error-key";
+    transport.events = [
+      notification("error", {
+        threadId: "other",
+        error: { message: "outside scope" },
+      }),
+      notification("error", {
+        error: { message: `retry ${secret}` },
+        willRetry: true,
+      }),
+      notification("item/completed", { item: message("answer", "recovered") }),
+      completed(),
+    ];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.appSettings.codingProviderSettings.codex.apiKey = secret;
+    const progress: Array<{
+      error: string;
+      assistant: string;
+      upserts: number;
+    }> = [];
+    try {
+      const result = await new CodexAdapter(undefined, {
+        /** 対象内外に異なるエラーを流し、回復 item までを同じ transport から渡す。 */
+        createTransport: () => transport,
+      }).runSessionTurn(input, (state, changes) => {
+        if (progress.length === 0)
+          context.mock.timers.enable({ apis: ["setTimeout"] });
+        progress.push({
+          error: state.errorMessage,
+          assistant: state.assistantText,
+          upserts: changes?.steps.upserts.length ?? 0,
+        });
+      });
+      const errorIndex = progress.findIndex(
+        (frame) =>
+          frame.error === "retry [WITHMATE_BINDING_REFERENCE_REDACTED]",
+      );
+      assert.ok(errorIndex >= 0);
+      assert.equal(progress[errorIndex].assistant, "");
+      assert.equal(progress[errorIndex].upserts, 0);
+      assert.ok(
+        progress.slice(errorIndex + 1).some((frame) => frame.error === ""),
+      );
+      assert.ok(
+        progress.every(
+          (frame) =>
+            !frame.error.includes(secret) && frame.error !== "outside scope",
+        ),
+      );
+      assert.equal(progress.at(-1)?.assistant, "recovered");
+      assert.equal(progress.at(-1)?.error, "");
+      assert.equal(result.assistantText, "recovered");
+    } finally {
+      context.mock.timers.reset();
+    }
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -1185,58 +2162,126 @@ it("Codexはlive timer前に一時errorを通知して回復時に解除する",
 // impact = "描画の遅いWindowが保存・承認・取消を止めず取得済み応答を維持する"
 // distinction = "Worker client単体とRuntimeのslow writer testでは実adapterのlive timerと承認・取消の並行経路を通らない"
 // @end-test-value
-it("live consumerが遅くても承認・terminalと取消を独立させる", { timeout: 10_000 }, async () => workspace(async (directory) => {
-  for (const outcome of ["complete", "cancel"] as const) {
-    const transport = new FakeTransport();
-    transport.events = [notification("item/started", { item: message("answer", "") }), notification("item/agentMessage/delta", { itemId: "answer", delta: "i" })];
-    let releaseLive!: () => void;
-    const liveGate = new Promise<void>(resolve => { releaseLive = resolve; });
-    let sawLive!: () => void;
-    const firstLive = new Promise<void>(resolve => { sawLive = resolve; });
-    let sawApproval!: () => void;
-    const approved = new Promise<void>(resolve => { sawApproval = resolve; });
-    let sawClosedInput!: () => void;
-    const closedInput = new Promise<void>(resolve => { sawClosedInput = resolve; });
-    let liveCount = 0;
-    let heldLive = false;
-    const controller = new AbortController();
-    const input = { ...createCodexRunSessionTurnInput(directory), signal: controller.signal, onApprovalRequest: () => "approve" as const };
-    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-    const operation = adapter.runSessionTurn(input, async (state, changes) => {
-
-      if (!state.inputAvailable) sawClosedInput();
-      {
-        liveCount += 1;
-        if (state.assistantText === "i" && !heldLive) { heldLive = true; sawLive(); await liveGate; }
+/** 本文 consumer を保留しても承認に応答でき、終端・取消で先に入力を閉じて最後の全文を通常または部分結果に返す。 */
+it(
+  "live consumerが遅くても承認・terminalと取消を独立させる",
+  { timeout: 10_000 },
+  async () =>
+    workspace(async (directory) => {
+      for (const outcome of ["complete", "cancel"] as const) {
+        const transport = new FakeTransport();
+        transport.events = [
+          notification("item/started", { item: message("answer", "") }),
+          notification("item/agentMessage/delta", {
+            itemId: "answer",
+            delta: "i",
+          }),
+        ];
+        let releaseLive!: () => void;
+        const liveGate = new Promise<void>((resolve) => {
+          releaseLive = resolve;
+        });
+        let sawLive!: () => void;
+        const firstLive = new Promise<void>((resolve) => {
+          sawLive = resolve;
+        });
+        let sawApproval!: () => void;
+        const approved = new Promise<void>((resolve) => {
+          sawApproval = resolve;
+        });
+        let sawClosedInput!: () => void;
+        const closedInput = new Promise<void>((resolve) => {
+          sawClosedInput = resolve;
+        });
+        let liveCount = 0;
+        let heldLive = false;
+        const controller = new AbortController();
+        const input = {
+          ...createCodexRunSessionTurnInput(directory),
+          signal: controller.signal,
+          /** 本文側が停止していても、承認には即時許可で答えられるようにする。 */
+          onApprovalRequest: () => "approve" as const,
+        };
+        const adapter = new CodexAdapter(undefined, {
+          /** 本文バーストと承認要求を同じ transport に追加できるようにする。 */
+          createTransport: () => transport,
+        });
+        const operation = adapter.runSessionTurn(
+          input,
+          async (state, changes) => {
+            if (!state.inputAvailable) sawClosedInput();
+            {
+              liveCount += 1;
+              if (state.assistantText === "i" && !heldLive) {
+                heldLive = true;
+                sawLive();
+                await liveGate;
+              }
+            }
+          },
+        );
+        void operation.catch(() => undefined);
+        try {
+          await firstLive;
+          for (let index = 0; index < 200; index += 1)
+            transport.push(
+              notification("item/agentMessage/delta", {
+                itemId: "answer",
+                delta: "x",
+              }),
+            );
+          transport.push({
+            kind: "serverRequest",
+            id: 1,
+            method: "item/commandExecution/requestApproval",
+            params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
+            /** native 側に許可が返ったことを照合し、承認が処理済みであることをテストへ通知する。 */
+            respond: async (result) => {
+              assert.deepEqual(result, { decision: "accept" });
+              sawApproval();
+            },
+            /** 許可シナリオで拒否が返った場合は予期しない結果として失敗させる。 */
+            reject: async () => {
+              throw new Error("Approval was rejected");
+            },
+          });
+          await approved;
+          assert.equal(heldLive, true);
+          if (outcome === "complete") transport.push(completed());
+          else controller.abort();
+          await closedInput;
+          releaseLive();
+          const expected = `i${"x".repeat(200)}`;
+          if (outcome === "complete")
+            assert.equal((await operation).assistantText, expected);
+          else
+            await assert.rejects(operation, (error) => {
+              assert.ok(error instanceof ProviderTurnError);
+              assert.equal(error.canceled, true);
+              assert.equal(error.partialResult.assistantText, expected);
+              return true;
+            });
+          assert.ok(liveCount <= 4);
+        } finally {
+          releaseLive();
+          controller.abort();
+          await operation.catch(() => undefined);
+        }
       }
-    });
-    void operation.catch(() => undefined);
-    try {
-      await firstLive;
-      for (let index = 0; index < 200; index += 1) transport.push(notification("item/agentMessage/delta", { itemId: "answer", delta: "x" }));
-      transport.push({ kind: "serverRequest", id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId: "turn-1", command: "run" },
-        respond: async result => { assert.deepEqual(result, { decision: "accept" }); sawApproval(); }, reject: async () => { throw new Error("Approval was rejected"); } });
-      await approved;
-      assert.equal(heldLive, true);
-      if (outcome === "complete") transport.push(completed());
-      else controller.abort();
-      await closedInput;
-      releaseLive();
-      const expected = `i${"x".repeat(200)}`;
-      if (outcome === "complete") assert.equal((await operation).assistantText, expected);
-      else await assert.rejects(operation, error => {
-        assert.ok(error instanceof ProviderTurnError);
-        assert.equal(error.canceled, true);
-        assert.equal(error.partialResult.assistantText, expected);
-        return true;
-      });
-      assert.ok(liveCount <= 4);
-    } finally { releaseLive(); controller.abort(); await operation.catch(() => undefined); }
+    }),
+);
+/** 各ケースに未使用の一時 workspace を提供し、正常・失敗にかかわらず最後に削除する。 */
+async function workspace<T>(
+  run: (directory: string) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-codex-native-"),
+  );
+  try {
+    return await run(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
-}));
-async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-native-"));
-  try { return await run(directory); } finally { await rm(directory, { recursive: true, force: true }); }
 }
 // @test-value v2
 // kind = "contract"
@@ -1250,26 +2295,37 @@ async function workspace<T>(run: (directory: string) => Promise<T>): Promise<T> 
 // impact = "live表示consumerが失敗したturnを正常完了と誤認させず取得済み応答を保持する"
 // distinction = "通常progress失敗testではcoalescing後のfinallyだけで届く本文consumer失敗を検出できない;短いfake transportで確認する"
 // @end-test-value
-it("最終snapshotのconsumer rejectionをpartial付き失敗へ伝播する", async (context) => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [completed([message("answer", "final acquired body")])];
-  let bodyCallbacks = 0;
-  try {
-    const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), state => {
-      if (state.inputAvailable) context.mock.timers.enable({ apis: ["setTimeout"] });
-      if (state.assistantText) { bodyCallbacks += 1; return Promise.reject(new Error("final consumer failure")); }
-    });
-    await assert.rejects(operation, error => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.message, "final consumer failure");
-      assert.equal(error.partialResult.assistantText, "final acquired body");
-      assert.equal(error.canceled, false);
-      return true;
-    });
-    assert.equal(bodyCallbacks, 1);
-    assert.equal(transport.closed, true);
-  } finally { context.mock.timers.reset(); }
-}));
+/** タイマーを使わず届く本文付き最終 snapshot が一度だけ拒否された場合、取得本文を部分結果に残し transport を閉じる。 */
+it("最終snapshotのconsumer rejectionをpartial付き失敗へ伝播する", async (context) =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    transport.events = [completed([message("answer", "final acquired body")])];
+    let bodyCallbacks = 0;
+    try {
+      const operation = new CodexAdapter(undefined, {
+        /** 途中 delta なしで終端項目だけを通知する transport を使う。 */
+        createTransport: () => transport,
+      }).runSessionTurn(createCodexRunSessionTurnInput(directory), (state) => {
+        if (state.inputAvailable)
+          context.mock.timers.enable({ apis: ["setTimeout"] });
+        if (state.assistantText) {
+          bodyCallbacks += 1;
+          return Promise.reject(new Error("final consumer failure"));
+        }
+      });
+      await assert.rejects(operation, (error) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.message, "final consumer failure");
+        assert.equal(error.partialResult.assistantText, "final acquired body");
+        assert.equal(error.canceled, false);
+        return true;
+      });
+      assert.equal(bodyCallbacks, 1);
+      assert.equal(transport.closed, true);
+    } finally {
+      context.mock.timers.reset();
+    }
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -1283,37 +2339,72 @@ it("最終snapshotのconsumer rejectionをpartial付き失敗へ伝播する", a
 // impact = "制御consumer失敗を正常完了と誤認せず入力受付と実行結果を一致させる"
 // distinction = "同期callback失敗とslow live testではfinal配送後にrejectするcontrol Promiseを検知できない;明示gateのfake transportで確認する"
 // @end-test-value
-it("final配送後のterminal control rejectionをpartial付き失敗へ伝播する", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [completed([message("answer", "terminal acquired body")])];
-  let rejectControl!: (error: Error) => void;
-  const control = new Promise<void>((_resolve, reject) => { rejectControl = reject; });
-  let sawFinal!: () => void;
-  const finalSeen = new Promise<void>(resolve => { sawFinal = resolve; });
-  let heldControl = false;
-  let settled = false;
-  const input = createCodexRunSessionTurnInput(directory);
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  const operation = adapter.runSessionTurn(input, state => {
-    if (!state.inputAvailable && !heldControl) { heldControl = true; return control; }
-    if (state.assistantText === "terminal acquired body") sawFinal();
-  });
-  void operation.then(() => { settled = true; }, () => { settled = true; });
-  try {
-    await finalSeen;
-    await new Promise<void>(resolve => setImmediate(resolve));
-    assert.equal(settled, false);
-    await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "late", attachments: [] }), /no longer accepting/);
-    rejectControl(new Error("delayed control failure"));
-    await assert.rejects(operation, error => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.message, "delayed control failure");
-      assert.equal(error.partialResult.assistantText, "terminal acquired body");
-      return true;
+/** 最終本文が先に届いても制御 callback の結果を待ち、追加入力は既に閉じたまま、遅い拒否を本文付きの失敗として返す。 */
+it("final配送後のterminal control rejectionをpartial付き失敗へ伝播する", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    transport.events = [
+      completed([message("answer", "terminal acquired body")]),
+    ];
+    let rejectControl!: (error: Error) => void;
+    const control = new Promise<void>((_resolve, reject) => {
+      rejectControl = reject;
     });
-    assert.equal(transport.closed, true);
-  } finally { rejectControl(new Error("test cleanup")); await operation.catch(() => undefined); }
-}));
+    let sawFinal!: () => void;
+    const finalSeen = new Promise<void>((resolve) => {
+      sawFinal = resolve;
+    });
+    let heldControl = false;
+    let settled = false;
+    const input = createCodexRunSessionTurnInput(directory);
+    const adapter = new CodexAdapter(undefined, {
+      /** 終端を先に通知する transport を接続し、consumer 側の解決時点だけを保留する。 */
+      createTransport: () => transport,
+    });
+    const operation = adapter.runSessionTurn(input, (state) => {
+      if (!state.inputAvailable && !heldControl) {
+        heldControl = true;
+        return control;
+      }
+      if (state.assistantText === "terminal acquired body") sawFinal();
+    });
+    void operation.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await finalSeen;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(settled, false);
+      await assert.rejects(
+        adapter.steerSessionTurn({
+          sessionId: input.session.id,
+          expectedTurnId: "turn-1",
+          userMessage: "late",
+          attachments: [],
+        }),
+        /no longer accepting/,
+      );
+      rejectControl(new Error("delayed control failure"));
+      await assert.rejects(operation, (error) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.message, "delayed control failure");
+        assert.equal(
+          error.partialResult.assistantText,
+          "terminal acquired body",
+        );
+        return true;
+      });
+      assert.equal(transport.closed, true);
+    } finally {
+      rejectControl(new Error("test cleanup"));
+      await operation.catch(() => undefined);
+    }
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -1327,29 +2418,49 @@ it("final配送後のterminal control rejectionをpartial付き失敗へ伝播�
 // impact = "取消操作でMainの未捕捉例外を発生させず取得済み応答と取消状態を保持する"
 // distinction = "非同期rejectionや通常通知からのthrowではAbortSignalの同期listener境界を通らない;fake transportの本文配送後に取消する"
 // @end-test-value
-it("abort controlの同期throwを取消partial結果へ閉じ込める", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [notification("item/completed", { item: message("answer", "cancel acquired body") })];
-  const controller = new AbortController();
-  let sawBody!: () => void;
-  const bodySeen = new Promise<void>(resolve => { sawBody = resolve; });
-  let threw = false;
-  const operation = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn({ ...createCodexRunSessionTurnInput(directory), signal: controller.signal }, state => {
-    if (state.assistantText) sawBody();
-    if (!state.inputAvailable && !threw) { threw = true; throw new Error("abort control sync failure"); }
-  });
-  void operation.catch(() => undefined);
-  await bodySeen;
-  controller.abort();
-  await assert.rejects(operation, error => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.message, "abort control sync failure");
-    assert.equal(error.canceled, true);
-    assert.equal(error.partialResult.assistantText, "cancel acquired body");
-    return true;
-  });
-  assert.equal(transport.closed, true);
-}));
+/** 外部取消の入力閉鎖 callback が同期例外を投げても、取消フラグと取得済み本文を持つ部分結果に回収する。 */
+it("abort controlの同期throwを取消partial結果へ閉じ込める", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("item/completed", {
+        item: message("answer", "cancel acquired body"),
+      }),
+    ];
+    const controller = new AbortController();
+    let sawBody!: () => void;
+    const bodySeen = new Promise<void>((resolve) => {
+      sawBody = resolve;
+    });
+    let threw = false;
+    const operation = new CodexAdapter(undefined, {
+      /** 本文を一度投影した後に abort できるよう、終端をまだ送らない transport を渡す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(
+      {
+        ...createCodexRunSessionTurnInput(directory),
+        signal: controller.signal,
+      },
+      (state) => {
+        if (state.assistantText) sawBody();
+        if (!state.inputAvailable && !threw) {
+          threw = true;
+          throw new Error("abort control sync failure");
+        }
+      },
+    );
+    void operation.catch(() => undefined);
+    await bodySeen;
+    controller.abort();
+    await assert.rejects(operation, (error) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.message, "abort control sync failure");
+      assert.equal(error.canceled, true);
+      assert.equal(error.partialResult.assistantText, "cancel acquired body");
+      return true;
+    });
+    assert.equal(transport.closed, true);
+  }));
 // @test-value v2
 // kind = "invariant"
 // claim = "native itemの到着順とdeltaからassistant本文を確定する"
@@ -1362,15 +2473,34 @@ it("abort controlの同期throwを取消partial結果へ閉じ込める", async 
 // impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
+/** 途中 delta は確定 item で置き換わり、同じ item が最終一覧に再登場しても二重連結せず到着順の本文を返す。 */
 it("native agentMessageは到着順、deltaとcompletedの置換で連結する", () => {
   const state = createCodexTurnStreamState("thread-1");
-  applyCodexTurnEvent(state, notification("turn/started", { turn: { id: "turn-1" } }));
-  applyCodexTurnEvent(state, notification("item/started", { item: message("first", "") }));
-  applyCodexTurnEvent(state, notification("item/agentMessage/delta", { itemId: "first", delta: "途中" }));
+  applyCodexTurnEvent(
+    state,
+    notification("turn/started", { turn: { id: "turn-1" } }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("item/started", { item: message("first", "") }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("item/agentMessage/delta", { itemId: "first", delta: "途中" }),
+  );
   assert.equal(getLiveCodexAssistantText(state), "途中");
-  applyCodexTurnEvent(state, notification("item/completed", { item: message("first", "確定") }));
-  applyCodexTurnEvent(state, notification("item/completed", { item: message("second", "次") }));
-  applyCodexTurnEvent(state, completed([message("first", "確定"), message("second", "次")]));
+  applyCodexTurnEvent(
+    state,
+    notification("item/completed", { item: message("first", "確定") }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("item/completed", { item: message("second", "次") }),
+  );
+  applyCodexTurnEvent(
+    state,
+    completed([message("first", "確定"), message("second", "次")]),
+  );
   assert.equal(getLiveCodexAssistantText(state), "確定\n\n次");
 });
 // @test-value v2
@@ -1385,17 +2515,67 @@ it("native agentMessageは到着順、deltaとcompletedの置換で連結する"
 // impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
+/** 他 thread または他 turn の通知から本文・使用量を取り込まず、現在 turn の使用量だけを保持する。 */
 it("native通知のthreadとturn scopeを保持する", () => {
   const state = createCodexTurnStreamState("thread-1");
   state.turnId = "turn-1";
-  applyCodexTurnEvent(state, notification("item/completed", { threadId: "other", item: message("bad", "wrong") }));
-  applyCodexTurnEvent(state, notification("item/completed", { turnId: "other", item: message("bad", "wrong") }));
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { tokenUsage: { last: { inputTokens: 10, outputTokens: 3, cachedInputTokens: 2, totalTokens: 13, reasoningOutputTokens: 1 } } }));
-  const foreignUsage = { inputTokens: 900, outputTokens: 800, cachedInputTokens: 700, totalTokens: 1700, reasoningOutputTokens: 600 };
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { threadId: "other", tokenUsage: { total: foreignUsage, last: foreignUsage } }));
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { turnId: "other", tokenUsage: { total: foreignUsage, last: foreignUsage } }));
+  applyCodexTurnEvent(
+    state,
+    notification("item/completed", {
+      threadId: "other",
+      item: message("bad", "wrong"),
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("item/completed", {
+      turnId: "other",
+      item: message("bad", "wrong"),
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      tokenUsage: {
+        last: {
+          inputTokens: 10,
+          outputTokens: 3,
+          cachedInputTokens: 2,
+          totalTokens: 13,
+          reasoningOutputTokens: 1,
+        },
+      },
+    }),
+  );
+  const foreignUsage = {
+    inputTokens: 900,
+    outputTokens: 800,
+    cachedInputTokens: 700,
+    totalTokens: 1700,
+    reasoningOutputTokens: 600,
+  };
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      threadId: "other",
+      tokenUsage: { total: foreignUsage, last: foreignUsage },
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      turnId: "other",
+      tokenUsage: { total: foreignUsage, last: foreignUsage },
+    }),
+  );
   assert.equal(getLiveCodexAssistantText(state), "");
-  assert.deepEqual(state.usage, { inputTokens: 10, outputTokens: 3, cachedInputTokens: 2, totalTokens: 13, reasoningOutputTokens: 1 });
+  assert.deepEqual(state.usage, {
+    inputTokens: 10,
+    outputTokens: 3,
+    cachedInputTokens: 2,
+    totalTokens: 13,
+    reasoningOutputTokens: 1,
+  });
 });
 // @test-value v2
 // kind = "invariant"
@@ -1409,26 +2589,59 @@ it("native通知のthreadとturn scopeを保持する", () => {
 // impact = "回答生成が正常再開した現在状態を失敗と誤表示する"
 // distinction = "確定結果と型検査では途中のdiagnostic解除とscope guardを検出できない"
 // @end-test-value
+/** 現 scope の有効な item 操作だけが再試行中の表示を解除し、失敗終端が確定した後は後続 item で上書きしない。 */
 it("同scopeのitem再開だけでretry diagnosticを解除しterminal failureを保持する", () => {
-  for (const method of ["item/started", "item/completed", "item/agentMessage/delta"]) {
+  for (const method of [
+    "item/started",
+    "item/completed",
+    "item/agentMessage/delta",
+  ]) {
     const state = createCodexTurnStreamState("thread-1");
     state.turnId = "turn-1";
-    applyCodexTurnEvent(state, notification("item/started", { item: message("answer", "") }));
-    applyCodexTurnEvent(state, notification("error", { error: { message: "Reconnecting transient failure" }, willRetry: true }));
-    const recovery = method === "item/agentMessage/delta"
-      ? { itemId: "answer", delta: "Recovered response" }
-      : { item: message("answer", "Recovered response") };
+    applyCodexTurnEvent(
+      state,
+      notification("item/started", { item: message("answer", "") }),
+    );
+    applyCodexTurnEvent(
+      state,
+      notification("error", {
+        error: { message: "Reconnecting transient failure" },
+        willRetry: true,
+      }),
+    );
+    const recovery =
+      method === "item/agentMessage/delta"
+        ? { itemId: "answer", delta: "Recovered response" }
+        : { item: message("answer", "Recovered response") };
     for (const foreignScope of [{ threadId: "other" }, { turnId: "other" }]) {
-      applyCodexTurnEvent(state, notification(method, { ...recovery, ...foreignScope }));
+      applyCodexTurnEvent(
+        state,
+        notification(method, { ...recovery, ...foreignScope }),
+      );
       assert.equal(state.streamErrorMessage, "Reconnecting transient failure");
       assert.equal(getLiveCodexAssistantText(state), "");
     }
-    applyCodexTurnEvent(state, notification("item/agentMessage/delta", { itemId: "missing", delta: "not accepted" }));
+    applyCodexTurnEvent(
+      state,
+      notification("item/agentMessage/delta", {
+        itemId: "missing",
+        delta: "not accepted",
+      }),
+    );
     assert.equal(state.streamErrorMessage, "Reconnecting transient failure");
     applyCodexTurnEvent(state, notification(method, recovery));
-    assert.deepEqual({ assistantText: getLiveCodexAssistantText(state), errorMessage: state.streamErrorMessage, terminal: state.turnCompleted }, {
-      assistantText: "Recovered response", errorMessage: "", terminal: false,
-    });
+    assert.deepEqual(
+      {
+        assistantText: getLiveCodexAssistantText(state),
+        errorMessage: state.streamErrorMessage,
+        terminal: state.turnCompleted,
+      },
+      {
+        assistantText: "Recovered response",
+        errorMessage: "",
+        terminal: false,
+      },
+    );
     applyCodexTurnEvent(state, completed([], "failed"));
     assert.equal(state.streamErrorMessage, "provider failed");
     assert.equal(state.terminalStatus, "failed");
@@ -1450,78 +2663,148 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 // distinction = "型検査やtransport単体では検出できないadapterの新規/再開request選択とparamsを、既存の軽量mockで検証する"
 // @end-test-value
 /** 再開時はスレッドを維持しつつ、この Turn に保存された指示を組み立て済みの入力に含めて送る。 */
-it("foregroundは保存thread resumeとnative設定、履歴結果を維持する", async () => workspace(async (directory) => {
-  const fresh = new FakeTransport();
-  fresh.events = [completed([message("answer", "fresh")])];
-  const freshResult = await new CodexAdapter(undefined, { createTransport: () => fresh }).runSessionTurn(createCodexRunSessionTurnInput(directory));
-  assert.equal(fresh.calls[0].method, "thread/start");
-  assert.equal(Object.hasOwn(fresh.calls[0].params as object, "excludeTurns"), false);
-  assert.equal(Object.hasOwn(fresh.calls[0].params as object, "threadId"), false);
-  assert.equal(freshResult.threadId, "thread-1");
-  assert.equal(freshResult.assistantText, "fresh");
-  assert.equal(fresh.closed, true);
-  const transport = new FakeTransport();
-  transport.events = [notification("item/completed", { item: message("answer", "done") }), completed([message("answer", "done")])];
-  const input = { ...createCodexRunSessionTurnInput(directory), sessionInstructions: "Codex 固定指示 🧭" };
-  input.session.threadId = "thread-1";
-  input.session.allowedAdditionalDirectories = [path.join(directory, "..", "additional")];
-  input.executionOptions = { ...input.executionOptions, codexSandboxMode: "workspace-write-network", codexSpeed: "fast", codexReviewer: "auto-review" };
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  const result = await adapter.runSessionTurn(input);
-  assert.equal(transport.calls[0].method, "thread/resume");
-  const resume = transport.calls[0].params as Record<string, unknown>;
-  assert.equal(resume.threadId, "thread-1");
-  assert.equal(resume.excludeTurns, true);
-  const start = transport.calls.find((call) => call.method === "turn/start")!.params as Record<string, any>;
-  assert.equal(start.serviceTier, "fast");
-  assert.equal(start.approvalsReviewer, "auto_review");
-  assert.equal(start.sandboxPolicy.networkAccess, true);
-  assert.deepEqual(start.sandboxPolicy.writableRoots, [directory, path.resolve(directory, "..", "additional")]);
-  assert.equal(start.input[0].text, adapter.composePrompt(input).logicalPrompt.composedText);
-  assert.match(start.input[0].text, /# Session Instructions\n\nCodex 固定指示 🧭\n\n#/);
-  assert.equal(result.assistantText, "done");
-  assert.equal(result.threadId, "thread-1");
-  assert.equal(transport.closed, true);
-  for (const reasoningEffort of ["max", "ultra"] as const) {
-    const updated = new FakeTransport();
-    updated.events = [completed([message("answer", "updated")])];
-    input.executionOptions = { ...input.executionOptions, model: "gpt-5.6-sol", reasoningEffort };
-    await new CodexAdapter(undefined, { createTransport: () => updated }).runSessionTurn(input);
-    const threadParams = updated.calls.find((call) => call.method === "thread/resume")!.params as Record<string, any>;
-    const turnParams = updated.calls.find((call) => call.method === "turn/start")!.params as Record<string, any>;
-    assert.equal(threadParams.model, "gpt-5.6-sol");
-    assert.equal(threadParams.config.model_reasoning_effort, reasoningEffort);
-    assert.equal(turnParams.model, "gpt-5.6-sol");
-    assert.equal(turnParams.effort, reasoningEffort);
-    assert.equal(updated.closed, true);
-  }
-  class ResumeFailureTransport extends FakeTransport {
-    override async request<T>(method: string, params?: unknown): Promise<T> {
-      if (method === "thread/resume") {
-        this.calls.push({ method, params });
-        throw new CodexAppServerRpcError(-32001, "saved thread unavailable");
-      }
-      return super.request<T>(method, params);
+it("foregroundは保存thread resumeとnative設定、履歴結果を維持する", async () =>
+  workspace(async (directory) => {
+    const fresh = new FakeTransport();
+    fresh.events = [completed([message("answer", "fresh")])];
+    const freshResult = await new CodexAdapter(undefined, {
+      /** 保存 thread のないケースで、新規作成の RPC に再開用引数がないことを記録する。 */
+      createTransport: () => fresh,
+    }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+    assert.equal(fresh.calls[0].method, "thread/start");
+    assert.equal(
+      Object.hasOwn(fresh.calls[0].params as object, "excludeTurns"),
+      false,
+    );
+    assert.equal(
+      Object.hasOwn(fresh.calls[0].params as object, "threadId"),
+      false,
+    );
+    assert.equal(freshResult.threadId, "thread-1");
+    assert.equal(freshResult.assistantText, "fresh");
+    assert.equal(fresh.closed, true);
+    const transport = new FakeTransport();
+    transport.events = [
+      notification("item/completed", { item: message("answer", "done") }),
+      completed([message("answer", "done")]),
+    ];
+    const input = {
+      ...createCodexRunSessionTurnInput(directory),
+      sessionInstructions: "Codex 固定指示 🧭",
+    };
+    input.session.threadId = "thread-1";
+    input.session.allowedAdditionalDirectories = [
+      path.join(directory, "..", "additional"),
+    ];
+    input.executionOptions = {
+      ...input.executionOptions,
+      codexSandboxMode: "workspace-write-network",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
+    };
+    const adapter = new CodexAdapter(undefined, {
+      /** 保存 thread に対する再開引数と、続けて送るプロンプトを同じ transport 上で観測する。 */
+      createTransport: () => transport,
+    });
+    const result = await adapter.runSessionTurn(input);
+    assert.equal(transport.calls[0].method, "thread/resume");
+    const resume = transport.calls[0].params as Record<string, unknown>;
+    assert.equal(resume.threadId, "thread-1");
+    assert.equal(resume.excludeTurns, true);
+    const start = transport.calls.find((call) => call.method === "turn/start")!
+      .params as Record<string, any>;
+    assert.equal(start.serviceTier, "fast");
+    assert.equal(start.approvalsReviewer, "auto_review");
+    assert.equal(start.sandboxPolicy.networkAccess, true);
+    assert.deepEqual(start.sandboxPolicy.writableRoots, [
+      directory,
+      path.resolve(directory, "..", "additional"),
+    ]);
+    assert.equal(
+      start.input[0].text,
+      adapter.composePrompt(input).logicalPrompt.composedText,
+    );
+    assert.match(
+      start.input[0].text,
+      /# Session Instructions\n\nCodex 固定指示 🧭\n\n#/,
+    );
+    assert.equal(result.assistantText, "done");
+    assert.equal(result.threadId, "thread-1");
+    assert.equal(transport.closed, true);
+    for (const reasoningEffort of ["max", "ultra"] as const) {
+      const updated = new FakeTransport();
+      updated.events = [completed([message("answer", "updated")])];
+      input.executionOptions = {
+        ...input.executionOptions,
+        model: "gpt-5.6-sol",
+        reasoningEffort,
+      };
+      await new CodexAdapter(undefined, {
+        /** 送信時に選んだ max または ultra が再開と新 turn の両方へ届くか、一反復ずつ別 transport で確認する。 */
+        createTransport: () => updated,
+      }).runSessionTurn(input);
+      const threadParams = updated.calls.find(
+        (call) => call.method === "thread/resume",
+      )!.params as Record<string, any>;
+      const turnParams = updated.calls.find(
+        (call) => call.method === "turn/start",
+      )!.params as Record<string, any>;
+      assert.equal(threadParams.model, "gpt-5.6-sol");
+      assert.equal(threadParams.config.model_reasoning_effort, reasoningEffort);
+      assert.equal(turnParams.model, "gpt-5.6-sol");
+      assert.equal(turnParams.effort, reasoningEffort);
+      assert.equal(updated.closed, true);
     }
-  }
-  const failed = new ResumeFailureTransport();
-  await assert.rejects(new CodexAdapter(undefined, { createTransport: () => failed }).runSessionTurn(input), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.partialResult.threadId, "thread-1");
-    return true;
-  });
-  assert.deepEqual(failed.calls.map((call) => call.method), ["thread/resume"]);
-  assert.equal(failed.closed, true);
-}));
+    /** 保存 thread の再開だけを RPC エラーで拒否し、新規 thread への代替があれば呼び出し記録に残す。 */
+    class ResumeFailureTransport extends FakeTransport {
+      /** 再開 RPC では既存 thread の不在を返し、他の要求には通常のダブルの応答を使う。 */
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/resume") {
+          this.calls.push({ method, params });
+          throw new CodexAppServerRpcError(-32001, "saved thread unavailable");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const failed = new ResumeFailureTransport();
+    await assert.rejects(
+      new CodexAdapter(undefined, {
+        /** 再開失敗時の RPC 列が thread/resume 一件だけで終わるか調べる。 */
+        createTransport: () => failed,
+      }).runSessionTurn(input),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.partialResult.threadId, "thread-1");
+        return true;
+      },
+    );
+    assert.deepEqual(
+      failed.calls.map((call) => call.method),
+      ["thread/resume"],
+    );
+    assert.equal(failed.closed, true);
+  }));
 
+/** 対象パスだけの捕捉と、差分更新から完全再構築へ切り替える境界を実ファイルで照合する。 */
 describe("workspace snapshot targeted capture", () => {
+  /** 候補にある実ファイルだけを本文と件数へ反映し、未指定ファイルと候補中の削除済みパスを含めない。 */
   it("指定された候補ファイルだけを snapshot に含める", async () => {
-    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-targeted-"));
+    const workspacePath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-snapshot-targeted-"),
+    );
 
     try {
       await mkdir(path.join(workspacePath, "src"), { recursive: true });
-      await writeFile(path.join(workspacePath, "src", "changed.ts"), "changed\n", "utf8");
-      await writeFile(path.join(workspacePath, "src", "unchanged.ts"), "unchanged\n", "utf8");
+      await writeFile(
+        path.join(workspacePath, "src", "changed.ts"),
+        "changed\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(workspacePath, "src", "unchanged.ts"),
+        "unchanged\n",
+        "utf8",
+      );
 
       const result = await captureWorkspaceSnapshotPaths(workspacePath, [
         "src/changed.ts",
@@ -1538,8 +2821,11 @@ describe("workspace snapshot targeted capture", () => {
     }
   });
 
+  /** 既存ファイルの本文だけを変更すると完全再構築せず、差分更新後の snapshot が最新の本文を返す。 */
   it("既存ファイルの本文更新は index の incremental refresh で反映する", async () => {
-    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-edit-"));
+    const workspacePath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-snapshot-index-edit-"),
+    );
 
     try {
       await mkdir(path.join(workspacePath, "src"), { recursive: true });
@@ -1559,15 +2845,26 @@ describe("workspace snapshot targeted capture", () => {
     }
   });
 
+  /** サブディレクトリにファイルを追加して構造変更を観測すると、完全再構築で新しいファイルを取り込む。 */
   it("directory 構造が変わった場合は full rebuild に戻す", async () => {
-    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-structure-"));
+    const workspacePath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-snapshot-index-structure-"),
+    );
 
     try {
       await mkdir(path.join(workspacePath, "src"), { recursive: true });
-      await writeFile(path.join(workspacePath, "src", "existing.ts"), "existing\n", "utf8");
+      await writeFile(
+        path.join(workspacePath, "src", "existing.ts"),
+        "existing\n",
+        "utf8",
+      );
 
       const index = await createWorkspaceSnapshotIndex(workspacePath);
-      await writeFile(path.join(workspacePath, "src", "added.ts"), "added\n", "utf8");
+      await writeFile(
+        path.join(workspacePath, "src", "added.ts"),
+        "added\n",
+        "utf8",
+      );
       const srcDirectoryPath = path.resolve(path.join(workspacePath, "src"));
       const realSrcStat = await stat(srcDirectoryPath);
 
@@ -1592,13 +2889,18 @@ describe("workspace snapshot targeted capture", () => {
     }
   });
 
+  /** ファイル数が上限と等しく内容も変わらなければ、上限到達だけで完全再構築しない。 */
   it("refresh 後の file count が limit と一致する場合は incremental refresh を維持する", async () => {
-    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-limit-"));
+    const workspacePath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-snapshot-index-limit-"),
+    );
 
     try {
       await writeFile(path.join(workspacePath, "only.txt"), "only\n", "utf8");
 
-      const index = await createWorkspaceSnapshotIndex(workspacePath, { maxFileCount: 1 });
+      const index = await createWorkspaceSnapshotIndex(workspacePath, {
+        maxFileCount: 1,
+      });
       const refreshed = await refreshWorkspaceSnapshotIndex(index);
 
       assert.equal(refreshed.usedFullRebuild, false);
@@ -1609,14 +2911,19 @@ describe("workspace snapshot targeted capture", () => {
     }
   });
 
+  /** 信頼済み候補の追加でファイル数が上限を超えたら、差分更新を続けず完全再構築へ切り替える。 */
   it("refresh 後に file count limit を超過した場合は full rebuild に戻す", async () => {
-    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-snapshot-index-limit-exceeded-"));
+    const workspacePath = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-snapshot-index-limit-exceeded-"),
+    );
 
     try {
       await writeFile(path.join(workspacePath, "one.txt"), "one\n", "utf8");
       await writeFile(path.join(workspacePath, "two.txt"), "two\n", "utf8");
 
-      const index = await createWorkspaceSnapshotIndex(workspacePath, { maxFileCount: 2 });
+      const index = await createWorkspaceSnapshotIndex(workspacePath, {
+        maxFileCount: 2,
+      });
       await writeFile(path.join(workspacePath, "three.txt"), "three\n", "utf8");
 
       const refreshed = await refreshWorkspaceSnapshotIndex(index, {
@@ -1643,44 +2950,104 @@ describe("workspace snapshot targeted capture", () => {
 // impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
-it("retry通知後はterminalで成否を決め切断と失敗時のpartialを回収する", async () => workspace(async (directory) => {
-  for (const status of ["completed", "disconnected", "failed", "interrupted"]) {
-    const transport = new FakeTransport();
-    transport.events = [notification("error", { error: { message: "Reconnecting transient failure" }, willRetry: true }), notification("item/completed", { item: message("answer", "partial") }), notification("item/completed", { item: { type: "commandExecution", id: "command", command: "echo done", aggregatedOutput: "done", exitCode: 0, status: "completed" } })];
-    if (status === "disconnected") transport.failure = new Error("disconnected");
-    else transport.events.push(completed([], status));
-    const run = new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
-    if (status === "completed") {
-      const result = await run;
-      assert.equal(result.assistantText, "partial");
-      assert.ok(result.artifact!.operationTimeline!.some((operation) => operation.type === "command_execution"));
-    } else {
-      await assert.rejects(run, (error: unknown) => {
-        assert.ok(error instanceof ProviderTurnError);
-        assert.equal(error.partialResult.assistantText, "partial");
-        assert.ok(error.partialResult.artifact!.operationTimeline!.some((operation) => operation.type === "command_execution"));
-        assert.equal(error.canceled, status === "interrupted");
-        if (status === "failed") assert.equal(error.message, "provider failed");
-        return true;
-      });
+/** 再試行通知を終端扱いせず、成功・切断・失敗・中断でも取得本文と操作を保持し、利用上限は三つの文言が揃った失敗だけに分類する。 */
+it("retry通知後はterminalで成否を決め切断と失敗時のpartialを回収する", async () =>
+  workspace(async (directory) => {
+    for (const status of [
+      "completed",
+      "disconnected",
+      "failed",
+      "interrupted",
+    ]) {
+      const transport = new FakeTransport();
+      transport.events = [
+        notification("error", {
+          error: { message: "Reconnecting transient failure" },
+          willRetry: true,
+        }),
+        notification("item/completed", { item: message("answer", "partial") }),
+        notification("item/completed", {
+          item: {
+            type: "commandExecution",
+            id: "command",
+            command: "echo done",
+            aggregatedOutput: "done",
+            exitCode: 0,
+            status: "completed",
+          },
+        }),
+      ];
+      if (status === "disconnected")
+        transport.failure = new Error("disconnected");
+      else transport.events.push(completed([], status));
+      const run = new CodexAdapter(undefined, {
+        /** 終端状態ごとに、再試行通知に続いて本文とコマンド結果を渡す。 */
+        createTransport: () => transport,
+      }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+      if (status === "completed") {
+        const result = await run;
+        assert.equal(result.assistantText, "partial");
+        assert.ok(
+          result.artifact!.operationTimeline!.some(
+            (operation) => operation.type === "command_execution",
+          ),
+        );
+      } else {
+        await assert.rejects(run, (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.partialResult.assistantText, "partial");
+          assert.ok(
+            error.partialResult.artifact!.operationTimeline!.some(
+              (operation) => operation.type === "command_execution",
+            ),
+          );
+          assert.equal(error.canceled, status === "interrupted");
+          if (status === "failed")
+            assert.equal(error.message, "provider failed");
+          return true;
+        });
+      }
+      assert.equal(transport.closed, true);
     }
-    assert.equal(transport.closed, true);
-  }
-  const usageMarkers = ["You've hit your usage limit.", "Purchase more credits", "Try again at 10:00"];
-  for (const missingMarker of [-1, 0, 1, 2]) {
-    const terminalMessage = usageMarkers.filter((_marker, index) => index !== missingMarker).join(" ");
-    const transport = new FakeTransport();
-    transport.events = [notification("turn/completed", { turn: { id: "turn-1", status: "failed", items: [], error: { message: terminalMessage } } })];
-    await assert.rejects(new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory)), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.canceled, false);
-      assert.equal(error.message, terminalMessage);
-      assert.equal(error.reason, missingMarker === -1 ? "usage_limit" : "unknown");
-      return true;
-    });
-    assert.equal(transport.closed, true);
-  }
-}));
+    const usageMarkers = [
+      "You've hit your usage limit.",
+      "Purchase more credits",
+      "Try again at 10:00",
+    ];
+    for (const missingMarker of [-1, 0, 1, 2]) {
+      const terminalMessage = usageMarkers
+        .filter((_marker, index) => index !== missingMarker)
+        .join(" ");
+      const transport = new FakeTransport();
+      transport.events = [
+        notification("turn/completed", {
+          turn: {
+            id: "turn-1",
+            status: "failed",
+            items: [],
+            error: { message: terminalMessage },
+          },
+        }),
+      ];
+      await assert.rejects(
+        new CodexAdapter(undefined, {
+          /** 使用制限の文言を一部ずつ欠いた失敗通知を同じ経路に入力する。 */
+          createTransport: () => transport,
+        }).runSessionTurn(createCodexRunSessionTurnInput(directory)),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.canceled, false);
+          assert.equal(error.message, terminalMessage);
+          assert.equal(
+            error.reason,
+            missingMarker === -1 ? "usage_limit" : "unknown",
+          );
+          return true;
+        },
+      );
+      assert.equal(transport.closed, true);
+    }
+  }));
 // @test-value v2
 // kind = "invariant"
 // claim = "active turn限定でsteerしterminal後は同じIDも送信しない"
@@ -1693,24 +3060,60 @@ it("retry通知後はterminalで成否を決め切断と失敗時のpartialを�
 // impact = "Codex実行の会話継続、履歴または権限が失われる"
 // distinction = "型検査では検出できないnative通知と実行結果の対応を検証する"
 // @end-test-value
-it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-  const input = createCodexRunSessionTurnInput(directory);
-  let active!: () => void;
-  const ready = new Promise<void>((resolve) => { active = resolve; });
-  const run = adapter.runSessionTurn(input, (state) => { if (state.inputAvailable) active(); });
-  await ready;
-  await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "old", userMessage: "wrong", attachments: [] }));
-  assert.deepEqual(await adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "追加", attachments: [] }), { turnId: "turn-1" });
-  const request = transport.calls.find((call) => call.method === "turn/steer")!.params as Record<string, any>;
-  assert.equal(request.expectedTurnId, "turn-1");
-  assert.equal(request.input[0].text, "追加");
-  transport.push(completed([message("answer", "done")]));
-  await run;
-  await assert.rejects(adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "late", attachments: [] }));
-  assert.equal(transport.calls.filter((call) => call.method === "turn/steer").length, 1);
-}));
+/** 現 turn の ID を指定した steer だけが RPC に届き、終端後は同じ ID の追加入力でも送信しない。 */
+it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    const adapter = new CodexAdapter(undefined, {
+      /** steer の送信回数と到着した引数を同じ transport から読み取る。 */
+      createTransport: () => transport,
+    });
+    const input = createCodexRunSessionTurnInput(directory);
+    let active!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      active = resolve;
+    });
+    const run = adapter.runSessionTurn(input, (state) => {
+      if (state.inputAvailable) active();
+    });
+    await ready;
+    await assert.rejects(
+      adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "old",
+        userMessage: "wrong",
+        attachments: [],
+      }),
+    );
+    assert.deepEqual(
+      await adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "turn-1",
+        userMessage: "追加",
+        attachments: [],
+      }),
+      { turnId: "turn-1" },
+    );
+    const request = transport.calls.find(
+      (call) => call.method === "turn/steer",
+    )!.params as Record<string, any>;
+    assert.equal(request.expectedTurnId, "turn-1");
+    assert.equal(request.input[0].text, "追加");
+    transport.push(completed([message("answer", "done")]));
+    await run;
+    await assert.rejects(
+      adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "turn-1",
+        userMessage: "late",
+        attachments: [],
+      }),
+    );
+    assert.equal(
+      transport.calls.filter((call) => call.method === "turn/steer").length,
+      1,
+    );
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -1724,62 +3127,145 @@ it("steerはexpectedTurnIdを送信しterminalで入口を閉じる", async () =
 // impact = "会話履歴とMCPのsession権限が誤ったSessionへ流れる"
 // distinction = "native通知と環境設定の実行時投影を確認し型検査では代替できない"
 // @end-test-value
-it("fresh process bindingを2 foreground ownerで分離し全出力境界をredactする", async () => workspace(async (directory) => {
-  const parentEnvironment = { ...process.env };
-  const transports: FakeTransport[] = [];
-  const environments: NodeJS.ProcessEnv[] = [];
-  const logs: unknown[] = [];
-  const secrets = ["owner-a-binding", "owner-a-capability", "owner-b-binding", "owner-b-capability"];
-  const adapter = new CodexAdapter((entry) => { logs.push(entry); }, { createTransport: (options) => {
-    environments.push(options.env ?? {});
-    const transport = new FakeTransport();
-    if (transports.length < 2) {
-      const echo = secrets.slice(transports.length * 2, transports.length * 2 + 2).join(" ");
-      transport.events = [
-        notification("item/completed", { item: message("answer", echo) }),
-        notification("item/completed", { item: { type: "commandExecution", id: "command", command: echo, aggregatedOutput: echo, exitCode: 0, status: "completed" } }),
-        notification("item/completed", { item: { type: "unsupported-" + echo, id: "unknown", payload: echo } }),
-        notification("turn/completed", { turn: { id: "turn-1", status: transports.length ? "failed" : "completed", items: [], error: transports.length ? { message: echo } : null } }),
-      ];
-    } else transport.events = [completed([message("answer", "{}")])];
-    transports.push(transport);
-    return transport;
-  } });
-  const progress: unknown[] = [];
-  const results: unknown[] = [];
-  for (let owner = 0; owner < 2; owner += 1) {
-    const input = createCodexRunSessionTurnInput(directory);
-    input.session.id = "owner-" + owner;
-    input.agentRuntimeBinding = { bindingId: "binding-" + owner, bindingReference: secrets[owner * 2], turnCapability: secrets[owner * 2 + 1], providerId: "codex", executionGeneration: "generation-" + owner, transport: "env", expiresAt: null,
-      runtimeOwner: { applicationInstanceId: "app-instance-" + owner, runtimeGenerationId: "memory-generation-" + owner } };
-    const run = adapter.runSessionTurn(input, (state) => { progress.push(state); });
-    if (owner === 0) {
-      const result = await run;
-      results.push(result.assistantText, result.artifact!.operationTimeline!, result.providerMetadata, result.artifact);
-    } else {
-      await assert.rejects(run, (error: unknown) => {
-        assert.ok(error instanceof ProviderTurnError);
-        results.push(error.message, error.partialResult.assistantText, error.partialResult.artifact!.operationTimeline!, error.partialResult.providerMetadata);
-        assert.ok(error.message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
-        return true;
+/** 二つの実行 owner ごとに固有の環境を渡し、親環境は変更せず、echo された秘密を live・成果物・失敗・ログに残さない。 */
+it("fresh process bindingを2 foreground ownerで分離し全出力境界をredactする", async () =>
+  workspace(async (directory) => {
+    const parentEnvironment = { ...process.env };
+    const transports: FakeTransport[] = [];
+    const environments: NodeJS.ProcessEnv[] = [];
+    const logs: unknown[] = [];
+    const secrets = [
+      "owner-a-binding",
+      "owner-a-capability",
+      "owner-b-binding",
+      "owner-b-capability",
+    ];
+    const adapter = new CodexAdapter(
+      (entry) => {
+        logs.push(entry);
+      },
+      {
+        /** 各起動時の環境を独立に控え、その owner の秘密が返却・失敗・未知 item に現れる模擬応答を作る。 */
+        createTransport: (options) => {
+          environments.push(options.env ?? {});
+          const transport = new FakeTransport();
+          if (transports.length < 2) {
+            const echo = secrets
+              .slice(transports.length * 2, transports.length * 2 + 2)
+              .join(" ");
+            transport.events = [
+              notification("item/completed", { item: message("answer", echo) }),
+              notification("item/completed", {
+                item: {
+                  type: "commandExecution",
+                  id: "command",
+                  command: echo,
+                  aggregatedOutput: echo,
+                  exitCode: 0,
+                  status: "completed",
+                },
+              }),
+              notification("item/completed", {
+                item: {
+                  type: "unsupported-" + echo,
+                  id: "unknown",
+                  payload: echo,
+                },
+              }),
+              notification("turn/completed", {
+                turn: {
+                  id: "turn-1",
+                  status: transports.length ? "failed" : "completed",
+                  items: [],
+                  error: transports.length ? { message: echo } : null,
+                },
+              }),
+            ];
+          } else transport.events = [completed([message("answer", "{}")])];
+          transports.push(transport);
+          return transport;
+        },
+      },
+    );
+    const progress: unknown[] = [];
+    const results: unknown[] = [];
+    for (let owner = 0; owner < 2; owner += 1) {
+      const input = createCodexRunSessionTurnInput(directory);
+      input.session.id = "owner-" + owner;
+      input.agentRuntimeBinding = {
+        bindingId: "binding-" + owner,
+        bindingReference: secrets[owner * 2],
+        turnCapability: secrets[owner * 2 + 1],
+        providerId: "codex",
+        executionGeneration: "generation-" + owner,
+        transport: "env",
+        expiresAt: null,
+        runtimeOwner: {
+          applicationInstanceId: "app-instance-" + owner,
+          runtimeGenerationId: "memory-generation-" + owner,
+        },
+      };
+      const run = adapter.runSessionTurn(input, (state) => {
+        progress.push(state);
       });
+      if (owner === 0) {
+        const result = await run;
+        results.push(
+          result.assistantText,
+          result.artifact!.operationTimeline!,
+          result.providerMetadata,
+          result.artifact,
+        );
+      } else {
+        await assert.rejects(run, (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          results.push(
+            error.message,
+            error.partialResult.assistantText,
+            error.partialResult.artifact!.operationTimeline!,
+            error.partialResult.providerMetadata,
+          );
+          assert.ok(
+            error.message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"),
+          );
+          return true;
+        });
+      }
     }
-  }
-  for (const owner of [0, 1]) {
-    assert.equal(environments[owner][WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-" + owner);
-    assert.equal(environments[owner][WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-" + owner);
-  }
-  for (const [index, secret] of secrets.entries()) {
-    assert.ok(Object.values(environments[Math.floor(index / 2)]).includes(secret));
-    assert.ok(!Object.values(environments[1 - Math.floor(index / 2)]).includes(secret));
-    for (const output of [progress, results, logs]) assert.ok(!JSON.stringify(output).includes(secret));
-  }
-  assert.ok(JSON.stringify(progress).includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
-  assert.ok(JSON.stringify(logs).includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"));
-  assert.ok(logs.length >= 2);
-  assert.deepEqual({ ...process.env }, parentEnvironment);
-  assert.ok(transports.every((transport) => transport.closed));
-}));
+    for (const owner of [0, 1]) {
+      assert.equal(
+        environments[owner][WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV],
+        "app-instance-" + owner,
+      );
+      assert.equal(
+        environments[owner][WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV],
+        "memory-generation-" + owner,
+      );
+    }
+    for (const [index, secret] of secrets.entries()) {
+      assert.ok(
+        Object.values(environments[Math.floor(index / 2)]).includes(secret),
+      );
+      assert.ok(
+        !Object.values(environments[1 - Math.floor(index / 2)]).includes(
+          secret,
+        ),
+      );
+      for (const output of [progress, results, logs])
+        assert.ok(!JSON.stringify(output).includes(secret));
+    }
+    assert.ok(
+      JSON.stringify(progress).includes(
+        "[WITHMATE_BINDING_REFERENCE_REDACTED]",
+      ),
+    );
+    assert.ok(
+      JSON.stringify(logs).includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"),
+    );
+    assert.ok(logs.length >= 2);
+    assert.deepEqual({ ...process.env }, parentEnvironment);
+    assert.ok(transports.every((transport) => transport.closed));
+  }));
 // @test-value v2
 // kind = "invariant"
 // claim = "native fileChangeのkindをartifact変更一覧へ正規化しcollaborationをtimelineへ投影する"
@@ -1792,18 +3278,50 @@ it("fresh process bindingを2 foreground ownerで分離し全出力境界をreda
 // impact = "利用者が変更されたfileや委譲作業の履歴を履歴で確認できなくなる"
 // distinction = "snapshot helper単体ではnative itemから変更一覧とtimelineへの実行時投影を確認できない"
 // @end-test-value
-it("native fileChangeとcollaborationをartifactへ投影する", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  const items = [
-    { type: "fileChange", id: "file", status: "completed", changes: [{ path: path.join(directory, "changed.ts"), kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-before\n+after" }] },
-    { type: "collabAgentToolCall", id: "agent", tool: "wait", status: "completed", agentsStates: { agent: { status: "completed" } } },
-    message("answer", "done"),
-  ];
-  transport.events = [completed(items)];
-  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory));
-  assert.deepEqual(result.artifact?.changedFiles.map((file) => ({ path: file.path, kind: file.kind })), [{ path: "changed.ts", kind: "edit" }]);
-  assert.ok(result.artifact?.operationTimeline?.some((operation) => operation.type === "collab_tool_call"));
-}));
+/** native の fileChange を相対パスと edit に変換し、協同ツールの wait を別種の履歴操作として残す。 */
+it("native fileChangeとcollaborationをartifactへ投影する", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    const items = [
+      {
+        type: "fileChange",
+        id: "file",
+        status: "completed",
+        changes: [
+          {
+            path: path.join(directory, "changed.ts"),
+            kind: { type: "update", move_path: null },
+            diff: "@@ -1 +1 @@\n-before\n+after",
+          },
+        ],
+      },
+      {
+        type: "collabAgentToolCall",
+        id: "agent",
+        tool: "wait",
+        status: "completed",
+        agentsStates: { agent: { status: "completed" } },
+      },
+      message("answer", "done"),
+    ];
+    transport.events = [completed(items)];
+    const result = await new CodexAdapter(undefined, {
+      /** 完了 snapshot にファイル変更と協同活動の両方を含めた通知を返す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(createCodexRunSessionTurnInput(directory));
+    assert.deepEqual(
+      result.artifact?.changedFiles.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+      })),
+      [{ path: "changed.ts", kind: "edit" }],
+    );
+    assert.ok(
+      result.artifact?.operationTimeline?.some(
+        (operation) => operation.type === "collab_tool_call",
+      ),
+    );
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -1817,45 +3335,114 @@ it("native fileChangeとcollaborationをartifactへ投影する", async () => wo
 // impact = "利用者が画像確認の対象や背景活動を履歴で識別できず、未対応診断も信用できなくなる"
 // distinction = "projection Worker単体では最終artifactと通常履歴の保存・復元およびadapter loggingの配線を確認できない"
 // @end-test-value
-it("native activitiesをOperationsへ保存し未知itemだけを警告する", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  const imagePath = path.join(directory, "result.png");
-  transport.events = [completed([
-    { type: "imageView", id: "image", path: imagePath },
-    { type: "sleep", id: "sleep", durationMs: 1500 },
-    { type: "contextCompaction", id: "compact" },
-    { type: "subAgentActivity", id: "child", kind: "completed", agentThreadId: "child-thread", agentPath: "/root/check", model: null, reasoningEffort: null },
-    { type: "futureItem", id: "future", value: "preserve" },
-    message("answer", "done"),
-  ])];
-  const logs: CodexLog[] = [];
-  const input = createCodexRunSessionTurnInput(directory);
-  const result = await new CodexAdapter((entry) => logs.push(entry), { createTransport: () => transport }).runSessionTurn(input);
-  assert.equal(result.assistantText, "done");
-  const operations = result.artifact!.operationTimeline!;
-  assert.deepEqual(operations.map(({ type }) => type), ["image_view", "sleep", "context_compaction", "subagent_activity", "unknown", "agent_message"]);
-  assert.deepEqual(operations[0], { id: "image", type: "image_view", summary: "result.png", details: imagePath });
-  assert.deepEqual(operations.slice(1, 4).map(({ id, summary }) => ({ id, summary })), [
-    { id: "sleep", summary: "Wait 1.5 s" }, { id: "compact", summary: "Compact conversation" }, { id: "child", summary: "completed: /root/check" },
-  ]);
-  assert.deepEqual(result.providerMetadata!.map(({ responseType }) => responseType), ["futureItem"]);
-  const warnings = logs.filter((entry) => entry.kind === "provider.unsupported-response");
-  assert.equal(warnings.length, 1);
-  assert.equal((warnings[0].data as { responseType: string }).responseType, "futureItem");
-  assert.equal(warnings[0].level, "warn");
-  const dbPath = path.join(directory, "history.db");
-  let storage = new SessionStorageV6(dbPath);
-  try {
-    const session = { ...input.session, messages: [{ role: "assistant" as const, text: result.assistantText, artifact: result.artifact }] };
-    storage.insertSession(session);
-    storage.close(); storage = new SessionStorageV6(dbPath);
-    const restored = storage.getSession(session.id)!;
-    assert.equal(restored.messages[0].text, "done");
-    const artifact = storage.getSessionMessageArtifact(session.id, 0);
-    const identity = ({ id, type, summary, details }: import("../../src-shared/session/runtime-state.js").MessageOperation) => ({ id, type, summary, details });
-    assert.deepEqual(artifact?.operationTimeline?.map(identity), operations.map(identity));
-  } finally { storage.close(); }
-}));
+/** 画像参照・待機・コンテキスト圧縮・子活動を本文に混ぜず Operations として再読込でき、未知 item だけを警告する。 */
+it("native activitiesをOperationsへ保存し未知itemだけを警告する", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    const imagePath = path.join(directory, "result.png");
+    transport.events = [
+      completed([
+        { type: "imageView", id: "image", path: imagePath },
+        { type: "sleep", id: "sleep", durationMs: 1500 },
+        { type: "contextCompaction", id: "compact" },
+        {
+          type: "subAgentActivity",
+          id: "child",
+          kind: "completed",
+          agentThreadId: "child-thread",
+          agentPath: "/root/check",
+          model: null,
+          reasoningEffort: null,
+        },
+        { type: "futureItem", id: "future", value: "preserve" },
+        message("answer", "done"),
+      ]),
+    ];
+    const logs: CodexLog[] = [];
+    const input = createCodexRunSessionTurnInput(directory);
+    const result = await new CodexAdapter((entry) => logs.push(entry), {
+      /** 既知活動と今後追加される未知 item の混在を一件の終端として読み込む。 */
+      createTransport: () => transport,
+    }).runSessionTurn(input);
+    assert.equal(result.assistantText, "done");
+    const operations = result.artifact!.operationTimeline!;
+    assert.deepEqual(
+      operations.map(({ type }) => type),
+      [
+        "image_view",
+        "sleep",
+        "context_compaction",
+        "subagent_activity",
+        "unknown",
+        "agent_message",
+      ],
+    );
+    assert.deepEqual(operations[0], {
+      id: "image",
+      type: "image_view",
+      summary: "result.png",
+      details: imagePath,
+    });
+    assert.deepEqual(
+      operations.slice(1, 4).map(({ id, summary }) => ({ id, summary })),
+      [
+        { id: "sleep", summary: "Wait 1.5 s" },
+        { id: "compact", summary: "Compact conversation" },
+        { id: "child", summary: "completed: /root/check" },
+      ],
+    );
+    assert.deepEqual(
+      result.providerMetadata!.map(({ responseType }) => responseType),
+      ["futureItem"],
+    );
+    const warnings = logs.filter(
+      (entry) => entry.kind === "provider.unsupported-response",
+    );
+    assert.equal(warnings.length, 1);
+    assert.equal(
+      (warnings[0].data as { responseType: string }).responseType,
+      "futureItem",
+    );
+    assert.equal(warnings[0].level, "warn");
+    const dbPath = path.join(directory, "history.db");
+    let storage = new SessionStorageV6(dbPath);
+    try {
+      const session = {
+        ...input.session,
+        messages: [
+          {
+            role: "assistant" as const,
+            text: result.assistantText,
+            artifact: result.artifact,
+          },
+        ],
+      };
+      storage.insertSession(session);
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+      const restored = storage.getSession(session.id)!;
+      assert.equal(restored.messages[0].text, "done");
+      const artifact = storage.getSessionMessageArtifact(session.id, 0);
+      /** 再読込した操作と保存前の操作から、保存前後で照合する識別子と表示内容を取り出す。 */
+      const identity = ({
+        id,
+        type,
+        summary,
+        details,
+      }: import("../../src-shared/session/runtime-state.js").MessageOperation) => ({
+        id,
+        type,
+        summary,
+        details,
+      });
+      assert.deepEqual(
+        artifact?.operationTimeline?.map(identity),
+        operations.map(identity),
+      );
+    } finally {
+      storage.close();
+    }
+  }));
 // @test-value v2
 // kind = "invariant"
 // claim = "大きいnative commandとMCP出力をliveとartifactの省略marker付きpreviewへ投影しassistant本文を保持する"
@@ -1868,32 +3455,63 @@ it("native activitiesをOperationsへ保存し未知itemだけを警告する", 
 // impact = "大きいtool出力がUIと通常履歴へ不要に複製され、省略表示や会話本文が失われる"
 // distinction = "shared予算helper testではCodexのnative projection配線を確認できない"
 // @end-test-value
-it("native commandとMCPの大きい出力をlive artifact予算へ投影する", async () => workspace(async (directory) => {
-  const largeText = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2);
-  const transport = new FakeTransport();
-  const command = { type: "commandExecution", id: "command", command: "echo large", aggregatedOutput: largeText, exitCode: 0, status: "completed" };
-  const mcps = Array.from({ length: 10 }, (_, index) => ({ type: "mcpToolCall", id: "mcp-" + index, server: "fixture", tool: "large", arguments: {}, result: { structuredContent: { text: largeText }, content: [] }, error: null, status: "completed" }));
-  transport.events = [notification("item/completed", { item: command }), ...mcps.map((item) => notification("item/completed", { item })), completed([message("answer", "本文保持")])];
-  const details: string[] = [];
-  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(createCodexRunSessionTurnInput(directory), (_state, changes) => {
-    for (const step of changes.steps.upserts) if (step.details) details.push(step.details);
-  });
-  assert.ok(details.length > 0);
-  for (const detail of details) {
-    assert.ok(detail.length < largeText.length);
-    assert.match(detail, /truncated/);
-  }
-  for (const type of ["command_execution", "mcp_tool_call"]) {
-    const detail = result.artifact!.operationTimeline!.find((operation) => operation.type === type)?.details;
-    assert.ok(detail);
-    assert.ok(detail.length < largeText.length);
-    assert.match(detail, /truncated/);
-  }
-  const raw = result.artifact;
-  assert.match(JSON.stringify(raw), /truncated/);
-  assert.equal(result.assistantText, "本文保持");
-  assert.equal(transport.closed, true);
-}));
+/** 大きな command と MCP 出力の詳細を live と成果物の両方で省略表示にし、独立の assistant 本文は欠落させない。 */
+it("native commandとMCPの大きい出力をlive artifact予算へ投影する", async () =>
+  workspace(async (directory) => {
+    const largeText = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT * 2);
+    const transport = new FakeTransport();
+    const command = {
+      type: "commandExecution",
+      id: "command",
+      command: "echo large",
+      aggregatedOutput: largeText,
+      exitCode: 0,
+      status: "completed",
+    };
+    const mcps = Array.from({ length: 10 }, (_, index) => ({
+      type: "mcpToolCall",
+      id: "mcp-" + index,
+      server: "fixture",
+      tool: "large",
+      arguments: {},
+      result: { structuredContent: { text: largeText }, content: [] },
+      error: null,
+      status: "completed",
+    }));
+    transport.events = [
+      notification("item/completed", { item: command }),
+      ...mcps.map((item) => notification("item/completed", { item })),
+      completed([message("answer", "本文保持")]),
+    ];
+    const details: string[] = [];
+    const result = await new CodexAdapter(undefined, {
+      /** 一件の command と複数の大きな MCP 通知を同じ turn の transport から流す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(
+      createCodexRunSessionTurnInput(directory),
+      (_state, changes) => {
+        for (const step of changes.steps.upserts)
+          if (step.details) details.push(step.details);
+      },
+    );
+    assert.ok(details.length > 0);
+    for (const detail of details) {
+      assert.ok(detail.length < largeText.length);
+      assert.match(detail, /truncated/);
+    }
+    for (const type of ["command_execution", "mcp_tool_call"]) {
+      const detail = result.artifact!.operationTimeline!.find(
+        (operation) => operation.type === type,
+      )?.details;
+      assert.ok(detail);
+      assert.ok(detail.length < largeText.length);
+      assert.match(detail, /truncated/);
+    }
+    const raw = result.artifact;
+    assert.match(JSON.stringify(raw), /truncated/);
+    assert.equal(result.assistantText, "本文保持");
+    assert.equal(transport.closed, true);
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -1907,14 +3525,43 @@ it("native commandとMCPの大きい出力をlive artifact予算へ投影する"
 // impact = "利用者のturn token使用量とmemory抽出閾値を誤る"
 // distinction = "複数responseと重複通知の集計は型検査では確認できない"
 // @end-test-value
+/** 再開前の累計を baseline にして現 turn の複数応答分を集計し、同じ累計の重複通知では加算しない。 */
 it("native token usageはthread baselineからturn差分を集計する", () => {
   const state = createCodexTurnStreamState("thread-1");
   state.turnId = "turn-1";
-  const breakdown = (inputTokens: number, outputTokens: number) => ({ inputTokens, outputTokens, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: inputTokens + outputTokens });
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { turnId: "old", tokenUsage: { total: breakdown(100, 50), last: breakdown(10, 5) } }));
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { tokenUsage: { total: breakdown(110, 55), last: breakdown(10, 5) } }));
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { tokenUsage: { total: breakdown(130, 62), last: breakdown(20, 7) } }));
-  applyCodexTurnEvent(state, notification("thread/tokenUsage/updated", { tokenUsage: { total: breakdown(130, 62), last: breakdown(20, 7) } }));
+  /** 入力・出力だけが変化する native 使用量を作り、thread の累計と各応答を同形式で比較する。 */
+  const breakdown = (inputTokens: number, outputTokens: number) => ({
+    inputTokens,
+    outputTokens,
+    cachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: inputTokens + outputTokens,
+  });
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      turnId: "old",
+      tokenUsage: { total: breakdown(100, 50), last: breakdown(10, 5) },
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      tokenUsage: { total: breakdown(110, 55), last: breakdown(10, 5) },
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      tokenUsage: { total: breakdown(130, 62), last: breakdown(20, 7) },
+    }),
+  );
+  applyCodexTurnEvent(
+    state,
+    notification("thread/tokenUsage/updated", {
+      tokenUsage: { total: breakdown(130, 62), last: breakdown(20, 7) },
+    }),
+  );
   assert.deepEqual(state.usage, breakdown(30, 12));
 });
 
@@ -1930,8 +3577,13 @@ it("native token usageはthread baselineからturn差分を集計する", () => 
 // impact = "受理済み追加入力の重複再送または有効な対話の喪失を防ぐ"
 // distinction = "実stdio transportのcloseによるpending RPC rejectとterminal先行ACKの競合を短いNode子processで検証する"
 // @end-test-value
-it("steer成功ACKはterminalが先に届いても受理結果を保持する", { timeout: 5_000 }, async () => workspace(async (directory) => {
-  const fixture = String.raw`
+/** 実 stdio で終端より遅れた steer の成功 ACK を破棄せず、元 turn の受理履歴と info 診断まで残す。 */
+it(
+  "steer成功ACKはterminalが先に届いても受理結果を保持する",
+  { timeout: 5_000 },
+  async () =>
+    workspace(async (directory) => {
+      const fixture = String.raw`
 import { createInterface } from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 createInterface({ input: process.stdin }).on('line', line => {
@@ -1946,28 +3598,57 @@ createInterface({ input: process.stdin }).on('line', line => {
 });
 setInterval(() => {}, 1000);
 `;
-  let transport!: CodexAppServerTransport;
-  const logs: CodexLog[] = [];
-  const adapter = new CodexAdapter((entry) => logs.push(entry), { createTransport: (options) => {
-    transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
-    return transport;
-  } });
-  const input = createCodexRunSessionTurnInput(directory);
-  let ready!: () => void;
-  const available = new Promise<void>((resolve) => { ready = resolve; });
-  const run = adapter.runSessionTurn(input, (state) => { if (state.inputAvailable) ready(); });
-  await available;
-  const steer = adapter.steerSessionTurn({ sessionId: input.session.id, expectedTurnId: "turn-1", userMessage: "追加", attachments: [] });
-  const result = await Promise.all([run, steer]);
-  assert.deepEqual(result[1], { turnId: "turn-1" });
-  assert.deepEqual((result[0].providerMetadata!.find((item) => item.kind === "withmate.accepted_steer")!.payload as { data: unknown }).data, {
-    threadId: "thread-1", turnId: "turn-1", input: [{ type: "text", text: "追加", text_elements: [] }],
-  });
-  assert.equal(transport.state, "closed");
-  const acceptedLog = logs.find((entry) => (entry.data as { kind?: string })?.kind === "withmate.accepted_steer")!;
-  assert.equal(acceptedLog.kind, "provider.diagnostic");
-  assert.equal(acceptedLog.level, "info");
-}));
+      let transport!: CodexAppServerTransport;
+      const logs: CodexLog[] = [];
+      const adapter = new CodexAdapter((entry) => logs.push(entry), {
+        /** 終端通知の後に steer ACK を送る Node プロセスを、実 stdio transport の相手にする。 */
+        createTransport: (options) => {
+          transport = new CodexAppServerTransport({
+            ...options,
+            executable: process.execPath,
+            arguments: ["--input-type=module", "-e", fixture],
+          });
+          return transport;
+        },
+      });
+      const input = createCodexRunSessionTurnInput(directory);
+      let ready!: () => void;
+      const available = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      const run = adapter.runSessionTurn(input, (state) => {
+        if (state.inputAvailable) ready();
+      });
+      await available;
+      const steer = adapter.steerSessionTurn({
+        sessionId: input.session.id,
+        expectedTurnId: "turn-1",
+        userMessage: "追加",
+        attachments: [],
+      });
+      const result = await Promise.all([run, steer]);
+      assert.deepEqual(result[1], { turnId: "turn-1" });
+      assert.deepEqual(
+        (
+          result[0].providerMetadata!.find(
+            (item) => item.kind === "withmate.accepted_steer",
+          )!.payload as { data: unknown }
+        ).data,
+        {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          input: [{ type: "text", text: "追加", text_elements: [] }],
+        },
+      );
+      assert.equal(transport.state, "closed");
+      const acceptedLog = logs.find(
+        (entry) =>
+          (entry.data as { kind?: string })?.kind === "withmate.accepted_steer",
+      )!;
+      assert.equal(acceptedLog.kind, "provider.diagnostic");
+      assert.equal(acceptedLog.level, "info");
+    }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -1981,23 +3662,41 @@ setInterval(() => {}, 1000);
 // impact = "開始直後や再開時のburstが有効なturnを中断し本文とツール結果を失うことを防ぐ"
 // distinction = "FakeTransportの既存burst testは受信キューを通らない;短いローカルNode processでACK前滞留と全量projectionを確認する"
 // @end-test-value
-it("実stdioの小delta burstを全量処理して承認後にturnを完了する", { timeout: 10_000 }, async (context) => workspace(async (directory) => {
-  const count = 5000;
-  let dispatches = 0;
-  let forwarded = 0;
-  let foreign = false;
-  const postMessage = Worker.prototype.postMessage;
-  context.mock.method(Worker.prototype, "postMessage", function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
-    const command = (args[0] as CodexProjectionRequest).command;
-    const events = command.type === "events" ? command.events : command.type === "event" ? [command.event] : [];
-    if (events.length) {
-      dispatches++;
-      forwarded += events.length;
-      foreign ||= events.some(event => (event.params as { threadId?: string }).threadId === "other-thread");
-    }
-    return postMessage.apply(this, args);
-  });
-  const fixture = String.raw`
+/** 開始 ACK 前の実 stdio バーストをまとめて Worker へ渡し、別 thread を除いた全本文と承認後のツール結果を保持する。 */
+it(
+  "実stdioの小delta burstを全量処理して承認後にturnを完了する",
+  { timeout: 10_000 },
+  async (context) =>
+    workspace(async (directory) => {
+      const count = 5000;
+      let dispatches = 0;
+      let forwarded = 0;
+      let foreign = false;
+      const postMessage = Worker.prototype.postMessage;
+      context.mock.method(
+        Worker.prototype,
+        "postMessage",
+        function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+          const command = (args[0] as CodexProjectionRequest).command;
+          const events =
+            command.type === "events"
+              ? command.events
+              : command.type === "event"
+                ? [command.event]
+                : [];
+          if (events.length) {
+            dispatches++;
+            forwarded += events.length;
+            foreign ||= events.some(
+              (event) =>
+                (event.params as { threadId?: string }).threadId ===
+                "other-thread",
+            );
+          }
+          return postMessage.apply(this, args);
+        },
+      );
+      const fixture = String.raw`
 import { createInterface } from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 createInterface({ input: process.stdin }).on('line', line => {
@@ -2020,22 +3719,50 @@ createInterface({ input: process.stdin }).on('line', line => {
 });
 setInterval(() => {}, 1000);
 `;
-  let transport!: CodexAppServerTransport;
-  let approvals = 0;
-  const adapter = new CodexAdapter(undefined, { createTransport: (options) => {
-    transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
-    return transport;
-  } });
-  const input = { ...createCodexRunSessionTurnInput(directory), onApprovalRequest: () => { approvals++; return "approve" as const; } };
-  const result = await adapter.runSessionTurn(input);
-  assert.equal(result.assistantText, Array.from({ length: count }, (_, index) => `${index}:日本語\n`).join(""));
-  assert.equal(approvals, 1);
-  assert.equal(result.artifact?.operationTimeline?.find(item => item.type === "command_execution")?.details, "tool-result");
-  assert.equal(transport.state, "closed");
-  assert.equal(forwarded, count + 3);
-  assert.equal(foreign, false);
-  assert.ok(dispatches < count / 8, `Expected batched Worker delivery, got ${dispatches} dispatches`);
-}));
+      let transport!: CodexAppServerTransport;
+      let approvals = 0;
+      const adapter = new CodexAdapter(undefined, {
+        /** 多数の delta と承認要求を ACK 前に流す短い Node fixture を実 stdio へつなぐ。 */
+        createTransport: (options) => {
+          transport = new CodexAppServerTransport({
+            ...options,
+            executable: process.execPath,
+            arguments: ["--input-type=module", "-e", fixture],
+          });
+          return transport;
+        },
+      });
+      const input = {
+        ...createCodexRunSessionTurnInput(directory),
+        /** 承認に一件ずつ応答し、バーストで重複して要求されなかったか数える。 */
+        onApprovalRequest: () => {
+          approvals++;
+          return "approve" as const;
+        },
+      };
+      const result = await adapter.runSessionTurn(input);
+      assert.equal(
+        result.assistantText,
+        Array.from({ length: count }, (_, index) => `${index}:日本語\n`).join(
+          "",
+        ),
+      );
+      assert.equal(approvals, 1);
+      assert.equal(
+        result.artifact?.operationTimeline?.find(
+          (item) => item.type === "command_execution",
+        )?.details,
+        "tool-result",
+      );
+      assert.equal(transport.state, "closed");
+      assert.equal(forwarded, count + 3);
+      assert.equal(foreign, false);
+      assert.ok(
+        dispatches < count / 8,
+        `Expected batched Worker delivery, got ${dispatches} dispatches`,
+      );
+    }),
+);
 
 // @test-value v2
 // kind = "invariant"
@@ -2049,19 +3776,49 @@ setInterval(() => {}, 1000);
 // impact = "有効なMCP対話が拒否され利用者が回答できなくなる"
 // distinction = "interaction helper単体ではadapterのthread/turn scope判定を通らずnullable turnIdの誤拒否を検出できない"
 // @end-test-value
-it("MCP elicitationのnullable turnIdをcurrent threadにscopeする", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  let response: unknown;
-  transport.events = [{ kind: "serverRequest", id: 3, method: "mcpServer/elicitation/request", params: { threadId: "thread-1", turnId: null, mode: "url", serverName: "example", message: "Authorize", url: "https://example.com/auth" },
-    respond: async (value) => { response = value; transport.push(completed()); },
-    reject: async () => { throw new Error("valid MCP elicitation rejected"); } }];
-  const input = createCodexRunSessionTurnInput(directory);
-  let calls = 0;
-  input.onElicitationRequest = (request) => { calls += 1; assert.equal(request.source, "example"); return { action: "decline" }; };
-  await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input);
-  assert.equal(calls, 1);
-  assert.deepEqual(response, { action: "decline", content: null });
-}));
+/** 現 thread の MCP 要求では turnId が null でも UI に一度渡し、decline を native 応答へ反映する。 */
+it("MCP elicitationのnullable turnIdをcurrent threadにscopeする", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    let response: unknown;
+    transport.events = [
+      {
+        kind: "serverRequest",
+        id: 3,
+        method: "mcpServer/elicitation/request",
+        params: {
+          threadId: "thread-1",
+          turnId: null,
+          mode: "url",
+          serverName: "example",
+          message: "Authorize",
+          url: "https://example.com/auth",
+        },
+        /** UI から返った回答を記録して、その直後に turn を完了させる。 */
+        respond: async (value) => {
+          response = value;
+          transport.push(completed());
+        },
+        /** 有効な nullable turnId の要求を拒否した場合は失敗を示す。 */
+        reject: async () => {
+          throw new Error("valid MCP elicitation rejected");
+        },
+      },
+    ];
+    const input = createCodexRunSessionTurnInput(directory);
+    let calls = 0;
+    input.onElicitationRequest = (request) => {
+      calls += 1;
+      assert.equal(request.source, "example");
+      return { action: "decline" };
+    };
+    await new CodexAdapter(undefined, {
+      /** nullable turnId を持つサーバー要求が transport から直接届くようにする。 */
+      createTransport: () => transport,
+    }).runSessionTurn(input);
+    assert.equal(calls, 1);
+    assert.deepEqual(response, { action: "decline", content: null });
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -2076,28 +3833,57 @@ it("MCP elicitationのnullable turnIdをcurrent threadにscopeする", async () 
 // impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
 // distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
 // @end-test-value
+/** 設定の API key を継承 key より優先し、選ばれた key で thread 開始前に一時ログインする。key がなければ保存済み CLI 認証へ介入しない。 */
 it("API key選択をprocess-local ephemeral loginへ投影する", async () => {
   const previous = process.env.CODEX_API_KEY;
   try {
-    for (const scenario of [{ configured: "fake-configured-key", inherited: "fake-inherited-key", expected: "fake-configured-key" }, { configured: "", inherited: "fake-inherited-key", expected: "fake-inherited-key" }, { configured: "", inherited: "", expected: "" }]) {
+    for (const scenario of [
+      {
+        configured: "fake-configured-key",
+        inherited: "fake-inherited-key",
+        expected: "fake-configured-key",
+      },
+      {
+        configured: "",
+        inherited: "fake-inherited-key",
+        expected: "fake-inherited-key",
+      },
+      { configured: "", inherited: "", expected: "" },
+    ]) {
       if (scenario.inherited) process.env.CODEX_API_KEY = scenario.inherited;
       else delete process.env.CODEX_API_KEY;
       const input = createCodexRunSessionTurnInput(process.cwd());
-      input.appSettings.codingProviderSettings.codex.apiKey = scenario.configured;
+      input.appSettings.codingProviderSettings.codex.apiKey =
+        scenario.configured;
       const transport = new FakeTransport();
       transport.events = [completed([message("answer", "{}")])];
       let argv: readonly string[] = [];
-      const adapter = new CodexAdapter(undefined, { createTransport: (options) => { argv = options.arguments ?? []; return transport; } });
+      const adapter = new CodexAdapter(undefined, {
+        /** 起動時の引数とログイン RPC を別々に捕捉し、key が引数に現れないことを照合する。 */
+        createTransport: (options) => {
+          argv = options.arguments ?? [];
+          return transport;
+        },
+      });
       await adapter.runSessionTurn(input);
-      const login = transport.calls.find((call) => call.method === "account/login/start");
+      const login = transport.calls.find(
+        (call) => call.method === "account/login/start",
+      );
       if (scenario.expected) {
-        assert.deepEqual(login?.params, { type: "apiKey", apiKey: scenario.expected });
+        assert.deepEqual(login?.params, {
+          type: "apiKey",
+          apiKey: scenario.expected,
+        });
         assert.equal(transport.calls[0].method, "account/login/start");
         assert.ok(argv.includes('cli_auth_credentials_store="ephemeral"'));
         assert.ok(!JSON.stringify(argv).includes(scenario.expected));
       } else {
         assert.equal(login, undefined);
-        assert.ok(!argv.some((argument) => argument.includes("cli_auth_credentials_store")));
+        assert.ok(
+          !argv.some((argument) =>
+            argument.includes("cli_auth_credentials_store"),
+          ),
+        );
         assert.equal(transport.calls[0].method, "thread/start");
       }
     }
@@ -2119,25 +3905,39 @@ it("API key選択をprocess-local ephemeral loginへ投影する", async () => {
 // impact = "明示API keyを無視して別accountで実行したりCLI認証storeや履歴へkeyを書き込む"
 // distinction = "API key選択とlogin-before-thread順序は型検査では確認できない"
 // @end-test-value
-it("API key login失敗はfallbackせずauth失敗として収束する", async () => workspace(async (directory) => {
-  for (const scenario of ["rejected", "wrong-type"]) {
-    const transport = new FakeTransport();
-    if (scenario === "rejected") transport.loginError = new Error("denied fake-private-key");
-    else transport.loginType = "chatgpt";
-    const input = createCodexRunSessionTurnInput(directory);
-    input.appSettings.codingProviderSettings.codex.apiKey = "fake-private-key";
-    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-    await assert.rejects(adapter.runSessionTurn(input), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.reason, "auth");
-      assert.ok(!error.message.includes("fake-private-key"));
-      assert.ok(!JSON.stringify(error.partialResult).includes("fake-private-key"));
-      return true;
-    });
-    assert.ok(!transport.calls.some((call) => call.method === "thread/start" || call.method === "thread/resume"));
-    assert.equal(transport.closed, true);
-  }
-}));
+/** API key のログインが拒まれた場合も認証種別が不正な場合も thread を開始せず、key を伏せた auth 失敗として返す。 */
+it("API key login失敗はfallbackせずauth失敗として収束する", async () =>
+  workspace(async (directory) => {
+    for (const scenario of ["rejected", "wrong-type"]) {
+      const transport = new FakeTransport();
+      if (scenario === "rejected")
+        transport.loginError = new Error("denied fake-private-key");
+      else transport.loginType = "chatgpt";
+      const input = createCodexRunSessionTurnInput(directory);
+      input.appSettings.codingProviderSettings.codex.apiKey =
+        "fake-private-key";
+      const adapter = new CodexAdapter(undefined, {
+        /** 認証拒否または別認証方式の応答を返す transport を差し替える。 */
+        createTransport: () => transport,
+      });
+      await assert.rejects(adapter.runSessionTurn(input), (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.reason, "auth");
+        assert.ok(!error.message.includes("fake-private-key"));
+        assert.ok(
+          !JSON.stringify(error.partialResult).includes("fake-private-key"),
+        );
+        return true;
+      });
+      assert.ok(
+        !transport.calls.some(
+          (call) =>
+            call.method === "thread/start" || call.method === "thread/resume",
+        ),
+      );
+      assert.equal(transport.closed, true);
+    }
+  }));
 // @test-value v2
 // kind = "invariant"
 // claim = "API key echoを含むCodex応答で、live assistantの少なくとも1件に秘匿markerが現れ、runSessionTurn返却JSONにはAPI keyが残らない"
@@ -2151,16 +3951,27 @@ it("API key login失敗はfallbackせずauth失敗として収束する", async 
 // impact = "providerがechoしたcredentialの返却会話・artifactへの漏洩と、live側の秘匿投影の欠落を検出する"
 // distinction = "key選択やlogin順序のtestはprovider応答のredactionを観測せず、型検査も返却文字列のsecretを検出できない"
 // @end-test-value
-it("API keyをprovider echoのliveとartifactから除去する", async () => workspace(async (directory) => {
-  const transport = new FakeTransport();
-  transport.events = [completed([message("answer", "fake-echoed-key")])];
-  const input = createCodexRunSessionTurnInput(directory);
-  input.appSettings.codingProviderSettings.codex.apiKey = "fake-echoed-key";
-  const live: string[] = [];
-  const result = await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(input, (state) => { live.push(state.assistantText); });
-  assert.ok(live.some((text) => text.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]")));
-  assert.ok(!JSON.stringify(result).includes("fake-echoed-key"));
-}));
+/** 応答が API key を echo した場合でも live 本文に秘匿マーカーを出し、返却本文と成果物を含む結果全体から key を消す。 */
+it("API keyをprovider echoのliveとartifactから除去する", async () =>
+  workspace(async (directory) => {
+    const transport = new FakeTransport();
+    transport.events = [completed([message("answer", "fake-echoed-key")])];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.appSettings.codingProviderSettings.codex.apiKey = "fake-echoed-key";
+    const live: string[] = [];
+    const result = await new CodexAdapter(undefined, {
+      /** 設定した key と同じ文字列を返す終端通知を合成して投影へ渡す。 */
+      createTransport: () => transport,
+    }).runSessionTurn(input, (state) => {
+      live.push(state.assistantText);
+    });
+    assert.ok(
+      live.some((text) =>
+        text.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"),
+      ),
+    );
+    assert.ok(!JSON.stringify(result).includes("fake-echoed-key"));
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -2175,18 +3986,36 @@ it("API keyをprovider echoのliveとartifactから除去する", async () => wo
 // impact = "背景評価の失敗またはcallbackの例外経由でcredentialを公開する"
 // distinction = "型検査では例外messageとRPC dataのsecret除去を確認できない"
 // @end-test-value
-it("final progress失敗のkey echoをapp logから除去する", async () => workspace(async (directory) => {
-  const apiKey = "fake-final-progress-key";
-  const transport = new FakeTransport();
-  transport.events = [completed()];
-  const input = createCodexRunSessionTurnInput(directory);
-  input.appSettings.codingProviderSettings.codex.apiKey = apiKey;
-  const logMessages: string[] = [];
-  const adapter = new CodexAdapter((entry) => { logMessages.push(entry.message); }, { createTransport: () => transport });
-  await assert.rejects(adapter.runSessionTurn(input, (state) => { if (!state.inputAvailable) throw new Error(apiKey); }));
-  assert.ok(logMessages.some((message) => message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]")));
-  assert.ok(logMessages.every((message) => !message.includes(apiKey)));
-}));
+/** 入力閉鎖時の progress 例外が API key を含んでも App logger の診断には秘匿マーカーだけが残る。 */
+it("final progress失敗のkey echoをapp logから除去する", async () =>
+  workspace(async (directory) => {
+    const apiKey = "fake-final-progress-key";
+    const transport = new FakeTransport();
+    transport.events = [completed()];
+    const input = createCodexRunSessionTurnInput(directory);
+    input.appSettings.codingProviderSettings.codex.apiKey = apiKey;
+    const logMessages: string[] = [];
+    const adapter = new CodexAdapter(
+      (entry) => {
+        logMessages.push(entry.message);
+      },
+      {
+        /** 空の終端通知を返す transport を使い、logger に渡る失敗文字列を比較する。 */
+        createTransport: () => transport,
+      },
+    );
+    await assert.rejects(
+      adapter.runSessionTurn(input, (state) => {
+        if (!state.inputAvailable) throw new Error(apiKey);
+      }),
+    );
+    assert.ok(
+      logMessages.some((message) =>
+        message.includes("[WITHMATE_BINDING_REFERENCE_REDACTED]"),
+      ),
+    );
+    assert.ok(logMessages.every((message) => !message.includes(apiKey)));
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -2200,53 +4029,106 @@ it("final progress失敗のkey echoをapp logから除去する", async () => wo
 // impact = "最終表示consumerの実失敗をturn成功として保存する誤判定と終了resourceの残留を防ぐ"
 // distinction = "既存key echo testは同期terminal control自体を拒否し、terminal items反映後だけの非同期本文・step拒否を通らない。fake transportと短い実Worker実行で最終配送契約を確認する"
 // @end-test-value
-it("最終consumer拒否はcleanup後にpartial付きで伝播し既存失敗を維持する", async (context) => workspace(async (directory) => {
-  const terminate = Worker.prototype.terminate;
-  let terminated = 0;
-  context.mock.method(Worker.prototype, "terminate", async function (this: Worker) {
-    const result = await terminate.call(this);
-    terminated += 1;
-    return result;
-  });
-  for (const scenario of ["text", "steps", "cleanup", "provider-failure"] as const) {
-    const cleanupFails = scenario === "cleanup" || scenario === "provider-failure";
-    class TerminalTransport extends FakeTransport {
-      override async close() {
-        await super.close();
-        if (cleanupFails) throw new Error("cleanup failure");
+/** 最終本文・step の消費失敗は部分結果に流し、Worker と transport を解放する。既に Provider が失敗していれば元の原因も守る。 */
+it("最終consumer拒否はcleanup後にpartial付きで伝播し既存失敗を維持する", async (context) =>
+  workspace(async (directory) => {
+    const terminate = Worker.prototype.terminate;
+    let terminated = 0;
+    context.mock.method(
+      Worker.prototype,
+      "terminate",
+      async function (this: Worker) {
+        const result = await terminate.call(this);
+        terminated += 1;
+        return result;
+      },
+    );
+    for (const scenario of [
+      "text",
+      "steps",
+      "cleanup",
+      "provider-failure",
+    ] as const) {
+      const cleanupFails =
+        scenario === "cleanup" || scenario === "provider-failure";
+      /** 閉鎖は実行しつつ、必要なケースだけ後処理エラーを追加で発生させる transport。 */
+      class TerminalTransport extends FakeTransport {
+        /** 待機を解消した後に終了エラーを選択的に発生させ、部分結果の元原因が維持されるか調べられるようにする。 */
+        override async close() {
+          await super.close();
+          if (cleanupFails) throw new Error("cleanup failure");
+        }
       }
+      const transport = new TerminalTransport();
+      const command = {
+        type: "commandExecution",
+        id: "command",
+        command: "echo result",
+        cwd: directory,
+        status: "completed",
+        aggregatedOutput: "result",
+        exitCode: 0,
+        durationMs: 1,
+      };
+      transport.events = [
+        completed(
+          [message("answer", "final body"), command],
+          scenario === "provider-failure" ? "failed" : "completed",
+        ),
+      ];
+      const adapter = new CodexAdapter(undefined, {
+        /** 各ケースの終端を送った transport を閉鎖・終了数の assertion に使う。 */
+        createTransport: () => transport,
+      });
+      let terminalControlSucceeded = false;
+      let finalRejected = false;
+      const beforeTerminated = terminated;
+      await assert.rejects(
+        adapter.runSessionTurn(
+          createCodexRunSessionTurnInput(directory),
+          (state, changes) => {
+            const finalFrame =
+              scenario === "steps"
+                ? changes.steps.upserts.some((step) => step.id === "command")
+                : state.assistantText === "final body";
+            if (finalFrame) {
+              assert.equal(terminalControlSucceeded, true);
+              finalRejected = true;
+              return Promise.reject(new Error("final consumer failed"));
+            }
+            if (!state.inputAvailable) terminalControlSucceeded = true;
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(
+            error.message,
+            scenario === "provider-failure"
+              ? "provider failed"
+              : "final consumer failed",
+          );
+          assert.equal(error.canceled, false);
+          assert.equal(error.partialResult.assistantText, "final body");
+          assert.ok(error.partialResult.artifact);
+          assert.equal(
+            error.partialResult.artifact.operationTimeline?.find(
+              (operation) => operation.id === "command",
+            )?.status,
+            "completed",
+          );
+          if (cleanupFails)
+            assert.match(
+              JSON.stringify(error.partialResult.providerMetadata),
+              /cleanup failure/,
+            );
+          assert.equal(transport.closed, true);
+          assert.equal(terminated, beforeTerminated + 1);
+          return true;
+        },
+      );
+      assert.equal(finalRejected, true);
     }
-    const transport = new TerminalTransport();
-    const command = { type: "commandExecution", id: "command", command: "echo result", cwd: directory,
-      status: "completed", aggregatedOutput: "result", exitCode: 0, durationMs: 1 };
-    transport.events = [completed([message("answer", "final body"), command], scenario === "provider-failure" ? "failed" : "completed")];
-    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-    let terminalControlSucceeded = false;
-    let finalRejected = false;
-    const beforeTerminated = terminated;
-    await assert.rejects(adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state, changes) => {
-      const finalFrame = scenario === "steps" ? changes.steps.upserts.some(step => step.id === "command") : state.assistantText === "final body";
-      if (finalFrame) {
-        assert.equal(terminalControlSucceeded, true);
-        finalRejected = true;
-        return Promise.reject(new Error("final consumer failed"));
-      }
-      if (!state.inputAvailable) terminalControlSucceeded = true;
-    }), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.message, scenario === "provider-failure" ? "provider failed" : "final consumer failed");
-      assert.equal(error.canceled, false);
-      assert.equal(error.partialResult.assistantText, "final body");
-      assert.ok(error.partialResult.artifact);
-      assert.equal(error.partialResult.artifact.operationTimeline?.find(operation => operation.id === "command")?.status, "completed");
-      if (cleanupFails) assert.match(JSON.stringify(error.partialResult.providerMetadata), /cleanup failure/);
-      assert.equal(transport.closed, true);
-      assert.equal(terminated, beforeTerminated + 1);
-      return true;
-    });
-    assert.equal(finalRejected, true);
-  }
-}));
+  }));
 
 // @test-value v2
 // kind = "contract"
@@ -2260,35 +4142,58 @@ it("最終consumer拒否はcleanup後にpartial付きで伝播し既存失敗を
 // impact = "取得済みの応答と操作結果が失敗履歴から失われ、利用者が処理結果を回収できなくなる"
 // distinction = "既存partial testは通知consumer例外を発生させず、privacy testはpartialを読まない。短い2通知条件で実Workerを通す接続だけを確認する"
 // @end-test-value
-it("terminal制御通知の同期・非同期失敗でも本文と操作結果をpartialへ回収する", async () => workspace(async (directory) => {
-  for (const failureMode of ["sync", "async"] as const) {
-    const transport = new FakeTransport();
-    transport.events = [completed([
-      message("answer", "must retain"),
-      { type: "commandExecution", id: "command", command: "echo retained", aggregatedOutput: "retained output", exitCode: 0, status: "completed" },
-    ])];
-    const failure = new Error(`consumer failure ${failureMode}`);
-    const adapter = new CodexAdapter(undefined, { createTransport: () => transport });
-    await assert.rejects(adapter.runSessionTurn(createCodexRunSessionTurnInput(directory), (state) => {
-      if (state.inputAvailable) return;
-      if (failureMode === "sync") throw failure;
-      return Promise.reject(failure);
-    }), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.message, failure.message);
-      assert.equal(error.canceled, false);
-      assert.equal(error.partialResult.assistantText, "must retain");
-      const operation = error.partialResult.artifact?.operationTimeline?.find((item) => item.id === "command");
-      assert.ok(operation);
-      assert.equal(operation.type, "command_execution");
-      assert.equal(operation.status, "completed");
-      assert.equal(operation.details, "retained output");
-      assert.equal(operation.exitCode, 0);
-      return true;
-    });
-    assert.equal(transport.closed, true);
-  }
-}));
+/** 入力閉鎖通知が同期例外または Promise 拒否になっても、終端 item の本文と完了済みコマンド詳細を失敗の部分結果に残す。 */
+it("terminal制御通知の同期・非同期失敗でも本文と操作結果をpartialへ回収する", async () =>
+  workspace(async (directory) => {
+    for (const failureMode of ["sync", "async"] as const) {
+      const transport = new FakeTransport();
+      transport.events = [
+        completed([
+          message("answer", "must retain"),
+          {
+            type: "commandExecution",
+            id: "command",
+            command: "echo retained",
+            aggregatedOutput: "retained output",
+            exitCode: 0,
+            status: "completed",
+          },
+        ]),
+      ];
+      const failure = new Error(`consumer failure ${failureMode}`);
+      const adapter = new CodexAdapter(undefined, {
+        /** 本文とコマンドを同じ完了通知に含めた transport を渡し、consumer だけを失敗させる。 */
+        createTransport: () => transport,
+      });
+      await assert.rejects(
+        adapter.runSessionTurn(
+          createCodexRunSessionTurnInput(directory),
+          (state) => {
+            if (state.inputAvailable) return;
+            if (failureMode === "sync") throw failure;
+            return Promise.reject(failure);
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.equal(error.message, failure.message);
+          assert.equal(error.canceled, false);
+          assert.equal(error.partialResult.assistantText, "must retain");
+          const operation =
+            error.partialResult.artifact?.operationTimeline?.find(
+              (item) => item.id === "command",
+            );
+          assert.ok(operation);
+          assert.equal(operation.type, "command_execution");
+          assert.equal(operation.status, "completed");
+          assert.equal(operation.details, "retained output");
+          assert.equal(operation.exitCode, 0);
+          return true;
+        },
+      );
+      assert.equal(transport.closed, true);
+    }
+  }));
 
 // @test-value v2
 // kind = "invariant"
@@ -2302,13 +4207,32 @@ it("terminal制御通知の同期・非同期失敗でも本文と操作結果�
 // impact = "長時間のcommand出力でMain heapを増幅し、失敗時の説明や会話本文を失う"
 // distinction = "projectionのみの既存testはdelta累積とterminal再設定時のowner保持量を観測しない"
 // @end-test-value
+/** delta の追記と完了 snapshot の置換の両方で command 出力の保持量を制限し、live・操作・raw の省略元長を正確に示す。 */
 it("command output ownerはdeltaとterminal更新でもprefixと正確な元lengthを維持する", () => {
   const state = createCodexTurnStreamState(null);
-  const initial = { type: "commandExecution", id: "bounded", command: "echo", aggregatedOutput: "a".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 2), exitCode: null, status: "inProgress" };
-  applyCodexTurnEvent(state, { method: "item/started", params: { item: initial } });
-  applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "bc" + "d".repeat(100000) } });
-  applyCodexTurnEvent(state, { method: "item/commandExecution/outputDelta", params: { itemId: initial.id, delta: "tail" } });
-  const expected = initial.aggregatedOutput + "bc\n...[truncated 100004 chars; originalLength=165540]";
+  const initial = {
+    type: "commandExecution",
+    id: "bounded",
+    command: "echo",
+    aggregatedOutput: "a".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 2),
+    exitCode: null,
+    status: "inProgress",
+  };
+  applyCodexTurnEvent(state, {
+    method: "item/started",
+    params: { item: initial },
+  });
+  applyCodexTurnEvent(state, {
+    method: "item/commandExecution/outputDelta",
+    params: { itemId: initial.id, delta: "bc" + "d".repeat(100000) },
+  });
+  applyCodexTurnEvent(state, {
+    method: "item/commandExecution/outputDelta",
+    params: { itemId: initial.id, delta: "tail" },
+  });
+  const expected =
+    initial.aggregatedOutput +
+    "bc\n...[truncated 100004 chars; originalLength=165540]";
   const retained = state.items.get(initial.id);
   assert.equal(retained?.type, "commandExecution");
   if (retained?.type !== "commandExecution") return;
@@ -2316,19 +4240,44 @@ it("command output ownerはdeltaとterminal更新でもprefixと正確な元leng
   assert.equal(retained.aggregatedOutputOriginalLength, 165540);
   assert.equal(state.liveSteps.get(initial.id)?.details, expected);
   assert.equal(toMessageOperations([retained])[0]?.details, expected);
-  const raw = buildCodexStableRawItems([retained])[0]?.data?.aggregatedOutput as { text: string; originalLength: number };
+  const raw = buildCodexStableRawItems([retained])[0]?.data
+    ?.aggregatedOutput as { text: string; originalLength: number };
   assert.equal(raw.text, expected);
   assert.equal(raw.originalLength, 165540);
-  assert.equal(initial.aggregatedOutput.length, PROVIDER_TEXT_PREVIEW_LIMIT - 2);
+  assert.equal(
+    initial.aggregatedOutput.length,
+    PROVIDER_TEXT_PREVIEW_LIMIT - 2,
+  );
   const finalOutput = "z".repeat(PROVIDER_TEXT_PREVIEW_LIMIT + 9);
   const assistantText = "answer".repeat(20000);
-  applyCodexTurnEvent(state, { method: "turn/completed", params: { turn: { id: "turn", status: "completed", items: [{ ...initial, aggregatedOutput: finalOutput, exitCode: 0, status: "completed" }, { type: "agentMessage", id: "assistant", text: assistantText }] } } });
+  applyCodexTurnEvent(state, {
+    method: "turn/completed",
+    params: {
+      turn: {
+        id: "turn",
+        status: "completed",
+        items: [
+          {
+            ...initial,
+            aggregatedOutput: finalOutput,
+            exitCode: 0,
+            status: "completed",
+          },
+          { type: "agentMessage", id: "assistant", text: assistantText },
+        ],
+      },
+    },
+  });
   const finalItem = state.items.get(initial.id);
   assert.equal(finalItem?.type, "commandExecution");
   if (finalItem?.type !== "commandExecution") return;
   assert.equal(finalItem.aggregatedOutput?.length, PROVIDER_TEXT_PREVIEW_LIMIT);
   assert.equal(finalItem.aggregatedOutputOriginalLength, finalOutput.length);
-  assert.equal(toMessageOperations([finalItem])[0]?.details, finalOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT) + "\n...[truncated 9 chars; originalLength=65545]");
+  assert.equal(
+    toMessageOperations([finalItem])[0]?.details,
+    finalOutput.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT) +
+      "\n...[truncated 9 chars; originalLength=65545]",
+  );
   assert.equal(getLiveCodexAssistantText(state), assistantText);
   assert.deepEqual([...state.items.keys()], ["bounded", "assistant"]);
 });

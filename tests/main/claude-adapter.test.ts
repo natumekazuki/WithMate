@@ -5,15 +5,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { spawn } from "node:child_process";
 import { it } from "node:test";
-import type { Options, ResolvedSettings, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Options,
+  ResolvedSettings,
+  SDKMessage,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
-import { ProviderTurnError, type RunSessionTurnInput, type RunSessionTurnResult } from "../../src-electron/providers/provider-runtime.js";
+import {
+  ProviderTurnError,
+  type RunSessionTurnInput,
+  type RunSessionTurnResult,
+} from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
 
+/** SDK へのストリーミング入力を捕捉し、必要に応じて result を送信 UUID と idle 通知に対応付ける。 */
 function fakeQuery(
   produce: (options: Options) => AsyncGenerator<SDKMessage, void>,
   capture: (options: Options, prompt: unknown) => void = () => undefined,
@@ -21,13 +31,25 @@ function fakeQuery(
 ): typeof import("@anthropic-ai/claude-agent-sdk").query {
   return (({ options, prompt }: { options: Options; prompt: unknown }) => {
     return (async function* () {
-      const submitted = typeof prompt === "string" ? undefined
-        : (await (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()).value;
+      const submitted =
+        typeof prompt === "string"
+          ? undefined
+          : (
+              await (prompt as AsyncIterable<SDKUserMessage>)
+                [Symbol.asyncIterator]()
+                .next()
+            ).value;
       capture(options, submitted ?? prompt);
       for await (const message of produce(options)) {
-        if (automaticIdle && message.type === "result") yield sessionState("idle");
-        yield message.type === "result" && submitted?.uuid && !message.origin && !message.user_message_uuid && !message.user_message_uuids
-          ? { ...message, user_message_uuid: submitted.uuid } : message;
+        if (automaticIdle && message.type === "result")
+          yield sessionState("idle");
+        yield message.type === "result" &&
+        submitted?.uuid &&
+        !message.origin &&
+        !message.user_message_uuid &&
+        !message.user_message_uuids
+          ? { ...message, user_message_uuid: submitted.uuid }
+          : message;
       }
     })();
   }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
@@ -45,65 +67,158 @@ function fakeQuery(
 // impact = "失敗や取消後に取得済み操作の結果と順序が失われる"
 // distinction = "既存本文partial testはtool結果と未完了toolの区別を観測しない"
 // @end-test-value
+/** Turn の成否にかかわらず、結果を受信済みの操作と未完了操作を順序どおり保持する。 */
 it("Claudeはturn成否に依存せず個別tool結果を保持する", async () => {
   for (const outcome of ["completed", "failed", "canceled"] as const) {
     const controller = new AbortController();
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sdkMessage({ type: "assistant", uuid: "tools", parent_tool_use_id: null, message: { content: [
-        { type: "tool_use", id: "done", name: "Bash", input: { command: "first" } },
-        { type: "tool_use", id: "pending", name: "Bash", input: { command: "second" } },
-      ] } });
-      yield sdkMessage({ type: "user", parent_tool_use_id: null, message: { content: [
-        { type: "tool_result", tool_use_id: "done", is_error: true, content: "failed output" },
-      ] } });
-      if (outcome === "canceled") controller.abort();
-      if (outcome === "failed") throw new Error("connection failure");
-      yield result("thread");
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "tools",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "done",
+                name: "Bash",
+                input: { command: "first" },
+              },
+              {
+                type: "tool_use",
+                id: "pending",
+                name: "Bash",
+                input: { command: "second" },
+              },
+            ],
+          },
+        });
+        yield sdkMessage({
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "done",
+                is_error: true,
+                content: "failed output",
+              },
+            ],
+          },
+        });
+        if (outcome === "canceled") controller.abort();
+        if (outcome === "failed") throw new Error("connection failure");
+        yield result("thread");
+      }),
+    });
     let completed;
-    try { completed = await adapter.runSessionTurn(input("", controller.signal)); assert.equal(outcome, "completed"); }
-    catch (error) { assert.ok(error instanceof ProviderTurnError); assert.equal(error.canceled, outcome === "canceled"); completed = error.partialResult; }
+    try {
+      completed = await adapter.runSessionTurn(input("", controller.signal));
+      assert.equal(outcome, "completed");
+    } catch (error) {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, outcome === "canceled");
+      completed = error.partialResult;
+    }
     const operations = completed.artifact!.operationTimeline!;
-    assert.deepEqual(operations.map(({ id, status }) => ({ id, status })), [
-      { id: "done", status: "failed" }, { id: "pending", status: "in_progress" },
-    ]);
+    assert.deepEqual(
+      operations.map(({ id, status }) => ({ id, status })),
+      [
+        { id: "done", status: "failed" },
+        { id: "pending", status: "in_progress" },
+      ],
+    );
     assert.deepEqual(operations[0].error, { message: "failed output" });
     assert.equal(operations[0].exitCode, undefined);
     assert.equal(operations[1].details, undefined);
   }
 });
 
+/** 指定スレッドと取消シグナルを反映した Claude 実行入力を既定設定から作る。 */
 function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
-  const session = { ...buildNewSession({
-    provider: "claude", taskTitle: "Claude test", workspaceLabel: "workspace", workspacePath: process.cwd(),
-    branch: "main", characterId: "character", character: "Character", characterIconPath: "",
-    characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request",
-    model: "claude-opus-5-5", reasoningEffort: "high", customAgentName: "",
-  }), threadId };
+  const session = {
+    ...buildNewSession({
+      provider: "claude",
+      taskTitle: "Claude test",
+      workspaceLabel: "workspace",
+      workspacePath: process.cwd(),
+      branch: "main",
+      characterId: "character",
+      character: "Character",
+      characterIconPath: "",
+      characterThemeColors: { main: "#112233", sub: "#445566" },
+      approvalMode: "on-request",
+      model: "claude-opus-5-5",
+      reasoningEffort: "high",
+      customAgentName: "",
+    }),
+    threadId,
+  };
   return {
-    session, executionOptions: captureSessionExecutionOptions(session),
+    session,
+    executionOptions: captureSessionExecutionOptions(session),
     providerCatalog: {
-      id: "claude", label: "Claude", defaultModelId: "claude-opus-5-5", defaultReasoningEffort: "high",
-      models: [{ id: "claude-opus-5-5", label: "Opus", reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] }],
+      id: "claude",
+      label: "Claude",
+      defaultModelId: "claude-opus-5-5",
+      defaultReasoningEffort: "high",
+      models: [
+        {
+          id: "claude-opus-5-5",
+          label: "Opus",
+          reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+        },
+      ],
     },
-    userMessage: "hello", appSettings: createDefaultAppSettings(), attachments: [], signal,
+    userMessage: "hello",
+    appSettings: createDefaultAppSettings(),
+    attachments: [],
+    signal,
   };
 }
 
-function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
-
-function sessionState(state: "running" | "requires_action" | "idle"): SDKMessage {
-  return sdkMessage({ type: "system", subtype: "session_state_changed", state, session_id: "thread" });
+/** 必要なフィールドだけを指定したテストメッセージを SDK 入力として扱う。 */
+function sdkMessage(value: Record<string, unknown>): SDKMessage {
+  return value as SDKMessage;
 }
 
+/** SDK スレッドの実行状態が変わった通知を組み立てる。 */
+function sessionState(
+  state: "running" | "requires_action" | "idle",
+): SDKMessage {
+  return sdkMessage({
+    type: "system",
+    subtype: "session_state_changed",
+    state,
+    session_id: "thread",
+  });
+}
+
+/** 現在のバックグラウンド子タスクを、監視専用かどうかとともに通知する。 */
 function backgroundSnapshot(ids: string[], ambient = false): SDKMessage {
-  return sdkMessage({ type: "system", subtype: "background_tasks_changed", tasks: ids.map((id) => ({
-    task_id: id, task_type: "local_agent", description: `Agent ${id}`, ambient,
-  })) });
+  return sdkMessage({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: ids.map((id) => ({
+      task_id: id,
+      task_type: "local_agent",
+      description: `Agent ${id}`,
+      ambient,
+    })),
+  });
 }
 
+/** 指定された子タスクに対応する完了などの通知を作る。 */
 function taskNotification(id: string, status = "completed"): SDKMessage {
-  return sdkMessage({ type: "system", subtype: "task_notification", task_id: id, status, summary: `Report ${id}` });
+  return sdkMessage({
+    type: "system",
+    subtype: "task_notification",
+    task_id: id,
+    status,
+    summary: `Report ${id}`,
+  });
 }
 
 // @test-value v2
@@ -118,18 +233,39 @@ function taskNotification(id: string, status = "completed"): SDKMessage {
 // impact = "quota表示だけでmodel枠を消費しprocessを残すことを防ぐ"
 // distinction = "通常turn testはprompt無しcontrol APIのprocess lifecycleを通らない"
 // @end-test-value
+/** モデルへ入力を送らず利用枠を取得し、子プロセスの終了まで要求を完了しない。 */
 it("retrieves Claude quota without a prompt and waits for child close", async () => {
-  const child = Object.assign(new EventEmitter(), { pid: 123, stderr: { on() {}, resume() {} } });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 123,
+    stderr: {
+      /** stderr の購読を受けるが、このケースでは出力を発生させない。 */
+      on() {},
+      /** 実ストリームなしで stderr の再開要求を受ける。 */
+      resume() {},
+    },
+  });
   let closed = false;
   let promptResult: Promise<IteratorResult<unknown>> | undefined;
   let initialized = false;
   const adapter = new ClaudeAdapter({
-    resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
-    spawnProcess: ((_command: string, _args: string[], options: { windowsHide?: boolean }) => {
+    /** 利用枠の問い合わせを許可する、追加設定のない検査結果を返す。 */
+    resolveSettings: async () =>
+      ({ sources: [], effective: {}, provenance: {} }) as ResolvedSettings,
+    spawnProcess: ((
+      _command: string,
+      _args: string[],
+      options: { windowsHide?: boolean },
+    ) => {
       assert.equal(options?.windowsHide, true);
       return child;
     }) as unknown as typeof spawn,
-    query: (({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Options }) => {
+    query: (({
+      prompt,
+      options,
+    }: {
+      prompt: AsyncIterable<unknown>;
+      options: Options;
+    }) => {
       assert.deepEqual(options.tools, []);
       assert.deepEqual(options.mcpServers, {});
       assert.deepEqual(options.settingSources, []);
@@ -137,19 +273,43 @@ it("retrieves Claude quota without a prompt and waits for child close", async ()
       assert.equal(options.strictMcpConfig, true);
       assert.equal(options.persistSession, false);
       promptResult = prompt[Symbol.asyncIterator]().next();
-      options.spawnClaudeCodeProcess!({ command: "claude", args: [], cwd: process.cwd(), env: process.env, signal: options.abortController!.signal });
+      options.spawnClaudeCodeProcess!({
+        command: "claude",
+        args: [],
+        cwd: process.cwd(),
+        env: process.env,
+        signal: options.abortController!.signal,
+      });
       return {
-        initializationResult: async () => { initialized = true; },
-        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (options: unknown) => {
+        /** 利用枠 API を呼ぶ前に SDK の初期化を確認したことを記録する。 */
+        initializationResult: async () => {
+          initialized = true;
+        },
+        /** 動作を実行しないオプションで問い合わせ、所定の使用率を返す。 */
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (
+          options: unknown,
+        ) => {
           assert.equal(initialized, true);
           assert.deepEqual(options, { skipBehaviors: true });
-          return { rate_limits_available: true, rate_limits: { five_hour: { utilization: 42, resets_at: null } } };
+          return {
+            rate_limits_available: true,
+            rate_limits: { five_hour: { utilization: 42, resets_at: null } },
+          };
         },
-        close: () => { setImmediate(() => { closed = true; child.emit("close"); }); },
+        /** 終了要求と実際の終了通知に時間差を持たせ、待機の有無を観測する。 */
+        close: () => {
+          setImmediate(() => {
+            closed = true;
+            child.emit("close");
+          });
+        },
       };
     }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
   });
-  const result = await adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings() });
+  const result = await adapter.getProviderQuotaTelemetry({
+    providerId: "claude",
+    appSettings: createDefaultAppSettings(),
+  });
   assert.equal(result?.rateLimits?.[0].usedPercentage, 42);
   assert.equal(closed, true);
   assert.deepEqual(await promptResult, { done: true, value: undefined });
@@ -167,20 +327,43 @@ it("retrieves Claude quota without a prompt and waits for child close", async ()
 // risk_tags = ["privacy"]
 // distinction = "background prompt testは独立したquota取得入口を通らない"
 // @end-test-value
+/** 設定を安全に検証できない場合や取消済みの場合は、利用枠用 SDK を起動しない。 */
 it("rejects unverified, managed or canceled Claude quota requests before query", async () => {
   for (const outcome of ["managed", "failure", "canceled"] as const) {
     let calls = 0;
     const controller = new AbortController();
     if (outcome === "canceled") controller.abort();
     const adapter = new ClaudeAdapter({
-      query: (() => { calls++; throw new Error("Unexpected query"); }) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+      query: (() => {
+        calls++;
+        throw new Error("Unexpected query");
+      }) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+      /** 管理された設定または設定検査失敗を再現し、起動前の拒否を観測する。 */
       resolveSettings: async () => {
-        if (outcome === "failure") throw new Error("Settings inspection failed");
-        return { sources: outcome === "managed" ? [{ source: "managed", settings: {} }] : [], effective: {}, provenance: {} } as ResolvedSettings;
+        if (outcome === "failure")
+          throw new Error("Settings inspection failed");
+        return {
+          sources:
+            outcome === "managed" ? [{ source: "managed", settings: {} }] : [],
+          effective: {},
+          provenance: {},
+        } as ResolvedSettings;
       },
     });
-    const expectedError = outcome === "canceled" ? /Canceled/ : outcome === "failure" ? /Settings inspection failed/ : /managed settings/;
-    await assert.rejects(adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal }), expectedError);
+    const expectedError =
+      outcome === "canceled"
+        ? /Canceled/
+        : outcome === "failure"
+          ? /Settings inspection failed/
+          : /managed settings/;
+    await assert.rejects(
+      adapter.getProviderQuotaTelemetry({
+        providerId: "claude",
+        appSettings: createDefaultAppSettings(),
+        signal: controller.signal,
+      }),
+      expectedError,
+    );
     assert.equal(calls, 0);
   }
 });
@@ -196,36 +379,81 @@ it("rejects unverified, managed or canceled Claude quota requests before query",
 // lifecycle = "permanent"
 // distinction = "通常turnの取消testはquotaのinitializationResultとcontrol待機を通らない"
 // @end-test-value
+/** 初期化・利用枠の待機中に取消や期限切れが起きても、SDK 障害時と同様に子プロセスを閉じる。 */
 it("closes and awaits Claude quota child after cancellation, deadline or SDK failure", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
-  for (const outcome of ["initialization-cancel", "control-cancel", "deadline", "failure"] as const) {
+  for (const outcome of [
+    "initialization-cancel",
+    "control-cancel",
+    "deadline",
+    "failure",
+  ] as const) {
     const controller = new AbortController();
-    const child = Object.assign(new EventEmitter(), { pid: 123, stderr: { on() {}, resume() {} } });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 123,
+      stderr: {
+        /** 終了経路を観測する間は stderr 通知を送らない。 */
+        on() {},
+        /** ストリーム再開に副作用を持たせない。 */
+        resume() {},
+      },
+    });
     let entered!: () => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     let closed = false;
     let closeCalls = 0;
+    /** 取消や期限到達まで完了しない SDK 応答を作る。 */
     const pending = () => new Promise<never>(() => undefined);
     const adapter = new ClaudeAdapter({
-      resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
+      /** 安全性検査には通過し、後続の非同期終了経路を調べられるようにする。 */
+      resolveSettings: async () =>
+        ({ sources: [], effective: {}, provenance: {} }) as ResolvedSettings,
       spawnProcess: (() => child) as unknown as typeof spawn,
       query: (({ options }: { options: Options }) => {
-        options.spawnClaudeCodeProcess!({ command: "claude", args: [], cwd: process.cwd(), env: process.env, signal: options.abortController!.signal });
+        options.spawnClaudeCodeProcess!({
+          command: "claude",
+          args: [],
+          cwd: process.cwd(),
+          env: process.env,
+          signal: options.abortController!.signal,
+        });
         return {
+          /** 初期化中の取消を調べるケースだけ、SDK 初期化を保留する。 */
           initializationResult: async () => {
-            if (outcome === "initialization-cancel") { entered(); return pending(); }
+            if (outcome === "initialization-cancel") {
+              entered();
+              return pending();
+            }
           },
-          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
-            entered();
-            if (outcome === "failure") throw new Error("SDK usage failed");
-            return pending();
+          /** 利用枠の問い合わせ到達を通知し、ケースに応じて例外または無応答を返す。 */
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET:
+            async () => {
+              entered();
+              if (outcome === "failure") throw new Error("SDK usage failed");
+              return pending();
+            },
+          /** 終了要求を数え、後のイベントで子プロセスの終了を知らせる。 */
+          close: () => {
+            closeCalls++;
+            setImmediate(() => {
+              closed = true;
+              child.emit("close");
+            });
           },
-          close: () => { closeCalls++; setImmediate(() => { closed = true; child.emit("close"); }); },
         };
       }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
     });
-    const request = adapter.getProviderQuotaTelemetry({ providerId: "claude", appSettings: createDefaultAppSettings(), signal: controller.signal });
-    const rejection = assert.rejects(request, outcome === "failure" ? /SDK usage failed/ : /Canceled/);
+    const request = adapter.getProviderQuotaTelemetry({
+      providerId: "claude",
+      appSettings: createDefaultAppSettings(),
+      signal: controller.signal,
+    });
+    const rejection = assert.rejects(
+      request,
+      outcome === "failure" ? /SDK usage failed/ : /Canceled/,
+    );
     await started;
     if (outcome === "deadline") context.mock.timers.tick(30_000);
     else if (outcome !== "failure") controller.abort();
@@ -248,28 +476,57 @@ it("closes and awaits Claude quota child after cancellation, deadline or SDK fai
 // impact = "runtime capabilityの断片が画面と保存履歴へ漏洩する"
 // distinction = "既存tool_result testとbounded command testは入力command内のsecret境界を検査しない"
 // @end-test-value
+/** 操作の概要を長さ制限に合わせる前に秘匿処理し、途中で途切れた機密情報を残さない。 */
 it("ClaudeはBash commandを秘匿してからpreviewを生成する", async () => {
   const secret = "synthetic-command-capability-0123456789";
   const prefix = secret.slice(0, 8);
-  const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length) + secret + " tail";
-  const sanitized = command.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+  const command =
+    "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - prefix.length) + secret + " tail";
+  const sanitized = command.replace(
+    secret,
+    PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
+  );
   const expected = `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
   for (const outcome of ["completed", "failed", "canceled"] as const) {
     const controller = new AbortController();
     const request = input("", controller.signal);
-    request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: "fixture-reference", turnCapability: secret,
-      providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sdkMessage({ type: "assistant", uuid: "command", parent_tool_use_id: null,
-        message: { content: [{ type: "tool_use", id: "command", name: "Bash", input: { command } }] } });
-      if (outcome === "failed") throw new Error("connection failure");
-      if (outcome === "canceled") controller.abort();
-      yield result("thread");
-    }) });
+    request.agentRuntimeBinding = {
+      bindingId: "fixture",
+      bindingReference: "fixture-reference",
+      turnCapability: secret,
+      providerId: "claude",
+      executionGeneration: "fixture",
+      transport: "env",
+      expiresAt: null,
+    };
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "command",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "command",
+                name: "Bash",
+                input: { command },
+              },
+            ],
+          },
+        });
+        if (outcome === "failed") throw new Error("connection failure");
+        if (outcome === "canceled") controller.abort();
+        yield result("thread");
+      }),
+    });
     const summaries: string[] = [];
     let completed;
     try {
-      completed = await adapter.runSessionTurn(request, (state) => { summaries.push(...state.steps.map((step) => step.summary)); });
+      completed = await adapter.runSessionTurn(request, (state) => {
+        summaries.push(...state.steps.map((step) => step.summary));
+      });
       assert.equal(outcome, "completed");
     } catch (error) {
       assert.ok(error instanceof ProviderTurnError);
@@ -299,34 +556,85 @@ it("ClaudeはBash commandを秘匿してからpreviewを生成する", async () 
 // impact = "runtime capabilityの一部が画面と保存履歴へ漏洩することを防ぐ"
 // distinction = "既存secret testは本文の完全一致を観測するだけでtool出力のpreview境界とerrorの断片を検査しない"
 // @end-test-value
+/** 文字列でも構造化された操作結果でも、画面表示と保存用プレビューから機密情報を除く。 */
 it("Claude tool出力はsecretを秘匿してからpreviewを生成する", async () => {
   const secret = "synthetic-tool-capability-0123456789XY";
   for (const structured of [false, true]) {
     for (const outcome of ["completed", "failed", "canceled"] as const) {
       const controller = new AbortController();
       const request = input("", controller.signal);
-      request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: "fixture-reference", turnCapability: secret,
-        providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
-      const wrapperLength = structured ? JSON.stringify([{ type: "text", text: "" }]).indexOf('""') + 1 : 0;
-      const text = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1 - wrapperLength) + secret + " tail";
+      request.agentRuntimeBinding = {
+        bindingId: "fixture",
+        bindingReference: "fixture-reference",
+        turnCapability: secret,
+        providerId: "claude",
+        executionGeneration: "fixture",
+        transport: "env",
+        expiresAt: null,
+      };
+      const wrapperLength = structured
+        ? JSON.stringify([{ type: "text", text: "" }]).indexOf('""') + 1
+        : 0;
+      const text =
+        "x".repeat(
+          PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1 - wrapperLength,
+        ) +
+        secret +
+        " tail";
       const content = structured ? [{ type: "text", text }] : text;
-      const output = typeof content === "string" ? content : JSON.stringify(content);
-      const sanitized = output.replace(secret, PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
-      const expected = sanitized.length <= PROVIDER_TEXT_PREVIEW_LIMIT ? sanitized
-        : `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
-      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-        yield sdkMessage({ type: "assistant", uuid: "tool", parent_tool_use_id: null,
-          message: { content: [{ type: "tool_use", id: "tool", name: "Bash", input: { command: "check" } }] } });
-        yield sdkMessage({ type: "user", parent_tool_use_id: null,
-          message: { content: [{ type: "tool_result", tool_use_id: "tool", is_error: true, content }] } });
-        if (outcome === "failed") throw new Error("connection failure");
-        if (outcome === "canceled") controller.abort();
-        yield result("thread");
-      }) });
-      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] = [];
+      const output =
+        typeof content === "string" ? content : JSON.stringify(content);
+      const sanitized = output.replace(
+        secret,
+        PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
+      );
+      const expected =
+        sanitized.length <= PROVIDER_TEXT_PREVIEW_LIMIT
+          ? sanitized
+          : `${sanitized.slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${sanitized.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${sanitized.length}]`;
+      const adapter = new ClaudeAdapter({
+        query: fakeQuery(async function* () {
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "tool",
+            parent_tool_use_id: null,
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "tool",
+                  name: "Bash",
+                  input: { command: "check" },
+                },
+              ],
+            },
+          });
+          yield sdkMessage({
+            type: "user",
+            parent_tool_use_id: null,
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "tool",
+                  is_error: true,
+                  content,
+                },
+              ],
+            },
+          });
+          if (outcome === "failed") throw new Error("connection failure");
+          if (outcome === "canceled") controller.abort();
+          yield result("thread");
+        }),
+      });
+      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] =
+        [];
       let completed;
       try {
-        completed = await adapter.runSessionTurn(request, (state) => { steps.push(...state.steps); });
+        completed = await adapter.runSessionTurn(request, (state) => {
+          steps.push(...state.steps);
+        });
         assert.equal(outcome, "completed");
       } catch (error) {
         assert.ok(error instanceof ProviderTurnError);
@@ -335,12 +643,17 @@ it("Claude tool出力はsecretを秘匿してからpreviewを生成する", asyn
         completed = error.partialResult;
       }
       const operation = completed.artifact!.operationTimeline![0];
-      const live = steps.findLast((step) => step.id === "tool" && step.status === "failed");
+      const live = steps.findLast(
+        (step) => step.id === "tool" && step.status === "failed",
+      );
       assert.ok(live);
       for (const projected of [live, operation]) {
         assert.equal(projected.details, expected);
         assert.deepEqual(projected.error, { message: expected });
-        assert.equal(projected.truncated, sanitized.length > PROVIDER_TEXT_PREVIEW_LIMIT);
+        assert.equal(
+          projected.truncated,
+          sanitized.length > PROVIDER_TEXT_PREVIEW_LIMIT,
+        );
         assert.ok(!JSON.stringify(projected).includes(secret.slice(0, -1)));
       }
     }
@@ -360,29 +673,67 @@ it("Claude tool出力はsecretを秘匿してからpreviewを生成する", asyn
 // impact = "runtime資格情報のほぼ全体が画面と保存履歴へ漏洩する"
 // distinction = "tool_result境界testはcommand入力を通らず、bounded summary testにはsecretがない。SDK通信不要の小さいfixtureで秘匿順序を継続検査する"
 // @end-test-value
+/** 複数種の実行時認証情報をコマンド概要に残さず、成功時と部分結果の両方を検査する。 */
 it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", async () => {
-  const secrets = ["synthetic-binding-reference-0123456789XY", "synthetic-turn-capability-0123456789XY", "synthetic-managed-mcp-token-0123456789XY"];
+  const secrets = [
+    "synthetic-binding-reference-0123456789XY",
+    "synthetic-turn-capability-0123456789XY",
+    "synthetic-managed-mcp-token-0123456789XY",
+  ];
   for (const secret of secrets) {
     for (const outcome of ["completed", "failed", "canceled"] as const) {
       const controller = new AbortController();
       const request = input("", controller.signal);
-      request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secrets[0], turnCapability: secrets[1],
-        providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
-        managedMcp: { glossaryUrl: "http://localhost/mcp/glossary", token: secrets[2] } };
-      const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
-      const prefix = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1);
+      request.agentRuntimeBinding = {
+        bindingId: "fixture",
+        bindingReference: secrets[0],
+        turnCapability: secrets[1],
+        providerId: "claude",
+        executionGeneration: "fixture",
+        transport: "env",
+        expiresAt: null,
+        managedMcp: {
+          glossaryUrl: "http://localhost/mcp/glossary",
+          token: secrets[2],
+        },
+      };
+      const command =
+        "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) +
+        secret +
+        " tail".repeat(100);
+      const prefix = "x".repeat(
+        PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1,
+      );
       const expected = `${(prefix + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
-      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-        yield sdkMessage({ type: "assistant", uuid: "command", parent_tool_use_id: null,
-          message: { content: [{ type: "tool_use", id: "command", name: "Bash", input: { command } }] } });
-        if (outcome === "failed") throw new Error("connection failure");
-        if (outcome === "canceled") controller.abort();
-        yield result("thread");
-      }) });
-      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] = [];
+      const adapter = new ClaudeAdapter({
+        query: fakeQuery(async function* () {
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "command",
+            parent_tool_use_id: null,
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "command",
+                  name: "Bash",
+                  input: { command },
+                },
+              ],
+            },
+          });
+          if (outcome === "failed") throw new Error("connection failure");
+          if (outcome === "canceled") controller.abort();
+          yield result("thread");
+        }),
+      });
+      const steps: import("../../src-shared/session/runtime-state.js").LiveRunStep[] =
+        [];
       let completed;
       try {
-        completed = await adapter.runSessionTurn(request, (state) => { steps.push(...state.steps); });
+        completed = await adapter.runSessionTurn(request, (state) => {
+          steps.push(...state.steps);
+        });
         assert.equal(outcome, "completed");
       } catch (error) {
         assert.ok(error instanceof ProviderTurnError);
@@ -414,28 +765,63 @@ it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", as
 // impact = "live consumerの失敗を無視した実行継続や取得済み本文の喪失、利用者取消への誤分類を防ぐ"
 // distinction = "delivery helper単体ではSDK loop停止とpartial分類を検査できない"
 // @end-test-value
+/** 表示側の通知拒否を通常の失敗として扱い、取得済み本文を残して SDK の読み取りを止める。 */
 it("Claudeはprogress拒否をpartial付きfailureとして返しSDK消費を止める", async () => {
   let advancedAfterPartial = false;
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", session_id: "pressure", uuid: "partial", parent_tool_use_id: null, message: { content: [{ type: "text", text: "retained" }] } });
-    advancedAfterPartial = true;
-    yield result("pressure");
-  }) });
-  await assert.rejects(adapter.runSessionTurn(input(), () => Promise.reject(new Error("live delivery failure"))), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.canceled, false);
-    assert.equal(error.partialResult?.assistantText, "retained");
-    assert.match(error.message, /live delivery failure/);
-    return true;
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "assistant",
+        session_id: "pressure",
+        uuid: "partial",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "retained" }] },
+      });
+      advancedAfterPartial = true;
+      yield result("pressure");
+    }),
   });
+  await assert.rejects(
+    adapter.runSessionTurn(input(), () =>
+      Promise.reject(new Error("live delivery failure")),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, false);
+      assert.equal(error.partialResult?.assistantText, "retained");
+      assert.match(error.message, /live delivery failure/);
+      return true;
+    },
+  );
   assert.equal(advancedAfterPartial, false);
 });
 
-function result(sessionId: string, overrides: Record<string, unknown> = {}): SDKMessage {
+/** SDK の終端通知を簡潔な成功結果として組み立てる。 */
+function result(
+  sessionId: string,
+  overrides: Record<string, unknown> = {},
+): SDKMessage {
   return sdkMessage({
-    type: "result", subtype: "success", is_error: false, result: "Final", session_id: sessionId,
-    usage: { input_tokens: 7, cache_read_input_tokens: 3, cache_creation_input_tokens: 2, output_tokens: 5 },
-    modelUsage: { "claude-opus-5-5": { inputTokens: 7, cacheReadInputTokens: 3, cacheCreationInputTokens: 2, outputTokens: 5, thinkingTokens: 1 } },
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "Final",
+    session_id: sessionId,
+    usage: {
+      input_tokens: 7,
+      cache_read_input_tokens: 3,
+      cache_creation_input_tokens: 2,
+      output_tokens: 5,
+    },
+    modelUsage: {
+      "claude-opus-5-5": {
+        inputTokens: 7,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 2,
+        outputTokens: 5,
+        thinkingTokens: 1,
+      },
+    },
     ...overrides,
   });
 }
@@ -452,29 +838,118 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
 // impact = "結果回収時の本文欠落・二重化と失敗状態による確定済み回答の喪失を防ぐ"
 // distinction = "既存stream/partial testは複数blockと同一native message訂正後の保存用出力metadataを観測しない"
 // @end-test-value
+/** ネイティブのブロック位置ごとの本文と確定情報を、後続の通信失敗でも保持する。 */
 it("Claude common output keeps block identity and text finality after stream failure", async () => {
   for (const failed of [false, true]) {
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "native-output" } } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "draft" } } });
-      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "draft" }] } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
-      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "answer" }] } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "tail" } } });
-      yield sdkMessage({ type: "assistant", uuid: "second", message: { id: "native-output", content: [{ type: "text", text: "tail" }] } });
-      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
-      yield result("thread", { result: "answer\ntail" });
-      if (failed) throw new Error("connection after result");
-      yield sessionState("idle");
-    }, undefined, false) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(
+        async function* () {
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: { type: "message_start", message: { id: "native-output" } },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "text", text: "" },
+            },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: "draft" },
+            },
+          });
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "first",
+            message: {
+              id: "native-output",
+              content: [{ type: "text", text: "draft" }],
+            },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: { type: "content_block_stop", index: 0 },
+          });
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "first",
+            message: {
+              id: "native-output",
+              content: [{ type: "text", text: "answer" }],
+            },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_start",
+              index: 1,
+              content_block: { type: "text", text: "" },
+            },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: {
+              type: "content_block_delta",
+              index: 1,
+              delta: { type: "text_delta", text: "tail" },
+            },
+          });
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "second",
+            message: {
+              id: "native-output",
+              content: [{ type: "text", text: "tail" }],
+            },
+          });
+          yield sdkMessage({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: { type: "content_block_stop", index: 1 },
+          });
+          yield result("thread", { result: "answer\ntail" });
+          if (failed) throw new Error("connection after result");
+          yield sessionState("idle");
+        },
+        undefined,
+        false,
+      ),
+    });
     let completed: RunSessionTurnResult;
-    try { completed = await adapter.runSessionTurn(input()); assert.equal(failed, false); }
-    catch (error) { assert.ok(failed && error instanceof ProviderTurnError); completed = error.partialResult; }
+    try {
+      completed = await adapter.runSessionTurn(input());
+      assert.equal(failed, false);
+    } catch (error) {
+      assert.ok(failed && error instanceof ProviderTurnError);
+      completed = error.partialResult;
+    }
     assert.equal(completed.assistantText, "answer\ntail");
     assert.equal(completed.output?.finality, "identified");
-    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.blockIndex, unit.completion, unit.final, completed.assistantText.slice(unit.start, unit.end)]), [["native-output", 0, "complete", true, "answer"], ["native-output", 1, "complete", true, "tail"]]);
+    assert.deepEqual(
+      completed.output?.units.map((unit) => [
+        unit.messageId,
+        unit.blockIndex,
+        unit.completion,
+        unit.final,
+        completed.assistantText.slice(unit.start, unit.end),
+      ]),
+      [
+        ["native-output", 0, "complete", true, "answer"],
+        ["native-output", 1, "complete", true, "tail"],
+      ],
+    );
   }
 });
 
@@ -490,23 +965,63 @@ it("Claude common output keeps block identity and text finality after stream fai
 // impact = "訂正前の古い回答を最終回答として回収する誤認と、確定済み回答の不必要な喪失を防ぐ"
 // distinction = "既存block更新testはresult前の訂正であり、後続別message testは同一ID置換を通らない"
 // @end-test-value
+/** 同じ通知の再送では確定根拠を残し、本文が変わった場合だけ古い根拠を無効にする。 */
 it("Claude invalidates stale result evidence only after a real same-message change", async () => {
-  for (const update of ["duplicate", "changed-text", "changed-block", "removed-text"] as const) {
-    const expected = update === "changed-text" ? "corrected answer" : update === "removed-text" ? "" : "old answer";
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sessionState("running");
-      yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [{ type: "text", text: "old answer" }] } });
-      yield result("thread", { result: "old answer" });
-      yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [
-        ...(update === "changed-block" ? [{ type: "thinking", thinking: "not public" }] : []), { type: "text", text: expected },
-      ] } });
-      yield sessionState("idle");
-    }, undefined, false) });
+  for (const update of [
+    "duplicate",
+    "changed-text",
+    "changed-block",
+    "removed-text",
+  ] as const) {
+    const expected =
+      update === "changed-text"
+        ? "corrected answer"
+        : update === "removed-text"
+          ? ""
+          : "old answer";
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(
+        async function* () {
+          yield sessionState("running");
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "old",
+            message: {
+              id: "native-same",
+              content: [{ type: "text", text: "old answer" }],
+            },
+          });
+          yield result("thread", { result: "old answer" });
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "old",
+            message: {
+              id: "native-same",
+              content: [
+                ...(update === "changed-block"
+                  ? [{ type: "thinking", thinking: "not public" }]
+                  : []),
+                { type: "text", text: expected },
+              ],
+            },
+          });
+          yield sessionState("idle");
+        },
+        undefined,
+        false,
+      ),
+    });
     const completed = await adapter.runSessionTurn(input());
     assert.equal(completed.assistantText, expected);
     assert.equal(completed.lastNonEmptyAssistantMessageText, expected);
-    assert.equal(completed.output?.finality, update === "duplicate" ? "identified" : "unknown");
-    assert.equal(completed.output?.units.filter((unit) => unit.final).length, update === "duplicate" ? 1 : 0);
+    assert.equal(
+      completed.output?.finality,
+      update === "duplicate" ? "identified" : "unknown",
+    );
+    assert.equal(
+      completed.output?.units.filter((unit) => unit.final).length,
+      update === "duplicate" ? 1 : 0,
+    );
   }
 });
 
@@ -522,25 +1037,63 @@ it("Claude invalidates stale result evidence only after a real same-message chan
 // impact = "通常のtextからtoolへの応答で保存本文と公開execution outputが欠落することを防ぐ"
 // distinction = "既存stream testはnative indexのある通知であり、型検査はSDKの複数block通知の保持を検証できない"
 // @end-test-value
+/** 本文が同じでも別ブロックは独立したまま、操作通知や途中失敗を越えて残す。 */
 it("Claude retains separate same-message block notifications through a tool and failure", async () => {
   for (const failed of [false, true]) {
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      for (const uuid of ["text-one", "text-two"]) yield sdkMessage({ type: "assistant", uuid,
-        message: { id: "native-blocks", content: [{ type: "text", text: "same" }] } });
-      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "native-blocks", content: [
-        { type: "tool_use", id: "read", name: "Read", input: { file_path: "example" } },
-      ] } });
-      if (failed) throw new Error("connection after tool");
-      yield result("thread", { result: "" });
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        for (const uuid of ["text-one", "text-two"])
+          yield sdkMessage({
+            type: "assistant",
+            uuid,
+            message: {
+              id: "native-blocks",
+              content: [{ type: "text", text: "same" }],
+            },
+          });
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "tool",
+          message: {
+            id: "native-blocks",
+            content: [
+              {
+                type: "tool_use",
+                id: "read",
+                name: "Read",
+                input: { file_path: "example" },
+              },
+            ],
+          },
+        });
+        if (failed) throw new Error("connection after tool");
+        yield result("thread", { result: "" });
+      }),
+    });
     let completed: RunSessionTurnResult;
-    try { completed = await adapter.runSessionTurn(input()); assert.equal(failed, false); }
-    catch (error) { assert.ok(failed && error instanceof ProviderTurnError); completed = error.partialResult; }
+    try {
+      completed = await adapter.runSessionTurn(input());
+      assert.equal(failed, false);
+    } catch (error) {
+      assert.ok(failed && error instanceof ProviderTurnError);
+      completed = error.partialResult;
+    }
     assert.equal(completed.assistantText, "same\nsame");
-    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.blockIndex, completed.assistantText.slice(unit.start, unit.end)]), [
-      ["native-blocks", undefined, "same"], ["native-blocks", undefined, "same"],
-    ]);
-    assert.equal(new Set(completed.output?.units.map((unit) => unit.id)).size, 2);
+    assert.deepEqual(
+      completed.output?.units.map((unit) => [
+        unit.messageId,
+        unit.blockIndex,
+        completed.assistantText.slice(unit.start, unit.end),
+      ]),
+      [
+        ["native-blocks", undefined, "same"],
+        ["native-blocks", undefined, "same"],
+      ],
+    );
+    assert.equal(
+      new Set(completed.output?.units.map((unit) => unit.id)).size,
+      2,
+    );
   }
 });
 
@@ -556,22 +1109,52 @@ it("Claude retains separate same-message block notifications through a tool and 
 // impact = "保存execution outputの最終回答identityと回答範囲の誤認を防ぐ"
 // distinction = "既存testの異なる本文では最初の一致と終端の一致を区別できず、SDK通信不要の短いfixtureで保証する"
 // @end-test-value
+/** 繰り返された回答のうち終端に対応するものだけを最終回答とし、照合先がない場合は根拠を別に保持する。 */
 it("Claude matches repeated final text only to the terminal response", async () => {
   for (const terminal of ["text", "tool"] as const) {
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "A", content: [{ type: "text", text: "Done" }] } });
-      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "tool-message", content: [
-        { type: "tool_use", id: "read", name: "Read", input: {} },
-      ] } });
-      if (terminal === "text") yield sdkMessage({ type: "assistant", uuid: "last", message: { id: "B", content: [{ type: "text", text: "Done" }] } });
-      yield result("thread", { uuid: "result", result: "Done" });
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "first",
+          message: { id: "A", content: [{ type: "text", text: "Done" }] },
+        });
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "tool",
+          message: {
+            id: "tool-message",
+            content: [
+              { type: "tool_use", id: "read", name: "Read", input: {} },
+            ],
+          },
+        });
+        if (terminal === "text")
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "last",
+            message: { id: "B", content: [{ type: "text", text: "Done" }] },
+          });
+        yield result("thread", { uuid: "result", result: "Done" });
+      }),
+    });
     const completed = await adapter.runSessionTurn(input());
     assert.equal(completed.assistantText, "Done\n\nDone");
     assert.equal(completed.output?.finality, "identified");
-    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.final]), [["A", false], [terminal === "text" ? "B" : undefined, true]]);
+    assert.deepEqual(
+      completed.output?.units.map((unit) => [unit.messageId, unit.final]),
+      [
+        ["A", false],
+        [terminal === "text" ? "B" : undefined, true],
+      ],
+    );
     const final = completed.output!.units.at(-1)!;
-    assert.equal(final.evidence, terminal === "text" ? "claude.result:matching-assistant-blocks" : "claude.result:success-text");
+    assert.equal(
+      final.evidence,
+      terminal === "text"
+        ? "claude.result:matching-assistant-blocks"
+        : "claude.result:success-text",
+    );
     assert.equal(completed.assistantText.slice(final.start, final.end), "Done");
   }
 });
@@ -586,14 +1169,25 @@ it("Claude matches repeated final text only to the terminal response", async () 
 // scope = "Claude turn Depth forwarding"
 // lifecycle = "permanent"
 // @end-test-value
+/** 捕捉したプロバイダー固有の Depth を変換せず、指定がない場合は SDK の既定に委ねる。 */
 it("Claude native Depthは保持し未指定effortはSDKへ送らない", async () => {
   for (const effort of ["", "native-future-effort"]) {
     const request = input();
-    request.executionOptions = { ...request.executionOptions, reasoningEffort: effort };
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("depth"); }, (options) => {
-      assert.equal(Object.hasOwn(options, "effort"), Boolean(effort));
-      assert.equal(options.effort, effort || undefined);
-    }) });
+    request.executionOptions = {
+      ...request.executionOptions,
+      reasoningEffort: effort,
+    };
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(
+        async function* () {
+          yield result("depth");
+        },
+        (options) => {
+          assert.equal(Object.hasOwn(options, "effort"), Boolean(effort));
+          assert.equal(options.effort, effort || undefined);
+        },
+      ),
+    });
     await adapter.runSessionTurn(request);
   }
 });
@@ -610,50 +1204,107 @@ it("Claude native Depthは保持し未指定effortはSDKへ送らない", async 
 // impact = "Aux/Mainの再開時にユーザー送信が空の成功として消え、承認やhookへの応答経路が切れる"
 // distinction = "既存のresume・permission testは通知側resultの先行と入力EOFを組み合わせない。型検査では時系列を検出できず、通信なしの小さいfixtureで継続確認する"
 // @end-test-value
+/** テキストと画像の両方で、送信に対応する終端まで入力を開いたままにする。 */
 it("Claude codingは送信UUIDの結果まで入力を保持する", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "withmate-claude-input-"));
+  /** 添付画像と一時ディレクトリをテスト終了時に片付ける。 */
   t.after(() => rm(dir, { recursive: true, force: true }));
   const image = join(dir, "input.png");
-  const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=", "base64");
+  const imageBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=",
+    "base64",
+  );
   await writeFile(image, imageBytes);
   for (const withImage of [false, true]) {
     for (const useUuidList of [false, true]) {
       for (const text of ["Actual response", ""]) {
         let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
         let inputClosed = false;
-        const adapter = new ClaudeAdapter({ query: (({ prompt }: { prompt: string | AsyncIterable<SDKUserMessage> }) => {
-          assert.notEqual(typeof prompt, "string");
-          const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
-          return (async function* () {
-            const first = await iterator.next();
-            assert.ok(!first.done);
-            const sent = first.value;
-            assert.match(sent.uuid!, /^[0-9a-f-]{36}$/);
-            assert.equal(sent.parent_tool_use_id, null);
-            assert.deepEqual(sent.message.content, [
-              { type: "text", text: "# User Input\n\nhello" },
-              ...(withImage ? [{ type: "image", source: { type: "base64", media_type: "image/png", data: imageBytes.toString("base64") } }] : []),
-            ]);
-            inputEnd = iterator.next();
-            void inputEnd.then(() => { inputClosed = true; });
-            yield result("saved-thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
-            yield result("saved-thread", { user_message_uuid: "another-send", result: "Not this response" });
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            assert.equal(inputClosed, false, "input must stay open for the queried turn's controls");
-            yield sessionState("idle");
-            yield result("saved-thread", { result: text, ...(useUuidList
-              ? { user_message_uuid: "last-batched-send", user_message_uuids: [sent.uuid, "last-batched-send"] }
-              : { user_message_uuid: sent.uuid }) });
-          })();
-        }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+        const adapter = new ClaudeAdapter({
+          query: (({
+            prompt,
+          }: {
+            prompt: string | AsyncIterable<SDKUserMessage>;
+          }) => {
+            assert.notEqual(typeof prompt, "string");
+            const iterator = (prompt as AsyncIterable<SDKUserMessage>)[
+              Symbol.asyncIterator
+            ]();
+            return (async function* () {
+              const first = await iterator.next();
+              assert.ok(!first.done);
+              const sent = first.value;
+              assert.match(sent.uuid!, /^[0-9a-f-]{36}$/);
+              assert.equal(sent.parent_tool_use_id, null);
+              assert.deepEqual(sent.message.content, [
+                { type: "text", text: "# User Input\n\nhello" },
+                ...(withImage
+                  ? [
+                      {
+                        type: "image",
+                        source: {
+                          type: "base64",
+                          media_type: "image/png",
+                          data: imageBytes.toString("base64"),
+                        },
+                      },
+                    ]
+                  : []),
+              ]);
+              inputEnd = iterator.next();
+              void inputEnd.then(() => {
+                inputClosed = true;
+              });
+              yield result("saved-thread", {
+                origin: { kind: "task-notification" },
+                result: "",
+                num_turns: 0,
+              });
+              yield result("saved-thread", {
+                user_message_uuid: "another-send",
+                result: "Not this response",
+              });
+              await new Promise<void>((resolve) => setImmediate(resolve));
+              assert.equal(
+                inputClosed,
+                false,
+                "input must stay open for the queried turn's controls",
+              );
+              yield sessionState("idle");
+              yield result("saved-thread", {
+                result: text,
+                ...(useUuidList
+                  ? {
+                      user_message_uuid: "last-batched-send",
+                      user_message_uuids: [sent.uuid, "last-batched-send"],
+                    }
+                  : { user_message_uuid: sent.uuid }),
+              });
+            })();
+          }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
+        });
         const request = input("saved-thread");
-        if (withImage) request.attachments = [{ id: "image", kind: "image", source: "markdown-image", absolutePath: image,
-          displayPath: "input.png", workspaceRelativePath: null, isOutsideWorkspace: true }];
+        if (withImage)
+          request.attachments = [
+            {
+              id: "image",
+              kind: "image",
+              source: "markdown-image",
+              absolutePath: image,
+              displayPath: "input.png",
+              workspaceRelativePath: null,
+              isOutsideWorkspace: true,
+            },
+          ];
         const liveTexts: string[] = [];
-        const completed = await adapter.runSessionTurn(request, (state) => { liveTexts.push(state.assistantText); });
+        const completed = await adapter.runSessionTurn(request, (state) => {
+          liveTexts.push(state.assistantText);
+        });
         assert.equal(completed.assistantText, text);
         assert.equal(completed.usage?.outputTokens, 5);
-        assert.ok(liveTexts.every((body) => !body.includes("Not this response")));
+        assert.ok(
+          liveTexts.every((body) => !body.includes("Not this response")),
+        );
         assert.ok(inputEnd);
         assert.deepEqual(await inputEnd, { done: true, value: undefined });
       }
@@ -673,58 +1324,128 @@ it("Claude codingは送信UUIDの結果まで入力を保持する", async (t) =
 // impact = "子を中断して報告を失う、親の統合応答を保存できない、別の結果を返す"
 // distinction = "既存入力相関testは対応result後の子報告・idleを検査しない。通信なしの短い列でSDKの順序境界を継続検査する"
 // @end-test-value
+/** 送信に対応する result だけで閉じず、子タスクの報告と親の取りまとめが済んだ後の idle を待つ。 */
 it("Claudeは複数の子報告と親の取りまとめ後のidleまで待つ", async () => {
   for (const resultFirst of [true, false]) {
     let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
     let inputClosed = false;
     let closed = false;
-    const states: Array<{ ids: string[]; statuses: string[]; upserts: string[]; removes: string[] }> = [];
-    const adapter = new ClaudeAdapter({ query: (({ prompt, options }: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => {
-      assert.equal(options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS, "1");
-      assert.equal(options.env?.CLAUDE_CODE_BG_TASKS_REPORT_RUNNING, "1");
-      const iterator = prompt[Symbol.asyncIterator]();
-      return (async function* () {
-        try {
-          const first = await iterator.next();
-          assert.ok(!first.done);
-          inputEnd = iterator.next();
-          void inputEnd.then(() => { inputClosed = true; });
-          yield sessionState("idle");
-          yield result("thread", { origin: { kind: "task-notification" }, result: "Old notification" });
-          yield sessionState("running");
-          yield backgroundSnapshot(["a", "b"]);
-          yield sdkMessage({ type: "assistant", uuid: "interim", message: { content: [{ type: "text", text: "Waiting" }] } });
-          if (resultFirst) yield result("thread", { user_message_uuid: first.value.uuid, result: "Waiting" });
-          yield backgroundSnapshot(["a"]);
-          yield taskNotification("b");
-          yield result("thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
-          yield backgroundSnapshot([]);
-          await new Promise<void>((resolve) => setImmediate(resolve));
-          assert.equal(inputClosed, false);
-          assert.equal(options.abortController?.signal.aborted, false);
-          yield result("thread", { user_message_uuid: "unrelated", result: "Wrong response" });
-          yield taskNotification("a");
-          const summary = sdkMessage({ type: "assistant", uuid: "summary", message: { content: [{ type: "text", text: "Combined a + b" }] } });
-          yield summary;
-          yield summary;
-          yield result("thread", { origin: { kind: "task-notification" }, result: "Not the input result",
-            usage: { input_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 999 } });
-          yield sessionState("idle");
-          if (!resultFirst) yield result("thread", { user_message_uuid: first.value.uuid, result: "Combined a + b" });
-          throw new Error("read past terminal");
-        } finally { closed = true; }
-      })();
-    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
-    const completed = await adapter.runSessionTurn(input("thread"), (state, changes) => {
-      states.push({ ids: state.backgroundTasks.map((task) => task.id), statuses: state.backgroundTasks.map((task) => task.status),
-        upserts: changes.backgroundTasks.upserts.map((task) => task.id), removes: changes.backgroundTasks.removes });
+    const states: Array<{
+      ids: string[];
+      statuses: string[];
+      upserts: string[];
+      removes: string[];
+    }> = [];
+    const adapter = new ClaudeAdapter({
+      query: (({
+        prompt,
+        options,
+      }: {
+        prompt: AsyncIterable<SDKUserMessage>;
+        options: Options;
+      }) => {
+        assert.equal(options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS, "1");
+        assert.equal(options.env?.CLAUDE_CODE_BG_TASKS_REPORT_RUNNING, "1");
+        const iterator = prompt[Symbol.asyncIterator]();
+        return (async function* () {
+          try {
+            const first = await iterator.next();
+            assert.ok(!first.done);
+            inputEnd = iterator.next();
+            void inputEnd.then(() => {
+              inputClosed = true;
+            });
+            yield sessionState("idle");
+            yield result("thread", {
+              origin: { kind: "task-notification" },
+              result: "Old notification",
+            });
+            yield sessionState("running");
+            yield backgroundSnapshot(["a", "b"]);
+            yield sdkMessage({
+              type: "assistant",
+              uuid: "interim",
+              message: { content: [{ type: "text", text: "Waiting" }] },
+            });
+            if (resultFirst)
+              yield result("thread", {
+                user_message_uuid: first.value.uuid,
+                result: "Waiting",
+              });
+            yield backgroundSnapshot(["a"]);
+            yield taskNotification("b");
+            yield result("thread", {
+              origin: { kind: "task-notification" },
+              result: "",
+              num_turns: 0,
+            });
+            yield backgroundSnapshot([]);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(inputClosed, false);
+            assert.equal(options.abortController?.signal.aborted, false);
+            yield result("thread", {
+              user_message_uuid: "unrelated",
+              result: "Wrong response",
+            });
+            yield taskNotification("a");
+            const summary = sdkMessage({
+              type: "assistant",
+              uuid: "summary",
+              message: { content: [{ type: "text", text: "Combined a + b" }] },
+            });
+            yield summary;
+            yield summary;
+            yield result("thread", {
+              origin: { kind: "task-notification" },
+              result: "Not the input result",
+              usage: {
+                input_tokens: 999,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+                output_tokens: 999,
+              },
+            });
+            yield sessionState("idle");
+            if (!resultFirst)
+              yield result("thread", {
+                user_message_uuid: first.value.uuid,
+                result: "Combined a + b",
+              });
+            throw new Error("read past terminal");
+          } finally {
+            closed = true;
+          }
+        })();
+      }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
     });
+    const completed = await adapter.runSessionTurn(
+      input("thread"),
+      (state, changes) => {
+        states.push({
+          ids: state.backgroundTasks.map((task) => task.id),
+          statuses: state.backgroundTasks.map((task) => task.status),
+          upserts: changes.backgroundTasks.upserts.map((task) => task.id),
+          removes: changes.backgroundTasks.removes,
+        });
+      },
+    );
     assert.equal(completed.assistantText, "Waiting\n\nCombined a + b");
     assert.equal(completed.lastNonEmptyAssistantMessageText, "Combined a + b");
     assert.equal(completed.usage?.outputTokens, 5);
-    assert.ok(states.some((state) => state.ids.join() === "a,b" && state.statuses.every((status) => status === "running")));
+    assert.ok(
+      states.some(
+        (state) =>
+          state.ids.join() === "a,b" &&
+          state.statuses.every((status) => status === "running"),
+      ),
+    );
     assert.ok(states.some((state) => state.removes.includes("a")));
-    assert.ok(states.some((state) => state.upserts.includes("b") && state.statuses.includes("completed")));
+    assert.ok(
+      states.some(
+        (state) =>
+          state.upserts.includes("b") && state.statuses.includes("completed"),
+      ),
+    );
     assert.deepEqual(await inputEnd, { done: true, value: undefined });
     assert.equal(closed, true);
   }
@@ -742,42 +1463,101 @@ it("Claudeは複数の子報告と親の取りまとめ後のidleまで待つ", 
 // impact = "未回収の子報告や異常終了を正常完了と表示し再試行判断を誤る"
 // distinction = "既存EOF・取消testは入力対応result受信前だけ。短いfake streamで終端後待機を検査する"
 // @end-test-value
+/** 子処理やストリームで起きた失敗を成功へ変えず、取消と区別して途中本文を残す。 */
 it("Claudeはバックグラウンド待機中の失敗と取消を区別する", async () => {
-  for (const outcome of ["failed", "stopped", "started-first", "report-error", "report-is-error", "eof", "stream", "canceled"] as const) {
+  for (const outcome of [
+    "failed",
+    "stopped",
+    "started-first",
+    "report-error",
+    "report-is-error",
+    "eof",
+    "stream",
+    "canceled",
+  ] as const) {
     const controller = new AbortController();
     let failedTask = false;
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sessionState("running");
-      if (outcome === "started-first") {
-        yield sdkMessage({ type: "system", subtype: "task_started", task_id: "a", task_type: "local_agent", is_backgrounded: true, description: "Agent a" });
-      } else yield backgroundSnapshot(["a"]);
-      yield sdkMessage({ type: "assistant", uuid: "partial", message: { content: [{ type: "text", text: "Partial" }] } });
-      yield result("thread", { result: "Partial" });
-      if (outcome === "canceled") controller.abort();
-      if (outcome === "stream") throw new Error("Transport failed");
-      if (outcome === "report-error" || outcome === "report-is-error") {
-        yield taskNotification("a");
-        yield result("thread", { origin: { kind: "task-notification" }, is_error: true,
-          ...(outcome === "report-error" ? { subtype: "error_max_turns", errors: ["Report failed"] } : { result: "Report failed" }) });
-        yield sessionState("idle");
-      }
-      if (outcome === "failed" || outcome === "stopped" || outcome === "started-first") {
-        yield backgroundSnapshot([]);
-        yield taskNotification("a", outcome === "started-first" ? "failed" : outcome);
-        yield sessionState("idle");
-      }
-    }, undefined, false) });
-    await assert.rejects(adapter.runSessionTurn(input("", controller.signal), (state) => {
-      failedTask ||= state.backgroundTasks.some((task) => task.status === "failed");
-    }), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.canceled, outcome === "canceled");
-      assert.equal(error.partialResult.assistantText, "Partial");
-      assert.match(error.message, outcome === "canceled" ? /Canceled/ : outcome === "stream" ? /Transport failed/
-        : outcome === "eof" ? /before session idle/ : outcome.startsWith("report-") ? /Report failed/ : /background task (failed|stopped)/);
-      return true;
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(
+        async function* () {
+          yield sessionState("running");
+          if (outcome === "started-first") {
+            yield sdkMessage({
+              type: "system",
+              subtype: "task_started",
+              task_id: "a",
+              task_type: "local_agent",
+              is_backgrounded: true,
+              description: "Agent a",
+            });
+          } else yield backgroundSnapshot(["a"]);
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "partial",
+            message: { content: [{ type: "text", text: "Partial" }] },
+          });
+          yield result("thread", { result: "Partial" });
+          if (outcome === "canceled") controller.abort();
+          if (outcome === "stream") throw new Error("Transport failed");
+          if (outcome === "report-error" || outcome === "report-is-error") {
+            yield taskNotification("a");
+            yield result("thread", {
+              origin: { kind: "task-notification" },
+              is_error: true,
+              ...(outcome === "report-error"
+                ? { subtype: "error_max_turns", errors: ["Report failed"] }
+                : { result: "Report failed" }),
+            });
+            yield sessionState("idle");
+          }
+          if (
+            outcome === "failed" ||
+            outcome === "stopped" ||
+            outcome === "started-first"
+          ) {
+            yield backgroundSnapshot([]);
+            yield taskNotification(
+              "a",
+              outcome === "started-first" ? "failed" : outcome,
+            );
+            yield sessionState("idle");
+          }
+        },
+        undefined,
+        false,
+      ),
     });
-    assert.equal(failedTask, outcome === "failed" || outcome === "stopped" || outcome === "started-first");
+    await assert.rejects(
+      adapter.runSessionTurn(input("", controller.signal), (state) => {
+        failedTask ||= state.backgroundTasks.some(
+          (task) => task.status === "failed",
+        );
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.canceled, outcome === "canceled");
+        assert.equal(error.partialResult.assistantText, "Partial");
+        assert.match(
+          error.message,
+          outcome === "canceled"
+            ? /Canceled/
+            : outcome === "stream"
+              ? /Transport failed/
+              : outcome === "eof"
+                ? /before session idle/
+                : outcome.startsWith("report-")
+                  ? /Report failed/
+                  : /background task (failed|stopped)/,
+        );
+        return true;
+      },
+    );
+    assert.equal(
+      failedTask,
+      outcome === "failed" ||
+        outcome === "stopped" ||
+        outcome === "started-first",
+    );
   }
 });
 
@@ -793,20 +1573,33 @@ it("Claudeはバックグラウンド待機中の失敗と取消を区別する"
 // impact = "子の承認が回答不能になるか常駐監視で依頼が完了しない"
 // distinction = "既存承認testに入力result後のrequires_actionやambient snapshotがない。SDK通信不要で継続確認できる"
 // @end-test-value
+/** 子タスクの承認を待機中も中継するが、監視専用タスクを Turn の終了条件にしない。 */
 it("Claudeは子の承認を中継しambient監視を完了待ちに含めない", async () => {
   let approved = false;
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    yield sessionState("running");
-    yield result("thread");
-    yield sessionState("requires_action");
-    const permission = await options.canUseTool!("Bash", { command: "read-only check" }, {
-      signal: options.abortController!.signal, toolUseID: "child-tool", requestId: "child-approval",
-    });
-    assert.equal(permission?.behavior, "allow");
-    yield backgroundSnapshot(["watcher"], true);
-    yield sessionState("idle");
-    throw new Error("read past idle");
-  }, undefined, false) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(
+      async function* (options) {
+        yield sessionState("running");
+        yield result("thread");
+        yield sessionState("requires_action");
+        const permission = await options.canUseTool!(
+          "Bash",
+          { command: "read-only check" },
+          {
+            signal: options.abortController!.signal,
+            toolUseID: "child-tool",
+            requestId: "child-approval",
+          },
+        );
+        assert.equal(permission?.behavior, "allow");
+        yield backgroundSnapshot(["watcher"], true);
+        yield sessionState("idle");
+        throw new Error("read past idle");
+      },
+      undefined,
+      false,
+    ),
+  });
   const request = input();
   request.onApprovalRequest = (approval, signal) => {
     assert.equal(approval.requestId, "child-tool");
@@ -814,7 +1607,9 @@ it("Claudeは子の承認を中継しambient監視を完了待ちに含めない
     approved = true;
     return "approve";
   };
-  const completed = await adapter.runSessionTurn(request, (state) => { assert.deepEqual(state.backgroundTasks, []); });
+  const completed = await adapter.runSessionTurn(request, (state) => {
+    assert.deepEqual(state.backgroundTasks, []);
+  });
   assert.equal(approved, true);
   assert.equal(completed.assistantText, "Final");
 });
@@ -831,35 +1626,75 @@ it("Claudeは子の承認を中継しambient監視を完了待ちに含めない
 // impact = "失敗と取消が空の正常終了に化け、応答途中の内容と再送可能な終了状態を利用者が失う"
 // distinction = "既存EOF/cancel testには先行通知resultがなく、UUIDなしstartup failureと入力stream解放を観測しない。SDK通信を行わない小さいfixtureで境界を保持する"
 // @end-test-value
+/** 別通知の後に本来の結果を得られない場合、起動・通信失敗や取消を部分結果とともに返す。 */
 it("Claude codingは通知後の失敗・取消・EOFと起動失敗を保持する", async () => {
   for (const outcome of ["eof", "failed", "canceled", "startup"] as const) {
     const controller = new AbortController();
     let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
-    const adapter = new ClaudeAdapter({ query: (({ prompt }: { prompt: string | AsyncIterable<SDKUserMessage> }) => {
-      const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
-      return (async function* () {
-        const first = await iterator.next();
-        assert.ok(!first.done);
-        inputEnd = iterator.next();
-        if (outcome === "startup") {
-          yield result("saved-thread", { subtype: "error_during_execution", is_error: true, errors: ["Startup failed"] });
-          return;
-        }
-        yield result("saved-thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
-        yield sdkMessage({ type: "assistant", uuid: "partial", parent_tool_use_id: null,
-          message: { content: [{ type: "text", text: "Retained partial" }] } });
-        if (outcome === "failed") yield result("saved-thread", { user_message_uuid: first.value.uuid, is_error: true, result: "Actual API failure" });
-        if (outcome === "canceled") controller.abort();
-      })();
-    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
-    await assert.rejects(adapter.runSessionTurn(input("saved-thread", controller.signal)), (error: unknown) => {
-      assert.ok(error instanceof ProviderTurnError);
-      assert.equal(error.canceled, outcome === "canceled");
-      assert.equal(error.partialResult.assistantText, outcome === "startup" ? "" : "Retained partial");
-      assert.match(error.message, outcome === "startup" ? /Startup failed/ : outcome === "failed" ? /Actual API failure/
-        : outcome === "canceled" ? /Canceled/ : /stream ended before a result/);
-      return true;
+    const adapter = new ClaudeAdapter({
+      query: (({
+        prompt,
+      }: {
+        prompt: string | AsyncIterable<SDKUserMessage>;
+      }) => {
+        const iterator = (prompt as AsyncIterable<SDKUserMessage>)[
+          Symbol.asyncIterator
+        ]();
+        return (async function* () {
+          const first = await iterator.next();
+          assert.ok(!first.done);
+          inputEnd = iterator.next();
+          if (outcome === "startup") {
+            yield result("saved-thread", {
+              subtype: "error_during_execution",
+              is_error: true,
+              errors: ["Startup failed"],
+            });
+            return;
+          }
+          yield result("saved-thread", {
+            origin: { kind: "task-notification" },
+            result: "",
+            num_turns: 0,
+          });
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "partial",
+            parent_tool_use_id: null,
+            message: { content: [{ type: "text", text: "Retained partial" }] },
+          });
+          if (outcome === "failed")
+            yield result("saved-thread", {
+              user_message_uuid: first.value.uuid,
+              is_error: true,
+              result: "Actual API failure",
+            });
+          if (outcome === "canceled") controller.abort();
+        })();
+      }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
     });
+    await assert.rejects(
+      adapter.runSessionTurn(input("saved-thread", controller.signal)),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderTurnError);
+        assert.equal(error.canceled, outcome === "canceled");
+        assert.equal(
+          error.partialResult.assistantText,
+          outcome === "startup" ? "" : "Retained partial",
+        );
+        assert.match(
+          error.message,
+          outcome === "startup"
+            ? /Startup failed/
+            : outcome === "failed"
+              ? /Actual API failure/
+              : outcome === "canceled"
+                ? /Canceled/
+                : /stream ended before a result/,
+        );
+        return true;
+      },
+    );
     assert.ok(inputEnd);
     assert.deepEqual(await inputEnd, { done: true, value: undefined });
   }
@@ -877,17 +1712,27 @@ it("Claude codingは通知後の失敗・取消・EOFと起動失敗を保持す
 // impact = "正常な長文turnがアプリの人工的な容量判定で中断しない"
 // distinction = "共有delivery単体ではSDK messageから最終本文までの配線を確認できない;固定4 Mi文字入力を通信なしで確認する"
 // @end-test-value
+/** 長文を画面向け通知でも最終結果でも省略しない。 */
 it("Claudeの長い本文をprogressと成功結果に保持する", async () => {
   const body = "x".repeat(4 * 1024 * 1024);
   const received: string[] = [];
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", uuid: "capacity", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
-    yield result("large", { result: body });
-  }) });
-  const completed = await adapter.runSessionTurn(input(), state => { received.push(state.assistantText); });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "assistant",
+        uuid: "capacity",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: body }] },
+      });
+      yield result("large", { result: body });
+    }),
+  });
+  const completed = await adapter.runSessionTurn(input(), (state) => {
+    received.push(state.assistantText);
+  });
   assert.equal(completed.assistantText, body);
   assert.ok(received.length > 0);
-  assert.ok(received.every(text => text === body));
+  assert.ok(received.every((text) => text === body));
 });
 
 // @test-value v2
@@ -903,24 +1748,56 @@ it("Claudeの長い本文をprogressと成功結果に保持する", async () =>
 // distinction = "設定型検査では実行時queryへ渡す値やSDK応答のredactionを保証できない。fake SDKで通信せずadapter境界を確認する"
 // risk_tags = ["privacy"]
 // @end-test-value
+/** 前景 Turn に専用 MCP 設定と再開情報を渡し、画面や保存用応答には認証情報を出さない。 */
 it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   const request = input("saved-thread");
   request.agentRuntimeBinding = {
-    bindingId: "binding", bindingReference: "reference", providerId: "claude",
-    executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", sessionUrl: "http://127.0.0.1:47891/session", token: "opaque-http-token" },
+    bindingId: "binding",
+    bindingReference: "reference",
+    providerId: "claude",
+    executionGeneration: "generation",
+    transport: "env",
+    expiresAt: null,
+    managedMcp: {
+      glossaryUrl: "http://127.0.0.1:47891/glossary",
+      sessionUrl: "http://127.0.0.1:47891/session",
+      token: "opaque-http-token",
+    },
   };
   let seen: Options | undefined;
   let submittedPrompt: unknown;
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", session_id: "saved-thread", uuid: "http", parent_tool_use_id: null,
-      message: { content: [{ type: "text", text: "echo opaque-http-token" }] } });
-    yield result("saved-thread");
-  }, (options, prompt) => { seen = options; submittedPrompt = prompt; }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(
+      async function* () {
+        yield sdkMessage({
+          type: "assistant",
+          session_id: "saved-thread",
+          uuid: "http",
+          parent_tool_use_id: null,
+          message: {
+            content: [{ type: "text", text: "echo opaque-http-token" }],
+          },
+        });
+        yield result("saved-thread");
+      },
+      (options, prompt) => {
+        seen = options;
+        submittedPrompt = prompt;
+      },
+    ),
+  });
   const output = await adapter.runSessionTurn(request);
   assert.deepEqual(seen?.mcpServers, {
-    "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
-    "withmate-session": { type: "http", url: "http://127.0.0.1:47891/session", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-glossary": {
+      type: "http",
+      url: "http://127.0.0.1:47891/glossary",
+      headers: { "x-withmate-mcp-token": "opaque-http-token" },
+    },
+    "withmate-session": {
+      type: "http",
+      url: "http://127.0.0.1:47891/session",
+      headers: { "x-withmate-mcp-token": "opaque-http-token" },
+    },
   });
   assert.deepEqual(seen?.settingSources, ["user", "project", "local"]);
   assert.notEqual(seen?.strictMcpConfig, true);
@@ -943,34 +1820,59 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
 // distinction = "単独messageのtestは多数長文の全文連結と取消partialのartifact秘匿を同時に観測せず、型検査では返却値の欠落を検知できない"
 // risk_tags = ["privacy"]
 // @end-test-value
+/** 多数の長文メッセージと操作履歴を成功時や取消時にも保持し、操作情報の機密値は除く。 */
 it("Claude 長文でも全文と正常・cancel partialを保持する", async () => {
   for (const canceled of [false, true]) {
     const controller = new AbortController();
     const request = input("", controller.signal);
     const secret = "short-binding-reference";
     const longSecret = "long-capability-".repeat(8);
-    request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secret, turnCapability: longSecret,
-      providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null };
+    request.agentRuntimeBinding = {
+      bindingId: "fixture",
+      bindingReference: secret,
+      turnCapability: longSecret,
+      providerId: "claude",
+      executionGeneration: "fixture",
+      transport: "env",
+      expiresAt: null,
+    };
     const text = `あ😀\"\n${secret.repeat(1000)} ${longSecret}`;
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      for (let index = 0; index < 40; index += 1) {
-        yield sdkMessage({ type: "assistant", session_id: "raw-thread", uuid: `message-${index}`, parent_tool_use_id: null,
-          message: { content: [{ type: "text", text: `${index}:${text}` }] } });
-      }
-      if (canceled) controller.abort();
-      yield result("raw-thread", { result: `39:${text}` });
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        for (let index = 0; index < 40; index += 1) {
+          yield sdkMessage({
+            type: "assistant",
+            session_id: "raw-thread",
+            uuid: `message-${index}`,
+            parent_tool_use_id: null,
+            message: { content: [{ type: "text", text: `${index}:${text}` }] },
+          });
+        }
+        if (canceled) controller.abort();
+        yield result("raw-thread", { result: `39:${text}` });
+      }),
+    });
     let completed;
     try {
       completed = await adapter.runSessionTurn(request);
       assert.equal(canceled, false);
     } catch (error) {
-      assert.ok(canceled && error instanceof ProviderTurnError && error.canceled);
+      assert.ok(
+        canceled && error instanceof ProviderTurnError && error.canceled,
+      );
       completed = error.partialResult;
     }
-    const cleanText = text.split(secret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)
-      .split(longSecret).join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
-    assert.equal(completed.assistantText, Array.from({ length: 40 }, (_, index) => `${index}:${cleanText}`).join("\n\n"));
+    const cleanText = text
+      .split(secret)
+      .join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER)
+      .split(longSecret)
+      .join(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER);
+    assert.equal(
+      completed.assistantText,
+      Array.from({ length: 40 }, (_, index) => `${index}:${cleanText}`).join(
+        "\n\n",
+      ),
+    );
     assert.equal(completed.artifact!.operationTimeline!.length, 40);
     assert.equal(completed.artifact?.operationTimeline?.length, 40);
     assert.ok(!JSON.stringify(completed.artifact).includes(secret));
@@ -991,48 +1893,165 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
 // distinction = "型検査ではSDK option値とstream/final連結の実行結果を確認できない"
 // @end-test-value
 /** Claude は再開時も現在の固定指示を追記し、ユーザー入力には混ぜない。 */
+/** 再開時に最新定義をシステム指示へ反映し、ユーザー入力と分離して重複本文を表示しない。 */
 it("resumes by explicit id with the current system prompt and deduplicates streamed text", async () => {
   const seen: Array<{ options: Options; prompt: unknown }> = [];
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "system", subtype: "init", session_id: "thread-1", model: "claude-opus-5-5" });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-start", parent_tool_use_id: null, event: { type: "message_start", message: { id: "anthropic-msg-1" } } });
-    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
-    yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-thinking-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "thinking", thinking: "hidden" }] } });
-    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
-    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hello" } } });
-    yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-message-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "text", text: "Hello" }] } });
-    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-stop", parent_tool_use_id: null, event: { type: "message_stop" } });
-    yield result("thread-1", { result: "Hello" });
-    throw new Error("Iterator was advanced after result");
-  }, (options, prompt) => seen.push({ options, prompt })) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(
+      async function* () {
+        yield sdkMessage({
+          type: "system",
+          subtype: "init",
+          session_id: "thread-1",
+          model: "claude-opus-5-5",
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          session_id: "thread-1",
+          uuid: "event-start",
+          parent_tool_use_id: null,
+          event: { type: "message_start", message: { id: "anthropic-msg-1" } },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          },
+        });
+        yield sdkMessage({
+          type: "assistant",
+          session_id: "thread-1",
+          uuid: "sdk-thinking-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "anthropic-msg-1",
+            content: [{ type: "thinking", thinking: "hidden" }],
+          },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 0 },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "text", text: "" },
+          },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          session_id: "thread-1",
+          uuid: "event-delta",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 1,
+            delta: { type: "text_delta", text: "Hello" },
+          },
+        });
+        yield sdkMessage({
+          type: "assistant",
+          session_id: "thread-1",
+          uuid: "sdk-message-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "anthropic-msg-1",
+            content: [{ type: "text", text: "Hello" }],
+          },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 1 },
+        });
+        yield sdkMessage({
+          type: "stream_event",
+          session_id: "thread-1",
+          uuid: "event-stop",
+          parent_tool_use_id: null,
+          event: { type: "message_stop" },
+        });
+        yield result("thread-1", { result: "Hello" });
+        throw new Error("Iterator was advanced after result");
+      },
+      (options, prompt) => seen.push({ options, prompt }),
+    ),
+  });
   const progress: string[] = [];
   const request = input();
   let completed;
-  for (const [index, marker] of ["FIRST", "SECOND", "EXPLICIT-RESUME"].entries()) {
+  for (const [index, marker] of [
+    "FIRST",
+    "SECOND",
+    "EXPLICIT-RESUME",
+  ].entries()) {
     request.session.characterRuntimeSnapshot = {
-      characterId: "character", name: "Character", description: "Saved metadata", iconFilePath: `C:/Character Data/${marker}/icon.png`,
-      theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${marker}`,
-      definitionSha256: marker, definitionByteSize: marker.length, snapshotAt: "2026-10-03T00:00:00Z",
+      characterId: "character",
+      name: "Character",
+      description: "Saved metadata",
+      iconFilePath: `C:/Character Data/${marker}/icon.png`,
+      theme: { main: "#112233", sub: "#445566" },
+      definitionMarkdown: `Definition ${marker}`,
+      definitionSha256: marker,
+      definitionByteSize: marker.length,
+      snapshotAt: "2026-10-03T00:00:00Z",
     };
     // 明示的な再開ではアダプターを作り直し、最新の指示を取得できることがメモリ上のクエリキャッシュに依存しないようにする。
-    const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },
-      (options, prompt) => seen.push({ options, prompt })) }) : adapter;
-    completed = await currentAdapter.runSessionTurn({ ...request, sessionInstructions: `Instructions ${marker} 🧭` }, (state) => { progress.push(state.assistantText); });
-    assert.equal(seen[index].options.resume, index === 0 ? undefined : "thread-1");
+    const currentAdapter =
+      index === 2
+        ? new ClaudeAdapter({
+            query: fakeQuery(
+              async function* () {
+                yield result("thread-1");
+              },
+              (options, prompt) => seen.push({ options, prompt }),
+            ),
+          })
+        : adapter;
+    completed = await currentAdapter.runSessionTurn(
+      { ...request, sessionInstructions: `Instructions ${marker} 🧭` },
+      (state) => {
+        progress.push(state.assistantText);
+      },
+    );
+    assert.equal(
+      seen[index].options.resume,
+      index === 0 ? undefined : "thread-1",
+    );
     const system = seen[index].options.systemPrompt;
-    assert.ok(system && typeof system === "object" && !Array.isArray(system) && system.type === "preset");
+    assert.ok(
+      system &&
+        typeof system === "object" &&
+        !Array.isArray(system) &&
+        system.type === "preset",
+    );
     assert.equal(system.preset, "claude_code");
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
-    assert.ok(system.append?.endsWith(`# Session Instructions\n\nInstructions ${marker} 🧭`));
-    for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
+    assert.ok(
+      system.append?.endsWith(
+        `# Session Instructions\n\nInstructions ${marker} 🧭`,
+      ),
+    );
+    for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter(
+      (value) => value !== marker,
+    )) {
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}`));
     }
     const sent = seen[index].prompt as SDKUserMessage;
-    assert.deepEqual(sent.message.content, [{ type: "text", text: adapter.composePrompt(request).inputBodyText }]);
-    assert.deepEqual(sent.message.content, [{ type: "text", text: "# User Input\n\nhello" }]);
+    assert.deepEqual(sent.message.content, [
+      { type: "text", text: adapter.composePrompt(request).inputBodyText },
+    ]);
+    assert.deepEqual(sent.message.content, [
+      { type: "text", text: "# User Input\n\nhello" },
+    ]);
     request.session.threadId = completed.threadId!;
     if (index < 2) assert.equal(completed.assistantText, "Hello");
   }
@@ -1054,17 +2073,63 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
 // impact = "取得済みBash結果がDetailsから失われるか、内部subagent本文が利用者向け応答へ漏れる"
 // distinction = "SDK型と既存provider testはClaude固有のmessage順序と親子境界を検査しない"
 // @end-test-value
+/** 操作の完了詳細は tool_result から取り、子エージェントの本文を親の回答に混ぜない。 */
 it("records tool completion only from tool results and excludes subagent text", async () => {
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", session_id: "thread-2", uuid: "child", parent_tool_use_id: "tool-parent", message: { content: [{ type: "text", text: "Internal" }] } });
-    yield sdkMessage({ type: "assistant", session_id: "thread-2", uuid: "parent", parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: "tool-1", name: "Bash", input: { command: "npm test" } }] } });
-    yield sdkMessage({ type: "user", session_id: "thread-2", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: "tool-1", is_error: true, content: "failed" }] } });
-    yield result("thread-2");
-  }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "assistant",
+        session_id: "thread-2",
+        uuid: "child",
+        parent_tool_use_id: "tool-parent",
+        message: { content: [{ type: "text", text: "Internal" }] },
+      });
+      yield sdkMessage({
+        type: "assistant",
+        session_id: "thread-2",
+        uuid: "parent",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: "Bash",
+              input: { command: "npm test" },
+            },
+          ],
+        },
+      });
+      yield sdkMessage({
+        type: "user",
+        session_id: "thread-2",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              is_error: true,
+              content: "failed",
+            },
+          ],
+        },
+      });
+      yield result("thread-2");
+    }),
+  });
   const completed = await adapter.runSessionTurn(input());
   assert.equal(completed.assistantText, "Final");
-  assert.deepEqual(completed.artifact!.operationTimeline!.map((operation) => operation.details), ["failed"]);
-  assert.equal(completed.artifact!.operationTimeline![0]?.type, "command_execution");
+  assert.deepEqual(
+    completed.artifact!.operationTimeline!.map(
+      (operation) => operation.details,
+    ),
+    ["failed"],
+  );
+  assert.equal(
+    completed.artifact!.operationTimeline![0]?.type,
+    "command_execution",
+  );
 });
 
 // @test-value v2
@@ -1079,25 +2144,73 @@ it("records tool completion only from tool results and excludes subagent text", 
 // impact = "実行中コマンドが利用者へ見えず、非コマンドを実行履歴と誤認する"
 // distinction = "既存provider testではClaude SDKのtool_use/result投影を通らない"
 // @end-test-value
+/** Bash の実行中だけ生のコマンドをコマンド表示へ出し、その他の操作は別の種類で扱う。 */
 it("projects only Bash as a live command with the raw command", async () => {
   const steps: Array<{ type: string; summary: string; status: string }> = [];
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", session_id: "thread-tools", uuid: "parent", parent_tool_use_id: null, message: { content: [
-      { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "npm test" } },
-      { type: "tool_use", id: "read-1", name: "Read", input: { file_path: "README.md" } },
-    ] } });
-    yield sdkMessage({ type: "user", session_id: "thread-tools", parent_tool_use_id: null, message: { content: [
-      { type: "tool_result", tool_use_id: "bash-1", content: "done" },
-      { type: "tool_result", tool_use_id: "read-1", content: "read" },
-    ] } });
-    yield result("thread-tools");
-  }) });
-  const completed = await adapter.runSessionTurn(input(), (state) => {
-    steps.push(...state.steps.map((step) => ({ type: step.type, summary: step.summary, status: step.status })));
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "assistant",
+        session_id: "thread-tools",
+        uuid: "parent",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "bash-1",
+              name: "Bash",
+              input: { command: "npm test" },
+            },
+            {
+              type: "tool_use",
+              id: "read-1",
+              name: "Read",
+              input: { file_path: "README.md" },
+            },
+          ],
+        },
+      });
+      yield sdkMessage({
+        type: "user",
+        session_id: "thread-tools",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "bash-1", content: "done" },
+            { type: "tool_result", tool_use_id: "read-1", content: "read" },
+          ],
+        },
+      });
+      yield result("thread-tools");
+    }),
   });
-  assert.ok(steps.some((step) => step.type === "command_execution" && step.summary === "npm test" && step.status === "in_progress"));
-  assert.ok(steps.some((step) => step.type === "tool_call" && step.status === "in_progress"));
-  assert.deepEqual(completed.artifact!.operationTimeline!.map((operation) => operation.type), ["command_execution", "tool_call"]);
+  const completed = await adapter.runSessionTurn(input(), (state) => {
+    steps.push(
+      ...state.steps.map((step) => ({
+        type: step.type,
+        summary: step.summary,
+        status: step.status,
+      })),
+    );
+  });
+  assert.ok(
+    steps.some(
+      (step) =>
+        step.type === "command_execution" &&
+        step.summary === "npm test" &&
+        step.status === "in_progress",
+    ),
+  );
+  assert.ok(
+    steps.some(
+      (step) => step.type === "tool_call" && step.status === "in_progress",
+    ),
+  );
+  assert.deepEqual(
+    completed.artifact!.operationTimeline!.map((operation) => operation.type),
+    ["command_execution", "tool_call"],
+  );
 });
 
 // @test-value v2
@@ -1112,6 +2225,7 @@ it("projects only Bash as a live command with the raw command", async () => {
 // impact = "表示から消えた承認や質問がturnを停止させる"
 // distinction = "単独callback testと型検査は並行制御を検査しない"
 // @end-test-value
+/** 並行する承認二件と質問一件を、識別子を保って一件ずつ表示する。 */
 it("serializes concurrent approvals and elicitation without losing request identity", async () => {
   const active: string[] = [];
   const seen: string[] = [];
@@ -1120,21 +2234,64 @@ it("serializes concurrent approvals and elicitation without losing request ident
   request.onApprovalRequest = (card) => {
     active.push(card.requestId);
     seen.push(card.requestId);
-    return new Promise((resolve) => releases.push(() => { active.pop(); resolve("approve"); }));
+    return new Promise((resolve) =>
+      releases.push(() => {
+        active.pop();
+        resolve("approve");
+      }),
+    );
   };
   request.onElicitationRequest = (card) => {
     active.push(card.requestId);
     seen.push(card.requestId);
-    return new Promise((resolve) => releases.push(() => { active.pop(); resolve({ action: "accept", content: { answer: "yes" } }); }));
+    return new Promise((resolve) =>
+      releases.push(() => {
+        active.pop();
+        resolve({ action: "accept", content: { answer: "yes" } });
+      }),
+    );
   };
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    const context = (toolUseID: string) => ({ toolUseID, signal: new AbortController().signal }) as Parameters<NonNullable<Options["canUseTool"]>>[2];
-    const first = options.canUseTool!("Bash", { command: "one" }, context("approval-1"));
-    const second = options.canUseTool!("Bash", { command: "two" }, context("approval-2"));
-    const third = options.onElicitation!({ mode: "form", serverName: "test", message: "Choose", requestedSchema: { type: "object", properties: { answer: { type: "string" } } } } as Parameters<NonNullable<Options["onElicitation"]>>[0], { requestId: "elicitation-3", signal: new AbortController().signal } as Parameters<NonNullable<Options["onElicitation"]>>[1]);
-    assert.deepEqual(await Promise.all([first, second, third]), [{ behavior: "allow" }, { behavior: "allow" }, { action: "accept", content: { answer: "yes" } }]);
-    yield result("thread-queue");
-  }) });
+  /** SDK 経由で三件の要求を並行到着させ、それぞれに対応する回答を検査する。 */
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* (options) {
+      /** 個々の承認要求に別の操作識別子とシグナルを割り当てる。 */
+      const context = (toolUseID: string) =>
+        ({ toolUseID, signal: new AbortController().signal }) as Parameters<
+          NonNullable<Options["canUseTool"]>
+        >[2];
+      const first = options.canUseTool!(
+        "Bash",
+        { command: "one" },
+        context("approval-1"),
+      );
+      const second = options.canUseTool!(
+        "Bash",
+        { command: "two" },
+        context("approval-2"),
+      );
+      const third = options.onElicitation!(
+        {
+          mode: "form",
+          serverName: "test",
+          message: "Choose",
+          requestedSchema: {
+            type: "object",
+            properties: { answer: { type: "string" } },
+          },
+        } as Parameters<NonNullable<Options["onElicitation"]>>[0],
+        {
+          requestId: "elicitation-3",
+          signal: new AbortController().signal,
+        } as Parameters<NonNullable<Options["onElicitation"]>>[1],
+      );
+      assert.deepEqual(await Promise.all([first, second, third]), [
+        { behavior: "allow" },
+        { behavior: "allow" },
+        { action: "accept", content: { answer: "yes" } },
+      ]);
+      yield result("thread-queue");
+    }),
+  });
   const completed = adapter.runSessionTurn(request);
   for (const expected of ["approval-1", "approval-2", "elicitation-3"]) {
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1157,22 +2314,36 @@ it("serializes concurrent approvals and elicitation without losing request ident
 // impact = "利用者が取消済み操作を誤承認する"
 // distinction = "並行要求の正常回答testでは待機中のcontext cancelを検査しない"
 // @end-test-value
+/** 順番待ち中に取り消された承認は表示せず、拒否結果だけを返す。 */
 it("does not dispatch an approval canceled while queued", async () => {
   const seen: string[] = [];
   let releaseFirst: (() => void) | undefined;
   const request = input();
   request.onApprovalRequest = (card) => {
     seen.push(card.requestId);
-    return new Promise((resolve) => { releaseFirst = () => resolve("approve"); });
+    return new Promise((resolve) => {
+      releaseFirst = () => resolve("approve");
+    });
   };
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    const first = options.canUseTool!("Bash", { command: "one" }, { toolUseID: "first", signal: new AbortController().signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
-    const canceled = new AbortController();
-    const second = options.canUseTool!("Bash", { command: "two" }, { toolUseID: "second", signal: canceled.signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
-    canceled.abort();
-    assert.deepEqual(await Promise.all([first, second]), [{ behavior: "allow" }, { behavior: "deny", message: "Canceled" }]);
-    yield result("thread-queued-cancel");
-  }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* (options) {
+      const first = options.canUseTool!("Bash", { command: "one" }, {
+        toolUseID: "first",
+        signal: new AbortController().signal,
+      } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
+      const canceled = new AbortController();
+      const second = options.canUseTool!("Bash", { command: "two" }, {
+        toolUseID: "second",
+        signal: canceled.signal,
+      } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
+      canceled.abort();
+      assert.deepEqual(await Promise.all([first, second]), [
+        { behavior: "allow" },
+        { behavior: "deny", message: "Canceled" },
+      ]);
+      yield result("thread-queued-cancel");
+    }),
+  });
   const completed = adapter.runSessionTurn(request);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(seen, ["first"]);
@@ -1193,32 +2364,83 @@ it("does not dispatch an approval canceled while queued", async () => {
 // impact = "Providerごとに同じMCP質問の回答可否や値検証が異なる"
 // distinction = "共通converterの単体testだけではClaude envelopeからの接続を検査しない"
 // @end-test-value
+/** MCP の質問を共通フォームへ変換しても、選択肢・範囲・既定値が欠けない。 */
 it("preserves MCP selection and numeric constraints in Claude elicitation", async () => {
   const request = input();
   let fields: unknown;
   request.onElicitationRequest = (card) => {
     fields = card.fields;
-    return { action: "accept", content: { single: "a", multiple: ["x"], count: 2 } };
+    return {
+      action: "accept",
+      content: { single: "a", multiple: ["x"], count: 2 },
+    };
   };
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    const response = await options.onElicitation!({
-      mode: "form", serverName: "mcp-test", message: "Choose", requestedSchema: { type: "object", required: ["single", "multiple", "count"], properties: {
-        single: { type: "string", oneOf: [{ const: "a", title: "Alpha" }] },
-        multiple: { type: "array", items: { anyOf: [{ const: "x", title: "X" }] } },
-        count: { type: "integer", minimum: 1, maximum: 3, default: 2 },
-      } },
-    } as Parameters<NonNullable<Options["onElicitation"]>>[0], { requestId: "mcp-1", signal: new AbortController().signal } as Parameters<NonNullable<Options["onElicitation"]>>[1]);
-    assert.deepEqual(response, { action: "accept", content: { single: "a", multiple: ["x"], count: 2 } });
-    yield result("thread-mcp");
-  }) });
-  await adapter.runSessionTurn(request);
-  assert.deepEqual((fields as Array<{ type: string }>).map((field) => field.type), ["select", "multi-select", "number"]);
-  assert.deepEqual((fields as Array<{ options?: unknown }>)[0].options, [{ value: "a", label: "Alpha" }]);
-  assert.deepEqual((fields as Array<{ options?: unknown }>)[1].options, [{ value: "x", label: "X" }]);
-  assert.deepEqual((fields as Array<{ minimum?: number; maximum?: number; defaultValue?: number }>)[2], {
-    type: "number", numberKind: "integer", name: "count", title: "count", description: undefined,
-    required: true, defaultValue: 2, minimum: 1, maximum: 3,
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* (options) {
+      const response = await options.onElicitation!(
+        {
+          mode: "form",
+          serverName: "mcp-test",
+          message: "Choose",
+          requestedSchema: {
+            type: "object",
+            required: ["single", "multiple", "count"],
+            properties: {
+              single: {
+                type: "string",
+                oneOf: [{ const: "a", title: "Alpha" }],
+              },
+              multiple: {
+                type: "array",
+                items: { anyOf: [{ const: "x", title: "X" }] },
+              },
+              count: { type: "integer", minimum: 1, maximum: 3, default: 2 },
+            },
+          },
+        } as Parameters<NonNullable<Options["onElicitation"]>>[0],
+        {
+          requestId: "mcp-1",
+          signal: new AbortController().signal,
+        } as Parameters<NonNullable<Options["onElicitation"]>>[1],
+      );
+      assert.deepEqual(response, {
+        action: "accept",
+        content: { single: "a", multiple: ["x"], count: 2 },
+      });
+      yield result("thread-mcp");
+    }),
   });
+  await adapter.runSessionTurn(request);
+  assert.deepEqual(
+    (fields as Array<{ type: string }>).map((field) => field.type),
+    ["select", "multi-select", "number"],
+  );
+  assert.deepEqual((fields as Array<{ options?: unknown }>)[0].options, [
+    { value: "a", label: "Alpha" },
+  ]);
+  assert.deepEqual((fields as Array<{ options?: unknown }>)[1].options, [
+    { value: "x", label: "X" },
+  ]);
+  assert.deepEqual(
+    (
+      fields as Array<{
+        minimum?: number;
+        maximum?: number;
+        defaultValue?: number;
+      }>
+    )[2],
+    {
+      type: "number",
+      numberKind: "integer",
+      name: "count",
+      title: "count",
+      description: undefined,
+      required: true,
+      defaultValue: 2,
+      minimum: 1,
+      maximum: 3,
+    },
+  );
 });
 
 // @test-value v2
@@ -1233,19 +2455,31 @@ it("preserves MCP selection and numeric constraints in Claude elicitation", asyn
 // impact = "キャンセルしたtool/応答を成功と履歴・Sessionへ確定する"
 // distinction = "既存providerのキャンセルtestはClaude SDKのabort後success挙動を通らない"
 // @end-test-value
+/** 取消後に SDK が成功を返しても、既取得分を伴う取消結果を優先する。 */
 it("lets cancellation dominate a later successful SDK result", async () => {
   const controller = new AbortController();
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "assistant", session_id: "thread-3", uuid: "message", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Partial" }] } });
-    controller.abort();
-    yield result("thread-3");
-  }) });
-  await assert.rejects(adapter.runSessionTurn(input("", controller.signal)), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError);
-    assert.equal(error.canceled, true);
-    assert.equal(error.partialResult.assistantText, "Partial");
-    return true;
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "assistant",
+        session_id: "thread-3",
+        uuid: "message",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "Partial" }] },
+      });
+      controller.abort();
+      yield result("thread-3");
+    }),
   });
+  await assert.rejects(
+    adapter.runSessionTurn(input("", controller.signal)),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, true);
+      assert.equal(error.partialResult.assistantText, "Partial");
+      return true;
+    },
+  );
 });
 
 // @test-value v2
@@ -1260,27 +2494,66 @@ it("lets cancellation dominate a later successful SDK result", async () => {
 // impact = "取消済みでも生存する子と同じworkspaceへ新turnを送れてしまう"
 // distinction = "通常のfake Query取消testは子のexit時刻を観測しない"
 // @end-test-value
+/** SDK の取消後も子プロセスが終了するまで実行結果を確定しない。 */
 it("keeps the canceled provider promise pending until child exit", async () => {
   const controller = new AbortController();
-  const child = Object.assign(new EventEmitter(), { pid: 123, exitCode: null, stdin: {}, stdout: {}, killed: false, kill: () => true });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 123,
+    exitCode: null,
+    stdin: {},
+    stdout: {},
+    killed: false,
+    /** 終了要求を受理しても、実終了のイベントはケース側から送る。 */
+    kill: () => true,
+  });
   let nextCount = 0;
   let closed = false;
   const query = (({ options }: { options: Options }) => {
-    options.spawnClaudeCodeProcess!({ command: "unused", args: [], env: {}, signal: new AbortController().signal });
+    options.spawnClaudeCodeProcess!({
+      command: "unused",
+      args: [],
+      env: {},
+      signal: new AbortController().signal,
+    });
     return {
-      next: () => ++nextCount === 1
-        ? Promise.resolve({ done: false, value: sdkMessage({ type: "assistant", session_id: "thread-exit", uuid: "partial", parent_tool_use_id: null, message: { content: [{ type: "text", text: "Partial" }] } }) })
-        : new Promise(() => undefined),
-      close: () => { closed = true; },
+      /** 取得済み本文を一つ返し、その後は SDK の読み取りを保留する。 */
+      next: () =>
+        ++nextCount === 1
+          ? Promise.resolve({
+              done: false,
+              value: sdkMessage({
+                type: "assistant",
+                session_id: "thread-exit",
+                uuid: "partial",
+                parent_tool_use_id: null,
+                message: { content: [{ type: "text", text: "Partial" }] },
+              }),
+            })
+          : new Promise(() => undefined),
+      /** SDK 側を閉じた時点を、子プロセスの終了とは別に記録する。 */
+      close: () => {
+        closed = true;
+      },
     };
   }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
-  const adapter = new ClaudeAdapter({ query, spawnProcess: (() => child) as unknown as typeof spawn });
+  const adapter = new ClaudeAdapter({
+    query,
+    spawnProcess: (() => child) as unknown as typeof spawn,
+  });
   let settled = false;
-  const running = adapter.runSessionTurn(input("", controller.signal), (state) => {
-    if (state.assistantText === "Partial") controller.abort();
-  }).catch((error: unknown) => { settled = true; return error; });
+  const running = adapter
+    .runSessionTurn(input("", controller.signal), (state) => {
+      if (state.assistantText === "Partial") controller.abort();
+    })
+    .catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
   await new Promise<void>((resolve) => setImmediate(resolve));
-  child.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
+  child.emit(
+    "error",
+    Object.assign(new Error("aborted"), { name: "AbortError" }),
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(closed, true);
   assert.equal(settled, false);
@@ -1303,11 +2576,21 @@ it("keeps the canceled provider promise pending until child exit", async () => {
 // impact = "生存中の旧childと同じSession/workspaceへの再送を許し副作用競合を起こす"
 // distinction = "既存user cancel exit testでは入力signal非abortのlive配送拒否とcleanup通知経路を通らない"
 // @end-test-value
+/** 表示通知の失敗は取消と区別し、本文を残したまま子プロセスの後始末を追跡する。 */
 it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立する", async (context) => {
   const body = "x".repeat(4 * 1024 * 1024);
   for (const notifyCleanup of [false, true]) {
     const inputController = new AbortController();
-    const child = Object.assign(new EventEmitter(), { pid: 123, exitCode: null, stdin: {}, stdout: {}, killed: false, kill: () => true });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 123,
+      exitCode: null,
+      stdin: {},
+      stdout: {},
+      killed: false,
+      /** SDK を閉じる経路から終了を要求されても、exit はまだ発生させない。 */
+      kill: () => true,
+    });
+    /** 検査に失敗して早期終了した場合も、スタブに終了イベントを届ける。 */
     context.after(() => child.emit("exit", null, "SIGTERM"));
     let closeCalled = false;
     let callbacks = 0;
@@ -1316,23 +2599,58 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
     let cleanupSettled = false;
     let cleanupCompletion: Promise<void> | undefined;
     const query = (({ options }: { options: Options }) => {
-      options.spawnClaudeCodeProcess!({ command: "unused", args: [], env: {}, signal: new AbortController().signal });
+      options.spawnClaudeCodeProcess!({
+        command: "unused",
+        args: [],
+        env: {},
+        signal: new AbortController().signal,
+      });
       return {
-        next: () => ++nextCount === 1
-          ? Promise.resolve({ done: false, value: sdkMessage({ type: "assistant", uuid: "capacity-child", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } }) })
-          : new Promise(() => undefined),
-        close: () => { closeCalled = true; },
+        /** 大きな本文を一件送り、次の要求は解決しないようにして読み取り停止を確かめる。 */
+        next: () =>
+          ++nextCount === 1
+            ? Promise.resolve({
+                done: false,
+                value: sdkMessage({
+                  type: "assistant",
+                  uuid: "capacity-child",
+                  parent_tool_use_id: null,
+                  message: { content: [{ type: "text", text: body }] },
+                }),
+              })
+            : new Promise(() => undefined),
+        /** SDK を閉じる呼び出しだけを記録し、子プロセスの終了は個別に制御する。 */
+        close: () => {
+          closeCalled = true;
+        },
       };
     }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
     const request = input("", inputController.signal);
-    if (notifyCleanup) request.onCleanupPending = (completion) => {
-      cleanupCompletion = completion;
-      void completion.then(() => { cleanupSettled = true; });
-    };
-    const adapter = new ClaudeAdapter({ query, spawnProcess: (() => child) as unknown as typeof spawn });
-    const running = adapter.runSessionTurn(request, () => { callbacks += 1; throw new Error("live delivery failed"); }).catch((error: unknown) => { settled = true; return error; });
+    if (notifyCleanup)
+      request.onCleanupPending = (completion) => {
+        cleanupCompletion = completion;
+        void completion.then(() => {
+          cleanupSettled = true;
+        });
+      };
+    const adapter = new ClaudeAdapter({
+      query,
+      spawnProcess: (() => child) as unknown as typeof spawn,
+    });
+    const running = adapter
+      .runSessionTurn(request, () => {
+        callbacks += 1;
+        throw new Error("live delivery failed");
+      })
+      .catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    child.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
+    child.emit(
+      "error",
+      Object.assign(new Error("aborted"), { name: "AbortError" }),
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(closeCalled, true);
     assert.equal(inputController.signal.aborted, false);
@@ -1370,35 +2688,94 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 // impact = "選択した承認方針で通常の編集やコマンド実行を進められなくなる"
 // distinction = "共通Approval unionとselector testはSDK optionとhookの組合せを確認しない"
 // @end-test-value
+/** 保存済みの承認モードとレビュー担当の組み合わせを、SDK の権限とツールフックに対応付ける。 */
 it("maps captured Claude approval modes to SDK permissions and tool hooks", async () => {
   for (const [approvalMode, codexReviewer, permissionMode] of [
-    ["never", "user", "bypassPermissions"], ["never", "auto-review", "bypassPermissions"],
-    ["on-request", "user", "default"], ["on-request", "auto-review", "auto"],
+    ["never", "user", "bypassPermissions"],
+    ["never", "auto-review", "bypassPermissions"],
+    ["on-request", "user", "default"],
+    ["on-request", "auto-review", "auto"],
     ["safety-focused", "auto-review", "default"],
-    ["accept-edits", "user", "acceptEdits"], ["dont-ask", "user", "dontAsk"], ["plan", "user", "plan"],
+    ["accept-edits", "user", "acceptEdits"],
+    ["dont-ask", "user", "dontAsk"],
+    ["plan", "user", "plan"],
   ] as const) {
     const request = input();
-    request.executionOptions = { ...request.executionOptions, approvalMode, codexReviewer };
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-      assert.equal(options.permissionMode, permissionMode);
-      assert.equal(options.allowDangerouslySkipPermissions, approvalMode === "never");
-      const hook = options.hooks!.PreToolUse![0].hooks[0];
-      for (const toolName of ["Bash", "Edit", "Write", "mcp__example__write", "AskUserQuestion", "Read", "Glob", "Grep", "WebSearch", "WebFetch"]) {
-        const output = await hook({
-          hook_event_name: "PreToolUse", session_id: "thread", transcript_path: "transcript.jsonl", cwd: process.cwd(),
-          tool_name: toolName, tool_input: {}, tool_use_id: "tool-1",
-        }, "tool-1", { signal: new AbortController().signal });
-        const readOnly = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName);
-        const asks = toolName === "AskUserQuestion" ? permissionMode !== "dontAsk"
-          : !readOnly && approvalMode === "on-request" && codexReviewer === "user";
-        assert.deepEqual(output, !asks ? {} : {
-          hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "WithMate approval required" },
-        }, `${approvalMode}: ${toolName}`);
-      }
-      yield result("thread-permissions");
-    }) });
+    request.executionOptions = {
+      ...request.executionOptions,
+      approvalMode,
+      codexReviewer,
+    };
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* (options) {
+        assert.equal(options.permissionMode, permissionMode);
+        assert.equal(
+          options.allowDangerouslySkipPermissions,
+          approvalMode === "never",
+        );
+        const hook = options.hooks!.PreToolUse![0].hooks[0];
+        for (const toolName of [
+          "Bash",
+          "Edit",
+          "Write",
+          "mcp__example__write",
+          "AskUserQuestion",
+          "Read",
+          "Glob",
+          "Grep",
+          "WebSearch",
+          "WebFetch",
+        ]) {
+          const output = await hook(
+            {
+              hook_event_name: "PreToolUse",
+              session_id: "thread",
+              transcript_path: "transcript.jsonl",
+              cwd: process.cwd(),
+              tool_name: toolName,
+              tool_input: {},
+              tool_use_id: "tool-1",
+            },
+            "tool-1",
+            { signal: new AbortController().signal },
+          );
+          const readOnly = [
+            "Read",
+            "Glob",
+            "Grep",
+            "WebSearch",
+            "WebFetch",
+          ].includes(toolName);
+          const asks =
+            toolName === "AskUserQuestion"
+              ? permissionMode !== "dontAsk"
+              : !readOnly &&
+                approvalMode === "on-request" &&
+                codexReviewer === "user";
+          assert.deepEqual(
+            output,
+            !asks
+              ? {}
+              : {
+                  hookSpecificOutput: {
+                    hookEventName: "PreToolUse",
+                    permissionDecision: "ask",
+                    permissionDecisionReason: "WithMate approval required",
+                  },
+                },
+            `${approvalMode}: ${toolName}`,
+          );
+        }
+        yield result("thread-permissions");
+      }),
+    });
     const completed = await adapter.runSessionTurn(request);
-    assert.deepEqual(completed.artifact?.runChecks.filter((check) => check.label === "reviewer"), [{ label: "reviewer", value: codexReviewer }]);
+    assert.deepEqual(
+      completed.artifact?.runChecks.filter(
+        (check) => check.label === "reviewer",
+      ),
+      [{ label: "reviewer", value: codexReviewer }],
+    );
   }
 });
 
@@ -1415,29 +2792,68 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
 // impact = "SDKの明示的な承認要求が無断許可されるか、利用者が許可した操作を実行できない"
 // distinction = "permission設定testだけではSDKからの例外的な承認要求への応答を観測できない"
 // @end-test-value
+/** SDK が要求する対話承認を中継し、拒否・取消・UI 不在のときに許可を返さない。 */
 it("routes SDK-required approvals in interactive Claude modes and preserves denial and cancellation", async () => {
   for (const [approvalMode, codexReviewer] of [
-    ["never", "user"], ["on-request", "user"], ["on-request", "auto-review"], ["accept-edits", "user"], ["plan", "user"],
+    ["never", "user"],
+    ["on-request", "user"],
+    ["on-request", "auto-review"],
+    ["accept-edits", "user"],
+    ["plan", "user"],
   ] as const) {
-    for (const decision of ["approve", "deny", "unavailable", "canceled"] as const) {
+    for (const decision of [
+      "approve",
+      "deny",
+      "unavailable",
+      "canceled",
+    ] as const) {
       const request = input();
-      request.executionOptions = { ...request.executionOptions, approvalMode, codexReviewer };
-      const seen: string[] = [];
-      if (decision !== "unavailable") request.onApprovalRequest = (card) => {
-        seen.push(card.requestId);
-        return decision === "approve" ? "approve" : "deny";
+      request.executionOptions = {
+        ...request.executionOptions,
+        approvalMode,
+        codexReviewer,
       };
-      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-        const controller = new AbortController();
-        if (decision === "canceled") controller.abort();
-        const permission = await options.canUseTool!("Bash", { command: "example" }, { requestId: "permission-1", toolUseID: "sdk-ask", signal: controller.signal });
-        assert.deepEqual(permission, decision === "approve" ? { behavior: "allow" } : {
-          behavior: "deny", message: decision === "unavailable" ? "Tool approval is unavailable" : decision === "canceled" ? "Canceled" : "Denied by user",
-        });
-        yield result("thread-sdk-approval");
-      }) });
+      const seen: string[] = [];
+      if (decision !== "unavailable")
+        request.onApprovalRequest = (card) => {
+          seen.push(card.requestId);
+          return decision === "approve" ? "approve" : "deny";
+        };
+      const adapter = new ClaudeAdapter({
+        query: fakeQuery(async function* (options) {
+          const controller = new AbortController();
+          if (decision === "canceled") controller.abort();
+          const permission = await options.canUseTool!(
+            "Bash",
+            { command: "example" },
+            {
+              requestId: "permission-1",
+              toolUseID: "sdk-ask",
+              signal: controller.signal,
+            },
+          );
+          assert.deepEqual(
+            permission,
+            decision === "approve"
+              ? { behavior: "allow" }
+              : {
+                  behavior: "deny",
+                  message:
+                    decision === "unavailable"
+                      ? "Tool approval is unavailable"
+                      : decision === "canceled"
+                        ? "Canceled"
+                        : "Denied by user",
+                },
+          );
+          yield result("thread-sdk-approval");
+        }),
+      });
       await adapter.runSessionTurn(request);
-      assert.deepEqual(seen, decision === "approve" || decision === "deny" ? ["sdk-ask"] : []);
+      assert.deepEqual(
+        seen,
+        decision === "approve" || decision === "deny" ? ["sdk-ask"] : [],
+      );
     }
   }
 });
@@ -1454,19 +2870,37 @@ it("routes SDK-required approvals in interactive Claude modes and preserves deni
 // impact = "無人実行を意図した要求が対話待ちで停止するか権限を拡大する"
 // distinction = "SDK optionとhookのtestだけでは実際のcallbackによる対話開始を検出しない"
 // @end-test-value
+/** 事前承認のみの運用では、SDK やツールコールバックから対話を開始しない。 */
 it("does not prompt for approvals or questions in Preapproved Only", async () => {
   const request = input();
-  request.executionOptions = { ...request.executionOptions, approvalMode: "dont-ask" };
+  request.executionOptions = {
+    ...request.executionOptions,
+    approvalMode: "dont-ask",
+  };
   request.onApprovalRequest = () => assert.fail("Approval UI must not open");
   request.onElicitationRequest = () => assert.fail("Question UI must not open");
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    for (const toolName of ["Bash", "AskUserQuestion"]) {
-      assert.deepEqual(await options.canUseTool!(toolName, {}, { requestId: "preapproved-1", toolUseID: "tool-1", signal: new AbortController().signal }), {
-        behavior: "deny", message: "Only preapproved tools are allowed",
-      });
-    }
-    yield result("preapproved");
-  }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* (options) {
+      for (const toolName of ["Bash", "AskUserQuestion"]) {
+        assert.deepEqual(
+          await options.canUseTool!(
+            toolName,
+            {},
+            {
+              requestId: "preapproved-1",
+              toolUseID: "tool-1",
+              signal: new AbortController().signal,
+            },
+          ),
+          {
+            behavior: "deny",
+            message: "Only preapproved tools are allowed",
+          },
+        );
+      }
+      yield result("preapproved");
+    }),
+  });
   await adapter.runSessionTurn(request);
 });
 
@@ -1482,18 +2916,26 @@ it("does not prompt for approvals or questions in Preapproved Only", async () =>
 // impact = "選択に反して追加課金を伴うFastで動くか実際のStandardをFastと誤認する"
 // distinction = "選択肢や共通Speed正規化testはSDK optionと実行結果の組合せを通らない"
 // @end-test-value
+/** 捕捉済みの希望速度を SDK へ渡し、実際に選択された速度を成果物に記録する。 */
 it("applies captured Claude speed and reports native speed outcomes", async () => {
   for (const [codexSpeed, state, label] of [
-    ["standard", "off", "Standard"], ["fast", "on", "Fast"], ["fast", "cooldown", "Standard (Fast cooldown)"],
+    ["standard", "off", "Standard"],
+    ["fast", "on", "Fast"],
+    ["fast", "cooldown", "Standard (Fast cooldown)"],
   ] as const) {
     const request = input();
     request.executionOptions = { ...request.executionOptions, codexSpeed };
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-      assert.deepEqual(options.settings, { fastMode: codexSpeed === "fast" });
-      yield sdkMessage({ ...result("speed"), fast_mode_state: state });
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* (options) {
+        assert.deepEqual(options.settings, { fastMode: codexSpeed === "fast" });
+        yield sdkMessage({ ...result("speed"), fast_mode_state: state });
+      }),
+    });
     const completed = await adapter.runSessionTurn(request);
-    assert.deepEqual(completed.artifact?.runChecks.filter((check) => check.label === "speed"), [{ label: "speed", value: label }]);
+    assert.deepEqual(
+      completed.artifact?.runChecks.filter((check) => check.label === "speed"),
+      [{ label: "speed", value: label }],
+    );
   }
 });
 
@@ -1509,31 +2951,68 @@ it("applies captured Claude speed and reports native speed outcomes", async () =
 // impact = "選択した承認や課金速度と異なる動作が利用者に通知されない"
 // distinction = "通常mapping testはnativeが選択を受理しなかった場合を再現しない"
 // @end-test-value
+/** 利用不能な権限モードや速度を別の設定へ置き換えず、失敗理由と既知の実行情報を返す。 */
 it("rejects unavailable Claude modes without silently changing the selection", async () => {
   for (const kind of ["permission", "speed"] as const) {
     const request = input();
-    request.executionOptions = { ...request.executionOptions, approvalMode: "on-request", codexReviewer: "auto-review", codexSpeed: kind === "speed" ? "fast" : "standard" };
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-      yield sdkMessage({ type: "system", subtype: "init", session_id: "rejected-settings", permissionMode: kind === "permission" ? "default" : "auto",
-        fast_mode_state: "off", fast_mode_disabled_reason: "extra_usage_disabled" });
-      assert.fail("Settings refusal must stop SDK consumption");
-    }) });
+    request.executionOptions = {
+      ...request.executionOptions,
+      approvalMode: "on-request",
+      codexReviewer: "auto-review",
+      codexSpeed: kind === "speed" ? "fast" : "standard",
+    };
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* () {
+        yield sdkMessage({
+          type: "system",
+          subtype: "init",
+          session_id: "rejected-settings",
+          permissionMode: kind === "permission" ? "default" : "auto",
+          fast_mode_state: "off",
+          fast_mode_disabled_reason: "extra_usage_disabled",
+        });
+        assert.fail("Settings refusal must stop SDK consumption");
+      }),
+    });
     await assert.rejects(adapter.runSessionTurn(request), (error: unknown) => {
       assert.ok(error instanceof ProviderTurnError);
-      assert.match(error.message, kind === "permission" ? /requested permission mode/ : /Fast mode is unavailable/);
+      assert.match(
+        error.message,
+        kind === "permission"
+          ? /requested permission mode/
+          : /Fast mode is unavailable/,
+      );
       assert.equal(error.partialResult.threadId, "rejected-settings");
       return true;
     });
   }
   const request = input();
-  request.executionOptions = { ...request.executionOptions, approvalMode: "untrusted" };
+  request.executionOptions = {
+    ...request.executionOptions,
+    approvalMode: "untrusted",
+  };
   let queryCalls = 0;
   const inner = fakeQuery(async function* () {});
-  const adapter = new ClaudeAdapter({ query: ((...args: Parameters<typeof inner>) => { queryCalls += 1; return inner(...args); }) as typeof inner });
-  await assert.rejects(adapter.runSessionTurn(request), /not supported by Claude/);
+  const adapter = new ClaudeAdapter({
+    query: ((...args: Parameters<typeof inner>) => {
+      queryCalls += 1;
+      return inner(...args);
+    }) as typeof inner,
+  });
+  await assert.rejects(
+    adapter.runSessionTurn(request),
+    /not supported by Claude/,
+  );
   assert.equal(queryCalls, 0);
-  request.executionOptions = { ...request.executionOptions, approvalMode: "accept-edits", codexReviewer: "auto-review" };
-  await assert.rejects(adapter.runSessionTurn(request), /Auto Review requires Provider Controlled/);
+  request.executionOptions = {
+    ...request.executionOptions,
+    approvalMode: "accept-edits",
+    codexReviewer: "auto-review",
+  };
+  await assert.rejects(
+    adapter.runSessionTurn(request),
+    /Auto Review requires Provider Controlled/,
+  );
   assert.equal(queryCalls, 0);
 });
 
@@ -1549,35 +3028,75 @@ it("rejects unavailable Claude modes without silently changing the selection", a
 // impact = "Claudeの質問へユーザーが正しい自由回答を返せず作業が停止する"
 // distinction = "既存CopilotのMCP elicitation testはClaudeのAskUserQuestion更新入力を確認しない"
 // @end-test-value
+/** 対話できる運用では自由入力の回答を SDK へ引き渡し、配送済みを履歴に通知する。 */
 it("routes AskUserQuestion to elicitation and returns a free-text answer", async () => {
   for (const [approvalMode, codexReviewer] of [
-    ["never", "user"], ["on-request", "user"], ["on-request", "auto-review"], ["accept-edits", "user"], ["plan", "user"],
+    ["never", "user"],
+    ["on-request", "user"],
+    ["on-request", "auto-review"],
+    ["accept-edits", "user"],
+    ["plan", "user"],
   ] as const) {
     let permission: unknown;
     let allowsFreeText = false;
-    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-      permission = await options.canUseTool?.("AskUserQuestion", {
-        questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }],
-      }, { toolUseID: "question-1", signal: new AbortController().signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
-      yield result("thread-question");
-    }) });
+    const adapter = new ClaudeAdapter({
+      query: fakeQuery(async function* (options) {
+        permission = await options.canUseTool?.(
+          "AskUserQuestion",
+          {
+            questions: [
+              {
+                question: "Which path?",
+                options: [{ label: "A" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          {
+            toolUseID: "question-1",
+            signal: new AbortController().signal,
+          } as Parameters<NonNullable<Options["canUseTool"]>>[2],
+        );
+        yield result("thread-question");
+      }),
+    });
     const request = input();
     const delivered: string[] = [];
-    request.onElicitationDelivered = (id) => { delivered.push(id); };
-    request.executionOptions = { ...request.executionOptions, approvalMode, codexReviewer };
+    request.onElicitationDelivered = (id) => {
+      delivered.push(id);
+    };
+    request.executionOptions = {
+      ...request.executionOptions,
+      approvalMode,
+      codexReviewer,
+    };
     request.onElicitationRequest = (card) => {
-      allowsFreeText = card.fields.some((field) => field.name === "0" && field.type === "select" && field.allowFreeText === true);
+      allowsFreeText = card.fields.some(
+        (field) =>
+          field.name === "0" &&
+          field.type === "select" &&
+          field.allowFreeText === true,
+      );
       return { action: "accept", content: { "0": "A custom path" } };
     };
     await adapter.runSessionTurn(request);
     assert.equal(allowsFreeText, true);
     assert.deepEqual(delivered, ["question-1"]);
-    assert.deepEqual(permission, { behavior: "allow", updatedInput: {
-      questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }], answers: { "Which path?": "A custom path" },
-    } });
+    assert.deepEqual(permission, {
+      behavior: "allow",
+      updatedInput: {
+        questions: [
+          {
+            question: "Which path?",
+            options: [{ label: "A" }],
+            multiSelect: false,
+          },
+        ],
+        answers: { "Which path?": "A custom path" },
+      },
+    });
   }
 });
-
 
 // @test-value v2
 // kind = "invariant"
@@ -1591,11 +3110,29 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
 // impact = "失敗途中のユーザー可視応答が履歴から消え、turnが誤って完了する"
 // distinction = "SDKのterminal/EOF境界はClaude固有で既存adapter testでは観測しない"
 // @end-test-value
+/** SDK が結果前に終了した場合は、逐次受信した本文を返して失敗扱いにする。 */
 it("preserves streamed partial text when the SDK ends before result", async () => {
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    yield sdkMessage({ type: "stream_event", session_id: "thread-eof", uuid: "event-start", parent_tool_use_id: null, event: { type: "message_start", message: { id: "anthropic-partial" } } });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-eof", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Incomplete" } } });
-  }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      yield sdkMessage({
+        type: "stream_event",
+        session_id: "thread-eof",
+        uuid: "event-start",
+        parent_tool_use_id: null,
+        event: { type: "message_start", message: { id: "anthropic-partial" } },
+      });
+      yield sdkMessage({
+        type: "stream_event",
+        session_id: "thread-eof",
+        uuid: "event-delta",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: "Incomplete" },
+        },
+      });
+    }),
+  });
   await assert.rejects(adapter.runSessionTurn(input()), (error: unknown) => {
     assert.ok(error instanceof ProviderTurnError);
     assert.equal(error.canceled, false);
@@ -1603,7 +3140,6 @@ it("preserves streamed partial text when the SDK ends before result", async () =
     return true;
   });
 });
-
 
 // @test-value v2
 // kind = "invariant"
@@ -1617,23 +3153,73 @@ it("preserves streamed partial text when the SDK ends before result", async () =
 // impact = "大きいBash入力の反復でMain heapが増幅し履歴と会話を失う"
 // distinction = "shared helper testはClaude receiveからprogressとfinalへの接続を観測しない"
 // @end-test-value
+/** 複数の Bash 操作を順に有限のプレビューで記録する一方、回答本文は切り詰めない。 */
 it("ClaudeはBash summaryとoperation previewをboundedにし本文と操作順序を保つ", async () => {
   const command = "x".repeat(1024 * 1024);
   const body = "answer".repeat(20000);
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-    for (let index = 0; index < 16; index++) {
-      yield sdkMessage({ type: "assistant", uuid: "tool-" + index, parent_tool_use_id: null, message: { content: [{ type: "tool_use", id: String(index), name: "Bash", input: { command } }] } });
-      yield sdkMessage({ type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: String(index), is_error: false, content: "done" }] } });
-    }
-    yield sdkMessage({ type: "assistant", uuid: "answer", parent_tool_use_id: null, message: { content: [{ type: "text", text: body }] } });
-    yield result("bounded", { result: body });
-  }) });
+  const adapter = new ClaudeAdapter({
+    query: fakeQuery(async function* () {
+      for (let index = 0; index < 16; index++) {
+        yield sdkMessage({
+          type: "assistant",
+          uuid: "tool-" + index,
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: String(index),
+                name: "Bash",
+                input: { command },
+              },
+            ],
+          },
+        });
+        yield sdkMessage({
+          type: "user",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: String(index),
+                is_error: false,
+                content: "done",
+              },
+            ],
+          },
+        });
+      }
+      yield sdkMessage({
+        type: "assistant",
+        uuid: "answer",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: body }] },
+      });
+      yield result("bounded", { result: body });
+    }),
+  });
   const summaries: string[] = [];
-  const completed = await adapter.runSessionTurn(input(), (progress) => { for (const step of progress.steps) summaries.push(step.summary); });
-  const expected = command.slice(0, 65536) + "\n...[truncated 983040 chars; originalLength=1048576]";
+  const completed = await adapter.runSessionTurn(input(), (progress) => {
+    for (const step of progress.steps) summaries.push(step.summary);
+  });
+  const expected =
+    command.slice(0, 65536) +
+    "\n...[truncated 983040 chars; originalLength=1048576]";
   assert.ok(summaries.length > 0);
-  assert.ok(summaries.filter((summary) => summary.startsWith("x")).every((summary) => summary === expected));
-  assert.deepEqual(completed.artifact!.operationTimeline!.filter((operation) => operation.type === "command_execution").map((operation) => operation.summary), Array(16).fill(expected));
+  assert.ok(
+    summaries
+      .filter((summary) => summary.startsWith("x"))
+      .every((summary) => summary === expected),
+  );
+  assert.deepEqual(
+    completed
+      .artifact!.operationTimeline!.filter(
+        (operation) => operation.type === "command_execution",
+      )
+      .map((operation) => operation.summary),
+    Array(16).fill(expected),
+  );
   assert.equal(completed.assistantText, body);
 });
 
@@ -1650,33 +3236,67 @@ it("ClaudeはBash summaryとoperation previewをboundedにし本文と操作順�
 // impact = "runtime認証情報の断片が画面と保存履歴へ漏洩することを防ぐ"
 // distinction = "tool_result出力の秘匿化testはBash入力のcommand summary生成を通らない"
 // @end-test-value
+/** プレビュー境界の前後にまたがる機密情報も、表示と各終了状態の保存情報に残さない。 */
 it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async () => {
-  const secrets = ["binding-reference-fixture-0123456789", "turn-capability-fixture-0123456789", "mcp-token-fixture-0123456789"];
+  const secrets = [
+    "binding-reference-fixture-0123456789",
+    "turn-capability-fixture-0123456789",
+    "mcp-token-fixture-0123456789",
+  ];
   for (const secret of secrets) {
     for (const outcome of ["completed", "failed", "canceled"] as const) {
       const controller = new AbortController();
       const request = input("", controller.signal);
       request.agentRuntimeBinding = {
-        bindingId: "binding", bindingReference: secrets[0], turnCapability: secrets[1], providerId: "claude",
-        executionGeneration: "generation", transport: "env", expiresAt: null,
-        managedMcp: { glossaryUrl: "http://127.0.0.1:47891/glossary", token: secrets[2] },
+        bindingId: "binding",
+        bindingReference: secrets[0],
+        turnCapability: secrets[1],
+        providerId: "claude",
+        executionGeneration: "generation",
+        transport: "env",
+        expiresAt: null,
+        managedMcp: {
+          glossaryUrl: "http://127.0.0.1:47891/glossary",
+          token: secrets[2],
+        },
       };
-      const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
-      const expected = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10)
-        + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER.slice(0, 10)
-        + `\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
-      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
-        yield sdkMessage({ type: "assistant", uuid: "tool", parent_tool_use_id: null,
-          message: { content: [{ type: "tool_use", id: "boundary", name: "Bash", input: { command } }] } });
-        if (outcome === "failed") throw new Error("connection failure");
-        if (outcome === "canceled") controller.abort();
-        yield result("thread");
-      }) });
+      const command =
+        "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
+      const expected =
+        "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) +
+        PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER.slice(0, 10) +
+        `\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
+      const adapter = new ClaudeAdapter({
+        query: fakeQuery(async function* () {
+          yield sdkMessage({
+            type: "assistant",
+            uuid: "tool",
+            parent_tool_use_id: null,
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "boundary",
+                  name: "Bash",
+                  input: { command },
+                },
+              ],
+            },
+          });
+          if (outcome === "failed") throw new Error("connection failure");
+          if (outcome === "canceled") controller.abort();
+          yield result("thread");
+        }),
+      });
       const summaries: string[] = [];
       let completed;
       try {
         completed = await adapter.runSessionTurn(request, (state) => {
-          summaries.push(...state.steps.filter((step) => step.type === "command_execution").map((step) => step.summary));
+          summaries.push(
+            ...state.steps
+              .filter((step) => step.type === "command_execution")
+              .map((step) => step.summary),
+          );
         });
         assert.equal(outcome, "completed");
       } catch (error) {
@@ -1686,7 +3306,12 @@ it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async 
         completed = error.partialResult;
       }
       assert.ok(summaries.length > 0);
-      assert.ok(summaries.every((summary) => summary === expected && !summary.includes(secret.slice(0, 10))));
+      assert.ok(
+        summaries.every(
+          (summary) =>
+            summary === expected && !summary.includes(secret.slice(0, 10)),
+        ),
+      );
       assert.equal(completed.artifact!.operationTimeline![0].summary, expected);
     }
   }

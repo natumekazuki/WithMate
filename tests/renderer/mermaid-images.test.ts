@@ -5,38 +5,60 @@ import type { Mermaid } from "mermaid";
 import { renderMermaidWithImages } from "../../src/ui/markdown/mermaid-images.js";
 
 let mermaid: Mermaid;
-const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  pretendToBeVisual: true,
+});
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 const revoked: string[] = [];
 const previousRevoke = URL.revokeObjectURL;
 
 // ブラウザーでのリソース読み込みと位置・寸法だけを模擬する。Mermaid の
 // パーサー、組み込みの画像レンダラー、厳格なサニタイザーはインストール済みの実装をそのまま使う。
+/** 実ネットワークを使わず、Mermaid の画像寸法とロード成否を再現する。 */
 class LoadedImage {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   naturalWidth = 320;
   naturalHeight = 180;
   private resource = "";
+  /** SVG data URL の寸法を反映し、画像のロード通知を非同期で送る。 */
   set src(value: string) {
     this.resource = value;
     if (value.startsWith("data:image/svg+xml,")) {
-      const svg = new dom.window.DOMParser().parseFromString(decodeURIComponent(value.split(",").slice(1).join(",")), "image/svg+xml");
+      const svg = new dom.window.DOMParser().parseFromString(
+        decodeURIComponent(value.split(",").slice(1).join(",")),
+        "image/svg+xml",
+      );
       this.naturalWidth = Number(svg.documentElement.getAttribute("width"));
       this.naturalHeight = Number(svg.documentElement.getAttribute("height"));
     }
-    queueMicrotask(() => value === "blob:bad-image" ? this.onerror?.() : this.onload?.());
+    queueMicrotask(() =>
+      value === "blob:bad-image" ? this.onerror?.() : this.onload?.(),
+    );
   }
-  get src() { return this.resource; }
-  removeAttribute() { this.resource = ""; }
-  async decode() { if (this.resource === "blob:bad-image") throw new Error("decode failed"); }
+  /** 現在読み込んでいる画像 URL を返す。 */
+  get src() {
+    return this.resource;
+  }
+  /** キャンセル時にブラウザーが src を取り除く挙動を模擬する。 */
+  removeAttribute() {
+    this.resource = "";
+  }
+  /** 破損 fixture だけデコード失敗として扱う。 */
+  async decode() {
+    if (this.resource === "blob:bad-image") throw new Error("decode failed");
+  }
 }
 
+/** DOM と寸法計測を差し替えた後、実 Mermaid を strict モードで初期化する。 */
 before(async () => {
   const globals: Record<string, unknown> = {
-    window: dom.window, document: dom.window.document,
-    DOMParser: dom.window.DOMParser, XMLSerializer: dom.window.XMLSerializer,
-    HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement,
+    window: dom.window,
+    document: dom.window.document,
+    DOMParser: dom.window.DOMParser,
+    XMLSerializer: dom.window.XMLSerializer,
+    HTMLElement: dom.window.HTMLElement,
+    SVGElement: dom.window.SVGElement,
     CSSStyleSheet: dom.window.CSSStyleSheet,
     Image: LoadedImage,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
@@ -44,20 +66,42 @@ before(async () => {
   };
   for (const [key, value] of Object.entries(globals)) {
     previousGlobals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   }
   Object.defineProperty(dom.window.SVGElement.prototype, "getBBox", {
+    /** JSDOM でも SVG ノードを配置できるよう固定サイズの境界を供給する。 */
     value: () => ({ x: 0, y: 0, width: 80, height: 20 }),
   });
-  Object.defineProperty(dom.window.SVGElement.prototype, "getComputedTextLength", { value: () => 80 });
+  Object.defineProperty(
+    dom.window.SVGElement.prototype,
+    "getComputedTextLength",
+    {
+      /** SVG のテキスト幅を固定し、ブラウザーレイアウトへの依存を外す。 */
+      value: () => 80,
+    },
+  );
   // JSDOM は HTML ラベルの画像を読み込まない。ブラウザーでの画像のライフサイクルは
   // 描画確認用の fixture で確認する。ここでは Mermaid 本来のラベルとレイアウトの処理を動かす。
-  Object.defineProperty(dom.window.HTMLImageElement.prototype, "complete", { get: () => true });
-  URL.revokeObjectURL = (url) => { revoked.push(url); };
+  Object.defineProperty(dom.window.HTMLImageElement.prototype, "complete", {
+    /** JSDOM が行わない HTML ラベル画像のロード完了を通知する。 */
+    get: () => true,
+  });
+  URL.revokeObjectURL = (url) => {
+    revoked.push(url);
+  };
   mermaid = (await import("mermaid")).default;
-  mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "base" });
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+  });
 });
 
+/** 一時的な globals と URL 解放処理を復元し、試験用 DOM を閉じる。 */
 after(() => {
   for (const [key, descriptor] of previousGlobals) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -67,6 +111,7 @@ after(() => {
   dom.window.close();
 });
 
+/** SVG 内の HTML ラベルも取得できるよう HTML として読み、図のルートを確認する。 */
 function svgDocument(svg: string) {
   // プレビューは、HTML の `foreignObject` ラベルを含む Mermaid の SVG を HTML として扱う。
   const document = new dom.window.DOMParser().parseFromString(svg, "text/html");
@@ -86,41 +131,80 @@ function svgDocument(svg: string) {
 // impact = "標準Mermaid図に添付されたローカル画像と図の関係を利用者が読めなくなる"
 // distinction = "既存Markdown img testはMermaidの標準node構文とstrict sanitizerを通らない。実rendererを使う小規模な図でCI負担を限定する"
 // @end-test-value
+/** 空白と日本語を含むパスをそのまま解決し、標準ノードの寸法・位置・制約、アクセシブル名と辺を保つことを確認する。 */
 test("standard image nodes resolve Japanese paths with spaces and retain graph metadata", async () => {
   const targets: string[] = [];
   const controller = new AbortController();
   let renderSource = "";
   const observedMermaid: Mermaid = {
     ...mermaid,
+    /** 実描画へ委譲しつつ、標準画像ノードの metadata を照合するため変換後のソースを保存する。 */
     render: async (id, source, container) => {
       renderSource = source;
       return mermaid.render(id, source, container);
     },
   };
-  const result = await renderMermaidWithImages(observedMermaid, "images-standard", [
-    "flowchart LR",
-    'A@{ img: "./図 素材/一枚.png", label: "A", w: 120, h: 70, pos: "t", constraint: "on" }',
-    'B@{ img: "./図 素材/二枚.png", label: "二枚", w: 90, h: 50, pos: "b", constraint: "off" }',
-    "A --> B",
-  ].join("\n"), async (target) => {
-    targets.push(target);
-    return `blob:resolved-${targets.length}`;
-  }, controller.signal);
+  const result = await renderMermaidWithImages(
+    observedMermaid,
+    "images-standard",
+    [
+      "flowchart LR",
+      'A@{ img: "./図 素材/一枚.png", label: "A", w: 120, h: 70, pos: "t", constraint: "on" }',
+      'B@{ img: "./図 素材/二枚.png", label: "二枚", w: 90, h: 50, pos: "b", constraint: "off" }',
+      "A --> B",
+    ].join("\n"),
+    async (target) => {
+      targets.push(target);
+      return `blob:resolved-${targets.length}`;
+    },
+    controller.signal,
+  );
   assert.deepEqual(targets, ["./図 素材/一枚.png", "./図 素材/二枚.png"]);
   assert.deepEqual(result.imageErrors, []);
   const document = svgDocument(result.svg);
-  assert.deepEqual([...document.querySelectorAll("image")].map((image) => [image.getAttribute("href"), image.getAttribute("aria-label"), image.getAttribute("role")]), [
-    ["blob:resolved-1", "A", "img"], ["blob:resolved-2", "二枚", "img"],
-  ]);
+  assert.deepEqual(
+    [...document.querySelectorAll("image")].map((image) => [
+      image.getAttribute("href"),
+      image.getAttribute("aria-label"),
+      image.getAttribute("role"),
+    ]),
+    [
+      ["blob:resolved-1", "A", "img"],
+      ["blob:resolved-2", "二枚", "img"],
+    ],
+  );
   assert.equal(document.querySelector(".nodeLabel")?.textContent, "A");
   assert.match(document.documentElement.textContent ?? "", /二枚/);
   assert.equal(document.querySelectorAll("path.flowchart-link").length, 1);
   const parsed = await mermaid.mermaidAPI.getDiagramFromText(renderSource);
-  const vertices = (parsed.db as { getVertices: () => Map<string, { assetWidth: number; assetHeight: number; pos: string; constraint: string }> }).getVertices();
-  assert.deepEqual(["A", "B"].map((id) => {
-    const vertex = vertices.get(id)!;
-    return [vertex.assetWidth, vertex.assetHeight, vertex.pos, vertex.constraint];
-  }), [[120, 70, "t", "on"], [90, 50, "b", "off"]]);
+  const vertices = (
+    parsed.db as {
+      getVertices: () => Map<
+        string,
+        {
+          assetWidth: number;
+          assetHeight: number;
+          pos: string;
+          constraint: string;
+        }
+      >;
+    }
+  ).getVertices();
+  assert.deepEqual(
+    ["A", "B"].map((id) => {
+      const vertex = vertices.get(id)!;
+      return [
+        vertex.assetWidth,
+        vertex.assetHeight,
+        vertex.pos,
+        vertex.constraint,
+      ];
+    }),
+    [
+      [120, 70, "t", "on"],
+      [90, 50, "b", "off"],
+    ],
+  );
   assert.equal(revoked.includes("blob:resolved-1"), false);
   controller.abort();
   assert.equal(revoked.filter((url) => url === "blob:resolved-1").length, 1);
@@ -139,28 +223,53 @@ test("standard image nodes resolve Japanese paths with spaces and retain graph m
 // impact = "画像付きの説明図で一般的な複数行labelとfile linkを併用できなくなる"
 // distinction = "既存の画像testは単一行labelと画像のみ、link viewport testは生成済みSVGが入力。実render一件で画像とHTML label・linkの共存を検証する"
 // @end-test-value
+/** 標準画像ノードとサブグラフが共存しても、HTML の改行や名前空間と相対リンクを失わないことを確認する。 */
 test("image diagrams preserve subgraphs, HTML line breaks and relative links", async () => {
   const controller = new AbortController();
   try {
-    const result = await renderMermaidWithImages(mermaid, "images-html-label", [
-      "flowchart TB",
-      'subgraph GROUP[" "]',
-      'A@{ img: "./icon.png", label: "入力画像", h: 64, constraint: "on" }',
-      'B["仕様<br/>確認 &amp; 実装&nbsp;完了"]',
-      "A --> B",
-      "end",
-      'click B "./details.md" "詳細"',
-    ].join("\n"), async () => "blob:html-label-image", controller.signal);
+    const result = await renderMermaidWithImages(
+      mermaid,
+      "images-html-label",
+      [
+        "flowchart TB",
+        'subgraph GROUP[" "]',
+        'A@{ img: "./icon.png", label: "入力画像", h: 64, constraint: "on" }',
+        'B["仕様<br/>確認 &amp; 実装&nbsp;完了"]',
+        "A --> B",
+        "end",
+        'click B "./details.md" "詳細"',
+      ].join("\n"),
+      async () => "blob:html-label-image",
+      controller.signal,
+    );
     assert.deepEqual(result.imageErrors, []);
     const document = svgDocument(result.svg);
-    assert.equal(document.querySelector("svg")?.namespaceURI, "http://www.w3.org/2000/svg");
+    assert.equal(
+      document.querySelector("svg")?.namespaceURI,
+      "http://www.w3.org/2000/svg",
+    );
     assert.equal(document.querySelectorAll(".cluster").length, 1);
-    assert.equal(document.querySelector("image")?.getAttribute("href"), "blob:html-label-image");
-    assert.equal(document.querySelector("image")?.getAttribute("aria-label"), "入力画像");
-    assert.equal(document.querySelector("foreignObject br")?.namespaceURI, "http://www.w3.org/1999/xhtml");
-    assert.match(document.documentElement.textContent ?? "", /仕様確認 & 実装\u00a0完了/);
+    assert.equal(
+      document.querySelector("image")?.getAttribute("href"),
+      "blob:html-label-image",
+    );
+    assert.equal(
+      document.querySelector("image")?.getAttribute("aria-label"),
+      "入力画像",
+    );
+    assert.equal(
+      document.querySelector("foreignObject br")?.namespaceURI,
+      "http://www.w3.org/1999/xhtml",
+    );
+    assert.match(
+      document.documentElement.textContent ?? "",
+      /仕様確認 & 実装\u00a0完了/,
+    );
     const anchor = document.querySelector("a");
-    assert.equal(anchor?.getAttribute("href") ?? anchor?.getAttribute("xlink:href"), "./details.md");
+    assert.equal(
+      anchor?.getAttribute("href") ?? anchor?.getAttribute("xlink:href"),
+      "./details.md",
+    );
     assert.equal(document.querySelectorAll("path.flowchart-link").length, 1);
   } finally {
     controller.abort();
@@ -179,27 +288,54 @@ test("image diagrams preserve subgraphs, HTML line breaks and relative links", a
 // impact = "認可されない画像や壊れた画像一件で利用者が残りの図まで読めなくなる"
 // distinction = "Markdown resource testはMermaidの複数image nodeを含む図の継続描画を観測しない。三失敗を一図にまとめる"
 // @end-test-value
+/** 解決先なし・解決時例外・デコード失敗を対象別に返し、図の辺と失敗画像の代替ラベルを保つことを確認する。 */
 test("resolution and decode failures identify each target without discarding the graph", async () => {
   const controller = new AbortController();
-  const result = await renderMermaidWithImages(mermaid, "images-failed", [
-    "flowchart LR", 'A@{ img: "missing.png", label: "Missing" }',
-    'B@{ img: "denied.png", label: "Denied" }', 'C@{ img: "broken.png", label: "Broken" }',
-    "A --> B --> C",
-  ].join("\n"), async (target) => {
-    if (target === "missing.png") return null;
-    if (target === "denied.png") throw new Error("Root denied");
-    return "blob:bad-image";
-  }, controller.signal);
-  assert.deepEqual(result.imageErrors.map(({ nodeId, target }) => [nodeId, target]).sort(), [
-    ["A", "missing.png"], ["B", "denied.png"], ["C", "broken.png"],
-  ]);
-  assert.match(result.imageErrors.find(({ nodeId }) => nodeId === "B")!.message, /Root denied/);
-  assert.match(result.imageErrors.find(({ nodeId }) => nodeId === "C")!.message, /decoded|loaded/);
+  const result = await renderMermaidWithImages(
+    mermaid,
+    "images-failed",
+    [
+      "flowchart LR",
+      'A@{ img: "missing.png", label: "Missing" }',
+      'B@{ img: "denied.png", label: "Denied" }',
+      'C@{ img: "broken.png", label: "Broken" }',
+      "A --> B --> C",
+    ].join("\n"),
+    async (target) => {
+      if (target === "missing.png") return null;
+      if (target === "denied.png") throw new Error("Root denied");
+      return "blob:bad-image";
+    },
+    controller.signal,
+  );
+  assert.deepEqual(
+    result.imageErrors.map(({ nodeId, target }) => [nodeId, target]).sort(),
+    [
+      ["A", "missing.png"],
+      ["B", "denied.png"],
+      ["C", "broken.png"],
+    ],
+  );
+  assert.match(
+    result.imageErrors.find(({ nodeId }) => nodeId === "B")!.message,
+    /Root denied/,
+  );
+  assert.match(
+    result.imageErrors.find(({ nodeId }) => nodeId === "C")!.message,
+    /decoded|loaded/,
+  );
   const document = svgDocument(result.svg);
   assert.equal(document.querySelectorAll("path.flowchart-link").length, 2);
-  assert.deepEqual([...document.querySelectorAll("image")].map((image) => image.getAttribute("aria-label")), [
-    "Missing (image unavailable)", "Denied (image unavailable)", "Broken (image unavailable)",
-  ]);
+  assert.deepEqual(
+    [...document.querySelectorAll("image")].map((image) =>
+      image.getAttribute("aria-label"),
+    ),
+    [
+      "Missing (image unavailable)",
+      "Denied (image unavailable)",
+      "Broken (image unavailable)",
+    ],
+  );
   controller.abort();
 });
 
@@ -215,34 +351,75 @@ test("resolution and decode failures identify each target without discarding the
 // impact = "枠見出しやnode内の画像を使った図を読めなくなる"
 // distinction = "標準image node testはHTMLの属性とsubgraph titleを通らない。混在一図で三種のlabelと標準nodeの共存を確認する"
 // @end-test-value
+/** サブグラフ・ノード・辺の HTML ラベル画像と標準ノードを同じ解決経路に通し、解決対象・寸法・代替テキスト・図の関係を照合する。 */
 test("HTML label images share resolution and retain dimensions and graph relationships", async () => {
   const controller = new AbortController();
   const targets: string[] = [];
   try {
-    const result = await renderMermaidWithImages(mermaid, "html-images", [
-      "flowchart TB",
-      `subgraph GROUP["<div style='width:200px;height:64px'><img src='file:///C:/図 素材/a&amp;b.png' width='64' alt='枠画像'/></div>"]`,
-      `A["<img src="C:/図 素材/node.png" height="45" alt="node画像">説明<br/>続き"]`,
-      'B@{ img: "./native.png", label: "標準画像" }',
-      `A -->|"<img src='./edge.png' alt='接続画像'>"| B`,
-      "end",
-      `%% <img src='comment.png'>`,
-    ].join("\n"), async (target) => { targets.push(target); return `blob:html-${targets.length}`; }, controller.signal);
-    assert.deepEqual(targets.slice().sort(), ["file:///C:/図 素材/a&b.png", "C:/図 素材/node.png", "./edge.png", "./native.png"].sort());
+    const result = await renderMermaidWithImages(
+      mermaid,
+      "html-images",
+      [
+        "flowchart TB",
+        `subgraph GROUP["<div style='width:200px;height:64px'><img src='file:///C:/図 素材/a&amp;b.png' width='64' alt='枠画像'/></div>"]`,
+        `A["<img src="C:/図 素材/node.png" height="45" alt="node画像">説明<br/>続き"]`,
+        'B@{ img: "./native.png", label: "標準画像" }',
+        `A -->|"<img src='./edge.png' alt='接続画像'>"| B`,
+        "end",
+        `%% <img src='comment.png'>`,
+      ].join("\n"),
+      async (target) => {
+        targets.push(target);
+        return `blob:html-${targets.length}`;
+      },
+      controller.signal,
+    );
+    assert.deepEqual(
+      targets.slice().sort(),
+      [
+        "file:///C:/図 素材/a&b.png",
+        "C:/図 素材/node.png",
+        "./edge.png",
+        "./native.png",
+      ].sort(),
+    );
     assert.deepEqual(result.imageErrors, []);
     const document = svgDocument(result.svg);
     const images = [...document.querySelectorAll("img")];
     assert.equal(images.length, 3);
-    const byAlt = (alt: string) => images.find((image) => image.getAttribute("alt") === alt)!;
-    assert.deepEqual([byAlt("枠画像").getAttribute("width"), byAlt("枠画像").getAttribute("height")], ["64", "36"]);
-    assert.deepEqual([byAlt("node画像").getAttribute("width"), byAlt("node画像").getAttribute("height")], ["80", "45"]);
-    assert.deepEqual([byAlt("接続画像").getAttribute("width"), byAlt("接続画像").getAttribute("height")], ["320", "180"]);
+    /** ラベル画像の位置に依存せず、固有の代替テキストから寸法照合の対象を探す。 */
+    const byAlt = (alt: string) =>
+      images.find((image) => image.getAttribute("alt") === alt)!;
+    assert.deepEqual(
+      [
+        byAlt("枠画像").getAttribute("width"),
+        byAlt("枠画像").getAttribute("height"),
+      ],
+      ["64", "36"],
+    );
+    assert.deepEqual(
+      [
+        byAlt("node画像").getAttribute("width"),
+        byAlt("node画像").getAttribute("height"),
+      ],
+      ["80", "45"],
+    );
+    assert.deepEqual(
+      [
+        byAlt("接続画像").getAttribute("width"),
+        byAlt("接続画像").getAttribute("height"),
+      ],
+      ["320", "180"],
+    );
     for (const image of images) {
       assert.match(image.getAttribute("src") ?? "", /^blob:html-/);
       assert.equal(image.getAttribute("aria-label"), image.getAttribute("alt"));
       assert.equal(image.style.objectFit, "contain");
     }
-    assert.match(document.querySelector("image")?.getAttribute("href") ?? "", /^blob:html-/);
+    assert.match(
+      document.querySelector("image")?.getAttribute("href") ?? "",
+      /^blob:html-/,
+    );
     assert.equal(document.querySelectorAll(".cluster").length, 1);
     assert.equal(document.querySelectorAll("path.flowchart-link").length, 1);
     assert.match(document.documentElement.textContent ?? "", /説明続き/);
@@ -264,24 +441,53 @@ test("HTML label images share resolution and retain dimensions and graph relatio
 // impact = "図から任意コード実行や共通画像制限の迂回が可能になるか、残りの内容まで表示不能になる"
 // distinction = "標準nodeの安全性testはHTML imgのsrcをstrict後に復元しない。二画像一図で成功・失敗と安全境界を観測する"
 // @end-test-value
+/** HTML 画像の取得失敗を代替画像で示しつつ、正常画像と辺を保ち、画像復元時も除去された属性を戻さないことを確認する。 */
 test("HTML image failures retain the graph without restoring unsafe attributes", async () => {
   const controller = new AbortController();
   try {
-    const result = await renderMermaidWithImages(mermaid, "html-images-hostile", [
-      '%%{init: {"securityLevel": "loose"}}%%', "flowchart LR",
-      `A["<img src='javascript:alert(1)' onerror='alert(1)' srcset='file:///secret.png 2x' alt='失敗'>"]`,
-      `B["<img src='./good.png' onload='alert(1)' alt='正常'><img srcset='https://example.invalid/alternate.png 2x' alt='srcなし'><script>alert(1)</script>"]`,
-      "A --> B", 'click B "javascript:alert(1)"',
-    ].join("\n"), async (target) => target === "./good.png" ? "blob:html-good" : null, controller.signal);
-    assert.deepEqual(result.imageErrors.map(({ nodeId, target }) => [nodeId, target]), [["A", "javascript:alert(1)"]]);
+    const result = await renderMermaidWithImages(
+      mermaid,
+      "html-images-hostile",
+      [
+        '%%{init: {"securityLevel": "loose"}}%%',
+        "flowchart LR",
+        `A["<img src='javascript:alert(1)' onerror='alert(1)' srcset='file:///secret.png 2x' alt='失敗'>"]`,
+        `B["<img src='./good.png' onload='alert(1)' alt='正常'><img srcset='https://example.invalid/alternate.png 2x' alt='srcなし'><script>alert(1)</script>"]`,
+        "A --> B",
+        'click B "javascript:alert(1)"',
+      ].join("\n"),
+      async (target) => (target === "./good.png" ? "blob:html-good" : null),
+      controller.signal,
+    );
+    assert.deepEqual(
+      result.imageErrors.map(({ nodeId, target }) => [nodeId, target]),
+      [["A", "javascript:alert(1)"]],
+    );
     const document = svgDocument(result.svg);
-    assert.equal(document.querySelectorAll("script, [onerror], [onload], [srcset]").length, 0);
-    assert.match(document.querySelector('img[alt="失敗"]')?.getAttribute("src") ?? "", /^data:image\/svg\+xml,/);
-    assert.equal(document.querySelector('img[alt="失敗"]')?.getAttribute("aria-label"), "失敗 (image unavailable)");
-    assert.equal(document.querySelector('img[alt="正常"]')?.getAttribute("src"), "blob:html-good");
+    assert.equal(
+      document.querySelectorAll("script, [onerror], [onload], [srcset]").length,
+      0,
+    );
+    assert.match(
+      document.querySelector('img[alt="失敗"]')?.getAttribute("src") ?? "",
+      /^data:image\/svg\+xml,/,
+    );
+    assert.equal(
+      document.querySelector('img[alt="失敗"]')?.getAttribute("aria-label"),
+      "失敗 (image unavailable)",
+    );
+    assert.equal(
+      document.querySelector('img[alt="正常"]')?.getAttribute("src"),
+      "blob:html-good",
+    );
     assert.equal(document.querySelectorAll("path.flowchart-link").length, 1);
     for (const element of document.querySelectorAll("[href], [xlink\\:href]")) {
-      assert.doesNotMatch(element.getAttribute("href") ?? element.getAttribute("xlink:href") ?? "", /^javascript:/i);
+      assert.doesNotMatch(
+        element.getAttribute("href") ??
+          element.getAttribute("xlink:href") ??
+          "",
+        /^javascript:/i,
+      );
     }
   } finally {
     controller.abort();
@@ -300,20 +506,34 @@ test("HTML image failures retain the graph without restoring unsafe attributes",
 // impact = "Source切替やclose後も旧画像の読込と保持が継続する"
 // distinction = "標準nodeのcancel testとは別のHTML前処理経路を遅延promise一件で確認する"
 // @end-test-value
+/** HTML ラベル画像の解決中に中断すると、図を返さず遅れて届いた blob を一度だけ解放することを確認する。 */
 test("HTML image cancellation disposes a late resource without returning a stale diagram", async () => {
   const controller = new AbortController();
   let complete!: (value: string) => void;
   let started!: () => void;
-  const resolving = new Promise<void>((resolve) => { started = resolve; });
-  const result = renderMermaidWithImages(mermaid, "html-images-stale", `flowchart TD\nA["<img src='late.png'>"]`, () => {
-    started();
-    return new Promise<string>((resolve) => { complete = resolve; });
-  }, controller.signal);
+  const resolving = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const result = renderMermaidWithImages(
+    mermaid,
+    "html-images-stale",
+    `flowchart TD\nA["<img src='late.png'>"]`,
+    () => {
+      started();
+      return new Promise<string>((resolve) => {
+        complete = resolve;
+      });
+    },
+    controller.signal,
+  );
   await resolving;
   controller.abort();
   complete("blob:html-late-result");
   await assert.rejects(result, { name: "AbortError" });
-  assert.equal(revoked.filter((url) => url === "blob:html-late-result").length, 1);
+  assert.equal(
+    revoked.filter((url) => url === "blob:html-late-result").length,
+    1,
+  );
 });
 
 // @test-value v2
@@ -328,15 +548,26 @@ test("HTML image cancellation disposes a late resource without returning a stale
 // impact = "切替前の画像を再表示し、長時間previewでblob resourceを保持する"
 // distinction = "Markdown img lifecycle testはMermaid非同期render queueとresolver結果を通らない。遅延promise一件だけを使う"
 // @end-test-value
+/** 標準画像ノードの解決中に中断しても、旧図を返さず遅れて得た blob を一度だけ破棄することを確認する。 */
 test("cancellation disposes a late resolved blob and rejects stale rendering", async () => {
   const controller = new AbortController();
   let complete!: (value: string) => void;
   let started!: () => void;
-  const resolving = new Promise<void>((resolve) => { started = resolve; });
-  const result = renderMermaidWithImages(mermaid, "images-stale", 'flowchart TD\nA@{ img: "late.png" }', () => {
-    started();
-    return new Promise<string>((resolve) => { complete = resolve; });
-  }, controller.signal);
+  const resolving = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const result = renderMermaidWithImages(
+    mermaid,
+    "images-stale",
+    'flowchart TD\nA@{ img: "late.png" }',
+    () => {
+      started();
+      return new Promise<string>((resolve) => {
+        complete = resolve;
+      });
+    },
+    controller.signal,
+  );
   await resolving;
   controller.abort();
   complete("blob:late-result");
@@ -357,18 +588,37 @@ test("cancellation disposes a late resolved blob and rejects stale rendering", a
 // impact = "ユーザー提供diagramからrendererで任意コードを実行できる"
 // distinction = "他のMarkdown testはMermaidのdirectiveとclick構文を評価しない。実strict render一回で安全境界を観測する"
 // @end-test-value
+/** 正常画像を解決した図でも strict のサニタイズが働き、実行可能な要素・属性やリンクを出力しないことを確認する。 */
 test("image rendering retains strict sanitization of hostile source", async () => {
   const controller = new AbortController();
-  const result = await renderMermaidWithImages(mermaid, "images-hostile", [
-    '%%{init: {"securityLevel": "loose"}}%%', "flowchart TD",
-    'A@{ img: "safe.png", label: "<span onclick=alert(1)>Image</span>" }',
-    'B["<script>alert(1)</script>"]', "A --> B", 'click B "javascript:alert(1)"',
-  ].join("\n"), async () => "blob:safe-image", controller.signal);
+  const result = await renderMermaidWithImages(
+    mermaid,
+    "images-hostile",
+    [
+      '%%{init: {"securityLevel": "loose"}}%%',
+      "flowchart TD",
+      'A@{ img: "safe.png", label: "<span onclick=alert(1)>Image</span>" }',
+      'B["<script>alert(1)</script>"]',
+      "A --> B",
+      'click B "javascript:alert(1)"',
+    ].join("\n"),
+    async () => "blob:safe-image",
+    controller.signal,
+  );
   const document = svgDocument(result.svg);
-  assert.equal(document.querySelectorAll("script, [onerror], [onclick], [onload]").length, 0);
+  assert.equal(
+    document.querySelectorAll("script, [onerror], [onclick], [onload]").length,
+    0,
+  );
   for (const element of document.querySelectorAll("[href], [xlink\\:href]")) {
-    assert.doesNotMatch(element.getAttribute("href") ?? element.getAttribute("xlink:href") ?? "", /^javascript:/i);
+    assert.doesNotMatch(
+      element.getAttribute("href") ?? element.getAttribute("xlink:href") ?? "",
+      /^javascript:/i,
+    );
   }
-  assert.equal(document.querySelector("image")?.getAttribute("href"), "blob:safe-image");
+  assert.equal(
+    document.querySelector("image")?.getAttribute("href"),
+    "blob:safe-image",
+  );
   controller.abort();
 });

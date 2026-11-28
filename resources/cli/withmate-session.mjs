@@ -5797,6 +5797,7 @@ var selectionPolicySchema = object({
 		conditions: text$2.describe("Usage conditions, plan/billing evidence and limitations. No API keys or authentication data.")
 	}).strict()).max(100).describe("Contract routes in preferred order. OpenCode nativeProviderId/modelId identify the actual route when specified.")
 }).strict();
+/** リポジトリ固有の Worktree 配置設定。分類パスは空にでき、配置パターンはリポジトリ名とブランチ名を展開する。 */
 var worktreeRepositoryRuleSchema = object({
 	categoryPath: string().max(2e3).describe("Relative classification path, e.g. Electron or .net/MAUI. Empty string explicitly means no classification directory."),
 	repositoryName: string().min(1).max(255).describe("One directory name for this repository."),
@@ -5806,6 +5807,7 @@ object({
 	rootPath: path$2.nullable(),
 	repositories: record$1(string(), worktreeRepositoryRuleSchema)
 }).strict();
+/** 運用方針の読取・更新、利用枠照会、Worktree 配置先の解決に使う操作別の入力検証。 */
 var sessionOperatingPolicyRequestSchemas = {
 	get_selection_policy: object({}).strict(),
 	set_selection_policy: object({ policy: selectionPolicySchema.nullable() }).strict(),
@@ -5822,6 +5824,7 @@ var sessionOperatingPolicyRequestSchemas = {
 		destinationPath: path$2.optional()
 	}).strict()
 };
+/** 保存内容や Git を変更しない運用方針操作。配置先の解決は Worktree の作成を伴わない。 */
 var SESSION_OPERATING_POLICY_READS = [
 	"get_selection_policy",
 	"get_provider_quota",
@@ -5864,6 +5867,7 @@ var quotaTelemetry = object({
 		"unsupported"
 	]).optional()
 }).strict();
+/** 運用方針の操作別成功応答。未設定の方針、未観測の利用枠、既存と計画段階の配置先を区別する。 */
 var sessionOperatingPolicySuccessSchemas = {
 	get_selection_policy: selectionResult,
 	set_selection_policy: selectionResult,
@@ -5898,7 +5902,9 @@ var sessionOperatingPolicySuccessSchemas = {
 		missing: array(_enum(["rootPath", "repositoryRule"]))
 	}).strict()
 };
+/** Session MCP の利用者に、実行設定の選び直しや Worktree 作成の前に照会する項目と照会結果の限界を伝える。 */
 var SESSION_OPERATING_POLICY_READ_NOTICE = "Before creating a child or reselecting execution settings for an existing Session, read get_selection_policy and get_catalog for the intended Provider/Workspace; use get_provider_quota when relevant. Policy is guidance, not availability, free access, permission or authority. An existing Session's Provider is fixed; enqueue selects only its next Turn's options and Steer retains running settings. Before creating a Git Worktree, read resolve_worktree for the repository and branch; distinguish an existing Worktree from a planned destination. Unconfigured policy is explicit; never substitute Session/Crew Folders. One-off instructions do not change saved policies. Git operations and external Provider rule files remain the caller's responsibility under existing user authority.";
+/** 公開ツールの操作別説明。永続設定の更新に必要な明示依頼や、未観測の利用枠・未設定の配置方針の扱いを示す。 */
 var SESSION_OPERATING_POLICY_DESCRIPTIONS = {
 	get_selection_policy: "Read this device's saved selection criteria, execution guidelines and ordered contract routes; policy:null means unset. Read before child creation or execution-option reselection, then validate against the actual catalog. Reading never changes settings or external rules.",
 	set_selection_policy: "Register/replace the complete device selection policy, or clear it with policy:null. Only use on the user's explicit request to change persistent configuration; never from a one-off instruction, evaluation or agent suggestion. Do not store API keys or authentication data. Does not change Session defaults, running Turns, catalog availability, permissions or external Provider rule files.",
@@ -6381,6 +6387,7 @@ var sentRequest = object({
 	cursor: number().int().nonnegative().optional(),
 	limit: number().int().min(1).max(20).optional()
 }).strict();
+/** 指定の Session で実行の参照キーを一つだけ受け付け、操作固有の入力項目を加える。 */
 var exactReference = (extra) => object({
 	...reference,
 	...extra
@@ -6392,6 +6399,7 @@ var exactReference = (extra) => object({
 		ref.messageSeq
 	].filter((value) => value !== void 0).length === 1;
 }, "Specify exactly one receiptId, WithMate turnId or saved messageSeq.");
+/** Session 管理ツールの履歴・実行読取入力。個別実行は受付 ID、WithMate Turn ID、保存済みメッセージ連番のいずれかで指定する。 */
 var executionOperationRequestSchemas = {
 	list_issued_coordinations: object({
 		target: sessionTargetSchema,
@@ -6612,6 +6620,7 @@ var executionSettings = object({
 	customAgentName: string().nullable(),
 	withMateReviewerExplicit: literal(true).optional()
 });
+/** 公開の実行読取の成功応答を操作別に検証する。受付・実行の状態と保存済みの入力、出力、操作詳細を区別する。 */
 var executionOperationResultSchemas = {
 	list_sent_steers: object({
 		...ok,
@@ -6840,6 +6849,7 @@ var sentInstructionBody = object({
 	...ok,
 	items: array(sentInstructionBody).max(20)
 });
+/** Session MCP に表示する読取操作の説明。保存済み情報の参照方法、ページ送り、履歴の欠落時の扱いを伝える。 */
 var EXECUTION_OPERATION_DESCRIPTIONS = {
 	list_sent_steers: "Read saved direct Steer inputs sent by the exact source Session/incarnation/WithMate Turns in the displayed range. Uses the recipient user message's turnInput.origin, not receipts. Page by saved message row sequence cursor. Full text, exact recipient messageSeq and pending/confirmed/unknown/not-sent state are preserved; confirmed input is not whole-Turn completion. Inputs without saved origin are not reconstructed. Queued Send Input remains in list_sent_deliveries.",
 	list_issued_coordinations: "Read saved Coordination records issued by this exact Session/incarnation in recorded source Turns linked to the displayed saved messages or explicit live WithMate Turn. Includes records without delivery receipts. Returns authored consultation text and recorded Turn membership, not inferred output ordering. Page by record ID cursor, at most 20 records. Deleted records are omitted.",
@@ -7020,6 +7030,7 @@ var SESSION_COORDINATION_DESCRIPTIONS = {
 	coordination_consume: "As the immutable initiator, explicitly mark one exact saved answerId and revision as used. Receiving an answer is automatic and is distinct from explicitly marking it used.",
 	coordination_correct: "As the immutable initiator, record a correction through the common Coordination application. This does not change another Session's consultation or impersonate a user."
 };
+/** 共有設定に保存できる承認モード。Provider ごとの選択可否は別に判定する。 */
 var APPROVAL_MODE_VALUES = [
 	...[
 		"never",
@@ -7032,6 +7043,7 @@ var APPROVAL_MODE_VALUES = [
 	"safety-focused"
 ];
 // src-shared/settings/codex-sandbox-mode.ts
+/** 共有設定から選べる Codex のサンドボックスモード。ネットワーク付きの派生値も含む。 */
 var CODEX_SANDBOX_MODE_VALUES = [
 	"read-only",
 	"workspace-write",
@@ -7039,6 +7051,7 @@ var CODEX_SANDBOX_MODE_VALUES = [
 	"danger-full-access"
 ];
 // src-shared/settings/codex-reviewer.ts
+/** 承認の判断者として設定に保存できる値。 */
 var CODEX_REVIEWER_VALUES = ["user", "auto-review"];
 // src-shared/session/session-management-contract.ts
 var id = string().trim().min(1).max(256);
@@ -7063,6 +7076,7 @@ var child = object({
 	title: string().trim().min(1).max(500).optional(),
 	description: string().max(1e4).optional()
 }).strict();
+/** Session 管理ランタイムと公開ツールで共用する操作別の入力スキーマ。履歴・相談・運用方針・ローカル PR の操作も含む。 */
 var sessionOperationRequestSchemas = {
 	...localPrAgentInput,
 	...executionOperationRequestSchemas,
@@ -7134,12 +7148,14 @@ var sessionOperationRequestSchemas = {
 		message: string().trim().min(1).max(1e5)
 	}).strict()
 };
+/** 共通失敗応答を検証し、操作別の回復情報などの追加フィールドを保持する。 */
 var sessionOperationFailureSchema = object({
 	ok: literal(false),
 	code: string().min(1),
 	message: string().optional(),
 	effect: _enum(["none", "unknown"])
 }).passthrough();
+/** 管理応答を成功か失敗かに振り分ける共通スキーマ。成功データの詳細は操作別に検証する。 */
 var sessionOperationResultSchema = discriminatedUnion("ok", [object({ ok: literal(true) }).passthrough(), sessionOperationFailureSchema]);
 var relatedSessionSchema = object({
 	id,
@@ -7204,6 +7220,7 @@ var receiptSchema = object({
 	]).optional(),
 	sourceTurnPendingRelease: boolean().optional()
 }).passthrough();
+/** 管理操作の成功データを検証するスキーマ。子の作成、設定変更、送信などの操作固有の結果を保持する。 */
 var sessionOperationSuccessSchemas = {
 	...localPrAgentSuccessSchemas,
 	...executionOperationResultSchemas,
@@ -7339,10 +7356,13 @@ var sessionOperationSuccessSchemas = {
 		}).strict()
 	}).strict()
 };
+/** 登録操作名のアンダースコアをハイフンに変換し、ランタイムで呼び出す HTTP パスを引く。 */
 var SESSION_RUNTIME_OPERATION_PATHS = Object.fromEntries(Object.keys(sessionOperationRequestSchemas).map((key) => [key, `/v1/session/${key.replaceAll("_", "-")}`]));
 new Map(Object.entries(SESSION_RUNTIME_OPERATION_PATHS).map(([operation, path]) => [path, operation]));
+/** 操作名からエージェントランタイムへの登録・照合に使う Session ルート識別子を組み立てる。 */
 var sessionAgentRuntimeOperation = (operation) => `session.route.${operation}`;
 Object.fromEntries(Object.keys(sessionOperationRequestSchemas).map((operation) => [`session.${operation}`, sessionAgentRuntimeOperation(operation)]));
+/** 状態を変更しない管理操作の一覧。MCP の読取ヒントと応答未確認時の副作用判定で共用する。 */
 var SESSION_READ_OPERATIONS = [
 	...LOCAL_PR_AGENT_READS,
 	...SESSION_OPERATING_POLICY_READS,
@@ -7356,6 +7376,7 @@ var SESSION_READ_OPERATIONS = [
 	"coordination_list",
 	...Object.keys(executionOperationRequestSchemas)
 ];
+/** Session MCP に表示する操作別の説明。対象の指定方法、受理と完了の違い、応答不明時の回復手順などを示す。 */
 var SESSION_OPERATION_DESCRIPTIONS = {
 	...Object.fromEntries(Object.entries(EXECUTION_OPERATION_DESCRIPTIONS).map(([operation, description]) => [operation, `${description} ${SESSION_HISTORY_USAGE_NOTICE}`])),
 	...SESSION_COORDINATION_DESCRIPTIONS,

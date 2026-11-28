@@ -51,6 +51,7 @@ const connection: AgentRuntimeConnection = {
   },
   credential: { adapter: "mcp", adapterSecret: "adapter" },
 };
+/** 指定の CLI エントリに JSON を渡し、終了コードと構造化された応答を取り出す。既定の実装に加え配布 bundle も同じ方法で呼べる。 */
 async function cli(
   command: string,
   body: unknown,
@@ -59,21 +60,22 @@ async function cli(
   run = runWithMateSessionCli,
 ) {
   let output = "";
-  const exit = await run(
-    [command, "--json", JSON.stringify(body)],
-    {
-      env: boundEnv,
-      connection,
-      runtimeCall,
-      stdout: {
-        write: (value) => {
-          output += String(value);
-          return true;
-        },
+  const exit = await run([command, "--json", JSON.stringify(body)], {
+    env: boundEnv,
+    connection,
+    runtimeCall,
+    stdout: {
+      /** 標準出力の断片をまとめ、CLI の結果を後で JSON として読む。 */
+      write: (value) => {
+        output += String(value);
+        return true;
       },
-      stderr: { write: () => true },
     },
-  );
+    stderr: {
+      /** テストプロセスに CLI の標準エラーを混ぜない。 */
+      write: () => true,
+    },
+  });
   return { exit, value: JSON.parse(output) as Record<string, unknown> };
 }
 
@@ -89,86 +91,230 @@ async function cli(
 // impact = "会話の文脈に無関係な本文を取得したり、要求した枠の履歴を読めなくなる"
 // distinction = "storage単体と操作schema比較だけでは配布bundleのparser・実application・両入口の失敗出力を一緒に検証しない"
 // @end-test-value
+/** 配布 CLI と SDK MCP は保存済み Main の同じ会話スレッドを絞り込み、世代が古いスレッドを全履歴へ拡大せず同じ失敗を返す。 */
 test("bundled CLI and MCP read the same Main thread through the persisted runtime", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-thread-api-"));
   const dbPath = join(directory, "sessions.db");
-  const sessions = new SessionStorageV6(dbPath), queue = new SessionTurnQueueStorageV6(dbPath);
-  const turns = new SessionTurnStorageV6(dbPath), execution = new SessionExecutionReadStorage(dbPath);
-  const bindings = new AgentRuntimeBindingRegistry(), providerTurns = new ProviderAgentRuntimeTurnCoordinator();
+  const sessions = new SessionStorageV6(dbPath),
+    queue = new SessionTurnQueueStorageV6(dbPath);
+  const turns = new SessionTurnStorageV6(dbPath),
+    execution = new SessionExecutionReadStorage(dbPath);
+  const bindings = new AgentRuntimeBindingRegistry(),
+    providerTurns = new ProviderAgentRuntimeTurnCoordinator();
   const client = new Client({ name: "thread-parity", version: "1" });
   try {
-    const base = buildNewSession({ id: "thread-main", taskTitle: "Owner", workspaceLabel: "Workspace", workspacePath: directory, branch: "main",
-      characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#223344" },
-      approvalMode: "on-request", sessionRole: "overall-coordinator", rootSessionId: "thread-main" });
-    const main = sessions.insertSession({ ...base, messages: [{ role: "user", text: "Initial" },
-      { role: "user", text: "Follow-up" }, { role: "assistant", text: "Response" }] });
-    const peer = sessions.insertSession({ ...base, id: "thread-peer", sessionRole: "executor", parentSessionId: main.id, createdBySessionId: main.id,
-      messages: [{ role: "assistant", text: "Peer's own transcript" }] });
-    const exact = (session: typeof main) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
-    const target = exact(main), thread = exact(peer);
-    const request = { clientRequestId: randomUUID(), userMessage: "Follow-up", submitSource: "composer" as const,
-      mainConversationFrame: thread, executionOptions: captureSessionExecutionOptions(main) };
-    const receipt = queue.enqueue(target, { request, provider: main.provider, workspacePath: directory, attachments: [],
-      origin: { kind: "gui", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId } });
-    const stored = turns.createSessionTurn({ sessionId: main.id, createdAt: "now", phase: "completed", provider: main.provider,
-      model: main.model, reasoningEffort: main.reasoningEffort, approvalMode: main.approvalMode, threadId: "", errorMessage: "",
-      userMessageSeq: 1, assistantMessageSeq: 2 });
+    const base = buildNewSession({
+      id: "thread-main",
+      taskTitle: "Owner",
+      workspaceLabel: "Workspace",
+      workspacePath: directory,
+      branch: "main",
+      characterId: "unknown",
+      character: "Unknown",
+      characterIconPath: "",
+      characterThemeColors: { main: "#112233", sub: "#223344" },
+      approvalMode: "on-request",
+      sessionRole: "overall-coordinator",
+      rootSessionId: "thread-main",
+    });
+    const main = sessions.insertSession({
+      ...base,
+      messages: [
+        { role: "user", text: "Initial" },
+        { role: "user", text: "Follow-up" },
+        { role: "assistant", text: "Response" },
+      ],
+    });
+    const peer = sessions.insertSession({
+      ...base,
+      id: "thread-peer",
+      sessionRole: "executor",
+      parentSessionId: main.id,
+      createdBySessionId: main.id,
+      messages: [{ role: "assistant", text: "Peer's own transcript" }],
+    });
+    /** 履歴の所有者と会話相手を、それぞれ世代付きの Main として指定する。 */
+    const exact = (session: typeof main) => ({
+      kind: "main" as const,
+      sessionId: session.id,
+      incarnationId: getSessionIncarnationId(session),
+    });
+    const target = exact(main),
+      thread = exact(peer);
+    const request = {
+      clientRequestId: randomUUID(),
+      userMessage: "Follow-up",
+      submitSource: "composer" as const,
+      mainConversationFrame: thread,
+      executionOptions: captureSessionExecutionOptions(main),
+    };
+    const receipt = queue.enqueue(target, {
+      request,
+      provider: main.provider,
+      workspacePath: directory,
+      attachments: [],
+      origin: {
+        kind: "gui",
+        operation: "send",
+        targetSessionId: target.sessionId,
+        targetIncarnationId: target.incarnationId,
+      },
+    });
+    const stored = turns.createSessionTurn({
+      sessionId: main.id,
+      createdAt: "now",
+      phase: "completed",
+      provider: main.provider,
+      model: main.model,
+      reasoningEffort: main.reasoningEffort,
+      approvalMode: main.approvalMode,
+      threadId: "",
+      errorMessage: "",
+      userMessageSeq: 1,
+      assistantMessageSeq: 2,
+    });
     queue.claimNext(target);
-    queue.markStarted(target, receipt.id, { turnId: String(stored.id), userMessageSeq: 1 });
+    queue.markStarted(target, receipt.id, {
+      turnId: String(stored.id),
+      userMessageSeq: 1,
+    });
     queue.settle(target, receipt.id, "completed");
-    const binding = bindings.issueOrReuse({ actorSessionId: main.id, providerId: main.provider,
-      authoritySnapshot: { sessionIdentity: target }, operationGrants: getSessionAgentRuntimeOperations() });
-    const turn = providerTurns.begin({ actorSessionId: main.id, providerId: main.provider });
-    const boundEnv = { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference, WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability };
-    const unused = async () => { throw new Error("Unexpected operation"); };
+    const binding = bindings.issueOrReuse({
+      actorSessionId: main.id,
+      providerId: main.provider,
+      authoritySnapshot: { sessionIdentity: target },
+      operationGrants: getSessionAgentRuntimeOperations(),
+    });
+    const turn = providerTurns.begin({
+      actorSessionId: main.id,
+      providerId: main.provider,
+    });
+    const boundEnv = {
+      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+      WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
+    };
+    /** 履歴参照の検証範囲外の操作に入ったら失敗させる。 */
+    const unused = async () => {
+      throw new Error("Unexpected operation");
+    };
     const application = new SessionManagementApplication({
-      readSessionScope: async (actor, selection) => sessions.readSessionManagementScope(actor, selection),
-      operatingPolicy: unused, directories: unused, currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
-      getInstructions: unused, setInstructions: unused,
-      updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
-      createChild: unused, catalog: unused, coordinate: unused,
+      /** 要求元が読める Session の範囲を SQLite の親子関係から解決する。 */
+      readSessionScope: async (actor, selection) =>
+        sessions.readSessionManagementScope(actor, selection),
+      operatingPolicy: unused,
+      directories: unused,
+      /** 権限を持つ呼出元にテストの現在 Turn を割り当てる。 */
+      currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
+      crewFolder: unused,
+      getInstructions: unused,
+      setInstructions: unused,
+      updateMetadata: unused,
+      enqueue: unused,
+      getReceipt: unused,
+      cancelReceipt: unused,
+      stopTurn: unused,
+      steer: unused,
+      createChild: unused,
+      catalog: unused,
+      coordinate: unused,
+      /** 呼出元がまだ有効で、履歴の所有者が相手ではなく Main のままであることを確かめてから、SQLite の読取へ委譲する。 */
       readExecution: async (destination, operation, request, assertCurrent) => {
         assertCurrent();
         assert.equal(destination.id, main.id);
-        return execution.execute({ target: request.target, operation, request });
+        return execution.execute({
+          target: request.target,
+          operation,
+          request,
+        });
       },
     });
-    const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: providerTurns });
-    const runtimeCall: typeof callAgentRuntime = async (_connection, operation, options) => {
-      const response = await runtime.route({ method: operation.method, path: operation.path, body: operation.body, transport: "mcp",
-        bindingReference: options.bindingReference, turnCapability: options.turnCapability });
+    const runtime = new SessionManagementRuntimeService({
+      application,
+      bindingRegistry: bindings,
+      providerAgentRuntimeTurns: providerTurns,
+    });
+    /** 通信だけを差し替え、両入口の操作を世代付き binding と Turn capability で実 runtime へ渡す。 */
+    const runtimeCall: typeof callAgentRuntime = async (
+      _connection,
+      operation,
+      options,
+    ) => {
+      const response = await runtime.route({
+        method: operation.method,
+        path: operation.path,
+        body: operation.body,
+        transport: "mcp",
+        bindingReference: options.bindingReference,
+        turnCapability: options.turnCapability,
+      });
       assert.ok(response);
-      return { ok: response.status >= 200 && response.status < 300, status: response.status, value: response.value };
+      return {
+        ok: response.status >= 200 && response.status < 300,
+        status: response.status,
+        value: response.value,
+      };
     };
-    const server = createWithMateSessionMcpServer({ env: boundEnv, connection, runtimeCall });
+    const server = createWithMateSessionMcpServer({
+      env: boundEnv,
+      connection,
+      runtimeCall,
+    });
     const [a, b] = InMemoryTransport.createLinkedPair();
-    const bundle = await import(new URL("../../resources/cli/withmate-session.mjs", import.meta.url).href) as { runWithMateSessionCli: typeof runWithMateSessionCli };
+    const bundle = (await import(
+      new URL("../../resources/cli/withmate-session.mjs", import.meta.url).href
+    )) as { runWithMateSessionCli: typeof runWithMateSessionCli };
     try {
-      await server.connect(b); await client.connect(a);
+      await server.connect(b);
+      await client.connect(a);
+      /** 同じ履歴要求に対する配布 CLI と SDK MCP の構造化応答を照合する。 */
       const list = async (arguments_: Record<string, unknown>) => {
-        const command = await cli("list-messages", arguments_, runtimeCall, boundEnv, bundle.runWithMateSessionCli);
-        const result = await client.callTool({ name: "session.list_messages", arguments: arguments_ });
+        const command = await cli(
+          "list-messages",
+          arguments_,
+          runtimeCall,
+          boundEnv,
+          bundle.runWithMateSessionCli,
+        );
+        const result = await client.callTool({
+          name: "session.list_messages",
+          arguments: arguments_,
+        });
         assert.deepEqual(result.structuredContent, command.value);
         return command;
       };
       const filtered = await list({ target, thread, limit: 1, offset: 1 });
       assert.equal(filtered.exit, 0, JSON.stringify(filtered.value));
-      assert.deepEqual([filtered.value.total, filtered.value.nextOffset], [2, null]);
-      assert.deepEqual((filtered.value.items as Array<{ seq: number; textPreview: string }>).map(({ seq, textPreview }) => [seq, textPreview]), [[2, "Response"]]);
+      assert.deepEqual(
+        [filtered.value.total, filtered.value.nextOffset],
+        [2, null],
+      );
+      assert.deepEqual(
+        (
+          filtered.value.items as Array<{ seq: number; textPreview: string }>
+        ).map(({ seq, textPreview }) => [seq, textPreview]),
+        [[2, "Response"]],
+      );
       const initial = await list({ target, thread: null });
       assert.equal(initial.value.total, 1);
       assert.equal((await list({ target })).value.total, 3);
-      const stale = await list({ target, thread: { ...thread, incarnationId: "stale" } });
+      const stale = await list({
+        target,
+        thread: { ...thread, incarnationId: "stale" },
+      });
       assert.equal(stale.exit, 1);
       assert.equal(stale.value.code, "EXECUTION_THREAD_UNAVAILABLE");
       assert.equal(stale.value.items, undefined);
     } finally {
-      await client.close(); await server.close();
+      await client.close();
+      await server.close();
       providerTurns.end(turn);
     }
   } finally {
     bindings.revokeAll();
-    execution.close(); turns.close(); queue.close(); sessions.close();
+    execution.close();
+    turns.close();
+    queue.close();
+    sessions.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -185,21 +331,34 @@ test("bundled CLI and MCP read the same Main thread through the persisted runtim
 // impact = "MCP clientが既存設定を失い得る操作を追加のみと誤認する"
 // distinction = "入力・結果のparityや型検査では、SDKを介したtools/listの操作属性を検出できない"
 // @end-test-value
+/** SDK の tools/list で運用設定の置換・解除を破壊的な更新と示し、方針と利用枠の照会を読取専用と示すことを確認する。 */
 test("MCP tools list distinguishes operating policy replacement from read-only queries", async () => {
   const server = createWithMateSessionMcpServer({ env, connection });
-  const client = new Client({ name: "operating-policy-annotations", version: "1" });
+  const client = new Client({
+    name: "operating-policy-annotations",
+    version: "1",
+  });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
     await client.connect(a);
     const { tools } = await client.listTools();
-    for (const operation of ["set_selection_policy", "set_worktree_root", "set_worktree_repository"]) {
+    for (const operation of [
+      "set_selection_policy",
+      "set_worktree_root",
+      "set_worktree_repository",
+    ]) {
       const tool = tools.find((entry) => entry.name === `session.${operation}`);
       assert.ok(tool, operation);
       assert.equal(tool.annotations?.readOnlyHint, false, operation);
       assert.equal(tool.annotations?.destructiveHint, true, operation);
     }
-    for (const operation of ["get_selection_policy", "get_provider_quota", "get_worktree_policy", "resolve_worktree"]) {
+    for (const operation of [
+      "get_selection_policy",
+      "get_provider_quota",
+      "get_worktree_policy",
+      "resolve_worktree",
+    ]) {
       const tool = tools.find((entry) => entry.name === `session.${operation}`);
       assert.ok(tool, operation);
       assert.equal(tool.annotations?.readOnlyHint, true, operation);
@@ -222,11 +381,17 @@ test("MCP tools list distinguishes operating policy replacement from read-only q
 // impact = "入口によって送信・作成の入力が変わるか、未対応の指定を有効な入力と誤認する"
 // distinction = "実Storageの受付テストは実行結果を確認するが、利用者へ公開される入力の一致と閉じた境界までは確認しない"
 // @end-test-value
+/** 子作成と通常送信は CLI と MCP で同じ入力・必須項目を公開し、Model・Depth を含みつつ未宣言フィールドを許容しないと示す。 */
 test("CLI and MCP publish matching closed input schemas for create and send", async () => {
+  /** スキーマを調べただけで Session 操作へ進む回帰を検出する。 */
   const runtimeCall: typeof callAgentRuntime = async () => {
     throw new Error("Schema discovery must not dispatch");
   };
-  const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
+  const server = createWithMateSessionMcpServer({
+    env,
+    connection,
+    runtimeCall,
+  });
   const client = new Client({ name: "session-input-parity", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
@@ -235,16 +400,32 @@ test("CLI and MCP publish matching closed input schemas for create and send", as
     const { tools } = await client.listTools();
     const schema = await cli("schema", {}, runtimeCall);
     assert.equal(schema.exit, 0);
-    const cliOperations = schema.value.operations as Record<string, { input: typeof tools[number]["inputSchema"] }>;
+    const cliOperations = schema.value.operations as Record<
+      string,
+      { input: (typeof tools)[number]["inputSchema"] }
+    >;
     for (const operation of ["create_child", "enqueue"]) {
-      const published = tools.find((tool) => tool.name === `session.${operation}`);
+      const published = tools.find(
+        (tool) => tool.name === `session.${operation}`,
+      );
       assert.ok(published, operation);
       const cliInput = cliOperations[operation].input;
       const mcpInput = published.inputSchema;
       const fields = Object.keys(cliInput.properties ?? {}).sort();
-      assert.ok(fields.includes("model") && fields.includes("reasoningEffort"), operation);
-      assert.deepEqual(Object.keys(mcpInput.properties ?? {}).sort(), fields, operation);
-      assert.deepEqual([...(mcpInput.required ?? [])].sort(), [...(cliInput.required ?? [])].sort(), operation);
+      assert.ok(
+        fields.includes("model") && fields.includes("reasoningEffort"),
+        operation,
+      );
+      assert.deepEqual(
+        Object.keys(mcpInput.properties ?? {}).sort(),
+        fields,
+        operation,
+      );
+      assert.deepEqual(
+        [...(mcpInput.required ?? [])].sort(),
+        [...(cliInput.required ?? [])].sort(),
+        operation,
+      );
       assert.equal(cliInput.additionalProperties, false, operation);
       assert.equal(mcpInput.additionalProperties, false, operation);
     }
@@ -265,11 +446,13 @@ test("CLI and MCP publish matching closed input schemas for create and send", as
 // lifecycle = "permanent"
 // distinction = "schemaやapplication単体では実CLIとSDK MCPの接続契約と応答喪失を検出できない"
 // @end-test-value
+/** CLI と MCP が全操作の binding・Turn・結果を揃え、非 UUID を送信前に拒み、更新応答の喪失を未適用と取り違えないことを確認する。 */
 test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", async () => {
   const calls: unknown[] = [];
   let lose = false;
   let reject = true;
   let successValues: Record<string, Record<string, unknown>> = {};
+  /** 両入口が runtime へ渡した要求と binding を記録し、成功・認可拒否・応答喪失を切り替えられるようにする。 */
   const runtimeCall: typeof callAgentRuntime = async (
     _connection,
     request,
@@ -305,7 +488,13 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       incarnationId: "child-v1",
     };
     const requestId = "11111111-1111-4111-8111-111111111111";
-    const body = { target, requestId, message: "work", model: "model", reasoningEffort: "high" };
+    const body = {
+      target,
+      requestId,
+      message: "work",
+      model: "model",
+      reasoningEffort: "high",
+    };
     const exact = { target, turnId: "1" };
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
@@ -313,18 +502,31 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     const runId = "22222222-2222-4222-8222-222222222222";
     const pr = { prId, version: 1 };
     const ci = { ...pr, runId };
-    const headCommit = "a".repeat(40), targetCommit = "b".repeat(40);
+    const headCommit = "a".repeat(40),
+      targetCommit = "b".repeat(40);
     const targetBranch = "refs/heads/main";
     const inputs: Record<SessionOperation, Record<string, unknown>> = {
-      pr_list: {}, pr_branches: {}, pr_get: { prId },
+      pr_list: {},
+      pr_branches: {},
+      pr_get: { prId },
       pr_create: { headCommit, targetBranch, title: "Review" },
       pr_submit: { prId, headCommit, expectedVersion: 1 },
-      pr_close: pr, pr_diff: { ...pr, mode: "full" }, pr_comment: { ...pr, body: "Review" },
+      pr_close: pr,
+      pr_diff: { ...pr, mode: "full" },
+      pr_comment: { ...pr, body: "Review" },
       pr_merge: { ...pr, headCommit, targetCommit },
-      pr_ci_validate: pr, pr_ci_list: pr, pr_ci_start: pr,
-      pr_ci_cancel: ci, pr_ci_rerun: ci, pr_ci_log: { ...ci, offset: 0 },
-      get_selection_policy: {}, set_selection_policy: { policy: null }, get_provider_quota: {},
-      get_worktree_policy: {}, set_worktree_root: { rootPath: null }, set_worktree_repository: { rule: null },
+      pr_ci_validate: pr,
+      pr_ci_list: pr,
+      pr_ci_start: pr,
+      pr_ci_cancel: ci,
+      pr_ci_rerun: ci,
+      pr_ci_log: { ...ci, offset: 0 },
+      get_selection_policy: {},
+      set_selection_policy: { policy: null },
+      get_provider_quota: {},
+      get_worktree_policy: {},
+      set_worktree_root: { rootPath: null },
+      set_worktree_repository: { rule: null },
       resolve_worktree: { branch: "feat/task" },
       self: {},
       get_instructions: {},
@@ -342,7 +544,14 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       steer: { target, turnId: "1", message: "check loading first" },
       list_sent_deliveries: { target, messageSeqs: [0, 1] },
       list_issued_coordinations: { target, messageSeqs: [0, 1] },
-      list_sent_steers: { target: { kind: "main", sessionId: "parent", incarnationId: "parent-v1" }, messageSeqs: [0, 1] },
+      list_sent_steers: {
+        target: {
+          kind: "main",
+          sessionId: "parent",
+          incarnationId: "parent-v1",
+        },
+        messageSeqs: [0, 1],
+      },
       list_executions: { target },
       get_execution: exact,
       list_execution_inputs: exact,
@@ -407,7 +616,11 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       runState: "running",
       provider: "codex",
       workspacePath: "C:/workspace",
-      character: { id: "character", name: "Character", description: "公開紹介" },
+      character: {
+        id: "character",
+        name: "Character",
+        description: "公開紹介",
+      },
     };
     const receipt = {
       id: "receipt",
@@ -457,8 +670,15 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       artifactSaved: false,
     };
     const executionSettings = {
-      source: "input", provider: "codex", model: "captured-model", reasoningEffort: "high",
-      approvalMode: "on-request", codexSandboxMode: "workspace-write", codexReviewer: "auto-review", codexSpeed: "fast", customAgentName: "",
+      source: "input",
+      provider: "codex",
+      model: "captured-model",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      codexSandboxMode: "workspace-write",
+      codexReviewer: "auto-review",
+      codexSpeed: "fast",
+      customAgentName: "",
     };
     const record = {
       id: "consultation",
@@ -466,29 +686,118 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       state: "open",
       answerRevision: 0,
     };
-    const submission = { id: prId, targetBranch, sourceBranch: null, title: "Review", description: "", createdBy: target,
-      createdAt: "t", updatedAt: "t", state: "open", latestVersion: 1, mergedCommit: null };
-    const comment = { id: prId, version: 1, anchor: null, replyTo: null, body: "Review", author: target, draft: false, createdAt: "t", updatedAt: "t" };
-    const detail = { ...submission,
-      versions: [{ version: 1, headCommit, targetCommit, mergeBaseCommit: targetCommit, submittedAt: "t", submittedBy: target }],
-      comments: [comment], approval: null, currentTargetCommit: targetCommit };
-    const run = { id: runId, version: 1, headCommit, targetCommit, state: "running", startedAt: "t", finishedAt: null, exitCode: null, error: null };
+    const submission = {
+      id: prId,
+      targetBranch,
+      sourceBranch: null,
+      title: "Review",
+      description: "",
+      createdBy: target,
+      createdAt: "t",
+      updatedAt: "t",
+      state: "open",
+      latestVersion: 1,
+      mergedCommit: null,
+    };
+    const comment = {
+      id: prId,
+      version: 1,
+      anchor: null,
+      replyTo: null,
+      body: "Review",
+      author: target,
+      draft: false,
+      createdAt: "t",
+      updatedAt: "t",
+    };
+    const detail = {
+      ...submission,
+      versions: [
+        {
+          version: 1,
+          headCommit,
+          targetCommit,
+          mergeBaseCommit: targetCommit,
+          submittedAt: "t",
+          submittedBy: target,
+        },
+      ],
+      comments: [comment],
+      approval: null,
+      currentTargetCommit: targetCommit,
+    };
+    const run = {
+      id: runId,
+      version: 1,
+      headCommit,
+      targetCommit,
+      state: "running",
+      startedAt: "t",
+      finishedAt: null,
+      exitCode: null,
+      error: null,
+    };
     const values: Record<SessionOperation, Record<string, unknown>> = {
       pr_list: { data: { entries: [submission], hasMore: false } },
-      pr_branches: { data: { branches: [{ ref: targetBranch, commit: targetCommit }], head: headCommit, headBranch: null } },
-      pr_get: { data: detail }, pr_create: { data: detail }, pr_submit: { data: detail },
+      pr_branches: {
+        data: {
+          branches: [{ ref: targetBranch, commit: targetCommit }],
+          head: headCommit,
+          headBranch: null,
+        },
+      },
+      pr_get: { data: detail },
+      pr_create: { data: detail },
+      pr_submit: { data: detail },
       pr_close: { data: { ...detail, state: "closed" } },
-      pr_diff: { data: { beforeCommit: targetCommit, afterCommit: headCommit, files: [], patch: null } },
+      pr_diff: {
+        data: {
+          beforeCommit: targetCommit,
+          afterCommit: headCommit,
+          files: [],
+          patch: null,
+        },
+      },
       pr_comment: { data: comment },
-      pr_merge: { data: { ...detail, state: "merged", mergedCommit: headCommit } },
-      pr_ci_validate: { data: { headCommit, path: ".withmate/ci.yml", state: "not_configured", source: null, error: null } },
-      pr_ci_list: { data: { runs: [run] } }, pr_ci_start: { data: run },
+      pr_merge: {
+        data: { ...detail, state: "merged", mergedCommit: headCommit },
+      },
+      pr_ci_validate: {
+        data: {
+          headCommit,
+          path: ".withmate/ci.yml",
+          state: "not_configured",
+          source: null,
+          error: null,
+        },
+      },
+      pr_ci_list: { data: { runs: [run] } },
+      pr_ci_start: { data: run },
       pr_ci_cancel: { data: { ...run, state: "canceled", finishedAt: "t" } },
-      pr_ci_rerun: { data: run }, pr_ci_log: { data: { log: "output", nextOffset: 6, hasMore: false } },
-      get_selection_policy: { policy: null }, set_selection_policy: { policy: null }, get_provider_quota: { providers: [] },
-      get_worktree_policy: { repositoryId: "C:/repo/.git", rootPath: null, rule: null }, set_worktree_root: { rootPath: null },
-      set_worktree_repository: { repositoryId: "C:/repo/.git", rootPath: null, rule: null },
-      resolve_worktree: { repositoryId: "C:/repo/.git", branch: "feat/task", status: "unconfigured", source: null, destinationPath: null, missing: ["rootPath", "repositoryRule"] },
+      pr_ci_rerun: { data: run },
+      pr_ci_log: { data: { log: "output", nextOffset: 6, hasMore: false } },
+      get_selection_policy: { policy: null },
+      set_selection_policy: { policy: null },
+      get_provider_quota: { providers: [] },
+      get_worktree_policy: {
+        repositoryId: "C:/repo/.git",
+        rootPath: null,
+        rule: null,
+      },
+      set_worktree_root: { rootPath: null },
+      set_worktree_repository: {
+        repositoryId: "C:/repo/.git",
+        rootPath: null,
+        rule: null,
+      },
+      resolve_worktree: {
+        repositoryId: "C:/repo/.git",
+        branch: "feat/task",
+        status: "unconfigured",
+        source: null,
+        destinationPath: null,
+        missing: ["rootPath", "repositoryRule"],
+      },
       self: {
         session,
         currentTurn: { turnId: "1", receipt: null, origin: null },
@@ -500,9 +809,30 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         currentTurn: { turnId: "1", receipt: null, origin: null },
         crewFolder: { rootSessionId: "parent", path: "crew-files/parent" },
       },
-      list_directories: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
-      add_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
-      remove_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: [] } },
+      list_directories: {
+        directories: {
+          workspacePath: "workspace",
+          sessionFolderPath: "session-folder",
+          crewFolder: { rootSessionId: "parent", path: "crew-folder" },
+          additionalDirectories: ["C:/shared"],
+        },
+      },
+      add_directory: {
+        directories: {
+          workspacePath: "workspace",
+          sessionFolderPath: "session-folder",
+          crewFolder: { rootSessionId: "parent", path: "crew-folder" },
+          additionalDirectories: ["C:/shared"],
+        },
+      },
+      remove_directory: {
+        directories: {
+          workspacePath: "workspace",
+          sessionFolderPath: "session-folder",
+          crewFolder: { rootSessionId: "parent", path: "crew-folder" },
+          additionalDirectories: [],
+        },
+      },
       get_instructions: { body: " Fixed instructions.\n" },
       set_instructions: { byteLength: 21 },
       update_metadata: {
@@ -513,21 +843,81 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       cancel_receipt: { result: { outcome: "not-applied", receipt } },
       stop_turn: { result: { outcome: "applied", turnId: "1" } },
       steer: { result: { outcome: "applied", turnId: "1", messageSeq: 1 } },
-      list_issued_coordinations: { items: [{ id: "consultation", sourceTurnId: "1", sourceMessageSeq: 1, consultation: "Saved consultation" }], nextCursor: null },
-      list_sent_deliveries: { items: [{
-        receiptId: "receipt", sequence: 1, sourceTurnId: "1", sourceMessageSeq: 1, target, state: "completed",
-        origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId },
-        text: "Original input ".repeat(40), coordination: { id: "consultation", text: "Saved answer ".repeat(40) },
-      }], nextCursor: null },
-      list_sent_steers: { items: [{ sequence: 1, sourceTurnId: "1", sourceMessageSeq: 1, target, messageSeq: 2, state: "unknown",
-        origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "steer", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId }, text: "Saved direct input" }], nextCursor: null },
+      list_issued_coordinations: {
+        items: [
+          {
+            id: "consultation",
+            sourceTurnId: "1",
+            sourceMessageSeq: 1,
+            consultation: "Saved consultation",
+          },
+        ],
+        nextCursor: null,
+      },
+      list_sent_deliveries: {
+        items: [
+          {
+            receiptId: "receipt",
+            sequence: 1,
+            sourceTurnId: "1",
+            sourceMessageSeq: 1,
+            target,
+            state: "completed",
+            origin: {
+              kind: "session",
+              actorKind: "main",
+              actorSessionId: "parent",
+              actorIncarnationId: "parent-v1",
+              actorTurnId: "1",
+              operation: "send",
+              targetSessionId: target.sessionId,
+              targetIncarnationId: target.incarnationId,
+            },
+            text: "Original input ".repeat(40),
+            coordination: {
+              id: "consultation",
+              text: "Saved answer ".repeat(40),
+            },
+          },
+        ],
+        nextCursor: null,
+      },
+      list_sent_steers: {
+        items: [
+          {
+            sequence: 1,
+            sourceTurnId: "1",
+            sourceMessageSeq: 1,
+            target,
+            messageSeq: 2,
+            state: "unknown",
+            origin: {
+              kind: "session",
+              actorKind: "main",
+              actorSessionId: "parent",
+              actorIncarnationId: "parent-v1",
+              actorTurnId: "1",
+              operation: "steer",
+              targetSessionId: target.sessionId,
+              targetIncarnationId: target.incarnationId,
+            },
+            text: "Saved direct input",
+          },
+        ],
+        nextCursor: null,
+      },
       list_executions: {
         ...page,
         kind: "receipts",
         items: [description],
         total: 1,
       },
-      get_execution: { ...description, executionSettings, output, coordination: { id: "consultation", text: "Saved authored answer" } },
+      get_execution: {
+        ...description,
+        executionSettings,
+        output,
+        coordination: { id: "consultation", text: "Saved authored answer" },
+      },
       list_execution_inputs: { ...description, ...page },
       get_execution_input: {
         ...description,
@@ -577,7 +967,11 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       coordination_correct: { record },
       create_child: {
         session,
-        character: { id: "character", name: "Character", description: "公開紹介" },
+        character: {
+          id: "character",
+          name: "Character",
+          description: "公開紹介",
+        },
         provider: "codex",
         workspacePath: "workspace",
         executionOptions: {
@@ -602,7 +996,10 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
             provider: "codex",
             approvalModes: [{ value: "untrusted", label: "Safety Focused" }],
             sandboxModes: [{ value: "workspace-write", label: "Workspace" }],
-            reviewers: [{ value: "user", label: "User" }, { value: "auto-review", label: "Auto Review" }],
+            reviewers: [
+              { value: "user", label: "User" },
+              { value: "auto-review", label: "Auto Review" },
+            ],
           },
         ],
       },
@@ -658,10 +1055,18 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         assert.equal(command.exit, rejected ? 1 : 0);
         if (!rejected && operation === "get_execution") {
           assert.deepEqual(command.value.executionSettings, executionSettings);
-          assert.deepEqual(command.value.coordination, values.get_execution.coordination);
+          assert.deepEqual(
+            command.value.coordination,
+            values.get_execution.coordination,
+          );
         }
-        if (!rejected && operation === "list_sent_deliveries") assert.deepEqual(command.value.items, values.list_sent_deliveries.items);
-        if (!rejected && operation === "list_sent_steers") assert.deepEqual(command.value.items, values.list_sent_steers.items);
+        if (!rejected && operation === "list_sent_deliveries")
+          assert.deepEqual(
+            command.value.items,
+            values.list_sent_deliveries.items,
+          );
+        if (!rejected && operation === "list_sent_steers")
+          assert.deepEqual(command.value.items, values.list_sent_steers.items);
         if (rejected) assert.equal(command.value.effect, "none");
         assert.deepEqual(calls.at(-1), calls.at(-2));
         assert.deepEqual(calls.at(-1), {
@@ -678,10 +1083,17 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     for (const operation of ["enqueue", "get_receipt"] as const) {
       const input = { ...inputs[operation], requestId: "request-1" };
       const before = calls.length;
-      const invalidId = await cli(operation.replaceAll("_", "-"), input, runtimeCall);
+      const invalidId = await cli(
+        operation.replaceAll("_", "-"),
+        input,
+        runtimeCall,
+      );
       assert.equal(invalidId.exit, 2);
       assert.equal(invalidId.value.effect, "none");
-      const invalidTool = await client.callTool({ name: `session.${operation}`, arguments: input });
+      const invalidTool = await client.callTool({
+        name: `session.${operation}`,
+        arguments: input,
+      });
       assert.equal(invalidTool.isError, true);
       assert.equal(calls.length, before);
     }
@@ -707,17 +1119,37 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     assert.equal(invalid.exit, 2);
     assert.equal(calls.length, Object.keys(inputs).length * 4 + 2);
     // 置換の応答が失われても反映済みの場合があり、本文の専用読み取りでしか確かめられない。
-    const lostInstructions = await cli("set-instructions", inputs.set_instructions, runtimeCall);
+    const lostInstructions = await cli(
+      "set-instructions",
+      inputs.set_instructions,
+      runtimeCall,
+    );
     assert.equal(lostInstructions.exit, 3);
     assert.equal(lostInstructions.value.effect, "unknown");
     assert.match(String(lostInstructions.value.message), /get_instructions/);
     assert.deepEqual(
-      (await client.callTool({ name: "session.set_instructions", arguments: inputs.set_instructions })).structuredContent,
+      (
+        await client.callTool({
+          name: "session.set_instructions",
+          arguments: inputs.set_instructions,
+        })
+      ).structuredContent,
       lostInstructions.value,
     );
-    for (const [operation, effect] of [["pr_diff", "none"], ["pr_ci_start", "unknown"], ["pr_merge", "unknown"]] as const) {
-      const command = await cli(operation.replaceAll("_", "-"), inputs[operation], runtimeCall);
-      const tool = await client.callTool({ name: `session.${operation}`, arguments: inputs[operation] });
+    for (const [operation, effect] of [
+      ["pr_diff", "none"],
+      ["pr_ci_start", "unknown"],
+      ["pr_merge", "unknown"],
+    ] as const) {
+      const command = await cli(
+        operation.replaceAll("_", "-"),
+        inputs[operation],
+        runtimeCall,
+      );
+      const tool = await client.callTool({
+        name: `session.${operation}`,
+        arguments: inputs[operation],
+      });
       assert.equal(command.exit, 3);
       assert.equal(command.value.effect, effect);
       assert.match(String(command.value.message), /Read the PR or CI state/);
@@ -740,20 +1172,41 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
 // lifecycle = "permanent"
 // distinction = "型検査だけでは外部JSONの不正値や実入口によるfield欠落を検出できない"
 // @end-test-value
+/** 両入口で明示の配信タイミングと送信元 Turn の状態を保持し、未定義の値を runtime に渡さない。スキーマと CLI ヘルプにも有効な候補が載ることを確認する。 */
 test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", async () => {
   const calls: unknown[] = [];
-  const target = { kind: "main", sessionId: "child", incarnationId: "child-v1" };
+  const target = {
+    kind: "main",
+    sessionId: "child",
+    incarnationId: "child-v1",
+  };
   const requestId = randomUUID();
   let phase = "running";
+  /** 受付要求の本文を記録し、変化させた送信元 Turn の状態を受付結果に載せる。 */
   const runtimeCall: typeof callAgentRuntime = async (_connection, request) => {
     calls.push(request.body);
     return {
       ok: true,
       status: 200,
-      value: { ok: true, receipt: { id: "receipt", requestId, sessionId: "child", incarnationId: "child-v1", state: "queued", turnId: null, sourceTurnPhase: phase } },
+      value: {
+        ok: true,
+        receipt: {
+          id: "receipt",
+          requestId,
+          sessionId: "child",
+          incarnationId: "child-v1",
+          state: "queued",
+          turnId: null,
+          sourceTurnPhase: phase,
+        },
+      },
     };
   };
-  const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
+  const server = createWithMateSessionMcpServer({
+    env,
+    connection,
+    runtimeCall,
+  });
   const client = new Client({ name: "delivery-timing-parity", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
@@ -761,38 +1214,86 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
     await client.connect(a);
     const tools = await client.listTools();
     const schema = await cli("schema", {}, runtimeCall);
-    const cliInput = (schema.value.operations as Record<string, { input: { properties: Record<string, unknown>; required: string[] } }>).enqueue.input;
-    const mcpInput = tools.tools.find((tool) => tool.name === "session.enqueue")!.inputSchema;
-    assert.deepEqual(cliInput.properties.deliveryTiming, { type: "string", enum: ["immediate", "after_source_turn"] });
-    assert.deepEqual(mcpInput.properties?.deliveryTiming, cliInput.properties.deliveryTiming);
+    const cliInput = (
+      schema.value.operations as Record<
+        string,
+        { input: { properties: Record<string, unknown>; required: string[] } }
+      >
+    ).enqueue.input;
+    const mcpInput = tools.tools.find(
+      (tool) => tool.name === "session.enqueue",
+    )!.inputSchema;
+    assert.deepEqual(cliInput.properties.deliveryTiming, {
+      type: "string",
+      enum: ["immediate", "after_source_turn"],
+    });
+    assert.deepEqual(
+      mcpInput.properties?.deliveryTiming,
+      cliInput.properties.deliveryTiming,
+    );
     assert.equal(cliInput.required.includes("deliveryTiming"), false);
     assert.equal(mcpInput.required?.includes("deliveryTiming"), false);
     let help = "";
-    assert.equal(await runWithMateSessionCli(["help"], { stdout: { write: (value) => { help += String(value); return true; } } }), 0);
+    assert.equal(
+      await runWithMateSessionCli(["help"], {
+        stdout: {
+          /** 配信タイミングの案内を照合するため、CLI ヘルプの出力を取り込む。 */
+          write: (value) => {
+            help += String(value);
+            return true;
+          },
+        },
+      }),
+      0,
+    );
     assert.match(help, /deliveryTiming.*immediate.*after_source_turn/);
-    for (const deliveryTiming of [undefined, "immediate", "after_source_turn"]) {
-      const input = { target, requestId, message: "report", ...(deliveryTiming ? { deliveryTiming } : {}) };
+    for (const deliveryTiming of [
+      undefined,
+      "immediate",
+      "after_source_turn",
+    ]) {
+      const input = {
+        target,
+        requestId,
+        message: "report",
+        ...(deliveryTiming ? { deliveryTiming } : {}),
+      };
       const command = await cli("enqueue", input, runtimeCall);
-      const tool = await client.callTool({ name: "session.enqueue", arguments: input });
+      const tool = await client.callTool({
+        name: "session.enqueue",
+        arguments: input,
+      });
       assert.equal(command.exit, 0);
       assert.equal(tool.isError, undefined);
       assert.deepEqual(command.value, tool.structuredContent);
       assert.deepEqual(calls.slice(-2), [input, input]);
-      assert.equal((command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase, "running");
+      assert.equal(
+        (command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase,
+        "running",
+      );
     }
     for (phase of ["completed", "failed", "canceled", "unknown"]) {
       const input = { target, requestId };
       const command = await cli("get-receipt", input, runtimeCall);
-      const tool = await client.callTool({ name: "session.get_receipt", arguments: input });
+      const tool = await client.callTool({
+        name: "session.get_receipt",
+        arguments: input,
+      });
       assert.equal(command.exit, 0);
       assert.deepEqual(command.value, tool.structuredContent);
-      assert.equal((command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase, phase);
+      assert.equal(
+        (command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase,
+        phase,
+      );
     }
     for (const deliveryTiming of ["later", null, 1]) {
       const before = calls.length;
       const input = { target, requestId, message: "report", deliveryTiming };
       const command = await cli("enqueue", input, runtimeCall);
-      const tool = await client.callTool({ name: "session.enqueue", arguments: input });
+      const tool = await client.callTool({
+        name: "session.enqueue",
+        arguments: input,
+      });
       assert.equal(command.exit, 2);
       assert.equal(command.value.effect, "none");
       assert.equal(tool.isError, true);
@@ -816,82 +1317,250 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
 // risk_tags = ["authorization", "privacy"]
 // distinction = "手製の全操作parity fixtureやservice単体では実保存と両入口の結合を確認できない"
 // @end-test-value
+/** 両入口で自分と直属の子の追加ディレクトリを保存・参照・解除し、無関係な Session と相対パスを拒否する。解除後も実ファイルは残る。 */
 test("directory management crosses persisted Session runtime, MCP and CLI", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-directory-api-"));
-  const workspace = join(directory, "workspace"), extra = join(directory, "extra");
+  const workspace = join(directory, "workspace"),
+    extra = join(directory, "extra");
   await mkdir(workspace);
   await mkdir(extra);
   const retained = join(extra, "retained.txt");
   await writeFile(retained, "keep");
   const storage = new SessionStorageV6(join(directory, "sessions.db"));
-  const create = (id: string, parentSessionId?: string) => storage.insertSession(buildNewSession({
-    id, taskTitle: id, workspaceLabel: "Workspace", workspacePath: workspace, branch: "main",
-    characterId: "unknown", character: "Unknown", characterIconPath: "",
-    characterThemeColors: { main: "#123456", sub: "#234567" }, approvalMode: "untrusted",
-    sessionRole: parentSessionId ? "executor" : "overall-coordinator", rootSessionId: parentSessionId ?? id,
-    parentSessionId: parentSessionId ?? null, createdBySessionId: parentSessionId ?? null,
-  }));
-  const parent = create("dir-parent"), child = create("dir-child", parent.id), other = create("other");
+  /** 共通ワークスペースを使いつつ、親子と無関係な Session を別々に保存する。 */
+  const create = (id: string, parentSessionId?: string) =>
+    storage.insertSession(
+      buildNewSession({
+        id,
+        taskTitle: id,
+        workspaceLabel: "Workspace",
+        workspacePath: workspace,
+        branch: "main",
+        characterId: "unknown",
+        character: "Unknown",
+        characterIconPath: "",
+        characterThemeColors: { main: "#123456", sub: "#234567" },
+        approvalMode: "untrusted",
+        sessionRole: parentSessionId ? "executor" : "overall-coordinator",
+        rootSessionId: parentSessionId ?? id,
+        parentSessionId: parentSessionId ?? null,
+        createdBySessionId: parentSessionId ?? null,
+      }),
+    );
+  const parent = create("dir-parent"),
+    child = create("dir-child", parent.id),
+    other = create("other");
   let cached = [parent, child, other];
   const persistence = new SessionPersistenceService({
-    getSessions: () => cached, setSessions: (next) => { cached = next; },
+    /** 保存サービスへ現在の Session 一覧を渡す。 */
+    getSessions: () => cached,
+    /** 保存後の Session 一覧をキャッシュに反映する。 */
+    setSessions: (next) => {
+      cached = next;
+    },
+    /** Session のキャッシュから ID に一致する項目を返す。 */
     getSession: (id) => cached.find((entry) => entry.id === id) ?? null,
+    /** ディレクトリ管理が参照する保存済み Session を SQLite から読む。 */
     getStoredSession: (id) => storage.getSession(id),
+    /** テスト対象が実行中の Turn に依存しないよう未実行とする。 */
     isSessionRunInFlight: () => false,
+    /** 既存 Session の保存状態を実 DB へ反映する。 */
     upsertStoredSession: (session) => storage.updateSession(session),
-    setStoredSessionAdditionalDirectories: (id, incarnation, directories) => storage.setSessionAdditionalDirectories(id, incarnation, directories),
-    replaceStoredSessions: (sessions) => { storage.replaceSessions(sessions); },
+    /** Session の世代を指定して追加ディレクトリ設定を DB に書き込む。 */
+    setStoredSessionAdditionalDirectories: (id, incarnation, directories) =>
+      storage.setSessionAdditionalDirectories(id, incarnation, directories),
+    /** 保存する Session の集合を SQLite 側で置き換える。 */
+    replaceStoredSessions: (sessions) => {
+      storage.replaceSessions(sessions);
+    },
+    /** 実 DB から保存済み Session の一覧を返す。 */
     listStoredSessions: () => storage.listSessions(),
-    getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: () => ({ providers: [] }), clearSessionContextTelemetry: () => undefined, invalidateProviderSessionThread: () => undefined,
-    closeSessionWindow: () => undefined, broadcastSessions: () => undefined,
+    /** 個別の設定を持ち込まず正規化した共通設定を渡す。 */
+    getAppSettings: () => normalizeAppSettings({}),
+    /** ディレクトリ操作は対象モデル候補なしで検証する。 */
+    getModelCatalogSnapshot: () => ({ providers: [] }),
+    /** テレメトリーを永続化の副作用に含めない。 */
+    clearSessionContextTelemetry: () => undefined,
+    /** 実プロバイダーへ無効化を通知しない。 */
+    invalidateProviderSessionThread: () => undefined,
+    /** 起動していない画面の終了処理を省く。 */
+    closeSessionWindow: () => undefined,
+    /** Session 一覧の変更を外部の画面へ通知しない。 */
+    broadcastSessions: () => undefined,
   });
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
-  const target = (session: typeof parent) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
-  const binding = bindings.issueOrReuse({ actorSessionId: parent.id, providerId: parent.provider,
-    authoritySnapshot: { sessionIdentity: target(parent) }, operationGrants: getSessionAgentRuntimeOperations() });
-  const turn = turns.begin({ actorSessionId: parent.id, providerId: parent.provider });
-  const boundEnv = { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference, WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability };
-  const unused = async () => { throw new Error("Unexpected operation"); };
-  const application = new SessionManagementApplication({
-    readSessionScope: async (actor, selection) => storage.readSessionManagementScope(actor, selection),
-    getInstructions: unused, setInstructions: unused,
-    operatingPolicy: unused,
-    directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
-    currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
-    updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
-    readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,
+  /** ディレクトリ管理の宛先を Main の ID と世代で固定する。 */
+  const target = (session: typeof parent) => ({
+    kind: "main" as const,
+    sessionId: session.id,
+    incarnationId: getSessionIncarnationId(session),
   });
-  const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
-  const runtimeCall: typeof callAgentRuntime = async (_connection, operation, options) => {
-    const response = await runtime.route({ method: operation.method, path: operation.path, body: operation.body, transport: "mcp",
-      bindingReference: options.bindingReference, turnCapability: options.turnCapability });
-    assert.ok(response);
-    return { ok: response.status >= 200 && response.status < 300, status: response.status, value: response.value };
+  const binding = bindings.issueOrReuse({
+    actorSessionId: parent.id,
+    providerId: parent.provider,
+    authoritySnapshot: { sessionIdentity: target(parent) },
+    operationGrants: getSessionAgentRuntimeOperations(),
+  });
+  const turn = turns.begin({
+    actorSessionId: parent.id,
+    providerId: parent.provider,
+  });
+  const boundEnv = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+    WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
   };
-  const server = createWithMateSessionMcpServer({ env: boundEnv, connection, runtimeCall });
+  /** ディレクトリ管理と無関係な依存が実行されたら失敗させる。 */
+  const unused = async () => {
+    throw new Error("Unexpected operation");
+  };
+  const application = new SessionManagementApplication({
+    /** 実 DB の Crew 関係から操作対象の可視範囲を解決する。 */
+    readSessionScope: async (actor, selection) =>
+      storage.readSessionManagementScope(actor, selection),
+    getInstructions: unused,
+    setInstructions: unused,
+    operatingPolicy: unused,
+    /** テスト用のデータルートと認可の再確認を、本番のディレクトリ調整と保存処理へ渡す。 */
+    directories: (session, change, assertCurrent) =>
+      manageSessionDirectories(
+        persistence,
+        directory,
+        session,
+        change,
+        assertCurrent,
+      ),
+    /** bound 操作に必要な送信元の Turn をテスト用に供給する。 */
+    currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
+    crewFolder: unused,
+    updateMetadata: unused,
+    enqueue: unused,
+    getReceipt: unused,
+    cancelReceipt: unused,
+    stopTurn: unused,
+    steer: unused,
+    readExecution: unused,
+    createChild: unused,
+    catalog: unused,
+    coordinate: unused,
+  });
+  const runtime = new SessionManagementRuntimeService({
+    application,
+    bindingRegistry: bindings,
+    providerAgentRuntimeTurns: turns,
+  });
+  /** directory 操作を HTTP 越しにせず、binding と Turn capability を保ったまま実 runtime へ渡す。 */
+  const runtimeCall: typeof callAgentRuntime = async (
+    _connection,
+    operation,
+    options,
+  ) => {
+    const response = await runtime.route({
+      method: operation.method,
+      path: operation.path,
+      body: operation.body,
+      transport: "mcp",
+      bindingReference: options.bindingReference,
+      turnCapability: options.turnCapability,
+    });
+    assert.ok(response);
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      value: response.value,
+    };
+  };
+  const server = createWithMateSessionMcpServer({
+    env: boundEnv,
+    connection,
+    runtimeCall,
+  });
   const client = new Client({ name: "directory-parity", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
     await client.connect(a);
-    assert.equal((await cli("add-directory", { target: target(child), directoryPath: extra }, runtimeCall, boundEnv)).exit, 0);
-    const listed = await client.callTool({ name: "session.list_directories", arguments: { target: target(child) } });
-    assert.deepEqual((listed.structuredContent as { directories: { additionalDirectories: string[] } }).directories.additionalDirectories, [extra]);
-    assert.equal((await client.callTool({ name: "session.add_directory", arguments: { target: target(parent), directoryPath: extra } })).isError, undefined);
-    const own = await cli("list-directories", { target: target(parent) }, runtimeCall, boundEnv);
-    assert.deepEqual((own.value.directories as { additionalDirectories: string[] }).additionalDirectories, [extra]);
-    assert.equal((await client.callTool({ name: "session.remove_directory", arguments: { target: target(child), directoryPath: extra } })).isError, undefined);
-    assert.deepEqual(storage.getSession(child.id)?.allowedAdditionalDirectories, []);
-    assert.deepEqual(storage.getSession(parent.id)?.allowedAdditionalDirectories, [extra]);
+    assert.equal(
+      (
+        await cli(
+          "add-directory",
+          { target: target(child), directoryPath: extra },
+          runtimeCall,
+          boundEnv,
+        )
+      ).exit,
+      0,
+    );
+    const listed = await client.callTool({
+      name: "session.list_directories",
+      arguments: { target: target(child) },
+    });
+    assert.deepEqual(
+      (
+        listed.structuredContent as {
+          directories: { additionalDirectories: string[] };
+        }
+      ).directories.additionalDirectories,
+      [extra],
+    );
+    assert.equal(
+      (
+        await client.callTool({
+          name: "session.add_directory",
+          arguments: { target: target(parent), directoryPath: extra },
+        })
+      ).isError,
+      undefined,
+    );
+    const own = await cli(
+      "list-directories",
+      { target: target(parent) },
+      runtimeCall,
+      boundEnv,
+    );
+    assert.deepEqual(
+      (own.value.directories as { additionalDirectories: string[] })
+        .additionalDirectories,
+      [extra],
+    );
+    assert.equal(
+      (
+        await client.callTool({
+          name: "session.remove_directory",
+          arguments: { target: target(child), directoryPath: extra },
+        })
+      ).isError,
+      undefined,
+    );
+    assert.deepEqual(
+      storage.getSession(child.id)?.allowedAdditionalDirectories,
+      [],
+    );
+    assert.deepEqual(
+      storage.getSession(parent.id)?.allowedAdditionalDirectories,
+      [extra],
+    );
     await access(retained);
-    const forbidden = await cli("add-directory", { target: target(other), directoryPath: extra }, runtimeCall, boundEnv);
+    const forbidden = await cli(
+      "add-directory",
+      { target: target(other), directoryPath: extra },
+      runtimeCall,
+      boundEnv,
+    );
     assert.equal(forbidden.value.code, "SESSION_FORBIDDEN");
     assert.equal(forbidden.value.effect, "none");
-    const invalid = await cli("add-directory", { target: target(child), directoryPath: "relative" }, runtimeCall, boundEnv);
+    const invalid = await cli(
+      "add-directory",
+      { target: target(child), directoryPath: "relative" },
+      runtimeCall,
+      boundEnv,
+    );
     assert.equal(invalid.value.code, "SESSION_REJECTED");
     assert.equal(invalid.value.effect, "none");
-    assert.deepEqual(storage.getSession(other.id)?.allowedAdditionalDirectories, []);
+    assert.deepEqual(
+      storage.getSession(other.id)?.allowedAdditionalDirectories,
+      [],
+    );
   } finally {
     await client.close();
     await server.close();
@@ -912,6 +1581,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
 // lifecycle = "permanent"
 // distinction = "全操作parityの手製成功fixtureでは実保存projectionと公開success schemaの不一致を検出できない"
 // @end-test-value
+/** 実保存された相談を CLI と MCP で同じ形で読み、Auxiliary の所属 Main を失わず、起票元自身の取得だけが回答を取得済みにすることを確認する。 */
 test("saved Coordination details cross the real application and both public schemas", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-coordination-api-"));
   const dbPath = join(directory, "withmate-v6.db");
@@ -966,23 +1636,33 @@ test("saved Coordination details cross the real application and both public sche
     WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
   };
   const coordinationStore = {
+    /** 相談操作の読み書きを SQLite の実ストアに委譲する。 */
     execute: async (input) => store.execute(input),
+    /** 相談の配送先を実ストア側で解決する。 */
     deliveryTarget: async (input) => store.deliveryTarget(input),
   } satisfies import("../../src-shared/coordination/coordination-contract.js").CoordinationStore;
   const coordination = new CoordinationApplicationService({
+    /** 相談のアプリケーション処理が同じ SQLite を参照するようにする。 */
     getStore: () => coordinationStore,
+    /** 相談詳細の取得が新規配送を引き起こしたら失敗させる。 */
     prepareDelivery: async () => {
       throw new Error("Read must not deliver");
     },
   });
+  /** 相談の読取に関係しない操作が呼ばれたら失敗させる。 */
   const unused = async () => {
     throw new Error("Unexpected operation");
   };
   const application = new SessionManagementApplication({
-    readSessionScope: fixtureSessionManagementScope(() => resolveRelatedSessions([source], [])),
-    getInstructions: unused, setInstructions: unused,
+    readSessionScope: fixtureSessionManagementScope(() =>
+      resolveRelatedSessions([source], []),
+    ),
+    getInstructions: unused,
+    setInstructions: unused,
     operatingPolicy: unused,
+    /** Main の bound 操作へテスト用の現在 Turn を渡す。 */
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
+    /** 同じ Main をルートとする隔離 Crew Folder を返す。 */
     crewFolder: async () => ({ rootSessionId: source.id, path: directory }),
     directories: unused,
     updateMetadata: unused,
@@ -994,6 +1674,7 @@ test("saved Coordination details cross the real application and both public sche
     readExecution: unused,
     createChild: unused,
     catalog: unused,
+    /** 呼出元の世代を保持し、実行権限の再確認付きで相談の読取を実行する。 */
     coordinate: (actor, _turnId, request, assertCurrent) =>
       coordination.read(
         {
@@ -1013,6 +1694,7 @@ test("saved Coordination details cross the real application and both public sche
     bindingRegistry: bindings,
     providerAgentRuntimeTurns: turns,
   });
+  /** 公開入口の runtime 要求と実行権限を、外部 HTTP なしで実 Coordinator 側へ渡す。 */
   const runtimeCall: typeof callAgentRuntime = async (
     _connection,
     operation,
@@ -1047,7 +1729,9 @@ test("saved Coordination details cross the real application and both public sche
     await server.connect(b);
     await client.connect(a);
     const listed = await client.listTools();
-    const getTool = listed.tools.find((entry) => entry.name === "session.coordination_get")!;
+    const getTool = listed.tools.find(
+      (entry) => entry.name === "session.coordination_get",
+    )!;
     assert.equal(getTool.annotations?.readOnlyHint, false);
     assert.equal(getTool.annotations?.idempotentHint, true);
     const actors = [
@@ -1059,7 +1743,11 @@ test("saved Coordination details cross the real application and both public sche
         turnId: "2",
       },
     ];
-    for (const [actor, first] of [[actors[0], "cli"], [actors[0], "mcp"], [actors[1], "cli"]] as const) {
+    for (const [actor, first] of [
+      [actors[0], "cli"],
+      [actors[0], "mcp"],
+      [actors[1], "cli"],
+    ] as const) {
       const saved = store.execute({
         actor,
         request: {
@@ -1073,14 +1761,34 @@ test("saved Coordination details cross the real application and both public sche
         },
       });
       assert.ok("record" in saved);
-      store.execute({ actor: { kind: "user" }, request: { operation: "answer", id: saved.record.id, operationId: randomUUID(), body: "Use this", selectedChoices: [], expectedAnswerRevision: 0, send: false } });
+      store.execute({
+        actor: { kind: "user" },
+        request: {
+          operation: "answer",
+          id: saved.record.id,
+          operationId: randomUUID(),
+          body: "Use this",
+          selectedChoices: [],
+          expectedAnswerRevision: 0,
+          send: false,
+        },
+      });
       const input = { id: saved.record.id };
       let command: Awaited<ReturnType<typeof cli>>;
       let tool: Awaited<ReturnType<typeof client.callTool>>;
-      const callCli = () => cli("coordination-get", input, runtimeCall, boundEnv);
-      const callMcp = () => client.callTool({ name: "session.coordination_get", arguments: input });
-      if (first === "cli") { command = await callCli(); tool = await callMcp(); }
-      else { tool = await callMcp(); command = await callCli(); }
+      /** 同じ保存済み相談を bound CLI から取得する。 */
+      const callCli = () =>
+        cli("coordination-get", input, runtimeCall, boundEnv);
+      /** 同じ保存済み相談を SDK MCP から取得する。 */
+      const callMcp = () =>
+        client.callTool({ name: "session.coordination_get", arguments: input });
+      if (first === "cli") {
+        command = await callCli();
+        tool = await callMcp();
+      } else {
+        tool = await callMcp();
+        command = await callCli();
+      }
       assert.equal(command.exit, 0);
       assert.equal(tool.isError, undefined);
       assert.deepEqual(command.value, tool.structuredContent);
@@ -1088,7 +1796,9 @@ test("saved Coordination details cross the real application and both public sche
         (command.value.record as { id: string }).id,
         saved.record.id,
       );
-      const answer = (command.value.record as { answers: Array<{ acquiredAt?: string }> }).answers[0];
+      const answer = (
+        command.value.record as { answers: Array<{ acquiredAt?: string }> }
+      ).answers[0];
       assert.equal(Boolean(answer?.acquiredAt), actor.kind === "main");
       assert.deepEqual(
         command.value.initiatorTarget,

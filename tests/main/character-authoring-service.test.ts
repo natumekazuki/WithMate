@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -9,7 +16,10 @@ import {
   DEFAULT_CHARACTER_THEME,
   type CharacterDetail,
 } from "../../src-shared/character/character-catalog.js";
-import { buildNewSession, type CreateSessionInput } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  type CreateSessionInput,
+} from "../../src-shared/session/session-state.js";
 import {
   CharacterAuthoringService,
   CHARACTER_AUTHORING_SKILL_NAME,
@@ -18,14 +28,25 @@ import {
 } from "../../src-electron/character/character-authoring-service.js";
 import { CharacterWorkspaceOperationCoordinator } from "../../src-electron/character/character-workspace-operation-coordinator.js";
 
+/** 通常の試験では選ばれた Provider ID をそのまま受理し、選択可否を試す場合だけ解決処理を差し替える。 */
 const resolveSelectedProvider = (providerId: string): string => providerId;
-const bundledSkillPath = path.resolve("resources", "skills", CHARACTER_AUTHORING_SKILL_NAME);
+const bundledSkillPath = path.resolve(
+  "resources",
+  "skills",
+  CHARACTER_AUTHORING_SKILL_NAME,
+);
 const defaultDefinition = "# Existing character\n";
 const defaultNotes = "# Existing notes\n";
 const defaultStorageIdentity = {};
-const testWorkspaceOperationCoordinator = new CharacterWorkspaceOperationCoordinator();
+const testWorkspaceOperationCoordinator =
+  new CharacterWorkspaceOperationCoordinator();
 
-function deferred<T = void>(): { promise: Promise<T>; resolve(value: T extends void ? void : T): void } {
+/** 準備と保存の間に試験側から処理を挟めるよう、外部から解決できる Promise を作る。 */
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  /** 任意の結果を通知し、待機している試験処理を再開させる。 */
+  resolve(value: T extends void ? void : T): void;
+} {
   let resolve!: (value: T extends void ? void : T) => void;
   const promise = new Promise<T>((promiseResolve) => {
     resolve = promiseResolve as typeof resolve;
@@ -33,7 +54,10 @@ function deferred<T = void>(): { promise: Promise<T>; resolve(value: T extends v
   return { promise, resolve };
 }
 
-function buildCharacter(overrides: Partial<CharacterDetail> = {}): CharacterDetail {
+/** 有効な保存済み Character の基本値を用意し、試験に必要なフィールドだけを差し替える。 */
+function buildCharacter(
+  overrides: Partial<CharacterDetail> = {},
+): CharacterDetail {
   return {
     id: "char-muse",
     name: "Muse",
@@ -50,19 +74,28 @@ function buildCharacter(overrides: Partial<CharacterDetail> = {}): CharacterDeta
   };
 }
 
-type CharacterAuthoringServiceDeps = ConstructorParameters<typeof CharacterAuthoringService>[0];
+/** Authoring サービスの依存を試験ケースごとに差し替えるための型。 */
+type CharacterAuthoringServiceDeps = ConstructorParameters<
+  typeof CharacterAuthoringService
+>[0];
 
+/** 既定の Character と保存世代を用意し、試したい準備・検証・保存の依存だけを上書きできるようにする。 */
 function createService(
   overrides: Partial<CharacterAuthoringServiceDeps> = {},
 ): CharacterAuthoringService {
   return new CharacterAuthoringService({
     bundledSkillPath,
+    /** 保存先を交換しない通常の試験では同じ世代識別子を返す。 */
     getSessionStorageIdentity: () => defaultStorageIdentity,
     resolveProvider: resolveSelectedProvider,
+    /** 同じ Character の作業領域に対する操作を、共通の調停器で直列化する。 */
     runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
       testWorkspaceOperationCoordinator.runExclusive(characterId, operation),
+    /** 試験ごとに独立した Character 詳細を供給する。 */
     getCharacter: () => buildCharacter(),
+    /** 実ファイルを使うケースで専用パスを渡せるよう、既定では固定の作業先を返す。 */
     getCharacterDirectory: () => "C:/characters/char-muse",
+    /** 保存処理の代わりに、渡された起動情報から Session を組み立てる。 */
     async createSession(input) {
       return buildNewSession(input);
     },
@@ -70,40 +103,91 @@ function createService(
   });
 }
 
+/** 一時ディレクトリに既存定義を置き、notes がない既存 Character も再現できるようにする。 */
 async function createWorkspace(
   definition = defaultDefinition,
   notes: string | null = defaultNotes,
 ): Promise<{ tempDirectory: string; workspacePath: string }> {
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-character-authoring-"));
+  const tempDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-character-authoring-"),
+  );
   const workspacePath = path.join(tempDirectory, "characters", "char-muse");
   await mkdir(workspacePath, { recursive: true });
   await writeFile(path.join(workspacePath, "character.md"), definition, "utf8");
   if (notes !== null) {
-    await writeFile(path.join(workspacePath, "character-notes.md"), notes, "utf8");
+    await writeFile(
+      path.join(workspacePath, "character-notes.md"),
+      notes,
+      "utf8",
+    );
   }
   return { tempDirectory, workspacePath };
 }
 
+/** 準備だけで補助ファイルや Skill が上書きされていないか判定するため、識別用の内容をあらかじめ保存する。 */
 async function seedManagedArtifacts(workspacePath: string): Promise<void> {
-  await writeFile(path.join(workspacePath, "AGENTS.md"), "sentinel agents\n", "utf8");
-  await writeFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "sentinel prompt\n", "utf8");
-  await writeFile(path.join(workspacePath, "input.json"), "{\"sentinel\":true}\n", "utf8");
-  const skillPath = path.join(workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md");
+  await writeFile(
+    path.join(workspacePath, "AGENTS.md"),
+    "sentinel agents\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(workspacePath, "AUTHORING_PROMPT.md"),
+    "sentinel prompt\n",
+    "utf8",
+  );
+  await writeFile(
+    path.join(workspacePath, "input.json"),
+    '{"sentinel":true}\n',
+    "utf8",
+  );
+  const skillPath = path.join(
+    workspacePath,
+    ".agents",
+    "skills",
+    CHARACTER_AUTHORING_SKILL_NAME,
+    "SKILL.md",
+  );
   await mkdir(path.dirname(skillPath), { recursive: true });
   await writeFile(skillPath, "sentinel skill\n", "utf8");
 }
 
-async function assertManagedArtifactsPreserved(workspacePath: string): Promise<void> {
-  assert.equal(await readFile(path.join(workspacePath, "character-notes.md"), "utf8"), defaultNotes);
-  assert.equal(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), "sentinel agents\n");
-  assert.equal(await readFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "utf8"), "sentinel prompt\n");
-  assert.equal(await readFile(path.join(workspacePath, "input.json"), "utf8"), "{\"sentinel\":true}\n");
+/** 失敗した準備が既存 notes・補助ファイル・Skill を変更していないことをバイト列で照合する。 */
+async function assertManagedArtifactsPreserved(
+  workspacePath: string,
+): Promise<void> {
   assert.equal(
-    await readFile(path.join(workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"), "utf8"),
+    await readFile(path.join(workspacePath, "character-notes.md"), "utf8"),
+    defaultNotes,
+  );
+  assert.equal(
+    await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"),
+    "sentinel agents\n",
+  );
+  assert.equal(
+    await readFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "utf8"),
+    "sentinel prompt\n",
+  );
+  assert.equal(
+    await readFile(path.join(workspacePath, "input.json"), "utf8"),
+    '{"sentinel":true}\n',
+  );
+  assert.equal(
+    await readFile(
+      path.join(
+        workspacePath,
+        ".agents",
+        "skills",
+        CHARACTER_AUTHORING_SKILL_NAME,
+        "SKILL.md",
+      ),
+      "utf8",
+    ),
     "sentinel skill\n",
   );
 }
 
+/** 指定の見出しから次の同階層以上の見出しまでに限り、要求された各記述があることを確認する。 */
 function assertSectionContains(
   markdown: string,
   heading: string,
@@ -114,17 +198,19 @@ function assertSectionContains(
   const headingLevel = heading.match(/^#+/)?.[0].length;
   assert.ok(headingLevel, `${heading} must be a Markdown heading`);
   const sectionStart = headingIndex + heading.length;
-  const nextSectionOffset = markdown.slice(sectionStart).search(
-    new RegExp(`^#{1,${headingLevel}}\\s`, "m"),
-  );
-  const section = nextSectionOffset === -1
-    ? markdown.slice(headingIndex)
-    : markdown.slice(headingIndex, sectionStart + nextSectionOffset);
+  const nextSectionOffset = markdown
+    .slice(sectionStart)
+    .search(new RegExp(`^#{1,${headingLevel}}\\s`, "m"));
+  const section =
+    nextSectionOffset === -1
+      ? markdown.slice(headingIndex)
+      : markdown.slice(headingIndex, sectionStart + nextSectionOffset);
   for (const pattern of patterns) {
     assert.match(section, pattern, `${heading} must contain ${pattern}`);
   }
 }
 
+/** 保存済み Character から authoring を始める際の定義保持、配布物、および準備から保存までの契約を確認する。 */
 describe("CharacterAuthoringService", () => {
   // @test-value v2
   // kind = "contract"
@@ -138,6 +224,7 @@ describe("CharacterAuthoringService", () => {
   // impact = "削除・archive後のauthoring turnが旧Character snapshotを継続利用しない"
   // distinction = "snapshot resolverのnull応答を直接与え、旧snapshotだけをnull化する動作を確認する"
   // @end-test-value
+  /** 保存済みの最新定義から実行用 snapshot を解決できないターンで、Character ID は保つが古い snapshot は使わないことを確かめる。 */
   it("最新定義から snapshot を作れない turn は古い runtime snapshot を破棄する", () => {
     const session = buildNewSession({
       taskTitle: "Muse authoring",
@@ -163,7 +250,10 @@ describe("CharacterAuthoringService", () => {
       approvalMode: DEFAULT_APPROVAL_MODE,
     });
 
-    return resolveCharacterAuthoringRuntimeSessionForTurn(session, async () => null).then((resolved) => {
+    return resolveCharacterAuthoringRuntimeSessionForTurn(
+      session,
+      async () => null,
+    ).then((resolved) => {
       assert.equal(resolved.characterId, "muse");
       assert.equal(resolved.characterRuntimeSnapshot, null);
     });
@@ -181,6 +271,7 @@ describe("CharacterAuthoringService", () => {
   // impact = "authoring開始時の既存定義保持と、run固有の生成wrapper境界が崩れる"
   // distinction = "workspace準備・生成wrapper・session作成を実際のstartSession結果と生成ファイルで観測する"
   // @end-test-value
+  /** 既存の定義と notes は変更せず固定 Skill と実行用の補助ファイルを用意し、Character と Provider の指定を保った authoring セッションを作ることを確認する。 */
   it("workspace に固定 Skill と authoring 成果物を作成し character-authoring session を作る", async () => {
     const existingDefinition = `---
 schema: withmate-character-v5
@@ -191,17 +282,24 @@ description: "作業を一緒に進める相手"
 # Existing Character
 `;
     const existingNotes = "# Existing Notes\n";
-    const { tempDirectory, workspacePath } = await createWorkspace(existingDefinition, existingNotes);
+    const { tempDirectory, workspacePath } = await createWorkspace(
+      existingDefinition,
+      existingNotes,
+    );
     const createdInputs: CreateSessionInput[] = [];
     const service = createService({
-      getCharacter: () => buildCharacter({
-        description: "作業を一緒に進める相手",
-        iconFilePath: "C:\\Characters\\Muse\\legacy.webp",
-        theme: { main: "#112233", sub: "#445566" },
-        definitionMarkdown: existingDefinition,
-        notesMarkdown: existingNotes,
-      }),
+      /** セッションへ引き継ぐテーマと旧形式アイコンを持つ、既存 Character の詳細を返す。 */
+      getCharacter: () =>
+        buildCharacter({
+          description: "作業を一緒に進める相手",
+          iconFilePath: "C:\\Characters\\Muse\\legacy.webp",
+          theme: { main: "#112233", sub: "#445566" },
+          definitionMarkdown: existingDefinition,
+          notesMarkdown: existingNotes,
+        }),
+      /** 配布と定義保持を実ファイルで確認する一時 Workspace を返す。 */
       getCharacterDirectory: () => workspacePath,
+      /** 起動時に委譲した Session の引数を記録し、公開結果にも対応する Session を返す。 */
       async createSession(input) {
         createdInputs.push(input);
         return buildNewSession(input);
@@ -218,12 +316,18 @@ description: "作業を一緒に進める相手"
       assert.equal(result.session.sessionKind, "character-authoring");
       assert.equal(createdInputs[0]?.sessionKind, "character-authoring");
       assert.equal(createdInputs[0]?.approvalMode, DEFAULT_APPROVAL_MODE);
-      assert.deepEqual(createdInputs[0]?.characterThemeColors, { main: "#112233", sub: "#445566" });
+      assert.deepEqual(createdInputs[0]?.characterThemeColors, {
+        main: "#112233",
+        sub: "#445566",
+      });
       assert.equal(createdInputs[0]?.allowedAdditionalDirectories?.length, 0);
       assert.equal(createdInputs[0]?.provider, "codex");
       assert.equal(createdInputs[0]?.model, undefined);
       assert.equal(createdInputs[0]?.reasoningEffort, undefined);
-      assert.equal(createdInputs[0]?.characterIconPath, "C:\\Characters\\Muse\\legacy.webp");
+      assert.equal(
+        createdInputs[0]?.characterIconPath,
+        "C:\\Characters\\Muse\\legacy.webp",
+      );
       assert.equal(result.workspacePath, workspacePath);
 
       const rootEntries = await readdir(result.workspacePath);
@@ -237,7 +341,13 @@ description: "作業を一緒に進める相手"
       ]);
 
       const skillMarkdown = await readFile(
-        path.join(result.workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
+        path.join(
+          result.workspacePath,
+          ".agents",
+          "skills",
+          CHARACTER_AUTHORING_SKILL_NAME,
+          "SKILL.md",
+        ),
         "utf8",
       );
       assert.match(skillMarkdown, /name: withmate-character-authoring/);
@@ -249,38 +359,78 @@ description: "作業を一緒に進める相手"
         CHARACTER_AUTHORING_SKILL_NAME,
       );
       assert.match(
-        await readFile(path.join(copiedSkillRoot, "references", "character-format.md"), "utf8"),
+        await readFile(
+          path.join(copiedSkillRoot, "references", "character-format.md"),
+          "utf8",
+        ),
         /8,000文字以内/,
       );
       assert.match(
-        await readFile(path.join(copiedSkillRoot, "references", "source-and-rights-policy.md"), "utf8"),
+        await readFile(
+          path.join(
+            copiedSkillRoot,
+            "references",
+            "source-and-rights-policy.md",
+          ),
+          "utf8",
+        ),
         /コミュニティsource/,
       );
       assert.match(
-        await readFile(path.join(copiedSkillRoot, "references", "review-checklist.md"), "utf8"),
+        await readFile(
+          path.join(copiedSkillRoot, "references", "review-checklist.md"),
+          "utf8",
+        ),
         /Relationship smoke test/,
       );
 
-      const characterMarkdown = await readFile(path.join(result.workspacePath, "character.md"), "utf8");
+      const characterMarkdown = await readFile(
+        path.join(result.workspacePath, "character.md"),
+        "utf8",
+      );
       assert.equal(characterMarkdown, existingDefinition);
 
-      const notesMarkdown = await readFile(path.join(result.workspacePath, "character-notes.md"), "utf8");
+      const notesMarkdown = await readFile(
+        path.join(result.workspacePath, "character-notes.md"),
+        "utf8",
+      );
       assert.equal(notesMarkdown, existingNotes);
 
-      const agentsMarkdown = await readFile(path.join(result.workspacePath, "AGENTS.md"), "utf8");
-      assert.match(agentsMarkdown, new RegExp(`必ず ${CHARACTER_AUTHORING_SKILL_NAME} Skill を使う。`));
+      const agentsMarkdown = await readFile(
+        path.join(result.workspacePath, "AGENTS.md"),
+        "utf8",
+      );
+      assert.match(
+        agentsMarkdown,
+        new RegExp(`必ず ${CHARACTER_AUTHORING_SKILL_NAME} Skill を使う。`),
+      );
       assert.match(agentsMarkdown, /必要な場合の character-notes\.md/);
-      assert.doesNotMatch(agentsMarkdown, /character\.md \/ character-notes\.md を(?:改善|作成)する/);
+      assert.doesNotMatch(
+        agentsMarkdown,
+        /character\.md \/ character-notes\.md を(?:改善|作成)する/,
+      );
       assert.doesNotMatch(agentsMarkdown, /Grow From Conversations/);
 
-      const authoringPrompt = await readFile(path.join(result.workspacePath, "AUTHORING_PROMPT.md"), "utf8");
-      assert.match(authoringPrompt, /詳細な作成・検証手順は固定 Skill と参照資料に従う/);
+      const authoringPrompt = await readFile(
+        path.join(result.workspacePath, "AUTHORING_PROMPT.md"),
+        "utf8",
+      );
+      assert.match(
+        authoringPrompt,
+        /詳細な作成・検証手順は固定 Skill と参照資料に従う/,
+      );
       assert.match(authoringPrompt, /必要な場合の `character-notes\.md`/);
       assert.doesNotMatch(authoringPrompt, /検索不要.*調査/);
 
-      const inputJson = await readFile(path.join(result.workspacePath, "input.json"), "utf8");
+      const inputJson = await readFile(
+        path.join(result.workspacePath, "input.json"),
+        "utf8",
+      );
       assert.match(inputJson, /"skill": "withmate-character-authoring"/);
-      assert.match(inputJson, /"skillPath": ".agents\/skills\/withmate-character-authoring"/);
+      assert.match(
+        inputJson,
+        /"skillPath": ".agents\/skills\/withmate-character-authoring"/,
+      );
       assert.doesNotMatch(inputJson, /userInstruction/);
       assert.doesNotMatch(inputJson, /[A-Z]:\\\\/);
     } finally {
@@ -300,10 +450,16 @@ description: "作業を一緒に進める相手"
   // impact = "既存の良さを保持した対話・作業校正、未確認事項の正確な報告、成果物形式との分離、責務外のファイルやhidden inputの除外が次回Sessionへ伝わらない"
   // distinction = "配布処理の存在だけでなく、実際のCodex create workspaceにコピーされた列挙済みreferenceと生成指示の対話・作業契約を観測する"
   // @end-test-value
+  /** create で配布された Skill・資料・検証テンプレートに必要な設計と除外境界が揃い、起動用の補助文書は固定 Skill に手順を委ねることを確認する。 */
   it("配布後の固定 Skill は Character Kernel と検証・除外境界を一式持つ", async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const { tempDirectory, workspacePath } = await createWorkspace(
+      defaultDefinition,
+      null,
+    );
     const service = createService({
+      /** 配布された実ファイルを読み取る試験用 Workspace を指定する。 */
       getCharacterDirectory: () => workspacePath,
+      /** notes のない Character から create の配布を試す。 */
       getCharacter: () => buildCharacter({ notesMarkdown: "" }),
     });
 
@@ -319,7 +475,10 @@ description: "作業を一緒に進める相手"
         "skills",
         CHARACTER_AUTHORING_SKILL_NAME,
       );
-      const skillMarkdown = await readFile(path.join(copiedSkillRoot, "SKILL.md"), "utf8");
+      const skillMarkdown = await readFile(
+        path.join(copiedSkillRoot, "SKILL.md"),
+        "utf8",
+      );
       const formatMarkdown = await readFile(
         path.join(copiedSkillRoot, "references", "character-format.md"),
         "utf8",
@@ -337,7 +496,11 @@ description: "作業を一緒に進める相手"
         "utf8",
       );
       const improveExistingCharacterMarkdown = await readFile(
-        path.join(copiedSkillRoot, "references", "improve-existing-character.md"),
+        path.join(
+          copiedSkillRoot,
+          "references",
+          "improve-existing-character.md",
+        ),
         "utf8",
       );
       const sourceAndRightsPolicyMarkdown = await readFile(
@@ -348,8 +511,14 @@ description: "作業を一緒に進める相手"
         path.join(copiedSkillRoot, "references", "review-checklist.md"),
         "utf8",
       );
-      const agentsMarkdown = await readFile(path.join(result.workspacePath, "AGENTS.md"), "utf8");
-      const authoringPrompt = await readFile(path.join(result.workspacePath, "AUTHORING_PROMPT.md"), "utf8");
+      const agentsMarkdown = await readFile(
+        path.join(result.workspacePath, "AGENTS.md"),
+        "utf8",
+      );
+      const authoringPrompt = await readFile(
+        path.join(result.workspacePath, "AUTHORING_PROMPT.md"),
+        "utf8",
+      );
 
       assert.match(skillMarkdown, /選択の核 × 言語アイデンティティ × 状態変調/);
       assert.match(skillMarkdown, /collaborative authoring/);
@@ -359,69 +528,157 @@ description: "作業を一緒に進める相手"
       assert.match(skillMarkdown, /Multi-turn continuity/);
       assert.match(skillMarkdown, /Regression \/ Protected-trait/);
       assert.match(skillMarkdown, /conversation-and-work/);
-      assert.match(skillMarkdown, /Task-execution \/ Conversation-work Continuity/);
-      assert.match(skillMarkdown, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
-      assert.match(skillMarkdown, /synthetic-event.*recorded-tool-replay.*live-tool-execution/);
-      assert.match(skillMarkdown, /既存Characterへ自動migrationや一括rewriteを要求しない/);
-      assert.match(runtimePhilosophyMarkdown, /## Baseline Presence and Likeness Anchors/);
+      assert.match(
+        skillMarkdown,
+        /Task-execution \/ Conversation-work Continuity/,
+      );
+      assert.match(
+        skillMarkdown,
+        /Work Likeness \/ Task Integrity \/ Collaboration Comfort/,
+      );
+      assert.match(
+        skillMarkdown,
+        /synthetic-event.*recorded-tool-replay.*live-tool-execution/,
+      );
+      assert.match(
+        skillMarkdown,
+        /既存Characterへ自動migrationや一括rewriteを要求しない/,
+      );
+      assert.match(
+        runtimePhilosophyMarkdown,
+        /## Baseline Presence and Likeness Anchors/,
+      );
       assert.match(runtimePhilosophyMarkdown, /habitual/);
       assert.match(runtimePhilosophyMarkdown, /reactive/);
       assert.match(runtimePhilosophyMarkdown, /signature/);
-      assert.match(runtimePhilosophyMarkdown, /## Association and Meme Response/);
-      assert.match(runtimePhilosophyMarkdown, /## Character Presence during Work/);
+      assert.match(
+        runtimePhilosophyMarkdown,
+        /## Association and Meme Response/,
+      );
+      assert.match(
+        runtimePhilosophyMarkdown,
+        /## Character Presence during Work/,
+      );
       assert.match(runtimePhilosophyMarkdown, /### Work-session Validation/);
-      assertSectionContains(runtimePhilosophyMarkdown, "### Work-session Validation", [
+      assertSectionContains(
+        runtimePhilosophyMarkdown,
+        "### Work-session Validation",
+        [
+          /Task-execution \/ Conversation-work Continuity/,
+          /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/,
+          /Work Likeness（らしさ）、Task Integrity（作業の整合・信頼性）、Collaboration Comfort（一緒に進める心地よさ）を別評価する/,
+          /内部思考ではなく観察可能な行為と発話を検証する/,
+        ],
+      );
+      assert.match(
+        improveExistingCharacterMarkdown,
+        /## 4\. Separate Preserve \/ Revise \/ Investigate/,
+      );
+      assert.match(
+        improveExistingCharacterMarkdown,
+        /## 8\. Compare Outputs and Revise by Cause/,
+      );
+      assert.match(
+        improveExistingCharacterMarkdown,
         /Task-execution \/ Conversation-work Continuity/,
-        /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/,
-        /Work Likeness（らしさ）、Task Integrity（作業の整合・信頼性）、Collaboration Comfort（一緒に進める心地よさ）を別評価する/,
-        /内部思考ではなく観察可能な行為と発話を検証する/,
-      ]);
-      assert.match(improveExistingCharacterMarkdown, /## 4\. Separate Preserve \/ Revise \/ Investigate/);
-      assert.match(improveExistingCharacterMarkdown, /## 8\. Compare Outputs and Revise by Cause/);
-      assert.match(improveExistingCharacterMarkdown, /Task-execution \/ Conversation-work Continuity/);
-      assert.match(improveExistingCharacterMarkdown, /Work Likeness \/ Task Integrity \/ Collaboration Comfort/);
-      assert.match(sourceAndRightsPolicyMarkdown, /user-observation \/ user-preference \/ output-feedback \/ authoring-inference/);
-      assert.match(sourceAndRightsPolicyMarkdown, /## Meme and Association Sources/);
-      assert.match(sourceAndRightsPolicyMarkdown, /## Work-context Transfer and Task Evidence/);
-      assertSectionContains(sourceAndRightsPolicyMarkdown, "## Work-context Transfer and Task Evidence", [
-        /authoring-inference/,
-        /本人の開発経験、技術的な能力、未確認のtool使用歴を創作しない/,
-        /作業品質の低下、検証省略、わざと起こすミスへ変換しない/,
-        /synthetic-event、recorded-tool-replay、live-tool-execution/,
-        /非公開の内部思考を取得する工程にはしない/,
-        /標準Packは引き続き2ファイルのみ/,
-      ]);
+      );
+      assert.match(
+        improveExistingCharacterMarkdown,
+        /Work Likeness \/ Task Integrity \/ Collaboration Comfort/,
+      );
+      assert.match(
+        sourceAndRightsPolicyMarkdown,
+        /user-observation \/ user-preference \/ output-feedback \/ authoring-inference/,
+      );
+      assert.match(
+        sourceAndRightsPolicyMarkdown,
+        /## Meme and Association Sources/,
+      );
+      assert.match(
+        sourceAndRightsPolicyMarkdown,
+        /## Work-context Transfer and Task Evidence/,
+      );
+      assertSectionContains(
+        sourceAndRightsPolicyMarkdown,
+        "## Work-context Transfer and Task Evidence",
+        [
+          /authoring-inference/,
+          /本人の開発経験、技術的な能力、未確認のtool使用歴を創作しない/,
+          /作業品質の低下、検証省略、わざと起こすミスへ変換しない/,
+          /synthetic-event、recorded-tool-replay、live-tool-execution/,
+          /非公開の内部思考を取得する工程にはしない/,
+          /標準Packは引き続き2ファイルのみ/,
+        ],
+      );
       assert.match(reviewChecklistMarkdown, /## Evaluation Provenance/);
       assert.match(reviewChecklistMarkdown, /Marker-underuse/);
-      assert.match(reviewChecklistMarkdown, /Multi-turn continuity \/ Return-to-baseline/);
+      assert.match(
+        reviewChecklistMarkdown,
+        /Multi-turn continuity \/ Return-to-baseline/,
+      );
       assert.match(reviewChecklistMarkdown, /Relationship smoke test（7場面）/);
       assert.match(reviewChecklistMarkdown, /## Work-session Validation/);
-      assert.match(reviewChecklistMarkdown, /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/);
-      assertSectionContains(reviewChecklistMarkdown, "## Work-session Validation", [
-        /task ID、候補revision、初期状態、依頼・受入条件・許可範囲を固定した/,
-        /順調な経路と想定外の経路を扱い、中盤を含む時間順のセッションを確認した/,
-        /検証のために無許可の本番変更・送信・課金・デプロイをしていない/,
-        /Work Likenessを、必要な中盤発話・割り込み・復帰の出力から判定した/,
-        /Task Integrityを、実行\/未実行・仮説\/確認・許可範囲・受入条件から独立に判定した/,
-        /Collaboration Comfortを、発話密度・必要な共有・反復・作業の邪魔にならないことから判定した/,
-        /Functional verificationを別記し、synthetic-eventやreplayのみではnot-runのままにした/,
-        /非公開の内部思考の全文を検証資料として要求していない/,
-        /logの秘密情報、改変・省略・保存\/参照不能の限界を明示した/,
-      ]);
+      assert.match(
+        reviewChecklistMarkdown,
+        /synthetic-event \/ recorded-tool-replay \/ live-tool-execution/,
+      );
+      assertSectionContains(
+        reviewChecklistMarkdown,
+        "## Work-session Validation",
+        [
+          /task ID、候補revision、初期状態、依頼・受入条件・許可範囲を固定した/,
+          /順調な経路と想定外の経路を扱い、中盤を含む時間順のセッションを確認した/,
+          /検証のために無許可の本番変更・送信・課金・デプロイをしていない/,
+          /Work Likenessを、必要な中盤発話・割り込み・復帰の出力から判定した/,
+          /Task Integrityを、実行\/未実行・仮説\/確認・許可範囲・受入条件から独立に判定した/,
+          /Collaboration Comfortを、発話密度・必要な共有・反復・作業の邪魔にならないことから判定した/,
+          /Functional verificationを別記し、synthetic-eventやreplayのみではnot-runのままにした/,
+          /非公開の内部思考の全文を検証資料として要求していない/,
+          /logの秘密情報、改変・省略・保存\/参照不能の限界を明示した/,
+        ],
+      );
       for (const [boundary, pattern] of [
-        ["permanent Character output", /`character\.md`と`character-notes\.md`以外を編集しない/],
-        ["Character directory scope", /app database、packaged resource、このCharacter directory外のfileを編集しない/],
-        ["config.toml hidden input", /`config\.toml`.*hidden inputとして使わない/],
+        [
+          "permanent Character output",
+          /`character\.md`と`character-notes\.md`以外を編集しない/,
+        ],
+        [
+          "Character directory scope",
+          /app database、packaged resource、このCharacter directory外のfileを編集しない/,
+        ],
+        [
+          "config.toml hidden input",
+          /`config\.toml`.*hidden inputとして使わない/,
+        ],
         ["Memory hidden input", /Memory.*hidden inputとして使わない/],
-        ["unrelated Session history hidden input", /unrelated Session \/ chat history.*hidden inputとして使わない/],
-        ["Character root artifacts", /Character rootへsource report、review checklist、manifest、pack directory、Zipを作らない/],
+        [
+          "unrelated Session history hidden input",
+          /unrelated Session \/ chat history.*hidden inputとして使わない/,
+        ],
+        [
+          "Character root artifacts",
+          /Character rootへsource report、review checklist、manifest、pack directory、Zipを作らない/,
+        ],
         ["Notion sync", /Notion同期.*必須処理にしない/],
         ["parent and child pages", /親・子page作成.*必須処理にしない/],
-        ["CharacterPack Zip", /CharacterPack Zipの作成・展開検証.*必須処理にしない/],
-        ["asset generation and distribution", /asset生成・添付・配布.*必須処理にしない/],
-        ["catalog color metadata", /catalog metadataの色更新.*必須処理にしない/],
+        [
+          "CharacterPack Zip",
+          /CharacterPack Zipの作成・展開検証.*必須処理にしない/,
+        ],
+        [
+          "asset generation and distribution",
+          /asset生成・添付・配布.*必須処理にしない/,
+        ],
+        [
+          "catalog color metadata",
+          /catalog metadataの色更新.*必須処理にしない/,
+        ],
       ] as const) {
-        assert.match(skillMarkdown, pattern, `${boundary} boundary must be distributed`);
+        assert.match(
+          skillMarkdown,
+          pattern,
+          `${boundary} boundary must be distributed`,
+        );
       }
       for (const section of [
         "Identity Core",
@@ -437,7 +694,10 @@ description: "作業を一緒に進める相手"
         "Minimal Reliability",
       ]) {
         const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        assert.match(formatMarkdown, new RegExp(`^#{2,3} ${escapedSection}$`, "m"));
+        assert.match(
+          formatMarkdown,
+          new RegExp(`^#{2,3} ${escapedSection}$`, "m"),
+        );
       }
       assert.match(formatMarkdown, /Baseline Presence/);
       assert.match(formatMarkdown, /^## Voice Rules$/m);
@@ -449,7 +709,10 @@ description: "作業を一緒に進める相手"
         /smoke testの入力と出力は検証資料であり、runtime本文へコピーしない/,
         /作業イベントへの試演、実課題、toolログ、途中の完成台詞、テスト用コードはruntimeへ入れない/,
       ]);
-      assert.match(formatMarkdown, /旧sectionや既存`Examples`を含むCharacterも引き続き読み込める/);
+      assert.match(
+        formatMarkdown,
+        /旧sectionや既存`Examples`を含むCharacterも引き続き読み込める/,
+      );
       for (const validation of [
         "Baseline / Anchor-presence",
         "Name-swap",
@@ -468,21 +731,28 @@ description: "作業を一緒に進める相手"
         "7-scene Relationship Smoke Test",
         "Task-execution / Conversation-work Continuity",
       ]) {
-        assert.match(rubricMarkdown, new RegExp(validation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.match(
+          rubricMarkdown,
+          new RegExp(validation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        );
       }
-      assertSectionContains(rubricMarkdown, "### Task-execution / Conversation-work Continuity Test", [
-        /task ID.*候補revision.*初期ファイルや資料の版.*依頼・受入条件.*許可範囲/,
-        /#### Temporal Coverage/,
-        /#### Controlled Event Trials/,
-        /未来の結果・原因・予定する反応を先に教えない/,
-        /#### Live Task Trials and Mixed Dialogue/,
-        /無許可の本番変更、外部送信、課金、デプロイは品質testに含めない/,
-        /#### Three Independent Assessments/,
-        /各軸を`pass \/ fail \/ inconclusive \/ not-run \/ not-applicable`で別記する/,
-        /Functional verification（実編集・実行・受入条件の確認）は別欄/,
-        /synthetic-eventやreplayだけの場合は`not-run`/,
-        /非公開の内部思考の全文を求めず/,
-      ]);
+      assertSectionContains(
+        rubricMarkdown,
+        "### Task-execution / Conversation-work Continuity Test",
+        [
+          /task ID.*候補revision.*初期ファイルや資料の版.*依頼・受入条件.*許可範囲/,
+          /#### Temporal Coverage/,
+          /#### Controlled Event Trials/,
+          /未来の結果・原因・予定する反応を先に教えない/,
+          /#### Live Task Trials and Mixed Dialogue/,
+          /無許可の本番変更、外部送信、課金、デプロイは品質testに含めない/,
+          /#### Three Independent Assessments/,
+          /各軸を`pass \/ fail \/ inconclusive \/ not-run \/ not-applicable`で別記する/,
+          /Functional verification（実編集・実行・受入条件の確認）は別欄/,
+          /synthetic-eventやreplayだけの場合は`not-run`/,
+          /非公開の内部思考の全文を求めず/,
+        ],
+      );
       assert.match(notesTemplate, /## Calibration Brief/);
       assert.match(notesTemplate, /## Likeness Anchors/);
       assert.match(notesTemplate, /## Feedback and Revision Log/);
@@ -505,38 +775,61 @@ description: "作業を一緒に進める相手"
         notesTemplate,
         /^\| Task-execution \/ Conversation-work Continuity（作業用途で必須） \|/m,
       );
-      assertSectionContains(notesTemplate, "### Work-session Validation Record", [
-        /Session \/ task ID、候補revision/,
-        /ユーザー依頼・初期資料やfileの版・受入条件/,
-        /tool構成・権限・初期状態の復元方法/,
-        /Environment \/ Dialogue mode \/ Event source/,
-        /Event source・元log・加工の有無/,
-        /\| Work Likeness \|/,
-        /\| Task Integrity \|/,
-        /\| Collaboration Comfort \|/,
-        /Functional verification: pass \/ fail \/ inconclusive \/ not-run \/ not-applicable/,
-        /synthetic-eventやreplayのみのFunctional verificationはnot-run/,
-        /非公開の内部思考は原出力証拠にしない/,
-      ]);
-      assert.match(agentsMarkdown, /編集対象はこの workspace 内の `character\.md` \/ `character-notes\.md` に限定する/);
-      assert.match(agentsMarkdown, /詳細な authoring \/ validation 契約は固定 Skill と参照資料に従う/);
-      assert.match(authoringPrompt, /詳細な作成・検証手順は固定 Skill と参照資料に従う/);
-      assert.match(authoringPrompt, /Character directory 外の変更は、固定 Skill の boundary に従って作らない/);
+      assertSectionContains(
+        notesTemplate,
+        "### Work-session Validation Record",
+        [
+          /Session \/ task ID、候補revision/,
+          /ユーザー依頼・初期資料やfileの版・受入条件/,
+          /tool構成・権限・初期状態の復元方法/,
+          /Environment \/ Dialogue mode \/ Event source/,
+          /Event source・元log・加工の有無/,
+          /\| Work Likeness \|/,
+          /\| Task Integrity \|/,
+          /\| Collaboration Comfort \|/,
+          /Functional verification: pass \/ fail \/ inconclusive \/ not-run \/ not-applicable/,
+          /synthetic-eventやreplayのみのFunctional verificationはnot-run/,
+          /非公開の内部思考は原出力証拠にしない/,
+        ],
+      );
+      assert.match(
+        agentsMarkdown,
+        /編集対象はこの workspace 内の `character\.md` \/ `character-notes\.md` に限定する/,
+      );
+      assert.match(
+        agentsMarkdown,
+        /詳細な authoring \/ validation 契約は固定 Skill と参照資料に従う/,
+      );
+      assert.match(
+        authoringPrompt,
+        /詳細な作成・検証手順は固定 Skill と参照資料に従う/,
+      );
+      assert.match(
+        authoringPrompt,
+        /Character directory 外の変更は、固定 Skill の boundary に従って作らない/,
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  /** improve の起動が既存の Character 定義・notes を変えず、既存 Character の ID と保存ディレクトリを使うことを確かめる。 */
   it("improve mode の開始時に既存 Character files を書き換えない", async () => {
     const existingDefinition = "# Existing character\r\n";
     const existingNotes = "# Existing notes\r\n";
-    const { tempDirectory, workspacePath } = await createWorkspace(existingDefinition, existingNotes);
+    const { tempDirectory, workspacePath } = await createWorkspace(
+      existingDefinition,
+      existingNotes,
+    );
     const service = createService({
+      /** 改善前の定義と notes を保存したディレクトリを作業領域として返す。 */
       getCharacterDirectory: () => workspacePath,
-      getCharacter: () => buildCharacter({
-        definitionMarkdown: existingDefinition,
-        notesMarkdown: existingNotes,
-      }),
+      /** 起動前から存在する定義と notes を Character 詳細に含める。 */
+      getCharacter: () =>
+        buildCharacter({
+          definitionMarkdown: existingDefinition,
+          notesMarkdown: existingNotes,
+        }),
     });
 
     try {
@@ -546,10 +839,22 @@ description: "作業を一緒に進める相手"
         provider: "codex",
       });
 
-      assert.equal(await readFile(path.join(result.workspacePath, "character.md"), "utf8"), existingDefinition);
-      assert.equal(await readFile(path.join(result.workspacePath, "character-notes.md"), "utf8"), existingNotes);
+      assert.equal(
+        await readFile(path.join(result.workspacePath, "character.md"), "utf8"),
+        existingDefinition,
+      );
+      assert.equal(
+        await readFile(
+          path.join(result.workspacePath, "character-notes.md"),
+          "utf8",
+        ),
+        existingNotes,
+      );
       assert.equal(result.session.characterId, "char-muse");
-      assert.equal(result.workspacePath, path.join(tempDirectory, "characters", "char-muse"));
+      assert.equal(
+        result.workspacePath,
+        path.join(tempDirectory, "characters", "char-muse"),
+      );
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -567,10 +872,16 @@ description: "作業を一緒に進める相手"
   // impact = "notesを必要としないCharacterの起動を妨げるか、ユーザーの保存済みファイル構成を変更する"
   // distinction = "型やbuildでは検出できないoptional fileの保存境界と配布内容を同時に観測する既存testを維持する"
   // @end-test-value
+  /** notes なしでも起動でき、起動自身は補完せず必要時に使う初期化手順とテンプレートだけを Skill に配布することを確認する。 */
   it("optional な character-notes.md がなくても起動し、Skill が authoring 時の初期化手順を持つ", async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const { tempDirectory, workspacePath } = await createWorkspace(
+      defaultDefinition,
+      null,
+    );
     const service = createService({
+      /** 定義はあるが notes が存在しない試験用 Workspace を返す。 */
       getCharacterDirectory: () => workspacePath,
+      /** notes の本文がまだ保存されていない Character の詳細を返す。 */
       getCharacter: () => buildCharacter({ notesMarkdown: "" }),
     });
 
@@ -586,7 +897,13 @@ description: "作業を一緒に進める相手"
         (error: NodeJS.ErrnoException) => error.code === "ENOENT",
       );
       const skillMarkdown = await readFile(
-        path.join(result.workspacePath, ".agents", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
+        path.join(
+          result.workspacePath,
+          ".agents",
+          "skills",
+          CHARACTER_AUTHORING_SKILL_NAME,
+          "SKILL.md",
+        ),
         "utf8",
       );
       assert.match(skillMarkdown, /## Targeted Update Workflow/);
@@ -598,11 +915,14 @@ description: "作業を一緒に進める相手"
     }
   });
 
+  /** 指定した Provider は作成時に渡すが model と depth は設定せず、Session の既定値解決へ委ねることを確かめる。 */
   it("provider 指定時も model / depth は session 側の既定値解決に任せる", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace();
     const createdInputs: CreateSessionInput[] = [];
     const service = createService({
+      /** Provider に応じた Skill の配置を調べる作業領域を指定する。 */
       getCharacterDirectory: () => workspacePath,
+      /** model と depth が未指定のままかを調べられるように起動引数を保存する。 */
       async createSession(input) {
         createdInputs.push(input);
         return buildNewSession(input);
@@ -620,7 +940,13 @@ description: "作業を一緒に進める相手"
       assert.equal(createdInputs[0]?.model, undefined);
       assert.equal(createdInputs[0]?.reasoningEffort, undefined);
       const skillMarkdown = await readFile(
-        path.join(result.workspacePath, ".github", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
+        path.join(
+          result.workspacePath,
+          ".github",
+          "skills",
+          CHARACTER_AUTHORING_SKILL_NAME,
+          "SKILL.md",
+        ),
         "utf8",
       );
       assert.match(skillMarkdown, /name: withmate-character-authoring/);
@@ -641,50 +967,64 @@ description: "作業を一緒に進める相手"
   // impact = "provider変更後にworkspace/sessionを作らない"
   // distinction = "実bundle readerに接続した制御barrierの間にproviderを無効化し、commit再検証と既存filesの保持を確認する"
   // @end-test-value
-  it("Skill準備中にproviderが無効化された場合はcommitしない", { timeout: 10_000 }, async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace();
-    await seedManagedArtifacts(workspacePath);
-    let providerEnabled = true;
-    const readerEntered = deferred();
-    const readerBarrier = deferred();
-    let sessionCreationCount = 0;
-    const service = createService({
-      resolveProvider(providerId) {
-        if (!providerEnabled) {
-          throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
-        }
-        return providerId;
-      },
-      readBundledSkillFiles: async (rootPath) => {
-        readerEntered.resolve();
-        await readerBarrier.promise;
-        return readBundledCharacterAuthoringSkillFiles(rootPath);
-      },
-      getCharacterDirectory: () => workspacePath,
-      async createSession(input) {
-        sessionCreationCount += 1;
-        return buildNewSession(input);
-      },
-    });
-
-    try {
-      const authoringPromise = service.startSession({
-        mode: "improve",
-        characterId: "char-muse",
-        provider: "codex",
+  /** Skill の読取りを待っている間に Provider を無効化すると、既存 Workspace を変更せず Session も作らないことを確かめる。 */
+  it(
+    "Skill準備中にproviderが無効化された場合はcommitしない",
+    { timeout: 10_000 },
+    async () => {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      await seedManagedArtifacts(workspacePath);
+      let providerEnabled = true;
+      const readerEntered = deferred();
+      const readerBarrier = deferred();
+      let sessionCreationCount = 0;
+      const service = createService({
+        /** 準備中に切り替えられる設定値に従い、選択した Provider を受理または拒否する。 */
+        resolveProvider(providerId) {
+          if (!providerEnabled) {
+            throw new Error(
+              "選択した Character authoring provider は Settings で無効になっているよ。",
+            );
+          }
+          return providerId;
+        },
+        /** 読取りの開始を知らせて待機し、設定変更後に実際の bundle を読み取る。 */
+        readBundledSkillFiles: async (rootPath) => {
+          readerEntered.resolve();
+          await readerBarrier.promise;
+          return readBundledCharacterAuthoringSkillFiles(rootPath);
+        },
+        /** 無効化の前後で同じ Workspace を参照し、変更がないか比較する。 */
+        getCharacterDirectory: () => workspacePath,
+        /** 無効化された設定でも保存へ進んだ場合を呼出数で検出する。 */
+        async createSession(input) {
+          sessionCreationCount += 1;
+          return buildNewSession(input);
+        },
       });
-      await readerEntered.promise;
-      providerEnabled = false;
-      readerBarrier.resolve();
-      await assert.rejects(authoringPromise, /provider.*無効/);
-      assert.equal(sessionCreationCount, 0);
-      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
-      await assertManagedArtifactsPreserved(workspacePath);
-    } finally {
-      readerBarrier.resolve();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        const authoringPromise = service.startSession({
+          mode: "improve",
+          characterId: "char-muse",
+          provider: "codex",
+        });
+        await readerEntered.promise;
+        providerEnabled = false;
+        readerBarrier.resolve();
+        await assert.rejects(authoringPromise, /provider.*無効/);
+        assert.equal(sessionCreationCount, 0);
+        assert.equal(
+          await readFile(path.join(workspacePath, "character.md"), "utf8"),
+          defaultDefinition,
+        );
+        await assertManagedArtifactsPreserved(workspacePath);
+      } finally {
+        readerBarrier.resolve();
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
   // @test-value v2
   // kind = "invariant"
@@ -698,74 +1038,99 @@ description: "作業を一緒に進める相手"
   // impact = "古い準備結果が別のCharacterやstorageへ反映されず、既存のcanonical filesを保護する"
   // distinction = "Character update/delete/archive、directory change、storage exchangeを独立に実filesystemとSession creation countで確認する"
   // @end-test-value
-  it("準備中のCharacter・directory・storage交換をcommit前に拒否する", { timeout: 10_000 }, async () => {
-    const scenarios = ["character-update", "character-delete", "character-archive", "directory", "storage"] as const;
-    for (const scenario of scenarios) {
-      const { tempDirectory, workspacePath } = await createWorkspace();
-      await seedManagedArtifacts(workspacePath);
-      const preparedCharacter = buildCharacter();
-      const changedCharacter = buildCharacter({ description: "別のCharacter" });
-      let releasePreparation!: () => void;
-      const preparationBarrier = new Promise<void>((resolve) => {
-        releasePreparation = resolve;
-      });
-      let characterReadCount = 0;
-      const preparationEntered = deferred();
-      let directoryReadCount = 0;
-      let sessionCreationCount = 0;
-      let storageIdentity: object = {};
-      const replacementStorageIdentity = {};
-      const service = createService({
-        getCharacter: async () => {
-          characterReadCount += 1;
-          if (characterReadCount === 1) {
-            preparationEntered.resolve();
-            await preparationBarrier;
-          }
-          if (characterReadCount > 1 && scenario === "character-update") return changedCharacter;
-          if (characterReadCount > 1 && scenario === "character-delete") return null;
-          if (characterReadCount > 1 && scenario === "character-archive") {
-            return buildCharacter({ state: "archived", archivedAt: "2026-09-19T00:00:00.000Z" });
-          }
-          return preparedCharacter;
-        },
-        getCharacterDirectory: () => {
-          directoryReadCount += 1;
-          return scenario === "directory" && directoryReadCount > 1
-            ? path.join(tempDirectory, "moved-character")
-            : workspacePath;
-        },
-        getSessionStorageIdentity: () => storageIdentity,
-        async createSession(input) {
-          sessionCreationCount += 1;
-          return buildNewSession(input);
-        },
-      });
-
-      try {
-        const authoringPromise = service.startSession({
-          mode: "improve",
-          characterId: "char-muse",
-          provider: "codex",
+  /** 準備中に Character の更新・削除・アーカイブ、保存ディレクトリまたは Session 保存世代の変更が起きると、書込みと作成に進まないことを確認する。 */
+  it(
+    "準備中のCharacter・directory・storage交換をcommit前に拒否する",
+    { timeout: 10_000 },
+    async () => {
+      const scenarios = [
+        "character-update",
+        "character-delete",
+        "character-archive",
+        "directory",
+        "storage",
+      ] as const;
+      for (const scenario of scenarios) {
+        const { tempDirectory, workspacePath } = await createWorkspace();
+        await seedManagedArtifacts(workspacePath);
+        const preparedCharacter = buildCharacter();
+        const changedCharacter = buildCharacter({
+          description: "別のCharacter",
         });
-        await preparationEntered.promise;
-        if (scenario === "storage") {
-          storageIdentity = replacementStorageIdentity;
+        let releasePreparation!: () => void;
+        const preparationBarrier = new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        });
+        let characterReadCount = 0;
+        const preparationEntered = deferred();
+        let directoryReadCount = 0;
+        let sessionCreationCount = 0;
+        let storageIdentity: object = {};
+        const replacementStorageIdentity = {};
+        const service = createService({
+          /** 初回の Character 読取りを保留し、検証時は試験条件の更新・削除・アーカイブを反映した値を返す。 */
+          getCharacter: async () => {
+            characterReadCount += 1;
+            if (characterReadCount === 1) {
+              preparationEntered.resolve();
+              await preparationBarrier;
+            }
+            if (characterReadCount > 1 && scenario === "character-update")
+              return changedCharacter;
+            if (characterReadCount > 1 && scenario === "character-delete")
+              return null;
+            if (characterReadCount > 1 && scenario === "character-archive") {
+              return buildCharacter({
+                state: "archived",
+                archivedAt: "2026-09-19T00:00:00.000Z",
+              });
+            }
+            return preparedCharacter;
+          },
+          /** ディレクトリ変更のケースだけ、再照会時に異なる Workspace を返す。 */
+          getCharacterDirectory: () => {
+            directoryReadCount += 1;
+            return scenario === "directory" && directoryReadCount > 1
+              ? path.join(tempDirectory, "moved-character")
+              : workspacePath;
+          },
+          /** 初回または差し替え後の現在の保存世代を返す。 */
+          getSessionStorageIdentity: () => storageIdentity,
+          /** 準備と保存の間で不整合が起きても Session を作ろうとした場合、その回数を記録する。 */
+          async createSession(input) {
+            sessionCreationCount += 1;
+            return buildNewSession(input);
+          },
+        });
+
+        try {
+          const authoringPromise = service.startSession({
+            mode: "improve",
+            characterId: "char-muse",
+            provider: "codex",
+          });
+          await preparationEntered.promise;
+          if (scenario === "storage") {
+            storageIdentity = replacementStorageIdentity;
+          }
+          releasePreparation();
+          await assert.rejects(
+            authoringPromise,
+            /(?:The Character changed while preparing Character authoring|Session storage changed while preparing Character authoring|The Character authoring workspace changed)\. Try again\./,
+          );
+          assert.equal(sessionCreationCount, 0);
+          assert.equal(
+            await readFile(path.join(workspacePath, "character.md"), "utf8"),
+            defaultDefinition,
+          );
+          await assertManagedArtifactsPreserved(workspacePath);
+        } finally {
+          releasePreparation();
+          await rm(tempDirectory, { recursive: true, force: true });
         }
-        releasePreparation();
-        await assert.rejects(
-          authoringPromise,
-          /(?:The Character changed while preparing Character authoring|Session storage changed while preparing Character authoring|The Character authoring workspace changed)\. Try again\./,
-        );
-        assert.equal(sessionCreationCount, 0);
-        assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
-        await assertManagedArtifactsPreserved(workspacePath);
-      } finally {
-        releasePreparation();
-        await rm(tempDirectory, { recursive: true, force: true });
       }
-    }
-  });
+    },
+  );
 
   // @test-value v2
   // kind = "invariant"
@@ -779,31 +1144,46 @@ description: "作業を一緒に進める相手"
   // impact = "不完全なauthoring wrapperでCharacter directoryを汚染しない"
   // distinction = "bundle readerの実filesystem ENOENTを入口に、保存済みcanonical filesとmanaged outputを分けて観測する"
   // @end-test-value
-  it("Skill bundleのread失敗ではworkspaceを変更しない", { timeout: 10_000 }, async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace();
-    await seedManagedArtifacts(workspacePath);
-    let sessionCreationCount = 0;
-    const service = createService({
-      bundledSkillPath: path.join(tempDirectory, "missing-skill-bundle"),
-      getCharacterDirectory: () => workspacePath,
-      async createSession(input) {
-        sessionCreationCount += 1;
-        return buildNewSession(input);
-      },
-    });
+  /** 固定 Skill の配布元が見つからない場合は読取りエラーで止まり、既存定義と補助ファイルを保って Session は作らないことを確かめる。 */
+  it(
+    "Skill bundleのread失敗ではworkspaceを変更しない",
+    { timeout: 10_000 },
+    async () => {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      await seedManagedArtifacts(workspacePath);
+      let sessionCreationCount = 0;
+      const service = createService({
+        bundledSkillPath: path.join(tempDirectory, "missing-skill-bundle"),
+        /** 読取り失敗後に内容保持を照合する既存の Workspace を返す。 */
+        getCharacterDirectory: () => workspacePath,
+        /** bundle の読取りに失敗しても Session 作成へ進んだ場合の回数を記録する。 */
+        async createSession(input) {
+          sessionCreationCount += 1;
+          return buildNewSession(input);
+        },
+      });
 
-    try {
-      await assert.rejects(
-        () => service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" }),
-        /ENOENT|no such file/i,
-      );
-      assert.equal(sessionCreationCount, 0);
-      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
-      await assertManagedArtifactsPreserved(workspacePath);
-    } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
+      try {
+        await assert.rejects(
+          () =>
+            service.startSession({
+              mode: "improve",
+              characterId: "char-muse",
+              provider: "codex",
+            }),
+          /ENOENT|no such file/i,
+        );
+        assert.equal(sessionCreationCount, 0);
+        assert.equal(
+          await readFile(path.join(workspacePath, "character.md"), "utf8"),
+          defaultDefinition,
+        );
+        await assertManagedArtifactsPreserved(workspacePath);
+      } finally {
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
   // @test-value v2
   // kind = "invariant"
@@ -817,41 +1197,60 @@ description: "作業を一緒に進める相手"
   // impact = "Character update/delete/archive相当の変更が古い準備結果へ混入せず、workspaceを汚染しない"
   // distinction = "Skill読込みbarrier中の同一mutable objectへの書換を使い、値の再取得では検出できないsnapshot境界を観測する"
   // @end-test-value
-  it("準備開始後の同一Character objectの変更をsnapshot不一致として拒否する", { timeout: 10_000 }, async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace();
-    await seedManagedArtifacts(workspacePath);
-    const mutableCharacter = buildCharacter();
-    const readerEntered = deferred();
-    const readerBarrier = deferred();
-    let sessionCreationCount = 0;
-    const service = createService({
-      getCharacter: () => mutableCharacter,
-      readBundledSkillFiles: async (rootPath) => {
-        readerEntered.resolve();
-        await readerBarrier.promise;
-        return readBundledCharacterAuthoringSkillFiles(rootPath);
-      },
-      getCharacterDirectory: () => workspacePath,
-      async createSession(input) {
-        sessionCreationCount += 1;
-        return buildNewSession(input);
-      },
-    });
+  /** 同じ Character オブジェクトの内容が準備中に変わっても値の不一致を検出し、既存ファイルと Session の保存を保護することを確かめる。 */
+  it(
+    "準備開始後の同一Character objectの変更をsnapshot不一致として拒否する",
+    { timeout: 10_000 },
+    async () => {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      await seedManagedArtifacts(workspacePath);
+      const mutableCharacter = buildCharacter();
+      const readerEntered = deferred();
+      const readerBarrier = deferred();
+      let sessionCreationCount = 0;
+      const service = createService({
+        /** 読取りごとに同じオブジェクトを返し、参照の一致で内容変更を見落とさないか検証する。 */
+        getCharacter: () => mutableCharacter,
+        /** 固定 Skill の読取りをいったん止め、Character の値を変更した後に再開する。 */
+        readBundledSkillFiles: async (rootPath) => {
+          readerEntered.resolve();
+          await readerBarrier.promise;
+          return readBundledCharacterAuthoringSkillFiles(rootPath);
+        },
+        /** 値の変更があっても管理対象ファイルが保持されるべき Workspace を返す。 */
+        getCharacterDirectory: () => workspacePath,
+        /** 同一参照内の内容変更を見落とし保存まで進んだ場合に数える。 */
+        async createSession(input) {
+          sessionCreationCount += 1;
+          return buildNewSession(input);
+        },
+      });
 
-    try {
-      const authoringPromise = service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" });
-      await readerEntered.promise;
-      mutableCharacter.description = "準備中に変更された説明";
-      readerBarrier.resolve();
-      await assert.rejects(authoringPromise, /The Character changed while preparing Character authoring\./);
-      assert.equal(sessionCreationCount, 0);
-      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
-      await assertManagedArtifactsPreserved(workspacePath);
-    } finally {
-      readerBarrier.resolve();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
+      try {
+        const authoringPromise = service.startSession({
+          mode: "improve",
+          characterId: "char-muse",
+          provider: "codex",
+        });
+        await readerEntered.promise;
+        mutableCharacter.description = "準備中に変更された説明";
+        readerBarrier.resolve();
+        await assert.rejects(
+          authoringPromise,
+          /The Character changed while preparing Character authoring\./,
+        );
+        assert.equal(sessionCreationCount, 0);
+        assert.equal(
+          await readFile(path.join(workspacePath, "character.md"), "utf8"),
+          defaultDefinition,
+        );
+        await assertManagedArtifactsPreserved(workspacePath);
+      } finally {
+        readerBarrier.resolve();
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
   // @test-value v2
   // kind = "invariant"
@@ -865,60 +1264,79 @@ description: "作業を一緒に進める相手"
   // impact = "storage交換をまたぐ古いCharacter authoringのSession保存を防ぐ"
   // distinction = "commit時のCharacter read barrier中にidentityを差し替え、準備前だけでなくawait後の再検証を直接観測する"
   // @end-test-value
-  it("commit検証のawait後にSession storageが交換された場合は保存しない", { timeout: 10_000 }, async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace();
-    await seedManagedArtifacts(workspacePath);
-    let storageIdentity: object = {};
-    const replacementStorageIdentity = {};
-    let characterReadCount = 0;
-    const commitReadEntered = deferred();
-    const commitReadBarrier = deferred();
-    let sessionCreationCount = 0;
-    const service = createService({
-      getCharacter: () => {
-        characterReadCount += 1;
-        if (characterReadCount === 2) {
-          commitReadEntered.resolve();
-          return commitReadBarrier.promise.then(() => buildCharacter());
-        }
-        return buildCharacter();
-      },
-      getCharacterDirectory: () => workspacePath,
-      getSessionStorageIdentity: () => storageIdentity,
-      async createSession(input) {
-        sessionCreationCount += 1;
-        return buildNewSession(input);
-      },
-    });
-
-    try {
-      const authoringPromise = service.startSession({
-        mode: "improve",
-        characterId: "char-muse",
-        provider: "codex",
+  /** 保存直前の Character 読取りを待つ間に保存世代が交代すると、待機の再開後に拒否して既存ファイルと Session の保存を保護することを確かめる。 */
+  it(
+    "commit検証のawait後にSession storageが交換された場合は保存しない",
+    { timeout: 10_000 },
+    async () => {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      await seedManagedArtifacts(workspacePath);
+      let storageIdentity: object = {};
+      const replacementStorageIdentity = {};
+      let characterReadCount = 0;
+      const commitReadEntered = deferred();
+      const commitReadBarrier = deferred();
+      let sessionCreationCount = 0;
+      const service = createService({
+        /** 二回目の Character 照会だけを保留し、保存直前の再検証中に保存先を交換できるようにする。 */
+        getCharacter: () => {
+          characterReadCount += 1;
+          if (characterReadCount === 2) {
+            commitReadEntered.resolve();
+            return commitReadBarrier.promise.then(() => buildCharacter());
+          }
+          return buildCharacter();
+        },
+        /** 作業先は変えず、拒否が保存世代の違いに基づくようにする。 */
+        getCharacterDirectory: () => workspacePath,
+        /** 保存直前に入れ替わる現在の保存世代を返す。 */
+        getSessionStorageIdentity: () => storageIdentity,
+        /** 新しい保存先へ誤って古い準備結果を登録しようとした場合に数える。 */
+        async createSession(input) {
+          sessionCreationCount += 1;
+          return buildNewSession(input);
+        },
       });
-      await commitReadEntered.promise;
-      storageIdentity = replacementStorageIdentity;
-      commitReadBarrier.resolve();
-      await assert.rejects(authoringPromise, /Session storage changed while preparing Character authoring\./);
-      assert.equal(sessionCreationCount, 0);
-      assert.equal(await readFile(path.join(workspacePath, "character.md"), "utf8"), defaultDefinition);
-      await assertManagedArtifactsPreserved(workspacePath);
-    } finally {
-      commitReadBarrier.resolve();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
 
+      try {
+        const authoringPromise = service.startSession({
+          mode: "improve",
+          characterId: "char-muse",
+          provider: "codex",
+        });
+        await commitReadEntered.promise;
+        storageIdentity = replacementStorageIdentity;
+        commitReadBarrier.resolve();
+        await assert.rejects(
+          authoringPromise,
+          /Session storage changed while preparing Character authoring\./,
+        );
+        assert.equal(sessionCreationCount, 0);
+        assert.equal(
+          await readFile(path.join(workspacePath, "character.md"), "utf8"),
+          defaultDefinition,
+        );
+        await assertManagedArtifactsPreserved(workspacePath);
+      } finally {
+        commitReadBarrier.resolve();
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  /** Provider のない起動要求は Character の読取りにも Session の作成にも進まず拒否することを確認する。 */
   it("provider 未指定の authoring session は workspace mutation 前に拒否する", async () => {
     let characterResolutionCount = 0;
     let sessionCreationCount = 0;
     const service = createService({
+      /** Provider 未指定でも Character の解決まで到達した場合を数える。 */
       getCharacter: () => {
         characterResolutionCount += 1;
         return null;
       },
+      /** 正常経路では使わない固定パスで作業先の依存を置き換える。 */
       getCharacterDirectory: () => "C:/unexpected",
+      /** 不足する Provider 指定を補って Session を作ろうとした場合に数える。 */
       async createSession(input) {
         sessionCreationCount += 1;
         return buildNewSession(input);
@@ -935,15 +1353,19 @@ description: "作業を一緒に進める相手"
     assert.equal(sessionCreationCount, 0);
   });
 
+  /** 未知の authoring モードは既知モードに読み替えず、Character の読取りと Session の作成に進む前に拒否することを確かめる。 */
   it("未知の authoring mode は workspace mutation 前に拒否する", async () => {
     let characterResolutionCount = 0;
     let sessionCreationCount = 0;
     const service = createService({
+      /** モードの検証を通って Character 詳細を取得した場合に呼出数を残す。 */
       getCharacter: () => {
         characterResolutionCount += 1;
         return null;
       },
+      /** モード拒否を試す間は実 Workspace を割り当てない。 */
       getCharacterDirectory: () => "C:/unexpected",
+      /** 未知のモードで起動処理まで進んだ場合の回数を記録する。 */
       async createSession(input) {
         sessionCreationCount += 1;
         return buildNewSession(input);
@@ -951,31 +1373,47 @@ description: "作業を一緒に進める相手"
     });
 
     await assert.rejects(
-      () => service.startSession({
-        mode: "unknown",
-        characterId: "char-muse",
-        provider: "codex",
-      } as unknown as Parameters<CharacterAuthoringService["startSession"]>[0]),
+      () =>
+        service.startSession({
+          mode: "unknown",
+          characterId: "char-muse",
+          provider: "codex",
+        } as unknown as Parameters<
+          CharacterAuthoringService["startSession"]
+        >[0]),
       /mode/,
     );
     assert.equal(characterResolutionCount, 0);
     assert.equal(sessionCreationCount, 0);
   });
 
+  /** 無効な Provider と候補にない Provider をそれぞれの理由で拒否し、作業領域に補助ファイルや Skill を作らないことを確かめる。 */
   it("無効または不明な provider の authoring session は workspace mutation 前に拒否する", async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace(defaultDefinition, null);
+    const { tempDirectory, workspacePath } = await createWorkspace(
+      defaultDefinition,
+      null,
+    );
     let sessionCreationCount = 0;
     const service = createService({
+      /** カタログにない場合と設定で無効な場合を異なる例外として返す。 */
       resolveProvider(providerId) {
         if (providerId === "unknown-provider") {
-          throw new Error("選択した Character authoring provider が model catalog に見つからないよ。");
+          throw new Error(
+            "選択した Character authoring provider が model catalog に見つからないよ。",
+          );
         }
-        throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+        throw new Error(
+          "選択した Character authoring provider は Settings で無効になっているよ。",
+        );
       },
+      /** 拒否後の補助ファイルの不在を確認する実 Workspace を返す。 */
       getCharacterDirectory: () => workspacePath,
+      /** 無効な Provider でも作成まで到達した回数を数え、試験用の拒否を返す。 */
       async createSession() {
         sessionCreationCount += 1;
-        throw new Error("選択した Character authoring provider は Settings で無効になっているよ。");
+        throw new Error(
+          "選択した Character authoring provider は Settings で無効になっているよ。",
+        );
       },
     });
 
@@ -985,11 +1423,12 @@ description: "作業を一緒に進める相手"
         ["unknown-provider", /provider.*model catalog/],
       ] as const) {
         await assert.rejects(
-          () => service.startSession({
-            mode: "improve",
-            characterId: "char-muse",
-            provider,
-          }),
+          () =>
+            service.startSession({
+              mode: "improve",
+              characterId: "char-muse",
+              provider,
+            }),
           expectedError,
         );
       }
@@ -999,10 +1438,17 @@ description: "作業を一緒に進める相手"
         (error: NodeJS.ErrnoException) => error.code === "ENOENT",
       );
       await assert.rejects(
-        () => readFile(
-          path.join(workspacePath, ".github", "skills", CHARACTER_AUTHORING_SKILL_NAME, "SKILL.md"),
-          "utf8",
-        ),
+        () =>
+          readFile(
+            path.join(
+              workspacePath,
+              ".github",
+              "skills",
+              CHARACTER_AUTHORING_SKILL_NAME,
+              "SKILL.md",
+            ),
+            "utf8",
+          ),
         (error: NodeJS.ErrnoException) => error.code === "ENOENT",
       );
     } finally {
@@ -1022,15 +1468,19 @@ description: "作業を一緒に進める相手"
   // impact = "保存前Characterがauthoring workspaceやSessionへ流れ込むのを防ぐ"
   // distinction = "provider validation通過後でも保存済みID境界を実際のstartSession rejectionとdirectory解決・Session作成回数で確認する"
   // @end-test-value
+  /** 保存済み Character の ID が確定しない要求では、作業ディレクトリの解決にも Session 作成にも進まないことを確かめる。 */
   it("characterId 未確定の authoring session は開始しない", async () => {
     let workspaceResolutionCount = 0;
     let sessionCreationCount = 0;
     const service = createService({
+      /** ID が未確定の試験では Character の詳細を供給しない。 */
       getCharacter: () => null,
+      /** Character ID が確定しないままパスの解決に進んだ場合に記録する。 */
       getCharacterDirectory: () => {
         workspaceResolutionCount += 1;
         return "C:/unexpected";
       },
+      /** ID のないまま Session を作成しようとした呼出しを数える。 */
       async createSession(input) {
         sessionCreationCount += 1;
         return buildNewSession(input);
@@ -1038,10 +1488,11 @@ description: "作業を一緒に進める相手"
     });
 
     await assert.rejects(
-      () => service.startSession({
-        mode: "create",
-        provider: "codex",
-      }),
+      () =>
+        service.startSession({
+          mode: "create",
+          provider: "codex",
+        }),
       /An authoring session can start only for a saved Character\./,
     );
     assert.equal(workspaceResolutionCount, 0);
@@ -1060,15 +1511,19 @@ description: "作業を一緒に進める相手"
   // impact = "存在しないCharacterへのauthoring artifactやSessionが残らない"
   // distinction = "characterIdなしのgateとは分け、保存IDのlookup失敗時の副作用不在を観測する"
   // @end-test-value
+  /** 指定 ID の保存済み Character が見つからない場合、Workspace を解決せず Session も作らないことを確認する。 */
   it("保存済み Character が見つからない場合は workspace と session を作らない", async () => {
     let workspaceResolutionCount = 0;
     let sessionCreationCount = 0;
     const service = createService({
+      /** 指定 ID に対応する保存済み Character が存在しない状態を再現する。 */
       getCharacter: () => null,
+      /** 存在しない Character の作業領域を解決しようとした呼出しを数える。 */
       getCharacterDirectory: () => {
         workspaceResolutionCount += 1;
         return "C:/unexpected";
       },
+      /** Character の読取りが空でも Session 作成に進んだ場合を記録する。 */
       async createSession(input) {
         sessionCreationCount += 1;
         return buildNewSession(input);
@@ -1076,11 +1531,12 @@ description: "作業を一緒に進める相手"
     });
 
     await assert.rejects(
-      () => service.startSession({
-        mode: "improve",
-        characterId: "missing-character",
-        provider: "codex",
-      }),
+      () =>
+        service.startSession({
+          mode: "improve",
+          characterId: "missing-character",
+          provider: "codex",
+        }),
       /An authoring session can start only for a saved Character\./,
     );
     assert.equal(workspaceResolutionCount, 0);
@@ -1099,9 +1555,11 @@ description: "作業を一緒に進める相手"
   // impact = "古いauthoring instructionsやSkill残骸がprovider実行へ混入しない"
   // distinction = "既存補助ファイルとSkill残骸を先に配置し、次回startSession後に再生成内容を確認する"
   // @end-test-value
+  /** 前回の補助文書と入力ファイルを最新内容へ更新し、古い Skill ディレクトリの余分なファイルを残さないことを確かめる。 */
   it("authoring 補助ファイルと Skill directory は次回起動時に作り直す", async () => {
     const { tempDirectory, workspacePath } = await createWorkspace();
     const service = createService({
+      /** 前回の生成物と古い Skill が置かれた Workspace を再起動時にも返す。 */
       getCharacterDirectory: () => workspacePath,
     });
 
@@ -1112,9 +1570,21 @@ description: "作業を一緒に進める相手"
         provider: "codex",
       });
 
-      await writeFile(path.join(workspacePath, "AGENTS.md"), "stale agents", "utf8");
-      await writeFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "stale prompt", "utf8");
-      await writeFile(path.join(workspacePath, "input.json"), "{\"stale\":true}\n", "utf8");
+      await writeFile(
+        path.join(workspacePath, "AGENTS.md"),
+        "stale agents",
+        "utf8",
+      );
+      await writeFile(
+        path.join(workspacePath, "AUTHORING_PROMPT.md"),
+        "stale prompt",
+        "utf8",
+      );
+      await writeFile(
+        path.join(workspacePath, "input.json"),
+        '{"stale":true}\n',
+        "utf8",
+      );
       const staleSkillFilePath = path.join(
         workspacePath,
         ".agents",
@@ -1131,9 +1601,18 @@ description: "作業を一緒に進める相手"
         provider: "codex",
       });
 
-      assert.match(await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"), /Character Authoring Workspace/);
-      assert.match(await readFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "utf8"), /Muse Character Authoring/);
-      assert.match(await readFile(path.join(workspacePath, "input.json"), "utf8"), /"skill": "withmate-character-authoring"/);
+      assert.match(
+        await readFile(path.join(workspacePath, "AGENTS.md"), "utf8"),
+        /Character Authoring Workspace/,
+      );
+      assert.match(
+        await readFile(path.join(workspacePath, "AUTHORING_PROMPT.md"), "utf8"),
+        /Muse Character Authoring/,
+      );
+      assert.match(
+        await readFile(path.join(workspacePath, "input.json"), "utf8"),
+        /"skill": "withmate-character-authoring"/,
+      );
       await assert.rejects(() => readFile(staleSkillFilePath, "utf8"));
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -1152,44 +1631,59 @@ description: "作業を一緒に進める相手"
   // impact = "同一 Character の catalog と files の競合を防ぐ"
   // distinction = "実 CharacterAuthoringService の write seam と共有 Character coordinator を使い、同一 key の順序を観測する"
   // @end-test-value
-  it("managed write 中は同一 Character mutation を待機させる", { timeout: 10_000 }, async () => {
-    const { tempDirectory, workspacePath } = await createWorkspace();
-    const workspaceCoordinator = new CharacterWorkspaceOperationCoordinator();
-    const writeEntered = deferred();
-    const releaseWrite = deferred();
-    const events: string[] = [];
-    const service = createService({
-      runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
-        workspaceCoordinator.runExclusive(characterId, operation),
-      writePreparedWorkspace: async (targetPath, _provider, files) => {
-        writeEntered.resolve();
-        await releaseWrite.promise;
-        for (const file of files) {
-          const destination = path.join(targetPath, file.relativePath);
-          await mkdir(path.dirname(destination), { recursive: true });
-          await writeFile(destination, file.content);
-        }
-      },
-      async createSession(input) {
-        events.push("session");
-        return buildNewSession(input);
-      },
-    });
-
-    try {
-      const authoring = service.startSession({ mode: "improve", characterId: "char-muse", provider: "codex" });
-      await writeEntered.promise;
-      const characterMutation = workspaceCoordinator.runExclusive("char-muse", async () => {
-        events.push("mutation");
+  /** 管理ファイルの書込み中に入った同じ Character の変更を待たせ、Session 作成の後にだけ実行することを確かめる。 */
+  it(
+    "managed write 中は同一 Character mutation を待機させる",
+    { timeout: 10_000 },
+    async () => {
+      const { tempDirectory, workspacePath } = await createWorkspace();
+      const workspaceCoordinator = new CharacterWorkspaceOperationCoordinator();
+      const writeEntered = deferred();
+      const releaseWrite = deferred();
+      const events: string[] = [];
+      const service = createService({
+        /** Authoring と競合相手に同じ調停器を使わせ、Character 単位の排他処理を試す。 */
+        runCharacterWorkspaceOperationExclusive: (characterId, operation) =>
+          workspaceCoordinator.runExclusive(characterId, operation),
+        /** 管理ファイルの書込みを開始直後に保留し、試験側から解放された後でファイルを配置する。 */
+        writePreparedWorkspace: async (targetPath, _provider, files) => {
+          writeEntered.resolve();
+          await releaseWrite.promise;
+          for (const file of files) {
+            const destination = path.join(targetPath, file.relativePath);
+            await mkdir(path.dirname(destination), { recursive: true });
+            await writeFile(destination, file.content);
+          }
+        },
+        /** 競合する Character 変更と順序を比較できるよう、Session 作成の時点を記録する。 */
+        async createSession(input) {
+          events.push("session");
+          return buildNewSession(input);
+        },
       });
-      assert.deepEqual(events, []);
-      releaseWrite.resolve();
-      await authoring;
-      await characterMutation;
-      assert.deepEqual(events, ["session", "mutation"]);
-    } finally {
-      releaseWrite.resolve();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        const authoring = service.startSession({
+          mode: "improve",
+          characterId: "char-muse",
+          provider: "codex",
+        });
+        await writeEntered.promise;
+        const characterMutation = workspaceCoordinator.runExclusive(
+          "char-muse",
+          async () => {
+            events.push("mutation");
+          },
+        );
+        assert.deepEqual(events, []);
+        releaseWrite.resolve();
+        await authoring;
+        await characterMutation;
+        assert.deepEqual(events, ["session", "mutation"]);
+      } finally {
+        releaseWrite.resolve();
+        await rm(tempDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 });

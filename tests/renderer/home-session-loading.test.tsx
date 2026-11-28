@@ -18,8 +18,11 @@ import {
 } from "../../src-shared/session/session-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** 個々の取得結果をテストから成功または失敗させ、非同期応答の順序を制御する。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -30,55 +33,119 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+/** 指定IDと同名の、選択可能なカタログ項目を作る。 */
 function character(id: string): CharacterCatalogEntry {
   return {
-    id, name: id, description: "", iconFilePath: "",
+    id,
+    name: id,
+    description: "",
+    iconFilePath: "",
     theme: { main: "#6f8cff", sub: "#6fb8c7" },
-    state: "active", createdAt: "", updatedAt: "", archivedAt: null,
+    state: "active",
+    createdAt: "",
+    updatedAt: "",
+    archivedAt: null,
   };
 }
 
-function session(id: string, characterId = "used", isPinned = false): HomeSessionSummary {
+/** 使用キャラクターと固定表示の有無を指定できる既定セッションの要約を作る。 */
+function session(
+  id: string,
+  characterId = "used",
+  isPinned = false,
+): HomeSessionSummary {
   return {
-    id, taskTitle: id, status: "idle", updatedAt: "2026-09-01T00:00:00.000Z",
-    isPinned, workspaceLabel: "Session Folder", workspacePath: `C:\\sessions\\${id}`,
-    sessionKind: "default", accessMode: "active", sourceSchemaVersion: 6,
-    characterId, character: characterId, characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, runState: "idle",
+    id,
+    taskTitle: id,
+    status: "idle",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    isPinned,
+    workspaceLabel: "Session Folder",
+    workspacePath: `C:\\sessions\\${id}`,
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 6,
+    characterId,
+    character: characterId,
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    runState: "idle",
   };
 }
 
-function page(entries: HomeSessionSummary[], nextCursor: string | null = null): HomeSessionSummaryPageResult {
+/** 次カーソルの有無を一覧の継続可否にも反映する。 */
+function page(
+  entries: HomeSessionSummary[],
+  nextCursor: string | null = null,
+): HomeSessionSummaryPageResult {
   return { entries, hasMore: nextCursor !== null, nextCursor };
 }
 
-function auxiliary(id: string, cancellationState?: AuxiliarySessionSummary["cancellationState"]): AuxiliarySessionSummary {
+/** 親のカードにぶら下がるAuxiliary要約を作り、必要なら取消待ちを指定する。 */
+function auxiliary(
+  id: string,
+  cancellationState?: AuxiliarySessionSummary["cancellationState"],
+): AuxiliarySessionSummary {
   return {
-    id, parentSessionId: "open", runState: "idle", title: id,
-    provider: "codex", catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "high",
-    approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard",
-    codexReviewer: "auto-review", customAgentName: "",
-    threadId: "", displayAfterMessageIndex: null, createdAt: "", updatedAt: "",
-    preview: id, cancellationState,
+    id,
+    parentSessionId: "open",
+    runState: "idle",
+    title: id,
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "auto-review",
+    customAgentName: "",
+    threadId: "",
+    displayAfterMessageIndex: null,
+    createdAt: "",
+    updatedAt: "",
+    preview: id,
+    cancellationState,
   };
 }
 
+/** 表示ラベルで操作ボタンを取得し、欠けていればその場で失敗させる。 */
 function button(container: Element, label: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.trim() === label);
+  const found = Array.from(container.querySelectorAll("button")).find(
+    (item) => item.textContent?.trim() === label,
+  );
   assert.ok(found, `${label} button should exist`);
   return found;
 }
 
+/** Homeで観測するDOM・API要求と、各テストが取得や通知を操作するための契約。 */
 type Harness = {
   dom: JSDOM;
   element: HTMLElement;
   requests: CreateSessionRequest[];
-  setListPage: (handler: (request: SessionSummaryPageRequest) => Promise<HomeSessionSummaryPageResult>) => void;
-  setUsage: (handler: () => Promise<Array<{ characterId: string; sessionKind: "default" }>>) => void;
-  setCreate: (handler: (input: CreateSessionRequest) => Promise<ReturnType<typeof buildNewSession>>) => void;
-  setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
+  setListPage: (
+    handler: (
+      request: SessionSummaryPageRequest,
+    ) => Promise<HomeSessionSummaryPageResult>,
+  ) => void;
+  setUsage: (
+    handler: () => Promise<
+      Array<{ characterId: string; sessionKind: "default" }>
+    >,
+  ) => void;
+  setCreate: (
+    handler: (
+      input: CreateSessionRequest,
+    ) => Promise<ReturnType<typeof buildNewSession>>,
+  ) => void;
+  setAuxiliaryQuery: (
+    handler: () => Promise<AuxiliarySessionSummary[]>,
+  ) => void;
   setMonitorEntries: (handler: () => Promise<HomeSessionSummary[]>) => void;
-  emitLive: (sessionId: string, cancellationState?: LiveSessionRunStatus["cancellationState"] | null) => Promise<void>;
+  emitLive: (
+    sessionId: string,
+    cancellationState?: LiveSessionRunStatus["cancellationState"] | null,
+  ) => Promise<void>;
   liveSubscriptionCount: () => number;
   characterQueryCount: () => number;
   emitInvalidation: (payload: SessionSummaryInvalidation) => Promise<void>;
@@ -91,117 +158,235 @@ type Harness = {
   close: () => Promise<void>;
 };
 
-async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["cancellationState"]; auxiliaries?: AuxiliarySessionSummary[]; auxiliaryError?: Error; monitor?: boolean; openIds?: string[] }): Promise<Harness> {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
-    url: initial?.monitor ? "https://withmate.local/?mode=monitor" : "https://withmate.local/",
-  });
+/** 通常Homeまたは独立Monitorを同じUIで描画し、取得の状態と購読イベントをシナリオから差し替えられるようにする。 */
+async function mountHome(initial?: {
+  mainCancellation?: HomeSessionSummary["cancellationState"];
+  auxiliaries?: AuxiliarySessionSummary[];
+  auxiliaryError?: Error;
+  monitor?: boolean;
+  openIds?: string[];
+}): Promise<Harness> {
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      url: initial?.monitor
+        ? "https://withmate.local/?mode=monitor"
+        : "https://withmate.local/",
+    },
+  );
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
-  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  Object.defineProperty(globalThis, "window", {
+    value: dom.window,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "document", {
+    value: dom.window.document,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    value: dom.window.HTMLElement,
+    configurable: true,
+  });
 
-  let listPage = async (request: SessionSummaryPageRequest) => page(
-    request.scope === "open" ? [{ ...session("open"), cancellationState: initial?.mainCancellation }] : [],
-  );
-  let monitorEntries: () => Promise<HomeSessionSummary[]> = async () => (initial?.openIds ?? ["open"])
-    .map((id) => ({ ...session(id), cancellationState: initial?.mainCancellation }));
+  /** 既定では開いているSessionのスコープにだけ要約を返す。 */
+  let listPage = async (request: SessionSummaryPageRequest) =>
+    page(
+      request.scope === "open"
+        ? [{ ...session("open"), cancellationState: initial?.mainCancellation }]
+        : [],
+    );
+  /** 既定のOpen IDからMonitor用のカードを作り、取消状態を反映する。 */
+  let monitorEntries: () => Promise<HomeSessionSummary[]> = async () =>
+    (initial?.openIds ?? ["open"]).map((id) => ({
+      ...session(id),
+      cancellationState: initial?.mainCancellation,
+    }));
+  /** 初回の子Session取得を指定どおり成功または失敗させる。 */
   let auxiliaryQuery = async () => {
     if (initial?.auxiliaryError) throw initial.auxiliaryError;
     return initial?.auxiliaries ?? [];
   };
-  const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
-  const invalidationListeners = new Set<(payload: SessionSummaryInvalidation) => void>();
+  const liveListeners = new Set<
+    Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]
+  >();
+  const invalidationListeners = new Set<
+    (payload: SessionSummaryInvalidation) => void
+  >();
   const turnListeners = new Set<(sessionId: string) => void>();
   const openIdListeners = new Set<(ids: string[]) => void>();
   const opened: Array<[string, string | undefined]> = [];
-  let usage = async () => [{ characterId: "used", sessionKind: "default" as const }];
-  let create = async (input: CreateSessionRequest) => buildNewSession({
-    ...input, id: "created-session", workspaceLabel: "Session Folder",
-    workspacePath: "C:\\sessions\\created-session", branch: "", approvalMode: "on-request",
-  });
+  /** ランダム候補の除外に使う既定のキャラクター利用履歴を返す。 */
+  let usage = async () => [
+    { characterId: "used", sessionKind: "default" as const },
+  ];
+  /** 起動要求から保存済みセッションを作り、既定のSession Folderを割り当てる。 */
+  let create = async (input: CreateSessionRequest) =>
+    buildNewSession({
+      ...input,
+      id: "created-session",
+      workspaceLabel: "Session Folder",
+      workspacePath: "C:\\sessions\\created-session",
+      branch: "",
+      approvalMode: "on-request",
+    });
   const requests: CreateSessionRequest[] = [];
   let characterQueries = 0;
   const api: Partial<WithMateWindowApi> = {
-    listCharacters: async () => { characterQueries += 1; return [character("used"), character("unused")]; },
+    /** 使用中と未使用の候補を返し、検索で余計なカタログ再取得がないかを数える。 */
+    listCharacters: async () => {
+      characterQueries += 1;
+      return [character("used"), character("unused")];
+    },
+    /** Mate未作成の状態でHomeを初期化する。 */
     getMateState: async () => "not_created",
+    /** 表示とセッション作成で使用する既定の設定を返す。 */
     getAppSettings: async () => createDefaultAppSettings(),
+    /** 設定値をテスト中は変更しないため購読通知を発行しない。 */
     subscribeAppSettings: () => () => {},
+    /** クォータのテレメトリーがなくてもHomeを表示する。 */
     getProviderQuotaTelemetry: async () => null,
+    /** クォータ更新は今回調べないため購読に副作用を持たせない。 */
     subscribeProviderQuotaTelemetry: () => () => {},
+    /** セッションを開始できるProviderと利用モデルの候補を返す。 */
     getModelCatalog: async () => ({
       revision: 1,
-      providers: [{
-        id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
-        models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
-      }],
+      providers: [
+        {
+          id: "codex",
+          label: "Codex",
+          defaultModelId: "gpt-5.4",
+          defaultReasoningEffort: "high",
+          models: [
+            { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] },
+          ],
+        },
+      ],
     }),
+    /** 一覧要求を現在設定中のページ応答に渡す。 */
     listSessionSummaryPage: async (request) => listPage(request ?? {}),
+    /** 親と子の要約を同じMonitorスナップショットへまとめる。 */
     listSessionMonitorPage: async () => {
-      const [entries, auxiliarySessions] = await Promise.all([monitorEntries(), auxiliaryQuery()]);
+      const [entries, auxiliarySessions] = await Promise.all([
+        monitorEntries(),
+        auxiliaryQuery(),
+      ]);
       return { entries, auxiliarySessions, hasMore: false, nextCursor: null };
     },
-    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    /** 相談がない状態でMonitorの表示だけを検証する。 */
+    executeCoordination: async () => ({
+      items: [],
+      total: 0,
+      nextOffset: null,
+    }),
+    /** 相談更新の通知は発行しない。 */
     subscribeCoordinationChanged: () => () => {},
+    /** 個別Session詳細には依存せず、一覧のスナップショットを使う。 */
     getSessionSummary: async () => null,
+    /** 使用履歴の成功・失敗を切り替えられる取得先へ委ねる。 */
     listSessionCharacterUsage: async () => usage(),
+    /** 対象IDや全体の無効化を通知できるよう購読先を登録し、解除時に取り除く。 */
     subscribeSessionInvalidation: (listener) => {
       invalidationListeners.add(listener);
-      return () => { invalidationListeners.delete(listener); };
+      return () => {
+        invalidationListeners.delete(listener);
+      };
     },
+    /** Turn結果の更新を直接発行できるようにする。 */
     onSessionTurnUpdated: (listener) => {
       turnListeners.add(listener);
-      return () => { turnListeners.delete(listener); };
+      return () => {
+        turnListeners.delete(listener);
+      };
     },
+    /** 初回に開かれているウィンドウのセッションIDを返す。 */
     listOpenSessionWindowIds: async () => initial?.openIds ?? ["open"],
+    /** 開いているセッションの集合が変わったことを通知できるようにする。 */
     subscribeOpenSessionWindowIds: (listener) => {
       openIdListeners.add(listener);
-      return () => { openIdListeners.delete(listener); };
+      return () => {
+        openIdListeners.delete(listener);
+      };
     },
+    /** ウィンドウの復元予定がない初期状態を返す。 */
     getSessionWindowRestoreSet: async () => [],
+    /** 復元予定の変更とは無関係なので通知を発行しない。 */
     subscribeSessionWindowRestoreSet: () => () => {},
+    /** 実行状態の通知先を登録し、終了時に購読が消えることを観測できるようにする。 */
     subscribeLiveSessionRunStatus: (listener) => {
       liveListeners.add(listener);
-      return () => { liveListeners.delete(listener); };
+      return () => {
+        liveListeners.delete(listener);
+      };
     },
+    /** ダイアログから実際に組み立てられた作成要求を記録し、差し替え可能な作成処理へ送る。 */
     createSession: async (input) => {
       requests.push(input);
       return create(input);
     },
-    openSession: async (id, auxiliaryId) => { opened.push([id, auxiliaryId]); },
+    /** MainまたはAuxiliaryを開く操作の対象を、両IDの組として記録する。 */
+    openSession: async (id, auxiliaryId) => {
+      opened.push([id, auxiliaryId]);
+    },
   };
   dom.window.withmate = api as WithMateWindowApi;
   const element = dom.window.document.getElementById("root");
   assert.ok(element);
   let root: Root | null = null;
+  /** デバウンスされた取得と、それに続くReactの更新を待つ。 */
   const settle = async (ms = 160) => {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    });
   };
+  /** Homeへフォーカスし直した場合の再取得の契機を作る。 */
   const focus = async () => {
-    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    await act(async () =>
+      dom.window.dispatchEvent(new dom.window.Event("focus")),
+    );
   };
+  /** 新規Sessionを開いて必須タイトルとSession Folderを選び、キャラクター等の確認だけをテストへ残す。 */
   const launch = async () => {
-    const newSession = element.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    const newSession = element.querySelector<HTMLButtonElement>(
+      '[aria-label="New session"]',
+    );
     assert.ok(newSession);
     await act(async () => newSession.click());
-    const dialog = element.querySelector<HTMLElement>('[role="dialog"][aria-label="New Session"]');
+    const dialog = element.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="New Session"]',
+    );
     assert.ok(dialog);
-    const title = dialog.querySelector<HTMLInputElement>("#launch-session-title");
+    const title = dialog.querySelector<HTMLInputElement>(
+      "#launch-session-title",
+    );
     assert.ok(title);
     await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(title, "Task");
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(title, "Task");
       title.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
       button(dialog, "Session Folder").click();
     });
     return dialog;
   };
+  /** 描画と購読を終了し、DOMを閉じて元のグローバルを復元する。 */
   const close = async () => {
     await act(async () => root?.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "window", {
+      value: previousWindow,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: previousDocument,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      value: previousHTMLElement,
+      configurable: true,
+    });
   };
   try {
     const { createRoot } = await import("react-dom/client");
@@ -215,31 +400,66 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     throw error;
   }
   return {
-    dom, element, requests, opened,
-    setListPage: (handler) => { listPage = handler; },
-    setUsage: (handler) => { usage = handler; },
-    setCreate: (handler) => { create = handler; },
-    setAuxiliaryQuery: (handler) => { auxiliaryQuery = handler; },
-    setMonitorEntries: (handler) => { monitorEntries = handler; },
+    dom,
+    element,
+    requests,
+    opened,
+    /** 次回以降の一覧ページの応答を差し替える。 */
+    setListPage: (handler) => {
+      listPage = handler;
+    },
+    /** Random候補の判定に使う利用履歴の応答を差し替える。 */
+    setUsage: (handler) => {
+      usage = handler;
+    },
+    /** 作成要求への応答を変更して起動失敗を再現できるようにする。 */
+    setCreate: (handler) => {
+      create = handler;
+    },
+    /** 親を変えずにMonitorの子Session読取だけを差し替える。 */
+    setAuxiliaryQuery: (handler) => {
+      auxiliaryQuery = handler;
+    },
+    /** MonitorのMain要約の取得結果を切り替える。 */
+    setMonitorEntries: (handler) => {
+      monitorEntries = handler;
+    },
+    /** 取消待ちや実行終端を軽量なライブ通知として購読先へ届ける。 */
     emitLive: async (sessionId, cancellationState) => {
       await act(async () => {
-        const status: LiveSessionRunStatus | null = cancellationState === null
-          ? null : { runState: "running", cancellationState };
+        const status: LiveSessionRunStatus | null =
+          cancellationState === null
+            ? null
+            : { runState: "running", cancellationState };
         for (const listener of liveListeners) listener(sessionId, status);
       });
     },
+    /** 終了後に残ったライブ購読を検出できるよう現在数を返す。 */
     liveSubscriptionCount: () => liveListeners.size,
+    /** 無関係な操作からカタログが再取得されていないか調べるため読取件数を返す。 */
     characterQueryCount: () => characterQueries,
+    /** 全体または対象IDの無効化を、実際に登録された購読先へ届ける。 */
     emitInvalidation: async (payload) => {
-      await act(async () => { for (const listener of invalidationListeners) listener(payload); });
+      await act(async () => {
+        for (const listener of invalidationListeners) listener(payload);
+      });
     },
+    /** 指定SessionのTurn結果更新を購読経路へ流す。 */
     emitTurn: async (sessionId) => {
-      await act(async () => { for (const listener of turnListeners) listener(sessionId); });
+      await act(async () => {
+        for (const listener of turnListeners) listener(sessionId);
+      });
     },
+    /** 開く対象の変化として新しいID一覧を購読先へ届ける。 */
     emitOpenIds: async (ids) => {
-      await act(async () => { for (const listener of openIdListeners) listener(ids); });
+      await act(async () => {
+        for (const listener of openIdListeners) listener(ids);
+      });
     },
-    focus, settle, launch, close,
+    focus,
+    settle,
+    launch,
+    close,
   };
 }
 
@@ -255,19 +475,33 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
 // impact = "複数セッションの未確認結果と確認済み結果を識別できない"
 // distinction = "service/observer単体では最終consumerの更新配線とMain/Aux領域の独立性を検証できない"
 // @end-test-value
+/** 同じ親子カードでも未読状態は独立に変わり、既読にしても実行状態・順序・操作先を維持することを確認する。 */
 test("HomeとMonitorは結果更新でMain/Auxを独立に既読表示する", async () => {
   for (const monitor of [false, true]) {
     const h = await mountHome({ monitor });
     try {
       let mainUnread = true;
       let auxUnread = true;
-      h.setMonitorEntries(async () => [{ ...session("open"), runState: "error", hasUnreadResult: mainUnread }, session("other")]);
-      h.setAuxiliaryQuery(async () => [{ ...auxiliary("aux"), hasUnreadResult: auxUnread }]);
+      h.setMonitorEntries(async () => [
+        { ...session("open"), runState: "error", hasUnreadResult: mainUnread },
+        session("other"),
+      ]);
+      h.setAuxiliaryQuery(async () => [
+        { ...auxiliary("aux"), hasUnreadResult: auxUnread },
+      ]);
       await h.emitTurn("open");
-      const card = () => h.element.querySelector<HTMLElement>(".home-monitor-card")!;
-      const main = () => card().querySelector<HTMLButtonElement>(".home-monitor-parent-button")!;
-      const disclosure = () => card().querySelector<HTMLButtonElement>(".home-monitor-disclosure")!;
-      const child = () => card().querySelector<HTMLButtonElement>(".home-monitor-auxiliary-row")!;
+      /** 最新描画にある親子カードを参照する。 */
+      const card = () =>
+        h.element.querySelector<HTMLElement>(".home-monitor-card")!;
+      /** 親の未読表示とウィンドウを開く対象を確認するボタンを取得する。 */
+      const main = () =>
+        card().querySelector<HTMLButtonElement>(".home-monitor-parent-button")!;
+      /** 子の表示切替を行う親カード内の操作ボタンを取得する。 */
+      const disclosure = () =>
+        card().querySelector<HTMLButtonElement>(".home-monitor-disclosure")!;
+      /** 子Session自身の状態表示と操作先を検証する行を取得する。 */
+      const child = () =>
+        card().querySelector<HTMLButtonElement>(".home-monitor-auxiliary-row")!;
       assert.ok(main().classList.contains("has-unread-result"));
       assert.match(main().getAttribute("aria-label")!, /Unread Result/);
       assert.ok(disclosure().classList.contains("has-unread-result"));
@@ -287,14 +521,34 @@ test("HomeとMonitorは結果更新でMain/Auxを独立に既読表示する", a
       auxUnread = false;
       await h.emitTurn("aux");
       assert.equal(disclosure().classList.contains("has-unread-result"), false);
-      assert.doesNotMatch(disclosure().getAttribute("aria-label")!, /Unread Result/);
+      assert.doesNotMatch(
+        disclosure().getAttribute("aria-label")!,
+        /Unread Result/,
+      );
       assert.equal(child().classList.contains("has-unread-result"), false);
       assert.doesNotMatch(child().getAttribute("aria-label")!, /Unread Result/);
-      assert.ok(card().querySelector('.home-monitor-parent-identity [aria-label="Main Failed"]'));
-      assert.deepEqual([...h.element.querySelectorAll(".home-monitor-parent-title")].map((title) => title.textContent), ["open", "other"]);
-      await act(async () => { main().click(); child().click(); });
-      assert.deepEqual(h.opened, [["open", undefined], ["open", "aux"]]);
-    } finally { await h.close(); }
+      assert.ok(
+        card().querySelector(
+          '.home-monitor-parent-identity [aria-label="Main Failed"]',
+        ),
+      );
+      assert.deepEqual(
+        [...h.element.querySelectorAll(".home-monitor-parent-title")].map(
+          (title) => title.textContent,
+        ),
+        ["open", "other"],
+      );
+      await act(async () => {
+        main().click();
+        child().click();
+      });
+      assert.deepEqual(h.opened, [
+        ["open", undefined],
+        ["open", "aux"],
+      ]);
+    } finally {
+      await h.close();
+    }
   }
 });
 
@@ -310,14 +564,17 @@ test("HomeとMonitorは結果更新でMain/Auxを独立に既読表示する", a
 // impact = "Auxiliaryの状態を対象面から回復できず、別の取得や利用可能な一覧まで巻き込む"
 // distinction = "refresher単体や型checkでは検出できない両consumerのRetry配線と取得範囲を既存Home harnessで確認する"
 // @end-test-value
+/** 初回と再読込の両方で失敗したMonitorだけを再試行し、既知の行と失敗理由を保ったまま回復することを確認する。 */
 test("Home and Monitor retry only the failed Monitor snapshot", async () => {
   for (const { monitor, initiallyLoaded } of [false, true].flatMap((monitor) =>
-    [false, true].map((initiallyLoaded) => ({ monitor, initiallyLoaded }))
+    [false, true].map((initiallyLoaded) => ({ monitor, initiallyLoaded })),
   )) {
     const home = await mountHome({
       monitor,
       auxiliaries: initiallyLoaded ? [auxiliary("known-aux")] : [],
-      auxiliaryError: initiallyLoaded ? undefined : new Error("Auxiliary registry unavailable"),
+      auxiliaryError: initiallyLoaded
+        ? undefined
+        : new Error("Auxiliary registry unavailable"),
     });
     try {
       await home.settle();
@@ -325,29 +582,52 @@ test("Home and Monitor retry only the failed Monitor snapshot", async () => {
       let usageReads = 0;
       let auxiliaryReads = 0;
       let monitorReads = 0;
-      home.setListPage(async (request) => { pageReads++; return page(request.scope === "open" ? [session("open")] : []); });
-      home.setUsage(async () => { usageReads++; return []; });
+      home.setListPage(async (request) => {
+        pageReads++;
+        return page(request.scope === "open" ? [session("open")] : []);
+      });
+      home.setUsage(async () => {
+        usageReads++;
+        return [];
+      });
       if (initiallyLoaded) {
-        home.setAuxiliaryQuery(async () => { throw new Error("Auxiliary registry unavailable"); });
+        home.setAuxiliaryQuery(async () => {
+          throw new Error("Auxiliary registry unavailable");
+        });
         await home.emitInvalidation({ scope: "all" });
         await home.settle();
       }
       const card = home.element.querySelector(".home-monitor-card")!;
       if (initiallyLoaded) {
-        const disclosure = card.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]')!;
+        const disclosure = card.querySelector<HTMLButtonElement>(
+          '[aria-label="Show Auxiliary sessions for open"]',
+        )!;
         await act(async () => disclosure.click());
-        assert.ok(card.querySelector('[aria-label="Open Auxiliary: known-aux"]'));
+        assert.ok(
+          card.querySelector('[aria-label="Open Auxiliary: known-aux"]'),
+        );
       }
       const baseline = [pageReads, usageReads, home.characterQueryCount()];
       const pending = deferred<AuxiliarySessionSummary[]>();
-      home.setMonitorEntries(async () => { monitorReads++; return [session("open")]; });
-      home.setAuxiliaryQuery(() => { auxiliaryReads++; return pending.promise; });
+      home.setMonitorEntries(async () => {
+        monitorReads++;
+        return [session("open")];
+      });
+      home.setAuxiliaryQuery(() => {
+        auxiliaryReads++;
+        return pending.promise;
+      });
+      /** Monitorで発生したスナップショット取得失敗の説明領域を参照する。 */
       const alert = () => home.element.querySelector('[role="alert"]')!;
+      /** アラートに載る明示的な再試行操作を取得する。 */
       const retry = () => alert().querySelector<HTMLButtonElement>("button")!;
       const monitorBody = home.element.querySelector(".home-monitor-body")!;
       assert.match(alert().textContent!, /Auxiliary registry unavailable/);
       assert.equal(retry().disabled, false);
-      await act(async () => { retry().click(); retry().click(); });
+      await act(async () => {
+        retry().click();
+        retry().click();
+      });
       assert.equal(auxiliaryReads, 1);
       assert.equal(monitorReads, 1);
       assert.equal(retry().disabled, true);
@@ -357,16 +637,27 @@ test("Home and Monitor retry only the failed Monitor snapshot", async () => {
       await act(async () => retry().click());
       assert.match(alert().textContent!, /Auxiliary registry unavailable/);
       assert.equal(home.element.querySelector(".home-monitor-card"), card);
-      if (initiallyLoaded) assert.ok(card.querySelector('[aria-label="Open Auxiliary: known-aux"]'));
+      if (initiallyLoaded)
+        assert.ok(
+          card.querySelector('[aria-label="Open Auxiliary: known-aux"]'),
+        );
       await act(async () => pending.reject(new Error("Still unavailable")));
       assert.equal(auxiliaryReads, 1);
       assert.match(alert().textContent!, /Still unavailable/);
       assert.equal(retry().disabled, false);
       assert.notEqual(retry().getAttribute("aria-busy"), "true");
       assert.equal(monitorBody.getAttribute("aria-busy"), "false");
-      if (initiallyLoaded) assert.ok(card.querySelector('[aria-label="Open Auxiliary: known-aux"]'));
-      home.setAuxiliaryQuery(async () => { auxiliaryReads++; return [auxiliary("fresh-aux")]; });
-      await act(async () => alert().querySelector<HTMLButtonElement>("button")!.click());
+      if (initiallyLoaded)
+        assert.ok(
+          card.querySelector('[aria-label="Open Auxiliary: known-aux"]'),
+        );
+      home.setAuxiliaryQuery(async () => {
+        auxiliaryReads++;
+        return [auxiliary("fresh-aux")];
+      });
+      await act(async () =>
+        alert().querySelector<HTMLButtonElement>("button")!.click(),
+      );
       assert.equal(auxiliaryReads, 2);
       assert.equal(monitorReads, 2);
       assert.equal(monitorBody.getAttribute("aria-busy"), "false");
@@ -375,11 +666,18 @@ test("Home and Monitor retry only the failed Monitor snapshot", async () => {
       assert.ok(recoveredCard);
       if (initiallyLoaded) assert.equal(recoveredCard, card);
       if (!initiallyLoaded) {
-        const disclosure = recoveredCard.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]')!;
+        const disclosure = recoveredCard.querySelector<HTMLButtonElement>(
+          '[aria-label="Show Auxiliary sessions for open"]',
+        )!;
         await act(async () => disclosure.click());
       }
-      assert.ok(recoveredCard.querySelector('[aria-label="Open Auxiliary: fresh-aux"]'));
-      assert.deepEqual([pageReads, usageReads, home.characterQueryCount()], baseline);
+      assert.ok(
+        recoveredCard.querySelector('[aria-label="Open Auxiliary: fresh-aux"]'),
+      );
+      assert.deepEqual(
+        [pageReads, usageReads, home.characterQueryCount()],
+        baseline,
+      );
     } finally {
       await home.close();
     }
@@ -398,28 +696,49 @@ test("Home and Monitor retry only the failed Monitor snapshot", async () => {
 // impact = "Session Windowでは送信不能の会話を停止済みと誤認し、対象を開く導線でも会話を取り違える"
 // distinction = "pure projectionや型checkでは検出できないHomeApp取得・購読・DOM・open引数の結線を両modeで確認する"
 // @end-test-value
+/** 親子の取消待ちを再表示してRunning扱いにし、最後の実行が終了してからStoppedへ移すことを確認する。 */
 test("Home/Monitorの再表示で取消待ちを復元し、最後の実終了でStoppedへ戻る", async () => {
   for (const monitor of [false, true]) {
-    const home = await mountHome({ mainCancellation: "terminating", auxiliaries: [auxiliary("aux", "requested")], monitor });
+    const home = await mountHome({
+      mainCancellation: "terminating",
+      auxiliaries: [auxiliary("aux", "requested")],
+      monitor,
+    });
     try {
       await home.settle();
-      const running = home.element.querySelector('[aria-labelledby="home-monitor-running"]');
-      const stopped = home.element.querySelector('[aria-labelledby="home-monitor-inactive"]');
+      const running = home.element.querySelector(
+        '[aria-labelledby="home-monitor-running"]',
+      );
+      const stopped = home.element.querySelector(
+        '[aria-labelledby="home-monitor-inactive"]',
+      );
       assert.ok(running);
       assert.ok(stopped);
       assert.ok(running?.querySelector('[aria-label="Main Waiting For Stop"]'));
-      assert.ok(running?.querySelector('[aria-label="Auxiliary Canceling: 1"]'));
+      assert.ok(
+        running?.querySelector('[aria-label="Auxiliary Canceling: 1"]'),
+      );
       assert.equal(stopped?.querySelectorAll(".home-monitor-card").length, 0);
-      const disclosure = running.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]');
+      const disclosure = running.querySelector<HTMLButtonElement>(
+        '[aria-label="Show Auxiliary sessions for open"]',
+      );
       assert.ok(disclosure);
       await act(async () => disclosure.click());
-      assert.ok(running.querySelector('.home-monitor-auxiliary-row [aria-label="Auxiliary Canceling"]'));
-      const openAuxiliary = running.querySelector<HTMLButtonElement>('[aria-label="Open Auxiliary: aux"]');
+      assert.ok(
+        running.querySelector(
+          '.home-monitor-auxiliary-row [aria-label="Auxiliary Canceling"]',
+        ),
+      );
+      const openAuxiliary = running.querySelector<HTMLButtonElement>(
+        '[aria-label="Open Auxiliary: aux"]',
+      );
       assert.ok(openAuxiliary);
       await act(async () => openAuxiliary.click());
       assert.deepEqual(home.opened, [["open", "aux"]]);
 
-      home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+      home.setListPage(async (request) =>
+        page(request.scope === "open" ? [session("open")] : []),
+      );
       home.setMonitorEntries(async () => [session("open")]);
       await home.emitLive("open", null);
       assert.ok(running.querySelector('[aria-label="Main Idle"]'));
@@ -448,38 +767,71 @@ test("Home/Monitorの再表示で取消待ちを復元し、最後の実終了�
 // impact = "実行中の現在turnへ誤った取消表示を戻し、実停止していないAuxiliaryを停止済みと見せる"
 // distinction = "pure projectionや通常取得testにない非同期の逆順応答を、既存API mockとdeferredだけで検証する"
 // @end-test-value
+/** 過去の通知や遅れて到着した読取結果が、新しい取消状態やTurnを上書きしないことを確認する。 */
 test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さない", async () => {
-  const home = await mountHome({ mainCancellation: "requested", auxiliaries: [auxiliary("aux", "terminating")] });
+  const home = await mountHome({
+    mainCancellation: "requested",
+    auxiliaries: [auxiliary("aux", "terminating")],
+  });
   try {
     await home.settle();
     const staleMain = deferred<HomeSessionSummaryPageResult>();
     const staleAuxiliary = deferred<AuxiliarySessionSummary[]>();
-    home.setListPage(async (request) => request.scope === "open" ? staleMain.promise : page([]));
+    home.setListPage(async (request) =>
+      request.scope === "open" ? staleMain.promise : page([]),
+    );
     home.setMonitorEntries(async () => (await staleMain.promise).entries);
     home.setAuxiliaryQuery(() => staleAuxiliary.promise);
     await home.emitLive("open", "terminating");
-    home.setListPage(async (request) => page(request.scope === "open" ? [{ ...session("open"), runState: "running" }] : []));
-    home.setMonitorEntries(async () => [{ ...session("open"), runState: "running" }]);
+    home.setListPage(async (request) =>
+      page(
+        request.scope === "open"
+          ? [{ ...session("open"), runState: "running" }]
+          : [],
+      ),
+    );
+    home.setMonitorEntries(async () => [
+      { ...session("open"), runState: "running" },
+    ]);
     home.setAuxiliaryQuery(async () => [auxiliary("aux", "terminating")]);
     await home.emitLive("open");
     await home.emitLive("aux", "terminating");
     await act(async () => {
-      staleMain.resolve(page([{ ...session("open"), cancellationState: "terminating" }]));
+      staleMain.resolve(
+        page([{ ...session("open"), cancellationState: "terminating" }]),
+      );
       staleAuxiliary.resolve([auxiliary("aux")]);
     });
     assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
-    assert.ok(home.element.querySelector('[aria-label="Auxiliary Waiting For Stop: 1"]'));
+    assert.ok(
+      home.element.querySelector(
+        '[aria-label="Auxiliary Waiting For Stop: 1"]',
+      ),
+    );
 
     await home.emitLive("open", "requested"); // 旧 Turn の通知。読み取り結果は引き続き新しい Turn を返す。
     assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
-    home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+    home.setListPage(async (request) =>
+      page(request.scope === "open" ? [session("open")] : []),
+    );
     home.setMonitorEntries(async () => [session("open")]);
     home.setAuxiliaryQuery(async () => [auxiliary("aux")]);
     await home.emitLive("open");
     await home.emitLive("aux");
-    assert.equal(home.element.querySelector('[aria-labelledby="home-monitor-running"] .home-monitor-card'), null);
-    assert.ok(home.element.querySelector('[aria-labelledby="home-monitor-inactive"] .home-monitor-card'));
-  } finally { await home.close(); }
+    assert.equal(
+      home.element.querySelector(
+        '[aria-labelledby="home-monitor-running"] .home-monitor-card',
+      ),
+      null,
+    );
+    assert.ok(
+      home.element.querySelector(
+        '[aria-labelledby="home-monitor-inactive"] .home-monitor-card',
+      ),
+    );
+  } finally {
+    await home.close();
+  }
 });
 
 // @test-value v2
@@ -494,12 +846,17 @@ test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さな
 // impact = "一部の一覧が使えないだけでSession再開・新規開始を失い、使用中Characterを重複選択する"
 // distinction = "summary query単体では確認できないHome表示とdialog起動要求までの結線を実API mockで観測する"
 // @end-test-value
+/** RecentとPinnedの片側が失敗しても他方は表示され、Randomは使用中キャラクターを選ばないことを確認する。 */
 test("RecentとPinnedの単独失敗を分離し、Randomは使用中Characterを避ける", async () => {
   const home = await mountHome();
   try {
     home.setListPage(async (request) => {
       if (request.scope === "recent") throw new Error("Recent unavailable");
-      return page(request.scope === "open" ? [session("open")] : [session("pinned", "used", true)]);
+      return page(
+        request.scope === "open"
+          ? [session("open")]
+          : [session("pinned", "used", true)],
+      );
     });
     await home.settle();
     assert.match(home.element.textContent ?? "", /pinned/);
@@ -508,13 +865,21 @@ test("RecentとPinnedの単独失敗を分離し、Randomは使用中Character�
 
     home.setListPage(async (request) => {
       if (request.scope === "pinned") throw new Error("Pinned unavailable");
-      return page(request.scope === "open" ? [session("open")] : [session("recent")]);
+      return page(
+        request.scope === "open" ? [session("open")] : [session("recent")],
+      );
     });
     await home.focus();
     assert.match(home.element.textContent ?? "", /recent/);
     assert.match(home.element.textContent ?? "", /Pinned unavailable/);
-    assert.doesNotMatch(dialog.textContent ?? "", /Recent unavailable|Pinned unavailable/);
-    assert.equal(dialog.querySelector<HTMLInputElement>("#launch-session-title")?.value, "Task");
+    assert.doesNotMatch(
+      dialog.textContent ?? "",
+      /Recent unavailable|Pinned unavailable/,
+    );
+    assert.equal(
+      dialog.querySelector<HTMLInputElement>("#launch-session-title")?.value,
+      "Task",
+    );
 
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 1);
@@ -536,9 +901,11 @@ test("RecentとPinnedの単独失敗を分離し、Randomは使用中Character�
 // impact = "抽選重みが未確定の起動や固定Characterの不要な停止、実際の作成失敗の見落としにつながる"
 // distinction = "実行guardを直接呼ぶaction testとは別に、Homeの非同期取得からStartの有効状態・起動要求・feedback回復までの結線を検証する"
 // @end-test-value
+/** 利用履歴の取得状況による開始制限と固定キャラクターの開始を区別し、一覧の回復で作成失敗が消えないことを確認する。 */
 test("履歴未準備時のStart無効化と回復後の開始、作成失敗feedbackの保持を分離する", async () => {
   const home = await mountHome();
-  const pending = deferred<Array<{ characterId: string; sessionKind: "default" }>>();
+  const pending =
+    deferred<Array<{ characterId: string; sessionKind: "default" }>>();
   try {
     home.setUsage(() => pending.promise);
     await home.settle();
@@ -552,49 +919,81 @@ test("履歴未準備時のStart無効化と回復後の開始、作成失敗fee
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 0);
 
-    home.setUsage(async () => [{ characterId: "used", sessionKind: "default" }]);
+    home.setUsage(async () => [
+      { characterId: "used", sessionKind: "default" },
+    ]);
     await home.focus();
     assert.equal(button(dialog, "Start").disabled, false);
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 1);
     assert.equal(home.requests[0]?.characterId, "unused");
-    assert.equal(home.element.querySelector('[role="dialog"][aria-label="New Session"]'), null);
+    assert.equal(
+      home.element.querySelector('[role="dialog"][aria-label="New Session"]'),
+      null,
+    );
 
     dialog = await home.launch();
-    home.setUsage(async () => { throw new Error("History unavailable again"); });
+    home.setUsage(async () => {
+      throw new Error("History unavailable again");
+    });
     await home.focus();
     assert.equal(button(dialog, "Start").disabled, true);
 
-    home.setCreate(async () => { throw new Error("Create failed"); });
-    const fixed = Array.from(dialog.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
-      .find((item) => item.textContent?.includes("used"));
+    home.setCreate(async () => {
+      throw new Error("Create failed");
+    });
+    const fixed = Array.from(
+      dialog.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ).find((item) => item.textContent?.includes("used"));
     assert.ok(fixed);
     await act(async () => fixed.click());
     assert.equal(button(dialog, "Start").disabled, false);
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 2);
     assert.equal(home.requests[1]?.characterId, "used");
-    assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /Check Recent Sessions before trying again/);
-    const details = dialog.querySelector<HTMLButtonElement>('[aria-label="Session Creation Error Details"]');
+    assert.match(
+      dialog.querySelector('[role="alert"]')?.textContent ?? "",
+      /Check Recent Sessions before trying again/,
+    );
+    const details = dialog.querySelector<HTMLButtonElement>(
+      '[aria-label="Session Creation Error Details"]',
+    );
     assert.ok(details);
     await act(async () => details.click());
-    const errorPanel = home.element.ownerDocument.querySelector('[role="dialog"][aria-label="Session Creation Error Details"]');
+    const errorPanel = home.element.ownerDocument.querySelector(
+      '[role="dialog"][aria-label="Session Creation Error Details"]',
+    );
     assert.ok(errorPanel);
     assert.match(errorPanel.textContent ?? "", /Create failed/);
 
     home.setListPage(async (request) => {
-      if (request.scope === "recent") throw new Error("Recent unavailable during launch");
+      if (request.scope === "recent")
+        throw new Error("Recent unavailable during launch");
       return page(request.scope === "open" ? [session("open")] : []);
     });
-    home.setUsage(async () => [{ characterId: "used", sessionKind: "default" }]);
+    home.setUsage(async () => [
+      { characterId: "used", sessionKind: "default" },
+    ]);
     await home.focus();
-    assert.match(home.element.querySelector(".home-session-list-feedback")?.textContent ?? "", /Recent unavailable during launch/);
+    assert.match(
+      home.element.querySelector(".home-session-list-feedback")?.textContent ??
+        "",
+      /Recent unavailable during launch/,
+    );
     assert.equal(errorPanel.isConnected, true);
     assert.match(errorPanel.textContent ?? "", /Create failed/);
-    assert.doesNotMatch(dialog.textContent ?? "", /Recent unavailable during launch/);
-    home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+    assert.doesNotMatch(
+      dialog.textContent ?? "",
+      /Recent unavailable during launch/,
+    );
+    home.setListPage(async (request) =>
+      page(request.scope === "open" ? [session("open")] : []),
+    );
     await home.focus();
-    assert.equal(home.element.querySelector(".home-session-list-feedback"), null);
+    assert.equal(
+      home.element.querySelector(".home-session-list-feedback"),
+      null,
+    );
     assert.equal(errorPanel.isConnected, true);
     assert.match(errorPanel.textContent ?? "", /Create failed/);
   } finally {
@@ -614,12 +1013,19 @@ test("履歴未準備時のStart無効化と回復後の開始、作成失敗fee
 // impact = "使用中Characterが除外されず、同じCharacterでSession Windowが重複起動する"
 // distinction = "open ID購読や抽選関数単体と異なり、summary取得失敗をまたぐHome全体の起動経路を検証する"
 // @end-test-value
+/** Openの要約取得が失敗しても他の一覧は維持し、Randomだけを止めて、回復後は現在使用中の候補を除くことを確認する。 */
 test("Open summary失敗でも一覧を保ちRandomだけ停止し、回復後は使用中Characterを除外する", async () => {
   const home = await mountHome();
   try {
     home.setListPage(async (request) => {
       if (request.scope === "open") throw new Error("Open summary unavailable");
-      return page([session(request.scope === "recent" ? "recent" : "pinned", "used", request.scope === "pinned")]);
+      return page([
+        session(
+          request.scope === "recent" ? "recent" : "pinned",
+          "used",
+          request.scope === "pinned",
+        ),
+      ]);
     });
     await home.settle();
     assert.match(home.element.textContent ?? "", /recent/);
@@ -629,9 +1035,13 @@ test("Open summary失敗でも一覧を保ちRandomだけ停止し、回復後�
     assert.equal(home.requests.length, 0);
     assert.match(dialog.textContent ?? "", /open session/i);
 
-    home.setListPage(async (request) => page(
-      request.scope === "open" ? [session("open")] : [session(request.scope === "recent" ? "recent" : "pinned")],
-    ));
+    home.setListPage(async (request) =>
+      page(
+        request.scope === "open"
+          ? [session("open")]
+          : [session(request.scope === "recent" ? "recent" : "pinned")],
+      ),
+    );
     await home.focus();
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 1);
@@ -653,21 +1063,38 @@ test("Open summary失敗でも一覧を保ちRandomだけ停止し、回復後�
 // impact = "一覧を進めた後にRandom開始が不必要に停止するか、使用中Characterが重複して選ばれる"
 // distinction = "取得generation helper単体では検出できないpaginationと独立scope取得の競合を実HomeAppで検証する"
 // @end-test-value
+/** ページ追加と別に待っている履歴・Open要約が後で届いても、Randomの開始条件に反映されることを確認する。 */
 test("履歴とopen summaryの遅延中に追加pageが成功してもRandom開始へ反映する", async () => {
-  const pendingUsage = deferred<Array<{ characterId: string; sessionKind: "default" }>>();
+  const pendingUsage =
+    deferred<Array<{ characterId: string; sessionKind: "default" }>>();
   const pendingOpen = deferred<HomeSessionSummaryPageResult>();
   const previousObserver = globalThis.IntersectionObserver;
   let trigger!: () => void;
+  /** 追加ページの監視イベントを画面寸法なしで再現する。 */
   class TestObserver {
+    /** 次ページへの監視通知をテストのタイミングで発火できるようにする。 */
     constructor(callback: IntersectionObserverCallback) {
-      trigger = () => callback([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      trigger = () =>
+        callback(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
     }
+    /** 要素の登録は受け付けるが交差は自動通知しない。 */
     observe() {}
+    /** 監視を破棄する際、停止すべき自動通知はない。 */
     disconnect() {}
+    /** 個々の要素の監視終了時にも内部登録は持たない。 */
     unobserve() {}
-    takeRecords() { return []; }
+    /** 手動で送った通知以外に未処理の監視結果がないことを示す。 */
+    takeRecords() {
+      return [];
+    }
   }
-  Object.defineProperty(globalThis, "IntersectionObserver", { value: TestObserver, configurable: true });
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    value: TestObserver,
+    configurable: true,
+  });
   let home: Harness | null = null;
   let pageCalls = 0;
   try {
@@ -701,7 +1128,10 @@ test("履歴とopen summaryの遅延中に追加pageが成功してもRandom開�
     assert.equal(home.requests[0]?.characterId, "unused");
   } finally {
     await home?.close();
-    Object.defineProperty(globalThis, "IntersectionObserver", { value: previousObserver, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: previousObserver,
+      configurable: true,
+    });
   }
 });
 
@@ -717,6 +1147,7 @@ test("履歴とopen summaryの遅延中に追加pageが成功してもRandom開�
 // impact = "既存Sessionへの到達性が失われるか、継続的な自動再試行で失敗を利用者が回復できない"
 // distinction = "page query helper単体では確認できない既存rowの保持とUI Retry導線を観測する"
 // @end-test-value
+/** 続きの取得に失敗しても既存の行を残し、明示Retryの成功でエラーを消して続きの行を追加することを確認する。 */
 test("追加pageの失敗は行を残し、Retryで続きを表示する", async () => {
   const home = await mountHome();
   let pageCalls = 0;
@@ -731,21 +1162,38 @@ test("追加pageの失敗は行を残し、Retryで続きを表示する", async
     });
     await home.settle();
     assert.match(home.element.textContent ?? "", /first/);
-    const sentinel = home.element.querySelector(".home-session-list-load-sentinel");
+    const sentinel = home.element.querySelector(
+      ".home-session-list-load-sentinel",
+    );
     assert.ok(sentinel);
     // JSDOM には `IntersectionObserver` がないため、パネルの実際のページ送りコールバックを動かすために用意する。
     const previousObserver = globalThis.IntersectionObserver;
     let trigger!: () => void;
+    /** 追加ページの読取契機を手動で起こせる監視オブザーバー。 */
     class TestObserver {
+      /** 交差通知を後から発火する関数としてテストに渡す。 */
       constructor(callback: IntersectionObserverCallback) {
-        trigger = () => callback([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+        trigger = () =>
+          callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
       }
+      /** レイアウトによる自動通知をせず、監視の登録のみ受け付ける。 */
       observe() {}
+      /** 一覧のアンマウント時に解除すべきバックグラウンド処理はない。 */
       disconnect() {}
+      /** 監視終了でJSDOM上の要素状態は変えない。 */
       unobserve() {}
-      takeRecords() { return []; }
+      /** 溜まった交差記録はないものとして返す。 */
+      takeRecords() {
+        return [];
+      }
     }
-    Object.defineProperty(globalThis, "IntersectionObserver", { value: TestObserver, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: TestObserver,
+      configurable: true,
+    });
     try {
       await home.focus();
       await act(async () => trigger());
@@ -758,9 +1206,15 @@ test("追加pageの失敗は行を残し、Retryで続きを表示する", async
       assert.equal(pageCalls, 2);
       assert.match(home.element.textContent ?? "", /first/);
       assert.match(home.element.textContent ?? "", /second/);
-      assert.doesNotMatch(home.element.textContent ?? "", /Next page unavailable/);
+      assert.doesNotMatch(
+        home.element.textContent ?? "",
+        /Next page unavailable/,
+      );
     } finally {
-      Object.defineProperty(globalThis, "IntersectionObserver", { value: previousObserver, configurable: true });
+      Object.defineProperty(globalThis, "IntersectionObserver", {
+        value: previousObserver,
+        configurable: true,
+      });
     }
   } finally {
     await home.close();
@@ -779,43 +1233,72 @@ test("追加pageの失敗は行を残し、Retryで続きを表示する", async
 // impact = "遅延した失敗が回復済みの一覧を失敗扱いにし、利用可能なSession開始を止める"
 // distinction = "generation helper単体では検出できない一覧と利用履歴それぞれの結果反映境界を観測する"
 // @end-test-value
+/** 検索変更後は以前の一覧・履歴取得の失敗を適用せず、最新の結果から一覧とRandom開始を回復することを確認する。 */
 test("検索後の最新取得待機中に旧一覧・履歴の失敗を適用しない", async () => {
   const home = await mountHome();
   const oldRecent = deferred<HomeSessionSummaryPageResult>();
-  const oldUsage = deferred<Array<{ characterId: string; sessionKind: "default" }>>();
+  const oldUsage =
+    deferred<Array<{ characterId: string; sessionKind: "default" }>>();
   const freshRecent = deferred<HomeSessionSummaryPageResult>();
-  const freshUsage = deferred<Array<{ characterId: string; sessionKind: "default" }>>();
+  const freshUsage =
+    deferred<Array<{ characterId: string; sessionKind: "default" }>>();
   try {
     await home.settle();
-    home.setListPage((request) => request.scope === "recent" ? oldRecent.promise
-      : Promise.resolve(page(request.scope === "open" ? [session("open")] : [])));
+    home.setListPage((request) =>
+      request.scope === "recent"
+        ? oldRecent.promise
+        : Promise.resolve(
+            page(request.scope === "open" ? [session("open")] : []),
+          ),
+    );
     home.setUsage(() => oldUsage.promise);
     await home.focus();
 
-    home.setListPage((request) => request.scope === "recent" ? freshRecent.promise
-      : Promise.resolve(page(request.scope === "open" ? [session("open")] : [])));
+    home.setListPage((request) =>
+      request.scope === "recent"
+        ? freshRecent.promise
+        : Promise.resolve(
+            page(request.scope === "open" ? [session("open")] : []),
+          ),
+    );
     home.setUsage(() => freshUsage.promise);
-    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+    const search = home.element.querySelector<HTMLInputElement>(
+      'input[aria-label="Search Sessions And Characters"]',
+    );
     assert.ok(search);
     await act(async () => {
-      Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
-      search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(
+        home.dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search, "fresh");
+      search.dispatchEvent(
+        new home.dom.window.Event("input", { bubbles: true }),
+      );
     });
     await home.settle(320);
     await act(async () => {
       oldRecent.reject(new Error("Obsolete recent failure"));
       oldUsage.reject(new Error("Obsolete history failure"));
     });
-    assert.equal(home.element.querySelector(".home-session-list-feedback"), null);
+    assert.equal(
+      home.element.querySelector(".home-session-list-feedback"),
+      null,
+    );
     assert.ok(home.element.querySelector('[aria-label="Loading sessions"]'));
     const dialog = await home.launch();
     assert.equal(button(dialog, "Start").disabled, true);
-    assert.doesNotMatch(dialog.textContent ?? "", /could not|failed|unavailable/i);
+    assert.doesNotMatch(
+      dialog.textContent ?? "",
+      /could not|failed|unavailable/i,
+    );
     await act(async () => {
       freshRecent.resolve(page([session("fresh-recent")]));
       freshUsage.resolve([]);
     });
-    assert.match(home.element.querySelector(".home-session-card-list")?.textContent ?? "", /fresh-recent/);
+    assert.match(
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "",
+      /fresh-recent/,
+    );
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 1);
     assert.equal(home.requests[0]?.characterId, "unused");
@@ -836,33 +1319,56 @@ test("検索後の最新取得待機中に旧一覧・履歴の失敗を適用�
 // impact = "readの増殖で最新表示を遅らせるか、別の検索・open Sessionを表示する"
 // distinction = "owner単体testにない実HomeAppの全購読経路と最新stateの接続を確認する"
 // @end-test-value
+/** 通知・フォーカス・検索・Open対象の変更を最新の取得条件へまとめ、旧条件の次ページを発行しないことを確認する。 */
 test("通知集中と検索・open変更は最新1件へ収束して旧2page目を停止する", async () => {
   const previousObserver = globalThis.IntersectionObserver;
   let trigger!: () => void;
+  /** 旧条件の追加ページ読取を必要な順序で開始させるための監視オブザーバー。 */
   class TestObserver {
+    /** 監視対象が可視になったという通知をテスト側で遅らせられるようにする。 */
     constructor(callback: IntersectionObserverCallback) {
-      trigger = () => callback([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      trigger = () =>
+        callback(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
     }
+    /** 監視開始だけでは追加ページ通知を自動発行しない。 */
     observe() {}
+    /** 条件切替による監視破棄時に停止すべき実処理はない。 */
     disconnect() {}
+    /** 要素単位の監視解除では実ブラウザーの監視対象を必要としない。 */
     unobserve() {}
-    takeRecords() { return []; }
+    /** 保留する交差記録を持たず、意図した通知だけをテストから届ける。 */
+    takeRecords() {
+      return [];
+    }
   }
-  Object.defineProperty(globalThis, "IntersectionObserver", { value: TestObserver, configurable: true });
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    value: TestObserver,
+    configurable: true,
+  });
   const home = await mountHome();
   const oldPage = deferred<HomeSessionSummaryPageResult>();
   try {
-    home.setListPage(async (request) => request.scope === "recent"
-      ? request.cursor ? page([session("second")]) : page([session("first")], "old-next")
-      : page(request.scope === "open" ? [session("open")] : []));
+    home.setListPage(async (request) =>
+      request.scope === "recent"
+        ? request.cursor
+          ? page([session("second")])
+          : page([session("first")], "old-next")
+        : page(request.scope === "open" ? [session("open")] : []),
+    );
     await home.settle();
     await act(async () => trigger());
     assert.match(home.element.textContent ?? "", /second/);
     const requests: SessionSummaryPageRequest[] = [];
     home.setListPage((request) => {
       requests.push(request);
-      return request.scope === "recent" ? oldPage.promise
-        : Promise.resolve(page(request.scope === "open" ? [session("open")] : []));
+      return request.scope === "recent"
+        ? oldPage.promise
+        : Promise.resolve(
+            page(request.scope === "open" ? [session("open")] : []),
+          );
     });
     await home.focus();
     assert.equal(requests.length, 3);
@@ -871,32 +1377,61 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
       return page(request.scope === "pinned" ? [] : [session("fresh-open")]);
     });
     for (let index = 0; index < 50; index += 1) {
-      await home.emitInvalidation({ scope: "ids", sessionIds: [String(index)], detailChanged: false });
+      await home.emitInvalidation({
+        scope: "ids",
+        sessionIds: [String(index)],
+        detailChanged: false,
+      });
     }
     await home.focus();
-    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+    const search = home.element.querySelector<HTMLInputElement>(
+      'input[aria-label="Search Sessions And Characters"]',
+    );
     assert.ok(search);
     await act(async () => {
-      Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
-      search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(
+        home.dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search, "fresh");
+      search.dispatchEvent(
+        new home.dom.window.Event("input", { bubbles: true }),
+      );
     });
     await home.emitOpenIds(["fresh-open"]);
     home.setMonitorEntries(async () => [session("fresh-open")]);
     await home.focus();
     await home.settle(320);
     assert.equal(requests.length, 3);
-    await act(async () => oldPage.resolve(page([session("obsolete")], "old-next")));
+    await act(async () =>
+      oldPage.resolve(page([session("obsolete")], "old-next")),
+    );
     assert.equal(requests.length, 6);
-    assert.equal(requests.some(({ cursor }) => cursor === "old-next"), false);
+    assert.equal(
+      requests.some(({ cursor }) => cursor === "old-next"),
+      false,
+    );
     assert.equal(requests.at(-3)?.searchText, "fresh");
-    assert.deepEqual(requests.filter(({ scope }) => scope === "open").at(-1)?.sessionIds, ["fresh-open"]);
-    assert.match(home.element.querySelector(".home-session-card-list")?.textContent ?? "", /fresh-open/);
-    assert.match(home.element.querySelector('[aria-labelledby="home-monitor-inactive"]')?.textContent ?? "", /fresh-open/);
+    assert.deepEqual(
+      requests.filter(({ scope }) => scope === "open").at(-1)?.sessionIds,
+      ["fresh-open"],
+    );
+    assert.match(
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "",
+      /fresh-open/,
+    );
+    assert.match(
+      home.element.querySelector('[aria-labelledby="home-monitor-inactive"]')
+        ?.textContent ?? "",
+      /fresh-open/,
+    );
     assert.doesNotMatch(home.element.textContent ?? "", /obsolete/);
   } finally {
     oldPage.resolve(page([]));
     await home.close();
-    Object.defineProperty(globalThis, "IntersectionObserver", { value: previousObserver, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: previousObserver,
+      configurable: true,
+    });
   }
 });
 
@@ -912,36 +1447,69 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
 // impact = "同じ検索語なのに表示面ごとに別の対象を示し、paneを往復するたびに検索をやり直す"
 // distinction = "pure filterやbackend検索testでは検出できない共有stateと実React入力・タブ・clearの結線を既存Home harnessで確認する"
 // @end-test-value
+/** ヘッダー検索を三つのタブに共有し、タブの往復で入力を保ち、検索解除で元の一覧へ戻ることを確認する。 */
 test("header検索をSessions・Monitor・Charactersで共有し、タブ往復とclearで保持・復帰する", async () => {
   const home = await mountHome({ openIds: ["open", "other-open"] });
   try {
-    home.setMonitorEntries(async () => [session("open", "used"), session("other-open", "other")]);
+    home.setMonitorEntries(async () => [
+      session("open", "used"),
+      session("other-open", "other"),
+    ]);
     await home.focus();
     home.setListPage(async (request) => {
-      if (request.scope === "open") return page((request.sessionIds ?? []).map((id) => session(id, id === "open" ? "used" : "other")));
+      if (request.scope === "open")
+        return page(
+          (request.sessionIds ?? []).map((id) =>
+            session(id, id === "open" ? "used" : "other"),
+          ),
+        );
       if (request.scope === "pinned") return page([]);
       const query = request.searchText?.trim().toLocaleLowerCase() ?? "";
-      return page([session("used-session", "used"), session("other-session", "other")]
-        .filter((entry) => [entry.taskTitle, entry.character].some((value) => value.toLocaleLowerCase().includes(query))));
+      return page(
+        [
+          session("used-session", "used"),
+          session("other-session", "other"),
+        ].filter((entry) =>
+          [entry.taskTitle, entry.character].some((value) =>
+            value.toLocaleLowerCase().includes(query),
+          ),
+        ),
+      );
     });
     await home.settle();
     const charactersQueries = home.characterQueryCount();
+    /** 三つのタブで共通のヘッダー検索欄を取得する。 */
     const input = () => {
-      const found = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+      const found = home.element.querySelector<HTMLInputElement>(
+        'input[aria-label="Search Sessions And Characters"]',
+      );
       assert.ok(found);
       return found;
     };
+    /** 入力値をブラウザーの編集として通知し、検索の遅延適用まで待つ。 */
     const changeSearch = async (value: string) => {
       await act(async () => {
         const search = input();
-        Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, value);
-        search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+        Object.getOwnPropertyDescriptor(
+          home.dom.window.HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(search, value);
+        search.dispatchEvent(
+          new home.dom.window.Event("input", { bubbles: true }),
+        );
       });
       await home.settle(320);
     };
-    const monitorTitles = () => Array.from(home.element.querySelectorAll(".home-monitor-card .home-monitor-parent-title")).map((entry) => entry.textContent);
+    /** Monitorに検索結果として残ったMainカードの見出しを取得する。 */
+    const monitorTitles = () =>
+      Array.from(
+        home.element.querySelectorAll(
+          ".home-monitor-card .home-monitor-parent-title",
+        ),
+      ).map((entry) => entry.textContent);
     await changeSearch("used");
-    const sessionsText = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    const sessionsText =
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "";
     assert.match(sessionsText, /used-session/);
     assert.doesNotMatch(sessionsText, /other-session/);
     assert.deepEqual(monitorTitles(), ["open"]);
@@ -949,7 +1517,11 @@ test("header検索をSessions・Monitor・Charactersで共有し、タブ往復�
     await act(async () => button(home.element, "Characters").click());
     assert.equal(input().value, "used");
     await changeSearch("UNUSED");
-    const characterNames = () => Array.from(home.element.querySelectorAll(".home-character-card-title")).map((entry) => entry.textContent);
+    /** キャラクタータブに絞り込まれたカード名を取得する。 */
+    const characterNames = () =>
+      Array.from(
+        home.element.querySelectorAll(".home-character-card-title"),
+      ).map((entry) => entry.textContent);
     assert.deepEqual(characterNames(), ["unused"]);
     await act(async () => button(home.element, "Monitor").click());
     assert.equal(input().value, "UNUSED");
@@ -958,20 +1530,25 @@ test("header検索をSessions・Monitor・Charactersで共有し、タブ往復�
     assert.equal(input().value, "UNUSED");
     assert.deepEqual(characterNames(), ["unused"]);
 
-    const clear = home.element.querySelector<HTMLButtonElement>('[aria-label="Clear Search"]');
+    const clear = home.element.querySelector<HTMLButtonElement>(
+      '[aria-label="Clear Search"]',
+    );
     assert.ok(clear);
     await act(async () => clear.click());
     await home.settle();
     assert.equal(input().value, "");
     assert.equal(home.dom.window.document.activeElement, input());
     assert.deepEqual(characterNames(), ["used", "unused"]);
-    const restoredSessions = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    const restoredSessions =
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "";
     assert.match(restoredSessions, /used-session/);
     assert.match(restoredSessions, /other-session/);
     await act(async () => button(home.element, "Monitor").click());
     assert.deepEqual(monitorTitles().sort(), ["open", "other-open"]);
     assert.equal(home.characterQueryCount(), charactersQueries);
-  } finally { await home.close(); }
+  } finally {
+    await home.close();
+  }
 });
 
 // @test-value v2
@@ -986,53 +1563,99 @@ test("header検索をSessions・Monitor・Charactersで共有し、タブ往復�
 // impact = "検索中の一覧消失と再出現を避け、遅延や部分失敗でも既存Sessionへの到達性を保つ"
 // distinction = "hook timerやpure filterだけでは見えない、実入力から遅延APIとDOM更新までの表示保持を既存Home harnessで確認する"
 // @end-test-value
+/** 検索の適用待ちと片側取得の失敗では旧行を残し、成功したスコープだけを置換して、失敗側をRetryできることを確認する。 */
 test("検索の取得待ちと部分失敗で旧rowを保持し、成功したscopeだけ交換する", async () => {
   const home = await mountHome({ openIds: ["old-open", "fresh-open"] });
   const recent = deferred<HomeSessionSummaryPageResult>();
   const pinned = deferred<HomeSessionSummaryPageResult>();
   try {
-    home.setListPage(async (request) => page(request.scope === "open"
-      ? (request.sessionIds ?? []).map((id) => session(id))
-      : [session(request.scope === "pinned" ? "old-pinned" : "old-recent", "used", request.scope === "pinned")]));
+    home.setListPage(async (request) =>
+      page(
+        request.scope === "open"
+          ? (request.sessionIds ?? []).map((id) => session(id))
+          : [
+              session(
+                request.scope === "pinned" ? "old-pinned" : "old-recent",
+                "used",
+                request.scope === "pinned",
+              ),
+            ],
+      ),
+    );
     await home.settle();
+    /** 旧行が表示されたDOM自体の保持を比較するため、現在の一覧コンテナーを取得する。 */
     const list = () => home.element.querySelector(".home-session-card-list")!;
-    const oldRecent = Array.from(list().querySelectorAll(".session-card"))
-      .find((entry) => entry.textContent?.includes("old-recent"));
+    const oldRecent = Array.from(list().querySelectorAll(".session-card")).find(
+      (entry) => entry.textContent?.includes("old-recent"),
+    );
     assert.ok(oldRecent);
     const calls: SessionSummaryPageRequest[] = [];
     home.setListPage((request) => {
       calls.push(request);
       return request.scope === "recent" ? recent.promise : pinned.promise;
     });
-    const search = home.element.querySelector<HTMLInputElement>('input[aria-label="Search Sessions And Characters"]');
+    const search = home.element.querySelector<HTMLInputElement>(
+      'input[aria-label="Search Sessions And Characters"]',
+    );
     assert.ok(search);
     await act(async () => {
-      Object.getOwnPropertyDescriptor(home.dom.window.HTMLInputElement.prototype, "value")!.set!.call(search, "fresh");
-      search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(
+        home.dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search, "fresh");
+      search.dispatchEvent(
+        new home.dom.window.Event("input", { bubbles: true }),
+      );
     });
     assert.equal(search.value, "fresh");
     assert.equal(calls.length, 0);
     assert.match(list().textContent ?? "", /old-recent/);
     assert.equal(home.element.querySelectorAll(".home-monitor-card").length, 2);
     await home.settle(320);
-    assert.deepEqual(calls.map(({ scope, searchText }) => [scope, searchText]), [["recent", "fresh"], ["pinned", "fresh"]]);
+    assert.deepEqual(
+      calls.map(({ scope, searchText }) => [scope, searchText]),
+      [
+        ["recent", "fresh"],
+        ["pinned", "fresh"],
+      ],
+    );
     assert.equal(oldRecent.isConnected, true);
     assert.match(list().textContent ?? "", /old-pinned/);
-    assert.equal(home.element.querySelector('[aria-label="Loading sessions"]'), null);
-    assert.deepEqual(Array.from(home.element.querySelectorAll(".home-monitor-parent-title")).map((entry) => entry.textContent), ["fresh-open"]);
-    await act(async () => pinned.resolve(page([session("fresh-pinned", "used", true)])));
+    assert.equal(
+      home.element.querySelector('[aria-label="Loading sessions"]'),
+      null,
+    );
+    assert.deepEqual(
+      Array.from(
+        home.element.querySelectorAll(".home-monitor-parent-title"),
+      ).map((entry) => entry.textContent),
+      ["fresh-open"],
+    );
+    await act(async () =>
+      pinned.resolve(page([session("fresh-pinned", "used", true)])),
+    );
     assert.match(list().textContent ?? "", /fresh-pinned/);
     assert.doesNotMatch(list().textContent ?? "", /old-pinned/);
     assert.equal(oldRecent.isConnected, true);
     await act(async () => recent.reject(new Error("Search unavailable")));
     assert.match(home.element.textContent ?? "", /Search unavailable/);
     assert.equal(oldRecent.isConnected, true);
-    home.setListPage(async (request) => page([session(request.scope === "pinned" ? "fresh-pinned" : "fresh-recent", "used", request.scope === "pinned")]));
+    home.setListPage(async (request) =>
+      page([
+        session(
+          request.scope === "pinned" ? "fresh-pinned" : "fresh-recent",
+          "used",
+          request.scope === "pinned",
+        ),
+      ]),
+    );
     await act(async () => button(home.element, "Retry").click());
     assert.match(list().textContent ?? "", /fresh-recent/);
     assert.doesNotMatch(list().textContent ?? "", /old-recent/);
     assert.doesNotMatch(home.element.textContent ?? "", /Search unavailable/);
-  } finally { await home.close(); }
+  } finally {
+    await home.close();
+  }
 });
 
 // @test-value v2
@@ -1047,22 +1670,42 @@ test("検索の取得待ちと部分失敗で旧rowを保持し、成功したsc
 // impact = "更新されたSessionへ到達できないか、実行中のopen Sessionを停止済みと誤表示する"
 // distinction = "queryやprojection単体では判別できない通知payloadから取得scopeとDOMへの結線を確認する"
 // @end-test-value
+/** 詳細変更を伴わないID通知でも一覧の順序と構成を取り直し、Open側だけを該当IDに絞ることを確認する。 */
 test("ID通知は一覧membershipを取り直しopenだけ対象を絞る", async () => {
   const home = await mountHome({ openIds: ["open", "other-open"] });
   try {
-    home.setListPage(async (request) => page(request.scope === "open"
-      ? (request.sessionIds ?? []).map((id) => session(id))
-      : request.scope === "recent" ? [session("moving"), session("older")] : []));
+    home.setListPage(async (request) =>
+      page(
+        request.scope === "open"
+          ? (request.sessionIds ?? []).map((id) => session(id))
+          : request.scope === "recent"
+            ? [session("moving"), session("older")]
+            : [],
+      ),
+    );
     await home.settle();
     const requests: SessionSummaryPageRequest[] = [];
     home.setListPage(async (request) => {
       requests.push(request);
-      return page(request.scope === "pinned" ? [session("moving", "used", true)]
-        : request.scope === "recent" ? [session("newest"), session("older")] : []);
+      return page(
+        request.scope === "pinned"
+          ? [session("moving", "used", true)]
+          : request.scope === "recent"
+            ? [session("newest"), session("older")]
+            : [],
+      );
     });
-    await home.emitInvalidation({ scope: "ids", sessionIds: ["moving"], detailChanged: false });
-    assert.deepEqual(requests.map(({ scope }) => scope), ["recent", "pinned"]);
-    const list = home.element.querySelector(".home-session-card-list")?.textContent ?? "";
+    await home.emitInvalidation({
+      scope: "ids",
+      sessionIds: ["moving"],
+      detailChanged: false,
+    });
+    assert.deepEqual(
+      requests.map(({ scope }) => scope),
+      ["recent", "pinned"],
+    );
+    const list =
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "";
     assert.match(list, /moving/);
     assert.match(list, /newest/);
     assert.match(list, /older/);
@@ -1073,14 +1716,41 @@ test("ID通知は一覧membershipを取り直しopenだけ対象を絞る", asyn
     home.setListPage(async (request) => {
       requests.push(request);
       if (request.scope === "recent") throw new Error("Recent unavailable");
-      return page(request.scope === "open" ? [{ ...session("open"), runState: "running" }] : [session("moving", "used", true)]);
+      return page(
+        request.scope === "open"
+          ? [{ ...session("open"), runState: "running" }]
+          : [session("moving", "used", true)],
+      );
     });
-    home.setMonitorEntries(async () => [{ ...session("open"), runState: "running" }, session("other-open")]);
-    await home.emitInvalidation({ scope: "ids", sessionIds: ["open"], detailChanged: false });
-    assert.deepEqual(requests.find(({ scope }) => scope === "open")?.sessionIds, ["open"]);
-    assert.match(home.element.querySelector('[aria-labelledby="home-monitor-running"]')?.textContent ?? "", /open/);
-    assert.match(home.element.querySelector('[aria-labelledby="home-monitor-inactive"]')?.textContent ?? "", /other-open/);
+    home.setMonitorEntries(async () => [
+      { ...session("open"), runState: "running" },
+      session("other-open"),
+    ]);
+    await home.emitInvalidation({
+      scope: "ids",
+      sessionIds: ["open"],
+      detailChanged: false,
+    });
+    assert.deepEqual(
+      requests.find(({ scope }) => scope === "open")?.sessionIds,
+      ["open"],
+    );
+    assert.match(
+      home.element.querySelector('[aria-labelledby="home-monitor-running"]')
+        ?.textContent ?? "",
+      /open/,
+    );
+    assert.match(
+      home.element.querySelector('[aria-labelledby="home-monitor-inactive"]')
+        ?.textContent ?? "",
+      /other-open/,
+    );
     assert.match(home.element.textContent ?? "", /Recent unavailable/);
-    assert.match(home.element.querySelector(".home-session-card-list")?.textContent ?? "", /newest/);
-  } finally { await home.close(); }
+    assert.match(
+      home.element.querySelector(".home-session-card-list")?.textContent ?? "",
+      /newest/,
+    );
+  } finally {
+    await home.close();
+  }
 });

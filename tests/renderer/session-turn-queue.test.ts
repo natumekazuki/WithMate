@@ -4,7 +4,10 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SessionTurnQueueRow, SessionTurnSubmissionRow } from "../../src/chat/conversation/session-turn-queue-row.js";
+import {
+  SessionTurnQueueRow,
+  SessionTurnSubmissionRow,
+} from "../../src/chat/conversation/session-turn-queue-row.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { SessionTurnAcceptance } from "../../src/chat/runtime/session-turn-acceptance.js";
 import { projectSessionTurnQueue } from "../../src/chat/conversation/session-turn-queue-projection.js";
@@ -21,20 +24,78 @@ import { savedReplyConversationFrame } from "../../src-shared/session/conversati
 
 const owner = { kind: "main" as const, id: "session" };
 const request = {
-  incarnationId: "incarnation", clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc", userMessage: "A", submitSource: "composer" as const,
-  executionOptions: { catalogRevision: 1, model: "model", reasoningEffort: "medium" as const, approvalMode: "on-request" as const, codexSandboxMode: "workspace-write" as const, codexSpeed: "standard" as const, codexReviewer: "user" as const, customAgentName: "" },
+  incarnationId: "incarnation",
+  clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+  userMessage: "A",
+  submitSource: "composer" as const,
+  executionOptions: {
+    catalogRevision: 1,
+    model: "model",
+    reasoningEffort: "medium" as const,
+    approvalMode: "on-request" as const,
+    codexSandboxMode: "workspace-write" as const,
+    codexSpeed: "standard" as const,
+    codexReviewer: "user" as const,
+    customAgentName: "",
+  },
 };
-function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
-  return { sessionId: owner.id, incarnationId: request.incarnationId, id: "item", requestId: request.clientRequestId, sequence: 1, queuePosition: overrides.sequence ?? 1, state: "queued",
-    captured: { request, attachments: [], provider: "codex", workspacePath: "workspace" }, turnId: null, userMessageSeq: null, reason: null,
-    releasedAt: null, createdAt: "2026-10-10T00:00:00Z", updatedAt: "2026-10-10T00:00:00Z", ...overrides };
+/** 共通の送信要求を保持する待機済み受付を組み立て、必要な項目だけケース別に上書きする。 */
+function receipt(
+  overrides: Partial<SessionTurnQueueReceipt> = {},
+): SessionTurnQueueReceipt {
+  return {
+    sessionId: owner.id,
+    incarnationId: request.incarnationId,
+    id: "item",
+    requestId: request.clientRequestId,
+    sequence: 1,
+    queuePosition: overrides.sequence ?? 1,
+    state: "queued",
+    captured: {
+      request,
+      attachments: [],
+      provider: "codex",
+      workspacePath: "workspace",
+    },
+    turnId: null,
+    userMessageSeq: null,
+    reason: null,
+    releasedAt: null,
+    createdAt: "2026-10-10T00:00:00Z",
+    updatedAt: "2026-10-10T00:00:00Z",
+    ...overrides,
+  };
 }
 
+/** ブックマーク付きの既存発言を持つ実行中 Main を作る。 */
 function session(): Session {
-  return { id: owner.id, incarnationId: request.incarnationId, taskTitle: "Session", status: "idle", updatedAt: "2026-10-10T00:00:00Z", isPinned: false,
-    provider: "codex", ...request.executionOptions, workspaceLabel: "Workspace", workspacePath: "workspace", branch: "feature", sessionKind: "default", accessMode: "active", sourceSchemaVersion: 6,
-    characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#000000", sub: "#000000" }, characterRuntimeSnapshot: null,
-    runState: "running", allowedAdditionalDirectories: [], threadId: "thread", messages: [{ role: "user", text: "before", isBookmarked: true }], messageCount: 1, stream: [] };
+  return {
+    id: owner.id,
+    incarnationId: request.incarnationId,
+    taskTitle: "Session",
+    status: "idle",
+    updatedAt: "2026-10-10T00:00:00Z",
+    isPinned: false,
+    provider: "codex",
+    ...request.executionOptions,
+    workspaceLabel: "Workspace",
+    workspacePath: "workspace",
+    branch: "feature",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 6,
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#000000", sub: "#000000" },
+    characterRuntimeSnapshot: null,
+    runState: "running",
+    allowedAdditionalDirectories: [],
+    threadId: "thread",
+    messages: [{ role: "user", text: "before", isBookmarked: true }],
+    messageCount: 1,
+    stream: [],
+  };
 }
 
 // @test-value v2
@@ -49,46 +110,102 @@ function session(): Session {
 // impact = "別の話題の入力や返信先を知らずに失い、意図しない会話に続きを送る"
 // distinction = "既存の受付回復・Aux永続下書きテストは、同一Main内の複数枠と返信だけの版変更を検証しない"
 // @end-test-value
+/** 明示返信の受付後は送信元の同じ版だけを消し、別枠と受付待ち中の編集を保つ。 */
 test("Main acceptance consumes only the originating frame and draft revision", async () => {
-  const main = { kind: "main" as const, sessionId: owner.id, incarnationId: request.incarnationId };
-  const peer = { kind: "main" as const, sessionId: "peer", incarnationId: "peer-inc" };
+  const main = {
+    kind: "main" as const,
+    sessionId: owner.id,
+    incarnationId: request.incarnationId,
+  };
+  const peer = {
+    kind: "main" as const,
+    sessionId: "peer",
+    incarnationId: "peer-inc",
+  };
   const all = { ...owner, frameKey: "all" };
   const peerDraft = { ...owner, frameKey: "peer" };
   const registry = new ComposerControllerRegistry();
   const replyTo = { target: main, seq: 2 };
   const quote = { key: "two", reference: replyTo };
-  const threads = { initialMessageIndexes: [0], children: [
-    { target: peer, title: "Peer", messageIndexes: [2], sentMessageIndexes: [0], inboundTurnIds: [] },
-  ] };
+  const threads = {
+    initialMessageIndexes: [0],
+    children: [
+      {
+        target: peer,
+        title: "Peer",
+        messageIndexes: [2],
+        sentMessageIndexes: [0],
+        inboundTurnIds: [],
+      },
+    ],
+  };
   const thread = savedReplyConversationFrame(main, threads, replyTo);
   assert.deepEqual(thread, peer);
-  assert.equal(savedReplyConversationFrame(main, threads, { target: main, seq: 0 }), null);
+  assert.equal(
+    savedReplyConversationFrame(main, threads, { target: main, seq: 0 }),
+    null,
+  );
   registry.setDraft(owner, "Initial draft");
   registry.setDraft(peerDraft, "Peer draft @peer.txt");
   assert.equal(registry.get(all).draft, "");
-  const input = { ...request, userMessage: "Follow-up @example.txt", replyTo, mainConversationFrame: thread };
-  for (const scenario of ["accepted", "reply-edited", "attachment-edited", "rejected"] as const) {
+  const input = {
+    ...request,
+    userMessage: "Follow-up @example.txt",
+    replyTo,
+    mainConversationFrame: thread,
+  };
+  for (const scenario of [
+    "accepted",
+    "reply-edited",
+    "attachment-edited",
+    "rejected",
+  ] as const) {
     registry.setDraft(all, input.userMessage);
     registry.setReply(all, quote);
     const acceptance = new SessionTurnAcceptance();
-    let acknowledge!: (response: Awaited<ReturnType<WithMateWindowApi["enqueueSessionTurn"]>>) => void;
+    let acknowledge!: (
+      response: Awaited<ReturnType<WithMateWindowApi["enqueueSessionTurn"]>>,
+    ) => void;
     const op = runMainSessionTurnOperation({
       api: {
+        /** プレビューが送信元の会話と捕捉時の本文を使うことを確認する。 */
         previewComposerInput: async (id, text) => {
           assert.deepEqual([id, text], [main.sessionId, input.userMessage]);
           return { attachments: [], errors: [] };
         },
+        /** 送信先と捕捉要求を照合し、待機列への受付結果を保留する。 */
         enqueueSessionTurn: async (id, payload) => {
           assert.equal(id, main.sessionId);
           assert.deepEqual(payload, input);
-          return new Promise((resolve) => { acknowledge = resolve; });
+          return new Promise((resolve) => {
+            acknowledge = resolve;
+          });
         },
+        /** 受付 API の直接応答だけで結果を決め、照会には既存受付を返さない。 */
         getSessionTurnQueueReceipt: async () => null,
       },
-      sessionId: main.sessionId, selectedSession: session(), request: input, composerRegistry: registry, composerOwner: all,
-      submitCoordinator: new SessionSubmitCoordinator(), acceptance, queueTurn: true, clearDraft: true, collapseActionDock: false,
-      selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-      state: { setComposerPreview() {}, onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+      sessionId: main.sessionId,
+      selectedSession: session(),
+      request: input,
+      composerRegistry: registry,
+      composerOwner: all,
+      submitCoordinator: new SessionSubmitCoordinator(),
+      acceptance,
+      queueTurn: true,
+      clearDraft: true,
+      collapseActionDock: false,
+      selectedSessionRunState: "idle",
+      blockedReason: null,
+      isReadOnly: false,
+      /** Workspace 検証を成立済みとし、返信と下書きの版を独立して調べる。 */ validateWorkspace:
+        async () => true,
+      state: {
+        /** プレビュー表示は検証せず、登録された送信要求を観測する。 */ setComposerPreview() {},
+        /** 送信状態の画面反映を省き、下書き状態はレジストリから確認する。 */ onSubmitStateChanged() {},
+        /** 送信ブロック表示は捕捉版の照合に関与させない。 */ setForceComposerBlockedFeedback() {},
+        /** 操作ドックの表示はこのケースで観測しない。 */ collapseActionDock() {},
+      },
+      /** ログではなく下書きと受付要求を検証する。 */ log() {},
     });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(typeof acknowledge, "function");
@@ -96,12 +213,31 @@ test("Main acceptance consumes only the originating frame and draft revision", a
     assert.equal(registry.get(all).reply, quote);
     const edited = { key: "zero", reference: { target: main, seq: 0 } };
     if (scenario === "reply-edited") registry.setReply(all, edited); // 変わったのは返信先だけで、本文は同じ。
-    if (scenario === "attachment-edited") registry.setDraft(all, "Follow-up @new.txt");
-    acknowledge(scenario === "rejected" ? { state: "rejected", reason: "Queue rejected" }
-      : receipt({ accepted: { ...receipt().captured, request: input } }));
-    if (scenario === "rejected") await assert.rejects(op, /Queue rejected/); else assert.ok(await op);
-    assert.equal(registry.get(all).draft, scenario === "accepted" ? "" : scenario === "attachment-edited" ? "Follow-up @new.txt" : input.userMessage);
-    assert.equal(registry.get(all).reply, scenario === "accepted" ? undefined : scenario === "reply-edited" ? edited : quote);
+    if (scenario === "attachment-edited")
+      registry.setDraft(all, "Follow-up @new.txt");
+    acknowledge(
+      scenario === "rejected"
+        ? { state: "rejected", reason: "Queue rejected" }
+        : receipt({ accepted: { ...receipt().captured, request: input } }),
+    );
+    if (scenario === "rejected") await assert.rejects(op, /Queue rejected/);
+    else assert.ok(await op);
+    assert.equal(
+      registry.get(all).draft,
+      scenario === "accepted"
+        ? ""
+        : scenario === "attachment-edited"
+          ? "Follow-up @new.txt"
+          : input.userMessage,
+    );
+    assert.equal(
+      registry.get(all).reply,
+      scenario === "accepted"
+        ? undefined
+        : scenario === "reply-edited"
+          ? edited
+          : quote,
+    );
     assert.equal(registry.get(peerDraft).draft, "Peer draft @peer.txt");
     assert.equal(registry.get(owner).draft, "Initial draft");
   }
@@ -119,40 +255,104 @@ test("Main acceptance consumes only the originating frame and draft revision", a
 // impact = "受付済みの外部作用を重複実行し、編集中の指示を失う"
 // distinction = "main facadeの保存検証ではrendererのACK喪失とdraft保持を再現できない"
 // @end-test-value
+/** 失敗したターンの再送は保留中の重複を止め、後の照会で同一受付を確定しても現在の下書きを残す。 */
 test("failed Turn retry resolves an uncertain acknowledgement without replacing the draft", async () => {
   const acceptance = new SessionTurnAcceptance();
   const registry = new ComposerControllerRegistry();
   registry.setDraft(owner, "Keep this draft");
-  const retry = { target: { kind: "main" as const, sessionId: owner.id, incarnationId: request.incarnationId }, receiptId: "source", turnId: "42", clientRequestId: request.clientRequestId, executionOptions: request.executionOptions };
-  const origin = { kind: "gui" as const, operation: "send" as const, targetSessionId: owner.id, targetIncarnationId: request.incarnationId };
-  const acceptedInput = { request, provider: "codex", workspacePath: "workspace", attachments: [], origin,
-    retrySource: { receiptId: "source", turnId: "42", origin, changedSinceAcceptance: false } };
+  const retry = {
+    target: {
+      kind: "main" as const,
+      sessionId: owner.id,
+      incarnationId: request.incarnationId,
+    },
+    receiptId: "source",
+    turnId: "42",
+    clientRequestId: request.clientRequestId,
+    executionOptions: request.executionOptions,
+  };
+  const origin = {
+    kind: "gui" as const,
+    operation: "send" as const,
+    targetSessionId: owner.id,
+    targetIncarnationId: request.incarnationId,
+  };
+  const acceptedInput = {
+    request,
+    provider: "codex",
+    workspacePath: "workspace",
+    attachments: [],
+    origin,
+    retrySource: {
+      receiptId: "source",
+      turnId: "42",
+      origin,
+      changedSinceAcceptance: false,
+    },
+  };
   const saved = receipt({ captured: acceptedInput, accepted: acceptedInput });
   let disconnect!: (error: Error) => void;
   let completeLookup!: (receipt: SessionTurnQueueReceipt | null) => void;
-  const initialReply = new Promise<SessionTurnQueueReceipt>((_, reject) => { disconnect = reject; });
-  const initialLookup = new Promise<SessionTurnQueueReceipt | null>((resolve) => { completeLookup = resolve; });
+  const initialReply = new Promise<SessionTurnQueueReceipt>((_, reject) => {
+    disconnect = reject;
+  });
+  const initialLookup = new Promise<SessionTurnQueueReceipt | null>(
+    (resolve) => {
+      completeLookup = resolve;
+    },
+  );
   let lookups = 0;
   let sends = 0;
   const api = {
-    enqueueSessionTurn: async () => { throw new Error("unexpected normal send"); },
-    retryFailedSessionTurn: async () => { sends++; return initialReply; },
-    getSessionTurnQueueReceipt: async (_sessionId: string, id: string) => { assert.equal(id, retry.clientRequestId); lookups++; return lookups === 1 ? initialLookup : lookups === 2 ? { ...saved, requestId: "wrong" } : saved; },
+    /** 失敗ターンの再送経路を通るはずなので、通常送信が呼ばれたら失敗とする。 */
+    enqueueSessionTurn: async () => {
+      throw new Error("unexpected normal send");
+    },
+    /** 再送の回数を数え、初回の受付応答は通信断を再現できるよう保留する。 */
+    retryFailedSessionTurn: async () => {
+      sends++;
+      return initialReply;
+    },
+    /** 要求 ID を照合し、不在、不整合、正しい受付を順に返す。 */
+    getSessionTurnQueueReceipt: async (_sessionId: string, id: string) => {
+      assert.equal(id, retry.clientRequestId);
+      lookups++;
+      return lookups === 1
+        ? initialLookup
+        : lookups === 2
+          ? { ...saved, requestId: "wrong" }
+          : saved;
+    },
   };
-  const operation = assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /acceptance could not be confirmed/);
+  const operation = assert.rejects(
+    acceptance.submitFailedRetry(api, owner.id, retry),
+    /acceptance could not be confirmed/,
+  );
   assert.equal(acceptance.hasUncertain(owner.id), false);
-  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /in progress/);
+  await assert.rejects(
+    acceptance.submitFailedRetry(api, owner.id, retry),
+    /in progress/,
+  );
   disconnect(new Error("ack lost"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(lookups, 1);
   assert.equal(acceptance.hasUncertain(owner.id), false);
   assert.equal(await acceptance.check(api, owner.id, registry), null);
-  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /in progress/);
+  await assert.rejects(
+    acceptance.submitFailedRetry(api, owner.id, retry),
+    /in progress/,
+  );
   completeLookup(null);
   await operation;
   assert.equal(acceptance.hasUncertain(owner.id), true);
-  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /previous turn/);
-  await assert.rejects(acceptance.check(api, owner.id, registry), /does not match/);
+  await assert.rejects(
+    acceptance.submitFailedRetry(api, owner.id, retry),
+    /previous turn/,
+  );
+  await assert.rejects(
+    acceptance.check(api, owner.id, registry),
+    /does not match/,
+  );
   assert.equal(acceptance.hasUncertain(owner.id), true);
   assert.equal(await acceptance.check(api, owner.id, registry), saved);
   assert.equal(acceptance.hasUncertain(owner.id), false);
@@ -173,27 +373,58 @@ test("failed Turn retry resolves an uncertain acknowledgement without replacing 
 // impact = "確定していないと誤認し再操作できない状態や、理由が分からないまま再度Resendする状態を防ぐ"
 // distinction = "通常送信の拒否testはResendに受付・失敗のローカル本文行がない経路を扱わない"
 // @end-test-value
+/** 受付不明の再試行で拒否が確定したら、元の会話だけに理由を残し下書きを変えない。 */
 test("failed Turn recovery keeps a known rejection scoped to its original conversation", async () => {
   const acceptance = new SessionTurnAcceptance();
   const registry = new ComposerControllerRegistry();
   registry.setDraft(owner, "Keep this draft");
-  const retry = { target: { kind: "main" as const, sessionId: owner.id, incarnationId: request.incarnationId }, receiptId: "source", turnId: "42", clientRequestId: request.clientRequestId, executionOptions: request.executionOptions };
+  const retry = {
+    target: {
+      kind: "main" as const,
+      sessionId: owner.id,
+      incarnationId: request.incarnationId,
+    },
+    receiptId: "source",
+    turnId: "42",
+    clientRequestId: request.clientRequestId,
+    executionOptions: request.executionOptions,
+  };
   const sentIds: string[] = [];
   const api = {
-    enqueueSessionTurn: async () => { throw new Error("unexpected normal send"); },
+    /** 元の操作は失敗ターンの再送であり、通常送信への切り替えを拒む。 */
+    enqueueSessionTurn: async () => {
+      throw new Error("unexpected normal send");
+    },
+    /** 同じ要求 ID で再試行されるか記録し、初回は応答喪失、次は確定拒否を返す。 */
     retryFailedSessionTurn: async (_sessionId: string, input: typeof retry) => {
       sentIds.push(input.clientRequestId);
       if (sentIds.length === 1) throw new Error("ack lost");
-      return { state: "rejected" as const, reason: "Original input is unavailable." };
+      return {
+        state: "rejected" as const,
+        reason: "Original input is unavailable.",
+      };
     },
+    /** 初回の応答喪失を受付照会で解決できない状態にする。 */
     getSessionTurnQueueReceipt: async () => null,
   };
-  await assert.rejects(acceptance.submitFailedRetry(api, owner.id, retry), /acceptance could not be confirmed/);
-  assert.equal(await acceptance.retry(api, owner.id, registry, "new-incarnation"), null);
-  await assert.rejects(acceptance.retry(api, owner.id, registry, request.incarnationId), /Original input is unavailable/);
+  await assert.rejects(
+    acceptance.submitFailedRetry(api, owner.id, retry),
+    /acceptance could not be confirmed/,
+  );
+  assert.equal(
+    await acceptance.retry(api, owner.id, registry, "new-incarnation"),
+    null,
+  );
+  await assert.rejects(
+    acceptance.retry(api, owner.id, registry, request.incarnationId),
+    /Original input is unavailable/,
+  );
   assert.deepEqual(sentIds, [retry.clientRequestId, retry.clientRequestId]);
   assert.equal(acceptance.hasUncertain(owner.id, request.incarnationId), false);
-  assert.equal(acceptance.resendRecoveryError(owner.id, request.incarnationId), "Original input is unavailable.");
+  assert.equal(
+    acceptance.resendRecoveryError(owner.id, request.incarnationId),
+    "Original input is unavailable.",
+  );
   assert.equal(acceptance.resendRecoveryError(owner.id, "new-incarnation"), "");
   assert.equal(registry.get(owner).draft, "Keep this draft");
 });
@@ -210,54 +441,191 @@ test("failed Turn recovery keeps a known rejection scoped to its original conver
 // impact = "非同期到着順や送信時のqueue位置で失敗が見失われることを防ぐ"
 // distinction = "Column単体testではreceiptからcanonicalへのbridgeとtail経路を通らない。小さいMain/Auxiliary fixtureで境界を確認する"
 // @end-test-value
+/** 保存済み応答や部分本文があれば尊重し、足りない場合だけ共通の失敗表示と補足行を投影する。 */
 test("failed receipts bridge the response and use the same tail failure surface", () => {
-  const failed = receipt({ state: "failed", turnId: "failed-turn", userMessageSeq: 40, reason: "Capacity unavailable." });
+  const failed = receipt({
+    state: "failed",
+    turnId: "failed-turn",
+    userMessageSeq: 40,
+    reason: "Capacity unavailable.",
+  });
   const context = { sessionId: owner.id, incarnationId: request.incarnationId };
   for (const primaryMessageSourceKind of ["session", "auxiliary"] as const) {
     for (const state of ["failed", "interrupted"] as const) {
       const terminal = { ...failed, state };
       const prompt = { role: "user" as const, text: "A", historyIndex: 40 };
-      const savedReply = { role: "assistant" as const, text: "saved reply", historyIndex: 41 };
-      const savedPartial = { ...savedReply, text: "saved partial", runFailure: terminal.reason!,
-        artifact: { title: "Execution details", activitySummary: [], changedFiles: [], runChecks: [{ label: "Fixture operation", value: "finished" }] } };
+      const savedReply = {
+        role: "assistant" as const,
+        text: "saved reply",
+        historyIndex: 41,
+      };
+      const savedPartial = {
+        ...savedReply,
+        text: "saved partial",
+        runFailure: terminal.reason!,
+        artifact: {
+          title: "Execution details",
+          activitySummary: [],
+          changedFiles: [],
+          runChecks: [{ label: "Fixture operation", value: "finished" }],
+        },
+      };
       const nextPrompt = { role: "user" as const, text: "B", historyIndex: 42 };
-      const nextReply = { role: "assistant" as const, text: "B reply", historyIndex: 43 };
-      const project = (messages: Parameters<typeof buildMessageListProjection>[0]) =>
-        projectSessionTurnQueue(buildMessageListProjection(messages, [], owner.id, { primaryMessageSourceKind }), [terminal], context).projection.messages;
-      assert.deepEqual(project([prompt, savedReply, nextPrompt, nextReply]), [prompt, savedReply, nextPrompt, nextReply]);
-      assert.deepEqual(project([prompt, savedPartial, nextPrompt, nextReply]), [prompt, savedPartial, nextPrompt, nextReply]);
-      assert.deepEqual(project([prompt, nextPrompt, nextReply]), [prompt, { role: "assistant", text: "", runFailure: failed.reason! }, nextPrompt, nextReply]);
-      const confirmedInput = { role: "user" as const, text: "confirmed follow-up", historyIndex: 41,
-        turnInput: { state: "confirmed" as const, turnId: "parent", nativeTurnId: "native", attachments: [] } };
-      const withInput = [prompt, confirmedInput, { ...savedReply, historyIndex: 42 }];
-      const inputHistory = buildMessageListProjection(withInput, [], owner.id, { primaryMessageSourceKind });
-      assert.deepEqual(projectSessionTurnQueue(inputHistory, [{ ...terminal, inputTurnId: "parent", userMessageSeq: 41 }], context).projection.messages, withInput);
-      assert.deepEqual(project([prompt, confirmedInput]), [prompt, confirmedInput, { role: "assistant", text: "", runFailure: failed.reason! }]);
+      const nextReply = {
+        role: "assistant" as const,
+        text: "B reply",
+        historyIndex: 43,
+      };
+      /** 対象会話の履歴へ同じ失敗受付を投影し、返されたメッセージ本文を比較する。 */
+      const project = (
+        messages: Parameters<typeof buildMessageListProjection>[0],
+      ) =>
+        projectSessionTurnQueue(
+          buildMessageListProjection(messages, [], owner.id, {
+            primaryMessageSourceKind,
+          }),
+          [terminal],
+          context,
+        ).projection.messages;
+      assert.deepEqual(project([prompt, savedReply, nextPrompt, nextReply]), [
+        prompt,
+        savedReply,
+        nextPrompt,
+        nextReply,
+      ]);
+      assert.deepEqual(project([prompt, savedPartial, nextPrompt, nextReply]), [
+        prompt,
+        savedPartial,
+        nextPrompt,
+        nextReply,
+      ]);
+      assert.deepEqual(project([prompt, nextPrompt, nextReply]), [
+        prompt,
+        { role: "assistant", text: "", runFailure: failed.reason! },
+        nextPrompt,
+        nextReply,
+      ]);
+      const confirmedInput = {
+        role: "user" as const,
+        text: "confirmed follow-up",
+        historyIndex: 41,
+        turnInput: {
+          state: "confirmed" as const,
+          turnId: "parent",
+          nativeTurnId: "native",
+          attachments: [],
+        },
+      };
+      const withInput = [
+        prompt,
+        confirmedInput,
+        { ...savedReply, historyIndex: 42 },
+      ];
+      const inputHistory = buildMessageListProjection(withInput, [], owner.id, {
+        primaryMessageSourceKind,
+      });
+      assert.deepEqual(
+        projectSessionTurnQueue(
+          inputHistory,
+          [{ ...terminal, inputTurnId: "parent", userMessageSeq: 41 }],
+          context,
+        ).projection.messages,
+        withInput,
+      );
+      assert.deepEqual(project([prompt, confirmedInput]), [
+        prompt,
+        confirmedInput,
+        { role: "assistant", text: "", runFailure: failed.reason! },
+      ]);
       const laterLive = buildMessageListProjection([prompt], [], owner.id, {
         primaryMessageSourceKind,
-        liveAssistant: { sessionId: owner.id, threadId: "shared-thread", withMateTurnId: "later-turn", messageIndex: 42, text: "Later response before its saved prompt" },
+        liveAssistant: {
+          sessionId: owner.id,
+          threadId: "shared-thread",
+          withMateTurnId: "later-turn",
+          messageIndex: 42,
+          text: "Later response before its saved prompt",
+        },
       });
-      assert.deepEqual(projectSessionTurnQueue(laterLive, [terminal], context).projection.messages,
-        [prompt, { role: "assistant", text: "", runFailure: failed.reason! }, laterLive.messages[1]]);
+      assert.deepEqual(
+        projectSessionTurnQueue(laterLive, [terminal], context).projection
+          .messages,
+        [
+          prompt,
+          { role: "assistant", text: "", runFailure: failed.reason! },
+          laterLive.messages[1],
+        ],
+      );
     }
-    const liveHistory = buildMessageListProjection([{ role: "user", text: "parent input", historyIndex: 40 }], [], owner.id, {
-      primaryMessageSourceKind, liveAssistant: { sessionId: owner.id, threadId: "thread", messageIndex: 41, text: "still generating" },
-    });
-    const unknownInput = { ...failed, state: "interrupted" as const, reason: "Execution outcome is unknown after interruption.", inputTurnId: "parent", userMessageSeq: null };
-    const unknown = projectSessionTurnQueue(liveHistory, [unknownInput], context);
+    const liveHistory = buildMessageListProjection(
+      [{ role: "user", text: "parent input", historyIndex: 40 }],
+      [],
+      owner.id,
+      {
+        primaryMessageSourceKind,
+        liveAssistant: {
+          sessionId: owner.id,
+          threadId: "thread",
+          messageIndex: 41,
+          text: "still generating",
+        },
+      },
+    );
+    const unknownInput = {
+      ...failed,
+      state: "interrupted" as const,
+      reason: "Execution outcome is unknown after interruption.",
+      inputTurnId: "parent",
+      userMessageSeq: null,
+    };
+    const unknown = projectSessionTurnQueue(
+      liveHistory,
+      [unknownInput],
+      context,
+    );
     assert.deepEqual(unknown.projection.messages, liveHistory.messages);
     assert.deepEqual(unknown.tail, [unknownInput]);
     for (const live of [false, true]) {
-      const history = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 40 }], [], owner.id, {
-        primaryMessageSourceKind,
-        ...(live ? { liveAssistant: { sessionId: owner.id, threadId: "thread", withMateTurnId: failed.turnId!, messageIndex: 41, text: "partial" } } : {}),
-      });
-      const messages = projectSessionTurnQueue(history, [failed], context).projection.messages;
+      const history = buildMessageListProjection(
+        [{ role: "user", text: "A", historyIndex: 40 }],
+        [],
+        owner.id,
+        {
+          primaryMessageSourceKind,
+          ...(live
+            ? {
+                liveAssistant: {
+                  sessionId: owner.id,
+                  threadId: "thread",
+                  withMateTurnId: failed.turnId!,
+                  messageIndex: 41,
+                  text: "partial",
+                },
+              }
+            : {}),
+        },
+      );
+      const messages = projectSessionTurnQueue(history, [failed], context)
+        .projection.messages;
       assert.equal(messages.length, 2);
       assert.equal(messages[1].text, live ? "partial" : "");
       assert.equal(messages[1].runFailure, failed.reason);
-      const canonical = buildMessageListProjection([history.messages[0], { role: "assistant", text: "partial", runFailure: failed.reason!, historyIndex: 41 }], [], owner.id, { primaryMessageSourceKind });
-      const settled = projectSessionTurnQueue(canonical, [failed], context).projection.messages;
+      const canonical = buildMessageListProjection(
+        [
+          history.messages[0],
+          {
+            role: "assistant",
+            text: "partial",
+            runFailure: failed.reason!,
+            historyIndex: 41,
+          },
+        ],
+        [],
+        owner.id,
+        { primaryMessageSourceKind },
+      );
+      const settled = projectSessionTurnQueue(canonical, [failed], context)
+        .projection.messages;
       assert.equal(settled.length, 2);
       assert.equal(settled[1].runFailure, failed.reason);
     }
@@ -265,18 +633,52 @@ test("failed receipts bridge the response and use the same tail failure surface"
   const character = { name: "Mate", iconPath: "" };
   const rows = [
     ...(["failed", "interrupted"] as const).map((state) =>
-      React.createElement(SessionTurnQueueRow, { receipt: { ...failed, state, userMessageSeq: null }, character, busy: false, onCancel() {} })),
-    React.createElement(SessionTurnSubmissionRow, { character, submission: { ...context, requestId: "local", userMessage: "A", historyMessageCount: 0, queuedBehindRun: true, error: failed.reason! } }),
+      React.createElement(SessionTurnQueueRow, {
+        receipt: { ...failed, state, userMessageSeq: null },
+        character,
+        busy: false,
+        /** 失敗済み行の静的表示だけを検査するため、取消操作は実行しない。 */ onCancel() {},
+      }),
+    ),
+    React.createElement(SessionTurnSubmissionRow, {
+      character,
+      submission: {
+        ...context,
+        requestId: "local",
+        userMessage: "A",
+        historyMessageCount: 0,
+        queuedBehindRun: true,
+        error: failed.reason!,
+      },
+    }),
   ];
   for (const row of rows) {
     const document = new JSDOM(renderToStaticMarkup(row)).window.document;
     assert.equal(document.querySelector(".message-row.user")?.textContent, "A");
     assert.equal(document.querySelectorAll(".session-run-failure").length, 1);
-    assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, `Failed${failed.reason}`);
+    assert.equal(
+      document.querySelector(".message-row.assistant [role=alert]")
+        ?.textContent,
+      `Failed${failed.reason}`,
+    );
   }
-  const unknown = React.createElement(SessionTurnQueueRow, { receipt: { ...failed, state: "interrupted", reason: null, inputTurnId: "parent", userMessageSeq: null }, character, busy: false, onCancel() {} });
+  const unknown = React.createElement(SessionTurnQueueRow, {
+    receipt: {
+      ...failed,
+      state: "interrupted",
+      reason: null,
+      inputTurnId: "parent",
+      userMessageSeq: null,
+    },
+    character,
+    busy: false,
+    /** 受付結果不明を示す終端行では、操作を提供しないことを DOM で観測する。 */ onCancel() {},
+  });
   const document = new JSDOM(renderToStaticMarkup(unknown)).window.document;
-  assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, "FailedInput acceptance could not be confirmed.");
+  assert.equal(
+    document.querySelector(".message-row.assistant [role=alert]")?.textContent,
+    "FailedInput acceptance could not be confirmed.",
+  );
   assert.equal(document.querySelectorAll("button").length, 0);
 });
 
@@ -292,14 +694,26 @@ test("failed receipts bridge the response and use the same tail failure surface"
 // impact = "Auxiliaryの入力消失と重複実行を防ぎ、実行中でも次turnを受け付ける"
 // distinction = "Main受付testとdraft owner単体testではAuxiliaryの共通operationからatomic受付への接続を確認できない"
 // @end-test-value
+/** 実行中 Auxiliary の送信は保存済みの下書きの版だけを消費し、受付待ち中の編集を次の版として残す。 */
 test("Auxiliary running Send consumes only its durable capture and preserves ACK-wait edits", async () => {
   const auxiliaryOwner = { kind: "auxiliary" as const, id: "aux" };
   const incarnation = "2026-10-11T00:00:00Z";
   const draftIncarnation = "730d0664-8452-4d50-9ee9-4b0e4f55c0be";
-  let durable = { auxiliarySessionId: "aux", parentSessionId: "session", incarnation: draftIncarnation, durableRevision: 3, text: "A", updatedAt: "" };
+  let durable = {
+    auxiliarySessionId: "aux",
+    parentSessionId: "session",
+    incarnation: draftIncarnation,
+    durableRevision: 3,
+    text: "A",
+    updatedAt: "",
+  };
   const saves: number[] = [];
   const draftOwner = new AuxiliaryDraftPersistenceOwner({
-    load: async () => ({ ...durable }), now: () => "now", debounceMs: 0,
+    /** 下書き所有者に初期の永続データのコピーを渡す。 */
+    load: async () => ({ ...durable }),
+    /** 下書きの更新時刻を一定にする。 */ now: () => "now",
+    debounceMs: 0,
+    /** 先行する版を照合し、受付後に編集の保存が新しい版から進むようにする。 */
     save: async (record) => {
       saves.push(record.durableRevision);
       assert.equal(record.durableRevision, durable.durableRevision);
@@ -307,7 +721,8 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
       return { outcome: "saved", record: { ...durable } };
     },
   });
-  const registry = new ComposerControllerRegistry(); registry.setDraft(auxiliaryOwner, "A");
+  const registry = new ComposerControllerRegistry();
+  registry.setDraft(auxiliaryOwner, "A");
   const acceptance = new SessionTurnAcceptance();
   let acknowledge!: (value: SessionTurnQueueReceipt) => void;
   let submitted: typeof request | undefined;
@@ -315,24 +730,61 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
   const accepted = receipt({ sessionId: "aux", incarnationId: incarnation });
   const operation = runMainSessionTurnOperation({
     api: {
-      previewComposerInput: async (id, text) => { assert.equal(id, "aux"); assert.equal(text, "A"); return { attachments: [], errors: [] }; },
-      enqueueSessionTurn: async (id, input) => {
-        assert.equal(id, "aux"); submitted = input as typeof request;
-        durable = { ...durable, text: "", durableRevision: 4 };
-        return new Promise((resolve) => { acknowledge = resolve; });
+      /** 予約対象の Auxiliary と捕捉本文がプレビューへ渡ることを確かめる。 */
+      previewComposerInput: async (id, text) => {
+        assert.equal(id, "aux");
+        assert.equal(text, "A");
+        return { attachments: [], errors: [] };
       },
+      /** 受付側で保存済み下書きを消費し、受理の返答は保留する。 */
+      enqueueSessionTurn: async (id, input) => {
+        assert.equal(id, "aux");
+        submitted = input as typeof request;
+        durable = { ...durable, text: "", durableRevision: 4 };
+        return new Promise((resolve) => {
+          acknowledge = resolve;
+        });
+      },
+      /** 受付の完了は直接応答で制御し、照会経路から受付を返さない。 */
       getSessionTurnQueueReceipt: async () => null,
     },
-    sessionId: "aux", selectedSession: { ...session(), id: "aux", incarnationId: incarnation },
+    sessionId: "aux",
+    selectedSession: { ...session(), id: "aux", incarnationId: incarnation },
     request: { ...request, displayAnchorParentMessageCount: 9 },
-    composerRegistry: registry, composerOwner: auxiliaryOwner, submitCoordinator: new SessionSubmitCoordinator(),
-    acceptance, auxiliaryDraftOwner: draftOwner, queueTurn: true, clearDraft: true, collapseActionDock: false,
-    onSubmitted: () => { submittedCount += 1; },
-    selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-    state: { setComposerPreview: (preview) => registry.setPreview(auxiliaryOwner, preview), onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+    composerRegistry: registry,
+    composerOwner: auxiliaryOwner,
+    submitCoordinator: new SessionSubmitCoordinator(),
+    acceptance,
+    auxiliaryDraftOwner: draftOwner,
+    queueTurn: true,
+    clearDraft: true,
+    collapseActionDock: false,
+    /** 送信時の通知が後続の受付で繰り返されないか回数を数える。 */
+    onSubmitted: () => {
+      submittedCount += 1;
+    },
+    selectedSessionRunState: "running",
+    blockedReason: null,
+    isReadOnly: false,
+    /** Workspace を有効に固定し、実行中の受付と下書き版だけを調べる。 */ validateWorkspace:
+      async () => true,
+    state: {
+      /** プレビュー結果を送信元 Auxiliary の状態に反映する。 */ setComposerPreview:
+        (preview) => registry.setPreview(auxiliaryOwner, preview),
+      /** 画面の pending 表示は使わず、受付結果を Promise から受け取る。 */ onSubmitStateChanged() {},
+      /** ブロック理由の画面反映は実行中送信のテストでは観測しない。 */ setForceComposerBlockedFeedback() {},
+      /** ドックを閉じずに同じ入力へ後続編集を入れる。 */ collapseActionDock() {},
+    },
+    /** 記録対象は送信通知と保存履歴に限定する。 */ log() {},
   });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(submitted, { ...request, incarnationId: incarnation, displayAnchorParentMessageCount: 9, auxiliaryDraftIncarnation: draftIncarnation, auxiliaryDraftDurableRevision: 3 });
+  assert.deepEqual(submitted, {
+    ...request,
+    incarnationId: incarnation,
+    displayAnchorParentMessageCount: 9,
+    auxiliaryDraftIncarnation: draftIncarnation,
+    auxiliaryDraftDurableRevision: 3,
+  });
   assert.equal(registry.get(auxiliaryOwner).draft, "A");
   assert.equal(submittedCount, 1);
   registry.setDraft(auxiliaryOwner, "B");
@@ -360,29 +812,61 @@ test("Auxiliary running Send consumes only its durable capture and preserves ACK
 // impact = "結果不明時の入力消失・二重実行と他会話の送信不能を防ぐ"
 // distinction = "既存Main unknown testにはAux durable CAS保存gateとowner照合がない"
 // @end-test-value
+/** 受付不明になった Auxiliary でも下書き保存を再開し、元の捕捉内容で再試行できる。 */
 test("Auxiliary uncertainty releases draft saving and retries the original target capture", async () => {
   const auxiliaryOwner = { kind: "auxiliary" as const, id: "aux" };
-  let durable = { auxiliarySessionId: "aux", parentSessionId: "session", incarnation: "aux-inc", durableRevision: 3, text: "A", updatedAt: "" };
+  let durable = {
+    auxiliarySessionId: "aux",
+    parentSessionId: "session",
+    incarnation: "aux-inc",
+    durableRevision: 3,
+    text: "A",
+    updatedAt: "",
+  };
   const draftOwner = new AuxiliaryDraftPersistenceOwner({
-    load: async () => ({ ...durable }), now: () => "now", debounceMs: 0,
-    save: async (record) => { durable = { ...record, durableRevision: record.durableRevision + 1 }; return { outcome: "saved", record: { ...durable } }; },
+    /** 再試行前の永続下書きをコピーで読み出す。 */
+    load: async () => ({ ...durable }),
+    /** 保存時刻を安定させ、比較には版番号を使う。 */ now: () => "now",
+    debounceMs: 0,
+    /** 保存時に版を進め、受付不明中の編集が永続化されたことを調べる。 */
+    save: async (record) => {
+      durable = { ...record, durableRevision: record.durableRevision + 1 };
+      return { outcome: "saved", record: { ...durable } };
+    },
   });
   await draftOwner.ensureLoaded();
-  const registry = new ComposerControllerRegistry(); registry.setDraft(auxiliaryOwner, "A");
+  const registry = new ComposerControllerRegistry();
+  registry.setDraft(auxiliaryOwner, "A");
   const acceptance = new SessionTurnAcceptance();
-  const original = { ...request, incarnationId: durable.incarnation, auxiliaryDraftIncarnation: durable.incarnation, auxiliaryDraftDurableRevision: 3 };
-  const captured = { request: original, owner: auxiliaryOwner, revision: registry.capture(auxiliaryOwner).revision, clearDraft: true, auxiliaryDraftOwner: draftOwner };
+  const original = {
+    ...request,
+    incarnationId: durable.incarnation,
+    auxiliaryDraftIncarnation: durable.incarnation,
+    auxiliaryDraftDurableRevision: 3,
+  };
+  const captured = {
+    request: original,
+    owner: auxiliaryOwner,
+    revision: registry.capture(auxiliaryOwner).revision,
+    clearDraft: true,
+    auxiliaryDraftOwner: draftOwner,
+  };
   const sent: unknown[] = [];
   let failed = true;
   const api = {
+    /** 会話 ID と本文・設定を記録し、最初の通信断後は同じ対象の受付を返す。 */
     enqueueSessionTurn: async (id: string, input: typeof original) => {
       sent.push({ id, input });
       if (failed) throw new Error("disconnected");
       return receipt({ sessionId: "aux", incarnationId: "aux-inc" });
     },
+    /** 初回の応答喪失を照会では確認できないようにする。 */
     getSessionTurnQueueReceipt: async () => null,
   };
-  await assert.rejects(acceptance.submit(api, "aux", captured, registry), /acceptance could not be confirmed/);
+  await assert.rejects(
+    acceptance.submit(api, "aux", captured, registry),
+    /acceptance could not be confirmed/,
+  );
   assert.equal(acceptance.hasUncertain("aux"), true);
   assert.equal(acceptance.hasUncertain(owner.id), false);
   registry.setDraft(auxiliaryOwner, "B");
@@ -390,7 +874,10 @@ test("Auxiliary uncertainty releases draft saving and retries the original targe
   assert.equal(durable.text, "B");
   failed = false;
   await acceptance.retry(api, "aux", registry);
-  assert.deepEqual(sent, [{ id: "aux", input: original }, { id: "aux", input: original }]);
+  assert.deepEqual(sent, [
+    { id: "aux", input: original },
+    { id: "aux", input: original },
+  ]);
   assert.equal(registry.get(auxiliaryOwner).draft, "B");
   assert.equal(acceptance.hasUncertain("aux"), false);
 });
@@ -407,8 +894,10 @@ test("Auxiliary uncertainty releases draft saving and retries the original targe
 // impact = "実行中に次の依頼を予約できない、選択設定が変わる、未受付の入力を失う"
 // distinction = "受付class単体ではComposer preview/preflightとRuntime operationの接続を検証しない"
 // @end-test-value
+/** Main の編集中に選択モデルが変わっても捕捉済み設定で受け付け、応答後にだけ下書きを消す。 */
 test("Main Queue Turn admits captured settings after preview and clears after ACK", async () => {
-  const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+  const registry = new ComposerControllerRegistry();
+  registry.setDraft(owner, "A");
   const selected = session();
   const coordinator = new SessionSubmitCoordinator();
   let previewDone!: (value: { attachments: []; errors: [] }) => void;
@@ -417,13 +906,53 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
   let pending: string | null = null;
   let submittedCount = 0;
   const operation = runMainSessionTurnOperation({
-    api: { previewComposerInput: async () => new Promise((resolve) => { previewDone = resolve; }),
-      enqueueSessionTurn: async (_id, input) => { submitted = input; return new Promise((resolve) => { acknowledge = resolve; }); }, getSessionTurnQueueReceipt: async () => null },
-    sessionId: owner.id, selectedSession: selected, request, composerRegistry: registry, composerOwner: owner, submitCoordinator: coordinator,
-    acceptance: new SessionTurnAcceptance(), queueTurn: true, clearDraft: true, collapseActionDock: false,
-    onSubmitted: () => { submittedCount += 1; },
-    selectedSessionRunState: "running", blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-    state: { setComposerPreview: (preview) => registry.setPreview(owner, preview), onSubmitStateChanged: () => { pending = coordinator.isClaimed(owner.id) ? owner.id : null; }, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+    api: {
+      /** プレビューを保留し、送信時に捕捉したモデルと現在の選択を変えられるようにする。 */ previewComposerInput:
+        async () =>
+          new Promise((resolve) => {
+            previewDone = resolve;
+          }),
+      /** 待機列へ渡った捕捉要求を保存し、受付応答を遅らせる。 */
+      enqueueSessionTurn: async (_id, input) => {
+        submitted = input;
+        return new Promise((resolve) => {
+          acknowledge = resolve;
+        });
+      },
+      /** 照会では結果を返さず、直接の応答で受付完了を制御する。 */ getSessionTurnQueueReceipt:
+        async () => null,
+    },
+    sessionId: owner.id,
+    selectedSession: selected,
+    request,
+    composerRegistry: registry,
+    composerOwner: owner,
+    submitCoordinator: coordinator,
+    acceptance: new SessionTurnAcceptance(),
+    queueTurn: true,
+    clearDraft: true,
+    collapseActionDock: false,
+    /** 受付応答を返す前に送信通知が一回発生したか数える。 */
+    onSubmitted: () => {
+      submittedCount += 1;
+    },
+    selectedSessionRunState: "running",
+    blockedReason: null,
+    isReadOnly: false,
+    /** プレビューと受理の順序に集中するため Workspace を有効にする。 */ validateWorkspace:
+      async () => true,
+    state: {
+      /** Main の入力欄に戻るプレビュー結果を記録する。 */ setComposerPreview: (
+        preview,
+      ) => registry.setPreview(owner, preview),
+      /** 送信権の取得と解放を pending 状態に変換して観測する。 */ onSubmitStateChanged:
+        () => {
+          pending = coordinator.isClaimed(owner.id) ? owner.id : null;
+        },
+      /** 利用可能な Workspace ではブロック表示を使わない。 */ setForceComposerBlockedFeedback() {},
+      /** 入力欄の折りたたみは受付の版照合と切り離す。 */ collapseActionDock() {},
+    },
+    /** ログには依存せず要求、通知回数、下書きの変化を照合する。 */ log() {},
   });
   await new Promise((resolve) => setImmediate(resolve));
   selected.model = "changed-after-send";
@@ -433,12 +962,16 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
   assert.equal(registry.get(owner).draft, "A");
   assert.equal(pending, owner.id);
   assert.equal(submittedCount, 1);
-  const accepted = receipt(); acknowledge(accepted); assert.equal(await operation, accepted);
+  const accepted = receipt();
+  acknowledge(accepted);
+  assert.equal(await operation, accepted);
   assert.equal(submittedCount, 1);
   assert.equal(registry.get(owner).draft, "");
   assert.equal(pending, null);
   assert.equal(coordinator.isClaimed(owner.id), false);
-  assert.deepEqual(selected.messages, [{ role: "user", text: "before", isBookmarked: true }]);
+  assert.deepEqual(selected.messages, [
+    { role: "user", text: "before", isBookmarked: true },
+  ]);
   assert.equal(selected.messageCount, 1);
 });
 
@@ -454,37 +987,89 @@ test("Main Queue Turn admits captured settings after preview and clears after AC
 // impact = "通信や準備の速度でDockや追従が遅れたり、失敗時に送信文を見失ったり、復旧時に読み返し位置を奪ったりする"
 // distinction = "型検査や受付class単体はworkspace/preview待ちと送信時UI callbackの境界を通らない。小さいdeferred Promiseで継続契約を確認する"
 // @end-test-value
+/** 非同期準備より前に送信の表示・ドック・追従を通知し、拒否や受付不明から回復しても繰り返さない。 */
 test("send notifies Dock and follow before asynchronous preparation and does not repeat them in recovery", async () => {
-  for (const outcome of ["accepted", "rejected", "unknown", "check", "retry"] as const) {
+  for (const outcome of [
+    "accepted",
+    "rejected",
+    "unknown",
+    "check",
+    "retry",
+  ] as const) {
     for (const autoCollapse of [false, true]) {
-      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const registry = new ComposerControllerRegistry();
+      registry.setDraft(owner, "A");
       const acceptance = new SessionTurnAcceptance();
       const events: string[] = [];
-      acceptance.submissions.subscribe(() => { if (!events.length) events.push("surface"); });
+      acceptance.submissions.subscribe(() => {
+        if (!events.length) events.push("surface");
+      });
       let validate!: (value: boolean) => void;
       let preview!: (value: { attachments: []; errors: [] }) => void;
       let acknowledge!: () => void;
       let recover = false;
       const api = {
-        previewComposerInput: async () => new Promise<{ attachments: []; errors: [] }>((resolve) => { preview = resolve; }),
+        /** 早期通知の順序を確認するため、添付プレビューを手動完了まで待たせる。 */
+        previewComposerInput: async () =>
+          new Promise<{ attachments: []; errors: [] }>((resolve) => {
+            preview = resolve;
+          }),
+        /** 初回だけ応答を待機し、受理・拒否・通信断を選んで返す。 */
         enqueueSessionTurn: async () => {
-          if (!recover) await new Promise<void>((resolve) => { acknowledge = resolve; });
-          if (outcome === "rejected") return { state: "rejected" as const, reason: "Workspace is unavailable." };
-          if (outcome !== "accepted" && !recover) throw new Error("disconnected");
+          if (!recover)
+            await new Promise<void>((resolve) => {
+              acknowledge = resolve;
+            });
+          if (outcome === "rejected")
+            return {
+              state: "rejected" as const,
+              reason: "Workspace is unavailable.",
+            };
+          if (outcome !== "accepted" && !recover)
+            throw new Error("disconnected");
           return receipt();
         },
-        getSessionTurnQueueReceipt: async () => recover ? receipt() : null,
+        /** 回復を明示した後にだけ、元要求に対応する受付を照会できるようにする。 */
+        getSessionTurnQueueReceipt: async () => (recover ? receipt() : null),
       };
       const operation = runMainSessionTurnOperation({
-        api, sessionId: owner.id, selectedSession: session(), request,
-        composerRegistry: registry, composerOwner: owner, submitCoordinator: new SessionSubmitCoordinator(), acceptance,
-        queueTurn: true, clearDraft: true, collapseActionDock: autoCollapse,
-        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
-        validateWorkspace: () => new Promise<boolean>((resolve) => { validate = resolve; }),
-        state: { setComposerPreview() {}, onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock: () => { events.push("collapse"); } },
-        onSubmitted: () => { events.push("follow"); }, log() {},
+        api,
+        sessionId: owner.id,
+        selectedSession: session(),
+        request,
+        composerRegistry: registry,
+        composerOwner: owner,
+        submitCoordinator: new SessionSubmitCoordinator(),
+        acceptance,
+        queueTurn: true,
+        clearDraft: true,
+        collapseActionDock: autoCollapse,
+        selectedSessionRunState: "idle",
+        blockedReason: null,
+        isReadOnly: false,
+        /** Workspace 確認すら終わる前に送信通知が出るよう、確認完了を保留する。 */
+        validateWorkspace: () =>
+          new Promise<boolean>((resolve) => {
+            validate = resolve;
+          }),
+        state: {
+          /** 添付プレビューの表示はイベント順序に含めない。 */ setComposerPreview() {},
+          /** 送信中表示の変化は記録せず、受付一覧の登録を観測する。 */ onSubmitStateChanged() {},
+          /** ブロック時フィードバックをドックと追従のイベントから切り離す。 */ setForceComposerBlockedFeedback() {},
+          /** オプションで送信時の折りたたみが行われたことをイベントとして記録する。 */ collapseActionDock:
+            () => {
+              events.push("collapse");
+            },
+        },
+        /** 送信時の末尾追従通知を記録し、回復時には増えないか確認する。 */
+        onSubmitted: () => {
+          events.push("follow");
+        },
+        /** 記録された DOM 操作の順序にログを加えない。 */ log() {},
       });
-      const expected = autoCollapse ? ["surface", "collapse", "follow"] : ["surface", "follow"];
+      const expected = autoCollapse
+        ? ["surface", "collapse", "follow"]
+        : ["surface", "follow"];
       assert.deepEqual(events, expected);
       assert.equal(acceptance.submissions.getSnapshot()[0]?.userMessage, "A");
       assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
@@ -497,19 +1082,40 @@ test("send notifies Dock and follow before asynchronous preparation and does not
       acknowledge();
       if (outcome === "accepted") await operation;
       else {
-        await assert.rejects(operation, outcome === "rejected" ? /Workspace is unavailable/ : /acceptance could not be confirmed/);
+        await assert.rejects(
+          operation,
+          outcome === "rejected"
+            ? /Workspace is unavailable/
+            : /acceptance could not be confirmed/,
+        );
         assert.equal(registry.get(owner).draft, "A");
-        assert.match(acceptance.submissions.getSnapshot()[0]!.error, outcome === "rejected" ? /Workspace is unavailable/ : /acceptance could not be confirmed/);
+        assert.match(
+          acceptance.submissions.getSnapshot()[0]!.error,
+          outcome === "rejected"
+            ? /Workspace is unavailable/
+            : /acceptance could not be confirmed/,
+        );
         if (outcome === "check" || outcome === "retry") {
           recover = true;
-          if (outcome === "check") await Promise.all([acceptance.check(api, owner.id, registry), acceptance.check(api, owner.id, registry)]);
+          if (outcome === "check")
+            await Promise.all([
+              acceptance.check(api, owner.id, registry),
+              acceptance.check(api, owner.id, registry),
+            ]);
           else await acceptance.retry(api, owner.id, registry);
         }
       }
       await acceptance.check(api, owner.id, registry);
       assert.deepEqual(events, expected);
-      if (outcome === "accepted" || outcome === "check" || outcome === "retry") {
-        assert.equal(acceptance.submissions.getSnapshot()[0]?.receipt?.requestId, request.clientRequestId);
+      if (
+        outcome === "accepted" ||
+        outcome === "check" ||
+        outcome === "retry"
+      ) {
+        assert.equal(
+          acceptance.submissions.getSnapshot()[0]?.receipt?.requestId,
+          request.clientRequestId,
+        );
         assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
         assert.equal(registry.get(owner).draft, "");
       }
@@ -529,32 +1135,66 @@ test("send notifies Dock and follow before asynchronous preparation and does not
 // impact = "未送信の古いpromptを送信失敗と誤表示せず、受付結果不明の要求を見失わずに新draftを保持する"
 // distinction = "既存workspace世代失効testはresolve経路のみ、受付単体testはoperationのcatchを通らない。deferred失敗で受付段階とcaptureの3失効条件を直接検証する"
 // @end-test-value
+/** 準備が失敗したら失効した未受付表示だけを取り消し、受付段階の結果不明では捕捉内容を維持する。 */
 test("failed preparation cancels only invalidated unaccepted captures", async () => {
   for (const stage of ["preview", "enqueue"] as const) {
     for (const invalidation of ["none", "edit", "target", "freeze"] as const) {
-      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const registry = new ComposerControllerRegistry();
+      registry.setDraft(owner, "A");
       const acceptance = new SessionTurnAcceptance();
       const coordinator = new SessionSubmitCoordinator();
       let fail!: (error: Error) => void;
-      const delayedFailure = () => new Promise<never>((_resolve, reject) => { fail = reject; });
+      /** 対象変更などを先に発生させてから、選んだ処理段階を失敗させる。 */
+      const delayedFailure = () =>
+        new Promise<never>((_resolve, reject) => {
+          fail = reject;
+        });
       let currentTarget = true;
       let enqueueCount = 0;
       let pending: string | null = null;
       const operation = runMainSessionTurnOperation({
         api: {
-          previewComposerInput: async () => stage === "preview" ? delayedFailure() : { attachments: [], errors: [] },
-          enqueueSessionTurn: async () => { enqueueCount += 1; return delayedFailure(); },
+          /** 失敗箇所がプレビューの場合だけ読取を保留し、ほかは空の添付で通過する。 */
+          previewComposerInput: async () =>
+            stage === "preview"
+              ? delayedFailure()
+              : { attachments: [], errors: [] },
+          /** 受付呼び出しを数え、受付段階を遅延エラーにする。 */
+          enqueueSessionTurn: async () => {
+            enqueueCount += 1;
+            return delayedFailure();
+          },
+          /** 受付の確認が取れない状態を返し、結果不明として残るか調べる。 */
           getSessionTurnQueueReceipt: async () => null,
         },
-        sessionId: owner.id, selectedSession: session(), request, composerRegistry: registry, composerOwner: owner,
-        submitCoordinator: coordinator, acceptance, clearDraft: true, collapseActionDock: false,
-        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
-        isCurrentSubmission: () => currentTarget, validateWorkspace: async () => true,
+        sessionId: owner.id,
+        selectedSession: session(),
+        request,
+        composerRegistry: registry,
+        composerOwner: owner,
+        submitCoordinator: coordinator,
+        acceptance,
+        clearDraft: true,
+        collapseActionDock: false,
+        selectedSessionRunState: "idle",
+        blockedReason: null,
+        isReadOnly: false,
+        /** 送信の準備中に表示対象が変わったかハンドラから確認できるようにする。 */
+        isCurrentSubmission: () => currentTarget,
+        /** Workspace 検証に失敗しない設定でプレビューと受付の境界を分ける。 */ validateWorkspace:
+          async () => true,
         state: {
+          /** プレビューの反映は省略し、送信一覧の表示を観測する。 */
           setComposerPreview() {},
-          onSubmitStateChanged: () => { pending = coordinator.isClaimed(owner.id) ? owner.id : null; },
-          setForceComposerBlockedFeedback() {}, collapseActionDock() {},
-        }, log() {},
+          /** 失敗後に送信権が解放され、pending 表示が消えるか記録する。 */
+          onSubmitStateChanged: () => {
+            pending = coordinator.isClaimed(owner.id) ? owner.id : null;
+          },
+          /** 受付状態とは別の強制フィードバックを操作しない。 */
+          setForceComposerBlockedFeedback() {},
+          /** 準備失敗でドックの表示は変更しない。 */ collapseActionDock() {},
+        },
+        /** 観測点を受付一覧と pending 状態に限定する。 */ log() {},
       });
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(acceptance.submissions.getSnapshot()[0]?.userMessage, "A");
@@ -563,7 +1203,10 @@ test("failed preparation cancels only invalidated unaccepted captures", async ()
       if (invalidation === "target") currentTarget = false;
       if (invalidation === "freeze") registry.freeze();
       const cancelled = stage === "preview" && invalidation !== "none";
-      const error = stage === "preview" ? /late preview failure/ : /acceptance could not be confirmed/;
+      const error =
+        stage === "preview"
+          ? /late preview failure/
+          : /acceptance could not be confirmed/;
       const result = cancelled ? operation : assert.rejects(operation, error);
       fail(new Error(`late ${stage} failure`));
       if (cancelled) assert.equal(await result, null);
@@ -578,7 +1221,10 @@ test("failed preparation cancels only invalidated unaccepted captures", async ()
       }
       assert.equal(acceptance.hasUncertain(owner.id), stage === "enqueue");
       assert.equal(enqueueCount, stage === "enqueue" ? 1 : 0);
-      assert.equal(registry.get(owner).draft, invalidation === "edit" ? "B" : "A");
+      assert.equal(
+        registry.get(owner).draft,
+        invalidation === "edit" ? "B" : "A",
+      );
       assert.equal(pending, null);
       assert.equal(coordinator.isClaimed(owner.id), false);
     }
@@ -597,49 +1243,113 @@ test("failed preparation cancels only invalidated unaccepted captures", async ()
 // impact = "対象切替で不要なWorkspace障害が残ることと、実際の送信不能を通知しないことを防ぎ、未受付の入力を保持する"
 // distinction = "workspace状態のpure testやoperationのboolean mockでは、正常なAPI結果が共有hookで世代失効falseへ変わる境界を通らない"
 // @end-test-value
+/** Workspace 検証中に失効した送信は取り消し、同じ対象への実際の失敗だけを表示する。 */
 test("workspace validation distinguishes invalidated submissions from real failures", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>");
-  const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
-  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, value });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     for (const scenario of ["superseded", "unavailable"] as const) {
       const parent = session();
       let deferValidation = false;
-      const resolutions: ((result: WorkspaceDirectoryValidationResult) => void)[] = [];
-      const api = { validateSessionWorkspace: async (id: string) => {
-        assert.equal(id, parent.id);
-        if (!deferValidation) return { valid: true };
-        return new Promise<WorkspaceDirectoryValidationResult>((resolve) => resolutions.push(resolve));
-      } } as WithMateWindowApi;
-      let current: ReturnType<typeof useSessionWorkspaceAvailability> | undefined;
-      function View() { current = useSessionWorkspaceAvailability(api, parent); return null; }
-      const workspace = () => { assert.ok(current); return current; };
-      await act(async () => { root.render(React.createElement(View, { key: scenario })); });
+      const resolutions: ((
+        result: WorkspaceDirectoryValidationResult,
+      ) => void)[] = [];
+      const api = {
+        /** 初回の Workspace は有効とし、送信後は複数の検証を個別に完了できるようにする。 */ validateSessionWorkspace:
+          async (id: string) => {
+            assert.equal(id, parent.id);
+            if (!deferValidation) return { valid: true };
+            return new Promise<WorkspaceDirectoryValidationResult>((resolve) =>
+              resolutions.push(resolve),
+            );
+          },
+      } as WithMateWindowApi;
+      let current:
+        ReturnType<typeof useSessionWorkspaceAvailability> | undefined;
+      /** 実際の Workspace 確認フックをマウントし、最新の確認操作を取得する。 */
+      function View() {
+        current = useSessionWorkspaceAvailability(api, parent);
+        return null;
+      }
+      /** 初期描画を確認してから Workspace の現在値を参照する。 */
+      const workspace = () => {
+        assert.ok(current);
+        return current;
+      };
+      await act(async () => {
+        root.render(React.createElement(View, { key: scenario }));
+      });
       assert.equal(workspace().workspaceAvailability.status, "available");
       deferValidation = true;
-      const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+      const registry = new ComposerControllerRegistry();
+      registry.setDraft(owner, "A");
       const acceptance = new SessionTurnAcceptance();
       const coordinator = new SessionSubmitCoordinator();
       let target = owner.id;
       let previewCount = 0;
       let enqueueCount = 0;
       const operation = runMainSessionTurnOperation({
-        api: { previewComposerInput: async () => { previewCount += 1; return { attachments: [], errors: [] }; },
-          enqueueSessionTurn: async () => { enqueueCount += 1; return receipt(); }, getSessionTurnQueueReceipt: async () => null },
-        sessionId: owner.id, selectedSession: parent, request, composerRegistry: registry, composerOwner: owner,
-        submitCoordinator: coordinator, acceptance, clearDraft: true, collapseActionDock: false,
-        selectedSessionRunState: "idle", blockedReason: null, isReadOnly: false,
+        api: {
+          /** Workspace 検証後にプレビューへ進んだ回数を測る。 */ previewComposerInput:
+            async () => {
+              previewCount += 1;
+              return { attachments: [], errors: [] };
+            },
+          /** 検証を通れなければ受付を送らないことを、件数で観測する。 */
+          enqueueSessionTurn: async () => {
+            enqueueCount += 1;
+            return receipt();
+          },
+          /** 送信を中止するケースでは受付照会の既存値を作らない。 */ getSessionTurnQueueReceipt:
+            async () => null,
+        },
+        sessionId: owner.id,
+        selectedSession: parent,
+        request,
+        composerRegistry: registry,
+        composerOwner: owner,
+        submitCoordinator: coordinator,
+        acceptance,
+        clearDraft: true,
+        collapseActionDock: false,
+        selectedSessionRunState: "idle",
+        blockedReason: null,
+        isReadOnly: false,
+        /** プレビュー前に対象が別会話へ変わったか返す。 */
         isCurrentSubmission: () => target === owner.id,
-        validateWorkspace: () => workspace().validateSessionWorkspace(parent, true),
-        state: { setComposerPreview() {}, onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} }, log() {},
+        /** 送信の妥当性確認を、親 Workspace の実フックに委ねる。 */
+        validateWorkspace: () =>
+          workspace().validateSessionWorkspace(parent, true),
+        state: {
+          /** 検証後までプレビューを反映しないので、表示更新は省略する。 */ setComposerPreview() {},
+          /** 送信中表示を操作せず、最後に送信権を照合する。 */ onSubmitStateChanged() {},
+          /** Workspace エラーの表示は、受付状態に残る文言を観測する。 */ setForceComposerBlockedFeedback() {},
+          /** Workspace の検証結果とドックの開閉は切り離す。 */ collapseActionDock() {},
+        },
+        /** 検証結果の識別をログではなく受付状態で確かめる。 */ log() {},
       });
       assert.equal(acceptance.submissions.getSnapshot()[0]?.error, "");
       assert.equal(resolutions.length, 1);
       if (scenario === "superseded") {
         target = "aux";
-        const auxiliaryValidation = workspace().validateSessionWorkspace(parent, true);
+        const auxiliaryValidation = workspace().validateSessionWorkspace(
+          parent,
+          true,
+        );
         assert.equal(resolutions.length, 2);
         await act(async () => {
           resolutions[0]({ valid: true });
@@ -651,11 +1361,17 @@ test("workspace validation distinguishes invalidated submissions from real failu
         assert.equal(workspace().workspaceAvailability.status, "available");
       } else {
         await act(async () => {
-          const rejected = assert.rejects(operation, /Workspace is not available/);
+          const rejected = assert.rejects(
+            operation,
+            /Workspace is not available/,
+          );
           resolutions[0]({ valid: false, reason: "unavailable" });
           await rejected;
         });
-        assert.match(acceptance.submissions.getSnapshot()[0]!.error, /Workspace is not available/);
+        assert.match(
+          acceptance.submissions.getSnapshot()[0]!.error,
+          /Workspace is not available/,
+        );
         assert.equal(workspace().workspaceAvailability.status, "unavailable");
       }
       assert.equal(registry.get(owner).draft, "A");
@@ -667,7 +1383,8 @@ test("workspace validation distinguishes invalidated submissions from real failu
     await act(async () => root.unmount());
     dom.window.close();
     for (const [key, descriptor] of previous) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
     }
   }
 });
@@ -684,16 +1401,40 @@ test("workspace validation distinguishes invalidated submissions from real failu
 // impact = "受付されていない入力やACK待ちの追編集を失う"
 // distinction = "Registry単体のrevision検査では非同期durable受付境界を検証しない"
 // @end-test-value
+/** 受付待ちに同じ本文へ戻しても異なる版なら、受理後にその下書きを消さない。 */
 test("queue ACK clears only its captured draft revision", async () => {
   for (const edit of [false, true]) {
-    const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+    const registry = new ComposerControllerRegistry();
+    registry.setDraft(owner, "A");
     const acceptance = new SessionTurnAcceptance();
     let resolve!: (value: SessionTurnQueueReceipt) => void;
-    const api = { enqueueSessionTurn: async () => new Promise<SessionTurnQueueReceipt>((done) => { resolve = done; }), getSessionTurnQueueReceipt: async () => null };
-    const pending = acceptance.submit(api, owner.id, { request, owner, revision: registry.capture(owner).revision, clearDraft: true }, registry);
+    const api = {
+      /** 受付確認前に編集できるよう、送信への応答を保留する。 */ enqueueSessionTurn:
+        async () =>
+          new Promise<SessionTurnQueueReceipt>((done) => {
+            resolve = done;
+          }),
+      /** 受付照会からは先行する成功を返さない。 */ getSessionTurnQueueReceipt:
+        async () => null,
+    };
+    const pending = acceptance.submit(
+      api,
+      owner.id,
+      {
+        request,
+        owner,
+        revision: registry.capture(owner).revision,
+        clearDraft: true,
+      },
+      registry,
+    );
     assert.equal(registry.get(owner).draft, "A");
-    if (edit) { registry.setDraft(owner, "B"); registry.setDraft(owner, "A"); }
-    resolve(receipt()); await pending;
+    if (edit) {
+      registry.setDraft(owner, "B");
+      registry.setDraft(owner, "A");
+    }
+    resolve(receipt());
+    await pending;
     assert.equal(registry.get(owner).draft, edit ? "A" : "");
   }
 });
@@ -710,20 +1451,48 @@ test("queue ACK clears only its captured draft revision", async () => {
 // impact = "結果不明の要求の二重実行と追編集の消失を防ぐ"
 // distinction = "IPCとstorage冪等testはWindow内のrequest保持とdraft更新を通らない"
 // @end-test-value
+/** 受付不明の間は新規要求を止め、明示的な再試行は元の捕捉要求で行う。 */
 test("unknown acceptance retains its original request for manual retry", async () => {
-  const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+  const registry = new ComposerControllerRegistry();
+  registry.setDraft(owner, "A");
   const acceptance = new SessionTurnAcceptance();
-  const sent: typeof request[] = [];
+  const sent: (typeof request)[] = [];
   let fail = true;
-  const api = { enqueueSessionTurn: async (_id: string, input: typeof request) => { sent.push(input); if (fail) throw new Error("disconnected"); return receipt(); }, getSessionTurnQueueReceipt: async () => null };
-  const captured = { request, owner, revision: registry.capture(owner).revision, clearDraft: true };
-  await assert.rejects(acceptance.submit(api, owner.id, captured, registry), /acceptance could not be confirmed/);
+  const api = {
+    /** 元の送信と再試行の要求を記録し、初回だけ切断として扱う。 */ enqueueSessionTurn:
+      async (_id: string, input: typeof request) => {
+        sent.push(input);
+        if (fail) throw new Error("disconnected");
+        return receipt();
+      },
+    /** 元の受付を照会から確定できないようにする。 */ getSessionTurnQueueReceipt:
+      async () => null,
+  };
+  const captured = {
+    request,
+    owner,
+    revision: registry.capture(owner).revision,
+    clearDraft: true,
+  };
+  await assert.rejects(
+    acceptance.submit(api, owner.id, captured, registry),
+    /acceptance could not be confirmed/,
+  );
   assert.equal(acceptance.hasUncertain(owner.id), true);
   assert.equal(await acceptance.check(api, owner.id, registry), null);
   registry.setDraft(owner, "B");
-  await assert.rejects(acceptance.submit(api, owner.id, { ...captured, request: { ...request, userMessage: "B" } }, registry), /previous turn/);
+  await assert.rejects(
+    acceptance.submit(
+      api,
+      owner.id,
+      { ...captured, request: { ...request, userMessage: "B" } },
+      registry,
+    ),
+    /previous turn/,
+  );
   assert.equal(sent.length, 1);
-  fail = false; await acceptance.retry(api, owner.id, registry);
+  fail = false;
+  await acceptance.retry(api, owner.id, registry);
   assert.deepEqual(sent, [request, request]);
   assert.equal(registry.get(owner).draft, "B");
   assert.equal(acceptance.hasUncertain(owner.id), false);
@@ -741,33 +1510,82 @@ test("unknown acceptance retains its original request for manual retry", async (
 // impact = "未受付の入力消失と再送信不能を防ぐ"
 // distinction = "RPC throwの結果不明testとは別の、Mainが未mutationを保証した応答を検証する"
 // @end-test-value
+/** 確定拒否は下書きを維持し、不明からの再試行では元受付の不在まで確認して状態を解除する。 */
 test("known rejection preserves draft and retry settles only when the prior receipt can be checked", async () => {
-  for (const outcome of ["initial-rejection", "retry-rejection", "retry-lookup-failure", "retry-conflicting-receipt"] as const) {
-    const registry = new ComposerControllerRegistry(); registry.setDraft(owner, "A");
+  for (const outcome of [
+    "initial-rejection",
+    "retry-rejection",
+    "retry-lookup-failure",
+    "retry-conflicting-receipt",
+  ] as const) {
+    const registry = new ComposerControllerRegistry();
+    registry.setDraft(owner, "A");
     const acceptance = new SessionTurnAcceptance();
-    let lookupCount = 0; let sendCount = 0;
+    let lookupCount = 0;
+    let sendCount = 0;
     const retry = outcome !== "initial-rejection";
     const api = {
-      enqueueSessionTurn: async () => { ++sendCount; if (retry && sendCount === 1) throw new Error("disconnected"); return { state: "rejected" as const, reason: "Workspace is unavailable." }; },
+      /** 不明状態を経るケースだけ初回を通信断にし、次回または通常ケースは確定拒否にする。 */
+      enqueueSessionTurn: async () => {
+        ++sendCount;
+        if (retry && sendCount === 1) throw new Error("disconnected");
+        return {
+          state: "rejected" as const,
+          reason: "Workspace is unavailable.",
+        };
+      },
+      /** 受付不在、照会エラー、競合する別本文の受付を分けて再試行後の状態を観測する。 */
       getSessionTurnQueueReceipt: async () => {
         ++lookupCount;
-        if (lookupCount > 1 && outcome === "retry-lookup-failure") throw new Error("lookup unavailable");
+        if (lookupCount > 1 && outcome === "retry-lookup-failure")
+          throw new Error("lookup unavailable");
         if (lookupCount > 1 && outcome === "retry-conflicting-receipt") {
           const conflicting = receipt().captured;
-          return receipt({ accepted: { ...conflicting, request: { ...conflicting.request, userMessage: "another request" } } });
+          return receipt({
+            accepted: {
+              ...conflicting,
+              request: {
+                ...conflicting.request,
+                userMessage: "another request",
+              },
+            },
+          });
         }
         return null;
       },
     };
-    const captured = { request, owner, revision: registry.capture(owner).revision, clearDraft: true };
-    if (retry) await assert.rejects(acceptance.submit(api, owner.id, captured, registry), /acceptance could not be confirmed/);
+    const captured = {
+      request,
+      owner,
+      revision: registry.capture(owner).revision,
+      clearDraft: true,
+    };
+    if (retry)
+      await assert.rejects(
+        acceptance.submit(api, owner.id, captured, registry),
+        /acceptance could not be confirmed/,
+      );
     const previousLookups = lookupCount;
-    const error = outcome === "retry-lookup-failure" ? /lookup unavailable/ : outcome === "retry-conflicting-receipt" ? /does not match/ : /Workspace is unavailable/;
-    await assert.rejects(retry ? acceptance.retry(api, owner.id, registry) : acceptance.submit(api, owner.id, captured, registry), error);
+    const error =
+      outcome === "retry-lookup-failure"
+        ? /lookup unavailable/
+        : outcome === "retry-conflicting-receipt"
+          ? /does not match/
+          : /Workspace is unavailable/;
+    await assert.rejects(
+      retry
+        ? acceptance.retry(api, owner.id, registry)
+        : acceptance.submit(api, owner.id, captured, registry),
+      error,
+    );
     assert.equal(lookupCount, previousLookups + (retry ? 1 : 0));
     assert.equal(sendCount, retry ? 2 : 1);
     assert.equal(registry.get(owner).draft, "A");
-    assert.equal(acceptance.hasUncertain(owner.id), outcome === "retry-lookup-failure" || outcome === "retry-conflicting-receipt");
+    assert.equal(
+      acceptance.hasUncertain(owner.id),
+      outcome === "retry-lookup-failure" ||
+        outcome === "retry-conflicting-receipt",
+    );
   }
 });
 
@@ -783,31 +1601,117 @@ test("known rejection preserves draft and retry settles only when the prior rece
 // impact = "同文連続送信や逆順通知で本文が重複・消失する"
 // distinction = "storage seq整合性testはRendererのlive・saved・queue結合を検証しない"
 // @end-test-value
+/** 同じ文の待機項目は本文でなく会話と保存位置に結び付け、確定履歴へ移すまで見かけのキーを保つ。 */
 test("queue projection uses canonical sequence and preserves terminal barrier", () => {
   for (const primaryMessageSourceKind of ["session", "auxiliary"] as const) {
-    const history = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 40 }], [], owner.id,
-      { primaryMessageSourceKind, liveAssistant: { sessionId: owner.id, threadId: "thread", messageIndex: 41, text: "live" } });
-    const started = receipt({ state: "running", turnId: "turn", userMessageSeq: 42 });
+    const history = buildMessageListProjection(
+      [{ role: "user", text: "A", historyIndex: 40 }],
+      [],
+      owner.id,
+      {
+        primaryMessageSourceKind,
+        liveAssistant: {
+          sessionId: owner.id,
+          threadId: "thread",
+          messageIndex: 41,
+          text: "live",
+        },
+      },
+    );
+    const started = receipt({
+      state: "running",
+      turnId: "turn",
+      userMessageSeq: 42,
+    });
     const queued = receipt({ id: "next", sequence: 2 });
     const queuedLater = receipt({ id: "later", sequence: 3 });
-    const context = { sessionId: owner.id, incarnationId: request.incarnationId };
-    const projected = projectSessionTurnQueue(history, [queuedLater, queued, started, receipt({ id: "old", incarnationId: "old" })], context);
-    assert.deepEqual(projected.projection.messages.map((message) => message.text), ["A", "A", "live"]);
+    const context = {
+      sessionId: owner.id,
+      incarnationId: request.incarnationId,
+    };
+    const projected = projectSessionTurnQueue(
+      history,
+      [
+        queuedLater,
+        queued,
+        started,
+        receipt({ id: "old", incarnationId: "old" }),
+      ],
+      context,
+    );
+    assert.deepEqual(
+      projected.projection.messages.map((message) => message.text),
+      ["A", "A", "live"],
+    );
     assert.equal(projected.projection.sources[1].kind, "turn-queue");
-    assert.deepEqual(projected.tail.map((row) => row.id), ["next", "later"]);
-    const terminal = projectSessionTurnQueue(history, [{ ...started, state: "completed" }, queued], context);
-    assert.deepEqual(terminal.projection.messages.map((message) => message.text), ["A", "A", "live"]);
-    assert.deepEqual(projectSessionTurnQueue(history, [{ ...started, state: "canceled" }], context).projection.messages.map((message) => message.text), ["A", "A", "live"]);
-    const canonical = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 40 }, { role: "user", text: "A", historyIndex: 42 }], [], owner.id, { primaryMessageSourceKind });
-    const connected = projectSessionTurnQueue(canonical, [started, queued], context);
+    assert.deepEqual(
+      projected.tail.map((row) => row.id),
+      ["next", "later"],
+    );
+    const terminal = projectSessionTurnQueue(
+      history,
+      [{ ...started, state: "completed" }, queued],
+      context,
+    );
+    assert.deepEqual(
+      terminal.projection.messages.map((message) => message.text),
+      ["A", "A", "live"],
+    );
+    assert.deepEqual(
+      projectSessionTurnQueue(
+        history,
+        [{ ...started, state: "canceled" }],
+        context,
+      ).projection.messages.map((message) => message.text),
+      ["A", "A", "live"],
+    );
+    const canonical = buildMessageListProjection(
+      [
+        { role: "user", text: "A", historyIndex: 40 },
+        { role: "user", text: "A", historyIndex: 42 },
+      ],
+      [],
+      owner.id,
+      { primaryMessageSourceKind },
+    );
+    const connected = projectSessionTurnQueue(
+      canonical,
+      [started, queued],
+      context,
+    );
     assert.equal(connected.projection.messages.length, 2);
-    assert.equal(connected.metadata.get(connected.projection.keys[1])?.id, started.id);
-    assert.equal(connected.projection.keys[1], projected.projection.keys[1], "the accepted prompt keeps its key at the canonical handoff");
+    assert.equal(
+      connected.metadata.get(connected.projection.keys[1])?.id,
+      started.id,
+    );
+    assert.equal(
+      connected.projection.keys[1],
+      projected.projection.keys[1],
+      "the accepted prompt keeps its key at the canonical handoff",
+    );
     if (primaryMessageSourceKind === "auxiliary") {
-      const otherOwner = buildMessageListProjection([{ role: "user", text: "A", historyIndex: 42 }], [], "other-aux", { primaryMessageSourceKind });
-      assert.equal(projectSessionTurnQueue(otherOwner, [started], context).projection.sources[1].kind, "turn-queue");
+      const otherOwner = buildMessageListProjection(
+        [{ role: "user", text: "A", historyIndex: 42 }],
+        [],
+        "other-aux",
+        { primaryMessageSourceKind },
+      );
+      assert.equal(
+        projectSessionTurnQueue(otherOwner, [started], context).projection
+          .sources[1].kind,
+        "turn-queue",
+      );
     }
-    const paged = projectSessionTurnQueue(buildMessageListProjection([{ role: "user", text: "later", historyIndex: 100 }], [], owner.id, { primaryMessageSourceKind }), [{ ...started, state: "completed" }], context);
+    const paged = projectSessionTurnQueue(
+      buildMessageListProjection(
+        [{ role: "user", text: "later", historyIndex: 100 }],
+        [],
+        owner.id,
+        { primaryMessageSourceKind },
+      ),
+      [{ ...started, state: "completed" }],
+      context,
+    );
     assert.equal(paged.projection.messages.length, 1);
   }
 });

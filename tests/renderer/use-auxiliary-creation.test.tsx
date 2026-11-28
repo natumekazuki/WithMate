@@ -3,45 +3,106 @@ import { test, type TestContext } from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { AuxiliaryCreationRequest, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type {
+  AuxiliaryCreationRequest,
+  AuxiliarySession,
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { useAuxiliaryCreation } from "../../src/chat/use-auxiliary-creation.js";
 import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchProviderDialog.js";
 import { canCancelAuxiliaryLaunchCreation } from "../../src/chat/auxiliary-launch-state.js";
 
+/** 非同期の作成・取消応答をテストが任意の順序で成功または失敗させられるようにする。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 
-const context = { generationId: "generation-1", parentIncarnationId: "parent-incarnation" };
-const request: AuxiliaryCreationRequest = { parentSessionId: "parent-1", clientRequestId: "request-1", creationContext: context };
-const savedFor = (candidate: AuxiliaryCreationRequest) => ({ id: "aux-1", ...candidate }) as AuxiliarySession;
+const context = {
+  generationId: "generation-1",
+  parentIncarnationId: "parent-incarnation",
+};
+const request: AuxiliaryCreationRequest = {
+  parentSessionId: "parent-1",
+  clientRequestId: "request-1",
+  creationContext: context,
+};
+/** 要求の来歴を保った保存済みAuxiliaryを返す。 */
+const savedFor = (candidate: AuxiliaryCreationRequest) =>
+  ({ id: "aux-1", ...candidate }) as AuxiliarySession;
+/** 作成フックが利用するAPIのテスト用型。 */
 type Api = NonNullable<Parameters<typeof useAuxiliaryCreation>[0]["api"]>;
 
+/** 仮想ポーリングと実ダイアログを組み合わせ、作成フックの状態と操作を観測する。 */
 async function mount(t: TestContext, api: Api) {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost/" });
-  const properties = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = Object.keys(properties).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(properties)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const properties = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = Object.keys(properties).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(properties))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const root = createRoot(dom.window.document.getElementById("root")!);
   let state!: ReturnType<typeof useAuxiliaryCreation>;
   const applied: AuxiliarySession[] = [];
   let closes = 0;
+  /** 選択中の親に作成フックを結び付け、進行状況と操作可否をダイアログへ反映する。 */
   function Harness({ parent }: { parent: string | null }) {
     const [feedback, setFeedback] = React.useState("");
     const [provider, setProvider] = React.useState("codex");
-    state = useAuxiliaryCreation({ parentSessionId: parent, api, onCommitted: (session) => applied.push(session), onFeedback: setFeedback });
-    return <AuxiliaryLaunchProviderDialog open providers={[{ id: "codex", label: "Codex" }, { id: "copilot", label: "Copilot" }]}
-      selectedProviderId={provider} feedback={feedback} starting={state.starting} creationInFlight={state.inFlight}
-      checkingCreationResult={state.status === "unknown"} cancelling={state.cancelling}
-      canCancelCreation={canCancelAuxiliaryLaunchCreation(state.status)}
-      onCancelCreation={() => { void state.cancel(); }}
-      onClose={() => { closes++; }} onSelectProvider={setProvider} onStart={() => { void state.start(provider); }} />;
+    state = useAuxiliaryCreation({
+      parentSessionId: parent,
+      api,
+      /** 確定結果として適用されたAuxiliaryを順に集める。 */
+      onCommitted: (session) => applied.push(session),
+      onFeedback: setFeedback,
+    });
+    return (
+      <AuxiliaryLaunchProviderDialog
+        open
+        providers={[
+          { id: "codex", label: "Codex" },
+          { id: "copilot", label: "Copilot" },
+        ]}
+        selectedProviderId={provider}
+        feedback={feedback}
+        starting={state.starting}
+        creationInFlight={state.inFlight}
+        checkingCreationResult={state.status === "unknown"}
+        cancelling={state.cancelling}
+        canCancelCreation={canCancelAuxiliaryLaunchCreation(state.status)}
+        onCancelCreation={() => {
+          void state.cancel();
+        }}
+        onClose={() => {
+          closes++;
+        }}
+        onSelectProvider={setProvider}
+        onStart={() => {
+          void state.start(provider);
+        }}
+      />
+    );
   }
-  const render = async (parent: string | null) => { await act(async () => root.render(<Harness parent={parent} />)); };
+  /** 親セッションを切り替えても同じフックの再描画として扱う。 */
+  const render = async (parent: string | null) => {
+    await act(async () => root.render(<Harness parent={parent} />));
+  };
+  /** 作成ポーリングとDOMを破棄し、仮想タイマーとグローバル設定を元へ戻す。 */
   t.after(async () => {
     await act(async () => root.unmount());
     t.mock.timers.reset();
@@ -51,19 +112,47 @@ async function mount(t: TestContext, api: Api) {
       else Reflect.deleteProperty(globalThis, key);
     }
   });
-  return { render, get state() { return state; }, applied, storage: dom.window.localStorage,
-    get closes() { return closes; },
+  return {
+    render,
+    /** 最後に描画された作成フックの状態を返す。 */
+    get state() {
+      return state;
+    },
+    applied,
+    storage: dom.window.localStorage,
+    /** ダイアログが閉じる要求を受けた回数を返す。 */
+    get closes() {
+      return closes;
+    },
     document: dom.window.document,
-    get startButton() { return dom.window.document.querySelector<HTMLButtonElement>(".start-session-button")!; },
-    poll: async () => { await act(async () => { t.mock.timers.tick(500); }); } };
+    /** 進行状況に応じた有効・無効を調べる開始ボタンを取得する。 */
+    get startButton() {
+      return dom.window.document.querySelector<HTMLButtonElement>(
+        ".start-session-button",
+      )!;
+    },
+    /** 次の作成状態照会まで仮想タイマーを進める。 */
+    poll: async () => {
+      await act(async () => {
+        t.mock.timers.tick(500);
+      });
+    },
+  };
 }
 
+/** 通常の作成経路を既定にして、各シナリオが必要なAPIだけを差し替える。 */
 function apiWith(overrides: Partial<Api> = {}): Api {
   return {
+    /** 作成要求に付ける世代と親の実体を固定する。 */
     getAuxiliaryCreationContext: async () => context,
-    createAuxiliarySession: async (input) => savedFor(input as AuxiliaryCreationRequest),
+    /** 作成を直ちに完了させ、要求に対応する保存済みAuxiliaryを返す。 */
+    createAuxiliarySession: async (input) =>
+      savedFor(input as AuxiliaryCreationRequest),
+    /** ポーリングの既定応答は準備中とする。 */
     getAuxiliaryCreation: async () => ({ status: "preparing" }),
+    /** 特に指定がなければ取消が直ちに成立する。 */
     cancelAuxiliaryCreation: async () => ({ status: "cancelled" }),
+    /** 確定済み作成結果から開くAuxiliaryを返す。 */
     getAuxiliarySession: async () => savedFor(request),
     ...overrides,
   };
@@ -81,41 +170,81 @@ function apiWith(overrides: Partial<Api> = {}): Api {
 // impact = "keyboard利用者が作成待ちの取消やdialogを閉じる操作へ到達できなくなる"
 // distinction = "既存busy testや型検査では扱わない非同期control無効化後のfocus境界を同じ軽量DOM harnessで検証する"
 // @end-test-value
+/** 作成と取消で操作ボタンの有効状態が変化しても、TabとEscapeをダイアログ内で扱えることを確認する。 */
 test("Auxiliary dialog keeps Tab and Escape inside while creation controls change", async (t) => {
   const pendingCreate = deferred<AuxiliarySession>();
-  const pendingCancel = deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
-  const fixture = await mount(t, apiWith({
-    createAuxiliarySession: () => pendingCreate.promise,
-    cancelAuxiliaryCreation: () => pendingCancel.promise,
-  }));
+  const pendingCancel =
+    deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
+  const fixture = await mount(
+    t,
+    apiWith({
+      /** ダイアログが作成待ちの間に操作されるよう、作成結果を保留する。 */
+      createAuxiliarySession: () => pendingCreate.promise,
+      /** ボタンが無効になる取消待ち状態をテストから維持する。 */
+      cancelAuxiliaryCreation: () => pendingCancel.promise,
+    }),
+  );
   await fixture.render("parent-1");
-  await act(async () => { fixture.startButton.focus(); fixture.startButton.click(); });
-  const dialog = fixture.document.querySelector<HTMLElement>('[role="dialog"] > section')!;
-  const cancel = fixture.document.querySelector<HTMLButtonElement>(".launch-cancel-button")!;
-  assert.ok(fixture.document.activeElement === dialog, "disabled start moves focus to the dialog");
+  await act(async () => {
+    fixture.startButton.focus();
+    fixture.startButton.click();
+  });
+  const dialog = fixture.document.querySelector<HTMLElement>(
+    '[role="dialog"] > section',
+  )!;
+  const cancel = fixture.document.querySelector<HTMLButtonElement>(
+    ".launch-cancel-button",
+  )!;
+  assert.ok(
+    fixture.document.activeElement === dialog,
+    "disabled start moves focus to the dialog",
+  );
+  /** 現在フォーカスを持つ要素にキーを送り、既定動作が抑止されたことを確認する。 */
   const press = async (key: string, shiftKey = false) => {
-    const event = new fixture.document.defaultView!.KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true });
-    await act(async () => { fixture.document.activeElement!.dispatchEvent(event); });
+    const event = new fixture.document.defaultView!.KeyboardEvent("keydown", {
+      key,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      fixture.document.activeElement!.dispatchEvent(event);
+    });
     assert.equal(event.defaultPrevented, true);
   };
   for (const shiftKey of [true, false]) {
     dialog.focus();
     await press("Tab", shiftKey);
-    assert.ok(fixture.document.activeElement === cancel, "dialog Tab moves to Cancel Creation");
+    assert.ok(
+      fixture.document.activeElement === cancel,
+      "dialog Tab moves to Cancel Creation",
+    );
     await press("Tab", shiftKey);
-    assert.ok(fixture.document.activeElement === cancel, "Tab wraps within the dialog");
+    assert.ok(
+      fixture.document.activeElement === cancel,
+      "Tab wraps within the dialog",
+    );
   }
   await act(async () => cancel.click());
   assert.equal(cancel.disabled, true);
-  assert.ok(fixture.document.activeElement === dialog, "disabled cancel moves focus to the dialog");
+  assert.ok(
+    fixture.document.activeElement === dialog,
+    "disabled cancel moves focus to the dialog",
+  );
   await press("Tab", true);
-  assert.ok(fixture.document.activeElement === dialog, "Tab keeps focus in the dialog when every control is disabled");
+  assert.ok(
+    fixture.document.activeElement === dialog,
+    "Tab keeps focus in the dialog when every control is disabled",
+  );
   await press("Escape");
   assert.equal(fixture.closes, 1);
   await act(async () => pendingCancel.reject(new Error("Cancel unavailable")));
   assert.equal(cancel.disabled, false);
   await press("Tab", true);
-  assert.ok(fixture.document.activeElement === cancel, "cancel recovery restores keyboard access");
+  assert.ok(
+    fixture.document.activeElement === cancel,
+    "cancel recovery restores keyboard access",
+  );
   await press("Escape");
   assert.equal(fixture.closes, 2);
 });
@@ -132,26 +261,50 @@ test("Auxiliary dialog keeps Tab and Escape inside while creation controls chang
 // impact = "別Sessionへの誤表示と処理中表示の上書きを防ぐ"
 // distinction = "request比較だけの単体testと異なりrender/effectと非同期応答の順序を制御する"
 // @end-test-value
+/** 親切替前のコンテキストや作成応答が、切替後の画面や作成先を変更しないことを確認する。 */
 test("Auxiliary creation rejects old parent responses across context and create waits", async (t) => {
   const pendingContext = deferred<typeof context>();
   const pendingCreate = deferred<AuxiliarySession>();
   const creates: string[] = [];
-  const fixture = await mount(t, apiWith({
-    getAuxiliaryCreationContext: (parent) => parent === "parent-1" ? pendingContext.promise : Promise.resolve(context),
-    createAuxiliarySession: (input) => { creates.push(input.parentSessionId); return pendingCreate.promise; },
-  }));
+  const fixture = await mount(
+    t,
+    apiWith({
+      /** 最初の親のコンテキスト取得だけを保留する。 */
+      getAuxiliaryCreationContext: (parent) =>
+        parent === "parent-1"
+          ? pendingContext.promise
+          : Promise.resolve(context),
+      /** 作成先の親を記録したうえで、作成結果が遅れて届く状態を作る。 */
+      createAuxiliarySession: (input) => {
+        creates.push(input.parentSessionId);
+        return pendingCreate.promise;
+      },
+    }),
+  );
   await fixture.render("parent-1");
   let first!: Promise<void>;
-  await act(async () => { first = fixture.state.start("codex"); });
+  await act(async () => {
+    first = fixture.state.start("codex");
+  });
   await fixture.render("parent-2");
-  await act(async () => { pendingContext.resolve(context); await first; });
+  await act(async () => {
+    pendingContext.resolve(context);
+    await first;
+  });
   assert.deepEqual(creates, []);
   let second!: Promise<void>;
-  await act(async () => { second = fixture.state.start("codex"); });
+  await act(async () => {
+    second = fixture.state.start("codex");
+  });
   assert.deepEqual(creates, ["parent-2"]);
-  const oldRequest = JSON.parse(fixture.storage.getItem("withmate:auxiliary-creation:parent-2")!) as AuxiliaryCreationRequest;
+  const oldRequest = JSON.parse(
+    fixture.storage.getItem("withmate:auxiliary-creation:parent-2")!,
+  ) as AuxiliaryCreationRequest;
   await fixture.render("parent-3");
-  await act(async () => { pendingCreate.resolve(savedFor(oldRequest)); await second; });
+  await act(async () => {
+    pendingCreate.resolve(savedFor(oldRequest));
+    await second;
+  });
   assert.deepEqual(fixture.applied, []);
   assert.equal(fixture.state.starting, false);
   assert.equal(fixture.state.status, null);
@@ -169,34 +322,58 @@ test("Auxiliary creation rejects old parent responses across context and create 
 // impact = "応答を失った作成結果を二重作成せず回復し、利用者の現在画面を繰り返し変更しない"
 // distinction = "実hookのeffectと仮想timerを通し、DB応答待ちの再描画とpoll終了を観測する"
 // @end-test-value
+/** 結果不明の作成が画面を開き直した後で一度だけ回復され、再作成もポーリングの継続もないことを確認する。 */
 test("Auxiliary reopen recovers unknown commit once and stops polling", async (t) => {
   const pendingSession = deferred<AuxiliarySession>();
   const queries: string[] = [];
   let creates = 0;
-  const fixture = await mount(t, apiWith({
-    createAuxiliarySession: async () => { creates += 1; return savedFor(request); },
-    getAuxiliaryCreation: async (candidate) => {
-      queries.push(candidate.clientRequestId);
-      return queries.length === 1 ? { status: "unknown" } : { status: "committed", auxiliarySessionId: "aux-1" };
-    },
-    getAuxiliarySession: () => pendingSession.promise,
-  }));
-  fixture.storage.setItem("withmate:auxiliary-creation:parent-1", JSON.stringify(request));
+  const fixture = await mount(
+    t,
+    apiWith({
+      /** 回復時に新規作成を誤って呼んだ場合を回数で検出する。 */
+      createAuxiliarySession: async () => {
+        creates += 1;
+        return savedFor(request);
+      },
+      /** 保存した要求IDで照会し、結果不明から確定済みへ遷移させる。 */
+      getAuxiliaryCreation: async (candidate) => {
+        queries.push(candidate.clientRequestId);
+        return queries.length === 1
+          ? { status: "unknown" }
+          : { status: "committed", auxiliarySessionId: "aux-1" };
+      },
+      /** 確定済みと判明してもAuxiliary本体の読出しは別に保留する。 */
+      getAuxiliarySession: () => pendingSession.promise,
+    }),
+  );
+  fixture.storage.setItem(
+    "withmate:auxiliary-creation:parent-1",
+    JSON.stringify(request),
+  );
   await fixture.render("parent-1");
   await fixture.poll();
   assert.equal(fixture.state.status, "unknown");
-  await act(async () => { await fixture.state.start("codex"); });
+  await act(async () => {
+    await fixture.state.start("codex");
+  });
   assert.equal(creates, 0);
   await fixture.poll();
   assert.equal(fixture.state.status, "committed");
   assert.equal(fixture.state.starting, false);
   assert.equal(fixture.startButton.disabled, true);
-  await act(async () => { fixture.startButton.click(); });
+  await act(async () => {
+    fixture.startButton.click();
+  });
   assert.equal(creates, 0);
   assert.deepEqual(fixture.applied, []);
-  await act(async () => { pendingSession.resolve(savedFor(request)); });
+  await act(async () => {
+    pendingSession.resolve(savedFor(request));
+  });
   assert.deepEqual(fixture.applied, [savedFor(request)]);
-  assert.equal(fixture.storage.getItem("withmate:auxiliary-creation:parent-1"), null);
+  assert.equal(
+    fixture.storage.getItem("withmate:auxiliary-creation:parent-1"),
+    null,
+  );
   assert.equal(fixture.startButton.disabled, false);
   await fixture.poll();
   assert.deepEqual(queries, [request.clientRequestId, request.clientRequestId]);
@@ -215,23 +392,43 @@ test("Auxiliary reopen recovers unknown commit once and stops polling", async (t
 // impact = "作成済みAuxiliaryを取消済み・失敗と誤表示して再送することを防ぐ"
 // distinction = "backend cancel応答とcreate promiseの先後を実React hook経由で検証する"
 // @end-test-value
+/** 取消が作成確定と競合した場合、遅れて作成エラーが届いても確定結果を適用することを確認する。 */
 test("Auxiliary commit wins over cancel and late create failure", async (t) => {
   const pendingCreate = deferred<AuxiliarySession>();
   let submitted!: AuxiliaryCreationRequest;
   const cancels: string[] = [];
-  const fixture = await mount(t, apiWith({
-    createAuxiliarySession: (input) => { submitted = input as AuxiliaryCreationRequest; return pendingCreate.promise; },
-    cancelAuxiliaryCreation: async (candidate) => { cancels.push(candidate.clientRequestId); return { status: "committed", auxiliarySessionId: "aux-1" }; },
-    getAuxiliarySession: async () => savedFor(submitted),
-  }));
+  const fixture = await mount(
+    t,
+    apiWith({
+      /** 利用者が実際に送った要求を保持し、初回の作成応答は保留する。 */
+      createAuxiliarySession: (input) => {
+        submitted = input as AuxiliaryCreationRequest;
+        return pendingCreate.promise;
+      },
+      /** 取消要求の対象を記録し、すでに作成済みであることを返す。 */
+      cancelAuxiliaryCreation: async (candidate) => {
+        cancels.push(candidate.clientRequestId);
+        return { status: "committed", auxiliarySessionId: "aux-1" };
+      },
+      /** 取消応答で判明したAuxiliaryを元の作成要求から復元する。 */
+      getAuxiliarySession: async () => savedFor(submitted),
+    }),
+  );
   await fixture.render("parent-1");
   let pending!: Promise<void>;
-  await act(async () => { pending = fixture.state.start("codex"); });
-  await act(async () => { await fixture.state.cancel(); });
+  await act(async () => {
+    pending = fixture.state.start("codex");
+  });
+  await act(async () => {
+    await fixture.state.cancel();
+  });
   assert.deepEqual(cancels, [submitted.clientRequestId]);
   assert.equal(fixture.state.status, "committed");
   assert.equal(fixture.applied.length, 1);
-  await act(async () => { pendingCreate.reject(new Error("lost response")); await pending; });
+  await act(async () => {
+    pendingCreate.reject(new Error("lost response"));
+    await pending;
+  });
   await fixture.poll();
   assert.equal(fixture.state.status, "committed");
   assert.equal(fixture.state.starting, false);
@@ -251,53 +448,102 @@ test("Auxiliary commit wins over cancel and late create failure", async (t) => {
 // impact = "利用者が取消応答待ちを認識し、送信済みproviderとの不一致や二重作成を起こさず失敗から回復できる"
 // distinction = "状態helperやmarkupだけの検査と異なり実hookのpoll・保留API・取消失敗をdialogへ結線し、操作と通知の契約を短いDOM testで保持する"
 // @end-test-value
+/** ポーリングで進行状態が変わっても取消処理中を維持し、取消に失敗すれば操作を再開できることを確認する。 */
 test("Auxiliary dialog keeps cancellation busy through polling and recovers controls after failure", async (t) => {
   const pendingCreate = deferred<AuxiliarySession>();
-  const pendingCancel = deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
+  const pendingCancel =
+    deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
   let polledStatus: "preparing" | "committing" | "failed" = "preparing";
   const providers: string[] = [];
   let cancels = 0;
-  const fixture = await mount(t, apiWith({
-    createAuxiliarySession: (input) => { providers.push(input.provider); return pendingCreate.promise; },
-    cancelAuxiliaryCreation: () => { cancels += 1; return pendingCancel.promise; },
-    getAuxiliaryCreation: async () => ({ status: polledStatus }),
-  }));
+  const fixture = await mount(
+    t,
+    apiWith({
+      /** 開始時に捕捉されたProviderを控え、作成応答はテストから進める。 */
+      createAuxiliarySession: (input) => {
+        providers.push(input.provider);
+        return pendingCreate.promise;
+      },
+      /** 取消試行を数え、応答前後の操作可否を観測するまで処理を保留する。 */
+      cancelAuxiliaryCreation: () => {
+        cancels += 1;
+        return pendingCancel.promise;
+      },
+      /** 作成状態をテスト側で遷移させ、取消待ちと独立してポーリングへ返す。 */
+      getAuxiliaryCreation: async () => ({ status: polledStatus }),
+    }),
+  );
   await fixture.render("parent-1");
-  const options = [...fixture.document.querySelectorAll<HTMLButtonElement>("[role=option]")];
-  await act(async () => { options[1]!.click(); });
+  const options = [
+    ...fixture.document.querySelectorAll<HTMLButtonElement>("[role=option]"),
+  ];
+  await act(async () => {
+    options[1]!.click();
+  });
   assert.equal(options[1]!.getAttribute("aria-selected"), "true");
-  await act(async () => { fixture.startButton.click(); });
+  await act(async () => {
+    fixture.startButton.click();
+  });
   assert.deepEqual(providers, ["copilot"]);
   assert.equal(fixture.startButton.getAttribute("aria-busy"), "true");
-  assert.equal(fixture.startButton.getAttribute("aria-label"), "Starting Auxiliary");
-  assert.ok(options.every((option) => option.disabled && option.tabIndex === -1));
-  await act(async () => { options[0]!.click(); fixture.startButton.click(); });
+  assert.equal(
+    fixture.startButton.getAttribute("aria-label"),
+    "Starting Auxiliary",
+  );
+  assert.ok(
+    options.every((option) => option.disabled && option.tabIndex === -1),
+  );
+  await act(async () => {
+    options[0]!.click();
+    fixture.startButton.click();
+  });
   assert.equal(options[1]!.getAttribute("aria-selected"), "true");
   assert.deepEqual(providers, ["copilot"]);
 
-  const cancel = fixture.document.querySelector<HTMLButtonElement>(".launch-cancel-button")!;
+  const cancel = fixture.document.querySelector<HTMLButtonElement>(
+    ".launch-cancel-button",
+  )!;
   assert.ok(cancel && !cancel.disabled);
-  await act(async () => { cancel.click(); });
+  await act(async () => {
+    cancel.click();
+  });
   assert.equal(cancel.disabled, true);
   assert.equal(cancel.getAttribute("aria-busy"), "true");
-  assert.equal(cancel.getAttribute("aria-label"), "Canceling Auxiliary Creation");
+  assert.equal(
+    cancel.getAttribute("aria-label"),
+    "Canceling Auxiliary Creation",
+  );
   assert.equal(fixture.startButton.disabled, true);
   assert.equal(fixture.startButton.hasAttribute("aria-busy"), false);
   polledStatus = "committing";
   await fixture.poll();
   assert.equal(fixture.document.querySelector(".launch-cancel-button"), cancel);
   assert.equal(cancel.getAttribute("aria-busy"), "true");
-  await act(async () => { cancel.click(); });
+  await act(async () => {
+    cancel.click();
+  });
   assert.equal(cancels, 1);
 
-  await act(async () => { pendingCancel.reject(new Error("Cancel request failed.")); });
+  await act(async () => {
+    pendingCancel.reject(new Error("Cancel request failed."));
+  });
   assert.equal(fixture.state.cancelling, false);
-  assert.equal(fixture.document.querySelector("[role=status]")?.textContent, "Cancel request failed.");
+  assert.equal(
+    fixture.document.querySelector("[role=status]")?.textContent,
+    "Cancel request failed.",
+  );
   assert.equal(fixture.startButton.getAttribute("aria-busy"), "true");
-  await act(async () => { pendingCreate.reject(new Error("Create response lost.")); });
+  await act(async () => {
+    pendingCreate.reject(new Error("Create response lost."));
+  });
   assert.equal(fixture.state.status, "unknown");
-  assert.equal(fixture.startButton.getAttribute("aria-label"), "Checking Auxiliary Creation Result");
-  await act(async () => { fixture.startButton.click(); });
+  assert.equal(
+    fixture.startButton.getAttribute("aria-label"),
+    "Checking Auxiliary Creation Result",
+  );
+  await act(async () => {
+    fixture.startButton.click();
+  });
   assert.deepEqual(providers, ["copilot"]);
 
   polledStatus = "failed";
@@ -305,5 +551,8 @@ test("Auxiliary dialog keeps cancellation busy through polling and recovers cont
   assert.equal(fixture.startButton.disabled, false);
   assert.equal(fixture.startButton.hasAttribute("aria-busy"), false);
   assert.ok(options.every((option) => !option.disabled));
-  assert.equal(fixture.document.querySelector("[role=status]")?.textContent, "Could not start the Auxiliary session.");
+  assert.equal(
+    fixture.document.querySelector("[role=status]")?.textContent,
+    "Could not start the Auxiliary session.",
+  );
 });

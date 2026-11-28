@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { MessageOperation, LiveBackgroundTask, LiveRunStep, ProviderQuotaTelemetry } from "../../src-shared/session/runtime-state.js";
-import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
+import type {
+  MessageOperation,
+  LiveBackgroundTask,
+  LiveRunStep,
+  ProviderQuotaTelemetry,
+} from "../../src-shared/session/runtime-state.js";
+import type {
+  GlossaryProjectionState,
+  SessionGlossaryProjection,
+} from "../../src-shared/glossary/glossary-contract.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -19,17 +27,29 @@ import {
   isGlossarySearchRevisionCurrent,
 } from "../../src/chat/runtime/session-ui-projection.js";
 
-function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
+/** 投影の比較に使うバックグラウンドタスクを、詳細なしを既定として組み立てる。 */
+function makeBackgroundTask(
+  partial: Partial<LiveBackgroundTask> &
+    Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">,
+): LiveBackgroundTask {
   return {
     details: undefined,
     ...partial,
   };
 }
 
+/** Session の実行記録・利用枠・コンテキスト情報を表示へ変換する際の選択条件と表示値を検査する。 */
 describe("session-ui-projection", () => {
+  /** Glossary の検索は、結果が現在と同じリビジョンを持つときだけ採用し、未選択時や旧版の応答を捨てる。 */
   it("Glossary検索結果は初回・追加取得ともcurrent projection revisionだけを採用する", () => {
-    assert.equal(isGlossarySearchRevisionCurrent("revision-a", "revision-a"), true);
-    assert.equal(isGlossarySearchRevisionCurrent("revision-b", "revision-a"), false);
+    assert.equal(
+      isGlossarySearchRevisionCurrent("revision-a", "revision-a"),
+      true,
+    );
+    assert.equal(
+      isGlossarySearchRevisionCurrent("revision-b", "revision-a"),
+      false,
+    );
     assert.equal(isGlossarySearchRevisionCurrent("revision-a", null), false);
   });
 
@@ -43,6 +63,7 @@ describe("session-ui-projection", () => {
   // scope = "latest-command-arrival-order"
   // lifecycle = "permanent"
   // @end-test-value
+  /** ライブ手順と保存済み操作のどちらからも、別種別の項目を飛ばして配列の最後のコマンドを探す。 */
   it("latest command helpers は末尾の command_execution を拾う", () => {
     const liveSteps: LiveRunStep[] = [
       {
@@ -93,6 +114,7 @@ describe("session-ui-projection", () => {
   // scope = "latest-command-no-command"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 実行配列に推論やアシスタント応答しかない場合、それらをコマンドと見なさず null を返す。 */
   it("latest command helpers は command_execution がなければ null を返す", () => {
     assert.equal(
       findLatestLiveCommandStep([
@@ -126,6 +148,7 @@ describe("session-ui-projection", () => {
   // scope = "latest-command-legacy-status"
   // lifecycle = "permanent"
   // @end-test-value
+  /** ライブがなければ保存アーティファクトの出力を表示し、保存されていない実行状態は成功ではなく不明にする。 */
   it("LatestCommand projection は live がなければ 通常artifact を使い未記録statusを保持する", () => {
     const projection = buildLatestCommandProjection({
       liveSteps: [],
@@ -148,7 +171,6 @@ describe("session-ui-projection", () => {
     });
   });
 
-
   // @test-value v2
   // kind = "invariant"
   // claim = "保存commandが存在してもLatest Commandはlive commandを優先する"
@@ -159,6 +181,7 @@ describe("session-ui-projection", () => {
   // scope = "latest-command-live-priority"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 保存履歴があっても現在のライブコマンドを採用し、進行状態とライブ由来の表示を保持する。 */
   it("LatestCommand projection は 通常artifactよりlive command を優先する", () => {
     const projection = buildLatestCommandProjection({
       liveSteps: [
@@ -199,14 +222,31 @@ describe("session-ui-projection", () => {
   // impact = "利用者が出力のあるfailed commandを成功と誤認し、切り詰め出力を完全出力として判断する"
   // distinction = "型検査はoptional fieldの投影欠落を検出しないため実際のview値を確認する"
   // @end-test-value
+  /** 保存コマンドの部分出力を表示しても、失敗状態、終了コード、エラーと切り詰め情報を落とさない。 */
   it("Latest Command keeps individual results beside output preview", () => {
     const projection = buildLatestCommandProjection({
       liveSteps: [],
-      operations: [{ type: "command_execution", summary: "npm test", status: "failed", exitCode: 2, error: { message: "Command failed", code: "EXIT" }, truncated: true, details: "partial stdout" }],
+      operations: [
+        {
+          type: "command_execution",
+          summary: "npm test",
+          status: "failed",
+          exitCode: 2,
+          error: { message: "Command failed", code: "EXIT" },
+          truncated: true,
+          details: "partial stdout",
+        },
+      ],
     });
     assert.deepEqual(projection.latestCommandView, {
-      status: "failed", summary: "npm test", exitCode: 2, errorMessage: "Command failed", truncated: true,
-      details: "partial stdout", sourceLabel: "latest run", riskLabels: [],
+      status: "failed",
+      summary: "npm test",
+      exitCode: 2,
+      errorMessage: "Command failed",
+      truncated: true,
+      details: "partial stdout",
+      sourceLabel: "latest run",
+      riskLabels: [],
     });
   });
 
@@ -222,6 +262,7 @@ describe("session-ui-projection", () => {
   // impact = "利用者が最新の実行対象と危険操作を誤認する"
   // distinction = "live/artifact双方を入力し、優先順位とderived riskを一つのprojectionで確認する"
   // @end-test-value
+  /** いま実行中のコマンドを保存済みコマンドより優先し、詳細と削除リスクを状態と合わせて表示する。 */
   it("live command があれば latest run より優先して LatestCommand view を作る", () => {
     const latestCommandOperation: MessageOperation = {
       type: "command_execution",
@@ -260,6 +301,7 @@ describe("session-ui-projection", () => {
   // impact = "provider quotaの残量とreset時刻を判断できなくなる"
   // distinction = "preferred snapshotの選択と表示formatをprojection結果から直接確認する"
   // @end-test-value
+  /** Copilot のスナップショットを選び、残率を丸めて残リクエスト数とリセット時刻を整形する。 */
   it("Copilot quota projection は preferred snapshot と表示文言を返す", () => {
     const telemetry: ProviderQuotaTelemetry = {
       provider: "copilot",
@@ -285,6 +327,7 @@ describe("session-ui-projection", () => {
     assert.match(projection.resetLabel, /\d{2}\/\d{2}, \d{2}:\d{2} [AP]M/);
   });
 
+  /** 従来の枠と AI クレジットが共存するときは、クレジットを選び、その単位で残数を表示する。 */
   it("Copilot quota projection は AI credits snapshot を優先して credits 表示にする", () => {
     const telemetry: ProviderQuotaTelemetry = {
       provider: "copilot",
@@ -328,6 +371,7 @@ describe("session-ui-projection", () => {
   // impact = "context paneで最新commandの状態と出所を誤認する"
   // distinction = "LatestCommand tabを選択し、background taskがあってもcommand projectionを維持することを確認する"
   // @end-test-value
+  /** Latest Command 選択中は、失敗したバックグラウンドタスクがあっても、コマンドの完了と前回実行由来の表示を保つ。 */
   it("ContextPaneProjection は LatestCommand tab の表示情報を作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "latest-command",
@@ -368,6 +412,7 @@ describe("session-ui-projection", () => {
   // impact = "background taskの失敗を見逃し、復旧判断を誤る"
   // distinction = "Tasks tabでcompleted commandとfailed taskを対照させ、task由来のtoneを分離して確認する"
   // @end-test-value
+  /** Tasks 選択中は、コマンドの成功にかかわらず、バックグラウンドタスクの失敗をペインのトーンとバッジに出す。 */
   it("ContextPaneProjection は Tasks tab の tone を background task 状態から作る", () => {
     const projection = buildContextPaneProjection({
       activeContextPaneTab: "tasks",
@@ -394,7 +439,7 @@ describe("session-ui-projection", () => {
     assert.equal(projection.latestCommandToneClassName, "completed");
   });
 
-
+  /** 実行の詳細には完了済みの手順を残し、最新コマンドとして別に表示する進行中の項目を重ねて出さない。 */
   it("running details は確定済み step だけを末尾から拾い、最新 command は重複表示しない", () => {
     const entries = buildRunningDetailsEntries({
       liveSteps: [
@@ -409,7 +454,7 @@ describe("session-ui-projection", () => {
           id: "tool-1",
           type: "mcp_tool_call",
           summary: "github/search",
-          details: "{\"count\":1}",
+          details: '{"count":1}',
           status: "completed",
         },
         {
@@ -436,11 +481,12 @@ describe("session-ui-projection", () => {
         type: "mcp_tool_call",
         status: "completed",
         summary: "github/search",
-        details: "{\"count\":1}",
+        details: '{"count":1}',
       },
     ]);
   });
 
+  /** 未確定の手順を表示せず、指定件数に収まる直近の完了済み手順を元の順序で残す。 */
   it("running details は pending / in_progress を除外し、件数を絞る", () => {
     const entries = buildRunningDetailsEntries({
       liveSteps: [
@@ -496,6 +542,7 @@ describe("session-ui-projection", () => {
     ]);
   });
 
+  /** コンテキスト利用量と上限の要約に加え、会話・システムの内訳とメッセージ数を整形して返す。 */
   it("SessionContextTelemetry projection は表示用の文字列をまとめる", () => {
     const projection = buildSessionContextTelemetryProjection({
       provider: "copilot",
@@ -526,11 +573,25 @@ describe("session-ui-projection", () => {
   // scope = "session-context-pane-tab-cycle"
   // lifecycle = "permanent"
   // @end-test-value
+  /** すべての標準タブで前後へ移動し、末尾と先頭が指定順でつながることを確認する。 */
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
-    const order = ["latest-command", "coordination", "messages", "glossary", "reasoning", "tasks"] as const;
+    const order = [
+      "latest-command",
+      "coordination",
+      "messages",
+      "glossary",
+      "reasoning",
+      "tasks",
+    ] as const;
     order.forEach((tab, index) => {
-      assert.equal(cycleContextPaneTab(tab, 1), order[(index + 1) % order.length]);
-      assert.equal(cycleContextPaneTab(tab, -1), order[(index + order.length - 1) % order.length]);
+      assert.equal(
+        cycleContextPaneTab(tab, 1),
+        order[(index + 1) % order.length],
+      );
+      assert.equal(
+        cycleContextPaneTab(tab, -1),
+        order[(index + order.length - 1) % order.length],
+      );
     });
   });
 
@@ -544,33 +605,37 @@ describe("session-ui-projection", () => {
   // scope = "session-context-pane-available-tabs"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 通常 Session の Coordination は残し、Tasks は Copilot のみ、Reasoning は能力や本文がある場合に追加する。 */
   it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false }), [
-      "latest-command",
-      "coordination",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
-      "latest-command",
-      "coordination",
-      "tasks",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasReasoningCapability: true }), [
-      "latest-command",
-      "coordination",
-      "reasoning",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningCapability: true }), [
-      "latest-command",
-      "coordination",
-      "reasoning",
-      "tasks",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true, hasReasoningText: true }), [
-      "latest-command",
-      "coordination",
-      "reasoning",
-      "tasks",
-    ]);
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({ isCopilotSession: false }),
+      ["latest-command", "coordination"],
+    );
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({ isCopilotSession: true }),
+      ["latest-command", "coordination", "tasks"],
+    );
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({
+        isCopilotSession: false,
+        hasReasoningCapability: true,
+      }),
+      ["latest-command", "coordination", "reasoning"],
+    );
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({
+        isCopilotSession: true,
+        hasReasoningCapability: true,
+      }),
+      ["latest-command", "coordination", "reasoning", "tasks"],
+    );
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({
+        isCopilotSession: true,
+        hasReasoningText: true,
+      }),
+      ["latest-command", "coordination", "reasoning", "tasks"],
+    );
   });
 
   // @test-value v2
@@ -583,12 +648,27 @@ describe("session-ui-projection", () => {
   // scope = "Session context pane provider filtered navigation"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 非 Copilot の基本構成では利用不可のタブを飛ばし、Latest Command と Coordination だけを双方向に循環する。 */
   it("cycleContextPaneTab は利用可能 tab だけを循環する", () => {
-    const availableTabs = resolveAvailableContextPaneTabs({ isCopilotSession: false });
-    assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "coordination");
-    assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "coordination");
-    assert.equal(cycleContextPaneTab("coordination", 1, availableTabs), "latest-command");
-    assert.equal(cycleContextPaneTab("coordination", -1, availableTabs), "latest-command");
+    const availableTabs = resolveAvailableContextPaneTabs({
+      isCopilotSession: false,
+    });
+    assert.equal(
+      cycleContextPaneTab("latest-command", 1, availableTabs),
+      "coordination",
+    );
+    assert.equal(
+      cycleContextPaneTab("latest-command", -1, availableTabs),
+      "coordination",
+    );
+    assert.equal(
+      cycleContextPaneTab("coordination", 1, availableTabs),
+      "latest-command",
+    );
+    assert.equal(
+      cycleContextPaneTab("coordination", -1, availableTabs),
+      "latest-command",
+    );
   });
 
   // @test-value v2
@@ -601,25 +681,25 @@ describe("session-ui-projection", () => {
   // scope = "Session context pane Messages capability"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Messages を有効にしたウィンドウだけに、既存順でタブとラベルを追加し、切替先として使えるようにする。 */
   it("Messages tab は明示的に有効化したSession Windowだけへ既存順で追加される", () => {
-    assert.deepEqual(resolveAvailableContextPaneTabs({
-      isCopilotSession: true,
-      includeMessages: true,
-      hasReasoningCapability: true,
-    }), [
-      "latest-command",
-      "coordination",
-      "messages",
-      "reasoning",
-      "tasks",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
-      "latest-command",
-      "coordination",
-      "tasks",
-    ]);
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({
+        isCopilotSession: true,
+        includeMessages: true,
+        hasReasoningCapability: true,
+      }),
+      ["latest-command", "coordination", "messages", "reasoning", "tasks"],
+    );
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({ isCopilotSession: true }),
+      ["latest-command", "coordination", "tasks"],
+    );
     assert.equal(contextPaneTabLabel("messages"), "Messages");
-    assert.equal(cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]), "messages");
+    assert.equal(
+      cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]),
+      "messages",
+    );
   });
 
   // @test-value v2
@@ -632,61 +712,103 @@ describe("session-ui-projection", () => {
   // scope = "Session context pane Glossary capability"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Glossary を有効にすると、Coordination と Messages の後ろに表示名付きのタブが加わる。 */
   it("Glossary tabはAgent Sessionで明示的に有効化し、既存right pane順へ追加する", () => {
-    assert.deepEqual(resolveAvailableContextPaneTabs({
-      isCopilotSession: false,
-      includeMessages: true,
-      includeGlossary: true,
-    }), ["latest-command", "coordination", "messages", "glossary"]);
+    assert.deepEqual(
+      resolveAvailableContextPaneTabs({
+        isCopilotSession: false,
+        includeMessages: true,
+        includeGlossary: true,
+      }),
+      ["latest-command", "coordination", "messages", "glossary"],
+    );
     assert.equal(contextPaneTabLabel("glossary"), "Glossary");
   });
 
+  /** Glossary の読み込み中、欠損、空、失敗でも、状態を確認する入口となるタブを表示し続ける。 */
   it("Glossary tabはloading・missing・空を含む全状態で安定して表示する", () => {
-    const projection = (state: GlossaryProjectionState): SessionGlossaryProjection => ({
+    /** リポジトリとスコープを固定したまま、Glossary の状態だけを差し替える。 */
+    const projection = (
+      state: GlossaryProjectionState,
+    ): SessionGlossaryProjection => ({
       sessionId: "session-1",
       scopeRevision: "scope-1",
       sequence: 1,
-      checkout: { repositoryName: "repository", branch: "main", pathLabel: "repository" },
+      checkout: {
+        repositoryName: "repository",
+        branch: "main",
+        pathLabel: "repository",
+      },
       state,
     });
     const issue = { path: "$", code: "INVALID_YAML", message: "invalid" };
 
     assert.equal(shouldIncludeGlossaryContextPane(null), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "missing",
-      relativePath: ".withmate/glossary.yaml",
-      revision: null,
-    })), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "valid",
-      relativePath: ".withmate/glossary.yaml",
-      revision: "empty",
-      entries: [],
-    })), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "valid",
-      relativePath: ".withmate/glossary.yaml",
-      revision: "populated",
-      entries: [{ term: "Runtime", aliases: [], definition: "definition" }],
-    })), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "invalid",
-      relativePath: ".withmate/glossary.yaml",
-      revision: "invalid",
-      issues: [issue],
-    })), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "unsupported",
-      relativePath: ".withmate/glossary.yaml",
-      revision: "unsupported",
-      schemaVersion: 2,
-      issues: [issue],
-    })), true);
-    assert.equal(shouldIncludeGlossaryContextPane(projection({
-      status: "watch-error",
-      relativePath: ".withmate/glossary.yaml",
-      revision: null,
-      message: "watch failed",
-    })), true);
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "missing",
+          relativePath: ".withmate/glossary.yaml",
+          revision: null,
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "valid",
+          relativePath: ".withmate/glossary.yaml",
+          revision: "empty",
+          entries: [],
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "valid",
+          relativePath: ".withmate/glossary.yaml",
+          revision: "populated",
+          entries: [{ term: "Runtime", aliases: [], definition: "definition" }],
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "invalid",
+          relativePath: ".withmate/glossary.yaml",
+          revision: "invalid",
+          issues: [issue],
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "unsupported",
+          relativePath: ".withmate/glossary.yaml",
+          revision: "unsupported",
+          schemaVersion: 2,
+          issues: [issue],
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      shouldIncludeGlossaryContextPane(
+        projection({
+          status: "watch-error",
+          relativePath: ".withmate/glossary.yaml",
+          revision: null,
+          message: "watch failed",
+        }),
+      ),
+      true,
+    );
   });
 });

@@ -14,12 +14,23 @@ import {
   CREATE_SESSIONS_TABLE_SQL,
 } from "../../src-electron/storage/database-schema-v1.js";
 import { CREATE_V2_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v2.js";
-import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
+import {
+  PersistentStoreLifecycleService,
+  type PersistentStoreBundle,
+} from "../../src-electron/storage/persistent-store-lifecycle-service.js";
 import { SessionStorageV2 } from "../../src-electron/session/session-storage-v2.js";
 import { hydrateSessionsFromSummaries } from "../../src-electron/session/session-summary-adapter.js";
-import { createMigrationDryRunReport, createMigrationWriteReport } from "../../src-electron/storage/migrations/migrate-database-v1-to-v2.js";
+import {
+  createMigrationDryRunReport,
+  createMigrationWriteReport,
+} from "../../src-electron/storage/migrations/migrate-database-v1-to-v2.js";
 
-function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: () => void } {
+/** 旧本文 JSON や廃止メモリを直接格納できる V1 スキーマと、使い捨ての DB パスを用意する。 */
+function createV1FixtureDatabase(): {
+  dbPath: string;
+  dirPath: string;
+  cleanup: () => void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "withmate-v1-to-v2-"));
   const dbPath = join(dir, "withmate.db");
   const db = new DatabaseSync(dbPath);
@@ -37,34 +48,53 @@ function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: 
   return {
     dbPath,
     dirPath: dir,
+    /** 移行元を含むテスト専用ディレクトリを片付ける。 */
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
+/** 対象のテーブルが SQLite スキーマに存在するかを判定する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName);
+  const row = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName);
   return row !== undefined;
 }
 
+/** 移行対象の件数を比較するため、テーブルが存在しなければ 0、あれば実件数を返す。 */
 function countRows(db: DatabaseSync, tableName: string): number {
   if (!tableExists(db, tableName)) {
     return 0;
   }
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as { count: number };
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+    .get() as { count: number };
   return row.count;
 }
 
-function countRowsBySessionId(db: DatabaseSync, tableName: string, sessionId: string): number {
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE session_id = ?`).get(sessionId) as { count: number };
+/** 指定 Session に帰属する移行先行だけを数え、他 Session の行と混ざらないようにする。 */
+function countRowsBySessionId(
+  db: DatabaseSync,
+  tableName: string,
+  sessionId: string,
+): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE session_id = ?`)
+    .get(sessionId) as { count: number };
   return row.count;
 }
 
-function insertSession(db: DatabaseSync, input: {
-  id: string;
-  messagesJson: string;
-  streamJson: string;
-}): void {
-  db.prepare(`
+/** V1 の Session 行へメッセージと stream の生 JSON を入れる。有効行だけでなく破損入力も再現できる。 */
+function insertSession(
+  db: DatabaseSync,
+  input: {
+    id: string;
+    messagesJson: string;
+    streamJson: string;
+  },
+): void {
+  db.prepare(
+    `
     INSERT INTO sessions (
       id,
       task_title,
@@ -93,7 +123,8 @@ function insertSession(db: DatabaseSync, input: {
       stream_json,
       last_active_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     input.id,
     "task",
     "idle",
@@ -123,6 +154,7 @@ function insertSession(db: DatabaseSync, input: {
   );
 }
 
+/** 書き込みなしで観測できる入力件数・変換予定・非対応データの報告を扱う。 */
 describe("V1 to V2 database migration dry-run", () => {
   // @test-value v2
   // kind = "contract"
@@ -136,6 +168,7 @@ describe("V1 to V2 database migration dry-run", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
+  /** Session・メッセージ・成果物・設定の予定件数と、stream・旧設定・Memory の除外件数を同じ dry-run 報告で照合する。 */
   it("V1 DB を変更せず V2 変換予定件数と skip 件数を report する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -145,26 +178,29 @@ describe("V1 to V2 database migration dry-run", () => {
           id: "session-1",
           messagesJson: JSON.stringify([
             { role: "user", text: "hello" },
-            { role: "assistant", text: "done", artifact: { title: "result", changedFiles: [] } },
+            {
+              role: "assistant",
+              text: "done",
+              artifact: { title: "result", changedFiles: [] },
+            },
           ]),
-          streamJson: JSON.stringify([{ mood: "calm", time: "10:00", text: "legacy monologue" }]),
+          streamJson: JSON.stringify([
+            { mood: "calm", time: "10:00", text: "legacy monologue" },
+          ]),
         });
-        db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-          "system_prompt_prefix",
-          "prefix",
-          "2026-04-27T00:00:00.000Z",
-        );
-        db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+        db.prepare(
+          "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+        ).run("system_prompt_prefix", "prefix", "2026-04-27T00:00:00.000Z");
+        db.prepare(
+          "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+        ).run(
           "memory_extraction_provider_settings_json",
           "{}",
           "2026-04-27T00:00:00.000Z",
         );
-        db.prepare("INSERT INTO session_memories (session_id, workspace_path, thread_id, updated_at) VALUES (?, ?, ?, ?)").run(
-          "session-1",
-          "workspace",
-          "thread",
-          "2026-04-27T00:00:00.000Z",
-        );
+        db.prepare(
+          "INSERT INTO session_memories (session_id, workspace_path, thread_id, updated_at) VALUES (?, ?, ?, ?)",
+        ).run("session-1", "workspace", "thread", "2026-04-27T00:00:00.000Z");
       } finally {
         db.close();
       }
@@ -204,6 +240,7 @@ describe("V1 to V2 database migration dry-run", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
+  /** 壊れた JSON と無効なメッセージが変換予定に入らず、除外件数と原因が報告されることを確認する。 */
   it("壊れた JSON と invalid message を V2 へ入れず report に記録する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -223,7 +260,10 @@ describe("V1 to V2 database migration dry-run", () => {
       assert.equal(report.plannedV2Counts.sessionMessages, 0);
       assert.equal(report.skipped.invalidMessages, 1);
       assert.deepEqual(
-        report.issues.map((issue) => `${issue.sourceTable}.${issue.sourceColumn}:${issue.errorKind}`),
+        report.issues.map(
+          (issue) =>
+            `${issue.sourceTable}.${issue.sourceColumn}:${issue.errorKind}`,
+        ),
         [
           "sessions.messages_json:invalid_message_role",
           "sessions.stream_json:invalid_json_array",
@@ -235,6 +275,7 @@ describe("V1 to V2 database migration dry-run", () => {
   });
 });
 
+/** 実際の V2 作成、既存書き込み先の保護、移行後に runtime から使えることを扱う。 */
 describe("V1 to V2 database migration write mode", () => {
   // @test-value v2
   // kind = "contract"
@@ -248,6 +289,7 @@ describe("V1 to V2 database migration write mode", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
+  /** 旧履歴を V2 の順序付きメッセージと成果物へ分け、対応設定を持ち越す一方、旧 Memory を作らずソースの行を維持する。 */
   it("V1 DB から V2 DB を作成し、sessions/messages/artifacts を write する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -268,23 +310,27 @@ describe("V1 to V2 database migration write mode", () => {
               },
             },
           ]),
-          streamJson: JSON.stringify([{ mood: "calm", time: "10:00", text: "legacy monologue" }]),
+          streamJson: JSON.stringify([
+            { mood: "calm", time: "10:00", text: "legacy monologue" },
+          ]),
         });
         insertSession(sourceDb, {
           id: "session-2",
-          messagesJson: JSON.stringify([{ role: "assistant", text: "second session only" }]),
+          messagesJson: JSON.stringify([
+            { role: "assistant", text: "second session only" },
+          ]),
           streamJson: JSON.stringify([]),
         });
-        sourceDb.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-          "system_prompt_prefix",
-          "prefix",
-          "2026-04-27T00:00:00.000Z",
-        );
-        sourceDb.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
-          "memory_generation_enabled",
-          "true",
-          "2026-04-27T00:00:00.000Z",
-        );
+        sourceDb
+          .prepare(
+            "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+          )
+          .run("system_prompt_prefix", "prefix", "2026-04-27T00:00:00.000Z");
+        sourceDb
+          .prepare(
+            "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+          )
+          .run("memory_generation_enabled", "true", "2026-04-27T00:00:00.000Z");
       } finally {
         sourceDb.close();
       }
@@ -293,8 +339,16 @@ describe("V1 to V2 database migration write mode", () => {
         const sourceDb = new DatabaseSync(fixture.dbPath);
         try {
           return {
-            sessions: sourceDb.prepare("SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id").all(),
-            appSettings: sourceDb.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all(),
+            sessions: sourceDb
+              .prepare(
+                "SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id",
+              )
+              .all(),
+            appSettings: sourceDb
+              .prepare(
+                "SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key",
+              )
+              .all(),
           };
         } finally {
           sourceDb.close();
@@ -319,24 +373,40 @@ describe("V1 to V2 database migration write mode", () => {
           "model_catalog_models",
         ];
         for (const tableName of expectedSchemaTables) {
-          assert.equal(tableExists(v2Db, tableName), true, `${tableName} が V2 スキーマとして作成される`);
+          assert.equal(
+            tableExists(v2Db, tableName),
+            true,
+            `${tableName} が V2 スキーマとして作成される`,
+          );
         }
-        assert.equal(tableExists(v2Db, "session_memories"), false, "session_memories は V2 スキーマに含まれない");
+        assert.equal(
+          tableExists(v2Db, "session_memories"),
+          false,
+          "session_memories は V2 スキーマに含まれない",
+        );
 
-        const sessionSummaries = v2Db.prepare("SELECT id, message_count FROM sessions ORDER BY id").all() as Array<{
+        const sessionSummaries = v2Db
+          .prepare("SELECT id, message_count FROM sessions ORDER BY id")
+          .all() as Array<{
           id: string;
           message_count: number;
         }>;
-        const session1 = sessionSummaries.find((session) => session.id === "session-1");
-        const session2 = sessionSummaries.find((session) => session.id === "session-2");
+        const session1 = sessionSummaries.find(
+          (session) => session.id === "session-1",
+        );
+        const session2 = sessionSummaries.find(
+          (session) => session.id === "session-2",
+        );
 
         assert.ok(session1);
         assert.ok(session2);
         assert.equal(session1.message_count, 2);
 
-        const sessionMessages = v2Db.prepare("SELECT id, seq, role, accent, artifact_available FROM session_messages WHERE session_id = ? ORDER BY seq").all(
-          "session-1",
-        ) as Array<{
+        const sessionMessages = v2Db
+          .prepare(
+            "SELECT id, seq, role, accent, artifact_available FROM session_messages WHERE session_id = ? ORDER BY seq",
+          )
+          .all("session-1") as Array<{
           id: number;
           seq: number;
           role: string;
@@ -344,9 +414,18 @@ describe("V1 to V2 database migration write mode", () => {
           artifact_available: number;
         }>;
         assert.equal(sessionMessages.length, 2);
-        assert.deepEqual(sessionMessages.map((row) => row.seq), [0, 1]);
-        assert.deepEqual(sessionMessages.map((row) => row.role), ["user", "assistant"]);
-        assert.deepEqual(sessionMessages.map((row) => row.accent), [0, 1]);
+        assert.deepEqual(
+          sessionMessages.map((row) => row.seq),
+          [0, 1],
+        );
+        assert.deepEqual(
+          sessionMessages.map((row) => row.role),
+          ["user", "assistant"],
+        );
+        assert.deepEqual(
+          sessionMessages.map((row) => row.accent),
+          [0, 1],
+        );
 
         const artifactRows = v2Db
           .prepare(
@@ -370,14 +449,20 @@ describe("V1 to V2 database migration write mode", () => {
           summary: "implemented migration",
         });
 
-
-        assert.equal(countRowsBySessionId(v2Db, "session_messages", "session-2"), 1);
+        assert.equal(
+          countRowsBySessionId(v2Db, "session_messages", "session-2"),
+          1,
+        );
 
         const migratedSystemPromptPrefixRow = v2Db
-          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .prepare(
+            "SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?",
+          )
           .get("system_prompt_prefix") as { count: number };
         const skippedMemoryGenerationEnabledRow = v2Db
-          .prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?")
+          .prepare(
+            "SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = ?",
+          )
           .get("memory_generation_enabled") as { count: number };
         assert.equal(migratedSystemPromptPrefixRow.count, 1);
         assert.equal(skippedMemoryGenerationEnabledRow.count, 0);
@@ -390,11 +475,19 @@ describe("V1 to V2 database migration write mode", () => {
         assert.equal(countRows(sourceDbAfter, "sessions"), 2);
         assert.equal(countRows(sourceDbAfter, "app_settings"), 2);
         assert.deepEqual(
-          sourceDbAfter.prepare("SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id").all(),
+          sourceDbAfter
+            .prepare(
+              "SELECT id, task_title, messages_json, stream_json FROM sessions ORDER BY id",
+            )
+            .all(),
           sourceContentsBefore.sessions,
         );
         assert.deepEqual(
-          sourceDbAfter.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all(),
+          sourceDbAfter
+            .prepare(
+              "SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key",
+            )
+            .all(),
           sourceContentsBefore.appSettings,
         );
       } finally {
@@ -417,6 +510,7 @@ describe("V1 to V2 database migration write mode", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
+  /** 既存ターゲットへの明示上書きがなければ行を変えずに拒否し、指定した場合は移行した行を報告する。 */
   it("既存 V2 DB は overwrite 指定がない限り置き換えない", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -439,8 +533,12 @@ describe("V1 to V2 database migration write mode", () => {
 
       const existingTargetDb = new DatabaseSync(v2DbPath);
       try {
-        existingTargetDb.prepare("UPDATE sessions SET task_title = ? WHERE id = ?").run("existing target task", "session-1");
-        existingTargetDb.prepare("UPDATE session_messages SET text = ? WHERE session_id = ?").run("existing target message", "session-1");
+        existingTargetDb
+          .prepare("UPDATE sessions SET task_title = ? WHERE id = ?")
+          .run("existing target task", "session-1");
+        existingTargetDb
+          .prepare("UPDATE session_messages SET text = ? WHERE session_id = ?")
+          .run("existing target message", "session-1");
       } finally {
         existingTargetDb.close();
       }
@@ -454,17 +552,42 @@ describe("V1 to V2 database migration write mode", () => {
         /V2 database already exists/,
       );
 
-      const targetDbAfterRejection = new DatabaseSync(v2DbPath, { readOnly: true });
+      const targetDbAfterRejection = new DatabaseSync(v2DbPath, {
+        readOnly: true,
+      });
       try {
         assert.equal(countRows(targetDbAfterRejection, "sessions"), 1);
         assert.equal(countRows(targetDbAfterRejection, "session_messages"), 1);
         assert.deepEqual(
-          targetDbAfterRejection.prepare("SELECT id, task_title, message_count FROM sessions ORDER BY id").all().map((row) => ({ ...row })),
-          [{ id: "session-1", task_title: "existing target task", message_count: 1 }],
+          targetDbAfterRejection
+            .prepare(
+              "SELECT id, task_title, message_count FROM sessions ORDER BY id",
+            )
+            .all()
+            .map((row) => ({ ...row })),
+          [
+            {
+              id: "session-1",
+              task_title: "existing target task",
+              message_count: 1,
+            },
+          ],
         );
         assert.deepEqual(
-          targetDbAfterRejection.prepare("SELECT session_id, seq, role, text FROM session_messages ORDER BY session_id, seq").all().map((row) => ({ ...row })),
-          [{ session_id: "session-1", seq: 0, role: "user", text: "existing target message" }],
+          targetDbAfterRejection
+            .prepare(
+              "SELECT session_id, seq, role, text FROM session_messages ORDER BY session_id, seq",
+            )
+            .all()
+            .map((row) => ({ ...row })),
+          [
+            {
+              session_id: "session-1",
+              seq: 0,
+              role: "user",
+              text: "existing target message",
+            },
+          ],
         );
       } finally {
         targetDbAfterRejection.close();
@@ -495,6 +618,7 @@ describe("V1 to V2 database migration write mode", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査では同一pathのruntime拒否と拒否後のsource tableの存在を確認できない"
   // @end-test-value
+  /** ソースとターゲットに同じ DB を指定すると上書きの許可があっても拒否し、元のテーブルを残す。 */
   it("V1 と V2 が同一パスの場合は overwrite 指定でも拒否する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -531,6 +655,7 @@ describe("V1 to V2 database migration write mode", () => {
   // impact = "既存の通常会話・artifactの継続利用または移行先データ保護を損なう"
   // distinction = "型検査だけではSQLite移行後の実データとsource保持を検証できない"
   // @end-test-value
+  /** 上書き途中のエラーで出力先を失わず、以前の V2 の Session 行を復旧できる。 */
   it("overwrite 中に失敗した場合は既存 V2 DB を復旧する", () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -558,13 +683,12 @@ describe("V1 to V2 database migration write mode", () => {
         sourceDbWithBadRow.close();
       }
 
-      assert.throws(
-        () =>
-          createMigrationWriteReport({
-            v1DbPath: fixture.dbPath,
-            v2DbPath,
-            overwrite: true,
-          }),
+      assert.throws(() =>
+        createMigrationWriteReport({
+          v1DbPath: fixture.dbPath,
+          v2DbPath,
+          overwrite: true,
+        }),
       );
 
       const restoredV2Db = new DatabaseSync(v2DbPath);
@@ -588,6 +712,7 @@ describe("V1 to V2 database migration write mode", () => {
   // scope = "V1 to V2 migration runtime lifecycle"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 移行 DB を実 V2 Session ストレージで読み書きし、タイトル変更でも本文・成果物を保持した後、再作成で空の V2 に戻せる。 */
   it("V1 から移行した V2 DB を runtime lifecycle で開き主要 read/write path を通せる", async () => {
     const fixture = createV1FixtureDatabase();
     try {
@@ -604,13 +729,20 @@ describe("V1 to V2 database migration write mode", () => {
                 title: "runtime artifact",
                 activitySummary: ["migrated"],
                 changedFiles: [
-                  { kind: "edit", path: "src/index.ts", summary: "updated", diffRows: [] },
+                  {
+                    kind: "edit",
+                    path: "src/index.ts",
+                    summary: "updated",
+                    diffRows: [],
+                  },
                 ],
                 runChecks: [{ label: "test", value: "pass" }],
               },
             },
           ]),
-          streamJson: JSON.stringify([{ mood: "calm", text: "legacy monologue" }]),
+          streamJson: JSON.stringify([
+            { mood: "calm", text: "legacy monologue" },
+          ]),
         });
       } finally {
         sourceDb.close();
@@ -628,16 +760,31 @@ describe("V1 to V2 database migration write mode", () => {
       const removedPaths: string[] = [];
       const truncatedWalPaths: string[] = [];
       const lifecycle = new PersistentStoreLifecycleService({
+        /** この検証が Session ライフサイクルだけを通るよう、カタログ用の軽い代替ストアを作る。 */
         createModelCatalogStorage: () =>
           ({
+            /** Session の初期読み出しに実カタログが不要なため、空の Provider 一覧を返す。 */
             getCatalog: () => ({ providers: [] }),
+            /** カタログの代替には解放する DB 接続がない。 */
             close() {},
           }) as never,
+        /** V2 初期化が誤って V1 用 Session ストアを要求したら、その場で検証に失敗させる。 */
         createSessionStorage: () => {
           throw new Error("V2 lifecycle では V1 session storage を生成しない");
         },
-        createAppSettingsStorage: () => ({ close() {} }) as never,
-        createMateStorage: () => ({ close() {} }) as never,
+        /** テストが利用しない設定ストアは、ライフサイクルが閉じられる最小の形で返す。 */
+        createAppSettingsStorage: () =>
+          ({
+            /** 設定の代替には解放するファイルがない。 */
+            close() {},
+          }) as never,
+        /** Mate ストアが Session の移行と再作成に実ファイルを要求しないようにする。 */
+        createMateStorage: () =>
+          ({
+            /** Mate のダブルの終了は追加処理を必要としない。 */
+            close() {},
+          }) as never,
+        /** ライフサイクルが指定した DB に実 V2 スキーマを適用し、構築接続を閉じる。 */
         ensureV2Schema(dbPath) {
           const db = new DatabaseSync(dbPath);
           try {
@@ -648,33 +795,43 @@ describe("V1 to V2 database migration write mode", () => {
             db.close();
           }
         },
+        /** ライフサイクルの閉じる前処理には追加の副作用を用意しない。 */
         onBeforeClose: () => {},
+        /** 再作成前に WAL 整理を求めた DB パスを assertion 用に控える。 */
         truncateWal(dbPath) {
           truncatedWalPaths.push(dbPath);
         },
+        /** 指定ファイルを削除し、再作成がどの DB と sidecar を対象にしたかを記録する。 */
         async removeFile(filePath) {
           removedPaths.push(filePath);
           rmSync(filePath, { force: true });
         },
       });
 
-      let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath);
+      let bundle: PersistentStoreBundle | null =
+        await lifecycle.initialize(v2DbPath);
       const sessionStorage = bundle.sessionStorage as SessionStorageV2;
 
       try {
         assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
-        assert.deepEqual(bundle.sessions.map((session) => ({
-          id: session.id,
-          messages: session.messages.length,
-        })), [{ id: "session-1", messages: 0 }]);
+        assert.deepEqual(
+          bundle.sessions.map((session) => ({
+            id: session.id,
+            messages: session.messages.length,
+          })),
+          [{ id: "session-1", messages: 0 }],
+        );
 
         const migratedSession = sessionStorage.getSession("session-1");
         assert.ok(migratedSession);
-        assert.deepEqual(migratedSession.messages.map((message) => message.text), [
-          "hello from v1",
-          "done from v1",
-        ]);
-        assert.equal(migratedSession.messages[1]?.artifact?.title, "runtime artifact");
+        assert.deepEqual(
+          migratedSession.messages.map((message) => message.text),
+          ["hello from v1", "done from v1"],
+        );
+        assert.equal(
+          migratedSession.messages[1]?.artifact?.title,
+          "runtime artifact",
+        );
 
         sessionStorage.upsertSession({
           ...migratedSession,
@@ -682,37 +839,53 @@ describe("V1 to V2 database migration write mode", () => {
         });
         const updatedSession = sessionStorage.getSession("session-1");
         assert.equal(updatedSession?.taskTitle, "updated in runtime");
-        assert.deepEqual(updatedSession?.messages.map((message) => message.text), [
-          "hello from v1",
-          "done from v1",
-        ]);
-        assert.equal(updatedSession?.messages[1]?.artifact?.title, "runtime artifact");
+        assert.deepEqual(
+          updatedSession?.messages.map((message) => message.text),
+          ["hello from v1", "done from v1"],
+        );
+        assert.equal(
+          updatedSession?.messages[1]?.artifact?.title,
+          "runtime artifact",
+        );
 
-        const listFullSessions = () => hydrateSessionsFromSummaries(sessionStorage);
+        /** 軽量一覧だけでは見えない本文・成果物を、Session ストレージの summary 群から読み戻す。 */
+        const listFullSessions = () =>
+          hydrateSessionsFromSummaries(sessionStorage);
         const runtimeSessions = listFullSessions();
         assert.equal(runtimeSessions[0]?.messages.length, 2);
-        assert.equal(runtimeSessions[0]?.messages[1]?.artifact?.title, "runtime artifact");
+        assert.equal(
+          runtimeSessions[0]?.messages[1]?.artifact?.title,
+          "runtime artifact",
+        );
 
         const recreated = await lifecycle.recreate(v2DbPath, bundle);
         bundle = null;
         try {
-          assert.deepEqual(truncatedWalPaths.map((filePath) => basename(filePath)), ["withmate-v2.db"]);
-          assert.deepEqual(removedPaths.map((filePath) => basename(filePath)), [
-            "withmate-v2.db-wal",
-            "withmate-v2.db-shm",
-            "withmate-v2.db",
-          ]);
+          assert.deepEqual(
+            truncatedWalPaths.map((filePath) => basename(filePath)),
+            ["withmate-v2.db"],
+          );
+          assert.deepEqual(
+            removedPaths.map((filePath) => basename(filePath)),
+            ["withmate-v2.db-wal", "withmate-v2.db-shm", "withmate-v2.db"],
+          );
           assert.deepEqual(recreated.sessions, []);
-          assert.equal(recreated.sessionStorage instanceof SessionStorageV2, true);
+          assert.equal(
+            recreated.sessionStorage instanceof SessionStorageV2,
+            true,
+          );
 
-          const recreatedSessionStorage = recreated.sessionStorage as SessionStorageV2;
+          const recreatedSessionStorage =
+            recreated.sessionStorage as SessionStorageV2;
           recreatedSessionStorage.upsertSession({
             ...updatedSession,
             id: "session-after-recreate",
             messages: [{ role: "user", text: "after recreate" }],
           });
           assert.deepEqual(
-            recreatedSessionStorage.getSession("session-after-recreate")?.messages.map((message) => message.text),
+            recreatedSessionStorage
+              .getSession("session-after-recreate")
+              ?.messages.map((message) => message.text),
             ["after recreate"],
           );
         } finally {

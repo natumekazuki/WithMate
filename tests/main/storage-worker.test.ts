@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
-import { StorageWorkerClient, StorageWorkerGenerationError, StorageWorkerRemoteError } from "../../src-electron/storage/storage-worker-client.js";
+import {
+  StorageWorkerClient,
+  StorageWorkerGenerationError,
+  StorageWorkerRemoteError,
+} from "../../src-electron/storage/storage-worker-client.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { createPersistentStoreLifecycleService } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
@@ -15,6 +19,7 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 
+/** 起動通知の遅延・異なる世代・異常終了・不正な応答を再現できる Worker の URL を作る。 */
 function createFixtureWorkerUrl(): URL {
   const source = `
     import { parentPort, workerData } from "node:worker_threads";
@@ -76,8 +81,14 @@ function createFixtureWorkerUrl(): URL {
 // impact = "MainとWorkerの契約不整合や旧ownerの遅延書込みによるturn結果変更を防ぐ"
 // distinction = "storage直接testはWorker allowlist・structured clone・client generation境界を通らない"
 // @end-test-value
+/** 実 Worker でターンを保存・取得し、閉じた世代の変更が再オープン後のデータに届かないことを確認する。 */
 test("V6 storage workerは最小turnとgeneration境界を維持する", async () => {
-  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-progress-"));
+  const userDataPath = await mkdtemp(
+    join(
+      process.env.TEMP ?? process.cwd(),
+      "withmate-storage-worker-progress-",
+    ),
+  );
   let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
   try {
     await mkdir(join(userDataPath, "characters"), { recursive: true });
@@ -85,37 +96,63 @@ test("V6 storage workerは最小turnとgeneration境界を維持する", async (
     const options = {
       dbPath: bootstrap.dbPath,
       userDataPath,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     };
     bundle = createV6StorageWorkerBundle(options);
     await bundle.initialize();
     const session = buildNewSession({
-      id: "worker-progress", taskTitle: "worker progress", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
-      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      id: "worker-progress",
+      taskTitle: "worker progress",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
     });
     await bundle.stores.session.upsertSession(session);
     const created = await bundle.stores.turn.createSessionTurn({
-      sessionId: session.id, createdAt: "2026-10-05T00:00:00.000Z", phase: "running",
-      provider: session.provider, model: session.model, reasoningEffort: session.reasoningEffort, approvalMode: session.approvalMode,
-      threadId: "", errorMessage: "",
+      sessionId: session.id,
+      createdAt: "2026-10-05T00:00:00.000Z",
+      phase: "running",
+      provider: session.provider,
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      approvalMode: session.approvalMode,
+      threadId: "",
+      errorMessage: "",
     });
-    assert.equal((await bundle.stores.turn.getLatestSessionTurn(session.id))?.id, created.id);
+    assert.equal(
+      (await bundle.stores.turn.getLatestSessionTurn(session.id))?.id,
+      created.id,
+    );
     const oldTurn = bundle.stores.turn;
     await bundle.client.close();
     bundle = createV6StorageWorkerBundle(options);
     await bundle.initialize();
-    await assert.rejects(oldTurn.updateSessionTurn(created.id, { ...created, phase: "failed" }), StorageWorkerGenerationError);
-    assert.equal((await bundle.stores.turn.getLatestSessionTurn(session.id))?.phase, "running");
+    await assert.rejects(
+      oldTurn.updateSessionTurn(created.id, { ...created, phase: "failed" }),
+      StorageWorkerGenerationError,
+    );
+    assert.equal(
+      (await bundle.stores.turn.getLatestSessionTurn(session.id))?.phase,
+      "running",
+    );
   } finally {
     if (bundle) await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });
   }
 });
-
-
 
 // @test-value v2
 // kind = "invariant"
@@ -129,12 +166,16 @@ test("V6 storage workerは最小turnとgeneration境界を維持する", async (
 // impact = "Mainの非同期callerが起動直後のstorage要求を失わず、初期化済みWorkerへ処理を依頼できる"
 // distinction = "typecheck では確認できない Worker 起動と要求キューの実動作を確認する"
 // @end-test-value
+/** 使用可能通知前に呼び出した要求を待機させ、通知後に Worker へ送る。 */
 test("storage worker client queues calls until ready and returns queued work", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
     workerData: { reportReadyState: true, rejectBeforeReady: true },
   });
   try {
-    const result = await client.call<{ payload: { value: number }; receivedAfterReady: boolean }>("echo", { value: 3 });
+    const result = await client.call<{
+      payload: { value: number };
+      receivedAfterReady: boolean;
+    }>("echo", { value: 3 });
     assert.deepEqual(result.payload, { value: 3 });
     assert.equal(result.receivedAfterReady, true);
   } finally {
@@ -154,6 +195,7 @@ test("storage worker client queues calls until ready and returns queued work", a
 // impact = "Worker再生成後に旧応答が現在のDB要求へ混入する"
 // distinction = "ready前キューの成功確認とは別に、実際のstale generation frameを拒否する"
 // @end-test-value
+/** 現在とは異なる世代の結果を有効な応答として返さない。 */
 test("storage worker client rejects a stale generation response", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
     workerData: { wrongGeneration: true },
@@ -180,6 +222,7 @@ test("storage worker client rejects a stale generation response", async () => {
 // impact = "不明なcommit結果を自動再実行せず、旧generationへの書込みを防ぐ"
 // distinction = "build や型検査では確認できない Worker exit 後のPromise settlementを確認する"
 // @end-test-value
+/** 更新を送った後に Worker が終了し、結果を確定できない場合に呼び出しを拒否する。 */
 test("storage worker client rejects sent mutations after worker exit", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
     workerData: {},
@@ -187,8 +230,16 @@ test("storage worker client rejects sent mutations after worker exit", async () 
   await client.call("echo", { ready: true });
   try {
     const pending = client.call("exit", null, { mutation: true });
-    await assert.rejects(pending, (error: unknown) => error instanceof Error && error.name === "StorageWorkerUnknownOutcomeError");
-    await assert.rejects(() => client.call("echo", null), StorageWorkerGenerationError);
+    await assert.rejects(
+      pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.name === "StorageWorkerUnknownOutcomeError",
+    );
+    await assert.rejects(
+      () => client.call("echo", null),
+      StorageWorkerGenerationError,
+    );
   } finally {
     await client.close();
   }
@@ -206,16 +257,21 @@ test("storage worker client rejects sent mutations after worker exit", async () 
 // impact = "書込み結果が不明な要求の不用意な再試行による重複更新を防ぐ"
 // distinction = "client単体のmutation指定テストでは検出できないbundle側method分類を確認し、SQLite更新内容は別testが担う"
 // @end-test-value
+/** 条件付きの Auxiliary 保存が開始後の Worker 終了で結果不明として扱われることを確認する。 */
 test("auxiliary conditional save reports an unknown write outcome after worker exit", async () => {
   const bundle = createV6StorageWorkerBundle({
-    dbPath: "unused.db", userDataPath: ".",
-  workerUrl: createFixtureWorkerUrl(), workerOptions: {},
+    dbPath: "unused.db",
+    userDataPath: ".",
+    workerUrl: createFixtureWorkerUrl(),
+    workerOptions: {},
   });
   try {
     // この通信 fixture はストレージ用の引数を解釈する前に終了し、データベースは開かない。
     await assert.rejects(
       bundle.stores.auxiliary.updateAuxiliarySessionIfMatches({} as never),
-      (error: unknown) => error instanceof Error && error.name === "StorageWorkerUnknownOutcomeError",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.name === "StorageWorkerUnknownOutcomeError",
     );
   } finally {
     await bundle.client.close();
@@ -234,14 +290,20 @@ test("auxiliary conditional save reports an unknown write outcome after worker e
 // impact = "read callerが不要な書込み再試行禁止状態にならない"
 // distinction = "型検査では送信済みreadとmutationのfault分類を確認できない"
 // @end-test-value
+/** Worker が中断した読み取りと結果を確定できない書き込みを別の失敗として返す。 */
 test("storage worker client keeps interrupted reads distinct from unknown writes", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
+    workerData: {},
+  });
   await client.call("echo", { ready: true });
   try {
     const pending = client.call("exit", null);
     await assert.rejects(
       pending,
-      (error: unknown) => error instanceof Error && error.name === "Error" && error.message === "Storage worker exited with code 1.",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.name === "Error" &&
+        error.message === "Storage worker exited with code 1.",
     );
   } finally {
     await client.close();
@@ -260,16 +322,30 @@ test("storage worker client keeps interrupted reads distinct from unknown writes
 // impact = "呼び出し単位のWorker処理状態を追跡できる"
 // distinction = "buildではdiagnostic stageとrequest correlationを確認できない"
 // @end-test-value
+/** 診断で同じ要求の受け付け・開始・待ち時間を追跡できることを確認する。 */
 test("storage worker diagnostics report request correlation and worker timings", async () => {
-  const events: Array<{ stage: string; requestId?: string; waitMs?: number; holdMs?: number }> = [];
+  const events: Array<{
+    stage: string;
+    requestId?: string;
+    waitMs?: number;
+    holdMs?: number;
+  }> = [];
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
     workerData: {},
+    /** 診断イベントを保存し、要求 ID と計測値をあとから比較できるようにする。 */
     diagnosticSink: (event) => events.push(event),
   });
   try {
-    await client.call("echo", { diagnostics: true }, { operation: "session.getSession" });
+    await client.call(
+      "echo",
+      { diagnostics: true },
+      { operation: "session.getSession" },
+    );
     const ownEvents = events.filter((event) => event.requestId);
-    assert.deepEqual(ownEvents.map((event) => event.stage), ["queued", "started", "completed"]);
+    assert.deepEqual(
+      ownEvents.map((event) => event.stage),
+      ["queued", "started", "completed"],
+    );
     assert.equal(new Set(ownEvents.map((event) => event.requestId)).size, 1);
   } finally {
     await client.close();
@@ -288,12 +364,16 @@ test("storage worker diagnostics report request correlation and worker timings",
 // impact = "reset/reopen 後に旧 storage generation へ保存しない"
 // distinction = "型検査や build では確認できない close 後の公開API拒否を確認する"
 // @end-test-value
+/** 世代を閉じたクライアントは、後続の要求を新たに送信しない。 */
 test("storage worker client rejects calls after generation close", async () => {
   const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
     workerData: {},
   });
   await client.close();
-  await assert.rejects(() => client.call("echo", null), StorageWorkerGenerationError);
+  await assert.rejects(
+    () => client.call("echo", null),
+    StorageWorkerGenerationError,
+  );
 });
 
 // @test-value v2
@@ -308,15 +388,21 @@ test("storage worker client rejects calls after generation close", async () => {
 // impact = "送信されていない要求だけを解放し、同じWorkerの後続要求を維持する"
 // distinction = "実Workerへのstructured clone境界を通らない型検査では検出できない"
 // @end-test-value
+/** 引数の複製に失敗した要求を解決して待機一覧に残さず、次の要求まで巻き込まない。 */
 test("storage worker client settles structured clone failures without leaking pending work", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
+    workerData: {},
+  });
   try {
     await client.call("echo", null);
     await assert.rejects(
       client.call("echo", () => undefined, { mutation: true }),
-      (error: unknown) => error instanceof Error && error.name === "DataCloneError",
+      (error: unknown) =>
+        error instanceof Error && error.name === "DataCloneError",
     );
-    assert.deepEqual(await client.call("echo", { afterCloneError: true }), { afterCloneError: true });
+    assert.deepEqual(await client.call("echo", { afterCloneError: true }), {
+      afterCloneError: true,
+    });
   } finally {
     await client.close();
   }
@@ -334,18 +420,18 @@ test("storage worker client settles structured clone failures without leaking pe
 // impact = "結果不明の書込みと非mutation要求の失敗を区別する"
 // distinction = "実Worker dispatchではなく、clientが受け取る非mutation error frameの分類を確認する"
 // @end-test-value
+/** 対象外の非更新コマンドのエラーを未実行として分類する。 */
 test("storage worker client classifies fixture non-mutation errors as not-executed", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
+    workerData: {},
+  });
   try {
-    await assert.rejects(
-      client.call("not-allowed", null),
-      (error: unknown) => {
-        assert.ok(error instanceof StorageWorkerRemoteError);
-        assert.equal(error.outcome, "not-executed");
-        assert.equal(error.code, "STORAGE_WORKER_COMMAND_FAILED");
-        return true;
-      },
-    );
+    await assert.rejects(client.call("not-allowed", null), (error: unknown) => {
+      assert.ok(error instanceof StorageWorkerRemoteError);
+      assert.equal(error.outcome, "not-executed");
+      assert.equal(error.code, "STORAGE_WORKER_COMMAND_FAILED");
+      return true;
+    });
   } finally {
     await client.close();
   }
@@ -363,11 +449,17 @@ test("storage worker client classifies fixture non-mutation errors as not-execut
 // impact = "Worker応答の不正な相関をDB callerへ適用せず、旧generationを閉じる"
 // distinction = "型検査ではruntime message validationとpending解放を確認できない"
 // @end-test-value
+/** 要求識別子のない結果を受けると世代を異常終了扱いにし、後続要求を拒否する。 */
 test("storage worker faults on malformed response frames", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
+  const client = new StorageWorkerClient(createFixtureWorkerUrl(), {
+    workerData: {},
+  });
   try {
     await assert.rejects(client.call("bad-frame", null), Error);
-    await assert.rejects(() => client.call("echo", null), StorageWorkerGenerationError);
+    await assert.rejects(
+      () => client.call("echo", null),
+      StorageWorkerGenerationError,
+    );
   } finally {
     await client.close();
   }
@@ -385,32 +477,57 @@ test("storage worker faults on malformed response frames", async () => {
 // impact = "外部FS待ちを含むCharacter/Mate処理中も無関係なDB処理を進め、同じstoreの変更は直列化する"
 // distinction = "通常のWorker call testではresource lane選択とlane間並行を確認できない"
 // @end-test-value
+/** 別リソースの操作は待機に巻き込まず、同じリソースの操作だけを順番に実行する。 */
 test("storage worker resource lanes isolate unrelated work and serialize each resource", async () => {
   const laneReleaseBuffer = new SharedArrayBuffer(4);
-  const client = new StorageWorkerClient(new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), {
-    execArgv: ["--import", "tsx"],
-    workerData: {
-      handlerModule: new URL("./fixtures/storage-worker-lane-handler.ts", import.meta.url).href,
-      laneReleaseBuffer,
+  const client = new StorageWorkerClient(
+    new URL(
+      "../../src-electron/storage/storage-worker-entry.ts",
+      import.meta.url,
+    ),
+    {
+      execArgv: ["--import", "tsx"],
+      workerData: {
+        handlerModule: new URL(
+          "./fixtures/storage-worker-lane-handler.ts",
+          import.meta.url,
+        ).href,
+        laneReleaseBuffer,
+      },
     },
-  });
+  );
   try {
-    const characterWait = client.call("store.call", { store: "character", method: "wait", args: [] }, { mutation: true });
+    const characterWait = client.call(
+      "store.call",
+      { store: "character", method: "wait", args: [] },
+      { mutation: true },
+    );
     const unrelated = await client.call<{ started: number; completed: number }>(
       "store.call",
       { store: "settings", method: "short", args: [] },
     );
     assert.deepEqual(unrelated, { started: 1, completed: 0 });
 
-    const firstMate = client.call("store.call", { store: "mate", method: "wait", args: [] }, { mutation: true });
-    const secondMate = client.call("store.call", { store: "mate", method: "wait", args: [] }, { mutation: true });
+    const firstMate = client.call(
+      "store.call",
+      { store: "mate", method: "wait", args: [] },
+      { mutation: true },
+    );
+    const secondMate = client.call(
+      "store.call",
+      { store: "mate", method: "wait", args: [] },
+      { mutation: true },
+    );
     await client.call("release", { store: "character" }, { mutation: false });
     const characterResult = await characterWait;
     assert.deepEqual(characterResult, { started: 2, completed: 1 });
     await client.call("release", { store: "mate" }, { mutation: false });
     const firstMateResult = await firstMate;
     assert.deepEqual(firstMateResult, { started: 2, completed: 2 });
-    const state = await client.call<{ started: number; completed: number }>("state", null);
+    const state = await client.call<{ started: number; completed: number }>(
+      "state",
+      null,
+    );
     assert.deepEqual(state, { started: 3, completed: 2 });
 
     Atomics.store(new Int32Array(laneReleaseBuffer), 0, 1);
@@ -436,75 +553,112 @@ test("storage worker resource lanes isolate unrelated work and serialize each re
 // impact = "外部FS待ちのresource処理を切断せず、shutdown後のrequestを孤児化しない"
 // distinction = "client.closeはshutdown後の新規callを受け付けないため、entryの生Worker境界を直接検証する"
 // @end-test-value
-test("storage worker entry drains a pending resource lane before shutdown", { timeout: 10_000 }, async () => {
-  const laneReleaseBuffer = new SharedArrayBuffer(4);
-  const generationId = randomUUID();
-  const waitRequestId = randomUUID();
-  const shutdownRequestId = randomUUID();
-  const lateRequestId = randomUUID();
-  const worker = new Worker(new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), {
-    execArgv: ["--import", "tsx"],
-    workerData: {
-      generationId,
-      handlerModule: new URL("./fixtures/storage-worker-lane-handler.ts", import.meta.url).href,
-      laneReleaseBuffer,
-    },
-  });
-  const messages: unknown[] = [];
-  const messageQueue: unknown[] = [];
-  const waiters: Array<(message: unknown) => void> = [];
-  const onMessage = (message: unknown): void => {
-    messages.push(message);
-    const waiter = waiters.shift();
-    if (waiter) waiter(message);
-    else messageQueue.push(message);
-  };
-  worker.on("message", onMessage);
-  const nextMessage = (): Promise<unknown> => {
-    const queued = messageQueue.shift();
-    if (queued !== undefined) return Promise.resolve(queued);
-    return new Promise((resolve) => waiters.push(resolve));
-  };
-  const exitPromise = new Promise<number>((resolve) => worker.once("exit", resolve));
-  try {
-    assert.equal((await nextMessage() as { type: string }).type, "ready");
-    worker.postMessage({
-      type: "call",
-      context: { requestId: waitRequestId, generationId },
-      command: "store.call",
-      payload: { store: "mate", method: "wait", args: [] },
-      mutation: true,
-    });
-    assert.equal((await nextMessage() as { type: string; requestId: string }).type, "started");
+/** 終了要求が処理中のリソースを待ち、その間に届く新規要求を明示的に拒否することを確認する。 */
+test(
+  "storage worker entry drains a pending resource lane before shutdown",
+  { timeout: 10_000 },
+  async () => {
+    const laneReleaseBuffer = new SharedArrayBuffer(4);
+    const generationId = randomUUID();
+    const waitRequestId = randomUUID();
+    const shutdownRequestId = randomUUID();
+    const lateRequestId = randomUUID();
+    const worker = new Worker(
+      new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      {
+        execArgv: ["--import", "tsx"],
+        workerData: {
+          generationId,
+          handlerModule: new URL(
+            "./fixtures/storage-worker-lane-handler.ts",
+            import.meta.url,
+          ).href,
+          laneReleaseBuffer,
+        },
+      },
+    );
+    const messages: unknown[] = [];
+    const messageQueue: unknown[] = [];
+    const waiters: Array<(message: unknown) => void> = [];
+    /** 到着した通知を記録し、待ち手がいれば渡し、いなければ順番にためる。 */
+    const onMessage = (message: unknown): void => {
+      messages.push(message);
+      const waiter = waiters.shift();
+      if (waiter) waiter(message);
+      else messageQueue.push(message);
+    };
+    worker.on("message", onMessage);
+    /** 先着済みの通知を返し、なければ次の通知を受け取るまで待つ。 */
+    const nextMessage = (): Promise<unknown> => {
+      const queued = messageQueue.shift();
+      if (queued !== undefined) return Promise.resolve(queued);
+      return new Promise((resolve) => waiters.push(resolve));
+    };
+    const exitPromise = new Promise<number>((resolve) =>
+      worker.once("exit", resolve),
+    );
+    try {
+      assert.equal(((await nextMessage()) as { type: string }).type, "ready");
+      worker.postMessage({
+        type: "call",
+        context: { requestId: waitRequestId, generationId },
+        command: "store.call",
+        payload: { store: "mate", method: "wait", args: [] },
+        mutation: true,
+      });
+      assert.equal(
+        ((await nextMessage()) as { type: string; requestId: string }).type,
+        "started",
+      );
 
-    worker.postMessage({ type: "shutdown", requestId: shutdownRequestId });
-    worker.postMessage({
-      type: "call",
-      context: { requestId: lateRequestId, generationId },
-      command: "echo",
-      payload: null,
-      mutation: false,
-    });
-    const lateError = await nextMessage() as { type: string; requestId: string; message: string };
-    assert.equal(lateError.type, "error");
-    assert.equal(lateError.requestId, lateRequestId);
-    assert.match(lateError.message, /shutting down/);
-    assert.equal(messages.some((message) => (message as { type?: string }).type === "shutdown-complete"), false);
+      worker.postMessage({ type: "shutdown", requestId: shutdownRequestId });
+      worker.postMessage({
+        type: "call",
+        context: { requestId: lateRequestId, generationId },
+        command: "echo",
+        payload: null,
+        mutation: false,
+      });
+      const lateError = (await nextMessage()) as {
+        type: string;
+        requestId: string;
+        message: string;
+      };
+      assert.equal(lateError.type, "error");
+      assert.equal(lateError.requestId, lateRequestId);
+      assert.match(lateError.message, /shutting down/);
+      assert.equal(
+        messages.some(
+          (message) =>
+            (message as { type?: string }).type === "shutdown-complete",
+        ),
+        false,
+      );
 
-    Atomics.store(new Int32Array(laneReleaseBuffer), 0, 1);
-    Atomics.notify(new Int32Array(laneReleaseBuffer), 0);
-    const laneResult = await nextMessage() as { type: string; requestId: string };
-    assert.equal(laneResult.type, "result");
-    assert.equal(laneResult.requestId, waitRequestId);
-    const shutdownComplete = await nextMessage() as { type: string; requestId: string };
-    assert.equal(shutdownComplete.type, "shutdown-complete");
-    assert.equal(shutdownComplete.requestId, shutdownRequestId);
-    assert.equal(await exitPromise, 0);
-  } finally {
-    worker.off("message", onMessage);
-    if (worker.threadId !== -1) await worker.terminate();
-  }
-});
+      Atomics.store(new Int32Array(laneReleaseBuffer), 0, 1);
+      Atomics.notify(new Int32Array(laneReleaseBuffer), 0);
+      const laneResult = (await nextMessage()) as {
+        type: string;
+        requestId: string;
+      };
+      assert.equal(laneResult.type, "result");
+      assert.equal(laneResult.requestId, waitRequestId);
+      const shutdownComplete = (await nextMessage()) as {
+        type: string;
+        requestId: string;
+      };
+      assert.equal(shutdownComplete.type, "shutdown-complete");
+      assert.equal(shutdownComplete.requestId, shutdownRequestId);
+      assert.equal(await exitPromise, 0);
+    } finally {
+      worker.off("message", onMessage);
+      if (worker.threadId !== -1) await worker.terminate();
+    }
+  },
+);
 
 // @test-value v2
 // kind = "contract"
@@ -518,8 +672,11 @@ test("storage worker entry drains a pending resource lane before shutdown", { ti
 // impact = "V6の同期SQLite所有権をWorkerへ移す際に、既存DBの初期化と限定store APIを維持する"
 // distinction = "transport単体testでは確認できない実V6 schemaと全store生成の接続を確認する"
 // @end-test-value
+/** 一時データベースで V6 Worker を初期化し、ストアを利用できることを確認する。 */
 test("V6 storage worker bundle initializes against a temporary database", async () => {
-  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-"));
+  const userDataPath = await mkdtemp(
+    join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-"),
+  );
   let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
   try {
     await mkdir(join(userDataPath, "characters"), { recursive: true });
@@ -527,27 +684,48 @@ test("V6 storage worker bundle initializes against a temporary database", async 
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
       userDataPath,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
-    const initial = await bundle.initialize() as { activeModelCatalog: { providers: unknown[] }; sessions: unknown[] };
+    const initial = (await bundle.initialize()) as {
+      activeModelCatalog: { providers: unknown[] };
+      sessions: unknown[];
+    };
     assert.deepEqual(initial.activeModelCatalog.providers, []);
     assert.deepEqual(initial.sessions, []);
     assert.deepEqual(await bundle.stores.session.listSessions(), []);
-    await bundle.stores.prompt.createPromptTemplate({ name: "worker-test", prompt: "persisted" });
+    await bundle.stores.prompt.createPromptTemplate({
+      name: "worker-test",
+      prompt: "persisted",
+    });
     await bundle.client.close();
     bundle = null;
 
     const reopened = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
       userDataPath,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
     try {
-      assert.equal((await reopened.stores.prompt.listPromptTemplates()).length, 1);
+      assert.equal(
+        (await reopened.stores.prompt.listPromptTemplates()).length,
+        1,
+      );
     } finally {
       await reopened.client.close();
     }
@@ -567,8 +745,11 @@ test("V6 storage worker bundle initializes against a temporary database", async 
 // scope = "v6-worker-auxiliary-draft"
 // lifecycle = "permanent"
 // @end-test-value
+/** 実際の V6 親に属する Auxiliary で、下書きを保存してから消費できることを確認する。 */
 test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・consumeする", async () => {
-  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-draft-"));
+  const userDataPath = await mkdtemp(
+    join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-draft-"),
+  );
   let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
   try {
     await mkdir(join(userDataPath, "characters"), { recursive: true });
@@ -576,8 +757,14 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
       userDataPath,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
     await bundle.initialize();
@@ -619,9 +806,13 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
       characterIconPath: parent.characterIconPath,
     };
     await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
-    const initial = await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id);
+    const initial = await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    );
     assert.equal(initial?.text, "initial draft");
-    const fullInitial = await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id);
+    const fullInitial = await bundle.stores.auxiliary.getAuxiliarySession(
+      auxiliary.id,
+    );
     assert.equal(fullInitial?.composerDraft, "initial draft");
     const saved = await bundle.stores.auxiliary.saveAuxiliaryDraft({
       auxiliarySessionId: auxiliary.id,
@@ -643,8 +834,13 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
       updatedAt: "2026-09-20T00:02:00.000Z",
     });
     assert.equal(stale.outcome, "stale");
-    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "worker draft");
-    const savedRecord = await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id);
+    assert.equal(
+      (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text,
+      "worker draft",
+    );
+    const savedRecord = await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    );
     const consumed = await bundle.stores.auxiliary.consumeAuxiliaryDraft({
       auxiliarySessionId: auxiliary.id,
       parentSessionId: parent.id,
@@ -653,8 +849,15 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
     });
     assert.equal(consumed.outcome, "consumed");
     assert.equal(consumed.ack?.incarnation, savedRecord!.incarnation);
-    assert.equal(consumed.ack?.durableRevision, savedRecord!.durableRevision + 1);
-    assert.equal((await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id))?.composerDraft, "");
+    assert.equal(
+      consumed.ack?.durableRevision,
+      savedRecord!.durableRevision + 1,
+    );
+    assert.equal(
+      (await bundle.stores.auxiliary.getAuxiliarySession(auxiliary.id))
+        ?.composerDraft,
+      "",
+    );
   } finally {
     if (bundle) await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });
@@ -673,8 +876,14 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
 // impact = "Auxiliary Composerからturnを開始できず、失敗・再送時の入力も失い得る"
 // distinction = "service mockや型検査では見えないstructured cloneを、実Workerとserviceの組合せで確認する"
 // @end-test-value
+/** Composer 送信時に実 Worker 越しで下書きを消費し、実行失敗時には以前の下書きを復元する。 */
 test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復元する", async () => {
-  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-worker-aux-send-"));
+  const userDataPath = await mkdtemp(
+    join(
+      process.env.TEMP ?? process.cwd(),
+      "withmate-storage-worker-aux-send-",
+    ),
+  );
   let bundle: ReturnType<typeof createV6StorageWorkerBundle> | null = null;
   try {
     await mkdir(join(userDataPath, "characters"), { recursive: true });
@@ -682,8 +891,14 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
       userDataPath,
-      workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-      handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+      workerUrl: new URL(
+        "../../src-electron/storage/storage-worker-entry.ts",
+        import.meta.url,
+      ),
+      handlerModule: new URL(
+        "../../src-electron/storage/storage-worker-bundle.ts",
+        import.meta.url,
+      ),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
     await bundle.initialize();
@@ -725,42 +940,77 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
       characterIconPath: parent.characterIconPath,
     };
     await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
-    const initial = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    const initial = (await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    ))!;
     const consumeInput = {
       auxiliarySessionId: auxiliary.id,
       parentSessionId: parent.id,
       incarnation: initial.incarnation,
       expectedDurableRevision: initial.durableRevision,
     };
-    const uncloneableInput = { ...consumeInput, run: async () => undefined };
+    const uncloneableInput = {
+      ...consumeInput,
+      /** Worker に転送できない関数を混ぜ、複製失敗を再現する。 */ run: async () =>
+        undefined,
+    };
     await assert.rejects(
       bundle.stores.auxiliary.consumeAuxiliaryDraft(uncloneableInput),
-      (error: unknown) => error instanceof Error && error.name === "DataCloneError",
+      (error: unknown) =>
+        error instanceof Error && error.name === "DataCloneError",
     );
-    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "first draft");
+    assert.equal(
+      (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text,
+      "first draft",
+    );
 
     const service = new AuxiliarySessionService({
-      getStorage: () => bundle!.stores.auxiliary as unknown as AuxiliarySessionStorageAccess,
+      /** Auxiliary の実ストレージ Worker プロキシーをサービスに渡す。 */
+      getStorage: () =>
+        bundle!.stores.auxiliary as unknown as AuxiliarySessionStorageAccess,
+      /** 送信対象の Auxiliary に対応する実データベースの親を返す。 */
       getParentSession: async () => parent,
-      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
-      resolveSessionLaunchSelection: async () => { throw new Error("not used"); },
-      listActiveCharacters: () => { throw new Error("not used"); },
-      createCharacterRuntimeSnapshot: () => { throw new Error("not used"); },
+      /** 他のプロバイダー操作と競合させず、渡された送信操作をその場で実行する。 */
+      runProviderRuntimeOperationExclusive: async (operation) =>
+        await operation(),
+      /** 既存 Auxiliary の送信のため、起動時のモデル選択が必要になれば失敗させる。 */
+      resolveSessionLaunchSelection: async () => {
+        throw new Error("not used");
+      },
+      /** 既存の会話で新規キャラクターの一覧が必要になれば失敗させる。 */
+      listActiveCharacters: () => {
+        throw new Error("not used");
+      },
+      /** 既存の会話でキャラクター情報を作り直そうとしたら失敗させる。 */
+      createCharacterRuntimeSnapshot: () => {
+        throw new Error("not used");
+      },
     });
     let runs = 0;
     await service.runAuxiliaryTurnWithDraft({
       ...consumeInput,
       userMessage: "first draft",
-      run: async () => { runs += 1; },
+      /** 一致する下書きからターンを一回起動したことを記録する。 */
+      run: async () => {
+        runs += 1;
+      },
     });
     assert.equal(runs, 1);
-    const consumed = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    const consumed = (await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    ))!;
     assert.equal(consumed.text, "");
-    await assert.rejects(service.runAuxiliaryTurnWithDraft({
-      ...consumeInput,
-      userMessage: "stale draft",
-      run: async () => { runs += 1; },
-    }), /draft changed/);
+    await assert.rejects(
+      service.runAuxiliaryTurnWithDraft({
+        ...consumeInput,
+        userMessage: "stale draft",
+        /** 消費済みの下書きで再実行されていないかを計数する。 */
+        run: async () => {
+          runs += 1;
+        },
+      }),
+      /draft changed/,
+    );
     assert.equal(runs, 1);
 
     const saved = await bundle.stores.auxiliary.saveAuxiliaryDraft({
@@ -770,32 +1020,55 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
       updatedAt: "2026-09-20T00:01:00.000Z",
     });
     assert.equal(saved.outcome, "saved");
-    await assert.rejects(service.runAuxiliaryTurnWithDraft({
-      ...consumeInput,
-      expectedDurableRevision: consumed.durableRevision,
-      userMessage: "changed draft",
-      run: async () => { runs += 1; },
-    }), /draft changed/);
+    await assert.rejects(
+      service.runAuxiliaryTurnWithDraft({
+        ...consumeInput,
+        expectedDurableRevision: consumed.durableRevision,
+        userMessage: "changed draft",
+        /** 更新前の下書きの版では実行されないことを呼び出し回数で検証する。 */
+        run: async () => {
+          runs += 1;
+        },
+      }),
+      /draft changed/,
+    );
     assert.equal(runs, 1);
 
-    const changed = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
-    await assert.rejects(service.runAuxiliaryTurnWithDraft({
-      ...consumeInput,
-      expectedDurableRevision: changed.durableRevision,
-      userMessage: "changed draft",
-      run: async () => { runs += 1; throw new Error("turn failed"); },
-    }), /turn failed/);
-    const restored = (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))!;
+    const changed = (await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    ))!;
+    await assert.rejects(
+      service.runAuxiliaryTurnWithDraft({
+        ...consumeInput,
+        expectedDurableRevision: changed.durableRevision,
+        userMessage: "changed draft",
+        /** 新しい下書きでの実行後にエラーを発生させて復元経路を通す。 */
+        run: async () => {
+          runs += 1;
+          throw new Error("turn failed");
+        },
+      }),
+      /turn failed/,
+    );
+    const restored = (await bundle.stores.auxiliary.getAuxiliaryDraft(
+      auxiliary.id,
+    ))!;
     assert.equal(restored.text, "changed draft");
     assert.equal(restored.durableRevision, changed.durableRevision + 2);
     await service.runAuxiliaryTurnWithDraft({
       ...consumeInput,
       expectedDurableRevision: restored.durableRevision,
       userMessage: "changed draft",
-      run: async () => { runs += 1; },
+      /** 復元後の下書きでの再実行を記録し、成功させる。 */
+      run: async () => {
+        runs += 1;
+      },
     });
     assert.equal(runs, 3);
-    assert.equal((await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text, "");
+    assert.equal(
+      (await bundle.stores.auxiliary.getAuxiliaryDraft(auxiliary.id))?.text,
+      "",
+    );
   } finally {
     if (bundle) await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });
@@ -814,8 +1087,11 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
 // impact = "DB ownerのgenerationをlifecycleのrecreate/closeへ接続し、旧Workerを残さない"
 // distinction = "bundle単体では確認できないPersistentStoreLifecycleServiceとの実接続を確認する"
 // @end-test-value
+/** 永続ストアを閉じた後は旧 Worker を使用できず、同じ DB の再オープンでは新しい Worker を使う。 */
 test("V6 persistent store lifecycle uses the storage worker across close and reopen", async () => {
-  const userDataPath = await mkdtemp(join(process.env.TEMP ?? process.cwd(), "withmate-storage-lifecycle-"));
+  const userDataPath = await mkdtemp(
+    join(process.env.TEMP ?? process.cwd(), "withmate-storage-lifecycle-"),
+  );
   const service = createPersistentStoreLifecycleService();
   let first: Awaited<ReturnType<typeof service.initialize>> | null = null;
   let dbPath: string | null = null;
@@ -826,7 +1102,10 @@ test("V6 persistent store lifecycle uses the storage worker across close and reo
     assert.ok(first.storageWorker);
     assert.deepEqual(await first.sessionStorage.listSessions(), []);
     await service.close(first, bootstrap.dbPath);
-    await assert.rejects(async () => first!.sessionStorage.listSessions(), StorageWorkerGenerationError);
+    await assert.rejects(
+      async () => first!.sessionStorage.listSessions(),
+      StorageWorkerGenerationError,
+    );
     first = null;
     const second = await service.initialize(bootstrap.dbPath, userDataPath);
     try {
@@ -836,7 +1115,8 @@ test("V6 persistent store lifecycle uses the storage worker across close and reo
       await service.close(second, bootstrap.dbPath);
     }
   } finally {
-    if (first && dbPath) await service.close(first, dbPath).catch(() => undefined);
+    if (first && dbPath)
+      await service.close(first, dbPath).catch(() => undefined);
     await rm(userDataPath, { recursive: true, force: true });
   }
 });

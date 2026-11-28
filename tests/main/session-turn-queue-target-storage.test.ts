@@ -7,12 +7,20 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
-import { buildNewSession, getSessionIncarnationId, type Message } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+  type Message,
+} from "../../src-shared/session/session-state.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTurnInput } from "../../src-shared/session/session-turn-state.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type {
+  SessionTurnQueueCapturedInput,
+  SessionTurnQueueOwner,
+  SessionTurnQueueReceipt,
+} from "../../src-shared/session/session-turn-queue.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 
 // @test-value v2
@@ -27,58 +35,196 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 // impact = "指示内容の破壊、取消や開始済み指示の復活、意図しない順の実行を防ぐ"
 // distinction = "既存FIFO testは並べ替えやposition更新途中のrollbackを通らない。2 ownerを同じ小規模DBで確認する"
 // @end-test-value
+/** MainとAuxiliaryの順変更は失敗時に一件も更新せず、成功時は履歴を保ったまま再起動後にも保存順で処理されることを確かめる。 */
 test("Main/Auxの順変更は原子的に保存し競合と履歴を保持する", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
-    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "reorder-aux", parentSessionId: f.session.id,
-      title: "Aux", runState: "idle", composerDraft: "draft", messages: [], displayAfterMessageIndex: null,
-      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
-    const owners = [{ sessionId: f.session.id, incarnationId: getSessionIncarnationId(f.session) }, { sessionId: aux.id, incarnationId: aux.createdAt }];
-    const snapshots: Array<{ owner: SessionTurnQueueOwner; ids: string[]; receipts: SessionTurnQueueReceipt[] }> = [];
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.session,
+      id: "reorder-aux",
+      parentSessionId: f.session.id,
+      title: "Aux",
+      runState: "idle",
+      composerDraft: "draft",
+      messages: [],
+      displayAfterMessageIndex: null,
+      characterId: undefined,
+      characterRuntimeSnapshot: undefined,
+      createdAt: "created",
+      updatedAt: "created",
+    });
+    const owners = [
+      {
+        sessionId: f.session.id,
+        incarnationId: getSessionIncarnationId(f.session),
+      },
+      { sessionId: aux.id, incarnationId: aux.createdAt },
+    ];
+    const snapshots: Array<{
+      owner: SessionTurnQueueOwner;
+      ids: string[];
+      receipts: SessionTurnQueueReceipt[];
+    }> = [];
     for (const owner of owners) {
       const rows = [];
-      for (const text of ["one", "two", "three"]) rows.push(await f.bundle.stores.queue.enqueue(owner,
-        { ...f.captured(text), request: { ...f.captured(text).request, submitSource: "retry" },
-          attachments: [{ id: text, kind: "file", source: "text", absolutePath: "C:/workspace/input.txt", displayPath: "input.txt", workspaceRelativePath: "input.txt", isOutsideWorkspace: false }] }));
+      for (const text of ["one", "two", "three"])
+        rows.push(
+          await f.bundle.stores.queue.enqueue(owner, {
+            ...f.captured(text),
+            request: { ...f.captured(text).request, submitSource: "retry" },
+            attachments: [
+              {
+                id: text,
+                kind: "file",
+                source: "text",
+                absolutePath: "C:/workspace/input.txt",
+                displayPath: "input.txt",
+                workspaceRelativePath: "input.txt",
+                isOutsideWorkspace: false,
+              },
+            ],
+          }),
+        );
       const ids = rows.map((row) => row.id);
-      await assert.rejects(f.bundle.stores.queue.reorderQueued(owner, ids, [ids[0]!, ids[0]!, ids[2]!]), /unique identities/);
-      await assert.rejects(f.bundle.stores.queue.reorderQueued({ ...owner, incarnationId: "stale" }, ids, [...ids].reverse()), /incarnation mismatch/);
+      await assert.rejects(
+        f.bundle.stores.queue.reorderQueued(owner, ids, [
+          ids[0]!,
+          ids[0]!,
+          ids[2]!,
+        ]),
+        /unique identities/,
+      );
+      await assert.rejects(
+        f.bundle.stores.queue.reorderQueued(
+          { ...owner, incarnationId: "stale" },
+          ids,
+          [...ids].reverse(),
+        ),
+        /incarnation mismatch/,
+      );
       db.exec(`CREATE TRIGGER fail_reorder BEFORE UPDATE OF queue_position ON session_turn_queue_v6
         WHEN OLD.id = '${ids[1]}' BEGIN SELECT RAISE(ABORT, 'reorder failed'); END`);
-      await assert.rejects(f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse()), /reorder failed/);
+      await assert.rejects(
+        f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse()),
+        /reorder failed/,
+      );
       db.exec("DROP TRIGGER fail_reorder");
       assert.deepEqual(await f.bundle.stores.queue.listActive(owner), rows);
-      const result = await f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse());
+      const result = await f.bundle.stores.queue.reorderQueued(
+        owner,
+        ids,
+        [...ids].reverse(),
+      );
       assert.equal(result.outcome, "reordered");
-      assert.deepEqual(result.receipts.map((row) => row.id), [...ids].reverse());
+      assert.deepEqual(
+        result.receipts.map((row) => row.id),
+        [...ids].reverse(),
+      );
       for (const original of rows) {
         const actual = result.receipts.find((row) => row.id === original.id)!;
-        assert.deepEqual({ ...actual, queuePosition: original.queuePosition, updatedAt: original.updatedAt }, original);
+        assert.deepEqual(
+          {
+            ...actual,
+            queuePosition: original.queuePosition,
+            updatedAt: original.updatedAt,
+          },
+          original,
+        );
       }
-      assert.equal((await f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse())).outcome, "conflict");
-      const page = await f.bundle.stores.queue.listReceipts(owner, { limit: 2 });
-      assert.deepEqual(page.receipts.map((row) => row.id), ids.slice(0, 2));
-      assert.equal((await f.bundle.stores.queue.listReceipts(owner, { cursor: page.nextCursor! })).receipts[0]?.id, ids[2]);
+      assert.equal(
+        (
+          await f.bundle.stores.queue.reorderQueued(
+            owner,
+            ids,
+            [...ids].reverse(),
+          )
+        ).outcome,
+        "conflict",
+      );
+      const page = await f.bundle.stores.queue.listReceipts(owner, {
+        limit: 2,
+      });
+      assert.deepEqual(
+        page.receipts.map((row) => row.id),
+        ids.slice(0, 2),
+      );
+      assert.equal(
+        (
+          await f.bundle.stores.queue.listReceipts(owner, {
+            cursor: page.nextCursor!,
+          })
+        ).receipts[0]?.id,
+        ids[2],
+      );
       snapshots.push({ owner, ids, receipts: result.receipts });
     }
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, "draft");
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text,
+      "draft",
+    );
     await f.bundle.client.close();
     reopened = createV6StorageWorkerBundle(f.options);
     await reopened.initialize();
     for (const snapshot of snapshots) {
-      assert.deepEqual(await reopened.stores.queue.listActive(snapshot.owner), snapshot.receipts);
-      const extra = await reopened.stores.queue.enqueue(snapshot.owner, { ...f.captured("extra"), request: { ...f.captured("extra").request, submitSource: "retry" } });
+      assert.deepEqual(
+        await reopened.stores.queue.listActive(snapshot.owner),
+        snapshot.receipts,
+      );
+      const extra = await reopened.stores.queue.enqueue(snapshot.owner, {
+        ...f.captured("extra"),
+        request: { ...f.captured("extra").request, submitSource: "retry" },
+      });
       const reverse = [...snapshot.ids].reverse();
-      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, reverse, snapshot.ids)).outcome, "conflict");
+      assert.equal(
+        (
+          await reopened.stores.queue.reorderQueued(
+            snapshot.owner,
+            reverse,
+            snapshot.ids,
+          )
+        ).outcome,
+        "conflict",
+      );
       await reopened.stores.queue.cancelQueued(snapshot.owner, extra.id);
-      await reopened.stores.queue.cancelQueued(snapshot.owner, snapshot.ids[1]!);
-      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, reverse, snapshot.ids)).outcome, "conflict");
-      assert.equal((await reopened.stores.queue.claimNext(snapshot.owner))?.id, snapshot.ids[2]);
-      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, [snapshot.ids[2]!, snapshot.ids[0]!], [snapshot.ids[0]!, snapshot.ids[2]!])).outcome, "conflict");
-      await reopened.stores.queue.settle(snapshot.owner, snapshot.ids[2]!, "completed");
-      assert.equal((await reopened.stores.queue.claimNext(snapshot.owner))?.id, snapshot.ids[0]);
+      await reopened.stores.queue.cancelQueued(
+        snapshot.owner,
+        snapshot.ids[1]!,
+      );
+      assert.equal(
+        (
+          await reopened.stores.queue.reorderQueued(
+            snapshot.owner,
+            reverse,
+            snapshot.ids,
+          )
+        ).outcome,
+        "conflict",
+      );
+      assert.equal(
+        (await reopened.stores.queue.claimNext(snapshot.owner))?.id,
+        snapshot.ids[2],
+      );
+      assert.equal(
+        (
+          await reopened.stores.queue.reorderQueued(
+            snapshot.owner,
+            [snapshot.ids[2]!, snapshot.ids[0]!],
+            [snapshot.ids[0]!, snapshot.ids[2]!],
+          )
+        ).outcome,
+        "conflict",
+      );
+      await reopened.stores.queue.settle(
+        snapshot.owner,
+        snapshot.ids[2]!,
+        "completed",
+      );
+      assert.equal(
+        (await reopened.stores.queue.claimNext(snapshot.owner))?.id,
+        snapshot.ids[0],
+      );
     }
     await reopened.client.close();
     reopened = undefined;
@@ -86,9 +232,16 @@ test("Main/Auxの順変更は原子的に保存し競合と履歴を保持する
     reopened = createV6StorageWorkerBundle(f.options);
     await reopened.initialize();
     for (const snapshot of snapshots) {
-      const receipts: SessionTurnQueueReceipt[] = (await reopened.stores.queue.listReceipts(snapshot.owner)).receipts;
-      assert.ok(receipts.every((receipt) => receipt.queuePosition === receipt.sequence));
-      assert.deepEqual(receipts.slice(0, 3).map((receipt) => receipt.captured), [...snapshot.receipts].reverse().map((receipt) => receipt.captured));
+      const receipts: SessionTurnQueueReceipt[] = (
+        await reopened.stores.queue.listReceipts(snapshot.owner)
+      ).receipts;
+      assert.ok(
+        receipts.every((receipt) => receipt.queuePosition === receipt.sequence),
+      );
+      assert.deepEqual(
+        receipts.slice(0, 3).map((receipt) => receipt.captured),
+        [...snapshot.receipts].reverse().map((receipt) => receipt.captured),
+      );
     }
   } finally {
     await reopened?.client.close();
@@ -109,40 +262,73 @@ test("Main/Auxの順変更は原子的に保存し競合と履歴を保持する
 // impact = "並び変更時の受付喪失や異なる順序での指示実行を防ぐ"
 // distinction = "storage単独testではservice lock、drainと保存返信喪失時の再送回数を検証できない"
 // @end-test-value
+/** 順変更が保存済みなのに返信だけ失われたとき、サービスは再送せず保存順で各入力を一度ずつ配送する。 */
 test("serviceは順変更の返信不明を再送せず保存順をdispatchする", async () => {
   const f = await fixture();
-  const owner = { sessionId: f.session.id, incarnationId: getSessionIncarnationId(f.session) };
+  const owner = {
+    sessionId: f.session.id,
+    incarnationId: getSessionIncarnationId(f.session),
+  };
   let held = true;
   let loseReply = false;
   let mutations = 0;
   const dispatched: SessionTurnQueueCapturedInput[] = [];
-  const store = new Proxy(f.bundle.stores.queue, { get: (target, property) => property === "reorderQueued"
-    ? async (...args: Parameters<typeof target.reorderQueued>) => {
-      mutations += 1;
-      const result = await target.reorderQueued(...args);
-      if (loseReply) throw new Error("reorder reply lost");
-      return result;
-    } : Reflect.get(target, property) });
-  const service = new SessionTurnQueueService({ store, isRunInFlight: () => held,
-    dispatch: async (receipt) => { dispatched.push(receipt.captured); return { state: "completed" }; } });
+  const store = new Proxy(f.bundle.stores.queue, {
+    /** 並べ替えの保存を実行した後に返信だけ失わせ、変更回数を数える。 */ get: (
+      target,
+      property,
+    ) =>
+      property === "reorderQueued"
+        ? async (...args: Parameters<typeof target.reorderQueued>) => {
+            mutations += 1;
+            const result = await target.reorderQueued(...args);
+            if (loseReply) throw new Error("reorder reply lost");
+            return result;
+          }
+        : Reflect.get(target, property),
+  });
+  const service = new SessionTurnQueueService({
+    store,
+    /** 並べ替えが確定するまで実行中として配送を待たせる。 */ isRunInFlight:
+      () => held,
+    /** 配送された受付時入力の順を記録し、各処理を成功として終える。 */
+    dispatch: async (receipt) => {
+      dispatched.push(receipt.captured);
+      return { state: "completed" };
+    },
+  });
   try {
     const first = await service.enqueue(owner, f.captured("first"));
     const second = await service.enqueue(owner, f.captured("second"));
     const original = [first.id, second.id];
     const adding = service.enqueue(owner, f.captured("third"));
-    const stale = service.reorderQueued(owner, original, [...original].reverse());
+    const stale = service.reorderQueued(
+      owner,
+      original,
+      [...original].reverse(),
+    );
     const third = await adding;
     assert.equal((await stale).outcome, "conflict");
     const ids = [...original, third.id];
     loseReply = true;
-    await assert.rejects(service.reorderQueued(owner, ids, [third.id, first.id, second.id]), /reply lost/);
+    await assert.rejects(
+      service.reorderQueued(owner, ids, [third.id, first.id, second.id]),
+      /reply lost/,
+    );
     assert.equal(mutations, 2);
-    assert.deepEqual((await store.listActive(owner)).map((receipt) => receipt.id), [third.id, first.id, second.id]);
+    assert.deepEqual(
+      (await store.listActive(owner)).map((receipt) => receipt.id),
+      [third.id, first.id, second.id],
+    );
     assert.deepEqual(dispatched, []);
     held = false;
     service.wake(owner.sessionId);
     await service.waitForPending();
-    assert.deepEqual(dispatched, [third.captured, first.captured, second.captured]);
+    assert.deepEqual(dispatched, [
+      third.captured,
+      first.captured,
+      second.captured,
+    ]);
     assert.equal(mutations, 2);
     service.beginShutdown();
     assert.throws(() => service.reorderQueued(owner, [], []), /shutting down/);
@@ -152,23 +338,67 @@ test("serviceは順変更の返信不明を再送せず保存順をdispatchす�
   }
 });
 
+/** 実ワーカーと隔離DBを起動し、キュー入力を保存できるMainセッションを用意する。 */
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "withmate-queue-target-"));
-  const options = { dbPath: join(directory, "withmate-v6.db"), userDataPath: directory,
-    bundledModelCatalogPath: join(process.cwd(), "public/model-catalog.json") };
+  const options = {
+    dbPath: join(directory, "withmate-v6.db"),
+    userDataPath: directory,
+    bundledModelCatalogPath: join(process.cwd(), "public/model-catalog.json"),
+  };
   const bundle = createV6StorageWorkerBundle(options);
   await bundle.initialize();
-  const session = await bundle.stores.session.insertSession(buildNewSession({ id: "main", taskTitle: "Queue",
-    workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown",
-    character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#abcdef" }, approvalMode: DEFAULT_APPROVAL_MODE }));
-  const captured = (text: string): SessionTurnQueueCapturedInput => ({ request: { userMessage: text,
-    clientRequestId: randomUUID(), executionOptions: captureSessionExecutionOptions(session) },
-    provider: session.provider, workspacePath: session.workspacePath, attachments: [] });
-  const turn = (sessionId: string, count = 0): SessionTurnInput => ({ sessionId, phase: "running", provider: session.provider,
-    model: session.model, reasoningEffort: session.reasoningEffort, approvalMode: session.approvalMode,
-    sandboxMode: session.codexSandboxMode, userMessageSeq: count, threadId: "", errorMessage: "", createdAt: "start" });
-  return { directory, options, bundle, session, captured, turn,
-    async dispose() { await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
+  const session = await bundle.stores.session.insertSession(
+    buildNewSession({
+      id: "main",
+      taskTitle: "Queue",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "unknown",
+      character: "Unknown",
+      characterIconPath: "",
+      characterThemeColors: { main: "#123456", sub: "#abcdef" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
+  );
+  /** 同じ実行設定を使いながら、入力ごとに固有の要求IDを付ける。 */
+  const captured = (text: string): SessionTurnQueueCapturedInput => ({
+    request: {
+      userMessage: text,
+      clientRequestId: randomUUID(),
+      executionOptions: captureSessionExecutionOptions(session),
+    },
+    provider: session.provider,
+    workspacePath: session.workspacePath,
+    attachments: [],
+  });
+  /** 指定会話の実行中ターンを、共通設定と起点のメッセージ番号で組み立てる。 */
+  const turn = (sessionId: string, count = 0): SessionTurnInput => ({
+    sessionId,
+    phase: "running",
+    provider: session.provider,
+    model: session.model,
+    reasoningEffort: session.reasoningEffort,
+    approvalMode: session.approvalMode,
+    sandboxMode: session.codexSandboxMode,
+    userMessageSeq: count,
+    threadId: "",
+    errorMessage: "",
+    createdAt: "start",
+  });
+  return {
+    directory,
+    options,
+    bundle,
+    session,
+    captured,
+    turn,
+    /** ワーカーを閉じてから、使用していた一時DBを取り除く。 */ async dispose() {
+      await bundle.client.close();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
 }
 
 // @test-value v2
@@ -183,47 +413,153 @@ async function fixture() {
 // impact = "送信結果不明を追加なしとして見せることと、確認済み入力の喪失を防ぐ"
 // distinction = "既存queue Steer testはreceiptを持たない入力のProvider呼出前保存を確認しない"
 // @end-test-value
+/** 直接Steerを配送前にpendingで残し、確定時の失敗から再読しても本文・ターン・配送状態を識別できる。 */
 test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに残る", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
-  const expected: Array<{ id: string; auxiliary: boolean; turnId: string }> = [];
+  const expected: Array<{ id: string; auxiliary: boolean; turnId: string }> =
+    [];
   try {
-    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "direct-aux", parentSessionId: f.session.id,
-      title: "Aux", runState: "idle", composerDraft: "", messages: [], displayAfterMessageIndex: null,
-      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.session,
+      id: "direct-aux",
+      parentSessionId: f.session.id,
+      title: "Aux",
+      runState: "idle",
+      composerDraft: "",
+      messages: [],
+      displayAfterMessageIndex: null,
+      characterId: undefined,
+      characterRuntimeSnapshot: undefined,
+      createdAt: "created",
+      updatedAt: "created",
+    });
     for (const auxiliary of [false, true]) {
       const id = auxiliary ? aux.id : f.session.id;
-      const owner = { sessionId: id, incarnationId: auxiliary ? aux.createdAt : f.session.incarnationId! };
-      const target = { auxiliarySessionId: id, parentSessionId: f.session.id, createdAt: owner.incarnationId };
-      if (auxiliary) await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...target, expectedMessageCount: 0, updatedAt: "start",
-          userMessage: { role: "user", text: "start" } });
-      else await f.bundle.stores.session.appendRunningTurnStart({ ...owner, expectedMessageCount: 0, updatedAt: "start", userMessage: { role: "user", text: "start" } });
-      const turnId = (await f.bundle.stores.turn.createSessionTurn(f.turn(id))).id;
-      for (const [index, state] of (["confirmed", "unknown", "not-sent"] as const).entries()) {
+      const owner = {
+        sessionId: id,
+        incarnationId: auxiliary ? aux.createdAt : f.session.incarnationId!,
+      };
+      const target = {
+        auxiliarySessionId: id,
+        parentSessionId: f.session.id,
+        createdAt: owner.incarnationId,
+      };
+      if (auxiliary)
+        await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+          ...target,
+          expectedMessageCount: 0,
+          updatedAt: "start",
+          userMessage: { role: "user", text: "start" },
+        });
+      else
+        await f.bundle.stores.session.appendRunningTurnStart({
+          ...owner,
+          expectedMessageCount: 0,
+          updatedAt: "start",
+          userMessage: { role: "user", text: "start" },
+        });
+      const turnId = (await f.bundle.stores.turn.createSessionTurn(f.turn(id)))
+        .id;
+      for (const [index, state] of (
+        ["confirmed", "unknown", "not-sent"] as const
+      ).entries()) {
         const seq = index + 1;
-        const input = { expectedMessageCount: seq, turnId, nativeTurnId: "native-target", attachments: [],
-          userMessage: { role: "user" as const, text: `input-${state}`, turnInput: { turnId: String(turnId), nativeTurnId: "native-target", state: "pending" as const, attachments: [], questionRequestId: `question-${state}` } }, updatedAt: "pending" };
-        if (auxiliary) await f.bundle.stores.auxiliary.beginAuxiliarySteer({ ...target, ...input });
-        else await f.bundle.stores.session.beginSessionSteer({ ...owner, ...input });
-        const read = auxiliary ? await f.bundle.stores.auxiliary.getAuxiliarySession(id) : await f.bundle.stores.session.getSession(id);
+        const input = {
+          expectedMessageCount: seq,
+          turnId,
+          nativeTurnId: "native-target",
+          attachments: [],
+          userMessage: {
+            role: "user" as const,
+            text: `input-${state}`,
+            turnInput: {
+              turnId: String(turnId),
+              nativeTurnId: "native-target",
+              state: "pending" as const,
+              attachments: [],
+              questionRequestId: `question-${state}`,
+            },
+          },
+          updatedAt: "pending",
+        };
+        if (auxiliary)
+          await f.bundle.stores.auxiliary.beginAuxiliarySteer({
+            ...target,
+            ...input,
+          });
+        else
+          await f.bundle.stores.session.beginSessionSteer({
+            ...owner,
+            ...input,
+          });
+        const read = auxiliary
+          ? await f.bundle.stores.auxiliary.getAuxiliarySession(id)
+          : await f.bundle.stores.session.getSession(id);
         assert.equal(read?.messages[seq]?.turnInput?.state, "pending");
         assert.equal(read?.messages[seq]?.turnInput?.turnId, String(turnId));
-        const settle = { expectedMessageCount: seq + 1, turnId, messageSeq: seq, state, updatedAt: "settled" };
+        const settle = {
+          expectedMessageCount: seq + 1,
+          turnId,
+          messageSeq: seq,
+          state,
+          updatedAt: "settled",
+        };
         if (state === "confirmed") {
           db.exec(`CREATE TRIGGER fail_direct_settle BEFORE UPDATE OF body ON ${auxiliary ? "auxiliary_session_messages" : "session_messages_v6"}
             BEGIN SELECT RAISE(ABORT, 'direct settle failed'); END`);
-          if (auxiliary) await assert.rejects(f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle }), /direct settle failed/);
-          else await assert.rejects(f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle }), /direct settle failed/);
+          if (auxiliary)
+            await assert.rejects(
+              f.bundle.stores.auxiliary.settleAuxiliarySteer({
+                ...target,
+                ...settle,
+              }),
+              /direct settle failed/,
+            );
+          else
+            await assert.rejects(
+              f.bundle.stores.session.settleSessionSteer({
+                ...owner,
+                ...settle,
+              }),
+              /direct settle failed/,
+            );
           db.exec("DROP TRIGGER fail_direct_settle");
-          const pending = auxiliary ? await f.bundle.stores.auxiliary.getAuxiliarySession(id) : await f.bundle.stores.session.getSession(id);
+          const pending = auxiliary
+            ? await f.bundle.stores.auxiliary.getAuxiliarySession(id)
+            : await f.bundle.stores.session.getSession(id);
           assert.equal(pending?.messages[seq]?.turnInput?.state, "pending");
         }
-        if (auxiliary) await f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle });
-        else await f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle });
+        if (auxiliary)
+          await f.bundle.stores.auxiliary.settleAuxiliarySteer({
+            ...target,
+            ...settle,
+          });
+        else
+          await f.bundle.stores.session.settleSessionSteer({
+            ...owner,
+            ...settle,
+          });
         if (state === "confirmed") {
-          if (auxiliary) await assert.rejects(f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle, state: "unknown" }), /no longer matches/);
-          else await assert.rejects(f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle, state: "unknown" }), /no longer matches/);
+          if (auxiliary)
+            await assert.rejects(
+              f.bundle.stores.auxiliary.settleAuxiliarySteer({
+                ...target,
+                ...settle,
+                state: "unknown",
+              }),
+              /no longer matches/,
+            );
+          else
+            await assert.rejects(
+              f.bundle.stores.session.settleSessionSteer({
+                ...owner,
+                ...settle,
+                state: "unknown",
+              }),
+              /no longer matches/,
+            );
         }
       }
       expected.push({ id, auxiliary, turnId: String(turnId) });
@@ -232,12 +568,31 @@ test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに
     reopened = createV6StorageWorkerBundle(f.options);
     await reopened.initialize();
     for (const target of expected) {
-      const saved: { messages: Message[] } | null = target.auxiliary ? await reopened.stores.auxiliary.getAuxiliarySession(target.id) : await reopened.stores.session.getSession(target.id);
-      assert.deepEqual(saved?.messages.slice(1).map((message) => ({ text: message.text, turnId: message.turnInput?.turnId,
-        nativeTurnId: message.turnInput?.nativeTurnId, state: message.turnInput?.state, questionRequestId: message.turnInput?.questionRequestId })),
-      ["confirmed", "unknown", "not-sent"].map((state) => ({ text: `input-${state}`, turnId: target.turnId, nativeTurnId: "native-target", state, questionRequestId: `question-${state}` })));
+      const saved: { messages: Message[] } | null = target.auxiliary
+        ? await reopened.stores.auxiliary.getAuxiliarySession(target.id)
+        : await reopened.stores.session.getSession(target.id);
+      assert.deepEqual(
+        saved?.messages.slice(1).map((message) => ({
+          text: message.text,
+          turnId: message.turnInput?.turnId,
+          nativeTurnId: message.turnInput?.nativeTurnId,
+          state: message.turnInput?.state,
+          questionRequestId: message.turnInput?.questionRequestId,
+        })),
+        ["confirmed", "unknown", "not-sent"].map((state) => ({
+          text: `input-${state}`,
+          turnId: target.turnId,
+          nativeTurnId: "native-target",
+          state,
+          questionRequestId: `question-${state}`,
+        })),
+      );
     }
-  } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
+  } finally {
+    db.close();
+    await reopened?.client.close();
+    await f.dispose();
+  }
 });
 
 // @test-value v2
@@ -250,70 +605,225 @@ test("直接Steerの送信前記録と配送状態はMain/Auxで既存messageに
 // scope = "分離SQLite Workerの直接Steer開始、通常終端とWorker起動回収"
 // lifecycle = "permanent"
 // @end-test-value
+/** 終了したターンのpendingだけが終端または再起動時にunknownとなり、別会話の実行中入力は変わらない。 */
 test("Main/AuxでTurn終端後の未確定Steerはunknownとして再読できる", async () => {
   for (const restart of [true, false]) {
     const f = await fixture();
     let reader = f.bundle;
     try {
-      const createAux = (id: string) => f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id, parentSessionId: f.session.id,
-        title: "Aux", runState: "idle", composerDraft: "", messages: [], displayAfterMessageIndex: null,
-        characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
+      /** 同じ親の下に、他のターンと識別できる空のAuxiliaryを保存する。 */
+      const createAux = (id: string) =>
+        f.bundle.stores.auxiliary.upsertAuxiliarySession({
+          ...f.session,
+          id,
+          parentSessionId: f.session.id,
+          title: "Aux",
+          runState: "idle",
+          composerDraft: "",
+          messages: [],
+          displayAfterMessageIndex: null,
+          characterId: undefined,
+          characterRuntimeSnapshot: undefined,
+          createdAt: "created",
+          updatedAt: "created",
+        });
       const aux = await createAux("pending-aux");
       const other = restart ? null : await createAux("other-aux");
       if (other) {
-        const target = { auxiliarySessionId: other.id, parentSessionId: f.session.id, createdAt: other.createdAt };
-        await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...target, expectedMessageCount: 0, updatedAt: "start",
-          userMessage: { role: "user", text: "other start" } });
-        const { id } = await f.bundle.stores.turn.createSessionTurn(f.turn(other.id));
-        await f.bundle.stores.auxiliary.beginAuxiliarySteer({ ...target, expectedMessageCount: 1, turnId: id, nativeTurnId: "native", attachments: [], updatedAt: "pending",
-          userMessage: { role: "user", text: "other unconfirmed input", turnInput: { turnId: String(id), nativeTurnId: "native", state: "pending", attachments: [] } } });
+        const target = {
+          auxiliarySessionId: other.id,
+          parentSessionId: f.session.id,
+          createdAt: other.createdAt,
+        };
+        await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+          ...target,
+          expectedMessageCount: 0,
+          updatedAt: "start",
+          userMessage: { role: "user", text: "other start" },
+        });
+        const { id } = await f.bundle.stores.turn.createSessionTurn(
+          f.turn(other.id),
+        );
+        await f.bundle.stores.auxiliary.beginAuxiliarySteer({
+          ...target,
+          expectedMessageCount: 1,
+          turnId: id,
+          nativeTurnId: "native",
+          attachments: [],
+          updatedAt: "pending",
+          userMessage: {
+            role: "user",
+            text: "other unconfirmed input",
+            turnInput: {
+              turnId: String(id),
+              nativeTurnId: "native",
+              state: "pending",
+              attachments: [],
+            },
+          },
+        });
       }
-      const owners = [f.session, aux].map((entry) => ({ sessionId: entry.id,
-        incarnationId: entry.id === aux.id ? aux.createdAt : getSessionIncarnationId(f.session) }));
-      const expected: Array<{ auxiliary: boolean; owner: SessionTurnQueueOwner; turnId: number; receipt: SessionTurnQueueReceipt; follower: SessionTurnQueueReceipt }> = [];
+      const owners = [f.session, aux].map((entry) => ({
+        sessionId: entry.id,
+        incarnationId:
+          entry.id === aux.id
+            ? aux.createdAt
+            : getSessionIncarnationId(f.session),
+      }));
+      const expected: Array<{
+        auxiliary: boolean;
+        owner: SessionTurnQueueOwner;
+        turnId: number;
+        receipt: SessionTurnQueueReceipt;
+        follower: SessionTurnQueueReceipt;
+      }> = [];
       for (const owner of owners) {
         const auxiliary = owner.sessionId === aux.id;
-        const target = { auxiliarySessionId: aux.id, parentSessionId: f.session.id, createdAt: aux.createdAt };
+        const target = {
+          auxiliarySessionId: aux.id,
+          parentSessionId: f.session.id,
+          createdAt: aux.createdAt,
+        };
+        /** Auxiliaryでは現在の下書き版を捕捉し、対象会話の入力として受け付ける。 */
         const enqueue = async (text: string) => {
           const input = f.captured(text);
           if (auxiliary) {
-            const draft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
-            assert.equal((await f.bundle.stores.auxiliary.saveAuxiliaryDraft({ auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId,
-              incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision, text, updatedAt: "draft" })).outcome, "saved");
-            const saved = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+            const draft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+              aux.id,
+            ))!;
+            assert.equal(
+              (
+                await f.bundle.stores.auxiliary.saveAuxiliaryDraft({
+                  auxiliarySessionId: aux.id,
+                  parentSessionId: aux.parentSessionId,
+                  incarnation: draft.incarnation,
+                  expectedDurableRevision: draft.durableRevision,
+                  text,
+                  updatedAt: "draft",
+                })
+              ).outcome,
+              "saved",
+            );
+            const saved = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+              aux.id,
+            ))!;
             input.request.auxiliaryDraftIncarnation = saved.incarnation;
             input.request.auxiliaryDraftDurableRevision = saved.durableRevision;
           }
           return f.bundle.stores.queue.enqueue(owner, input);
         };
         const receipt = await enqueue("start");
-        assert.equal((await f.bundle.stores.queue.claimNext(owner))?.id, receipt.id);
-        const start = { expectedMessageCount: 0, updatedAt: "start", userMessage: { role: "user" as const, text: "start" },
-          queuedTurn: { queueId: receipt.id, turn: f.turn(owner.sessionId) } };
-        const started = auxiliary ? await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...target, ...start })
-          : await f.bundle.stores.session.appendRunningTurnStart({ ...owner, ...start });
+        assert.equal(
+          (await f.bundle.stores.queue.claimNext(owner))?.id,
+          receipt.id,
+        );
+        const start = {
+          expectedMessageCount: 0,
+          updatedAt: "start",
+          userMessage: { role: "user" as const, text: "start" },
+          queuedTurn: { queueId: receipt.id, turn: f.turn(owner.sessionId) },
+        };
+        const started = auxiliary
+          ? await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+              ...target,
+              ...start,
+            })
+          : await f.bundle.stores.session.appendRunningTurnStart({
+              ...owner,
+              ...start,
+            });
         const turnId = started!.queuedTurn!.id;
         const follower = await enqueue("follower");
-        for (const [i, text] of ["confirmed input", "unconfirmed input"].entries()) {
+        for (const [i, text] of [
+          "confirmed input",
+          "unconfirmed input",
+        ].entries()) {
           const seq = i + 1;
-          const input = { expectedMessageCount: seq, turnId, nativeTurnId: "native", attachments: [], updatedAt: "pending",
-            userMessage: { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId: "native", state: "pending" as const, attachments: [] } } };
-          if (auxiliary) await f.bundle.stores.auxiliary.beginAuxiliarySteer({ ...target, ...input });
-          else await f.bundle.stores.session.beginSessionSteer({ ...owner, ...input });
+          const input = {
+            expectedMessageCount: seq,
+            turnId,
+            nativeTurnId: "native",
+            attachments: [],
+            updatedAt: "pending",
+            userMessage: {
+              role: "user" as const,
+              text,
+              turnInput: {
+                turnId: String(turnId),
+                nativeTurnId: "native",
+                state: "pending" as const,
+                attachments: [],
+              },
+            },
+          };
+          if (auxiliary)
+            await f.bundle.stores.auxiliary.beginAuxiliarySteer({
+              ...target,
+              ...input,
+            });
+          else
+            await f.bundle.stores.session.beginSessionSteer({
+              ...owner,
+              ...input,
+            });
           if (i === 0) {
-            const settle = { expectedMessageCount: seq + 1, turnId, messageSeq: seq, state: "confirmed" as const, updatedAt: "settled" };
-            if (auxiliary) await f.bundle.stores.auxiliary.settleAuxiliarySteer({ ...target, ...settle });
-            else await f.bundle.stores.session.settleSessionSteer({ ...owner, ...settle });
+            const settle = {
+              expectedMessageCount: seq + 1,
+              turnId,
+              messageSeq: seq,
+              state: "confirmed" as const,
+              updatedAt: "settled",
+            };
+            if (auxiliary)
+              await f.bundle.stores.auxiliary.settleAuxiliarySteer({
+                ...target,
+                ...settle,
+              });
+            else
+              await f.bundle.stores.session.settleSessionSteer({
+                ...owner,
+                ...settle,
+              });
           }
         }
-        const before = auxiliary ? await reader.stores.auxiliary.getAuxiliarySession(owner.sessionId) : await reader.stores.session.getSession(owner.sessionId);
+        const before = auxiliary
+          ? await reader.stores.auxiliary.getAuxiliarySession(owner.sessionId)
+          : await reader.stores.session.getSession(owner.sessionId);
         assert.equal(before?.messages[2]?.turnInput?.state, "pending");
         if (!restart) {
-          const terminal = { expectedMessageCount: 3, assistantMessage: { role: "assistant" as const, text: "answer" },
-            terminalCommit: { turnId, sessionId: owner.sessionId, phase: "completed" as const, assistantMessageSeq: 3,
-              threadId: "thread", errorMessage: "", completedAt: "end" } };
-          if (auxiliary) await f.bundle.stores.auxiliary.appendAuxiliaryTerminal({ ...target, ...terminal, runState: "idle", threadId: "thread", preview: "answer", updatedAt: "end" });
-          else await f.bundle.stores.session.appendSessionTerminal({ ...owner, ...terminal, metadata: { status: "idle", runState: "idle", threadId: "thread", updatedAt: "end" } });
+          const terminal = {
+            expectedMessageCount: 3,
+            assistantMessage: { role: "assistant" as const, text: "answer" },
+            terminalCommit: {
+              turnId,
+              sessionId: owner.sessionId,
+              phase: "completed" as const,
+              assistantMessageSeq: 3,
+              threadId: "thread",
+              errorMessage: "",
+              completedAt: "end",
+            },
+          };
+          if (auxiliary)
+            await f.bundle.stores.auxiliary.appendAuxiliaryTerminal({
+              ...target,
+              ...terminal,
+              runState: "idle",
+              threadId: "thread",
+              preview: "answer",
+              updatedAt: "end",
+            });
+          else
+            await f.bundle.stores.session.appendSessionTerminal({
+              ...owner,
+              ...terminal,
+              metadata: {
+                status: "idle",
+                runState: "idle",
+                threadId: "thread",
+                updatedAt: "end",
+              },
+            });
         }
         expected.push({ auxiliary, owner, turnId, receipt, follower });
       }
@@ -325,22 +835,57 @@ test("Main/AuxでTurn終端後の未確定Steerはunknownとして再読でき�
         assert.equal(await reader.stores.queue.recoverInterrupted(), 0);
       }
       for (const { auxiliary, owner, turnId, receipt, follower } of expected) {
-        const saved = auxiliary ? await reader.stores.auxiliary.getAuxiliarySession(owner.sessionId) : await reader.stores.session.getSession(owner.sessionId);
+        const saved = auxiliary
+          ? await reader.stores.auxiliary.getAuxiliarySession(owner.sessionId)
+          : await reader.stores.session.getSession(owner.sessionId);
         assert.equal(saved?.messages.length, 4);
-        assert.deepEqual(saved?.messages.slice(1, 3).map(({ text, turnInput }) => [text, turnInput?.turnId, turnInput?.nativeTurnId, turnInput?.state]), [
-          ["confirmed input", String(turnId), "native", "confirmed"], ["unconfirmed input", String(turnId), "native", "unknown"],
-        ]);
+        assert.deepEqual(
+          saved?.messages
+            .slice(1, 3)
+            .map(({ text, turnInput }) => [
+              text,
+              turnInput?.turnId,
+              turnInput?.nativeTurnId,
+              turnInput?.state,
+            ]),
+          [
+            ["confirmed input", String(turnId), "native", "confirmed"],
+            ["unconfirmed input", String(turnId), "native", "unknown"],
+          ],
+        );
         assert.equal(saved?.messages[3]?.text, restart ? "" : "answer");
-        assert.equal((await reader.stores.queue.getReceipt(owner, receipt.requestId))?.state, restart ? "failed" : "completed");
-        const target = auxiliary ? { kind: "auxiliary" as const, ...owner, mainSessionId: f.session.id, mainIncarnationId: getSessionIncarnationId(f.session) }
+        assert.equal(
+          (await reader.stores.queue.getReceipt(owner, receipt.requestId))
+            ?.state,
+          restart ? "failed" : "completed",
+        );
+        const target = auxiliary
+          ? {
+              kind: "auxiliary" as const,
+              ...owner,
+              mainSessionId: f.session.id,
+              mainIncarnationId: getSessionIncarnationId(f.session),
+            }
           : { kind: "main" as const, ...owner };
-        const result = executionOperationResultSchemas.get_execution.parse(await reader.stores.execution.execute({ target,
-          operation: "get_execution", request: { target, turnId: String(turnId) } }));
-        assert.deepEqual(result.inputs.additional.unresolved, [{ seq: 2, state: "unknown" }]);
-        assert.equal((await reader.stores.queue.claimNext(owner))?.id, follower.id);
+        const result = executionOperationResultSchemas.get_execution.parse(
+          await reader.stores.execution.execute({
+            target,
+            operation: "get_execution",
+            request: { target, turnId: String(turnId) },
+          }),
+        );
+        assert.deepEqual(result.inputs.additional.unresolved, [
+          { seq: 2, state: "unknown" },
+        ]);
+        assert.equal(
+          (await reader.stores.queue.claimNext(owner))?.id,
+          follower.id,
+        );
       }
       if (other) {
-        const saved = await reader.stores.auxiliary.getAuxiliarySession(other.id);
+        const saved = await reader.stores.auxiliary.getAuxiliarySession(
+          other.id,
+        );
         assert.equal(saved?.runState, "running");
         assert.equal(saved?.messages[1]?.text, "other unconfirmed input");
         assert.equal(saved?.messages[1]?.turnInput?.state, "pending");
@@ -364,43 +909,82 @@ test("Main/AuxでTurn終端後の未確定Steerはunknownとして再読でき�
 // impact = "再送で未送信draftを喪失するか現在draftが前回本文と異なるために回復できなくなる"
 // distinction = "renderer stubはSQLite受付transaction内のdraft消費を実行せず、通常queue testはretryを扱わない"
 // @end-test-value
+/** 再試行は過去の入力を受け付けても現行のAuxiliary下書きを変えず、通常送信だけが下書きを消費する。 */
 test("Aux retry受付は現在draftを保持し通常composer受付だけがdraftを消費する", async () => {
   const f = await fixture();
   try {
-    for (const [index, text] of ["Different unsent draft", "Previous request", ""].entries()) {
-      const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session,
-        id: `retry-aux-${index}`, parentSessionId: f.session.id, title: "Recovery", runState: "error",
-        composerDraft: text, messages: [], displayAfterMessageIndex: null,
-        characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: `created-${index}`, updatedAt: "created",
+    for (const [index, text] of [
+      "Different unsent draft",
+      "Previous request",
+      "",
+    ].entries()) {
+      const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+        ...f.session,
+        id: `retry-aux-${index}`,
+        parentSessionId: f.session.id,
+        title: "Recovery",
+        runState: "error",
+        composerDraft: text,
+        messages: [],
+        displayAfterMessageIndex: null,
+        characterId: undefined,
+        characterRuntimeSnapshot: undefined,
+        createdAt: `created-${index}`,
+        updatedAt: "created",
       });
       const owner = { sessionId: aux.id, incarnationId: aux.createdAt };
-      const before = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      const before = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+        aux.id,
+      ))!;
       const retry = f.captured("Previous request");
       retry.request.submitSource = "retry";
-      await assert.rejects(f.bundle.stores.queue.enqueue({ ...owner, incarnationId: "stale" }, retry), /incarnation mismatch/);
+      await assert.rejects(
+        f.bundle.stores.queue.enqueue(
+          { ...owner, incarnationId: "stale" },
+          retry,
+        ),
+        /incarnation mismatch/,
+      );
       const receipt = await f.bundle.stores.queue.enqueue(owner, retry);
       assert.equal(receipt.captured.request.userMessage, "Previous request");
       assert.equal(receipt.captured.request.submitSource, "retry");
-      assert.equal((await f.bundle.stores.queue.enqueue(owner, retry)).id, receipt.id);
-      const after = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      assert.equal(
+        (await f.bundle.stores.queue.enqueue(owner, retry)).id,
+        receipt.id,
+      );
+      const after = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+        aux.id,
+      ))!;
       assert.equal(after.text, text);
       assert.equal(after.durableRevision, before.durableRevision);
 
-      const saved = await f.bundle.stores.auxiliary.saveAuxiliaryDraft({ auxiliarySessionId: aux.id,
-        parentSessionId: aux.parentSessionId, incarnation: after.incarnation, expectedDurableRevision: after.durableRevision,
-        text: "Normal composer request", updatedAt: "normal-draft" });
+      const saved = await f.bundle.stores.auxiliary.saveAuxiliaryDraft({
+        auxiliarySessionId: aux.id,
+        parentSessionId: aux.parentSessionId,
+        incarnation: after.incarnation,
+        expectedDurableRevision: after.durableRevision,
+        text: "Normal composer request",
+        updatedAt: "normal-draft",
+      });
       assert.equal(saved.outcome, "saved");
-      const normalDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      const normalDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+        aux.id,
+      ))!;
       const normal = f.captured("Normal composer request");
       normal.request.submitSource = "composer";
       normal.request.auxiliaryDraftIncarnation = normalDraft.incarnation;
-      normal.request.auxiliaryDraftDurableRevision = normalDraft.durableRevision;
+      normal.request.auxiliaryDraftDurableRevision =
+        normalDraft.durableRevision;
       await f.bundle.stores.queue.enqueue(owner, normal);
-      const consumed = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      const consumed = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+        aux.id,
+      ))!;
       assert.equal(consumed.text, "");
       assert.equal(consumed.durableRevision, normalDraft.durableRevision + 1);
     }
-  } finally { await f.dispose(); }
+  } finally {
+    await f.dispose();
+  }
 });
 
 // @test-value v2
@@ -415,72 +999,183 @@ test("Aux retry受付は現在draftを保持し通常composer受付だけがdraf
 // impact = "指示喪失・二重送信と現在turnの誤中断を防ぐ"
 // distinction = "通常steerはqueue receiptを扱わず、実WorkerとSQLite triggerの失敗注入で原子境界を確認する"
 // @end-test-value
+/** 予約したMain入力の本文と受付状態を原子的に保存し、配送不明の受付が実行中ターンを書き換えないことを確かめる。 */
 test("Main queued inputはWorkerで原子的にappendし不明結果でcurrent turnを変えない", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
-    const owner = { sessionId: f.session.id, incarnationId: f.session.incarnationId! };
+    const owner = {
+      sessionId: f.session.id,
+      incarnationId: f.session.incarnationId!,
+    };
     const original = f.captured("original");
     const receipt = await f.bundle.stores.queue.enqueue(owner, original);
     await f.bundle.stores.queue.claimNext(owner);
-    const started = await f.bundle.stores.session.appendRunningTurnStart({ ...owner, expectedMessageCount: 0,
-      userMessage: { role: "user", text: "original" }, updatedAt: "start", queuedTurn: { queueId: receipt.id, turn: f.turn(owner.sessionId) } });
+    const started = await f.bundle.stores.session.appendRunningTurnStart({
+      ...owner,
+      expectedMessageCount: 0,
+      userMessage: { role: "user", text: "original" },
+      updatedAt: "start",
+      queuedTurn: { queueId: receipt.id, turn: f.turn(owner.sessionId) },
+    });
     const turnId = String(started.queuedTurn!.id);
     const providerTurnId = "provider-turn";
     assert.notEqual(providerTurnId, turnId);
     const captured = f.captured("input");
     const queued = await f.bundle.stores.queue.enqueue(owner, captured);
-    await assert.rejects(f.bundle.stores.queue.claimForInput({ ...owner, incarnationId: "stale" }, queued.id, providerTurnId), /incarnation mismatch/);
-    const claimed = await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
+    await assert.rejects(
+      f.bundle.stores.queue.claimForInput(
+        { ...owner, incarnationId: "stale" },
+        queued.id,
+        providerTurnId,
+      ),
+      /incarnation mismatch/,
+    );
+    const claimed = await f.bundle.stores.queue.claimForInput(
+      owner,
+      queued.id,
+      providerTurnId,
+    );
     assert.equal(claimed.turnId, turnId);
     assert.deepEqual(claimed.dispatched, captured);
-    await f.bundle.stores.queue.restoreQueuedInput(owner, queued.id, providerTurnId);
-    const restored = await f.bundle.stores.queue.getReceipt(owner, queued.requestId);
+    await f.bundle.stores.queue.restoreQueuedInput(
+      owner,
+      queued.id,
+      providerTurnId,
+    );
+    const restored = await f.bundle.stores.queue.getReceipt(
+      owner,
+      queued.requestId,
+    );
     assert.equal(restored?.inputTurnId, null);
     assert.equal(restored?.turnId, null);
     assert.equal(restored?.dispatched, null);
     await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
-    await assert.rejects(f.bundle.stores.queue.markStarted(owner, queued.id, { turnId, userMessageSeq: 1 }), /not starting/);
-    const append = { ...owner, expectedMessageCount: 1, turnId: Number(turnId), userMessage: { role: "user" as const, text: "input" },
-      updatedAt: "input", queuedInput: { queueId: queued.id, inputTurnId: providerTurnId } };
-    db.exec("CREATE TRIGGER fail_input BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'completed' BEGIN SELECT RAISE(ABORT, 'input failed'); END");
-    await assert.rejects(f.bundle.stores.session.appendSessionSteer(append), /input failed/);
+    await assert.rejects(
+      f.bundle.stores.queue.markStarted(owner, queued.id, {
+        turnId,
+        userMessageSeq: 1,
+      }),
+      /not starting/,
+    );
+    const append = {
+      ...owner,
+      expectedMessageCount: 1,
+      turnId: Number(turnId),
+      userMessage: { role: "user" as const, text: "input" },
+      updatedAt: "input",
+      queuedInput: { queueId: queued.id, inputTurnId: providerTurnId },
+    };
+    db.exec(
+      "CREATE TRIGGER fail_input BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'completed' BEGIN SELECT RAISE(ABORT, 'input failed'); END",
+    );
+    await assert.rejects(
+      f.bundle.stores.session.appendSessionSteer(append),
+      /input failed/,
+    );
     db.exec("DROP TRIGGER fail_input");
-    assert.equal((await f.bundle.stores.session.getSessionMetadata(owner.sessionId))?.messageCount, 1);
-    assert.equal((await f.bundle.stores.queue.getReceipt(owner, queued.requestId))?.state, "starting");
+    assert.equal(
+      (await f.bundle.stores.session.getSessionMetadata(owner.sessionId))
+        ?.messageCount,
+      1,
+    );
+    assert.equal(
+      (await f.bundle.stores.queue.getReceipt(owner, queued.requestId))?.state,
+      "starting",
+    );
     await f.bundle.stores.session.appendSessionSteer(append);
-    const completed = await f.bundle.stores.queue.claimForInput(owner, queued.id, providerTurnId);
+    const completed = await f.bundle.stores.queue.claimForInput(
+      owner,
+      queued.id,
+      providerTurnId,
+    );
     assert.equal(completed.state, "completed");
     assert.equal(completed.inputTurnId, providerTurnId);
     assert.equal(completed.turnId, turnId);
-    await assert.rejects(f.bundle.stores.queue.restoreQueuedInput(owner, queued.id, providerTurnId), /cannot be restored/);
-    assert.deepEqual((await f.bundle.stores.session.getSession(owner.sessionId))?.messages.map((m) => m.text), ["original", "input"]);
-    const unknown = await f.bundle.stores.queue.enqueue(owner, f.captured("unknown"));
-    await f.bundle.stores.queue.claimForInput(owner, unknown.id, providerTurnId);
+    await assert.rejects(
+      f.bundle.stores.queue.restoreQueuedInput(
+        owner,
+        queued.id,
+        providerTurnId,
+      ),
+      /cannot be restored/,
+    );
+    assert.deepEqual(
+      (await f.bundle.stores.session.getSession(owner.sessionId))?.messages.map(
+        (m) => m.text,
+      ),
+      ["original", "input"],
+    );
+    const unknown = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.captured("unknown"),
+    );
+    await f.bundle.stores.queue.claimForInput(
+      owner,
+      unknown.id,
+      providerTurnId,
+    );
     await f.bundle.stores.queue.settle(owner, unknown.id, "interrupted");
-    const uncertain = await f.bundle.stores.queue.getReceipt(owner, unknown.requestId);
+    const uncertain = await f.bundle.stores.queue.getReceipt(
+      owner,
+      unknown.requestId,
+    );
     assert.equal(uncertain?.turnId, turnId);
     assert.deepEqual(uncertain?.dispatched, uncertain?.captured);
     assert.equal(uncertain?.state, "interrupted");
     assert.equal(uncertain?.userMessageSeq, null);
     assert.equal(uncertain?.inputTurnId, providerTurnId);
-    assert.equal((await f.bundle.stores.session.getSessionMetadata(owner.sessionId))?.summary.runState, "running");
-    assert.equal((await f.bundle.stores.turn.getLatestSessionTurn(owner.sessionId))?.phase, "running");
-    const follower = await f.bundle.stores.queue.enqueue(owner, f.captured("next"));
+    assert.equal(
+      (await f.bundle.stores.session.getSessionMetadata(owner.sessionId))
+        ?.summary.runState,
+      "running",
+    );
+    assert.equal(
+      (await f.bundle.stores.turn.getLatestSessionTurn(owner.sessionId))?.phase,
+      "running",
+    );
+    const follower = await f.bundle.stores.queue.enqueue(
+      owner,
+      f.captured("next"),
+    );
     await f.bundle.client.close();
     reopened = createV6StorageWorkerBundle(f.options);
     await reopened.initialize();
     assert.equal(await reopened.stores.queue.recoverInterrupted(), 1);
-    assert.equal((await reopened.stores.queue.getReceipt(owner, original.request.clientRequestId))?.state, "failed");
-    assert.deepEqual(await reopened.stores.queue.getReceipt(owner, queued.requestId), completed);
-    assert.deepEqual(await reopened.stores.queue.getReceipt(owner, unknown.requestId), uncertain);
+    assert.equal(
+      (
+        await reopened.stores.queue.getReceipt(
+          owner,
+          original.request.clientRequestId,
+        )
+      )?.state,
+      "failed",
+    );
+    assert.deepEqual(
+      await reopened.stores.queue.getReceipt(owner, queued.requestId),
+      completed,
+    );
+    assert.deepEqual(
+      await reopened.stores.queue.getReceipt(owner, unknown.requestId),
+      uncertain,
+    );
     const recovered = await reopened.stores.session.getSession(owner.sessionId);
-    assert.deepEqual(recovered?.messages.map((m) => m.text), ["original", "input", ""]);
+    assert.deepEqual(
+      recovered?.messages.map((m) => m.text),
+      ["original", "input", ""],
+    );
     assert.equal(recovered?.messages[1]?.turnInput?.state, "confirmed");
     assert.ok(recovered?.messages[2]?.runFailure);
-    assert.equal((await reopened.stores.queue.claimNext(owner))?.id, follower.id);
-  } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
+    assert.equal(
+      (await reopened.stores.queue.claimNext(owner))?.id,
+      follower.id,
+    );
+  } finally {
+    db.close();
+    await reopened?.client.close();
+    await f.dispose();
+  }
 });
 
 // @test-value v2
@@ -495,84 +1190,243 @@ test("Main queued inputはWorkerで原子的にappendし不明結果でcurrent t
 // impact = "Auxiliaryの下書きと受付済み指示の喪失、二重実行を防ぐ"
 // distinction = "Main queue testではAux createdAt identity、独立draftと親CASCADEを通らない"
 // @end-test-value
+/** Auxiliaryでは下書きの版照合と受付を一緒に保存し、再起動時の回収が別の正常履歴を変えないことを検証する。 */
 test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後も保つ", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
   let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
   try {
-    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "aux", parentSessionId: f.session.id,
-      title: "Aux", runState: "idle", composerDraft: " queued\n", messages: [], displayAfterMessageIndex: null,
-      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created" });
-    const aux2 = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...aux, id: "aux2", composerDraft: "queued" });
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...f.session,
+      id: "aux",
+      parentSessionId: f.session.id,
+      title: "Aux",
+      runState: "idle",
+      composerDraft: " queued\n",
+      messages: [],
+      displayAfterMessageIndex: null,
+      characterId: undefined,
+      characterRuntimeSnapshot: undefined,
+      createdAt: "created",
+      updatedAt: "created",
+    });
+    const aux2 = await f.bundle.stores.auxiliary.upsertAuxiliarySession({
+      ...aux,
+      id: "aux2",
+      composerDraft: "queued",
+    });
     const owner = { sessionId: aux.id, incarnationId: aux.createdAt };
-    const writeOwner = { auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId, createdAt: aux.createdAt };
+    const writeOwner = {
+      auxiliarySessionId: aux.id,
+      parentSessionId: aux.parentSessionId,
+      createdAt: aux.createdAt,
+    };
     const draft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
     const captured = f.captured("queued");
     captured.request.auxiliaryDraftIncarnation = draft.incarnation;
     captured.request.auxiliaryDraftDurableRevision = draft.durableRevision;
     captured.request.displayAnchorParentMessageCount = 2;
     const claim = { unreleasedSourceTurnIds: [] };
-    await assert.rejects(f.bundle.stores.queue.admit(owner, { ...captured, request: { ...captured.request, userMessage: "different" } }, claim), /stale/);
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, " queued\n");
-    db.exec("CREATE TRIGGER fail_claim BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'starting' BEGIN SELECT RAISE(ABORT, 'claim failed'); END");
-    await assert.rejects(f.bundle.stores.queue.admit(owner, captured, claim), /claim failed/);
+    await assert.rejects(
+      f.bundle.stores.queue.admit(
+        owner,
+        {
+          ...captured,
+          request: { ...captured.request, userMessage: "different" },
+        },
+        claim,
+      ),
+      /stale/,
+    );
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text,
+      " queued\n",
+    );
+    db.exec(
+      "CREATE TRIGGER fail_claim BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'starting' BEGIN SELECT RAISE(ABORT, 'claim failed'); END",
+    );
+    await assert.rejects(
+      f.bundle.stores.queue.admit(owner, captured, claim),
+      /claim failed/,
+    );
     db.exec("DROP TRIGGER fail_claim");
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.durableRevision, draft.durableRevision);
-    assert.equal(await f.bundle.stores.queue.getReceipt(owner, captured.request.clientRequestId), null);
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.displayAfterMessageIndex, null);
-    const { receipt, claimed } = await f.bundle.stores.queue.admit(owner, captured, claim);
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))
+        ?.durableRevision,
+      draft.durableRevision,
+    );
+    assert.equal(
+      await f.bundle.stores.queue.getReceipt(
+        owner,
+        captured.request.clientRequestId,
+      ),
+      null,
+    );
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.displayAfterMessageIndex,
+      null,
+    );
+    const { receipt, claimed } = await f.bundle.stores.queue.admit(
+      owner,
+      captured,
+      claim,
+    );
     assert.equal(receipt.state, "starting");
     assert.equal(claimed?.id, receipt.id);
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.displayAfterMessageIndex, 1);
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, "");
-    assert.deepEqual(await f.bundle.stores.queue.admit(owner, captured, claim), { receipt, claimed: null });
-    const draft2 = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux2.id))!;
-    const second = await f.bundle.stores.queue.enqueue({ sessionId: aux2.id, incarnationId: aux2.createdAt },
-      { ...captured, request: { ...captured.request, auxiliaryDraftIncarnation: draft2.incarnation } });
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.displayAfterMessageIndex,
+      1,
+    );
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text,
+      "",
+    );
+    assert.deepEqual(
+      await f.bundle.stores.queue.admit(owner, captured, claim),
+      { receipt, claimed: null },
+    );
+    const draft2 = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+      aux2.id,
+    ))!;
+    const second = await f.bundle.stores.queue.enqueue(
+      { sessionId: aux2.id, incarnationId: aux2.createdAt },
+      {
+        ...captured,
+        request: {
+          ...captured.request,
+          auxiliaryDraftIncarnation: draft2.incarnation,
+        },
+      },
+    );
     assert.notEqual(receipt.id, second.id);
-    const start = { ...writeOwner, expectedMessageCount: 0, userMessage: { role: "user" as const, text: "queued" }, updatedAt: "start",
-      queuedTurn: { queueId: receipt.id, turn: f.turn(aux.id) } };
-    db.exec("CREATE TRIGGER fail_start BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'running' BEGIN SELECT RAISE(ABORT, 'start failed'); END");
-    await assert.rejects(f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart(start), /start failed/);
+    const start = {
+      ...writeOwner,
+      expectedMessageCount: 0,
+      userMessage: { role: "user" as const, text: "queued" },
+      updatedAt: "start",
+      queuedTurn: { queueId: receipt.id, turn: f.turn(aux.id) },
+    };
+    db.exec(
+      "CREATE TRIGGER fail_start BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'running' BEGIN SELECT RAISE(ABORT, 'start failed'); END",
+    );
+    await assert.rejects(
+      f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart(start),
+      /start failed/,
+    );
     db.exec("DROP TRIGGER fail_start");
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 0);
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.messageCount,
+      0,
+    );
     assert.equal(await f.bundle.stores.turn.getLatestSessionTurn(aux.id), null);
-    const started = (await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart(start))!;
+    const started =
+      (await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart(start))!;
     const turnId = String(started.queuedTurn!.id);
     const providerTurnId = "provider-turn";
     assert.notEqual(providerTurnId, turnId);
-    assert.equal((await f.bundle.stores.queue.getReceipt(owner, receipt.requestId))?.turnId, turnId);
-    const currentDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
-    await f.bundle.stores.auxiliary.saveAuxiliaryDraft({ auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId,
-      incarnation: currentDraft.incarnation, expectedDurableRevision: currentDraft.durableRevision, text: "steer", updatedAt: "draft-steer" });
-    const nextDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+    assert.equal(
+      (await f.bundle.stores.queue.getReceipt(owner, receipt.requestId))
+        ?.turnId,
+      turnId,
+    );
+    const currentDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+      aux.id,
+    ))!;
+    await f.bundle.stores.auxiliary.saveAuxiliaryDraft({
+      auxiliarySessionId: aux.id,
+      parentSessionId: aux.parentSessionId,
+      incarnation: currentDraft.incarnation,
+      expectedDurableRevision: currentDraft.durableRevision,
+      text: "steer",
+      updatedAt: "draft-steer",
+    });
+    const nextDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(
+      aux.id,
+    ))!;
     const nextCaptured = f.captured("steer");
     nextCaptured.request.auxiliaryDraftIncarnation = nextDraft.incarnation;
-    nextCaptured.request.auxiliaryDraftDurableRevision = nextDraft.durableRevision;
+    nextCaptured.request.auxiliaryDraftDurableRevision =
+      nextDraft.durableRevision;
     const input = await f.bundle.stores.queue.enqueue(owner, nextCaptured);
     await f.bundle.stores.queue.claimForInput(owner, input.id, providerTurnId);
-    const append = { ...writeOwner, expectedMessageCount: 1, turnId: Number(turnId), userMessage: { role: "user" as const, text: "steer" },
-      updatedAt: "steer", queuedInput: { queueId: input.id, inputTurnId: providerTurnId } };
-    assert.equal(await f.bundle.stores.auxiliary.appendAuxiliarySteer({ ...append, createdAt: "stale" }), null);
+    const append = {
+      ...writeOwner,
+      expectedMessageCount: 1,
+      turnId: Number(turnId),
+      userMessage: { role: "user" as const, text: "steer" },
+      updatedAt: "steer",
+      queuedInput: { queueId: input.id, inputTurnId: providerTurnId },
+    };
+    assert.equal(
+      await f.bundle.stores.auxiliary.appendAuxiliarySteer({
+        ...append,
+        createdAt: "stale",
+      }),
+      null,
+    );
     await f.bundle.stores.auxiliary.appendAuxiliarySteer(append);
-    const completedInput = await f.bundle.stores.queue.getReceipt(owner, input.requestId);
+    const completedInput = await f.bundle.stores.queue.getReceipt(
+      owner,
+      input.requestId,
+    );
     assert.equal(completedInput?.state, "completed");
     assert.equal(completedInput?.inputTurnId, providerTurnId);
     assert.equal(completedInput?.turnId, turnId);
-    const terminal = { ...writeOwner, expectedMessageCount: 2, assistantMessage: { role: "assistant" as const, text: "done" },
-      updatedAt: "done", runState: "idle" as const, threadId: "thread", preview: "done", terminalCommit: {
-        sessionId: aux.id, turnId: Number(turnId), phase: "completed" as const, assistantMessageSeq: 2,
-        threadId: "thread", errorMessage: "", completedAt: "done" } };
-    db.exec("CREATE TRIGGER fail_terminal BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'completed' BEGIN SELECT RAISE(ABORT, 'terminal failed'); END");
-    await assert.rejects(f.bundle.stores.auxiliary.appendAuxiliaryTerminal(terminal), /terminal failed/);
+    const terminal = {
+      ...writeOwner,
+      expectedMessageCount: 2,
+      assistantMessage: { role: "assistant" as const, text: "done" },
+      updatedAt: "done",
+      runState: "idle" as const,
+      threadId: "thread",
+      preview: "done",
+      terminalCommit: {
+        sessionId: aux.id,
+        turnId: Number(turnId),
+        phase: "completed" as const,
+        assistantMessageSeq: 2,
+        threadId: "thread",
+        errorMessage: "",
+        completedAt: "done",
+      },
+    };
+    db.exec(
+      "CREATE TRIGGER fail_terminal BEFORE UPDATE ON session_turn_queue_v6 WHEN NEW.state = 'completed' BEGIN SELECT RAISE(ABORT, 'terminal failed'); END",
+    );
+    await assert.rejects(
+      f.bundle.stores.auxiliary.appendAuxiliaryTerminal(terminal),
+      /terminal failed/,
+    );
     db.exec("DROP TRIGGER fail_terminal");
-    assert.equal((await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.messageCount, 2);
+    assert.equal(
+      (await f.bundle.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.messageCount,
+      2,
+    );
     await f.bundle.stores.auxiliary.appendAuxiliaryTerminal(terminal);
-    assert.equal((await f.bundle.stores.queue.getReceipt(owner, receipt.requestId))?.state, "completed");
-    assert.deepEqual((await f.bundle.stores.auxiliary.getAuxiliarySession(aux.id))?.messages.map((m) => m.text), ["queued", "steer", "done"]);
-    await f.bundle.stores.queue.claimNext({ sessionId: aux2.id, incarnationId: aux2.createdAt });
-    const aux2Start = await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({ ...start,
-      auxiliarySessionId: aux2.id, queuedTurn: { queueId: second.id, turn: f.turn(aux2.id) } });
+    assert.equal(
+      (await f.bundle.stores.queue.getReceipt(owner, receipt.requestId))?.state,
+      "completed",
+    );
+    assert.deepEqual(
+      (
+        await f.bundle.stores.auxiliary.getAuxiliarySession(aux.id)
+      )?.messages.map((m) => m.text),
+      ["queued", "steer", "done"],
+    );
+    await f.bundle.stores.queue.claimNext({
+      sessionId: aux2.id,
+      incarnationId: aux2.createdAt,
+    });
+    const aux2Start =
+      await f.bundle.stores.auxiliary.appendAuxiliaryRunningTurnStart({
+        ...start,
+        auxiliarySessionId: aux2.id,
+        queuedTurn: { queueId: second.id, turn: f.turn(aux2.id) },
+      });
     assert.ok(aux2Start?.queuedTurn);
     await f.bundle.client.close();
     reopened = createV6StorageWorkerBundle(f.options);
@@ -580,16 +1434,44 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
     assert.equal(await reopened.stores.queue.recoverInterrupted(), 1);
     const owner2 = { sessionId: aux2.id, incarnationId: aux2.createdAt };
     assert.deepEqual(await reopened.stores.queue.listPendingOwners(), []);
-    assert.equal((await reopened.stores.queue.getReceipt(owner2, second.requestId))?.state, "failed");
+    assert.equal(
+      (await reopened.stores.queue.getReceipt(owner2, second.requestId))?.state,
+      "failed",
+    );
     const failed = await reopened.stores.auxiliary.getAuxiliarySession(aux2.id);
-    assert.deepEqual(failed?.messages.map((m) => m.text), ["queued", ""]);
+    assert.deepEqual(
+      failed?.messages.map((m) => m.text),
+      ["queued", ""],
+    );
     assert.ok(failed?.messages[1]?.runFailure);
-    assert.equal((await reopened.stores.turn.getLatestSessionTurn(aux2.id))?.phase, "failed");
-    assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux2.id))?.runState, "error");
-    assert.equal((await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))?.runState, "idle");
+    assert.equal(
+      (await reopened.stores.turn.getLatestSessionTurn(aux2.id))?.phase,
+      "failed",
+    );
+    assert.equal(
+      (await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux2.id))
+        ?.runState,
+      "error",
+    );
+    assert.equal(
+      (await reopened.stores.auxiliary.getAuxiliarySessionMetadata(aux.id))
+        ?.runState,
+      "idle",
+    );
     await reopened.stores.session.deleteSession(f.session.id);
-    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM session_turn_queue_v6").get() as { n: number }).n, 0);
-  } finally { db.close(); await reopened?.client.close(); await f.dispose(); }
+    assert.equal(
+      (
+        db.prepare("SELECT COUNT(*) AS n FROM session_turn_queue_v6").get() as {
+          n: number;
+        }
+      ).n,
+      0,
+    );
+  } finally {
+    db.close();
+    await reopened?.client.close();
+    await f.dispose();
+  }
 });
 
 // @test-value v2
@@ -604,6 +1486,7 @@ test("Aux queueはdraft CASとtarget別dedupとatomic履歴をWorker再open後�
 // impact = "既存受付の喪失と二重実行を防ぐ"
 // distinction = "fresh schema testは既存tableのinline UNIQUE変更と全行保存を検証しない"
 // @end-test-value
+/** 旧Mainキューの行と受付順を保ち、過去の未知項目には値を補わず次の受付番号を進める。 */
 test("旧Main queue schema移行はreceiptと受付順を保持する", async () => {
   const f = await fixture();
   const db = new DatabaseSync(f.options.dbPath);
@@ -615,15 +1498,32 @@ test("旧Main queue schema移行はreceiptと受付順を保持する", async ()
         captured_json TEXT NOT NULL, turn_id TEXT, user_message_seq INTEGER, reason TEXT, released_at TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(session_id, incarnation_id, request_id),
         FOREIGN KEY(session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE);`);
-    db.prepare(`INSERT INTO session_turn_queue_v6 VALUES (42, 'receipt', ?, ?, 'request', 'interrupted', ?, '5', 3, 'unknown', 'released', 'created', 'updated')`)
-      .run(f.session.id, f.session.incarnationId!, JSON.stringify(f.captured("keep")));
-    db.prepare(`INSERT INTO session_turn_queue_v6 VALUES (80, 'deleted', ?, ?, 'deleted', 'completed', '{}', NULL, NULL, NULL, NULL, 'created', 'updated')`)
-      .run(f.session.id, f.session.incarnationId!);
+    db.prepare(
+      `INSERT INTO session_turn_queue_v6 VALUES (42, 'receipt', ?, ?, 'request', 'interrupted', ?, '5', 3, 'unknown', 'released', 'created', 'updated')`,
+    ).run(
+      f.session.id,
+      f.session.incarnationId!,
+      JSON.stringify(f.captured("keep")),
+    );
+    db.prepare(
+      `INSERT INTO session_turn_queue_v6 VALUES (80, 'deleted', ?, ?, 'deleted', 'completed', '{}', NULL, NULL, NULL, NULL, 'created', 'updated')`,
+    ).run(f.session.id, f.session.incarnationId!);
     db.exec("DELETE FROM session_turn_queue_v6 WHERE id = 'deleted'");
     const before = db.prepare("SELECT * FROM session_turn_queue_v6").get();
     ensureV6Schema(db);
-    const after = db.prepare("SELECT * FROM session_turn_queue_v6").get() as Record<string, unknown>;
-    const { auxiliary_session_id, input_turn_id, queue_position, accepted_json, dispatched_json, source_display_position, source_display_verified, ...retained } = after;
+    const after = db
+      .prepare("SELECT * FROM session_turn_queue_v6")
+      .get() as Record<string, unknown>;
+    const {
+      auxiliary_session_id,
+      input_turn_id,
+      queue_position,
+      accepted_json,
+      dispatched_json,
+      source_display_position,
+      source_display_verified,
+      ...retained
+    } = after;
     assert.deepEqual(retained, { ...before });
     assert.equal(queue_position, 42);
     assert.equal(auxiliary_session_id, null);
@@ -633,8 +1533,22 @@ test("旧Main queue schema移行はreceiptと受付順を保持する", async ()
     assert.equal(source_display_position, null);
     assert.equal(source_display_verified, 0);
     ensureV6Schema(db);
-    db.prepare(`INSERT INTO session_turn_queue_v6 (id,session_id,incarnation_id,request_id,state,captured_json,created_at,updated_at)
-      VALUES ('next',?,?, 'next', 'queued', '{}', 'now','now')`).run(f.session.id, f.session.incarnationId!);
-    assert.equal((db.prepare("SELECT sequence FROM session_turn_queue_v6 WHERE id = 'next'").get() as { sequence: number }).sequence, 81);
-  } finally { db.close(); await f.dispose(); }
+    db.prepare(
+      `INSERT INTO session_turn_queue_v6 (id,session_id,incarnation_id,request_id,state,captured_json,created_at,updated_at)
+      VALUES ('next',?,?, 'next', 'queued', '{}', 'now','now')`,
+    ).run(f.session.id, f.session.incarnationId!);
+    assert.equal(
+      (
+        db
+          .prepare(
+            "SELECT sequence FROM session_turn_queue_v6 WHERE id = 'next'",
+          )
+          .get() as { sequence: number }
+      ).sequence,
+      81,
+    );
+  } finally {
+    db.close();
+    await f.dispose();
+  }
 });

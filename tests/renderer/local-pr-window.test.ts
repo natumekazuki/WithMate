@@ -4,7 +4,10 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { createServer } from "vite";
-import type { LocalPrDetail, LocalPrWindowApi } from "../../src-shared/local-pr/local-pr-contract.js";
+import type {
+  LocalPrDetail,
+  LocalPrWindowApi,
+} from "../../src-shared/local-pr/local-pr-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 
 /** 両 Window とも読み取りに失敗しても取得済みの内容を維持し、各 Window のラベルやローカル日付で元の内容を書き換えない。 */
@@ -15,12 +18,21 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     server: { middlewareMode: true },
     appType: "custom",
   });
-  const dom = new JSDOM("<!doctype html><div id='first'></div><div id='second'></div>", {
-    url: "http://localhost",
-  });
+  const dom = new JSDOM(
+    "<!doctype html><div id='first'></div><div id='second'></div>",
+    {
+      url: "http://localhost",
+    },
+  );
   Object.assign(dom.window.HTMLDialogElement.prototype, {
-    showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); },
-    close(this: HTMLDialogElement) { this.removeAttribute("open"); },
+    /** JSDOM でモーダルを開いた状態を open 属性で再現する。 */
+    showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    },
+    /** 閉じたダイアログが検索に残らないよう open 属性を外す。 */
+    close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    },
   });
   const previous = {
     window: globalThis.window,
@@ -74,10 +86,13 @@ test("local PR labels, dates, and independent window refreshes retain their boun
   const opened: string[] = [];
   let finishMerge: (() => void) | undefined;
   let finishLog: (() => void) | undefined;
+  /** 両ウィンドウの PR 操作に決定的な応答を返し、読取障害とマージ・ログの応答待ちを制御する。 */
   const execute = async (operation: string, input: unknown) => {
     if (operation === "pr_merge") {
       merges.push(input);
-      await new Promise<void>((resolve) => { finishMerge = resolve; });
+      await new Promise<void>((resolve) => {
+        finishMerge = resolve;
+      });
       return { ok: true, data: detail };
     }
     if (operation === "pr_get") reads += 1;
@@ -139,8 +154,13 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       };
     if (operation === "pr_ci_log") {
       if ((input as { runId?: string }).runId === "failed") {
-        await new Promise<void>((resolve) => { finishLog = resolve; });
-        return { ok: true, data: { log: "failed run log", nextOffset: 14, hasMore: false } };
+        await new Promise<void>((resolve) => {
+          finishLog = resolve;
+        });
+        return {
+          ok: true,
+          data: { log: "failed run log", nextOffset: 14, hasMore: false },
+        };
       }
       return {
         ok: true,
@@ -151,21 +171,56 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       return { ok: true, data: { branches: [], head: null, headBranch: null } };
     if (operation === "session_choices") {
       const request = input as { query?: string; offset?: number };
-      const entries = Array.from({ length: 51 }, (_, index) => ({ target: { ...author, sessionId: `agent-${index}` }, title: `Session ${index}`, character: `Character ${index}`, iconPath: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" }))
-        .filter((entry) => `${entry.title} ${entry.character}`.toLowerCase().includes((request.query ?? "").toLowerCase()));
+      const entries = Array.from({ length: 51 }, (_, index) => ({
+        target: { ...author, sessionId: `agent-${index}` },
+        title: `Session ${index}`,
+        character: `Character ${index}`,
+        iconPath:
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E",
+      })).filter((entry) =>
+        `${entry.title} ${entry.character}`
+          .toLowerCase()
+          .includes((request.query ?? "").toLowerCase()),
+      );
       const offset = request.offset ?? 0;
-      return { ok: true, data: { sessions: entries.slice(offset, offset + 50), hasMore: entries.length > offset + 50 } };
+      return {
+        ok: true,
+        data: {
+          sessions: entries.slice(offset, offset + 50),
+          hasMore: entries.length > offset + 50,
+        },
+      };
     }
     return { ok: true, data: { sessions: [], hasMore: false } };
   };
   const api: LocalPrWindowApi = {
     execute: execute as unknown as LocalPrWindowApi["execute"],
-    pickAttachment: async () => { picked += 1; return ["C:/fixture/review.png", "C:/fixture/notes.txt"]; },
+    /** ファイル選択回数を記録し、画像とテキストの二種類を返す。 */
+    pickAttachment: async () => {
+      picked += 1;
+      return ["C:/fixture/review.png", "C:/fixture/notes.txt"];
+    },
+    /** 貼り付けを既存ローカルファイルとして扱わないよう、パスなしを返す。 */
     clipboardFilePath: () => "",
-    saveClipboardImage: async () => { pasted += 1; return "C:/fixture/pasted.png"; },
-    openAttachment: async (target) => { opened.push(target); return { status: "opened", targetType: "local-path", target }; },
-    inspectImage: async () => { throw new Error("No image in this fixture."); },
-    readImageChunk: async () => { throw new Error("No image in this fixture."); },
+    /** クリップボード画像の保存回数を記録し、差し込み先のパスを返す。 */
+    saveClipboardImage: async () => {
+      pasted += 1;
+      return "C:/fixture/pasted.png";
+    },
+    /** 添付リンクの操作で委譲されたローカルパスを記録する。 */
+    openAttachment: async (target) => {
+      opened.push(target);
+      return { status: "opened", targetType: "local-path", target };
+    },
+    /** この fixture では画像の内容検査を利用できないことを返す。 */
+    inspectImage: async () => {
+      throw new Error("No image in this fixture.");
+    },
+    /** 画像の読み込み経路への意図しない進入を検出する。 */
+    readImageChunk: async () => {
+      throw new Error("No image in this fixture.");
+    },
+    /** 各ウィンドウの PR 更新通知を登録し、解除された購読を除外する。 */
     subscribeChanged(callback) {
       listeners.add(callback);
       return () => {
@@ -194,23 +249,56 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       items.forEach((item) => item.click());
     });
     assert.equal(reads, 2);
-    assert.equal(first.querySelector(".local-pr-pr-meta .local-pr-status")?.textContent, "Open");
-    assert.equal(first.querySelector(".local-pr-pr-meta code")?.textContent, "my-feature → main");
-    assert.ok(first.querySelector("[title='refs/heads/my-feature → refs/heads/main']"));
-    assert.equal(first.querySelector(".local-pr-description h3")?.textContent, "Review notes");
-    assert.equal(first.querySelector(".local-pr-description strong")?.textContent, "lowercase USER text");
+    assert.equal(
+      first.querySelector(".local-pr-pr-meta .local-pr-status")?.textContent,
+      "Open",
+    );
+    assert.equal(
+      first.querySelector(".local-pr-pr-meta code")?.textContent,
+      "my-feature → main",
+    );
+    assert.ok(
+      first.querySelector("[title='refs/heads/my-feature → refs/heads/main']"),
+    );
+    assert.equal(
+      first.querySelector(".local-pr-description h3")?.textContent,
+      "Review notes",
+    );
+    assert.equal(
+      first.querySelector(".local-pr-description strong")?.textContent,
+      "lowercase USER text",
+    );
     assert.match(first.textContent ?? "", /lowercase USER text/);
-    const splitter = first.querySelector<HTMLButtonElement>("button[aria-label='Collapse Pull Request List']");
+    const splitter = first.querySelector<HTMLButtonElement>(
+      "button[aria-label='Collapse Pull Request List']",
+    );
     assert.ok(splitter);
     assert.equal(splitter.getAttribute("aria-expanded"), "true");
     await act(async () => splitter.click());
     assert.equal(splitter.getAttribute("aria-expanded"), "false");
-    assert.equal(splitter.getAttribute("aria-label"), "Expand Pull Request List");
-    assert.equal(first.querySelector<HTMLElement>("#local-pr-list")?.hidden, true);
-    assert.match(first.querySelector("main")?.textContent ?? "", /lowercase USER text/);
+    assert.equal(
+      splitter.getAttribute("aria-label"),
+      "Expand Pull Request List",
+    );
+    assert.equal(
+      first.querySelector<HTMLElement>("#local-pr-list")?.hidden,
+      true,
+    );
+    assert.match(
+      first.querySelector("main")?.textContent ?? "",
+      /lowercase USER text/,
+    );
     await act(async () => splitter.click());
-    assert.equal(first.querySelector<HTMLElement>("#local-pr-list")?.hidden, false);
-    assert.equal(first.querySelector(".local-pr-list-item[aria-current='true'] strong")?.textContent, "Review me");
+    assert.equal(
+      first.querySelector<HTMLElement>("#local-pr-list")?.hidden,
+      false,
+    );
+    assert.equal(
+      first.querySelector(".local-pr-list-item[aria-current='true'] strong")
+        ?.textContent,
+      "Review me",
+    );
+    /** 最初のウィンドウの、表示名が合うボタンを取得する。 */
     const button = (name: string) => {
       const found = Array.from(first.querySelectorAll("button")).find(
         (item) => item.textContent?.trim() === name,
@@ -224,22 +312,42 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.match(first.textContent ?? "", /src\/my-file\.ts\s*Modified/);
     await act(async () => button("Send to Agent").click());
     assert.equal(first.querySelectorAll("dialog[open]").length, 1);
-    const agent = Array.from(first.querySelectorAll<HTMLButtonElement>(".local-pr-session-choices button"))[0];
+    const agent = Array.from(
+      first.querySelectorAll<HTMLButtonElement>(
+        ".local-pr-session-choices button",
+      ),
+    )[0];
     assert.ok(agent?.querySelector(".character-avatar img"));
     await act(async () => agent.click());
     assert.equal(agent.getAttribute("aria-pressed"), "true");
     await act(async () => button("Next").click());
-    assert.match(first.querySelector(".local-pr-session-choices")?.textContent ?? "", /Session 50/);
-    assert.equal(first.querySelector(".local-pr-session-choices button")?.getAttribute("aria-pressed"), "false");
-    const search = first.querySelector<HTMLInputElement>("input[maxlength='300']");
+    assert.match(
+      first.querySelector(".local-pr-session-choices")?.textContent ?? "",
+      /Session 50/,
+    );
+    assert.equal(
+      first
+        .querySelector(".local-pr-session-choices button")
+        ?.getAttribute("aria-pressed"),
+      "false",
+    );
+    const search = first.querySelector<HTMLInputElement>(
+      "input[maxlength='300']",
+    );
     assert.ok(search);
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      const setter = Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      )?.set;
       setter?.call(search, "Character 42");
       search.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 300));
     });
-    assert.match(first.querySelector(".local-pr-session-choices")?.textContent ?? "", /Session 42/);
+    assert.match(
+      first.querySelector(".local-pr-session-choices")?.textContent ?? "",
+      /Session 42/,
+    );
     await act(async () => button("Cancel").click());
     assert.equal(first.querySelectorAll("dialog").length, 0);
     await act(async () => {
@@ -276,7 +384,9 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       first.querySelector("pre[aria-label='CI Log']")?.textContent?.trim(),
       "mixed CASE log",
     );
-    const failedRun = Array.from(first.querySelectorAll("button")).find((item) => item.textContent?.includes("Failed"));
+    const failedRun = Array.from(first.querySelectorAll("button")).find(
+      (item) => item.textContent?.includes("Failed"),
+    );
     assert.ok(failedRun);
     await act(async () => failedRun.click());
     const log = first.querySelector("pre[aria-label='CI Log']");
@@ -295,25 +405,48 @@ test("local PR labels, dates, and independent window refreshes retain their boun
       assert.ok(
         container.querySelector("h2")?.textContent?.includes("Review me"),
       );
-      assert.ok(container.querySelector("button[aria-label='Read Error Details']"));
-      assert.ok(Array.from(container.querySelectorAll("button")).some((item) => item.textContent === "Retry"));
+      assert.ok(
+        container.querySelector("button[aria-label='Read Error Details']"),
+      );
+      assert.ok(
+        Array.from(container.querySelectorAll("button")).some(
+          (item) => item.textContent === "Retry",
+        ),
+      );
     }
-    await act(async () => first.querySelector<HTMLButtonElement>("button[aria-label='Read Error Details']")?.click());
-    assert.match(dom.window.document.querySelector("[role='dialog']")?.textContent ?? "", /Read failed/);
+    await act(async () =>
+      first
+        .querySelector<HTMLButtonElement>(
+          "button[aria-label='Read Error Details']",
+        )
+        ?.click(),
+    );
+    assert.match(
+      dom.window.document.querySelector("[role='dialog']")?.textContent ?? "",
+      /Read failed/,
+    );
     await act(async () => {
       dom.window.document.querySelector("[role='dialog']")?.dispatchEvent(
-        new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
       );
     });
     assert.equal(dom.window.document.querySelector("[role='dialog']"), null);
-    assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Read Error Details");
+    assert.equal(
+      dom.window.document.activeElement?.getAttribute("aria-label"),
+      "Read Error Details",
+    );
     fail = false;
     await act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("focus"));
     });
     assert.equal(reads, 6);
     assert.doesNotMatch(first.textContent ?? "", /Read failed/);
-    const reload = first.querySelector<HTMLButtonElement>("button[aria-label='Reload Pull Requests']");
+    const reload = first.querySelector<HTMLButtonElement>(
+      "button[aria-label='Reload Pull Requests']",
+    );
     assert.ok(reload);
     await act(async () => {
       reload.click();
@@ -342,7 +475,9 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.ok(finishMerge);
     await act(async () => finishMerge?.());
     assert.equal(merge.getAttribute("aria-busy"), "false");
-    assert.deepEqual(merges, [{ prId: detail.id, version: 1, headCommit: sha, targetCommit: sha }]);
+    assert.deepEqual(merges, [
+      { prId: detail.id, version: 1, headCommit: sha, targetCommit: sha },
+    ]);
     assert.doesNotMatch(first.textContent ?? "", /Confirm Merge/);
     detail.state = "merged";
     detail.currentTargetCommit = detail.mergedCommit = "b".repeat(40);
@@ -352,25 +487,50 @@ test("local PR labels, dates, and independent window refreshes retain their boun
     assert.match(first.textContent ?? "", /Merged/);
     assert.doesNotMatch(first.textContent ?? "", /Target Branch Has Changed/);
     await act(async () => button("New PR").click());
-    const attach = first.querySelector<HTMLButtonElement>("button[aria-label='Attach Files']");
+    const attach = first.querySelector<HTMLButtonElement>(
+      "button[aria-label='Attach Files']",
+    );
     assert.ok(attach);
     const previousAnimationFrame = globalThis.requestAnimationFrame;
-    globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
+    globalThis.requestAnimationFrame = (callback) => {
+      callback(0);
+      return 0;
+    };
     try {
       await act(async () => attach.click());
       assert.equal(picked, 1);
-      const value = first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']")?.value ?? "";
+      const value =
+        first.querySelector<HTMLTextAreaElement>(
+          "textarea[aria-labelledby='local-pr-description-label']",
+        )?.value ?? "";
       assert.match(value, /!\[review\.png\]\(C:\/fixture\/review\.png\)/);
       assert.match(value, /\[notes\.txt\]\(C:\/fixture\/notes\.txt\)/);
-      const field = first.querySelector<HTMLTextAreaElement>("textarea[aria-labelledby='local-pr-description-label']");
+      const field = first.querySelector<HTMLTextAreaElement>(
+        "textarea[aria-labelledby='local-pr-description-label']",
+      );
       assert.ok(field);
-      const paste = new dom.window.Event("paste", { bubbles: true, cancelable: true });
-      Object.defineProperty(paste, "clipboardData", { value: { files: [{ type: "image/png", arrayBuffer: async () => new Uint8Array([1, 2]).buffer }] } });
+      const paste = new dom.window.Event("paste", {
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(paste, "clipboardData", {
+        value: {
+          files: [
+            {
+              type: "image/png",
+              /** 貼り付けられた画像ファイルから取得する固定のバイト列。 */
+              arrayBuffer: async () => new Uint8Array([1, 2]).buffer,
+            },
+          ],
+        },
+      });
       await act(async () => field.dispatchEvent(paste));
       assert.equal(pasted, 1);
       assert.match(field.value, /!\[pasted\.png\]\(C:\/fixture\/pasted\.png\)/);
       await act(async () => button("Preview").click());
-      const link = first.querySelector<HTMLAnchorElement>("a[href='C:/fixture/notes.txt']");
+      const link = first.querySelector<HTMLAnchorElement>(
+        "a[href='C:/fixture/notes.txt']",
+      );
       assert.ok(link);
       await act(async () => link.click());
       assert.deepEqual(opened, ["C:/fixture/notes.txt"]);

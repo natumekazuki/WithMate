@@ -7,13 +7,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { createRenderedTextSearchIndex } from "../../src/file-explorer/rendered-text-search.js";
-import {
-  isMessageRenderedSearchTextNode,
-} from "../../src/chat/conversation/message-rendered-search-text.js";
+import { isMessageRenderedSearchTextNode } from "../../src/chat/conversation/message-rendered-search-text.js";
 import { projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** React の実描画に必要な DOM API を設定し、検証後に戻す処理を返す。 */
 function installDomGlobals(dom: JSDOM): () => void {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -22,9 +23,18 @@ function installDomGlobals(dom: JSDOM): () => void {
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
   const previousHTMLElement = globalThis.HTMLElement;
 
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
   Object.defineProperty(globalThis, "requestAnimationFrame", {
     configurable: true,
     value: dom.window.requestAnimationFrame.bind(dom.window),
@@ -33,28 +43,62 @@ function installDomGlobals(dom: JSDOM): () => void {
     configurable: true,
     value: dom.window.cancelAnimationFrame.bind(dom.window),
   });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
 
   return () => {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-    Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: previousRequestAnimationFrame });
-    Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: previousCancelAnimationFrame });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+    Object.defineProperty(globalThis, "requestAnimationFrame", {
+      configurable: true,
+      value: previousRequestAnimationFrame,
+    });
+    Object.defineProperty(globalThis, "cancelAnimationFrame", {
+      configurable: true,
+      value: previousCancelAnimationFrame,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
   };
 }
 
+/** URL や装飾構文ではなく、実際に画面に現れるリンク名と装飾後の本文を検索対象にする。 */
 test("message search projection は Markdown source ではなく表示文字列だけを返す", () => {
   const markdown = "[needle](https://needle.example/path) **bold** and `code`";
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
-    assert.equal(projectMessageRenderedSearchText(markdown).toLocaleLowerCase(), indexed.normalizedText);
-    assert.equal(projectMessageRenderedSearchText(markdown), "needle bold and code");
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
+    assert.equal(
+      projectMessageRenderedSearchText(markdown).toLocaleLowerCase(),
+      indexed.normalizedText,
+    );
+    assert.equal(
+      projectMessageRenderedSearchText(markdown),
+      "needle bold and code",
+    );
   } finally {
     dom.window.close();
   }
@@ -72,28 +116,49 @@ test("message search projection は Markdown source ではなく表示文字列�
 // impact = "表示された金額を見落とすか、表示されない構文を表示一致として選択する"
 // distinction = "型検査はparser設定とrendererの文字列一致を保証しない。代表構文の小さいmounted DOM fixtureを直接照合する"
 // @end-test-value
+/** 数式や改行タグの扱いを表示と揃え、リテラルとして出る記号と HTML は検索に残す。 */
 test("message search projection は数式とbrの表示条件をDOM indexと一致させる", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
   const restoreGlobals = installDomGlobals(dom);
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   try {
     for (const [markdown, expected] of [
       ["$price$ and $$a^2$$ value", "$price$ and  value"],
-      ["first<br>second<br/>third<br />fourth<BR>fifth", "firstsecondthirdfourthfifth"],
-      ['first<br class="x">second </br> literal', 'first<br class="x">second </br> literal'],
+      [
+        "first<br>second<br/>third<br />fourth<BR>fifth",
+        "firstsecondthirdfourthfifth",
+      ],
+      [
+        'first<br class="x">second </br> literal',
+        'first<br class="x">second </br> literal',
+      ],
       ["before\n\n```math\na^2\n```\n\nafter", "beforeafter"],
-      ["before\n\n```math\n\\frac{needle\n```\n\nafter needle", "beforeafter needle"],
+      [
+        "before\n\n```math\n\\frac{needle\n```\n\nafter needle",
+        "beforeafter needle",
+      ],
       ["before $$\\frac{needle$$ after needle", "before  after needle"],
       ["before\n\n```Math\na^2\n```\n\nafter", "beforea^2after"],
     ]) {
-      await act(async () => root.render(React.createElement(MessageRichText, { text: markdown })));
+      await act(async () =>
+        root.render(React.createElement(MessageRichText, { text: markdown })),
+      );
       const richText = container.querySelector<HTMLElement>(".rich-text");
       assert.ok(richText);
       const projected = projectMessageRenderedSearchText(markdown);
-      const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+      const indexed = createRenderedTextSearchIndex(
+        richText,
+        isMessageRenderedSearchTextNode,
+      );
       assert.equal(projected, expected, markdown);
-      assert.equal(indexed.normalizedText, projected.toLocaleLowerCase(), markdown);
+      assert.equal(
+        indexed.normalizedText,
+        projected.toLocaleLowerCase(),
+        markdown,
+      );
     }
   } finally {
     await act(async () => root.unmount());
@@ -102,6 +167,7 @@ test("message search projection は数式とbrの表示条件をDOM indexと一�
   }
 });
 
+/** YAML の前置きが表として描画された順序で、ヘッダー・値・本文の文字列を検索に含める。 */
 test("message search projection は YAML frontmatter table と DOM index を一致させる", () => {
   const markdown = [
     "---",
@@ -111,21 +177,31 @@ test("message search projection は YAML frontmatter table と DOM index を一�
     "",
     "# Body",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
-    assert.equal(projected, "namewithmate-memorydescriptionUse injected contextBody");
+    assert.equal(
+      projected,
+      "namewithmate-memorydescriptionUse injected contextBody",
+    );
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
   } finally {
     dom.window.close();
   }
 });
 
+/** 本文と脚注の文字列だけを含め、表示用の補助ラベルや図・数式のソースを検索から除外する。 */
 test("message search projection は renderer 生成ラベルをDOM検索と同じく対象外にする", () => {
   const markdown = [
     "alpha note[^1]",
@@ -140,13 +216,19 @@ test("message search projection は renderer 生成ラベルをDOM検索と同�
     "",
     "[^1]: foot body",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
     assert.match(projected, /alpha note/);
@@ -157,6 +239,7 @@ test("message search projection は renderer 生成ラベルをDOM検索と同�
   }
 });
 
+/** 脚注本文を定義順ではなく参照順で末尾に置き、参照されない定義は省く。 */
 test("message search projection は参照順でfootnote本文を末尾へ置き未参照定義を除外する", () => {
   const markdown = [
     "[^b]: beta needle",
@@ -166,13 +249,19 @@ test("message search projection は参照順でfootnote本文を末尾へ置き�
     "",
     "[^a]: alpha needle",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
     assert.equal(projected, "start middlealpha needle beta needle ");
@@ -182,6 +271,7 @@ test("message search projection は参照順でfootnote本文を末尾へ置き�
   }
 });
 
+/** 本文からたどれる入れ子の脚注を、描画後の DOM と同じ順序で含める。 */
 test("message search projection は本文から到達できる入れ子footnoteだけをDOM順で含める", () => {
   const markdown = [
     "main[^used]",
@@ -190,13 +280,19 @@ test("message search projection は本文から到達できる入れ子footnote�
     "",
     "[^nested]: nested needle",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(projected, "mainused bodynested needle ");
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
@@ -205,6 +301,7 @@ test("message search projection は本文から到達できる入れ子footnote�
   }
 });
 
+/** 入れ子の脚注参照の直後にある本文や、参照へ戻るリンク前の空白を表示どおりに扱う。 */
 test("message search projection は入れ子footnote後のplain textとbackref境界をDOMに揃える", () => {
   const markdown = [
     "main[^used]",
@@ -213,13 +310,19 @@ test("message search projection は入れ子footnote後のplain textとbackref�
     "",
     "[^nested]: nested needle",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(projected, "mainbefore after nested needle ");
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
@@ -228,6 +331,7 @@ test("message search projection は入れ子footnote後のplain textとbackref�
   }
 });
 
+/** 同じ脚注識別子に定義が複数あれば、描画と同様に最初の定義だけを採用する。 */
 test("message search projection はfootnoteの重複定義でrendererと同じ最初の定義を使う", () => {
   const markdown = [
     "main[^same]",
@@ -236,13 +340,19 @@ test("message search projection はfootnoteの重複定義でrendererと同じ�
     "",
     "[^same]: second body",
   ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(projected, "mainfirst body ");
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
@@ -252,6 +362,7 @@ test("message search projection はfootnoteの重複定義でrendererと同じ�
   }
 });
 
+/** 脚注の末尾がリストで、その項目に別の脚注が付く場合も、検索文字列の境界を描画に合わせる。 */
 test("message search projection はfootnote内のlist tailをDOM境界どおりに投影する", () => {
   const cases = [
     [
@@ -268,14 +379,24 @@ test("message search projection はfootnote内のlist tailをDOM境界どおり�
   ] as const;
 
   for (const [label, markdown] of cases) {
-    const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+    const html = renderToStaticMarkup(
+      React.createElement(MessageRichText, { text: markdown }),
+    );
     const dom = new JSDOM(`<!doctype html>${html}`);
     try {
-      const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+      const richText =
+        dom.window.document.querySelector<HTMLElement>(".rich-text");
       assert.ok(richText, label);
       const projected = projectMessageRenderedSearchText(markdown);
-      const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
-      assert.equal(indexed.normalizedText, projected.toLocaleLowerCase(), label);
+      const indexed = createRenderedTextSearchIndex(
+        richText,
+        isMessageRenderedSearchTextNode,
+      );
+      assert.equal(
+        indexed.normalizedText,
+        projected.toLocaleLowerCase(),
+        label,
+      );
     } finally {
       dom.window.close();
     }
@@ -292,8 +413,9 @@ test("message search projection はfootnote内のlist tailをDOM境界どおり�
 // scope = "message-rendered-search-dom-boundaries"
 // lifecycle = "permanent"
 // @end-test-value
+/** マウント済みの本文を基準に、インライン要素の空白、行末改行、コードやリテラル HTML の境界を照合する。 */
 test("message search projection はmount済みDOMのinline空白とhard break境界に一致する", async () => {
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
     url: "http://localhost/",
   });
@@ -339,35 +461,19 @@ test("message search projection はmount済みDOMのinline空白とhard break境
     ],
     [
       "escaped block html",
-      [
-        "before",
-        "",
-        "<section>",
-        "needle",
-        "</section>",
-        "",
-        "after",
-      ].join("\n"),
+      ["before", "", "<section>", "needle", "</section>", "", "after"].join(
+        "\n",
+      ),
       "before<section>\nneedle\n</section>after",
     ],
     [
       "fenced code block boundary",
-      [
-        "~~~txt",
-        "needle",
-        "~~~",
-        "",
-        "next",
-      ].join("\n"),
+      ["~~~txt", "needle", "~~~", "", "next"].join("\n"),
       "needlenext",
     ],
     [
       "indented code block boundary",
-      [
-        "    needle",
-        "",
-        "next",
-      ].join("\n"),
+      ["    needle", "", "next"].join("\n"),
       "needlenext",
     ],
     [
@@ -389,12 +495,21 @@ test("message search projection はmount済みDOMのinline空白とhard break境
     root = createRoot(container);
     for (const [label, markdown, expected] of cases) {
       await act(async () => {
-        root?.render(React.createElement(MessageRichText, { text: markdown, forceFullRender: true }));
+        root?.render(
+          React.createElement(MessageRichText, {
+            text: markdown,
+            forceFullRender: true,
+          }),
+        );
       });
-      const richText: HTMLElement | null = container.querySelector<HTMLElement>(".rich-text");
+      const richText: HTMLElement | null =
+        container.querySelector<HTMLElement>(".rich-text");
       assert.ok(richText, label);
       const projected = projectMessageRenderedSearchText(markdown);
-      const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+      const indexed = createRenderedTextSearchIndex(
+        richText,
+        isMessageRenderedSearchTextNode,
+      );
       assert.equal(projected, expected, label);
       assert.equal(indexed.normalizedText, expected.toLocaleLowerCase(), label);
     }
@@ -407,6 +522,7 @@ test("message search projection はmount済みDOMのinline空白とhard break境
   }
 });
 
+/** 未参照の脚注からしかたどれない定義を検索対象に含めない。 */
 test("message search projection は未参照footnote内だけの参照を検索対象にしない", () => {
   const markdown = [
     "main",
@@ -419,21 +535,24 @@ test("message search projection は未参照footnote内だけの参照を検索�
   assert.equal(projectMessageRenderedSearchText(markdown), "main");
 });
 
+/** 循環する脚注を一度ずつ含め、繰り返したどらずに投影を終える。 */
 test("message search projection は循環footnote参照を一度ずつ投影して停止する", () => {
-  const markdown = [
-    "main[^a]",
-    "",
-    "[^a]: A[^b]",
-    "",
-    "[^b]: B[^a]",
-  ].join("\n");
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const markdown = ["main[^a]", "", "[^a]: A[^b]", "", "[^b]: B[^a]"].join(
+    "\n",
+  );
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: markdown }),
+  );
   const dom = new JSDOM(`<!doctype html>${html}`);
   try {
-    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    const richText =
+      dom.window.document.querySelector<HTMLElement>(".rich-text");
     assert.ok(richText);
     const projected = projectMessageRenderedSearchText(markdown);
-    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+    const indexed = createRenderedTextSearchIndex(
+      richText,
+      isMessageRenderedSearchTextNode,
+    );
 
     assert.equal(projected, "mainAB");
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());

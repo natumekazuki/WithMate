@@ -2,38 +2,85 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
-import { SessionFolderCleanup, type SessionFolderCleanupApi } from "../../src/settings/SessionFolderCleanup.js";
+import {
+  SessionFolderCleanup,
+  type SessionFolderCleanupApi,
+} from "../../src/settings/SessionFolderCleanup.js";
 import type { SessionFolderCleanupScan } from "../../src-shared/session/session-folder-cleanup.js";
 
 const scan: SessionFolderCleanupScan = {
-  scanId: "synthetic-scan", request: { fromDate: "", toDate: "", minimumFileSizeMiB: 0 },
-  sessionCount: 12, totalFileCount: 80, totalBytes: 8192, matchedFileCount: 40, matchedBytes: 4096,
-  skippedRunningSessionCount: 0, skippedWorkspaceSessionCount: 0, skippedLinkCount: 0, issues: [],
+  scanId: "synthetic-scan",
+  request: { fromDate: "", toDate: "", minimumFileSizeMiB: 0 },
+  sessionCount: 12,
+  totalFileCount: 80,
+  totalBytes: 8192,
+  matchedFileCount: 40,
+  matchedBytes: 4096,
+  skippedRunningSessionCount: 0,
+  skippedWorkspaceSessionCount: 0,
+  skippedLinkCount: 0,
+  issues: [],
 };
 
-async function withCleanup(api: SessionFolderCleanupApi, run: (harness: {
-  document: Document;
-  click(text: string): Promise<void>;
-  root: HTMLElement;
-}) => Promise<void>) {
-  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
-  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
-  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
-  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+/** 掃除コントロールを開いた設定グループ内に描画し、各試験の終了後にDOMとグローバルを片付ける。 */
+async function withCleanup(
+  api: SessionFolderCleanupApi,
+  run: (harness: {
+    document: Document;
+    /** 表示ラベルで操作対象を選んでクリックし、Reactへの反映を待つ。 */
+    click(text: string): Promise<void>;
+    root: HTMLElement;
+  }) => Promise<void>,
+) {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", {
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute("open", "");
+  };
+  dom.window.HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+  };
   const { createRoot } = await import("react-dom/client");
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
+  /** 同名のボタンまたはラベルを探し、押下できる状態であることを確かめて操作する。 */
   const click = async (text: string) => {
-    const element = [...dom.window.document.querySelectorAll<HTMLButtonElement | HTMLLabelElement>("button,label")]
-      .find((item) => item.textContent?.trim() === text);
+    const element = [
+      ...dom.window.document.querySelectorAll<
+        HTMLButtonElement | HTMLLabelElement
+      >("button,label"),
+    ].find((item) => item.textContent?.trim() === text);
     assert.ok(element, `Missing control: ${text}`);
-    if (element instanceof dom.window.HTMLButtonElement) assert.equal(element.disabled, false);
-    await act(async () => { element.click(); });
+    if (element instanceof dom.window.HTMLButtonElement)
+      assert.equal(element.disabled, false);
+    await act(async () => {
+      element.click();
+    });
   };
   try {
-    await act(async () => { root.render(<details className="settings-section-card" open><summary>Storage Maintenance</summary><SessionFolderCleanup api={api} /></details>); });
+    await act(async () => {
+      root.render(
+        <details className="settings-section-card" open>
+          <summary>Storage Maintenance</summary>
+          <SessionFolderCleanup api={api} />
+        </details>,
+      );
+    });
     await run({ document: dom.window.document, root: container, click });
   } finally {
     await act(async () => root.unmount());
@@ -57,29 +104,53 @@ async function withCleanup(api: SessionFolderCleanupApi, run: (harness: {
 // impact = "利用者が確認していない削除や古い対象範囲の削除を実行する"
 // distinction = "service testではrendererの確認取消と実行APIへの接続を検証できない"
 // @end-test-value
+/** 確認を取り消しても削除せず、明示確定した計算IDでだけ実行して再計算へ戻す。 */
 test("概要確認のCancelでは削除せず、確定した計算IDだけを実行する", async () => {
   const requests: { scanId: string }[] = [];
-  await withCleanup({
-    async scanSessionFolderCleanup(request) { assert.deepEqual(request, scan.request); return scan; },
-    async runSessionFolderCleanup(request) {
-      requests.push(request);
-      return { deletedFileCount: 40, deletedBytes: 4096, deletedDirectoryCount: 2, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+  await withCleanup(
+    {
+      /** 指定された計算リクエストを照合し、既知の件数と容量を返す。 */
+      async scanSessionFolderCleanup(request) {
+        assert.deepEqual(request, scan.request);
+        return scan;
+      },
+      /** 実行要求を控え、確認した概要と照合できる削除結果を返す。 */
+      async runSessionFolderCleanup(request) {
+        requests.push(request);
+        return {
+          deletedFileCount: 40,
+          deletedBytes: 4096,
+          deletedDirectoryCount: 2,
+          skippedFileCount: 0,
+          failedFileCount: 0,
+          issues: [],
+        };
+      },
     },
-  }, async ({ root, click }) => {
-    await click("All Dates");
-    await click("Calculate");
-    await click("Delete Files…");
-    assert.equal(requests.length, 0);
-    assert.match(root.ownerDocument.querySelector("dialog")!.textContent!, /40 Files · 4 KiB/);
-    await click("Cancel");
-    assert.equal(root.ownerDocument.querySelector("dialog"), null);
-    assert.equal(requests.length, 0);
-    await click("Delete Files…");
-    await click("Permanently Delete");
-    assert.deepEqual(requests, [{ scanId: "synthetic-scan" }]);
-    assert.match(root.textContent!, /40 Files Deleted · 4 KiB/);
-    assert.equal([...root.querySelectorAll("button")].find((button) => button.textContent === "Delete Files…")!.disabled, true);
-  });
+    async ({ root, click }) => {
+      await click("All Dates");
+      await click("Calculate");
+      await click("Delete Files…");
+      assert.equal(requests.length, 0);
+      assert.match(
+        root.ownerDocument.querySelector("dialog")!.textContent!,
+        /40 Files · 4 KiB/,
+      );
+      await click("Cancel");
+      assert.equal(root.ownerDocument.querySelector("dialog"), null);
+      assert.equal(requests.length, 0);
+      await click("Delete Files…");
+      await click("Permanently Delete");
+      assert.deepEqual(requests, [{ scanId: "synthetic-scan" }]);
+      assert.match(root.textContent!, /40 Files Deleted · 4 KiB/);
+      assert.equal(
+        [...root.querySelectorAll("button")].find(
+          (button) => button.textContent === "Delete Files…",
+        )!.disabled,
+        true,
+      );
+    },
+  );
 });
 
 // @test-value v2
@@ -94,23 +165,42 @@ test("概要確認のCancelでは削除せず、確定した計算IDだけを実
 // impact = "取得失敗を対象なしと誤認する、または表示条件と異なる削除が可能になる"
 // distinction = "serviceと型検査では非同期エラーからのUI回復と入力変更の接続を確認できない"
 // @end-test-value
+/** 計算失敗を正常な空結果と区別し、再計算後に条件を変えたら旧計算での削除を許可しない。 */
 test("計算失敗を再試行でき、入力変更で古い削除対象を失効させる", async () => {
   let calls = 0;
-  await withCleanup({
-    async scanSessionFolderCleanup() { if (++calls === 1) throw new Error("Synthetic read failure"); return scan; },
-    async runSessionFolderCleanup() { assert.fail("No deletion expected"); },
-  }, async ({ root, click }) => {
-    await click("All Dates");
-    await click("Calculate");
-    assert.match(root.querySelector('[role="status"]')!.textContent!, /Calculate Session File Usage failed/);
-    assert.match(root.querySelector('[popover]')!.textContent!, /Synthetic read failure/);
-    await click("Calculate");
-    const button = [...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!;
-    assert.equal(button.disabled, false);
-    await click("All Dates");
-    assert.equal(button.disabled, true);
-    assert.equal(calls, 2);
-  });
+  await withCleanup(
+    {
+      /** 最初は読込失敗、再試行では有効な計算結果を返す。 */
+      async scanSessionFolderCleanup() {
+        if (++calls === 1) throw new Error("Synthetic read failure");
+        return scan;
+      },
+      /** 今回の操作で削除まで進んだら試験を失敗させる。 */
+      async runSessionFolderCleanup() {
+        assert.fail("No deletion expected");
+      },
+    },
+    async ({ root, click }) => {
+      await click("All Dates");
+      await click("Calculate");
+      assert.match(
+        root.querySelector('[role="status"]')!.textContent!,
+        /Calculate Session File Usage failed/,
+      );
+      assert.match(
+        root.querySelector("[popover]")!.textContent!,
+        /Synthetic read failure/,
+      );
+      await click("Calculate");
+      const button = [...root.querySelectorAll("button")].find(
+        (item) => item.textContent === "Delete Files…",
+      )!;
+      assert.equal(button.disabled, false);
+      await click("All Dates");
+      assert.equal(button.disabled, true);
+      assert.equal(calls, 2);
+    },
+  );
 });
 
 // @test-value v2
@@ -125,62 +215,110 @@ test("計算失敗を再試行でき、入力変更で古い削除対象を失�
 // impact = "失敗から回復できない、または再確認していない範囲のファイルを削除する"
 // distinction = "serviceと型検査ではrendererの回復操作と再計算・確認・実行の接続を検証できない"
 // @end-test-value
+/** 削除失敗後の再操作で計算と確認をやり直し、閉じた設定グループの外側で確認・フォーカス復帰を扱う。 */
 test("削除失敗の再操作は再計算と再確認を経て新しい計算IDを使う", async () => {
   let scans = 0;
   let resolveRetry!: (value: SessionFolderCleanupScan) => void;
   const requests: { scanId: string }[] = [];
-  await withCleanup({
-    async scanSessionFolderCleanup() {
-      scans++;
-      if (scans === 2) throw new Error("Synthetic recalculation failure");
-      if (scans === 3) return new Promise((resolve) => { resolveRetry = resolve; });
-      return scan;
+  await withCleanup(
+    {
+      /** 再計算を一度失敗させ、次は新しい概要をテストの任意の時点で返せるようにする。 */
+      async scanSessionFolderCleanup() {
+        scans++;
+        if (scans === 2) throw new Error("Synthetic recalculation failure");
+        if (scans === 3)
+          return new Promise((resolve) => {
+            resolveRetry = resolve;
+          });
+        return scan;
+      },
+      /** 旧IDによる削除を一度失敗させ、再確認後の新IDでは成功を返す。 */
+      async runSessionFolderCleanup(request) {
+        requests.push(request);
+        if (requests.length === 1)
+          throw new Error("Synthetic deletion failure");
+        return {
+          deletedFileCount: 2,
+          deletedBytes: 1024,
+          deletedDirectoryCount: 0,
+          skippedFileCount: 0,
+          failedFileCount: 0,
+          issues: [],
+        };
+      },
     },
-    async runSessionFolderCleanup(request) {
-      requests.push(request);
-      if (requests.length === 1) throw new Error("Synthetic deletion failure");
-      return { deletedFileCount: 2, deletedBytes: 1024, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+    async ({ root, click }) => {
+      await click("All Dates");
+      await click("Calculate");
+      await click("Delete Files…");
+      await click("Permanently Delete");
+      const button = [...root.querySelectorAll("button")].find(
+        (item) => item.textContent === "Delete Files…",
+      )!;
+      assert.equal(button.disabled, false);
+      assert.match(
+        button.parentElement!.querySelector("[popover]")!.textContent!,
+        /Synthetic deletion failure/,
+      );
+      await click("Delete Files…");
+      assert.equal(button.disabled, false);
+      assert.match(
+        button.parentElement!.querySelector("[popover]")!.textContent!,
+        /Synthetic recalculation failure/,
+      );
+      assert.equal(root.ownerDocument.querySelector("dialog"), null);
+      assert.equal(requests.length, 1);
+      await click("Delete Files…");
+      assert.equal(button.disabled, true);
+      assert.equal(button.getAttribute("aria-busy"), "true");
+      await act(async () => button.click());
+      assert.equal(scans, 3);
+      const group = root.querySelector<HTMLDetailsElement>(
+        "details.settings-subsection",
+      )!;
+      const summary = group.querySelector("summary")!;
+      const outer = root.querySelector<HTMLDetailsElement>(
+        "details.settings-section-card",
+      )!;
+      const outerSummary = outer.querySelector("summary")!;
+      await act(async () => summary.click());
+      assert.equal(group.open, false);
+      await act(async () => outerSummary.click());
+      assert.equal(outer.open, false);
+      await act(async () =>
+        resolveRetry({
+          ...scan,
+          scanId: "fresh-scan",
+          matchedFileCount: 2,
+          matchedBytes: 1024,
+        }),
+      );
+      assert.match(
+        root.ownerDocument.querySelector("dialog")!.textContent!,
+        /2 Files · 1 KiB/,
+      );
+      assert.equal(
+        root.ownerDocument.querySelector("dialog")!.closest("details"),
+        null,
+      );
+      assert.equal(requests.length, 1);
+      await click("Cancel");
+      assert.equal(requests.length, 1);
+      assert.equal(root.ownerDocument.activeElement, outerSummary);
+      assert.equal(group.open, false);
+      assert.equal(outer.open, false);
+      await act(async () => {
+        outerSummary.click();
+        summary.click();
+      });
+      await click("Delete Files…");
+      await click("Permanently Delete");
+      assert.deepEqual(requests, [
+        { scanId: "synthetic-scan" },
+        { scanId: "fresh-scan" },
+      ]);
     },
-  }, async ({ root, click }) => {
-    await click("All Dates");
-    await click("Calculate");
-    await click("Delete Files…");
-    await click("Permanently Delete");
-    const button = [...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!;
-    assert.equal(button.disabled, false);
-    assert.match(button.parentElement!.querySelector('[popover]')!.textContent!, /Synthetic deletion failure/);
-    await click("Delete Files…");
-    assert.equal(button.disabled, false);
-    assert.match(button.parentElement!.querySelector('[popover]')!.textContent!, /Synthetic recalculation failure/);
-    assert.equal(root.ownerDocument.querySelector("dialog"), null);
-    assert.equal(requests.length, 1);
-    await click("Delete Files…");
-    assert.equal(button.disabled, true);
-    assert.equal(button.getAttribute("aria-busy"), "true");
-    await act(async () => button.click());
-    assert.equal(scans, 3);
-    const group = root.querySelector<HTMLDetailsElement>("details.settings-subsection")!;
-    const summary = group.querySelector("summary")!;
-    const outer = root.querySelector<HTMLDetailsElement>("details.settings-section-card")!;
-    const outerSummary = outer.querySelector("summary")!;
-    await act(async () => summary.click());
-    assert.equal(group.open, false);
-    await act(async () => outerSummary.click());
-    assert.equal(outer.open, false);
-    await act(async () => resolveRetry({ ...scan, scanId: "fresh-scan", matchedFileCount: 2, matchedBytes: 1024 }));
-    assert.match(root.ownerDocument.querySelector("dialog")!.textContent!, /2 Files · 1 KiB/);
-    assert.equal(root.ownerDocument.querySelector("dialog")!.closest("details"), null);
-    assert.equal(requests.length, 1);
-    await click("Cancel");
-    assert.equal(requests.length, 1);
-    assert.equal(root.ownerDocument.activeElement, outerSummary);
-    assert.equal(group.open, false);
-    assert.equal(outer.open, false);
-    await act(async () => { outerSummary.click(); summary.click(); });
-    await click("Delete Files…");
-    await click("Permanently Delete");
-    assert.deepEqual(requests, [{ scanId: "synthetic-scan" }, { scanId: "fresh-scan" }]);
-  });
+  );
 });
 
 // @test-value v2
@@ -195,35 +333,63 @@ test("削除失敗の再操作は再計算と再確認を経て新しい計算ID
 // impact = "部分失敗から再操作できない、または削除対象のない確認・実行を許可する"
 // distinction = "Main service testでは部分結果を受けた操作導線と確認抑止を検証できない"
 // @end-test-value
+/** 一部削除だけが失敗しても再計算へ戻れ、対象ゼロなら確認に進まない。 */
 test("ファイルとdirectoryの部分失敗は再操作でき、再計算0件では削除しない", async () => {
   for (const failedFileCount of [1, 0]) {
     let scans = 0;
     let runs = 0;
-    await withCleanup({
-      async scanSessionFolderCleanup() {
-        return ++scans === 1 ? scan : { ...scan, scanId: "empty-scan", matchedFileCount: 0, matchedBytes: 0 };
+    await withCleanup(
+      {
+        /** 初回は削除候補を返し、再計算では空になったフォルダーを再現する。 */
+        async scanSessionFolderCleanup() {
+          return ++scans === 1
+            ? scan
+            : {
+                ...scan,
+                scanId: "empty-scan",
+                matchedFileCount: 0,
+                matchedBytes: 0,
+              };
+        },
+        /** 削除済みの件数・容量と、残ったファイルまたはディレクトリの問題を返す。 */
+        async runSessionFolderCleanup() {
+          runs++;
+          return {
+            deletedFileCount: 39,
+            deletedBytes: 3072,
+            deletedDirectoryCount: 0,
+            skippedFileCount: 0,
+            failedFileCount,
+            issues: [
+              {
+                sessionId: "synthetic",
+                relativePath: "locked",
+                kind: "failed",
+                message: "Synthetic cleanup failure",
+              },
+            ],
+          };
+        },
       },
-      async runSessionFolderCleanup() {
-        runs++;
-        return { deletedFileCount: 39, deletedBytes: 3072, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount,
-          issues: [{ sessionId: "synthetic", relativePath: "locked", kind: "failed", message: "Synthetic cleanup failure" }] };
+      async ({ root, click }) => {
+        await click("All Dates");
+        await click("Calculate");
+        await click("Delete Files…");
+        await click("Permanently Delete");
+        assert.match(root.textContent!, /39 Files Deleted · 3 KiB/);
+        if (failedFileCount) assert.match(root.textContent!, /1 Files Failed/);
+        const button = [...root.querySelectorAll("button")].find(
+          (item) => item.textContent === "Delete Files…",
+        )!;
+        assert.equal(button.disabled, false);
+        await click("Delete Files…");
+        assert.equal(scans, 2);
+        assert.equal(runs, 1);
+        assert.equal(button.disabled, true);
+        assert.equal(root.ownerDocument.querySelector("dialog"), null);
+        assert.match(root.querySelector("dl")!.textContent!, /0 B/);
       },
-    }, async ({ root, click }) => {
-      await click("All Dates");
-      await click("Calculate");
-      await click("Delete Files…");
-      await click("Permanently Delete");
-      assert.match(root.textContent!, /39 Files Deleted · 3 KiB/);
-      if (failedFileCount) assert.match(root.textContent!, /1 Files Failed/);
-      const button = [...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!;
-      assert.equal(button.disabled, false);
-      await click("Delete Files…");
-      assert.equal(scans, 2);
-      assert.equal(runs, 1);
-      assert.equal(button.disabled, true);
-      assert.equal(root.ownerDocument.querySelector("dialog"), null);
-      assert.match(root.querySelector("dl")!.textContent!, /0 B/);
-    });
+    );
   }
 });
 
@@ -239,27 +405,56 @@ test("ファイルとdirectoryの部分失敗は再操作でき、再計算0件�
 // impact = "意図しない全期間対象化と重複操作を発生させる"
 // distinction = "入力のUI上の明示選択と多重click制御はshared parserやservice testでは確認できない"
 // @end-test-value
+/** 期間が未指定なら計算せず、計算中の重複を抑止し、正常な対象ゼロなら削除できない。 */
 test("期間の明示指定と計算single-flight、正常0件の削除抑止を維持する", async () => {
   let resolve!: (value: SessionFolderCleanupScan) => void;
   let calls = 0;
-  await withCleanup({
-    scanSessionFolderCleanup() { calls++; return new Promise((accept) => { resolve = accept; }); },
-    async runSessionFolderCleanup() { assert.fail("No deletion expected"); },
-  }, async ({ root, click }) => {
-    await click("Calculate");
-    assert.match(root.textContent!, /Choose a date range or All Dates/);
-    assert.equal(calls, 0);
-    await click("All Dates");
-    await click("Calculate");
-    const calculate = [...root.querySelectorAll("button")].find((item) => item.textContent?.includes("Calculate"))!;
-    assert.equal(calculate.disabled, true);
-    assert.equal(calculate.getAttribute("aria-busy"), "true");
-    await act(async () => calculate.click());
-    assert.equal(calls, 1);
-    await act(async () => resolve({ ...scan, sessionCount: 0, totalFileCount: 0, totalBytes: 0, matchedFileCount: 0, matchedBytes: 0 }));
-    assert.match(root.textContent!, /0 B/);
-    assert.equal([...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!.disabled, true);
-  });
+  await withCleanup(
+    {
+      /** 計算を保留してから選んだ時点で完了させ、待機中の呼び出し数を測る。 */
+      scanSessionFolderCleanup() {
+        calls++;
+        return new Promise((accept) => {
+          resolve = accept;
+        });
+      },
+      /** 空の計算結果で削除が呼ばれたこと自体を失敗にする。 */
+      async runSessionFolderCleanup() {
+        assert.fail("No deletion expected");
+      },
+    },
+    async ({ root, click }) => {
+      await click("Calculate");
+      assert.match(root.textContent!, /Choose a date range or All Dates/);
+      assert.equal(calls, 0);
+      await click("All Dates");
+      await click("Calculate");
+      const calculate = [...root.querySelectorAll("button")].find((item) =>
+        item.textContent?.includes("Calculate"),
+      )!;
+      assert.equal(calculate.disabled, true);
+      assert.equal(calculate.getAttribute("aria-busy"), "true");
+      await act(async () => calculate.click());
+      assert.equal(calls, 1);
+      await act(async () =>
+        resolve({
+          ...scan,
+          sessionCount: 0,
+          totalFileCount: 0,
+          totalBytes: 0,
+          matchedFileCount: 0,
+          matchedBytes: 0,
+        }),
+      );
+      assert.match(root.textContent!, /0 B/);
+      assert.equal(
+        [...root.querySelectorAll("button")].find(
+          (item) => item.textContent === "Delete Files…",
+        )!.disabled,
+        true,
+      );
+    },
+  );
 });
 
 // @test-value v2
@@ -274,56 +469,88 @@ test("期間の明示指定と計算single-flight、正常0件の削除抑止を
 // impact = "別操作の結果によって未解消の削除失敗を再確認できなくなる、または回復後も失敗表示が残る"
 // distinction = "既存service・renderer testと型検査はCalculateと削除結果の交差経路を検証しない"
 // @end-test-value
+/** 削除例外と部分失敗の診断を、通常計算や確認の取消で消さず、新しい削除結果まで維持する。 */
 test("通常の再計算と確認取消は未解消の削除失敗を保持する", async () => {
   for (const partial of [false, true]) {
     let scans = 0;
     let runs = 0;
-    await withCleanup({
-      async scanSessionFolderCleanup() {
-        if (++scans === 3) throw new Error("Synthetic calculation failure");
-        return { ...scan, scanId: `scan-${scans}` };
+    await withCleanup(
+      {
+        /** 計算し直すたびに異なるIDを返し、途中の計算失敗も再現する。 */
+        async scanSessionFolderCleanup() {
+          if (++scans === 3) throw new Error("Synthetic calculation failure");
+          return { ...scan, scanId: `scan-${scans}` };
+        },
+        /** 初回は例外または部分失敗を返し、次は最新の計算IDで成功させる。 */
+        async runSessionFolderCleanup(request) {
+          runs++;
+          if (runs === 1) {
+            if (!partial) throw new Error("Synthetic deletion failure");
+            return {
+              deletedFileCount: 39,
+              deletedBytes: 3072,
+              deletedDirectoryCount: 0,
+              skippedFileCount: 0,
+              failedFileCount: 1,
+              issues: [
+                {
+                  sessionId: "synthetic",
+                  relativePath: "locked",
+                  kind: "failed",
+                  message: "Synthetic deletion failure",
+                },
+              ],
+            };
+          }
+          assert.equal(request.scanId, "scan-4");
+          return {
+            deletedFileCount: 1,
+            deletedBytes: 1024,
+            deletedDirectoryCount: 0,
+            skippedFileCount: 0,
+            failedFileCount: 0,
+            issues: [],
+          };
+        },
       },
-      async runSessionFolderCleanup(request) {
-        runs++;
-        if (runs === 1) {
-          if (!partial) throw new Error("Synthetic deletion failure");
-          return { deletedFileCount: 39, deletedBytes: 3072, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount: 1,
-            issues: [{ sessionId: "synthetic", relativePath: "locked", kind: "failed", message: "Synthetic deletion failure" }] };
-        }
-        assert.equal(request.scanId, "scan-4");
-        return { deletedFileCount: 1, deletedBytes: 1024, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+      async ({ root, click }) => {
+        await click("All Dates");
+        await click("Calculate");
+        await click("Delete Files…");
+        await click("Permanently Delete");
+        const button = [...root.querySelectorAll("button")].find(
+          (item) => item.textContent === "Delete Files…",
+        )!;
+        /** 元の削除診断が表示され、削除が再実行されていないことを確認する。 */
+        const assertDeletionFailure = () => {
+          assert.match(
+            button.parentElement!.querySelector("[popover]")!.textContent!,
+            /Synthetic deletion failure/,
+          );
+          if (partial) assert.match(root.textContent!, /1 Files Failed/);
+          assert.equal(runs, 1);
+        };
+        assertDeletionFailure();
+        await click("Calculate");
+        assertDeletionFailure();
+        assert.ok(root.querySelector("dl"));
+        await click("Delete Files…");
+        await click("Cancel");
+        assertDeletionFailure();
+        await click("Calculate");
+        assertDeletionFailure();
+        assert.match(root.textContent!, /Synthetic calculation failure/);
+        await click("Delete Files…");
+        assertDeletionFailure();
+        await click("Cancel");
+        assertDeletionFailure();
+        await click("Delete Files…");
+        await click("Permanently Delete");
+        assert.equal(scans, 4);
+        assert.equal(runs, 2);
+        assert.match(root.textContent!, /1 Files Deleted · 1 KiB/);
+        assert.equal(button.parentElement!.querySelector("[popover]"), null);
       },
-    }, async ({ root, click }) => {
-      await click("All Dates");
-      await click("Calculate");
-      await click("Delete Files…");
-      await click("Permanently Delete");
-      const button = [...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!;
-      const assertDeletionFailure = () => {
-        assert.match(button.parentElement!.querySelector('[popover]')!.textContent!, /Synthetic deletion failure/);
-        if (partial) assert.match(root.textContent!, /1 Files Failed/);
-        assert.equal(runs, 1);
-      };
-      assertDeletionFailure();
-      await click("Calculate");
-      assertDeletionFailure();
-      assert.ok(root.querySelector("dl"));
-      await click("Delete Files…");
-      await click("Cancel");
-      assertDeletionFailure();
-      await click("Calculate");
-      assertDeletionFailure();
-      assert.match(root.textContent!, /Synthetic calculation failure/);
-      await click("Delete Files…");
-      assertDeletionFailure();
-      await click("Cancel");
-      assertDeletionFailure();
-      await click("Delete Files…");
-      await click("Permanently Delete");
-      assert.equal(scans, 4);
-      assert.equal(runs, 2);
-      assert.match(root.textContent!, /1 Files Deleted · 1 KiB/);
-      assert.equal(button.parentElement!.querySelector('[popover]'), null);
-    });
+    );
   }
 });

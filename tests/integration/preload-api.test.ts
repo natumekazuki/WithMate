@@ -8,6 +8,7 @@ import type {
   WithMateWindowSettingsApi,
 } from "../../src-shared/ipc/withmate-window-api.js";
 
+/** Electron のイベントとチャネル固有の引数を受け取る検証用リスナーの型。 */
 type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
@@ -21,13 +22,29 @@ type Listener = (...args: unknown[]) => void;
 // lifecycle = "permanent"
 // distinction = "型検査と公開key集合ではruntimeのIPC伝達を保証できない"
 // @end-test-value
+/** PDF の参照基準とチャンクの範囲・期待版を、preload が各専用チャネルへ欠落なく渡すことを確かめる。 */
 test("PDF preload forwards link and revision-bound chunk requests", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
-  const request = { sessionId: "session", target: "result.pdf", baseResource: { sessionId: "session", absolutePath: "/outside/source.md" } };
-  assert.deepEqual(await api.inspectSessionPdf(request), { channel: "withmate:inspect-session-pdf", args: [request] });
-  const chunk = { ...request, offset: 10, length: 20, expectedRevision: "revision" };
-  assert.deepEqual(await api.readSessionPdfChunk(chunk), { channel: "withmate:read-session-pdf-chunk", args: [chunk] });
+  const request = {
+    sessionId: "session",
+    target: "result.pdf",
+    baseResource: { sessionId: "session", absolutePath: "/outside/source.md" },
+  };
+  assert.deepEqual(await api.inspectSessionPdf(request), {
+    channel: "withmate:inspect-session-pdf",
+    args: [request],
+  });
+  const chunk = {
+    ...request,
+    offset: 10,
+    length: 20,
+    expectedRevision: "revision",
+  };
+  assert.deepEqual(await api.readSessionPdfChunk(chunk), {
+    channel: "withmate:read-session-pdf-chunk",
+    args: [chunk],
+  });
 });
 
 // @test-value v2
@@ -41,16 +58,28 @@ test("PDF preload forwards link and revision-bound chunk requests", async () => 
 // lifecycle = "permanent"
 // distinction = "公開keyと型検査はruntime channel・payload・選択結果の伝達を保証しない"
 // @end-test-value
+/** Preview メニューがスコープと座標を専用チャネルへ渡し、閉じる選択と取消をそのまま公開 API の結果にすることを確かめる。 */
 test("Preview menu preloadはscopeと座標と選択結果を伝達する", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   const request = { scope: "preview" as const, point: { x: 12, y: 34 } };
   assert.deepEqual(await api.showSessionFilePreviewContextMenu(request), {
-    channel: "withmate:show-session-file-preview-context-menu", args: [request],
+    channel: "withmate:show-session-file-preview-context-menu",
+    args: [request],
   });
   for (const result of ["close", "dismissed"] as const) {
-    const resultApi = createWithMateWindowApi({ ...ipcRenderer, invoke: async () => result } as never);
-    assert.equal(await resultApi.showSessionFilePreviewContextMenu({ ...request, scope: "session" }), result);
+    const resultApi = createWithMateWindowApi({
+      ...ipcRenderer,
+      /** メニューの選択または取消を Main からの応答として返す。 */ invoke:
+        async () => result,
+    } as never);
+    assert.equal(
+      await resultApi.showSessionFilePreviewContextMenu({
+        ...request,
+        scope: "session",
+      }),
+      result,
+    );
   }
 });
 
@@ -65,19 +94,37 @@ test("Preview menu preloadはscopeと座標と選択結果を伝達する", asyn
 // lifecycle = "permanent"
 // distinction = "key集合と型検査はchannelと引数のruntime接続や購読解除を保証しない"
 // @end-test-value
+/** Preview の一覧・フォーカス・クローズがトークンと所有者を取り違えず、変更通知の購読を解除できることを確かめる。 */
 test("Preview管理preloadは操作IDとchanged購読を接続する", async () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
-  assert.deepEqual(await api.listSessionFilePreviewWindows(), { channel: "withmate:list-session-file-preview-windows", args: [] });
-  assert.deepEqual(await api.focusSessionFilePreviewWindow("token"), { channel: "withmate:focus-session-file-preview-window", args: ["token"] });
-  assert.deepEqual(await api.closeSessionFilePreviewWindow("token"), { channel: "withmate:close-session-file-preview-window", args: ["token"] });
-  assert.deepEqual(await api.closeSessionFilePreviewWindows("owner"), { channel: "withmate:close-session-file-preview-windows", args: ["owner"] });
+  assert.deepEqual(await api.listSessionFilePreviewWindows(), {
+    channel: "withmate:list-session-file-preview-windows",
+    args: [],
+  });
+  assert.deepEqual(await api.focusSessionFilePreviewWindow("token"), {
+    channel: "withmate:focus-session-file-preview-window",
+    args: ["token"],
+  });
+  assert.deepEqual(await api.closeSessionFilePreviewWindow("token"), {
+    channel: "withmate:close-session-file-preview-window",
+    args: ["token"],
+  });
+  assert.deepEqual(await api.closeSessionFilePreviewWindows("owner"), {
+    channel: "withmate:close-session-file-preview-windows",
+    args: ["owner"],
+  });
   let changes = 0;
-  const dispose = api.subscribeSessionFilePreviewWindowsChanged(() => { changes++; });
+  const dispose = api.subscribeSessionFilePreviewWindowsChanged(() => {
+    changes++;
+  });
   listeners.get("withmate:session-file-preview-windows-changed")?.({});
   assert.equal(changes, 1);
   dispose();
-  assert.equal(listeners.has("withmate:session-file-preview-windows-changed"), false);
+  assert.equal(
+    listeners.has("withmate:session-file-preview-windows-changed"),
+    false,
+  );
 });
 
 // @test-value v2
@@ -91,14 +138,20 @@ test("Preview管理preloadは操作IDとchanged購読を接続する", async () 
 // lifecycle = "permanent"
 // distinction = "型検査はoptional引数の伝達漏れを検出できない"
 // @end-test-value
+/** 利用残量の問い合わせが Provider ID とキャッシュ限定指定を保持し、指定がない場合も既定値を勝手に補わないことを確かめる。 */
 test("quota preloadはcacheOnlyを伝達する", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
-  assert.deepEqual(await api.getProviderQuotaTelemetry("copilot", { cacheOnly: true }), {
-    channel: "withmate:get-provider-quota-telemetry", args: ["copilot", { cacheOnly: true }],
-  });
+  assert.deepEqual(
+    await api.getProviderQuotaTelemetry("copilot", { cacheOnly: true }),
+    {
+      channel: "withmate:get-provider-quota-telemetry",
+      args: ["copilot", { cacheOnly: true }],
+    },
+  );
   assert.deepEqual(await api.getProviderQuotaTelemetry("copilot"), {
-    channel: "withmate:get-provider-quota-telemetry", args: ["copilot", undefined],
+    channel: "withmate:get-provider-quota-telemetry",
+    args: ["copilot", undefined],
   });
 });
 
@@ -114,18 +167,39 @@ test("quota preloadはcacheOnlyを伝達する", async () => {
 // impact = "ページ切替と即時取消が正しいqueryへ届くことを保持する"
 // distinction = "型検査やkey集合testではruntime channelとpayload伝達を検出できない"
 // @end-test-value
+/** 会話検索とナビゲーターのページ識別情報を保持し、取消でも元の要求 ID と生成元を専用チャネルへ渡すことを確かめる。 */
 test("会話query preloadはpage identityと取消を伝達する", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
-  const common = { requestId: "query-1", producerId: "find", offset: 64, stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 2, requestId: "query-1" } };
+  const common = {
+    requestId: "query-1",
+    producerId: "find",
+    offset: 64,
+    stamp: {
+      generationId: "generation",
+      ownerIdentity: "owner",
+      contentRevision: 2,
+      requestId: "query-1",
+    },
+  };
   const search = { ...common, query: "needle", mode: "preview" as const };
-  assert.deepEqual(await api.searchConversation("aux", search), { channel: "withmate:search-conversation", args: ["aux", search] });
+  assert.deepEqual(await api.searchConversation("aux", search), {
+    channel: "withmate:search-conversation",
+    args: ["aux", search],
+  });
   const nav = { ...common, filter: "bookmarks" as const };
-  assert.deepEqual(await api.listConversationNavigator("aux", nav), { channel: "withmate:list-conversation-navigator", args: ["aux", nav] });
+  assert.deepEqual(await api.listConversationNavigator("aux", nav), {
+    channel: "withmate:list-conversation-navigator",
+    args: ["aux", nav],
+  });
   const cancel = { requestId: common.requestId, producerId: common.producerId };
-  assert.deepEqual(await api.cancelConversationQuery(cancel), { channel: "withmate:cancel-conversation-query", args: [cancel] });
+  assert.deepEqual(await api.cancelConversationQuery(cancel), {
+    channel: "withmate:cancel-conversation-query",
+    args: [cancel],
+  });
 });
 
+/** IPC 呼び出しのチャネルと引数、通知リスナーの登録・解除を実 Electron なしで観測できるスタブを作る。 */
 function createIpcRendererStub() {
   const listeners = new Map<string, Listener>();
   const removedListeners: Array<{ channel: string; listener: Listener }> = [];
@@ -134,18 +208,22 @@ function createIpcRendererStub() {
     listeners,
     removedListeners,
     ipcRenderer: {
+      /** IPC へ渡されたチャネルと引数を照合用の応答として返す。 */
       invoke(channel: string, ...args: unknown[]) {
         return Promise.resolve({ channel, args });
       },
+      /** 後から通知を発行できるよう、チャネルに登録されたリスナーを保持する。 */
       on(channel: string, listener: Listener) {
         listeners.set(channel, listener);
       },
+      /** 同じリスナーが登録されていれば外し、解除対象の組み合わせを記録する。 */
       removeListener(channel: string, listener: Listener) {
         if (listeners.get(channel) === listener) {
           listeners.delete(channel);
         }
         removedListeners.push({ channel, listener });
       },
+      /** 一方向の IPC 送信はこのスタブでは処理しない。 */
       send() {},
     },
   };
@@ -162,16 +240,33 @@ function createIpcRendererStub() {
 // lifecycle = "permanent"
 // distinction = "公開key集合と型検査はruntimeのinvoke channelおよび引数伝達を保証しない"
 // @end-test-value
+/** Files のピン一覧・登録・解除が、Session とファイルのルート参照をそれぞれの IPC に渡すことを確かめる。 */
 test("Files Pin preload は専用channelへSessionと参照を渡す", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   assert.deepEqual(await api.listSessionFilePins("aux-1"), {
-    channel: "withmate:list-session-file-pins", args: ["aux-1"],
+    channel: "withmate:list-session-file-pins",
+    args: ["aux-1"],
   });
-  const pin = { sessionId: "aux-1", rootId: "workspace", relativePath: "docs/file.txt" };
-  assert.deepEqual(await api.pinSessionFile(pin), { channel: "withmate:pin-session-file", args: [pin] });
-  const unpin = { sessionId: "aux-1", rootKind: "additional" as const, rootPath: "C:/removed", relativePath: "file.txt" };
-  assert.deepEqual(await api.unpinSessionFile(unpin), { channel: "withmate:unpin-session-file", args: [unpin] });
+  const pin = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "docs/file.txt",
+  };
+  assert.deepEqual(await api.pinSessionFile(pin), {
+    channel: "withmate:pin-session-file",
+    args: [pin],
+  });
+  const unpin = {
+    sessionId: "aux-1",
+    rootKind: "additional" as const,
+    rootPath: "C:/removed",
+    relativePath: "file.txt",
+  };
+  assert.deepEqual(await api.unpinSessionFile(unpin), {
+    channel: "withmate:unpin-session-file",
+    args: [unpin],
+  });
 });
 
 // @test-value v2
@@ -185,6 +280,7 @@ test("Files Pin preload は専用channelへSessionと参照を渡す", async () 
 // lifecycle = "permanent"
 // distinction = "型はIPC channel文字列とpayloadのruntime接続を保証せず、storage testはpreloadを通らない"
 // @end-test-value
+/** Session 全体の読み込みではなく、対象 ID を引数にサマリー専用の IPC を呼ぶことを確かめる。 */
 test("Session summaryを対象IDで専用channelへ要求する", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -205,6 +301,7 @@ test("Session summaryを対象IDで専用channelへ要求する", async () => {
 // lifecycle = "permanent"
 // distinction = "session mutationの専用channelとowner identity伝達を実際に観測し、旧generic APIの網羅検査とは区別する"
 // @end-test-value
+/** Session の操作・ファイル参照・設定などの代表的な公開 API が、専用 IPC に識別子や操作引数を保持して渡すことを確かめる。 */
 test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる", async () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -222,10 +319,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     sessionId: "session-1",
     point: { x: 24, y: 48 },
   };
-  assert.deepEqual(await api.showSessionMonitorContextMenu(sessionMonitorContextMenuRequest), {
-    channel: "withmate:show-session-monitor-context-menu",
-    args: [sessionMonitorContextMenuRequest],
-  });
+  assert.deepEqual(
+    await api.showSessionMonitorContextMenu(sessionMonitorContextMenuRequest),
+    {
+      channel: "withmate:show-session-monitor-context-menu",
+      args: [sessionMonitorContextMenuRequest],
+    },
+  );
   assert.deepEqual(await api.getAppBootStatus(), {
     channel: "withmate:get-app-boot-status",
     args: [],
@@ -242,18 +342,24 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:reset-app-database",
     args: [{ targets: ["appSettings"] }],
   });
-  assert.deepEqual(await api.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }), {
-    channel: "withmate:delete-sessions-last-active-before",
-    args: [{ cutoffDate: "2026-07-01" }],
-  });
+  assert.deepEqual(
+    await api.deleteSessionsLastActiveBefore({ cutoffDate: "2026-07-01" }),
+    {
+      channel: "withmate:delete-sessions-last-active-before",
+      args: [{ cutoffDate: "2026-07-01" }],
+    },
+  );
   assert.deepEqual(await api.getSessionGlossaryProjection("session-1"), {
     channel: "withmate:get-session-glossary-projection",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.searchSessionGlossary("session-1", { query: "runtime" }), {
-    channel: "withmate:search-session-glossary",
-    args: ["session-1", { query: "runtime" }],
-  });
+  assert.deepEqual(
+    await api.searchSessionGlossary("session-1", { query: "runtime" }),
+    {
+      channel: "withmate:search-session-glossary",
+      args: ["session-1", { query: "runtime" }],
+    },
+  );
   assert.deepEqual(await api.getMateState(), {
     channel: "withmate:get-mate-state",
     args: [],
@@ -270,10 +376,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:update-mate",
     args: [{ displayName: "Buddy 2" }],
   });
-  assert.deepEqual(await api.setMateAvatar({ avatarFilePath: "C:/avatar.png" }), {
-    channel: "withmate:set-mate-avatar",
-    args: [{ avatarFilePath: "C:/avatar.png" }],
-  });
+  assert.deepEqual(
+    await api.setMateAvatar({ avatarFilePath: "C:/avatar.png" }),
+    {
+      channel: "withmate:set-mate-avatar",
+      args: [{ avatarFilePath: "C:/avatar.png" }],
+    },
+  );
   assert.deepEqual(await api.resetMate(), {
     channel: "withmate:reset-mate",
     args: [],
@@ -290,45 +399,65 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:create-character",
     args: [{ name: "Mia" }],
   });
-  assert.deepEqual(await api.updateCharacterMetadata({ characterId: "char-1", name: "Mia 2" }), {
-    channel: "withmate:update-character-metadata",
-    args: [{ characterId: "char-1", name: "Mia 2" }],
-  });
-  assert.deepEqual(await api.updateCharacterDefinition({
-    characterId: "char-1",
-    definitionMarkdown: "definition",
-  }), {
-    channel: "withmate:update-character-definition",
-    args: [{
+  assert.deepEqual(
+    await api.updateCharacterMetadata({ characterId: "char-1", name: "Mia 2" }),
+    {
+      channel: "withmate:update-character-metadata",
+      args: [{ characterId: "char-1", name: "Mia 2" }],
+    },
+  );
+  assert.deepEqual(
+    await api.updateCharacterDefinition({
       characterId: "char-1",
       definitionMarkdown: "definition",
-    }],
-  });
+    }),
+    {
+      channel: "withmate:update-character-definition",
+      args: [
+        {
+          characterId: "char-1",
+          definitionMarkdown: "definition",
+        },
+      ],
+    },
+  );
   assert.deepEqual(await api.archiveCharacter("char-1"), {
     channel: "withmate:archive-character",
     args: ["char-1"],
   });
   assert.equal("setDefaultCharacter" in api, false);
-  assert.deepEqual(await api.resolveLaunchCharacter({ characterId: "char-1" }), {
-    channel: "withmate:resolve-launch-character",
-    args: [{ characterId: "char-1" }],
-  });
-  assert.deepEqual(await api.startCharacterAuthoringSession({
-    mode: "improve",
-    characterId: "char-1",
-    provider: "codex",
-  }), {
-    channel: "withmate:start-character-authoring-session",
-    args: [{ mode: "improve", characterId: "char-1", provider: "codex" }],
-  });
-  assert.deepEqual(await api.listSessionSummaryPage({ scope: "recent", limit: 25 }), {
-    channel: "withmate:list-session-summary-page",
-    args: [{ scope: "recent", limit: 25 }],
-  });
-  assert.deepEqual(await api.listSessionMonitorPage({ cursor: "parent-1", limit: 25 }), {
-    channel: "withmate:list-session-monitor-page",
-    args: [{ cursor: "parent-1", limit: 25 }],
-  });
+  assert.deepEqual(
+    await api.resolveLaunchCharacter({ characterId: "char-1" }),
+    {
+      channel: "withmate:resolve-launch-character",
+      args: [{ characterId: "char-1" }],
+    },
+  );
+  assert.deepEqual(
+    await api.startCharacterAuthoringSession({
+      mode: "improve",
+      characterId: "char-1",
+      provider: "codex",
+    }),
+    {
+      channel: "withmate:start-character-authoring-session",
+      args: [{ mode: "improve", characterId: "char-1", provider: "codex" }],
+    },
+  );
+  assert.deepEqual(
+    await api.listSessionSummaryPage({ scope: "recent", limit: 25 }),
+    {
+      channel: "withmate:list-session-summary-page",
+      args: [{ scope: "recent", limit: 25 }],
+    },
+  );
+  assert.deepEqual(
+    await api.listSessionMonitorPage({ cursor: "parent-1", limit: 25 }),
+    {
+      channel: "withmate:list-session-monitor-page",
+      args: [{ cursor: "parent-1", limit: 25 }],
+    },
+  );
   assert.deepEqual(await api.listSessionCharacterUsage(), {
     channel: "withmate:list-session-character-usage",
     args: [],
@@ -337,10 +466,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-latest-session-turn",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.copyFilesToSessionFiles("session-1", ["C:/note.txt"]), {
-    channel: "withmate:copy-files-to-session-files",
-    args: ["session-1", ["C:/note.txt"]],
-  });
+  assert.deepEqual(
+    await api.copyFilesToSessionFiles("session-1", ["C:/note.txt"]),
+    {
+      channel: "withmate:copy-files-to-session-files",
+      args: ["session-1", ["C:/note.txt"]],
+    },
+  );
   assert.deepEqual(await api.pickFiles("C:/seed"), {
     channel: "withmate:pick-files",
     args: ["C:/seed"],
@@ -365,27 +497,35 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:pick-session-image-file",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.pickImageFile("C:/icons/current.webp", "character-icon"), {
-    channel: "withmate:pick-image-file",
-    args: ["C:/icons/current.webp", "character-icon"],
-  });
+  assert.deepEqual(
+    await api.pickImageFile("C:/icons/current.webp", "character-icon"),
+    {
+      channel: "withmate:pick-image-file",
+      args: ["C:/icons/current.webp", "character-icon"],
+    },
+  );
   assert.deepEqual(await api.pickImageFile(), {
     channel: "withmate:pick-image-file",
     args: [null, "general"],
   });
   const pastedBuffer = new ArrayBuffer(3);
-  assert.deepEqual(await api.savePastedSessionFile({
-    sessionId: "session-1",
-    fileName: "pasted.png",
-    data: pastedBuffer,
-  }), {
-    channel: "withmate:save-pasted-session-file",
-    args: [{
+  assert.deepEqual(
+    await api.savePastedSessionFile({
       sessionId: "session-1",
       fileName: "pasted.png",
       data: pastedBuffer,
-    }],
-  });
+    }),
+    {
+      channel: "withmate:save-pasted-session-file",
+      args: [
+        {
+          sessionId: "session-1",
+          fileName: "pasted.png",
+          data: pastedBuffer,
+        },
+      ],
+    },
+  );
   assert.deepEqual(await api.openSessionFilesDirectory("session-1"), {
     channel: "withmate:open-session-files-directory",
     args: ["session-1"],
@@ -394,34 +534,55 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-files-terminal",
     args: ["session-1"],
   });
-  const fileRequest = { sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" };
+  const fileRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "src/app/SessionWindowApp.tsx",
+  };
   assert.equal(api.isSessionFileObjectCopyAvailable(), true);
-  assert.equal(createWithMateWindowApi(ipcRenderer as never, "linux").isSessionFileObjectCopyAvailable(), false);
+  assert.equal(
+    createWithMateWindowApi(
+      ipcRenderer as never,
+      "linux",
+    ).isSessionFileObjectCopyAvailable(),
+    false,
+  );
   assert.deepEqual(await api.listSessionFileRoots("session-1"), {
     channel: "withmate:list-session-file-roots",
     args: ["session-1"],
   });
-  assert.deepEqual(await api.listSessionDirectory({ ...fileRequest, relativePath: "src" }), {
-    channel: "withmate:list-session-directory",
-    args: [{ ...fileRequest, relativePath: "src" }],
-  });
+  assert.deepEqual(
+    await api.listSessionDirectory({ ...fileRequest, relativePath: "src" }),
+    {
+      channel: "withmate:list-session-directory",
+      args: [{ ...fileRequest, relativePath: "src" }],
+    },
+  );
   assert.deepEqual(await api.inspectSessionFile(fileRequest), {
     channel: "withmate:inspect-session-file",
     args: [fileRequest],
   });
-  assert.deepEqual(await api.readSessionFileChunk({
-    ...fileRequest,
-    offset: 0,
-    length: 1024,
-    expectedRevision: "10:20",
-  }), {
-    channel: "withmate:read-session-file-chunk",
-    args: [{ ...fileRequest, offset: 0, length: 1024, expectedRevision: "10:20" }],
-  });
-  assert.deepEqual(await api.openSessionFile({ ...fileRequest, reveal: true }), {
-    channel: "withmate:open-session-file",
-    args: [{ ...fileRequest, reveal: true }],
-  });
+  assert.deepEqual(
+    await api.readSessionFileChunk({
+      ...fileRequest,
+      offset: 0,
+      length: 1024,
+      expectedRevision: "10:20",
+    }),
+    {
+      channel: "withmate:read-session-file-chunk",
+      args: [
+        { ...fileRequest, offset: 0, length: 1024, expectedRevision: "10:20" },
+      ],
+    },
+  );
+  assert.deepEqual(
+    await api.openSessionFile({ ...fileRequest, reveal: true }),
+    {
+      channel: "withmate:open-session-file",
+      args: [{ ...fileRequest, reveal: true }],
+    },
+  );
   const filePreviewRequest = {
     kind: "resource" as const,
     resource: fileRequest,
@@ -431,25 +592,37 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-file-preview-window",
     args: [filePreviewRequest],
   });
-  const imageActionRequest = { sessionId: "session-1", point: { x: 120, y: 240 } };
+  const imageActionRequest = {
+    sessionId: "session-1",
+    point: { x: 120, y: 240 },
+  };
   assert.deepEqual(await api.copySessionFilePreviewImage(imageActionRequest), {
     channel: "withmate:copy-session-file-preview-image",
     args: [imageActionRequest],
   });
-  assert.deepEqual(await api.showSessionFilePreviewImageContextMenu(imageActionRequest), {
-    channel: "withmate:show-session-file-preview-image-context-menu",
-    args: [imageActionRequest],
-  });
+  assert.deepEqual(
+    await api.showSessionFilePreviewImageContextMenu(imageActionRequest),
+    {
+      channel: "withmate:show-session-file-preview-image-context-menu",
+      args: [imageActionRequest],
+    },
+  );
   const fileCopyRequest = { resource: fileRequest };
   assert.deepEqual(await api.copySessionFileObject(fileCopyRequest), {
     channel: "withmate:copy-session-file-object",
     args: [fileCopyRequest],
   });
-  const fileCopyContextMenuRequest = { ...fileCopyRequest, point: { x: 40, y: 60 } };
-  assert.deepEqual(await api.showSessionFileObjectCopyContextMenu(fileCopyContextMenuRequest), {
-    channel: "withmate:show-session-file-object-copy-context-menu",
-    args: [fileCopyContextMenuRequest],
-  });
+  const fileCopyContextMenuRequest = {
+    ...fileCopyRequest,
+    point: { x: 40, y: 60 },
+  };
+  assert.deepEqual(
+    await api.showSessionFileObjectCopyContextMenu(fileCopyContextMenuRequest),
+    {
+      channel: "withmate:show-session-file-object-copy-context-menu",
+      args: [fileCopyContextMenuRequest],
+    },
+  );
   const fileTreeContextMenuRequest = {
     sessionId: "session-1",
     rootId: "workspace",
@@ -458,10 +631,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     point: { x: 40, y: 60 },
     canInsert: true,
   };
-  assert.deepEqual(await api.showSessionFileTreeContextMenu(fileTreeContextMenuRequest), {
-    channel: "withmate:show-session-file-tree-context-menu",
-    args: [fileTreeContextMenuRequest],
-  });
+  assert.deepEqual(
+    await api.showSessionFileTreeContextMenu(fileTreeContextMenuRequest),
+    {
+      channel: "withmate:show-session-file-tree-context-menu",
+      args: [fileTreeContextMenuRequest],
+    },
+  );
   const markdownLinkRequest = {
     target: "docs/review-brief%20final.md",
     point: { x: 80, y: 160 },
@@ -470,26 +646,47 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:show-markdown-link-context-menu",
     args: [markdownLinkRequest],
   });
-  assert.deepEqual(await api.listFileRootChanges({ sessionId: "session-1", rootId: "workspace" }), {
-    channel: "withmate:list-file-root-changes",
-    args: [{ sessionId: "session-1", rootId: "workspace" }],
-  });
-  assert.deepEqual(await api.listFileRootChangesRepositories({
-    sessionId: "session-1",
-    rootIds: ["workspace", "additional:repo"],
-  }), {
-    channel: "withmate:list-file-root-changes-repositories",
-    args: [{ sessionId: "session-1", rootIds: ["workspace", "additional:repo"] }],
-  });
-  assert.deepEqual(await api.getFileRootDiff({
-    sessionId: "session-1",
-    rootId: "workspace",
-    relativePath: "src/app/SessionWindowApp.tsx",
-    scope: "working-tree",
-  }), {
-    channel: "withmate:get-file-root-diff",
-    args: [{ sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx", scope: "working-tree" }],
-  });
+  assert.deepEqual(
+    await api.listFileRootChanges({
+      sessionId: "session-1",
+      rootId: "workspace",
+    }),
+    {
+      channel: "withmate:list-file-root-changes",
+      args: [{ sessionId: "session-1", rootId: "workspace" }],
+    },
+  );
+  assert.deepEqual(
+    await api.listFileRootChangesRepositories({
+      sessionId: "session-1",
+      rootIds: ["workspace", "additional:repo"],
+    }),
+    {
+      channel: "withmate:list-file-root-changes-repositories",
+      args: [
+        { sessionId: "session-1", rootIds: ["workspace", "additional:repo"] },
+      ],
+    },
+  );
+  assert.deepEqual(
+    await api.getFileRootDiff({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "src/app/SessionWindowApp.tsx",
+      scope: "working-tree",
+    }),
+    {
+      channel: "withmate:get-file-root-diff",
+      args: [
+        {
+          sessionId: "session-1",
+          rootId: "workspace",
+          relativePath: "src/app/SessionWindowApp.tsx",
+          scope: "working-tree",
+        },
+      ],
+    },
+  );
   const historyRequest = {
     sessionId: "session-1",
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
@@ -499,34 +696,59 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     ...historyRequest,
     branch: "main",
   };
-  assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
-    channel: "withmate:list-file-root-git-history-repositories",
-    args: [{ sessionId: "session-1" }],
-  });
-  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyCommitsRequest, cursor: "100" }), {
-    channel: "withmate:list-file-root-git-history-commits",
-    args: [{ ...historyCommitsRequest, cursor: "100" }],
-  });
-  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, branch: null, cursor: null }), {
-    channel: "withmate:list-file-root-git-history-commits",
-    args: [{ ...historyRequest, branch: null, cursor: null }],
-  });
+  assert.deepEqual(
+    await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }),
+    {
+      channel: "withmate:list-file-root-git-history-repositories",
+      args: [{ sessionId: "session-1" }],
+    },
+  );
+  assert.deepEqual(
+    await api.listFileRootGitHistoryCommits({
+      ...historyCommitsRequest,
+      cursor: "100",
+    }),
+    {
+      channel: "withmate:list-file-root-git-history-commits",
+      args: [{ ...historyCommitsRequest, cursor: "100" }],
+    },
+  );
+  assert.deepEqual(
+    await api.listFileRootGitHistoryCommits({
+      ...historyRequest,
+      branch: null,
+      cursor: null,
+    }),
+    {
+      channel: "withmate:list-file-root-git-history-commits",
+      args: [{ ...historyRequest, branch: null, cursor: null }],
+    },
+  );
   const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
-  assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
-    channel: "withmate:get-file-root-git-history-commit-detail",
-    args: [historyDetailRequest],
-  });
+  assert.deepEqual(
+    await api.getFileRootGitHistoryCommitDetail(historyDetailRequest),
+    {
+      channel: "withmate:get-file-root-git-history-commit-detail",
+      args: [historyDetailRequest],
+    },
+  );
   const historyComparisonRequest = {
     ...historyRequest,
     base: { kind: "branch" as const, name: "main" },
     target: { kind: "tag" as const, name: "v1.0" },
     mode: "direct" as const,
   };
-  assert.deepEqual(await api.getFileRootGitHistoryComparison(historyComparisonRequest), {
-    channel: "withmate:get-file-root-git-history-comparison",
-    args: [historyComparisonRequest],
-  });
-  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/app/SessionWindowApp.tsx" };
+  assert.deepEqual(
+    await api.getFileRootGitHistoryComparison(historyComparisonRequest),
+    {
+      channel: "withmate:get-file-root-git-history-comparison",
+      args: [historyComparisonRequest],
+    },
+  );
+  const historyDiffRequest = {
+    ...historyDetailRequest,
+    relativePath: "src/app/SessionWindowApp.tsx",
+  };
   assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
     channel: "withmate:get-file-root-git-history-diff",
     args: [historyDiffRequest],
@@ -535,7 +757,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     parentSessionId: "session-1",
     provider: "copilot",
     clientRequestId: "preload-create-1",
-    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    creationContext: {
+      generationId: "generation-1",
+      parentIncarnationId: "incarnation-1",
+    },
   } as const;
   const sessionExecutionOptions = {
     catalogRevision: 1,
@@ -552,30 +777,48 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     incarnationId: "incarnation-1",
     executionOptions: sessionExecutionOptions,
   };
-  assert.deepEqual(await api.setSessionExecutionOptions(sessionExecutionOptionsRequest), {
-    channel: "withmate:set-session-execution-options",
-    args: [sessionExecutionOptionsRequest],
-  });
-  const sessionTitleRequest = { sessionId: "session-1", incarnationId: "incarnation-1", title: "Renamed" };
+  assert.deepEqual(
+    await api.setSessionExecutionOptions(sessionExecutionOptionsRequest),
+    {
+      channel: "withmate:set-session-execution-options",
+      args: [sessionExecutionOptionsRequest],
+    },
+  );
+  const sessionTitleRequest = {
+    sessionId: "session-1",
+    incarnationId: "incarnation-1",
+    title: "Renamed",
+  };
   assert.deepEqual(await api.setSessionTitle(sessionTitleRequest), {
     channel: "withmate:set-session-title",
     args: [sessionTitleRequest],
   });
-  const sessionBookmarkRequest = { sessionId: "session-1", incarnationId: "incarnation-1", messageIndex: 4, isBookmarked: true };
-  assert.deepEqual(await api.setSessionMessageBookmark(sessionBookmarkRequest), {
-    channel: "withmate:set-session-message-bookmark",
-    args: [sessionBookmarkRequest],
-  });
+  const sessionBookmarkRequest = {
+    sessionId: "session-1",
+    incarnationId: "incarnation-1",
+    messageIndex: 4,
+    isBookmarked: true,
+  };
+  assert.deepEqual(
+    await api.setSessionMessageBookmark(sessionBookmarkRequest),
+    {
+      channel: "withmate:set-session-message-bookmark",
+      args: [sessionBookmarkRequest],
+    },
+  );
   const auxiliaryExecutionOptionsRequest = {
     auxiliarySessionId: "aux-1",
     parentSessionId: "session-1",
     createdAt: "2026-07-04T00:00:00.000Z",
     executionOptions: sessionExecutionOptions,
   };
-  assert.deepEqual(await api.setAuxiliaryExecutionOptions(auxiliaryExecutionOptionsRequest), {
-    channel: "withmate:set-auxiliary-execution-options",
-    args: [auxiliaryExecutionOptionsRequest],
-  });
+  assert.deepEqual(
+    await api.setAuxiliaryExecutionOptions(auxiliaryExecutionOptionsRequest),
+    {
+      channel: "withmate:set-auxiliary-execution-options",
+      args: [auxiliaryExecutionOptionsRequest],
+    },
+  );
   const auxiliaryTitleRequest = {
     auxiliarySessionId: "aux-1",
     parentSessionId: "session-1",
@@ -593,10 +836,13 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     messageIndex: 2,
     isBookmarked: false,
   };
-  assert.deepEqual(await api.setAuxiliaryMessageBookmark(auxiliaryBookmarkRequest), {
-    channel: "withmate:set-auxiliary-message-bookmark",
-    args: [auxiliaryBookmarkRequest],
-  });
+  assert.deepEqual(
+    await api.setAuxiliaryMessageBookmark(auxiliaryBookmarkRequest),
+    {
+      channel: "withmate:set-auxiliary-message-bookmark",
+      args: [auxiliaryBookmarkRequest],
+    },
+  );
   assert.deepEqual(await api.createAuxiliarySession(creationRequest), {
     channel: "withmate:create-auxiliary-session",
     args: [creationRequest],
@@ -613,55 +859,89 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-auxiliary-creation",
     args: [creationRequest],
   });
-  assert.deepEqual(await api.runAuxiliarySessionTurn("aux-1", {
-    userMessage: "review",
-    executionOptions: sessionExecutionOptions,
-  }), {
-    channel: "withmate:run-auxiliary-session-turn",
-    args: ["aux-1", { userMessage: "review", executionOptions: sessionExecutionOptions }],
-  });
-  const auxiliaryStop = { sessionId: "aux-1", incarnationId: "aux-incarnation", execution: { kind: "receipt", id: "start-receipt" } } as const;
+  assert.deepEqual(
+    await api.runAuxiliarySessionTurn("aux-1", {
+      userMessage: "review",
+      executionOptions: sessionExecutionOptions,
+    }),
+    {
+      channel: "withmate:run-auxiliary-session-turn",
+      args: [
+        "aux-1",
+        { userMessage: "review", executionOptions: sessionExecutionOptions },
+      ],
+    },
+  );
+  const auxiliaryStop = {
+    sessionId: "aux-1",
+    incarnationId: "aux-incarnation",
+    execution: { kind: "receipt", id: "start-receipt" },
+  } as const;
   assert.deepEqual(await api.cancelAuxiliarySessionRun(auxiliaryStop), {
     channel: "withmate:cancel-auxiliary-session-run",
     args: [auxiliaryStop],
   });
-  const mainStop = { sessionId: "session-1", incarnationId: "main-incarnation", execution: { kind: "turn", id: "withmate-turn" } } as const;
+  const mainStop = {
+    sessionId: "session-1",
+    incarnationId: "main-incarnation",
+    execution: { kind: "turn", id: "withmate-turn" },
+  } as const;
   assert.deepEqual(await api.cancelSessionRun(mainStop), {
     channel: "withmate:cancel-session-run",
     args: [mainStop],
   });
   const input = { expectedTurnId: "turn-one", userMessage: "additional" };
   assert.deepEqual(await api.steerSessionTurn("session-1", input), {
-    channel: "withmate:steer-session-turn", args: ["session-1", input],
+    channel: "withmate:steer-session-turn",
+    args: ["session-1", input],
   });
   assert.deepEqual(await api.steerAuxiliarySessionTurn("aux-1", input), {
-    channel: "withmate:steer-auxiliary-session-turn", args: ["aux-1", input],
+    channel: "withmate:steer-auxiliary-session-turn",
+    args: ["aux-1", input],
   });
-  assert.deepEqual(await api.updateChatLayoutPreference({ target: "sidePane", value: "files" }), {
-    channel: "withmate:update-chat-layout-preference",
-    args: [{ target: "sidePane", value: "files" }],
-  });
+  assert.deepEqual(
+    await api.updateChatLayoutPreference({
+      target: "sidePane",
+      value: "files",
+    }),
+    {
+      channel: "withmate:update-chat-layout-preference",
+      args: [{ target: "sidePane", value: "files" }],
+    },
+  );
   assert.deepEqual(await api.listPromptTemplates(), {
     channel: "withmate:list-prompt-templates",
     args: [],
   });
-  assert.deepEqual(await api.createPromptTemplate({ name: "Review", prompt: "review it" }), {
-    channel: "withmate:create-prompt-template",
-    args: [{ name: "Review", prompt: "review it" }],
-  });
-  assert.deepEqual(await api.updatePromptTemplate({ id: "template-1", name: "Review", prompt: "review it" }), {
-    channel: "withmate:update-prompt-template",
-    args: [{ id: "template-1", name: "Review", prompt: "review it" }],
-  });
+  assert.deepEqual(
+    await api.createPromptTemplate({ name: "Review", prompt: "review it" }),
+    {
+      channel: "withmate:create-prompt-template",
+      args: [{ name: "Review", prompt: "review it" }],
+    },
+  );
+  assert.deepEqual(
+    await api.updatePromptTemplate({
+      id: "template-1",
+      name: "Review",
+      prompt: "review it",
+    }),
+    {
+      channel: "withmate:update-prompt-template",
+      args: [{ id: "template-1", name: "Review", prompt: "review it" }],
+    },
+  );
   assert.deepEqual(await api.deletePromptTemplate("template-1"), {
     channel: "withmate:delete-prompt-template",
     args: ["template-1"],
   });
 });
 
+/** Session Window の復元 API がスナップショットと通知の重複 ID を除き、復元結果の成功と失敗を Session 別に保持することを確かめる。 */
 test("Session Window restore API はsnapshotと対象別resultを検証して公開する", async () => {
   const listeners = new Map<string, Listener>();
   const api = createWithMateWindowApi({
+    /** 復元対象の一覧と復元実行について、チャネルごとに異なる検証用応答を返す。 */
     invoke(channel: string) {
       if (channel === "withmate:get-session-window-restore-set") {
         return Promise.resolve(["session-a", "session-a", "session-b"]);
@@ -675,16 +955,22 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
       }
       return Promise.resolve(undefined);
     },
+    /** 復元対象が変更されたことを通知できるように、チャネルのリスナーを記録する。 */
     on(channel: string, listener: Listener) {
       listeners.set(channel, listener);
     },
+    /** 復元対象の変更購読を解除するチャネルの登録を削除する。 */
     removeListener(channel: string) {
       listeners.delete(channel);
     },
+    /** 応答のない IPC 送信はこの検証では動作させない。 */
     send() {},
   } as never);
 
-  assert.deepEqual(await api.getSessionWindowRestoreSet(), ["session-a", "session-b"]);
+  assert.deepEqual(await api.getSessionWindowRestoreSet(), [
+    "session-a",
+    "session-b",
+  ]);
   assert.deepEqual(await api.restoreSessionWindows(), {
     requestedSessionIds: ["session-a", "session-b"],
     openedSessionIds: ["session-a"],
@@ -692,8 +978,13 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
   });
 
   const snapshots: string[][] = [];
-  const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => snapshots.push(sessionIds));
-  listeners.get("withmate:session-window-restore-set-changed")?.({}, ["session-c", "session-c"]);
+  const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) =>
+    snapshots.push(sessionIds),
+  );
+  listeners.get("withmate:session-window-restore-set-changed")?.({}, [
+    "session-c",
+    "session-c",
+  ]);
   assert.deepEqual(snapshots, [["session-c"]]);
   unsubscribe();
 });
@@ -709,6 +1000,7 @@ test("Session Window restore API はsnapshotと対象別resultを検証して公
 // lifecycle = "permanent"
 // distinction = "不足keyは型検査でも検出できるが、spread等で混入する余剰runtime keyは型だけでは排除できない。実際の公開objectを現行method集合と比較して公開surfaceの過不足を検出する"
 // @end-test-value
+/** 型に現れない余分な関数も検出できるよう、実際の公開オブジェクトのキーを想定した WithMateWindowApi の一覧と比較する。 */
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -938,25 +1230,76 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 // lifecycle = "permanent"
 // distinction = "公開key集合と型検査はruntime channel/payload接続とlistener解除を保証しない"
 // @end-test-value
+/** 永続キューが Session・受付・編集・ページの識別子を専用 IPC に渡し、キューと送信元変更のリスナーを解除できることを確かめる。 */
 test("queue preloadは専用引数を伝達しchanged購読を解除する", async () => {
   const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
-  const request = { incarnationId: "owner-1", clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
-    userMessage: "Inspect", submitSource: "composer" as const, executionOptions: {
-      catalogRevision: 1, model: "gpt-5", reasoningEffort: "medium" as const, approvalMode: "on-request" as const,
-      codexSandboxMode: "workspace-write" as const, codexSpeed: "standard" as const, codexReviewer: "user" as const, customAgentName: "",
-    } };
-  assert.deepEqual(await api.enqueueSessionTurn("session-1", request), { channel: "withmate:enqueue-session-turn", args: ["session-1", request] });
-  assert.deepEqual(await api.getSessionTurnQueueReceipt("session-1", request.clientRequestId), { channel: "withmate:get-session-turn-queue-receipt", args: ["session-1", request.clientRequestId] });
-  assert.deepEqual(await api.listSessionTurnQueue("session-1"), { channel: "withmate:list-session-turn-queue", args: ["session-1"] });
-  assert.deepEqual(await api.listSessionTurnQueueReceipts("session-1", { cursor: 4, limit: 20 }), { channel: "withmate:list-session-turn-queue-receipts", args: ["session-1", { cursor: 4, limit: 20 }] });
-  assert.deepEqual(await api.cancelQueuedSessionTurn("session-1", "item-1"), { channel: "withmate:cancel-queued-session-turn", args: ["session-1", "item-1"] });
+  const request = {
+    incarnationId: "owner-1",
+    clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+    userMessage: "Inspect",
+    submitSource: "composer" as const,
+    executionOptions: {
+      catalogRevision: 1,
+      model: "gpt-5",
+      reasoningEffort: "medium" as const,
+      approvalMode: "on-request" as const,
+      codexSandboxMode: "workspace-write" as const,
+      codexSpeed: "standard" as const,
+      codexReviewer: "user" as const,
+      customAgentName: "",
+    },
+  };
+  assert.deepEqual(await api.enqueueSessionTurn("session-1", request), {
+    channel: "withmate:enqueue-session-turn",
+    args: ["session-1", request],
+  });
+  assert.deepEqual(
+    await api.getSessionTurnQueueReceipt("session-1", request.clientRequestId),
+    {
+      channel: "withmate:get-session-turn-queue-receipt",
+      args: ["session-1", request.clientRequestId],
+    },
+  );
+  assert.deepEqual(await api.listSessionTurnQueue("session-1"), {
+    channel: "withmate:list-session-turn-queue",
+    args: ["session-1"],
+  });
+  assert.deepEqual(
+    await api.listSessionTurnQueueReceipts("session-1", {
+      cursor: 4,
+      limit: 20,
+    }),
+    {
+      channel: "withmate:list-session-turn-queue-receipts",
+      args: ["session-1", { cursor: 4, limit: 20 }],
+    },
+  );
+  assert.deepEqual(await api.cancelQueuedSessionTurn("session-1", "item-1"), {
+    channel: "withmate:cancel-queued-session-turn",
+    args: ["session-1", "item-1"],
+  });
   const edit = { incarnationId: "owner-1", id: "item-1" };
-  assert.deepEqual(await api.beginQueuedSessionTurnEdit("session-1", edit), { channel: "withmate:begin-queued-session-turn-edit", args: ["session-1", edit] });
+  assert.deepEqual(await api.beginQueuedSessionTurnEdit("session-1", edit), {
+    channel: "withmate:begin-queued-session-turn-edit",
+    args: ["session-1", edit],
+  });
   const update = { ...edit, userMessage: "Edited @input.txt" };
-  assert.deepEqual(await api.updateQueuedSessionTurn("session-1", update), { channel: "withmate:update-queued-session-turn", args: ["session-1", update] });
-  assert.deepEqual(await api.cancelQueuedSessionTurnEdit("session-1", edit), { channel: "withmate:cancel-queued-session-turn-edit", args: ["session-1", edit] });
-  assert.deepEqual(await api.sendQueuedSessionInput("aux-1", "item-2", "turn-1"), { channel: "withmate:send-queued-session-input", args: ["aux-1", "item-2", "turn-1"] });
+  assert.deepEqual(await api.updateQueuedSessionTurn("session-1", update), {
+    channel: "withmate:update-queued-session-turn",
+    args: ["session-1", update],
+  });
+  assert.deepEqual(await api.cancelQueuedSessionTurnEdit("session-1", edit), {
+    channel: "withmate:cancel-queued-session-turn-edit",
+    args: ["session-1", edit],
+  });
+  assert.deepEqual(
+    await api.sendQueuedSessionInput("aux-1", "item-2", "turn-1"),
+    {
+      channel: "withmate:send-queued-session-input",
+      args: ["aux-1", "item-2", "turn-1"],
+    },
+  );
   const changed: string[] = [];
   const dispose = api.onSessionTurnQueueChanged((id) => changed.push(id));
   const listener = listeners.get("withmate:session-turn-queue-changed");
@@ -965,19 +1308,31 @@ test("queue preloadは専用引数を伝達しchanged購読を解除する", asy
   assert.deepEqual(changed, ["session-1"]);
   dispose();
   assert.equal(listeners.has("withmate:session-turn-queue-changed"), false);
-  assert.deepEqual(removedListeners.at(-1), { channel: "withmate:session-turn-queue-changed", listener });
+  assert.deepEqual(removedListeners.at(-1), {
+    channel: "withmate:session-turn-queue-changed",
+    listener,
+  });
   const sent: string[] = [];
   const disposeSent = api.onSessionSentDeliveriesChanged((id) => sent.push(id));
-  const sentListener = listeners.get("withmate:session-sent-deliveries-changed");
+  const sentListener = listeners.get(
+    "withmate:session-sent-deliveries-changed",
+  );
   assert.ok(sentListener);
   for (const invalid of [null, 4, {}, ""]) sentListener({}, invalid);
   sentListener({}, "source");
   assert.deepEqual(sent, ["source"]);
   disposeSent();
-  assert.equal(listeners.has("withmate:session-sent-deliveries-changed"), false);
-  assert.deepEqual(removedListeners.at(-1), { channel: "withmate:session-sent-deliveries-changed", listener: sentListener });
+  assert.equal(
+    listeners.has("withmate:session-sent-deliveries-changed"),
+    false,
+  );
+  assert.deepEqual(removedListeners.at(-1), {
+    channel: "withmate:session-sent-deliveries-changed",
+    listener: sentListener,
+  });
 });
 
+/** ストレージの一括メンテナンス操作を Settings API 側のキーとして型検査し、Session API の代表的な操作一覧とは区別する。 */
 test("preload type surface は destructive storage maintenance API を Settings domain に置く", () => {
   const settingsKeys = [
     "resetAppDatabase",
@@ -991,7 +1346,10 @@ test("preload type surface は destructive storage maintenance API を Settings 
   ] satisfies Array<keyof WithMateWindowSessionApi>;
 
   assert.equal(settingsKeys.includes("deleteSessionsLastActiveBefore"), true);
-  assert.equal((sessionKeys as string[]).includes("deleteSessionsLastActiveBefore"), false);
+  assert.equal(
+    (sessionKeys as string[]).includes("deleteSessionsLastActiveBefore"),
+    false,
+  );
 });
 
 // @test-value v2
@@ -1004,6 +1362,7 @@ test("preload type surface は destructive storage maintenance API を Settings 
 // scope = "preload subscribe payload unwrap"
 // lifecycle = "permanent"
 // @end-test-value
+/** 起動状態・無効化・Preview 遷移・実行状態・テンプレートの通知が、IPC のイベントを除いた引数で公開コールバックに届くことを確かめる。 */
 test("createWithMateWindowApi は subscribe 系 API で payload を unwrap する", async () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -1015,9 +1374,11 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeInvalidation = api.subscribeSessionInvalidation((payload) => {
     received.push({ kind: "invalidation", payload });
   });
-  const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation((payload) => {
-    received.push({ kind: "previewNavigation", payload });
-  });
+  const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation(
+    (payload) => {
+      received.push({ kind: "previewNavigation", payload });
+    },
+  );
   const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
     received.push({ kind: "liveRun", sessionId, state });
   });
@@ -1025,16 +1386,35 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     received.push({ kind: "templates", templates });
   });
 
-  listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
-  listeners.get("withmate:sessions-invalidated")?.({}, { scope: "ids", sessionIds: ["session-1"] });
-  listeners.get("withmate:session-file-preview-navigation")?.({}, {
-    resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" },
-    ownerSessionId: "session-1",
-    displayPath: "C:/workspace/file", windowTitle: "App.tsx",
-    view: { kind: "diff", scope: "working-tree" },
-  });
-  listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
-  listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
+  listeners.get("withmate:app-boot-status")?.(
+    {},
+    { kind: "running", stage: "database", title: "DB" },
+  );
+  listeners.get("withmate:sessions-invalidated")?.(
+    {},
+    { scope: "ids", sessionIds: ["session-1"] },
+  );
+  listeners.get("withmate:session-file-preview-navigation")?.(
+    {},
+    {
+      resource: {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "src/app/SessionWindowApp.tsx",
+      },
+      ownerSessionId: "session-1",
+      displayPath: "C:/workspace/file",
+      windowTitle: "App.tsx",
+      view: { kind: "diff", scope: "working-tree" },
+    },
+  );
+  listeners.get("withmate:live-session-run")?.(
+    {},
+    { sessionId: "session-1", state: { phase: "running" } },
+  );
+  listeners.get("withmate:prompt-templates-changed")?.({}, [
+    { id: "template-1", name: "Review" },
+  ]);
   disposeBoot();
   disposeInvalidation();
   disposePreviewNavigation();
@@ -1042,14 +1422,25 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   disposeTemplates();
 
   assert.deepEqual(received, [
-    { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
-    { kind: "invalidation", payload: { scope: "ids", sessionIds: ["session-1"] } },
+    {
+      kind: "boot",
+      status: { kind: "running", stage: "database", title: "DB" },
+    },
+    {
+      kind: "invalidation",
+      payload: { scope: "ids", sessionIds: ["session-1"] },
+    },
     {
       kind: "previewNavigation",
       payload: {
-        resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" },
+        resource: {
+          sessionId: "session-1",
+          rootId: "workspace",
+          relativePath: "src/app/SessionWindowApp.tsx",
+        },
         ownerSessionId: "session-1",
-        displayPath: "C:/workspace/file", windowTitle: "App.tsx",
+        displayPath: "C:/workspace/file",
+        windowTitle: "App.tsx",
         view: { kind: "diff", scope: "working-tree" },
       },
     },
@@ -1058,7 +1449,10 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
-  assert.equal(listeners.has("withmate:session-file-preview-navigation"), false);
+  assert.equal(
+    listeners.has("withmate:session-file-preview-navigation"),
+    false,
+  );
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
@@ -1076,6 +1470,7 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
 // impact = "Home/Monitorの実停止待ち表示が更新されず、再openで不要な通知受信が残る"
 // distinction = "型検査やfull live unwrapでは確認できないdistinct status channelの実登録、null伝播、同一listener解除を小さい同期testで確認する"
 // @end-test-value
+/** 軽量実行状態の購読が Main と Auxiliary の ID、取消の進行状態、終端の null を保持し、登録したリスナー自身を解除することを確かめる。 */
 test("createWithMateWindowApi は軽量live statusと終端nullを渡し購読を解除する", () => {
   const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -1086,17 +1481,40 @@ test("createWithMateWindowApi は軽量live statusと終端nullを渡し購読�
   const channel = "withmate:live-session-run-status";
   const registeredListener = listeners.get(channel);
   assert.ok(registeredListener);
-  registeredListener({}, { sessionId: "main", status: { runState: "running", cancellationState: "terminating" } });
-  registeredListener({}, { sessionId: "aux", status: { runState: "running", cancellationState: "requested" } });
+  registeredListener(
+    {},
+    {
+      sessionId: "main",
+      status: { runState: "running", cancellationState: "terminating" },
+    },
+  );
+  registeredListener(
+    {},
+    {
+      sessionId: "aux",
+      status: { runState: "running", cancellationState: "requested" },
+    },
+  );
   registeredListener({}, { sessionId: "main", status: null });
   assert.deepEqual(received, [
-    { sessionId: "main", status: { runState: "running", cancellationState: "terminating" } },
-    { sessionId: "aux", status: { runState: "running", cancellationState: "requested" } },
+    {
+      sessionId: "main",
+      status: { runState: "running", cancellationState: "terminating" },
+    },
+    {
+      sessionId: "aux",
+      status: { runState: "running", cancellationState: "requested" },
+    },
     { sessionId: "main", status: null },
   ]);
   dispose();
   assert.equal(listeners.has(channel), false);
-  assert.ok(removedListeners.some((entry) => entry.channel === channel && entry.listener === registeredListener));
+  assert.ok(
+    removedListeners.some(
+      (entry) =>
+        entry.channel === channel && entry.listener === registeredListener,
+    ),
+  );
 });
 
 // @test-value v2
@@ -1111,23 +1529,34 @@ test("createWithMateWindowApi は軽量live statusと終端nullを渡し購読�
 // impact = "別親・空ID・不正形式のeventで誤ったAuxiliaryを選択しない"
 // distinction = "他のlive event unwrapとは分離して、Window間navigation eventの入力境界を検証する"
 // @end-test-value
+/** Auxiliary 選択通知は、親と対象の両 ID を正規化できる場合だけ公開コールバックへ渡すことを確かめる。 */
 test("createWithMateWindowApi はAuxiliary selection eventを検証してunwrapする", () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   const received: unknown[] = [];
-  const dispose = api.subscribeAuxiliarySessionSelection((payload) => received.push(payload));
+  const dispose = api.subscribeAuxiliarySessionSelection((payload) =>
+    received.push(payload),
+  );
 
-  listeners.get("withmate:auxiliary-session-selection")?.({}, {
-    parentSessionId: "  session-1 ",
-    auxiliarySessionId: " aux-1 ",
-  });
-  listeners.get("withmate:auxiliary-session-selection")?.({}, {
-    parentSessionId: "session-1",
-    auxiliarySessionId: "",
-  });
+  listeners.get("withmate:auxiliary-session-selection")?.(
+    {},
+    {
+      parentSessionId: "  session-1 ",
+      auxiliarySessionId: " aux-1 ",
+    },
+  );
+  listeners.get("withmate:auxiliary-session-selection")?.(
+    {},
+    {
+      parentSessionId: "session-1",
+      auxiliarySessionId: "",
+    },
+  );
   listeners.get("withmate:auxiliary-session-selection")?.({}, null);
 
-  assert.deepEqual(received, [{ parentSessionId: "session-1", auxiliarySessionId: "aux-1" }]);
+  assert.deepEqual(received, [
+    { parentSessionId: "session-1", auxiliarySessionId: "aux-1" },
+  ]);
   dispose();
   assert.equal(listeners.has("withmate:auxiliary-session-selection"), false);
 });
@@ -1143,6 +1572,7 @@ test("createWithMateWindowApi はAuxiliary selection eventを検証してunwrap�
 // lifecycle = "permanent"
 // distinction = "既存の複数subscription unwrap testでは検証しない、Auxiliary navigation固有のpayload検証と解除を専用に検証する"
 // @end-test-value
+/** Auxiliary を開く通知が親と対象の両 ID を正規化し、不正な入力を転送せず、登録した IPC リスナーを解除することを確かめる。 */
 test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwrapする", () => {
   const { ipcRenderer, listeners, removedListeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -1153,41 +1583,64 @@ test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwr
   const registeredListener = listeners.get("withmate:open-auxiliary-session");
   assert.ok(registeredListener);
 
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: " parent-session ",
-    auxiliarySessionId: " auxiliary-1 ",
-  });
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: "parent-session",
-    auxiliarySessionId: "",
-  });
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: "parent-session",
-    auxiliarySessionId: "auxiliary-1",
-    unexpected: true,
-  });
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: " parent-session ",
+      auxiliarySessionId: " auxiliary-1 ",
+    },
+  );
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: "parent-session",
+      auxiliarySessionId: "",
+    },
+  );
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: "parent-session",
+      auxiliarySessionId: "auxiliary-1",
+      unexpected: true,
+    },
+  );
   listeners.get("withmate:open-auxiliary-session")?.({}, null);
   listeners.get("withmate:open-auxiliary-session")?.({}, []);
   listeners.get("withmate:open-auxiliary-session")?.({}, 42);
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: 42,
-    auxiliarySessionId: "auxiliary-1",
-  });
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: "parent-session",
-    auxiliarySessionId: {},
-  });
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: 42,
+      auxiliarySessionId: "auxiliary-1",
+    },
+  );
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: "parent-session",
+      auxiliarySessionId: {},
+    },
+  );
   dispose();
-  listeners.get("withmate:open-auxiliary-session")?.({}, {
-    parentSessionId: "parent-session-2",
-    auxiliarySessionId: "auxiliary-2",
-  });
+  listeners.get("withmate:open-auxiliary-session")?.(
+    {},
+    {
+      parentSessionId: "parent-session-2",
+      auxiliarySessionId: "auxiliary-2",
+    },
+  );
 
-  assert.deepEqual(received, [{
-    parentSessionId: "parent-session",
-    auxiliarySessionId: "auxiliary-1",
-  }]);
-  assert.equal(removedListeners.at(-1)?.channel, "withmate:open-auxiliary-session");
+  assert.deepEqual(received, [
+    {
+      parentSessionId: "parent-session",
+      auxiliarySessionId: "auxiliary-1",
+    },
+  ]);
+  assert.equal(
+    removedListeners.at(-1)?.channel,
+    "withmate:open-auxiliary-session",
+  );
   assert.equal(removedListeners.at(-1)?.listener, registeredListener);
   assert.equal(listeners.has("withmate:open-auxiliary-session"), false);
 });
@@ -1203,40 +1656,64 @@ test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwr
 // lifecycle = "permanent"
 // distinction = "callbackの型だけでは実行時IPC payloadのunwrapと購読解除を保証できない"
 // @end-test-value
+/** 残量の通知は Provider ID と計測値、Glossary の通知は投影本体を公開コールバックへ渡し、Glossary の購読解除で登録が残らないことを確かめる。 */
 test("createWithMateWindowApi は telemetry / glossary の payload も unwrap する", () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   const quotaReceived: unknown[] = [];
   const glossaryReceived: unknown[] = [];
 
-  const disposeQuota = api.subscribeProviderQuotaTelemetry((providerId, telemetry) => {
-    quotaReceived.push({ providerId, telemetry });
-  });
+  const disposeQuota = api.subscribeProviderQuotaTelemetry(
+    (providerId, telemetry) => {
+      quotaReceived.push({ providerId, telemetry });
+    },
+  );
   const disposeGlossary = api.subscribeSessionGlossary((projection) => {
     glossaryReceived.push(projection);
   });
 
-  listeners.get("withmate:provider-quota-telemetry")?.({}, {
-    providerId: "copilot",
-    telemetry: { provider: "copilot", snapshots: [] },
-  });
-  listeners.get("withmate:session-glossary-changed")?.({}, {
-    sessionId: "session-1",
-    scopeRevision: "scope-1",
-    sequence: 2,
-    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
-    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
-  });
+  listeners.get("withmate:provider-quota-telemetry")?.(
+    {},
+    {
+      providerId: "copilot",
+      telemetry: { provider: "copilot", snapshots: [] },
+    },
+  );
+  listeners.get("withmate:session-glossary-changed")?.(
+    {},
+    {
+      sessionId: "session-1",
+      scopeRevision: "scope-1",
+      sequence: 2,
+      checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+      state: {
+        status: "missing",
+        relativePath: ".withmate/glossary.yaml",
+        revision: null,
+      },
+    },
+  );
   disposeQuota();
   disposeGlossary();
 
-  assert.deepEqual(quotaReceived, [{ providerId: "copilot", telemetry: { provider: "copilot", snapshots: [] } }]);
-  assert.deepEqual(glossaryReceived, [{
-    sessionId: "session-1",
-    scopeRevision: "scope-1",
-    sequence: 2,
-    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
-    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
-  }]);
+  assert.deepEqual(quotaReceived, [
+    {
+      providerId: "copilot",
+      telemetry: { provider: "copilot", snapshots: [] },
+    },
+  ]);
+  assert.deepEqual(glossaryReceived, [
+    {
+      sessionId: "session-1",
+      scopeRevision: "scope-1",
+      sequence: 2,
+      checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+      state: {
+        status: "missing",
+        relativePath: ".withmate/glossary.yaml",
+        revision: null,
+      },
+    },
+  ]);
   assert.equal(listeners.has("withmate:session-glossary-changed"), false);
 });

@@ -18,6 +18,7 @@ import { parseSessionFolderCleanupRequest } from "../../src-shared/session/sessi
 import type { AppLogInput } from "../../src-shared/window/app-log-types.js";
 
 const all = { fromDate: "", toDate: "", minimumFileSizeMiB: 0 };
+/** 一覧の日時やワークスペース保護条件を組み替えられる、非実行中のセッション概要を作る。 */
 const session = (
   id: string,
   updatedAt = new Date(2026, 4, 12, 12).toISOString(),
@@ -29,6 +30,7 @@ const session = (
   status: "saved" as const,
   runState: "idle",
 });
+/** 一時ユーザーデータに掃除サービスを接続し、ログ、実行中判定、ストア世代を操作できるようにする。 */
 async function fixture(writeLog?: (input: AppLogInput) => void) {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-cleanup-"));
   let identity = {};
@@ -36,18 +38,24 @@ async function fixture(writeLog?: (input: AppLogInput) => void) {
   const running = new Set<string>();
   const logs: AppLogInput[] = [];
   const service = new SessionFolderCleanupService({
+    /** 診断イベントを検証用に保持し、任意の外部ライターにも渡す。 */
     writeLog: (input) => {
       logs.push(input);
       writeLog?.(input);
     },
     userDataPath: root,
+    /** スキャンや実行時の現在のストア世代とセッション一覧を返す。 */
     readState: async () => ({ identity, sessions }),
+    /** 保存されたスナップショットの所有者が今も最新か検証する。 */
     assertCurrent: (value) => {
       assert.equal(value, identity);
     },
+    /** 実行中の集合に登録したセッションを掃除対象から除外させる。 */
     isRunning: (id) => running.has(id),
   });
+  /** 指定したセッションに対応する管理フォルダーのパスを返す。 */
   const folder = (id = "main") => path.join(root, "session-files", id);
+  /** 指定のセッション配下に途中のフォルダーと検証用ファイルを作る。 */
   const file = async (
     relativePath: string,
     data: string | Buffer,
@@ -66,9 +74,11 @@ async function fixture(writeLog?: (input: AppLogInput) => void) {
     service,
     folder,
     file,
+    /** セッション一覧を残したままストア世代だけを切り替え、古い確認結果を失効させる。 */
     changeStorage: () => {
       identity = {};
     },
+    /** 掃除対象のフィクスチャを含む一時データを削除する。 */
     close: () => rm(root, { recursive: true, force: true }),
   };
 }
@@ -85,6 +95,7 @@ async function fixture(writeLog?: (input: AppLogInput) => void) {
 // impact = "選択した掃除範囲が破られると保存fileを不可逆に失う"
 // distinction = "型checkで保証できない実filesystemの条件判定と削除を合成fileで確認する"
 // @end-test-value
+/** ローカル日付の両端と最小サイズちょうどのファイルを対象に含め、選択外のファイル、セッション、フォルダーのルートは維持する。 */
 it("local日付とMiB境界を含め、rootと条件外fileを保持する", async () => {
   const f = await fixture();
   try {
@@ -141,6 +152,7 @@ it("local日付とMiB境界を含め、rootと条件外fileを保持する", asy
 // distinction = "合成filesystemでscanのみ実行し、型checkでは保証できない実分岐の集計とログpayloadを検証する"
 // risk_tags = ["privacy"]
 // @end-test-value
+/** 期間指定と 0 MiB のスキャンでは各段階の候補数を記録し、個別のセッション・パス・内容は診断に含めない。 */
 it("期間と0MiBのscan診断を個別情報なしで集計する", async () => {
   const f = await fixture();
   try {
@@ -241,6 +253,7 @@ it("期間と0MiBのscan診断を個別情報なしで集計する", async () =>
 // impact = "候補0件と容量計算失敗を混同する誤診を防ぐ"
 // distinction = "実filesystemのmissingと通常file rootを作り、返却結果と記録を同時に観測する"
 // @end-test-value
+/** 管理ルートがなければ正常な候補ゼロ、通常ファイルなら元のエラーによる失敗とし、診断の状態も分ける。 */
 it("managed rootのmissingと失敗を診断で区別する", async () => {
   const f = await fixture();
   try {
@@ -289,6 +302,7 @@ it("managed rootのmissingと失敗を診断で区別する", async () => {
 // impact = "ログ保存先の障害で掃除の容量計算が利用不能になることを防ぐ"
 // distinction = "通常loggerの静的接続や型checkでは確認できない実行時throwを注入する"
 // @end-test-value
+/** 診断ライターが例外を投げても、正常な空結果と不正ルートの拒否理由を変えない。 */
 it("ログ書込失敗はscanの成否を変えない", async () => {
   const f = await fixture(() => {
     throw new Error("log-writer-failed");
@@ -316,6 +330,7 @@ it("ログ書込失敗はscanの成否を変えない", async () => {
 // distinction = "実walk内のdirectory読取とreadStateへ同じerrnoを注入し、継続と中断の両経路を確認する"
 // risk_tags = ["privacy"]
 // @end-test-value
+/** 個別項目の失敗と状態読込の中断を固定カテゴリで数え、例外の自由文や個別パスを診断へ公開しない。 */
 it("失敗を固定分類し例外の個別情報を診断へ出さない", async () => {
   const f = await fixture();
   const originalReaddir = fs.readdir;
@@ -357,11 +372,15 @@ it("失敗を固定分類し例外の個別情報を診断へ出さない", asyn
       assert.equal(data.scanFailureCategory, null);
       const failing = new SessionFolderCleanupService({
         userDataPath: f.root,
+        /** スキャン自体を中断する経路で、その時点のエラーをそのまま投げる。 */
         readState: async () => {
           throw error;
         },
+        /** 状態が読めないケースではストア世代の追加条件を設けない。 */
         assertCurrent: () => {},
+        /** 実行中判定では失敗させず、状態読み取りの失敗に限定する。 */
         isRunning: () => false,
+        /** 個別項目の失敗と中断の診断を同じ記録先で比較できるようにする。 */
         writeLog: (input) => {
           f.logs.push(input);
         },
@@ -407,6 +426,7 @@ it("失敗を固定分類し例外の個別情報を診断へ出さない", asyn
 // impact = "Workspaceまたは実行中の成果物の不可逆削除を防ぐ"
 // distinction = "実directory linkと複数Sessionの関係は型checkや単独fileの削除testでは保証しない"
 // @end-test-value
+/** 0 バイトの候補は削除しつつ、実行中、他のワークスペースと重なる場所、孤立フォルダーとリンクの先を保持する。 */
 it("実行中、Workspace、孤立folderとlinkを除外し0byteは掃除する", async () => {
   const f = await fixture();
   try {
@@ -463,6 +483,7 @@ it("実行中、Workspace、孤立folderとlinkを除外し0byteは掃除する"
 // impact = "ユーザーが確認していない成果物の不可逆削除を防ぐ"
 // distinction = "scanとrunの間の実filesystemおよびSession状態変化をserviceから確認する"
 // @end-test-value
+/** 変更・追加されたファイルと実行開始や世代変更後のセッションを保持し、最新のスキャンも一度しか実行できない。 */
 it("確認snapshot以外と状態変化を保持しscanを失効させる", async () => {
   const f = await fixture();
   try {
@@ -514,6 +535,7 @@ it("確認snapshot以外と状態変化を保持しscanを失効させる", asyn
 // impact = "確認範囲外のfileの不可逆削除を防ぐ"
 // distinction = "fileのidentityと更新metadataを保持したdirectory移動後にlinkを設置し、file自体の差分でなく祖先検証による除外を確認する"
 // @end-test-value
+/** スキャン後に祖先フォルダーをリンクへ置き換えた場合、同じファイルの識別情報でも削除せずにスキップする。 */
 it("scan後のdirectory link置換を除外する", async () => {
   const f = await fixture();
   try {
@@ -528,7 +550,14 @@ it("scan後のdirectory link置換を除外する", async () => {
       process.platform === "win32" ? "junction" : "dir",
     );
     const after = await stat(path.join(f.folder(), "nested", "keep"));
-    for (const key of ["dev", "ino", "birthtimeMs", "size", "mtimeMs", "ctimeMs"] as const) {
+    for (const key of [
+      "dev",
+      "ino",
+      "birthtimeMs",
+      "size",
+      "mtimeMs",
+      "ctimeMs",
+    ] as const) {
       assert.equal(after[key], before[key]);
     }
     const result = await f.service.run(scan.scanId);
@@ -555,6 +584,7 @@ it("scan後のdirectory link置換を除外する", async () => {
 // impact = "掃除の失敗を隠さず残存fileと解放容量を正確に伝える"
 // distinction = "OSのunlink失敗を注入しserviceの集計と実file保持を確認する"
 // @end-test-value
+/** 削除時の失敗と既に消失したファイルは成功と分け、実際に消した分だけ件数と容量へ計上する。 */
 it("削除失敗、消失、成功を区別する", async () => {
   const f = await fixture();
   const originalUnlink = fs.unlink;
@@ -607,6 +637,7 @@ it("削除失敗、消失、成功を区別する", async () => {
 // impact = "storage owner失効後の追加削除を止め、既に実行した削除と残存fileを正確に伝える"
 // distinction = "unlinkのawait中にfixtureのstorage owner identityだけを変更する。Mainが保持するSession配列参照の更新検証やWorkspace状態更新は通さない"
 // @end-test-value
+/** 最初の削除でストア所有者が失効したら後続を中断し、完了済みの件数・容量と残りのスキップを返す。 */
 it("削除中のstorage owner失効で中断し部分結果を返す", async () => {
   const f = await fixture();
   const originalUnlink = fs.unlink;
@@ -648,6 +679,7 @@ it("削除中のstorage owner失効で中断し部分結果を返す", async () 
 // impact = "不正入力による意図しない掃除範囲を防ぐ"
 // distinction = "IPCで失われるTypeScript型のruntime入力検証を確認する"
 // @end-test-value
+/** 実在する日付、正しい期間順序、安全なバイト数へ換算できる非負の有限値だけを掃除条件として受け入れる。 */
 it("掃除条件を信頼境界で検証する", () => {
   assert.deepEqual(parseSessionFolderCleanupRequest(all), all);
   assert.equal(

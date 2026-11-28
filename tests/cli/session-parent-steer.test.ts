@@ -25,23 +25,36 @@ import { SessionTurnQueueService } from "../../src-electron/session/session-turn
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import type { ProviderCodingAdapter, RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import type {
+  ProviderCodingAdapter,
+  RunSessionTurnInput,
+} from "../../src-electron/providers/provider-runtime.js";
 import {
   getSessionAgentRuntimeOperations,
   type SessionTarget,
 } from "../../src-shared/session/session-management-contract.js";
-import { buildNewSession, getSessionIncarnationId, type Session, type TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+  type Session,
+  type TurnInputDeliveryState,
+} from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
+/** 送信先の Main を ID と世代で指定する。 */
 const target = (session: Session): SessionTarget => ({
   kind: "main",
   sessionId: session.id,
   incarnationId: getSessionIncarnationId(session),
 });
-const owner = (session: Session) => ({ sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
+/** 操作対象の Session を所有者として世代まで特定する。 */
+const owner = (session: Session) => ({
+  sessionId: session.id,
+  incarnationId: getSessionIncarnationId(session),
+});
 const connection: AgentRuntimeConnection = {
   api: {
     baseUrl: "http://127.0.0.1:7777",
@@ -51,6 +64,7 @@ const connection: AgentRuntimeConnection = {
   },
   credential: { adapter: "mcp", adapterSecret: "adapter" },
 };
+/** 非同期の開始や中断をテストから明示的に解除できる待機点を作る。 */
 const deferred = () => {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -59,19 +73,31 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+/** 親子関係と実 Worker を用意し、子の実行・追加入力を CLI と MCP から観測できるようにする。 */
 async function fixture(provider = "codex") {
   const directory = await mkdtemp(join(tmpdir(), "withmate-parent-steer-"));
   const options = {
     dbPath: join(directory, "withmate-v6.db"),
     userDataPath: directory,
-    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-    handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
+    workerUrl: new URL(
+      "../../src-electron/storage/storage-worker-entry.ts",
+      import.meta.url,
+    ),
+    handlerModule: new URL(
+      "../../src-electron/storage/storage-worker-bundle.ts",
+      import.meta.url,
+    ),
     workerOptions: { execArgv: ["--import", "tsx"] },
   };
   const bundle = createV6StorageWorkerBundle(options);
   try {
     await bundle.initialize();
-    const create = (id: string, parentSessionId: string | null, childProvider = provider) =>
+    /** 同じ Crew に親や子孫を作成し、関係に応じた Role と実行環境を保存する。 */
+    const create = (
+      id: string,
+      parentSessionId: string | null,
+      childProvider = provider,
+    ) =>
       bundle.stores.session.insertSession(
         buildNewSession({
           id,
@@ -89,7 +115,11 @@ async function fixture(provider = "codex") {
           approvalMode: "on-request",
           codexSandboxMode: "workspace-write",
           sessionRole:
-            parentSessionId === "child" ? "executor" : parentSessionId ? "task-coordinator" : "overall-coordinator",
+            parentSessionId === "child"
+              ? "executor"
+              : parentSessionId
+                ? "task-coordinator"
+                : "overall-coordinator",
           rootSessionId: "parent",
           parentSessionId,
           createdBySessionId: parentSessionId,
@@ -101,7 +131,11 @@ async function fixture(provider = "codex") {
       grandchild = await create("grandchild", child.id);
     let cached = [parent, child, sibling, grandchild];
     const settings = createDefaultAppSettings();
-    settings.codingProviderSettings[provider] = { enabled: true, apiKey: "", skillRootPath: "" };
+    settings.codingProviderSettings[provider] = {
+      enabled: true,
+      apiKey: "",
+      skillRootPath: "",
+    };
     const catalog = {
       id: provider,
       label: provider,
@@ -109,65 +143,103 @@ async function fixture(provider = "codex") {
       defaultReasoningEffort: "high",
       models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
     };
+    /** 追加入力の検証に含めない操作が呼ばれたら失敗させる。 */
     const unused = async (): Promise<never> => {
       throw new Error("Unexpected operation");
     };
     const hooks = {
+      /** プレビュー処理の進行をテストで止められる差し替え点を設ける。 */
       preview: async () => {},
+      /** 追加入力の pending 保存直後に動作を差し込めるようにする。 */
       afterBegin: async () => {},
+      /** プロバイダーに渡った追加入力の応答を差し替えられるようにする。 */
       dispatch: async () => {},
+      /** 追加入力の結果が DB に保存された時点で状態を観測できるようにする。 */
       afterSettle: (_state: Exclude<TurnInputDeliveryState, "pending">) => {},
+      /** 確定した追加入力の保存応答に障害を差し込めるようにする。 */
       afterConfirm: async () => {},
     };
-    const sentInputChanges: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin[] = [];
+    const sentInputChanges: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin[] =
+      [];
     const persistence = new SessionPersistenceService({
+      /** 永続化サービスに現在の Session キャッシュを返す。 */
       getSessions: () => cached,
+      /** 保存後に Session のキャッシュを置き換える。 */
       setSessions: (next) => {
         cached = next;
       },
+      /** メモリー上の Session を ID で探す。 */
       getSession: (id) => cached.find((session) => session.id === id) ?? null,
+      /** キャッシュでなく実 DB の Session を調べる。 */
       getStoredSession: (id) => bundle.stores.session.getSession(id),
+      /** 永続化側では実行中の Session として扱う。 */
       isSessionRunInFlight: () => true,
       upsertStoredSession: unused,
       replaceStoredSessions: unused,
+      /** 永続化済みの Crew 一覧を Worker から取得する。 */
       listStoredSessions: () => bundle.stores.session.listSessions(),
-      appendStoredRunningTurnStart: (input) => bundle.stores.session.appendRunningTurnStart(input),
+      /** 実行開始時の Session 更新を DB へ渡す。 */
+      appendStoredRunningTurnStart: (input) =>
+        bundle.stores.session.appendRunningTurnStart(input),
+      /** Steer を pending で保存し、保存直後の割り込み位置を開く。 */
       beginStoredSessionSteer: async (input) => {
         const result = await bundle.stores.session.beginSessionSteer(input);
         await hooks.afterBegin();
         return result;
       },
+      /** 結果を DB に確定してから観測 hook を呼び、confirmed では保存応答の障害も再現できるようにする。 */
       settleStoredSessionSteer: async (input) => {
         const result = await bundle.stores.session.settleSessionSteer(input);
         hooks.afterSettle(input.state);
         if (input.state === "confirmed") await hooks.afterConfirm();
         return result;
       },
-      appendStoredSessionTerminal: (input) => bundle.stores.session.appendSessionTerminal(input),
-      checkpointStoredSessionRunMetadata: (input) => bundle.stores.session.checkpointSessionRunMetadata(input),
+      /** Session の終了状態を実際の DB へ反映する。 */
+      appendStoredSessionTerminal: (input) =>
+        bundle.stores.session.appendSessionTerminal(input),
+      /** 進行中 Turn のメタデータを Worker に記録する。 */
+      checkpointStoredSessionRunMetadata: (input) =>
+        bundle.stores.session.checkpointSessionRunMetadata(input),
+      /** 永続化サービスへフィクスチャの共通設定を渡す。 */
       getAppSettings: () => settings,
+      /** 対象 Provider の固定モデル候補を永続化サービスへ渡す。 */
       getModelCatalogSnapshot: () => ({ providers: [catalog] }),
+      /** 画面を使わないためコンテキスト計測の消去を省く。 */
       clearSessionContextTelemetry() {},
+      /** 実プロバイダーのスレッド無効化は送信しない。 */
       invalidateProviderSessionThread() {},
+      /** 開いていない Session ウィンドウの終了を省略する。 */
       closeSessionWindow() {},
+      /** Session キャッシュの更新は画面へ通知しない。 */
       broadcastSessions() {},
     });
     const live = new Map<string, LiveSessionRunState | null>();
     const runs: RunSessionTurnInput[] = [],
-      sent: Parameters<NonNullable<ProviderCodingAdapter["steerSessionTurn"]>>[0][] = [];
+      sent: Parameters<
+        NonNullable<ProviderCodingAdapter["steerSessionTurn"]>
+      >[0][] = [];
     let started = deferred(),
       finish = deferred();
     const adapter: ProviderCodingAdapter = {
+      /** プロンプト生成の違いを除外し、追加入力を検証するための初回入力を固定する。 */
       composePrompt: () => ({
         systemBodyText: "system",
         inputBodyText: "input",
-        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+        logicalPrompt: {
+          systemText: "system",
+          inputText: "input",
+          composedText: "system\ninput",
+        },
         imagePaths: [],
         additionalDirectories: [],
       }),
+      /** スタブは利用枠の観測値を返さない。 */
       getProviderQuotaTelemetry: async () => null,
+      /** スタブは外部の個別スレッドを切断しない。 */
       invalidateSessionThread: async () => {},
+      /** スタブは外部の全スレッドを切断しない。 */
       invalidateAllSessionThreads: async () => {},
+      /** 実行の入力を記録し、native Turn が追加入力を受けられる状態を通知して、明示解除まで実行を継続する。 */
       runSessionTurn: async (input, progress) => {
         runs.push(input);
         await progress?.(
@@ -185,51 +257,92 @@ async function fixture(provider = "codex") {
             approvalRequest: null,
             elicitationRequest: null,
           },
-          { steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] } },
+          {
+            steps: { upserts: [], removes: [] },
+            backgroundTasks: { upserts: [], removes: [] },
+          },
         );
         started.resolve();
         await finish.promise;
         return { threadId: "thread", assistantText: "done", usage: null };
       },
+      /** 来歴つき pending 入力が先に保存済みであることを検査してから、指定された native Turn の応答を模擬する。 */
       steerSessionTurn: async (input) => {
         sent.push(input);
         const saved = await bundle.stores.session.getSession(child.id);
         assert.equal(saved!.messages.at(-1)!.turnInput!.state, "pending");
-        assert.equal(saved!.messages.at(-1)!.turnInput!.origin!.actorSessionId, parent.id);
+        assert.equal(
+          saved!.messages.at(-1)!.turnInput!.origin!.actorSessionId,
+          parent.id,
+        );
         await hooks.dispatch();
         return { turnId: input.expectedTurnId };
       },
     };
     const runtime = new SessionRuntimeService({
+      /** 実行サービスが参照する Session を Worker から取得する。 */
       getSession: (id) => bundle.stores.session.getSession(id),
-      persistRunningTurnStart: (...args) => persistence.persistRunningTurnStart(...args),
+      /** 初回入力で実行開始する Session を永続化サービスに渡す。 */
+      persistRunningTurnStart: (...args) =>
+        persistence.persistRunningTurnStart(...args),
+      /** 実行中に追加された入力を実際に保存する経路へ渡す。 */
       appendRunningInput: (...args) => persistence.appendRunningInput(...args),
+      /** 追加入力の pending 保存を永続化サービスに委ねる。 */
       beginRunningInput: (...args) => persistence.beginRunningInput(...args),
+      /** 送信結果に応じた追加入力の確定を永続化サービスに渡す。 */
       settleRunningInput: (...args) => persistence.settleRunningInput(...args),
-      checkpointRuntimeMetadata: (...args) => persistence.checkpointRuntimeMetadata(...args),
-      appendTerminalSession: (session, commit) => persistence.appendTerminalSession(session, commit),
+      /** 実行途中のメタデータを永続化サービスへ渡す。 */
+      checkpointRuntimeMetadata: (...args) =>
+        persistence.checkpointRuntimeMetadata(...args),
+      /** 実行終了時の状態と確定内容を実際の保存処理へ渡す。 */
+      appendTerminalSession: (session, commit) =>
+        persistence.appendTerminalSession(session, commit),
+      /** 初回入力は待機させず、追加入力のプレビューだけに障害や実行競合を差し込めるようにする。 */
       resolveComposerPreview: async (_session, text) => {
         if (text !== "A") await hooks.preview();
         return { attachments: [], errors: [] };
       },
+      /** 実行サービスが読む共通設定を固定する。 */
       getAppSettings: () => settings,
-      resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
+      /** 外部問い合わせを行わず対象 Provider のモデルカタログを返す。 */
+      resolveProviderCatalog: () => ({
+        snapshot: { providers: [catalog] },
+        provider: catalog,
+      }),
+      /** 実際のモデル実行を、入力を記録できる adapter に差し替える。 */
       getProviderCodingAdapter: () => adapter,
+      /** 公開履歴に使う Turn を実際に作成する。 */
       createSessionTurn: (input) => bundle.stores.turn.createSessionTurn(input),
-      updateSessionTurn: (id, input) => bundle.stores.turn.updateSessionTurn(id, input),
+      /** Turn の進行に伴う変化を Worker のストアに書き込む。 */
+      updateSessionTurn: (id, input) =>
+        bundle.stores.turn.updateSessionTurn(id, input),
+      /** 進行中 Turn の更新を Session ID ごとにメモリーへ反映する。 */
       setLiveSessionRun: (id, value) => {
         live.set(id, value);
       },
+      /** 実行中の Turn があれば ID から状態を取得する。 */
       getLiveSessionRun: (id) => live.get(id) ?? null,
+      /** 承認 UI を待たず実行を継続する。 */
       waitForApprovalDecision: () => "approve",
+      /** 追加入力を要求された場合は実ユーザーの応答を待たず取り消す。 */
       waitForElicitationResponse: () => ({ action: "cancel" }),
+      /** 外部計測を伴わないため利用枠を記録しない。 */
       setProviderQuotaTelemetry() {},
+      /** 画面向けコンテキスト使用量は保持しない。 */
       setSessionContextTelemetry() {},
+      /** 実行終了に伴う実プロバイダーの無効化を省略する。 */
       invalidateProviderSessionThread() {},
+      /** 外部サービスへの利用枠更新を予約しない。 */
       scheduleProviderQuotaTelemetryRefresh() {},
+      /** 進行状態はメモリーだけで観測し、画面へ配信しない。 */
       broadcastLiveSessionRun() {},
-      onSentInputChanged(origin) { sentInputChanges.push(origin); },
+      /** 送信履歴更新の通知を来歴付きで記録し、pending と終端の別を追跡できるようにする。 */
+      onSentInputChanged(origin) {
+        sentInputChanges.push(origin);
+      },
+      /** 画面に保留中の承認要求はないため解決しない。 */
       resolvePendingApprovalRequest() {},
+      /** 画面に保留中の入力要求はないため解決しない。 */
       resolvePendingElicitationRequest() {},
     });
     const source = await bundle.stores.turn.createSessionTurn({
@@ -245,16 +358,24 @@ async function fixture(provider = "codex") {
     });
     const queue = new SessionTurnQueueService({
       store: bundle.stores.queue,
+      /** 通常メッセージを受付済みのキューに留め、Steer の即時呼出と区別する。 */
       isRunInFlight: () => true,
       dispatch: unused,
     });
     const facade = new MainSessionTurnQueueFacade({
+      /** テスト中の受付用 facade を常に稼働中とみなす。 */
       assertActive() {},
+      /** 通常メッセージの受付停止はこのフィクスチャでは再現しない。 */
       assertAccepting() {},
+      /** キューも同じ Worker の Session を参照する。 */
       getSession: (id) => bundle.stores.session.getSession(id),
+      /** 受付時点の共通設定をキューへ返す。 */
       getAppSettings: async () => settings,
+      /** キュー検証を実環境のワークスペース条件から分離する。 */
       validateWorkspace: async () => {},
+      /** 実プロバイダーの問い合わせなしで受付用モデル候補を返す。 */
       validateProvider: async () => ({ provider: catalog }),
+      /** 受け付けたテキストは添付もエラーもないものとして扱う。 */
       preview: async () => ({ attachments: [], errors: [] }),
       store: bundle.stores.queue,
       service: queue,
@@ -262,31 +383,59 @@ async function fixture(provider = "codex") {
     const extra: RelatedSession[] = [];
     const application = new SessionManagementApplication({
       operatingPolicy: unused,
-      getInstructions: unused, setInstructions: unused,
+      getInstructions: unused,
+      setInstructions: unused,
+      /** 実ストアの Crew 範囲を解決し、テストで差し込んだ補助 Session は所属 Main の範囲に結び付ける。 */
       readSessionScope: async (actor, selection) => {
-        const fixtureAuxiliary = actor.kind === "auxiliary" && extra.find((entry) => entry.id === actor.sessionId);
-        if (!fixtureAuxiliary || actor.kind !== "auxiliary") return bundle.stores.session.readSessionManagementScope(actor, selection);
-        const scope = await bundle.stores.session.readSessionManagementScope({
-          kind: "main", sessionId: actor.mainSessionId, incarnationId: actor.mainIncarnationId,
-        }, selection);
+        const fixtureAuxiliary =
+          actor.kind === "auxiliary" &&
+          extra.find((entry) => entry.id === actor.sessionId);
+        if (!fixtureAuxiliary || actor.kind !== "auxiliary")
+          return bundle.stores.session.readSessionManagementScope(
+            actor,
+            selection,
+          );
+        const scope = await bundle.stores.session.readSessionManagementScope(
+          {
+            kind: "main",
+            sessionId: actor.mainSessionId,
+            incarnationId: actor.mainIncarnationId,
+          },
+          selection,
+        );
         return { ...scope, actor: scope.actor ? fixtureAuxiliary : null };
       },
+      /** 親には保存済みの送信元 Turn、他の Session には稼働中の Turn を割り当てる。 */
       currentTurn: async (actor) => ({
-        turnId: actor.id === parent.id ? String(source.id) : (live.get(actor.id)?.sessionTurnId ?? null),
+        turnId:
+          actor.id === parent.id
+            ? String(source.id)
+            : (live.get(actor.id)?.sessionTurnId ?? null),
         receipt: null,
         origin: null,
       }),
+      /** 隔離したテストルートを Crew Folder として返す。 */
       crewFolder: async () => ({ rootSessionId: parent.id, path: directory }),
+      /** 呼出元と宛先の世代、および双方の Turn を保持して実 Steer 処理へ渡す。 */
       steer: (destination, input, actor, turnId, guard) =>
         runtime.steerChildSessionTurn(
-          { sessionId: destination.id, incarnationId: destination.incarnationId },
+          {
+            sessionId: destination.id,
+            incarnationId: destination.incarnationId,
+          },
           input.turnId,
           input.message,
           { sessionId: actor.id, incarnationId: actor.incarnationId, turnId },
           guard,
         ),
+      /** 同じ Worker を経て保存された実行履歴を公開操作へ返す。 */
       readExecution: async (_destination, operation, request) =>
-        bundle.stores.execution.execute({ target: request.target, operation, request }),
+        bundle.stores.execution.execute({
+          target: request.target,
+          operation,
+          request,
+        }),
+      /** 通常送信は送信者の来歴を付け、実行中 Turn への Steer とは別のキューへ渡す。 */
       enqueue: (destination, input, actor, turnId, guard) =>
         facade.enqueueSessionMessage(
           input,
@@ -318,7 +467,12 @@ async function fixture(provider = "codex") {
       bindingRegistry: bindings,
       providerAgentRuntimeTurns: turns,
     });
-    const runtimeCall: typeof callAgentRuntime = async (_connection, operation, bound) => {
+    /** HTTP サーバーを介さず、binding と capability 付きの要求を本番のルーティングへ渡す。 */
+    const runtimeCall: typeof callAgentRuntime = async (
+      _connection,
+      operation,
+      bound,
+    ) => {
       const response = await routing.route({
         ...operation,
         transport: "mcp",
@@ -326,9 +480,14 @@ async function fixture(provider = "codex") {
         turnCapability: bound.turnCapability,
       });
       assert.ok(response);
-      return { ok: response.status >= 200 && response.status < 300, status: response.status, value: response.value };
+      return {
+        ok: response.status >= 200 && response.status < 300,
+        status: response.status,
+        value: response.value,
+      };
     };
     const cleanups: (() => Promise<void>)[] = [];
+    /** Session の世代にバインドした実行権限を用意し、CLI と SDK MCP の両方で使えるようにする。 */
     async function endpoint(session: Session, identity = target(session)) {
       const binding = bindings.issueOrReuse({
         actorSessionId: identity.sessionId,
@@ -336,12 +495,19 @@ async function fixture(provider = "codex") {
         authoritySnapshot: { sessionIdentity: identity },
         operationGrants: getSessionAgentRuntimeOperations(),
       });
-      const active = turns.begin({ actorSessionId: identity.sessionId, providerId: session.provider });
+      const active = turns.begin({
+        actorSessionId: identity.sessionId,
+        providerId: session.provider,
+      });
       const env = {
         WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
         WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: active.capability,
       };
-      const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
+      const server = createWithMateSessionMcpServer({
+        env,
+        connection,
+        runtimeCall,
+      });
       const client = new Client({ name: "parent-steer", version: "1" });
       const [a, b] = InMemoryTransport.createLinkedPair();
       await server.connect(b);
@@ -352,29 +518,41 @@ async function fixture(provider = "codex") {
         turns.end(active);
       });
       return {
+        /** 接続を閉じず送信元 Turn の capability だけを失効させる。 */
         revoke: () => turns.end(active),
+        /** 同じテスト入力を選んだ公開入口へ送り、構造化結果として取り出す。 */
         call: async (
           transport: "cli" | "mcp",
           operation: string,
           body: Record<string, unknown>,
         ): Promise<Record<string, any>> => {
           if (transport === "mcp") {
-            const result = await client.callTool({ name: `session.${operation}`, arguments: body });
+            const result = await client.callTool({
+              name: `session.${operation}`,
+              arguments: body,
+            });
             return result.structuredContent ?? result;
           }
           let output = "";
-          await runWithMateSessionCli([operation.replaceAll("_", "-"), "--json", JSON.stringify(body)], {
-            env,
-            connection,
-            runtimeCall,
-            stdout: {
-              write: (text) => {
-                output += String(text);
-                return true;
+          await runWithMateSessionCli(
+            [operation.replaceAll("_", "-"), "--json", JSON.stringify(body)],
+            {
+              env,
+              connection,
+              runtimeCall,
+              stdout: {
+                /** CLI の JSON 出力を解析できるよう標準出力を連結する。 */
+                write: (text) => {
+                  output += String(text);
+                  return true;
+                },
+              },
+              stderr: {
+                /** テストプロセスの標準エラーへ CLI 出力を流さない。 */
+                write: () => true,
               },
             },
-            stderr: { write: () => true },
-          });
+          );
           return JSON.parse(output);
         },
       };
@@ -395,6 +573,7 @@ async function fixture(provider = "codex") {
       sent,
       runs,
       endpoint,
+      /** 子を起動し、adapter が追加入力可能になってから公開 Turn ID を返す。 */
       async start() {
         started = deferred();
         finish = deferred();
@@ -410,10 +589,12 @@ async function fixture(provider = "codex") {
         ]);
         return live.get(child.id)!.sessionTurnId!;
       },
+      /** adapter の待機を解除し、現在の実行が実際に終わるまで待つ。 */
       async finish() {
         finish.resolve();
         await running;
       },
+      /** 子の実行待機を解除し、SDK 接続・キュー・Worker を閉じて隔離データを片付ける。 */
       async close() {
         finish.resolve();
         await running?.catch(() => {});
@@ -442,18 +623,30 @@ async function fixture(provider = "codex") {
 // impact = "親の訂正が別作業へ届く、またはユーザーの発話と誤認される"
 // distinction = "schema検査とruntime単体では両入口から永続化・履歴読取までの接続を検証できない"
 // @end-test-value
+/** CLI と MCP の親 Steer が指定 Turn へ来歴付きで届き、保留・確定の履歴更新を通知する一方、通常送信は実行設定を変えず次 Turn を待つ。 */
 test("parent Steer preserves the exact Turn, attribution and settings through MCP and CLI", async () => {
   const f = await fixture();
   try {
     const parent = await f.endpoint(f.parent);
     const turnId = await f.start();
-    const initial = captureSessionExecutionOptions((await f.bundle.stores.session.getSession(f.child.id))!);
-    const outgoing = () => parent.call("mcp", "list_sent_steers", { target: target(f.parent), messageSeqs: [], liveTurnIds: [String(f.source.id)] });
+    const initial = captureSessionExecutionOptions(
+      (await f.bundle.stores.session.getSession(f.child.id))!,
+    );
+    /** 送信元 Turn に属する Steer 履歴を MCP から取得し、状態変化を比較する。 */
+    const outgoing = () =>
+      parent.call("mcp", "list_sent_steers", {
+        target: target(f.parent),
+        messageSeqs: [],
+        liveTurnIds: [String(f.source.id)],
+      });
     const noticeCounts = { before: 0, pending: 0, settled: 0 };
     f.hooks.dispatch = async () => {
       const pending = await outgoing();
       assert.equal(pending.items.at(-1).state, "pending");
-      assert.ok(f.sentInputChanges.length > noticeCounts.before, "This input must publish a pending notification before Provider dispatch.");
+      assert.ok(
+        f.sentInputChanges.length > noticeCounts.before,
+        "This input must publish a pending notification before Provider dispatch.",
+      );
       noticeCounts.pending = f.sentInputChanges.length;
       assert.equal(f.sentInputChanges.at(-1)?.actorSessionId, f.parent.id);
     };
@@ -462,31 +655,63 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
       noticeCounts.settled = f.sentInputChanges.length;
     };
     for (const transport of ["mcp", "cli"] as const) {
-      assert.equal((await parent.call(transport, "get", { target: target(f.child) })).currentTurn.turnId, turnId);
+      assert.equal(
+        (await parent.call(transport, "get", { target: target(f.child) }))
+          .currentTurn.turnId,
+        turnId,
+      );
       const text = `B ${transport}: check loading before changing settings`;
       noticeCounts.before = f.sentInputChanges.length;
       noticeCounts.pending = noticeCounts.settled = 0;
-      const response = await parent.call(transport, "steer", { target: target(f.child), turnId, message: text });
+      const response = await parent.call(transport, "steer", {
+        target: target(f.child),
+        turnId,
+        message: text,
+      });
       assert.equal(response.ok, true);
       assert.equal(response.result.outcome, "applied");
       assert.equal(response.result.turnId, turnId);
       const seq = response.result.messageSeq;
-      const detail = await parent.call(transport, "get_execution_input", { target: target(f.child), turnId, seq });
+      const detail = await parent.call(transport, "get_execution_input", {
+        target: target(f.child),
+        turnId,
+        seq,
+      });
       assert.equal(detail.text, text);
       assert.equal(detail.turnId, turnId);
       assert.equal(detail.inputOrigin.operation, "steer");
       assert.equal(detail.inputOrigin.actorSessionId, f.parent.id);
-      assert.equal(detail.inputOrigin.actorIncarnationId, f.parent.incarnationId);
+      assert.equal(
+        detail.inputOrigin.actorIncarnationId,
+        f.parent.incarnationId,
+      );
       assert.equal(detail.inputOrigin.actorTurnId, String(f.source.id));
       assert.equal(detail.inputOrigin.kind, "session");
       const sent = await outgoing();
-      assert.deepEqual([sent.items.at(-1).messageSeq, sent.items.at(-1).text, sent.items.at(-1).state], [seq, text, "confirmed"]);
+      assert.deepEqual(
+        [
+          sent.items.at(-1).messageSeq,
+          sent.items.at(-1).text,
+          sent.items.at(-1).state,
+        ],
+        [seq, text, "confirmed"],
+      );
       assert.deepEqual(sent.items.at(-1).target, target(f.child));
-      assert.ok(noticeCounts.settled >= noticeCounts.pending && noticeCounts.pending > noticeCounts.before);
+      assert.ok(
+        noticeCounts.settled >= noticeCounts.pending &&
+          noticeCounts.pending > noticeCounts.before,
+      );
       const resultNotices = f.sentInputChanges.slice(noticeCounts.settled);
-      assert.ok(resultNotices.length > 0, "Confirmed input must publish a new notification after its storage commit.");
-      for (const notice of resultNotices) assert.deepEqual(notice, detail.inputOrigin);
-      const history = await parent.call(transport, "get_message", { target: target(f.child), seq });
+      assert.ok(
+        resultNotices.length > 0,
+        "Confirmed input must publish a new notification after its storage commit.",
+      );
+      for (const notice of resultNotices)
+        assert.deepEqual(notice, detail.inputOrigin);
+      const history = await parent.call(transport, "get_message", {
+        target: target(f.child),
+        seq,
+      });
       assert.equal(history.speaker.kind, "agent");
       assert.equal(history.speaker.session.id, f.parent.id);
       assert.equal(f.sent.at(-1)!.expectedTurnId, "native-turn");
@@ -502,14 +727,22 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
       }
       assert.ok(f.sent.at(-1)!.userMessage.includes(text));
     }
-    const inputs = await parent.call("cli", "list_execution_inputs", { target: target(f.child), turnId });
+    const inputs = await parent.call("cli", "list_execution_inputs", {
+      target: target(f.child),
+      turnId,
+    });
     assert.deepEqual(
       inputs.items.map((item: { kind: string }) => item.kind),
       ["start", "additional", "additional"],
     );
     assert.equal(
-      (await parent.call("mcp", "get_execution_input", { target: target(f.child), turnId, seq: inputs.items[0].seq }))
-        .text,
+      (
+        await parent.call("mcp", "get_execution_input", {
+          target: target(f.child),
+          turnId,
+          seq: inputs.items[0].seq,
+        })
+      ).text,
       "A",
     );
     const executions = await f.bundle.stores.execution.execute({
@@ -529,8 +762,16 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
     assert.equal(queued.receipt.state, "queued");
     assert.equal(f.sent.length, 2);
     assert.equal(f.runs.length, 1);
-    assert.deepEqual(captureSessionExecutionOptions((await f.bundle.stores.session.getSession(f.child.id))!), initial);
-    const execution = await parent.call("mcp", "get_execution", { target: target(f.child), turnId });
+    assert.deepEqual(
+      captureSessionExecutionOptions(
+        (await f.bundle.stores.session.getSession(f.child.id))!,
+      ),
+      initial,
+    );
+    const execution = await parent.call("mcp", "get_execution", {
+      target: target(f.child),
+      turnId,
+    });
     assert.deepEqual(
       [
         execution.executionSettings.model,
@@ -543,7 +784,12 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
     await f.finish();
     assert.equal((await outgoing()).items.length, 2);
     assert.equal(
-      (await parent.call("cli", "list_execution_inputs", { target: target(f.child), turnId })).items.length,
+      (
+        await parent.call("cli", "list_execution_inputs", {
+          target: target(f.child),
+          turnId,
+        })
+      ).items.length,
       3,
     );
   } finally {
@@ -563,6 +809,7 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
 // impact = "権限のないAgentや古い依頼が別作業の進行へ介入する"
 // distinction = "正常系とschemaでは関係・世代・非同期Turn交代を検出できない"
 // @end-test-value
+/** 直属の Main 親以外、旧世代・旧 Turn、非対応プロバイダー、準備中に失効した要求を両入口で拒否し、プロバイダー送信や保存入力を残さない。 */
 test("parent Steer rejects unrelated senders and never retargets stale or unsupported Turns", async () => {
   for (const provider of ["codex", "copilot", "claude", "opencode"]) {
     const f = await fixture(provider);
@@ -623,7 +870,11 @@ test("parent Steer rejects unrelated senders and never retargets stale or unsupp
           entered.resolve();
           await resume.promise;
         };
-        const pending = parent.call("cli", "steer", { target: target(f.child), turnId, message: "race" });
+        const pending = parent.call("cli", "steer", {
+          target: target(f.child),
+          turnId,
+          message: "race",
+        });
         await entered.promise;
         await f.finish();
         resume.resolve();
@@ -631,22 +882,34 @@ test("parent Steer rejects unrelated senders and never retargets stale or unsupp
         const nextId = await f.start();
         assert.notEqual(nextId, turnId);
         assert.equal(
-          (await parent.call("cli", "steer", { target: target(f.child), turnId, message: "stale Turn" })).result
-            .outcome,
+          (
+            await parent.call("cli", "steer", {
+              target: target(f.child),
+              turnId,
+              message: "stale Turn",
+            })
+          ).result.outcome,
           "not-applied",
         );
         f.hooks.preview = async () => {
           parent.revoke();
         };
         assert.equal(
-          (await parent.call("mcp", "steer", { target: target(f.child), turnId: nextId, message: "revoked" })).result
-            .outcome,
+          (
+            await parent.call("mcp", "steer", {
+              target: target(f.child),
+              turnId: nextId,
+              message: "revoked",
+            })
+          ).result.outcome,
           "not-applied",
         );
       } else await f.finish();
       assert.equal(f.sent.length, 0);
       assert.ok(
-        (await f.bundle.stores.session.getSession(f.child.id))!.messages.every((message) => !message.turnInput),
+        (await f.bundle.stores.session.getSession(f.child.id))!.messages.every(
+          (message) => !message.turnInput,
+        ),
       );
     } finally {
       await f.close();
@@ -666,13 +929,23 @@ test("parent Steer rejects unrelated senders and never retargets stale or unsupp
 // impact = "訂正の重複配送または適用済みと誤認したまま運用する"
 // distinction = "通常Steer testは公開MCP/CLIの結果と保存された親来歴を照合しない"
 // @end-test-value
+/** 応答喪失と未送信を公開結果と送受信履歴で区別し、終端競合や確定応答の喪失でも確定入力を巻き戻さず自動再送しない。 */
 test("parent Steer reports uncertain delivery and preserves confirmed input across terminal races", async () => {
-  for (const mode of ["unknown", "not-sent", "confirm-lost", "terminal-race"] as const) {
+  for (const mode of [
+    "unknown",
+    "not-sent",
+    "confirm-lost",
+    "terminal-race",
+  ] as const) {
     const f = await fixture();
     try {
       const parent = await f.endpoint(f.parent);
       const turnId = await f.start();
-      const noticeCounts = { before: f.sentInputChanges.length, settled: 0, state: "" };
+      const noticeCounts = {
+        before: f.sentInputChanges.length,
+        settled: 0,
+        state: "",
+      };
       f.hooks.afterSettle = (state) => {
         noticeCounts.settled = f.sentInputChanges.length;
         noticeCounts.state = state;
@@ -696,11 +969,15 @@ test("parent Steer reports uncertain delivery and preserves confirmed input acro
           dispatchEntered.resolve();
           await dispatchResume.promise;
         };
-      const pending = parent.call(mode === "unknown" || mode === "terminal-race" ? "cli" : "mcp", "steer", {
-        target: target(f.child),
-        turnId,
-        message: "B",
-      });
+      const pending = parent.call(
+        mode === "unknown" || mode === "terminal-race" ? "cli" : "mcp",
+        "steer",
+        {
+          target: target(f.child),
+          turnId,
+          message: "B",
+        },
+      );
       let finishing: Promise<void> | undefined;
       if (mode === "terminal-race") {
         await dispatchEntered.promise;
@@ -710,7 +987,10 @@ test("parent Steer reports uncertain delivery and preserves confirmed input acro
       const response = await pending;
       const uncertain = mode === "unknown" || mode === "confirm-lost";
       assert.equal(response.ok, !uncertain);
-      assert.equal(response.result.outcome, uncertain ? "unknown" : mode === "not-sent" ? "not-applied" : "applied");
+      assert.equal(
+        response.result.outcome,
+        uncertain ? "unknown" : mode === "not-sent" ? "not-applied" : "applied",
+      );
       if (uncertain) {
         assert.equal(response.code, "SESSION_STEER_UNKNOWN");
         assert.equal(response.effect, "unknown");
@@ -719,35 +999,76 @@ test("parent Steer reports uncertain delivery and preserves confirmed input acro
       await finishing;
       await f.finish();
       const reader = await f.endpoint(f.child);
-      const inputState = mode === "unknown" ? "unresolved" : mode === "not-sent" ? "not-sent" : "confirmed";
+      const inputState =
+        mode === "unknown"
+          ? "unresolved"
+          : mode === "not-sent"
+            ? "not-sent"
+            : "confirmed";
       const inputs = await reader.call("cli", "list_execution_inputs", {
         target: target(f.child),
         turnId,
         state: inputState,
       });
-      const additional = inputs.items.filter((input: { kind: string }) => input.kind === "additional");
+      const additional = inputs.items.filter(
+        (input: { kind: string }) => input.kind === "additional",
+      );
       assert.equal(additional.length, 1);
       assert.equal(
         additional[0].state,
-        mode === "unknown" ? "unknown" : mode === "not-sent" ? "not-sent" : "confirmed",
+        mode === "unknown"
+          ? "unknown"
+          : mode === "not-sent"
+            ? "not-sent"
+            : "confirmed",
       );
       assert.equal(additional[0].inputOrigin.actorSessionId, f.parent.id);
-      const outgoing = await f.bundle.stores.execution.execute({ target: target(f.parent), operation: "list_sent_steers", request: { target: target(f.parent), messageSeqs: [], liveTurnIds: [String(f.source.id)] } });
+      const outgoing = await f.bundle.stores.execution.execute({
+        target: target(f.parent),
+        operation: "list_sent_steers",
+        request: {
+          target: target(f.parent),
+          messageSeqs: [],
+          liveTurnIds: [String(f.source.id)],
+        },
+      });
       assert.ok(outgoing.ok);
-      const projected = executionOperationResultSchemas.list_sent_steers.parse(outgoing);
-      assert.deepEqual(projected.items.map((item) => [item.state, item.text, item.messageSeq]), [[additional[0].state, "B", additional[0].seq]]);
-      assert.equal(noticeCounts.state, additional[0].state, "The baseline must follow the committed input state, including a lost confirmation reply.");
-      assert.ok(noticeCounts.settled > noticeCounts.before, "The pending notification must precede the result commit.");
-      const resultNotices = f.sentInputChanges.slice(noticeCounts.settled);
-      assert.ok(resultNotices.length > 0, `${mode} must publish a new notification after the input state commit.`);
-      for (const notice of resultNotices) assert.deepEqual(notice, additional[0].inputOrigin);
+      const projected =
+        executionOperationResultSchemas.list_sent_steers.parse(outgoing);
+      assert.deepEqual(
+        projected.items.map((item) => [item.state, item.text, item.messageSeq]),
+        [[additional[0].state, "B", additional[0].seq]],
+      );
       assert.equal(
-        (await reader.call("mcp", "get_execution_input", { target: target(f.child), turnId, seq: additional[0].seq }))
-          .text,
+        noticeCounts.state,
+        additional[0].state,
+        "The baseline must follow the committed input state, including a lost confirmation reply.",
+      );
+      assert.ok(
+        noticeCounts.settled > noticeCounts.before,
+        "The pending notification must precede the result commit.",
+      );
+      const resultNotices = f.sentInputChanges.slice(noticeCounts.settled);
+      assert.ok(
+        resultNotices.length > 0,
+        `${mode} must publish a new notification after the input state commit.`,
+      );
+      for (const notice of resultNotices)
+        assert.deepEqual(notice, additional[0].inputOrigin);
+      assert.equal(
+        (
+          await reader.call("mcp", "get_execution_input", {
+            target: target(f.child),
+            turnId,
+            seq: additional[0].seq,
+          })
+        ).text,
         "B",
       );
       assert.deepEqual(
-        (await f.bundle.stores.session.getSession(f.child.id))!.messages.map((message) => message.text),
+        (await f.bundle.stores.session.getSession(f.child.id))!.messages.map(
+          (message) => message.text,
+        ),
         ["A", "B", "done"],
       );
     } finally {

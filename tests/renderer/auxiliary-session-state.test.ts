@@ -45,7 +45,10 @@ const providerCatalog = {
   ],
 } satisfies ModelCatalogProvider;
 
-function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+/** 状態差分だけを指定できる待機中のCodex Auxiliaryを作る。 */
+function createAuxiliarySession(
+  overrides: Partial<AuxiliarySession> = {},
+): AuxiliarySession {
   return {
     id: "aux-1",
     parentSessionId: "session-1",
@@ -80,20 +83,33 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
 // scope = "auxiliary-preview"
 // lifecycle = "permanent"
 // @end-test-value
+/** 確定応答のMarkdownをプレーンテキスト化し、絵文字を分割せずに240文字に収める。 */
 test("buildAuxiliaryPreview は確定応答の冒頭をMarkdown平文化して使う", () => {
   assert.equal(
-    buildAuxiliaryPreview([
-      { role: "user", text: "調べて" },
-      { role: "assistant", text: "途中のログ", accent: true },
-      { role: "assistant", text: "別の本文" },
-    ], "**設定の問題**は `config_file.ts` です。\n続き。"),
+    buildAuxiliaryPreview(
+      [
+        { role: "user", text: "調べて" },
+        { role: "assistant", text: "途中のログ", accent: true },
+        { role: "assistant", text: "別の本文" },
+      ],
+      "**設定の問題**は `config_file.ts` です。\n続き。",
+    ),
     "設定の問題は config_file.ts です。 続き。",
   );
   const longUnicode = `🌙${"猫屋敷美紅".repeat(80)}`;
-  const limited = buildAuxiliaryPreview([{ role: "assistant", text: longUnicode }], longUnicode);
+  const limited = buildAuxiliaryPreview(
+    [{ role: "assistant", text: longUnicode }],
+    longUnicode,
+  );
   assert.equal(Array.from(limited).length, 240);
   assert.equal(limited.startsWith("🌙猫屋敷美紅"), true);
-  assert.equal(buildAuxiliaryPreview([], "`__private_id__` と `a > b * 2`\n\n```ts\nconst _id = ~mask;\n```"), "__private_id__ と a > b * 2 const _id = ~mask;");
+  assert.equal(
+    buildAuxiliaryPreview(
+      [],
+      "`__private_id__` と `a > b * 2`\n\n```ts\nconst _id = ~mask;\n```",
+    ),
+    "__private_id__ と a > b * 2 const _id = ~mask;",
+  );
 });
 
 // @test-value v2
@@ -106,6 +122,7 @@ test("buildAuxiliaryPreview は確定応答の冒頭をMarkdown平文化して�
 // scope = "auxiliary-initial-preview"
 // lifecycle = "permanent"
 // @end-test-value
+/** まだ送信されていない会話にはプレビュー本文を割り当てない。 */
 test("buildAuxiliaryPreview は未送信Auxiliaryのpreviewを空文字列にする", () => {
   assert.equal(buildAuxiliaryPreview([]), "");
 });
@@ -120,6 +137,7 @@ test("buildAuxiliaryPreview は未送信Auxiliaryのpreviewを空文字列にす
 // scope = "auxiliary-preview"
 // lifecycle = "permanent"
 // @end-test-value
+/** 確定応答がなければ途中のアシスタント文を連結せず、最新のユーザー本文を使う。 */
 test("buildAuxiliaryPreview はconfirmed finalなしではuser previewへ戻す", () => {
   assert.equal(
     buildAuxiliaryPreview([
@@ -142,12 +160,16 @@ test("buildAuxiliaryPreview はconfirmed finalなしではuser previewへ戻す"
 // scope = "auxiliary-preview"
 // lifecycle = "permanent"
 // @end-test-value
+/** 失敗時やストリーミング中に新しい確定応答がなければ、保存済みのプレビューを維持する。 */
 test("resolveAuxiliaryPreview は応答なしの失敗やstreamingで前回値を保つ", () => {
   assert.equal(
-    resolveAuxiliaryPreview([
-      { role: "user", text: "次の依頼" },
-      { role: "assistant", text: "失敗しました", accent: true },
-    ], "前回の確定応答"),
+    resolveAuxiliaryPreview(
+      [
+        { role: "user", text: "次の依頼" },
+        { role: "assistant", text: "失敗しました", accent: true },
+      ],
+      "前回の確定応答",
+    ),
     "前回の確定応答",
   );
 });
@@ -162,6 +184,7 @@ test("resolveAuxiliaryPreview は応答なしの失敗やstreamingで前回値�
 // scope = "auxiliary-session-state-normalization"
 // lifecycle = "permanent"
 // @end-test-value
+/** 壊れた新形式のキャラクタースナップショットを、旧形式の項目欠落と区別する。 */
 test("normalizeAuxiliarySession は不正な新形式snapshotを識別する", () => {
   const session = normalizeAuxiliarySession({
     id: "aux-invalid",
@@ -181,6 +204,7 @@ test("normalizeAuxiliarySession は不正な新形式snapshotを識別する", (
 // scope = "auxiliary-character-migration"
 // lifecycle = "permanent"
 // @end-test-value
+/** 新形式のIDとスナップショットの不一致・片方欠落を拒み、両方がない旧形式は区別する。 */
 test("normalizeAuxiliarySession は新形式Character identityの不一致と片欠けを識別する", () => {
   const snapshot = {
     characterId: "char-snapshot",
@@ -213,9 +237,16 @@ test("normalizeAuxiliarySession は新形式Character identityの不一致と片
   assert.equal(mismatch?.characterRuntimeSnapshotInvalid, true);
   assert.equal(missingId?.characterRuntimeSnapshotInvalid, true);
   assert.equal(missingSnapshot?.characterRuntimeSnapshotInvalid, true);
-  assert.equal(normalizeAuxiliarySession({ id: "aux-legacy", parentSessionId: "session-1" })?.characterRuntimeSnapshotInvalid, false);
+  assert.equal(
+    normalizeAuxiliarySession({
+      id: "aux-legacy",
+      parentSessionId: "session-1",
+    })?.characterRuntimeSnapshotInvalid,
+    false,
+  );
 });
 
+/** 指定した項目と更新日時以外のセッション状態を保持する。 */
 test("applyAuxiliarySessionPatch は指定 field と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession();
 
@@ -237,6 +268,7 @@ test("applyAuxiliarySessionPatch は指定 field と updatedAt だけを更新�
   );
 });
 
+/** 実行設定更新で、対象外の会話状態を変更しない。 */
 test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     approvalMode: "untrusted",
@@ -261,6 +293,7 @@ test("applyAuxiliarySessionRuntimeOptionsPatch は runtime option と updatedAt 
   );
 });
 
+/** 承認モードだけの変更で他の実行設定を保持する。 */
 test("applyAuxiliarySessionApprovalModeChange は approval mode と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     approvalMode: "untrusted",
@@ -280,6 +313,7 @@ test("applyAuxiliarySessionApprovalModeChange は approval mode と updatedAt �
   );
 });
 
+/** Codexのサンドボックスだけを切り替え、他の選択を維持する。 */
 test("applyAuxiliarySessionCodexSandboxModeChange は sandbox mode と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     codexSandboxMode: "workspace-write",
@@ -309,6 +343,7 @@ test("applyAuxiliarySessionCodexSandboxModeChange は sandbox mode と updatedAt
 // scope = "auxiliary-model-selection-patch"
 // lifecycle = "permanent"
 // @end-test-value
+/** モデルと推論深度を一組でパッチし、他の設定に触れない。 */
 test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -334,13 +369,18 @@ test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt
   );
 });
 
+/** 下書きを変更しても、セッション本文や実行設定を保つ。 */
 test("applyAuxiliarySessionComposerDraftPatch は draft と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     composerDraft: "before",
   });
 
   assert.deepEqual(
-    applyAuxiliarySessionComposerDraftPatch(session, "after", "2026-01-02T00:00:00.000Z"),
+    applyAuxiliarySessionComposerDraftPatch(
+      session,
+      "after",
+      "2026-01-02T00:00:00.000Z",
+    ),
     {
       ...session,
       composerDraft: "after",
@@ -349,13 +389,18 @@ test("applyAuxiliarySessionComposerDraftPatch は draft と updatedAt だけを�
   );
 });
 
+/** カスタムエージェントの指定を他の実行設定から独立して更新する。 */
 test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     customAgentName: "reviewer",
   });
 
   assert.deepEqual(
-    applyAuxiliarySessionCustomAgentPatch(session, "planner", "2026-01-02T00:00:00.000Z"),
+    applyAuxiliarySessionCustomAgentPatch(
+      session,
+      "planner",
+      "2026-01-02T00:00:00.000Z",
+    ),
     {
       ...session,
       customAgentName: "planner",
@@ -374,6 +419,7 @@ test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だ�
 // scope = "auxiliary-model-change"
 // lifecycle = "permanent"
 // @end-test-value
+/** モデルを明示的に変更したとき、新モデルの既定の推論深度を採用する。 */
 test("applyAuxiliarySessionModelChange は model selection と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -406,6 +452,7 @@ test("applyAuxiliarySessionModelChange は model selection と updatedAt だけ�
 // scope = "auxiliary-depth-change"
 // lifecycle = "permanent"
 // @end-test-value
+/** 現在モデルの推論深度だけを変更し、モデル本体や他の項目は保持する。 */
 test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -441,6 +488,7 @@ test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と update
 // impact = "保存されたSDK固有のDepthを編集または再送できなくなる"
 // distinction = "rendererから利用する公開helper経由で候補の検証とSDK固有値の保持を確認する"
 // @end-test-value
+/** 表示した候補の既定深度を採用し、カタログにあるSDK固有の深度もそのまま確定する。 */
 test("Auxiliaryの表示候補を確定しSDK固有Depthを保持する", () => {
   const session = createAuxiliarySession({
     model: "gpt-5.4-mini",
@@ -450,16 +498,33 @@ test("Auxiliaryの表示候補を確定しSDK固有Depthを保持する", () => 
   assert.deepEqual(
     applyAuxiliarySessionModelChange(
       session,
-      { id: "displayed-model", label: "Displayed", reasoningEfforts: ["sdk-default"], defaultReasoningEffort: "sdk-default" },
+      {
+        id: "displayed-model",
+        label: "Displayed",
+        reasoningEfforts: ["sdk-default"],
+        defaultReasoningEffort: "sdk-default",
+      },
       "2026-01-02T00:00:00.000Z",
     ),
-    { ...session, model: "displayed-model", reasoningEffort: "sdk-default", updatedAt: "2026-01-02T00:00:00.000Z" },
+    {
+      ...session,
+      model: "displayed-model",
+      reasoningEffort: "sdk-default",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    },
   );
-  assert.equal(applyAuxiliarySessionReasoningEffortChange(
-    session, providerCatalog, "sdk-depth", "2026-01-02T00:00:00.000Z",
-  ).reasoningEffort, "sdk-depth");
+  assert.equal(
+    applyAuxiliarySessionReasoningEffortChange(
+      session,
+      providerCatalog,
+      "sdk-depth",
+      "2026-01-02T00:00:00.000Z",
+    ).reasoningEffort,
+    "sdk-depth",
+  );
 });
 
+/** 現在の下書きに一致する保存要求は、本文を維持したまま更新日時を付ける。 */
 test("buildAuxiliaryDraftSaveRequest は保存すべき draft request を作る", () => {
   const currentSession = createAuxiliarySession({
     composerDraft: "draft text",
@@ -480,6 +545,7 @@ test("buildAuxiliaryDraftSaveRequest は保存すべき draft request を作る"
   );
 });
 
+/** 本文が古い、対象が異なる、または現行セッションがない下書き保存は要求を発行しない。 */
 test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () => {
   const currentSession = createAuxiliarySession({
     composerDraft: "newer draft",
@@ -496,7 +562,10 @@ test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () =
   );
   assert.equal(
     buildAuxiliaryDraftSaveRequest({
-      currentSession: createAuxiliarySession({ id: "aux-other", composerDraft: "stale draft" }),
+      currentSession: createAuxiliarySession({
+        id: "aux-other",
+        composerDraft: "stale draft",
+      }),
       targetSessionId: currentSession.id,
       draft: "stale draft",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -514,6 +583,7 @@ test("buildAuxiliaryDraftSaveRequest は古い draft save を無視する", () =
   );
 });
 
+/** 送信前に本文の前後の空白を除く。 */
 test("resolveAuxiliarySessionSendPreflight は送信文を trim する", () => {
   assert.deepEqual(
     resolveAuxiliarySessionSendPreflight({
@@ -540,6 +610,7 @@ test("resolveAuxiliarySessionSendPreflight は送信文を trim する", () => {
 // impact = "Auxiliary送信前の停止理由を識別し、空送信や実行中の重複送信を防ぐ"
 // distinction = "UI側のerror renderingではなく、送信actionが消費するpreflight resultの分類契約を確認する"
 // @end-test-value
+/** 入力なし、実行中、入力欄の送信制限を別の理由として通知する。 */
 test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", () => {
   assert.deepEqual(
     resolveAuxiliarySessionSendPreflight({
@@ -577,6 +648,7 @@ test("resolveAuxiliarySessionSendPreflight は送信前 block 理由を返す", 
   );
 });
 
+/** 同じセッションの最新値を優先し、現行値が得られない場合は元の選択を使う。 */
 test("resolveAuxiliarySessionSendTarget は保存後の送信対象 session を返す", () => {
   const activeSession = createAuxiliarySession({ title: "active" });
   const currentSession = createAuxiliarySession({ title: "current" });
@@ -603,6 +675,7 @@ test("resolveAuxiliarySessionSendTarget は保存後の送信対象 session を�
   );
 });
 
+/** 別セッションへの切り替えと同じセッションでの実行中を、異なる送信不可理由として返す。 */
 test("resolveAuxiliarySessionSendTarget は session 変更と running を区別する", () => {
   const activeSession = createAuxiliarySession();
 
@@ -640,6 +713,7 @@ test("resolveAuxiliarySessionSendTarget は session 変更と running を区別�
 // impact = "次依頼のdirectory選択が消えるか切替後の別会話へ反映される"
 // distinction = "backend mutation testはRenderer共有resolverの対象選択を通らない"
 // @end-test-value
+/** ID・親・世代が一致する編集対象は実行中でも返し、別の所有者は拒む。 */
 test("resolveEditableActiveAuxiliarySession は保存対象の active session を返す", () => {
   const activeSession = createAuxiliarySession();
   const currentSession = createAuxiliarySession({ title: "current" });
@@ -666,9 +740,24 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
     null,
   );
   const running = createAuxiliarySession({ runState: "running" });
-  assert.equal(resolveEditableActiveAuxiliarySession({ activeSession, currentSession: running }), running);
-  for (const changed of [createAuxiliarySession({ parentSessionId: "other-parent" }), createAuxiliarySession({ createdAt: "other-incarnation" })]) {
-    assert.equal(resolveEditableActiveAuxiliarySession({ activeSession, currentSession: changed }), null);
+  assert.equal(
+    resolveEditableActiveAuxiliarySession({
+      activeSession,
+      currentSession: running,
+    }),
+    running,
+  );
+  for (const changed of [
+    createAuxiliarySession({ parentSessionId: "other-parent" }),
+    createAuxiliarySession({ createdAt: "other-incarnation" }),
+  ]) {
+    assert.equal(
+      resolveEditableActiveAuxiliarySession({
+        activeSession,
+        currentSession: changed,
+      }),
+      null,
+    );
   }
 });
 
@@ -684,14 +773,19 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
 // impact = "会話の編集を反映できないか現在会話の状態を戻す"
 // distinction = "resolver参照のtestだけではrecipeに渡された実基底を検証できない"
 // @end-test-value
+/** 最新の対象へタイトル変更だけを適用し、実行状態や本文を保つ。 */
 test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recipe を適用する", () => {
   const activeSession = createAuxiliarySession({ title: "active" });
-  const currentSession = createAuxiliarySession({ title: "current", messages: [{ role: "user", text: "current" }] });
+  const currentSession = createAuxiliarySession({
+    title: "current",
+    messages: [{ role: "user", text: "current" }],
+  });
 
   assert.deepEqual(
     buildEditableActiveAuxiliarySessionPatch({
       activeSession,
       currentSession,
+      /** 現在値を継承し、タイトルだけを変更する。 */
       recipe: (current) => ({ ...current, title: "next" }),
     }),
     {
@@ -703,12 +797,14 @@ test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recip
     buildEditableActiveAuxiliarySessionPatch({
       activeSession,
       currentSession: createAuxiliarySession({ id: "aux-other" }),
+      /** 別セッションに誤適用された場合にもタイトル差分を観測できるようにする。 */
       recipe: (current) => ({ ...current, title: "next" }),
     }),
     null,
   );
 });
 
+/** 初回は親メッセージ末尾を基準にし、既存の表示アンカーや履歴不明時の値を保持する。 */
 test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor を解決する", () => {
   assert.equal(
     resolveAuxiliarySessionDisplayAfterMessageIndex({
@@ -748,6 +844,7 @@ test("resolveAuxiliarySessionDisplayAfterMessageIndex は初回 Auxiliary anchor
 // impact = "送信したAuxiliaryが親会話の誤った位置に表示されるか、実行状態と本文が一致しなくなる"
 // distinction = "既存anchorを維持する再送caseとは異なり、最初のanchor捕捉を確認する"
 // @end-test-value
+/** 初回送信で親の末尾をアンカーにし、下書きの消去と本文追加を実行中状態に反映する。 */
 test("buildAuxiliarySessionRunningTransition は初回 anchor と running state を組み立てる", () => {
   const session = createAuxiliarySession({
     composerDraft: "draft text",
@@ -788,6 +885,7 @@ test("buildAuxiliarySessionRunningTransition は初回 anchor と running state 
 // impact = "Auxiliaryの表示位置と会話履歴が送信前後で変わる"
 // distinction = "初回送信のanchor捕捉では検出できない再送時の位置・履歴保持を確認する"
 // @end-test-value
+/** 既存アンカーを取り直さず、以前の本文に新しいユーザーメッセージを追加する。 */
 test("buildAuxiliarySessionRunningTransition は既存 anchor を維持する", () => {
   const session = createAuxiliarySession({
     composerDraft: "draft text",

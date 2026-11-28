@@ -8,77 +8,185 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
 import type { RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
-import { AuxiliaryExecutionOptionsOwner, runAuxiliaryApprovalModeChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
+import {
+  AuxiliaryExecutionOptionsOwner,
+  runAuxiliaryApprovalModeChangeOperation,
+} from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
 import { useAuxiliaryDraftPersistence } from "../../src/chat/auxiliary/use-auxiliary-draft-persistence.js";
 import { runMainSessionTurnOperation } from "../../src/chat/runtime/run-main-session-turn-operation.js";
 import { SessionTurnAcceptance } from "../../src/chat/runtime/session-turn-acceptance.js";
 import { SessionSubmitCoordinator } from "../../src/chat/runtime/session-submit-coordinator.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Session } from "../../src-shared/session/session-state.js";
-import type { SessionTurnQueueAcceptanceResult, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import type {
+  SessionTurnQueueAcceptanceResult,
+  SessionTurnQueueReceipt,
+} from "../../src-shared/session/session-turn-queue.js";
 import type { AuxiliarySessionBinding } from "../../src/chat/use-auxiliary-workspace.js";
 
+/** 保存や照会を任意の順序で完了・拒否できる応答を作る。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
   return { promise, resolve, reject };
 }
 
+/** 同じ親と作成時刻を持つ待機中のCodex Auxiliaryを組み立てる。 */
 function session(id = "aux-1"): AuxiliarySession {
-  return { id, parentSessionId: "parent", runState: "idle", title: id, provider: "codex",
-    catalogRevision: 1, model: "model-a", reasoningEffort: "medium", approvalMode: "untrusted",
-    codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
-    threadId: "thread", composerDraft: "", messages: [],
-    displayAfterMessageIndex: null, createdAt: "creation-1", updatedAt: "before" };
+  return {
+    id,
+    parentSessionId: "parent",
+    runState: "idle",
+    title: id,
+    provider: "codex",
+    catalogRevision: 1,
+    model: "model-a",
+    reasoningEffort: "medium",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
+    customAgentName: "",
+    threadId: "thread",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "creation-1",
+    updatedAt: "before",
+  };
 }
 
+/** Auxiliaryの現在値、保存キュー、詳細の保持数を試験から操作できるようにする。 */
 function bindingFor(initial: AuxiliarySession) {
   const sessionRef = { current: initial as AuxiliarySession | null };
   let retained = 0;
   const binding: AuxiliarySessionBinding = {
-    sessionRef, mutationRevision: { current: 0 }, draftSaveQueue: { current: Promise.resolve() }, sessionSaveQueue: { current: Promise.resolve() },
+    sessionRef,
+    mutationRevision: { current: 0 },
+    draftSaveQueue: { current: Promise.resolve() },
+    sessionSaveQueue: { current: Promise.resolve() },
+    /** 現在バインド中のAuxiliaryを返す。 */
     getSession: () => sessionRef.current,
-    setSession: (update) => { sessionRef.current = typeof update === "function" ? update(sessionRef.current) : update; },
-    setExecutionSelection: (next) => { sessionRef.current = next; },
+    /** 直接値と更新関数のどちらも、現在のAuxiliaryへ反映する。 */
+    setSession: (update) => {
+      sessionRef.current =
+        typeof update === "function" ? update(sessionRef.current) : update;
+    },
+    /** 本文用の保存経路とは別に、表示中の実行設定を更新する。 */
+    setExecutionSelection: (next) => {
+      sessionRef.current = next;
+    },
+    /** このハーネスは下書きと実行設定を観測するため、ブックマークを保存しない。 */
     setMessageBookmark: () => {},
-    retainDetail: () => { retained++; return () => { retained--; }; },
+    /** 非同期操作の間に詳細を保持し、返す解除関数で参照数を戻す。 */
+    retainDetail: () => {
+      retained++;
+      return () => {
+        retained--;
+      };
+    },
   };
-  return { binding, get retained() { return retained; } };
+  return {
+    binding,
+    /** その時点で保持中のAuxiliary詳細の数を返す。 */ get retained() {
+      return retained;
+    },
+  };
 }
 
+/** 実際の下書きフックをDOMに載せ、世代と保存版を照合するスタブを公開する。 */
 async function mountDrafts(t: TestContext) {
   const dom = new JSDOM("<div id='root'></div>");
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = Object.keys(globals).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   const registry = new ComposerControllerRegistry();
   const records = new Map<string, AuxiliaryDraftRecord>();
+  /** Auxiliaryごとの永続下書きを返し、初回は空の版を用意する。 */
   const recordFor = (id: string) => {
     const existing = records.get(id);
     if (existing) return existing;
-    const record = { auxiliarySessionId: id, parentSessionId: "parent", incarnation: "incarnation-1", durableRevision: 0, text: "", updatedAt: "before" };
+    const record = {
+      auxiliarySessionId: id,
+      parentSessionId: "parent",
+      incarnation: "incarnation-1",
+      durableRevision: 0,
+      text: "",
+      updatedAt: "before",
+    };
     records.set(id, record);
     return record;
   };
-  const api: NonNullable<Parameters<typeof useAuxiliaryDraftPersistence>[0]["api"]> = {
-    getAuxiliarySessionStatus: async (id) => ({ id, parentSessionId: "parent", runState: "idle", createdAt: "creation-1", incarnation: recordFor(id).incarnation }),
+  const api: NonNullable<
+    Parameters<typeof useAuxiliaryDraftPersistence>[0]["api"]
+  > = {
+    /** 保存対象を見分けるため、永続下書きと同じ世代を状態APIで返す。 */
+    getAuxiliarySessionStatus: async (id) => ({
+      id,
+      parentSessionId: "parent",
+      runState: "idle",
+      createdAt: "creation-1",
+      incarnation: recordFor(id).incarnation,
+    }),
+    /** 読み取り側が正本を直接書き換えないよう、下書きの複製を返す。 */
     getAuxiliaryDraft: async (id) => ({ ...recordFor(id) }),
+    /** 世代と期待版を照合し、一致した保存だけで版を進めてACKを返す。 */
     saveAuxiliaryDraft: async (request) => {
       const record = recordFor(request.auxiliarySessionId);
-      if (record.incarnation !== request.incarnation || record.durableRevision !== request.expectedDurableRevision) return { outcome: "stale" };
-      const saved = { ...record, text: request.text, durableRevision: record.durableRevision + 1, updatedAt: request.updatedAt };
+      if (
+        record.incarnation !== request.incarnation ||
+        record.durableRevision !== request.expectedDurableRevision
+      )
+        return { outcome: "stale" };
+      const saved = {
+        ...record,
+        text: request.text,
+        durableRevision: record.durableRevision + 1,
+        updatedAt: request.updatedAt,
+      };
       records.set(record.auxiliarySessionId, saved);
-      return { outcome: "saved", ack: { auxiliarySessionId: saved.auxiliarySessionId, incarnation: saved.incarnation, durableRevision: saved.durableRevision, updatedAt: saved.updatedAt } };
+      return {
+        outcome: "saved",
+        ack: {
+          auxiliarySessionId: saved.auxiliarySessionId,
+          incarnation: saved.incarnation,
+          durableRevision: saved.durableRevision,
+          updatedAt: saved.updatedAt,
+        },
+      };
     },
   };
   let drafts!: ReturnType<typeof useAuxiliaryDraftPersistence>;
+  /** 共有レジストリと試験用APIを実際の永続化フックにつなぐ。 */
   function Harness() {
-    drafts = useAuxiliaryDraftPersistence({ api, composerRegistry: registry, touchRecency: () => {}, isFrozen: () => registry.isFrozen });
+    drafts = useAuxiliaryDraftPersistence({
+      api,
+      composerRegistry: registry,
+      /** 下書きの版を検査するため、最近使った順序の更新を行わない。 */ touchRecency:
+        () => {},
+      /** 送信準備中にフリーズできるよう、共有レジストリの現在値を読む。 */ isFrozen:
+        () => registry.isFrozen,
+    });
     return null;
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
   await act(async () => root.render(<Harness />));
+  /** マウントしたフックとDOMを破棄し、変更したグローバルを試験後に復元する。 */
   t.after(async () => {
     await act(async () => root.unmount());
     dom.window.close();
@@ -87,12 +195,19 @@ async function mountDrafts(t: TestContext) {
       else Reflect.deleteProperty(globalThis, key);
     }
   });
-  return { drafts, registry, records, api, recordFor,
+  return {
+    drafts,
+    registry,
+    records,
+    api,
+    recordFor,
+    /** 入力欄の末尾を選択位置にして編集し、保存が完了するまで待つ。 */
     edit: async (target: AuxiliarySession, text: string) => {
       const operation = drafts.changeDraft(target, text, text.length);
       await drafts.getOwner(target)!.flush();
       await operation;
-    } };
+    },
+  };
 }
 
 // @test-value v2
@@ -107,46 +222,123 @@ async function mountDrafts(t: TestContext) {
 // impact = "次のSendが利用者の選択と異なる実行設定で開始される"
 // distinction = "既存option patch testは非同期保存・拒否後の取得競合を通らず、型検査も応答順を検証しない"
 // @end-test-value
+/** 実行設定を先に表示し、現在の要求だけを復旧して、旧応答や会話再作成で新しい本文・設定を巻き戻さない。 */
 test("実行設定ownerは要求revisionと会話identityを照合してrollbackする", async () => {
   const owner = new AuxiliaryExecutionOptionsOwner();
   const { binding } = bindingFor(session());
-  const requests: Array<ReturnType<typeof deferred<SetExecutionOptionsResult>>> = [];
-  const reloads: Array<ReturnType<typeof deferred<AuxiliarySession | null>>> = [];
+  const requests: Array<
+    ReturnType<typeof deferred<SetExecutionOptionsResult>>
+  > = [];
+  const reloads: Array<ReturnType<typeof deferred<AuxiliarySession | null>>> =
+    [];
   const feedback: Array<{ ownerId: string; message: string } | null> = [];
   const logs: unknown[] = [];
   const api: NonNullable<Parameters<typeof owner.update>[0]["api"]> = {
+    /** 要求の所有者を確認し、保存可否を試験が後から確定できるようにする。 */
     setAuxiliaryExecutionOptions: async (request) => {
-      assert.deepEqual([request.auxiliarySessionId, request.parentSessionId, request.createdAt], ["aux-1", "parent", "creation-1"]);
-      const response = deferred<SetExecutionOptionsResult>(); requests.push(response); return response.promise;
+      assert.deepEqual(
+        [
+          request.auxiliarySessionId,
+          request.parentSessionId,
+          request.createdAt,
+        ],
+        ["aux-1", "parent", "creation-1"],
+      );
+      const response = deferred<SetExecutionOptionsResult>();
+      requests.push(response);
+      return response.promise;
     },
-    getAuxiliarySession: async () => { const response = deferred<AuxiliarySession | null>(); reloads.push(response); return response.promise; },
-    reportRendererLog: (log) => { logs.push(log); },
+    /** 拒否後に読み直す正本の応答を保留し、再作成との競合を作る。 */
+    getAuxiliarySession: async () => {
+      const response = deferred<AuxiliarySession | null>();
+      reloads.push(response);
+      return response.promise;
+    },
+    /** チェックポイント保存の診断を控える。 */
+    reportRendererLog: (log) => {
+      logs.push(log);
+    },
   };
-  const select = (model: string) => owner.update({ api, binding, isReadOnly: false, recipe: (current) => ({ ...current, model }), onFeedback: (value) => feedback.push(value) });
-  await select("model-b"); assert.equal(binding.getSession()!.model, "model-b");
-  await select("model-c"); requests[0].reject(new Error("old rejected"));
+  /** 異なるモデルの選択要求を同じ所有者へ順番に送る。 */
+  const select = (model: string) =>
+    owner.update({
+      api,
+      binding,
+      isReadOnly: false,
+      /** 現在のAuxiliaryでモデルだけを選び直す。 */ recipe: (current) => ({
+        ...current,
+        model,
+      }),
+      /** 実行設定の復旧や拒否に伴うフィードバックを記録する。 */ onFeedback: (
+        value,
+      ) => feedback.push(value),
+    });
+  await select("model-b");
+  assert.equal(binding.getSession()!.model, "model-b");
+  await select("model-c");
+  requests[0].reject(new Error("old rejected"));
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(binding.getSession()!.model, "model-c"); assert.equal(reloads.length, 0);
+  assert.equal(binding.getSession()!.model, "model-c");
+  assert.equal(reloads.length, 0);
   requests[1].reject(new Error("current rejected"));
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.match(feedback.at(-1)!.message, /current rejected/);
-  await select("model-d"); reloads[0].resolve({ ...session(), model: "model-a" });
+  await select("model-d");
+  reloads[0].resolve({ ...session(), model: "model-a" });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(binding.getSession()!.model, "model-d");
   requests[2].reject(new Error("retry rejected"));
   await new Promise<void>((resolve) => setImmediate(resolve));
-  binding.setSession({ ...binding.getSession()!, messages: [{ role: "assistant", text: "current body" }] });
-  reloads[1].resolve(session()); await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(binding.getSession()!.model, "model-a"); assert.equal(binding.getSession()!.messages[0].text, "current body");
-  await select("model-e"); binding.setSession({ ...session(), createdAt: "creation-2", model: "recreated" });
-  requests[3].reject(new Error("old identity")); await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(binding.getSession()!.model, "recreated"); assert.equal(reloads.length, 2);
-  binding.setSession(session()); await select("model-f");
-  requests[4].resolve({ status: "accepted", checkpointSaved: false }); await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(binding.getSession()!.model, "model-f"); assert.equal(logs.length, 1);
-  binding.setSession({ ...session(), runState: "running", approvalMode: "never" });
-  await owner.update({ api, binding, isReadOnly: false, recipe: (current) => ({ ...current, codexReviewer: "auto-review" }), onFeedback: () => {} });
-  await owner.update({ api, binding, isReadOnly: true, recipe: (current) => ({ ...current, model: "read-only-selection" }), onFeedback: () => {} });
+  binding.setSession({
+    ...binding.getSession()!,
+    messages: [{ role: "assistant", text: "current body" }],
+  });
+  reloads[1].resolve(session());
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(binding.getSession()!.model, "model-a");
+  assert.equal(binding.getSession()!.messages[0].text, "current body");
+  await select("model-e");
+  binding.setSession({
+    ...session(),
+    createdAt: "creation-2",
+    model: "recreated",
+  });
+  requests[3].reject(new Error("old identity"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(binding.getSession()!.model, "recreated");
+  assert.equal(reloads.length, 2);
+  binding.setSession(session());
+  await select("model-f");
+  requests[4].resolve({ status: "accepted", checkpointSaved: false });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(binding.getSession()!.model, "model-f");
+  assert.equal(logs.length, 1);
+  binding.setSession({
+    ...session(),
+    runState: "running",
+    approvalMode: "never",
+  });
+  await owner.update({
+    api,
+    binding,
+    isReadOnly: false,
+    /** 承認しないモードでReviewerだけを変える入力を試す。 */ recipe: (
+      current,
+    ) => ({ ...current, codexReviewer: "auto-review" }),
+    /** この拒否試験ではフィードバックではなく要求の抑止を確認する。 */ onFeedback:
+      () => {},
+  });
+  await owner.update({
+    api,
+    binding,
+    isReadOnly: true,
+    /** 読み取り専用のAuxiliaryへモデル変更を試みる。 */ recipe: (current) => ({
+      ...current,
+      model: "read-only-selection",
+    }),
+    /** 読み取り専用の拒否では変更の有無を観測し、通知は保存しない。 */ onFeedback:
+      () => {},
+  });
   assert.equal(requests.length, 5);
   assert.equal(binding.getSession()!.codexReviewer, "user");
   assert.equal(binding.getSession()!.model, "model-a");
@@ -164,63 +356,194 @@ test("実行設定ownerは要求revisionと会話identityを照合してrollback
 // impact = "確認した権限を次送信用に反映できない、または別の選択を意図せず変更する"
 // distinction = "serviceとcomposerの個別testではAuxiliary ownerを通る選択と要求の配線を確認できない"
 // @end-test-value
+/** 確認時の承認モードを照合し、Claude AuxiliaryのApprovalとReviewerを一要求で変更する。 */
 test("Auxiliaryは確認済みApprovalとReviewerを一括選択する", async () => {
   const owner = new AuxiliaryExecutionOptionsOwner();
-  const { binding } = bindingFor({ ...session(), provider: "claude", approvalMode: "never", codexReviewer: "auto-review" });
-  const requests: Array<{ executionOptions: ReturnType<typeof captureSessionExecutionOptions>; confirmedReviewerChange?: { previousApprovalMode: string } }> = [];
+  const { binding } = bindingFor({
+    ...session(),
+    provider: "claude",
+    approvalMode: "never",
+    codexReviewer: "auto-review",
+  });
+  const requests: Array<{
+    executionOptions: ReturnType<typeof captureSessionExecutionOptions>;
+    confirmedReviewerChange?: { previousApprovalMode: string };
+  }> = [];
   const api: NonNullable<Parameters<typeof owner.update>[0]["api"]> = {
-    setAuxiliaryExecutionOptions: async (request) => { requests.push(request); return { status: "accepted", checkpointSaved: true }; },
+    /** 送信された確認内容を控え、チェックポイント付きの受付成功を返す。 */
+    setAuxiliaryExecutionOptions: async (request) => {
+      requests.push(request);
+      return { status: "accepted", checkpointSaved: true };
+    },
+    /** 受付成功のケースで使う再読込先にはセッションを置かない。 */
     getAuxiliarySession: async () => null,
+    /** 確認済みの選択内容を検査するため、診断ログは保存しない。 */
     reportRendererLog: () => {},
   };
-  const update = (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: { previousApprovalMode: AuxiliarySession["approvalMode"] }) =>
-    owner.update({ api, binding, isReadOnly: false, recipe, confirmedReviewerChange, onFeedback: () => {} });
-  await runAuxiliaryApprovalModeChangeOperation({ approvalMode: "plan", confirmedReviewerChange: { previousApprovalMode: "on-request" }, updateActiveAuxiliarySession: update, createTimestampLabel: () => "now" });
+  /** 更新レシピと確認前の承認モードを一緒に所有者へ渡す。 */
+  const update = (
+    recipe: (current: AuxiliarySession) => AuxiliarySession,
+    confirmedReviewerChange?: {
+      previousApprovalMode: AuxiliarySession["approvalMode"];
+    },
+  ) =>
+    owner.update({
+      api,
+      binding,
+      isReadOnly: false,
+      recipe,
+      confirmedReviewerChange,
+      /** 選択リクエストと現在値を測るので、表示フィードバックは記録しない。 */ onFeedback:
+        () => {},
+    });
+  await runAuxiliaryApprovalModeChangeOperation({
+    approvalMode: "plan",
+    confirmedReviewerChange: { previousApprovalMode: "on-request" },
+    updateActiveAuxiliarySession: update,
+    /** 古い確認から行う試行にも同じ更新時刻を渡す。 */ createTimestampLabel:
+      () => "now",
+  });
   assert.equal(requests.length, 0);
   assert.equal(binding.getSession()?.approvalMode, "never");
-  await runAuxiliaryApprovalModeChangeOperation({ approvalMode: "plan", confirmedReviewerChange: { previousApprovalMode: "never" }, updateActiveAuxiliarySession: update, createTimestampLabel: () => "now" });
+  await runAuxiliaryApprovalModeChangeOperation({
+    approvalMode: "plan",
+    confirmedReviewerChange: { previousApprovalMode: "never" },
+    updateActiveAuxiliarySession: update,
+    /** 最新の確認から行う試行の更新時刻を固定する。 */ createTimestampLabel:
+      () => "now",
+  });
   assert.equal(requests.length, 1);
-  assert.deepEqual([requests[0]?.executionOptions.approvalMode, requests[0]?.executionOptions.codexReviewer, requests[0]?.confirmedReviewerChange], ["plan", "user", { previousApprovalMode: "never" }]);
-  assert.deepEqual([binding.getSession()?.approvalMode, binding.getSession()?.codexReviewer], ["plan", "user"]);
+  assert.deepEqual(
+    [
+      requests[0]?.executionOptions.approvalMode,
+      requests[0]?.executionOptions.codexReviewer,
+      requests[0]?.confirmedReviewerChange,
+    ],
+    ["plan", "user", { previousApprovalMode: "never" }],
+  );
+  assert.deepEqual(
+    [binding.getSession()?.approvalMode, binding.getSession()?.codexReviewer],
+    ["plan", "user"],
+  );
 });
 
-function sendQueue(h: Awaited<ReturnType<typeof mountDrafts>>, state: ReturnType<typeof bindingFor>, input: {
-  enqueue(request: RunSessionTurnRequest): Promise<SessionTurnQueueAcceptanceResult>;
-  isCurrent(): boolean;
-  requestId?: string;
-}) {
+/** 実下書きフックからキュー送信を行い、実行設定と下書き版を確保してから詳細を解放する。 */
+function sendQueue(
+  h: Awaited<ReturnType<typeof mountDrafts>>,
+  state: ReturnType<typeof bindingFor>,
+  input: {
+    /** 送信境界で受け取るターン要求を試験側の受付処理へ委ねる。 */
+    enqueue(
+      request: RunSessionTurnRequest,
+    ): Promise<SessionTurnQueueAcceptanceResult>;
+    /** 開始時と比べて同じ送信先が選択中かどうかを調べる。 */
+    isCurrent(): boolean;
+    requestId?: string;
+  },
+) {
   const selected = state.binding.getSession()!;
   const owner = { kind: "auxiliary" as const, id: selected.id };
   const release = state.binding.retainDetail();
   const executionOptions = captureSessionExecutionOptions(selected);
   const displayed: Session = {
-    id: selected.id, incarnationId: selected.createdAt, taskTitle: selected.title, status: "idle", updatedAt: selected.updatedAt, isPinned: false,
-    provider: selected.provider, catalogRevision: selected.catalogRevision, ...executionOptions, workspaceLabel: "Workspace", workspacePath: "workspace", branch: "feature",
-    sessionKind: "default", accessMode: "active", sourceSchemaVersion: 6, characterId: "mate", character: "Mate", characterIconPath: "",
-    characterThemeColors: { main: "#000000", sub: "#000000" }, characterRuntimeSnapshot: null,
-    runState: selected.runState, allowedAdditionalDirectories: [], threadId: selected.threadId, messages: [], stream: [],
+    id: selected.id,
+    incarnationId: selected.createdAt,
+    taskTitle: selected.title,
+    status: "idle",
+    updatedAt: selected.updatedAt,
+    isPinned: false,
+    provider: selected.provider,
+    catalogRevision: selected.catalogRevision,
+    ...executionOptions,
+    workspaceLabel: "Workspace",
+    workspacePath: "workspace",
+    branch: "feature",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 6,
+    characterId: "mate",
+    character: "Mate",
+    characterIconPath: "",
+    characterThemeColors: { main: "#000000", sub: "#000000" },
+    characterRuntimeSnapshot: null,
+    runState: selected.runState,
+    allowedAdditionalDirectories: [],
+    threadId: selected.threadId,
+    messages: [],
+    stream: [],
   };
-  return h.drafts.trackSend(runMainSessionTurnOperation({
-    api: {
-      previewComposerInput: async () => ({ attachments: [], errors: [] }),
-      enqueueSessionTurn: async (_id, request) => input.enqueue(request),
-      getSessionTurnQueueReceipt: async () => null,
-    },
-    sessionId: selected.id, selectedSession: displayed,
-    request: { userMessage: h.registry.get(owner).draft, clientRequestId: input.requestId ?? "801-capture", submitSource: "composer", executionOptions, displayAnchorParentMessageCount: 17 },
-    composerRegistry: h.registry, composerOwner: owner, submitCoordinator: new SessionSubmitCoordinator(), acceptance: new SessionTurnAcceptance(),
-    auxiliaryDraftOwner: h.drafts.getOwner(selected)!, queueTurn: true, clearDraft: true, collapseActionDock: false,
-    isCurrentSubmission: () => input.isCurrent() && state.binding.getSession()?.createdAt === selected.createdAt,
-    selectedSessionRunState: selected.runState, blockedReason: null, isReadOnly: false, validateWorkspace: async () => true,
-    state: { setComposerPreview: (preview) => h.registry.setPreview(owner, preview), onSubmitStateChanged() {}, setForceComposerBlockedFeedback() {}, collapseActionDock() {} },
-    log() {},
-  }).finally(release));
+  return h.drafts.trackSend(
+    runMainSessionTurnOperation({
+      api: {
+        /** 添付のない入力プレビューを返し、送信時の下書きと設定に集中する。 */
+        previewComposerInput: async () => ({ attachments: [], errors: [] }),
+        /** Auxiliaryから来たキュー要求をケースごとの受付処理へ渡す。 */
+        enqueueSessionTurn: async (_id, request) => input.enqueue(request),
+        /** 受付証の再照会による復旧経路は使わない。 */
+        getSessionTurnQueueReceipt: async () => null,
+      },
+      sessionId: selected.id,
+      selectedSession: displayed,
+      request: {
+        userMessage: h.registry.get(owner).draft,
+        clientRequestId: input.requestId ?? "801-capture",
+        submitSource: "composer",
+        executionOptions,
+        displayAnchorParentMessageCount: 17,
+      },
+      composerRegistry: h.registry,
+      composerOwner: owner,
+      submitCoordinator: new SessionSubmitCoordinator(),
+      acceptance: new SessionTurnAcceptance(),
+      auxiliaryDraftOwner: h.drafts.getOwner(selected)!,
+      queueTurn: true,
+      clearDraft: true,
+      collapseActionDock: false,
+      /** 選択の継続に加え、同じIDが再作成されていないことを開始時刻で照合する。 */
+      isCurrentSubmission: () =>
+        input.isCurrent() &&
+        state.binding.getSession()?.createdAt === selected.createdAt,
+      selectedSessionRunState: selected.runState,
+      blockedReason: null,
+      isReadOnly: false,
+      /** ワークスペースは有効とし、下書き保護の分岐だけを試す。 */ validateWorkspace:
+        async () => true,
+      state: {
+        /** 入力のプレビューをAuxiliary所有者のレジストリへ反映する。 */ setComposerPreview:
+          (preview) => h.registry.setPreview(owner, preview),
+        /** 表示側の送信状態通知は消費しない。 */ onSubmitStateChanged() {},
+        /** 入力ブロックの表示フィードバックは保存しない。 */ setForceComposerBlockedFeedback() {},
+        /** この送信はアクションドックの開閉を観測しない。 */ collapseActionDock() {},
+      },
+      /** 下書き・送信要求と無関係な診断は採取しない。 */
+      log() {},
+    }).finally(release),
+  );
 }
 
+/** 受け取った実行設定と下書き情報を改変せず、受付済みの証明に格納する。 */
 function queueReceipt(request: RunSessionTurnRequest): SessionTurnQueueReceipt {
-  return { sessionId: "aux-1", incarnationId: "creation-1", id: "receipt", requestId: request.clientRequestId!, sequence: 1, queuePosition: 1, state: "queued",
-    captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: "codex", workspacePath: "workspace" },
-    turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
+  return {
+    sessionId: "aux-1",
+    incarnationId: "creation-1",
+    id: "receipt",
+    requestId: request.clientRequestId!,
+    sequence: 1,
+    queuePosition: 1,
+    state: "queued",
+    captured: {
+      request: { ...request, clientRequestId: request.clientRequestId! },
+      attachments: [],
+      provider: "codex",
+      workspacePath: "workspace",
+    },
+    turnId: null,
+    userMessageSeq: null,
+    reason: null,
+    releasedAt: null,
+    createdAt: "now",
+    updatedAt: "now",
+  };
 }
 
 // @test-value v2
@@ -235,42 +558,83 @@ function queueReceipt(request: RunSessionTurnRequest): SessionTurnQueueReceipt {
 // impact = "実行中に次Turnの権限設定を選べない、または受付済みTurnの実行条件を後から変えてしまう"
 // distinction = "owner rollback testとqueue draft ACK testはrunningでの権限設定更新から次の受付までの接合を通らない。小さい既存hook fixtureだけを使う"
 // @end-test-value
+/** 実行中でも選択変更を次の受付にだけ反映させ、以前の要求に捕捉した設定を変更しない。 */
 test("running Auxiliaryの設定変更は次のreceiptだけへ捕捉される", async (t) => {
   const h = await mountDrafts(t);
   const running = { ...session(), runState: "running" as const };
   const state = bindingFor(running);
   const before = captureSessionExecutionOptions(running);
   const receipts: SessionTurnQueueReceipt[] = [];
+  /** 永続下書きの消費を再現し、受け取った設定を受付証ごとに控える。 */
   const enqueue = async (request: RunSessionTurnRequest) => {
     const record = h.recordFor(running.id);
-    h.records.set(running.id, { ...record, text: "", durableRevision: record.durableRevision + 1 });
+    h.records.set(running.id, {
+      ...record,
+      text: "",
+      durableRevision: record.durableRevision + 1,
+    });
     const receipt = queueReceipt(request);
     receipts.push(receipt);
     return receipt;
   };
   await h.edit(running, "before selection");
-  await sendQueue(h, state, { enqueue, isCurrent: () => true, requestId: "801-before-selection" });
+  await sendQueue(h, state, {
+    enqueue,
+    /** 設定変更前の送信で選択先を維持する。 */ isCurrent: () => true,
+    requestId: "801-before-selection",
+  });
   const selections: unknown[] = [];
   const owner = new AuxiliaryExecutionOptionsOwner();
   await owner.update({
     api: {
+      /** 受理された実行設定の要求を記録する。 */
       setAuxiliaryExecutionOptions: async (request) => {
         selections.push(request);
         return { status: "accepted", checkpointSaved: true };
       },
-      getAuxiliarySession: async () => { throw new Error("Accepted selection must not reload the conversation."); },
+      /** 設定受付後に不要な正本の再取得を行った場合に失敗させる。 */
+      getAuxiliarySession: async () => {
+        throw new Error("Accepted selection must not reload the conversation.");
+      },
+      /** 正常受付の検証では、レンダラーログを記録しない。 */
       reportRendererLog: () => {},
     },
-    binding: state.binding, isReadOnly: false,
-    recipe: (current) => ({ ...current, approvalMode: "on-request", codexSandboxMode: "read-only", codexSpeed: "fast", codexReviewer: "auto-review" }),
+    binding: state.binding,
+    isReadOnly: false,
+    /** 実行状態を保ちながら、承認・サンドボックス・速度とReviewerの選択を変更する。 */
+    recipe: (current) => ({
+      ...current,
+      approvalMode: "on-request",
+      codexSandboxMode: "read-only",
+      codexSpeed: "fast",
+      codexReviewer: "auto-review",
+    }),
+    /** 設定反映の検査ではエラー表示を蓄積しない。 */
     onFeedback: () => {},
   });
   const next = captureSessionExecutionOptions(state.binding.getSession()!);
-  assert.deepEqual(next, { ...before, approvalMode: "on-request", codexSandboxMode: "read-only", codexSpeed: "fast", codexReviewer: "auto-review" });
-  assert.deepEqual(selections, [{ auxiliarySessionId: running.id, parentSessionId: running.parentSessionId, createdAt: running.createdAt, executionOptions: next }]);
+  assert.deepEqual(next, {
+    ...before,
+    approvalMode: "on-request",
+    codexSandboxMode: "read-only",
+    codexSpeed: "fast",
+    codexReviewer: "auto-review",
+  });
+  assert.deepEqual(selections, [
+    {
+      auxiliarySessionId: running.id,
+      parentSessionId: running.parentSessionId,
+      createdAt: running.createdAt,
+      executionOptions: next,
+    },
+  ]);
   assert.equal(state.binding.getSession()!.runState, "running");
   await h.edit(state.binding.getSession()!, "after selection");
-  await sendQueue(h, state, { enqueue, isCurrent: () => true, requestId: "801-after-selection" });
+  await sendQueue(h, state, {
+    enqueue,
+    /** 設定変更後の送信にも同じAuxiliaryを選ぶ。 */ isCurrent: () => true,
+    requestId: "801-after-selection",
+  });
   assert.deepEqual(captureSessionExecutionOptions(running), before);
   assert.deepEqual(receipts[0].captured.request.executionOptions, before);
   assert.deepEqual(receipts[1].captured.request.executionOptions, next);
@@ -290,6 +654,7 @@ test("running Auxiliaryの設定変更は次のreceiptだけへ捕捉される",
 // impact = "実行中の次turn予約による追編集の消失とCAS保存失敗を防ぐ"
 // distinction = "queue operation単体は実draft hookの保存状態・flushと受付gate接続を通らない"
 // @end-test-value
+/** 受付時の永続下書きだけを消費し、ACK待ちの追加編集を消費後の版へ保存する。 */
 test("Auxiliary queue ACKは実draft hookの捕捉版だけをconsumeし、追編集を保存する", async (t) => {
   const h = await mountDrafts(t);
   const state = bindingFor({ ...session(), runState: "running" });
@@ -298,35 +663,66 @@ test("Auxiliary queue ACKは実draft hookの捕捉版だけをconsumeし、追�
     await h.edit(session(), "captured");
     const started = deferred<RunSessionTurnRequest>();
     const ack = deferred<SessionTurnQueueReceipt>();
-    const pending = sendQueue(h, state, { isCurrent: () => true, enqueue: async (request) => {
-      const record = h.recordFor(owner.id);
-      assert.equal(request.auxiliaryDraftDurableRevision, record.durableRevision);
-      h.records.set(owner.id, { ...record, text: "", durableRevision: record.durableRevision + 1 });
-      started.resolve(request);
-      return ack.promise;
-    } });
+    const pending = sendQueue(h, state, {
+      /** ACKを遅らせる間も同じAuxiliaryを選択中にする。 */ isCurrent: () =>
+        true,
+      /** 受付要求の保存版を照合し、下書きを原子的に消費した後にACKを保留する。 */ enqueue:
+        async (request) => {
+          const record = h.recordFor(owner.id);
+          assert.equal(
+            request.auxiliaryDraftDurableRevision,
+            record.durableRevision,
+          );
+          h.records.set(owner.id, {
+            ...record,
+            text: "",
+            durableRevision: record.durableRevision + 1,
+          });
+          started.resolve(request);
+          return ack.promise;
+        },
+    });
     const request = await started.promise;
     assert.equal(request.auxiliaryDraftIncarnation, "incarnation-1");
     assert.equal(request.displayAnchorParentMessageCount, 17);
-    assert.deepEqual(request.executionOptions, captureSessionExecutionOptions(session()));
+    assert.deepEqual(
+      request.executionOptions,
+      captureSessionExecutionOptions(session()),
+    );
     assert.equal(h.registry.get(owner).draft, "captured");
     assert.equal(state.retained, 1);
-    state.binding.setExecutionSelection({ ...state.binding.getSession()!, model: "later-selection" });
+    state.binding.setExecutionSelection({
+      ...state.binding.getSession()!,
+      model: "later-selection",
+    });
     let edited: Promise<void> | null = null;
     if (editDuringAck) {
       edited = h.drafts.changeDraft(session(), "new edit", 8);
       void h.drafts.getOwner(session())!.flush();
       await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(h.recordFor(owner.id).text, "", "queued save waits for atomic consume ACK");
+      assert.equal(
+        h.recordFor(owner.id).text,
+        "",
+        "queued save waits for atomic consume ACK",
+      );
     }
     ack.resolve(queueReceipt(request));
-    await pending; await edited; await h.drafts.flushAll(); await h.drafts.waitForPendingSends();
+    await pending;
+    await edited;
+    await h.drafts.flushAll();
+    await h.drafts.waitForPendingSends();
     assert.equal(h.registry.get(owner).draft, editDuringAck ? "new edit" : "");
     assert.equal(h.recordFor(owner.id).text, editDuringAck ? "new edit" : "");
-    assert.equal(h.registry.get(owner).saveState, editDuringAck ? "saved" : "idle");
+    assert.equal(
+      h.registry.get(owner).saveState,
+      editDuringAck ? "saved" : "idle",
+    );
     assert.equal(state.binding.getSession()!.model, "later-selection");
     assert.equal(state.retained, 0);
-    state.binding.setExecutionSelection({ ...state.binding.getSession()!, model: "model-a" });
+    state.binding.setExecutionSelection({
+      ...state.binding.getSession()!,
+      model: "model-a",
+    });
   }
 });
 
@@ -342,22 +738,37 @@ test("Auxiliary queue ACKは実draft hookの捕捉版だけをconsumeし、追�
 // impact = "別会話への誤送信と未受付の入力消失を防ぐ"
 // distinction = "queue class単体は実hookの遅いflushとUI capture失効を通らない"
 // @end-test-value
+/** 準備中の編集・選択・フリーズ・再作成で無効になった受付を止め、確定拒否でも保存済み入力を守る。 */
 test("Auxiliary queueはflush待ちの失効captureと確定拒否から入力を保護する", async (t) => {
   const h = await mountDrafts(t);
   const state = bindingFor(session());
   const owner = { kind: "auxiliary" as const, id: "aux-1" };
   let calls = 0;
   let selected = true;
-  const send = () => sendQueue(h, state, { isCurrent: () => selected, enqueue: async () => {
-    calls++;
-    return { state: "rejected", reason: "known rejection" };
-  } });
-  for (const invalidation of ["edit", "target", "freeze", "identity"] as const) {
+  /** 同じキュー実行経路を各失効要因と確定拒否で起動する。 */
+  const send = () =>
+    sendQueue(h, state, {
+      /** テストから切り替えられる現在の選択状態を返す。 */ isCurrent: () =>
+        selected,
+      /** 受付まで到達した回数を数え、確定した拒否を返す。 */ enqueue:
+        async () => {
+          calls++;
+          return { state: "rejected", reason: "known rejection" };
+        },
+    });
+  for (const invalidation of [
+    "edit",
+    "target",
+    "freeze",
+    "identity",
+  ] as const) {
     const saveDraft = h.api.saveAuxiliaryDraft;
     const savingStarted = deferred<void>();
     const releaseSave = deferred<void>();
     h.api.saveAuxiliaryDraft = async (request) => {
-      savingStarted.resolve(); await releaseSave.promise; return saveDraft(request);
+      savingStarted.resolve();
+      await releaseSave.promise;
+      return saveDraft(request);
     };
     const text = `draft before ${invalidation}`;
     const saving = h.drafts.changeDraft(session(), text, text.length);
@@ -366,19 +777,31 @@ test("Auxiliary queueはflush待ちの失効captureと確定拒否から入力�
     assert.equal(state.retained, 1);
     assert.equal(calls, 0);
     let laterEdit: Promise<void> | null = null;
-    if (invalidation === "edit") laterEdit = h.drafts.changeDraft(session(), "new edit", 8);
+    if (invalidation === "edit")
+      laterEdit = h.drafts.changeDraft(session(), "new edit", 8);
     if (invalidation === "target") selected = false;
     if (invalidation === "freeze") h.registry.freeze();
-    if (invalidation === "identity") state.binding.setSession({ ...session(), createdAt: "recreated" });
+    if (invalidation === "identity")
+      state.binding.setSession({ ...session(), createdAt: "recreated" });
     releaseSave.resolve();
-    await saving; await laterEdit; await pending;
+    await saving;
+    await laterEdit;
+    await pending;
     h.api.saveAuxiliaryDraft = saveDraft;
     assert.equal(calls, 0);
-    assert.equal(h.registry.get(owner).draft, invalidation === "edit" ? "new edit" : text);
-    assert.equal(h.recordFor(owner.id).text, invalidation === "edit" ? "new edit" : text);
+    assert.equal(
+      h.registry.get(owner).draft,
+      invalidation === "edit" ? "new edit" : text,
+    );
+    assert.equal(
+      h.recordFor(owner.id).text,
+      invalidation === "edit" ? "new edit" : text,
+    );
     assert.equal(h.registry.get(owner).saveState, "saved");
     assert.equal(state.retained, 0);
-    selected = true; h.registry.unfreeze(); state.binding.setSession(session());
+    selected = true;
+    h.registry.unfreeze();
+    state.binding.setSession(session());
   }
   await h.edit(session(), "rejected capture");
   const before = { ...h.recordFor(owner.id) };

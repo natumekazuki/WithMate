@@ -14,19 +14,72 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
 import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
-import { executionWindowResultSchemas, type ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueOrigin, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import {
+  executionWindowResultSchemas,
+  type ExecutionReadInput,
+} from "../../src-shared/session/session-execution-read.js";
+import type {
+  SessionTurnQueueCapturedInput,
+  SessionTurnQueueOrigin,
+  SessionTurnQueueReceipt,
+} from "../../src-shared/session/session-turn-queue.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
 
-const target = { kind: "main" as const, sessionId: "owner", incarnationId: "owner-v1" };
-const origin: SessionTurnQueueOrigin = { kind: "gui", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId };
-const original: SessionTurnQueueOrigin = { ...origin, kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-v1", actorTurnId: "12",
-  actorSnapshot: { sessionTitle: "Sender Workspace", character: { id: "sender", name: "Original Agent", iconPath: "" } },
-  targetSnapshot: { sessionTitle: "Owner Workspace", character: { id: "owner", name: "Owner", iconPath: "" } } };
-const character = { id: "owner", name: "Owner", iconPath: "", description: "", roleMarkdown: "", notesMarkdown: "", updatedAt: "", themeColors: { main: "#112233", sub: "#445566" } };
-const settings = captureSessionExecutionOptions(buildNewSession({ id: "owner", taskTitle: "Fixture", workspacePath: "C:/fixture", workspaceLabel: "Fixture",
-  branch: "main", characterId: character.id, character: character.name, characterIconPath: "", characterThemeColors: character.themeColors, approvalMode: "on-request" }));
+const target = {
+  kind: "main" as const,
+  sessionId: "owner",
+  incarnationId: "owner-v1",
+};
+const origin: SessionTurnQueueOrigin = {
+  kind: "gui",
+  operation: "send",
+  targetSessionId: target.sessionId,
+  targetIncarnationId: target.incarnationId,
+};
+const original: SessionTurnQueueOrigin = {
+  ...origin,
+  kind: "session",
+  actorKind: "main",
+  actorSessionId: "sender",
+  actorIncarnationId: "sender-v1",
+  actorTurnId: "12",
+  actorSnapshot: {
+    sessionTitle: "Sender Workspace",
+    character: { id: "sender", name: "Original Agent", iconPath: "" },
+  },
+  targetSnapshot: {
+    sessionTitle: "Owner Workspace",
+    character: { id: "owner", name: "Owner", iconPath: "" },
+  },
+};
+const character = {
+  id: "owner",
+  name: "Owner",
+  iconPath: "",
+  description: "",
+  roleMarkdown: "",
+  notesMarkdown: "",
+  updatedAt: "",
+  themeColors: { main: "#112233", sub: "#445566" },
+};
+const settings = captureSessionExecutionOptions(
+  buildNewSession({
+    id: "owner",
+    taskTitle: "Fixture",
+    workspacePath: "C:/fixture",
+    workspaceLabel: "Fixture",
+    branch: "main",
+    characterId: character.id,
+    character: character.name,
+    characterIconPath: "",
+    characterThemeColors: character.themeColors,
+    approvalMode: "on-request",
+  }),
+);
 
 // @test-value v2
 // kind = "contract"
@@ -40,50 +93,142 @@ const settings = captureSessionExecutionOptions(buildNewSession({ id: "owner", t
 // impact = "相手から新規の依頼が来たか、利用者が編集した再実行かを取り違える"
 // distinction = "SQLiteが来歴を分けて保存しても実際にどの話者をカードへ出すかは決まらない"
 // @end-test-value
+/** 待機カードが元の発言者による再送と利用者自身による編集を区別し、別の再試行キャプションを加えないことを確認する。 */
 test("Retry queue cards distinguish a replay from a user edit", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
-  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, IS_REACT_ACT_ENVIRONMENT: true };
-  const prior = Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const prior = Object.keys(globals).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, value });
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const accepted: SessionTurnQueueCapturedInput = { origin, provider: "codex", workspacePath: "C:/fixture", attachments: [],
-    retrySource: { receiptId: "original", turnId: "13", origin: original, changedSinceAcceptance: false },
-    request: { userMessage: "Original content", clientRequestId: "request", submitSource: "retry", executionOptions: settings } };
-  const receipt: SessionTurnQueueReceipt = { id: "retry", requestId: "request", sessionId: target.sessionId, incarnationId: target.incarnationId, state: "queued",
-    captured: accepted, accepted, dispatched: null, turnId: null, userMessageSeq: null, inputTurnId: null, reason: null, releasedAt: null,
-    queuePosition: 1, sequence: 1, createdAt: "now", updatedAt: "now" };
-  const renderQueue = (next: SessionTurnQueueReceipt) => root.render(<SessionTurnQueueRow receipt={next} character={character} busy={false} onCancel={() => {}} />);
+  const accepted: SessionTurnQueueCapturedInput = {
+    origin,
+    provider: "codex",
+    workspacePath: "C:/fixture",
+    attachments: [],
+    retrySource: {
+      receiptId: "original",
+      turnId: "13",
+      origin: original,
+      changedSinceAcceptance: false,
+    },
+    request: {
+      userMessage: "Original content",
+      clientRequestId: "request",
+      submitSource: "retry",
+      executionOptions: settings,
+    },
+  };
+  const receipt: SessionTurnQueueReceipt = {
+    id: "retry",
+    requestId: "request",
+    sessionId: target.sessionId,
+    incarnationId: target.incarnationId,
+    state: "queued",
+    captured: accepted,
+    accepted,
+    dispatched: null,
+    turnId: null,
+    userMessageSeq: null,
+    inputTurnId: null,
+    reason: null,
+    releasedAt: null,
+    queuePosition: 1,
+    sequence: 1,
+    createdAt: "now",
+    updatedAt: "now",
+  };
+  /** 受理済み入力の更新後も同じ待機カードを描画する。 */
+  const renderQueue = (next: SessionTurnQueueReceipt) =>
+    root.render(
+      <SessionTurnQueueRow
+        receipt={next}
+        character={character}
+        busy={false}
+        onCancel={() => {}}
+      />,
+    );
+  /** 本文・発言者・アクセシブル名を観測する対象カードを取得する。 */
   const article = () => dom.window.document.querySelector("article")!;
+  /** 再試行の来歴を示す補助キャプションが本文やラベルに現れないことを確かめる。 */
   const assertNoRetryCaption = () => {
-    assert.doesNotMatch(article().textContent!, /Retry requested by you|Previous input from/);
+    assert.doesNotMatch(
+      article().textContent!,
+      /Retry requested by you|Previous input from/,
+    );
     assert.equal(article().getAttribute("aria-label"), null);
     assert.equal(article().getAttribute("title"), null);
-    assert.equal(article().querySelector("[data-queue-receipt-id]")?.getAttribute("title") ?? null, null);
+    assert.equal(
+      article()
+        .querySelector("[data-queue-receipt-id]")
+        ?.getAttribute("title") ?? null,
+      null,
+    );
   };
   try {
     await act(async () => renderQueue(receipt));
-    assert.equal(article().querySelector(".message-character-name")?.textContent, "Original Agent");
-    assert.ok(article().querySelector('button[aria-label="Open Sender: Sender Workspace"]'));
+    assert.equal(
+      article().querySelector(".message-character-name")?.textContent,
+      "Original Agent",
+    );
+    assert.ok(
+      article().querySelector(
+        'button[aria-label="Open Sender: Sender Workspace"]',
+      ),
+    );
     assert.match(article().textContent!, /Original content/);
     assertNoRetryCaption();
-    assert.ok(article().querySelector('[role="group"][aria-label="Queued turn"] button[aria-label="Cancel queued turn"]'));
+    assert.ok(
+      article().querySelector(
+        '[role="group"][aria-label="Queued turn"] button[aria-label="Cancel queued turn"]',
+      ),
+    );
 
-    const changed = { ...accepted, request: { ...accepted.request, userMessage: "User edited content" } };
-    await act(async () => renderQueue({ ...receipt, captured: changed, updatedAt: "edited" }));
+    const changed = {
+      ...accepted,
+      request: { ...accepted.request, userMessage: "User edited content" },
+    };
+    await act(async () =>
+      renderQueue({ ...receipt, captured: changed, updatedAt: "edited" }),
+    );
     assert.ok(article().classList.contains("user"));
-    assert.equal(article().querySelector('button[aria-label="Open Sender: Sender Workspace"]'), null);
+    assert.equal(
+      article().querySelector(
+        'button[aria-label="Open Sender: Sender Workspace"]',
+      ),
+      null,
+    );
     assert.equal(article().querySelector(".message-character-name"), null);
     assert.match(article().textContent!, /User edited content/);
     assert.doesNotMatch(article().textContent!, /Original content/);
     assertNoRetryCaption();
 
-    await act(async () => renderQueue({ ...receipt, state: "interrupted", reason: "Saved outcome unknown" }));
+    await act(async () =>
+      renderQueue({
+        ...receipt,
+        state: "interrupted",
+        reason: "Saved outcome unknown",
+      }),
+    );
     assertNoRetryCaption();
-    assert.match(dom.window.document.body.textContent ?? "", /Saved outcome unknown/);
+    assert.match(
+      dom.window.document.body.textContent ?? "",
+      /Saved outcome unknown/,
+    );
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    for (const [key, descriptor] of prior)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
   }
 });
 
@@ -99,104 +244,314 @@ test("Retry queue cards distinguish a replay from a user edit", async () => {
 // impact = "添付を差し替えた方向付けや比較できない本文を、以前の相手から届いた原文と誤認する"
 // distinction = "待機カードtestは保存された三値との接続を通らず、履歴reader単体では話者の見え方を確認しない"
 // @end-test-value
+/** 入力が完全に一致する再試行だけが元の送信者への導線と配色を維持し、保存履歴でも表示を再現することを確認する。 */
 test("Retry cards preserve the original sender route and theme only for an exact replay", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-retry-author-"));
   const database = join(directory, "fixture.db");
   const sessions = new SessionStorageV6(database);
   const queue = new SessionTurnQueueStorageV6(database);
-  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true, url: "http://localhost" });
-  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, IS_REACT_ACT_ENVIRONMENT: true };
-  const prior = Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
-  Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 } });
+  const dom = new JSDOM("<div id='root'></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost",
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    Node: dom.window.Node,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const prior = Object.keys(globals).map(
+    (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { configurable: true, value });
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: {
+      /** JSDOMでメッセージ領域の高さを測定できるよう固定値を与える。 */
+      get: () => 720,
+    },
+    offsetWidth: {
+      /** レイアウトを持たないJSDOMで要素の実幅を代用する。 */
+      get: () => 800,
+    },
+    clientHeight: {
+      /** 表示領域の高さを与えて会話行の描画を成立させる。 */
+      get: () => 720,
+    },
+  });
   const container = dom.window.document.getElementById("root")!;
-  const attachment = (id: string): ComposerAttachment => ({ id, kind: "file", source: "text", absolutePath: join(directory, id),
-    displayPath: id, workspaceRelativePath: id, isOutsideWorkspace: false });
+  /** 添付の差し替えを経路や表示名で区別できる、試験用の添付を作る。 */
+  const attachment = (id: string): ComposerAttachment => ({
+    id,
+    kind: "file",
+    source: "text",
+    absolutePath: join(directory, id),
+    displayPath: id,
+    workspaceRelativePath: id,
+    isOutsideWorkspace: false,
+  });
   const content = "Content unchanged across retries";
   try {
-    const owner = sessions.insertSession(buildNewSession({ id: target.sessionId, taskTitle: "Owner",
-      workspacePath: directory, workspaceLabel: "Fixture", branch: "main", characterId: character.id,
-      character: character.name, characterIconPath: "", characterThemeColors: character.themeColors, approvalMode: "on-request" }));
-    const savedTarget = { ...target, incarnationId: getSessionIncarnationId(owner) };
-    const savedOrigin = { ...origin, targetIncarnationId: savedTarget.incarnationId };
+    const owner = sessions.insertSession(
+      buildNewSession({
+        id: target.sessionId,
+        taskTitle: "Owner",
+        workspacePath: directory,
+        workspaceLabel: "Fixture",
+        branch: "main",
+        characterId: character.id,
+        character: character.name,
+        characterIconPath: "",
+        characterThemeColors: character.themeColors,
+        approvalMode: "on-request",
+      }),
+    );
+    const savedTarget = {
+      ...target,
+      incarnationId: getSessionIncarnationId(owner),
+    };
+    const savedOrigin = {
+      ...origin,
+      targetIncarnationId: savedTarget.incarnationId,
+    };
     const senderColors = { main: "#e07299", sub: "#9bcdda" };
-    const sender = sessions.insertSession(buildNewSession({ id: "sender", taskTitle: "Sender Workspace",
-      workspacePath: directory, workspaceLabel: "Fixture", branch: "main", characterId: "sender",
-      character: "Original Agent", characterIconPath: "", characterThemeColors: senderColors, approvalMode: "on-request" }));
-    const savedOriginal = { ...original, actorIncarnationId: sender.incarnationId, targetIncarnationId: savedTarget.incarnationId };
+    const sender = sessions.insertSession(
+      buildNewSession({
+        id: "sender",
+        taskTitle: "Sender Workspace",
+        workspacePath: directory,
+        workspaceLabel: "Fixture",
+        branch: "main",
+        characterId: "sender",
+        character: "Original Agent",
+        characterIconPath: "",
+        characterThemeColors: senderColors,
+        approvalMode: "on-request",
+      }),
+    );
+    const savedOriginal = {
+      ...original,
+      actorIncarnationId: sender.incarnationId,
+      targetIncarnationId: savedTarget.incarnationId,
+    };
     const executionOptions = captureSessionExecutionOptions(owner);
     let seq = 0;
-    const enqueue = (inputOrigin: SessionTurnQueueOrigin, retrySource?: SessionTurnQueueCapturedInput["retrySource"], attachments = [attachment("original.txt")]) =>
-      queue.enqueue(savedTarget, { origin: inputOrigin, retrySource, provider: owner.provider, workspacePath: directory,
-        attachments, request: { userMessage: content, clientRequestId: randomUUID(),
-          submitSource: retrySource ? "retry" : "composer", executionOptions } });
+    /** 元メッセージと同じ本文を維持しながら、来歴と添付を変えて受理済み入力を作る。 */
+    const enqueue = (
+      inputOrigin: SessionTurnQueueOrigin,
+      retrySource?: SessionTurnQueueCapturedInput["retrySource"],
+      attachments = [attachment("original.txt")],
+    ) =>
+      queue.enqueue(savedTarget, {
+        origin: inputOrigin,
+        retrySource,
+        provider: owner.provider,
+        workspacePath: directory,
+        attachments,
+        request: {
+          userMessage: content,
+          clientRequestId: randomUUID(),
+          submitSource: retrySource ? "retry" : "composer",
+          executionOptions,
+        },
+      });
+    /** 受理済み入力を取得して実行へ移し、後で履歴へ保存するためのTurn IDを返す。 */
     const start = (input: SessionTurnQueueReceipt) => {
       const claimed = queue.claimNext(savedTarget);
       assert.equal(claimed?.id, input.id);
       assert.ok(claimed?.dispatched);
-      const running = sessions.appendRunningTurnStart({ ...savedTarget, expectedMessageCount: seq, updatedAt: "start",
-        userMessage: { role: "user", text: claimed.dispatched.request.userMessage },
-        queuedTurn: { queueId: input.id, turn: { sessionId: target.sessionId, phase: "running", userMessageSeq: seq,
-          provider: owner.provider, model: executionOptions.model, reasoningEffort: executionOptions.reasoningEffort,
-          sandboxMode: executionOptions.codexSandboxMode, approvalMode: executionOptions.approvalMode, threadId: "", createdAt: "start", errorMessage: "" } } });
+      const running = sessions.appendRunningTurnStart({
+        ...savedTarget,
+        expectedMessageCount: seq,
+        updatedAt: "start",
+        userMessage: {
+          role: "user",
+          text: claimed.dispatched.request.userMessage,
+        },
+        queuedTurn: {
+          queueId: input.id,
+          turn: {
+            sessionId: target.sessionId,
+            phase: "running",
+            userMessageSeq: seq,
+            provider: owner.provider,
+            model: executionOptions.model,
+            reasoningEffort: executionOptions.reasoningEffort,
+            sandboxMode: executionOptions.codexSandboxMode,
+            approvalMode: executionOptions.approvalMode,
+            threadId: "",
+            createdAt: "start",
+            errorMessage: "",
+          },
+        },
+      });
       assert.ok(running.queuedTurn);
       return running.queuedTurn.id;
     };
-    const finish = (input: SessionTurnQueueReceipt, id: number, phase: "failed" | "completed") => {
-      sessions.appendSessionTerminal({ ...savedTarget, expectedMessageCount: seq + 1, assistantMessage: { role: "assistant", text: phase },
-        metadata: { status: "saved", runState: "idle", threadId: "", updatedAt: "finish" },
-        terminalCommit: { turnId: id, sessionId: target.sessionId, phase, assistantMessageSeq: seq + 1,
-          threadId: "", errorMessage: "", completedAt: "finish" } });
+    /** ユーザー入力に対応する終端を履歴へ追記し、次のテスト入力が別の連番になるようにする。 */
+    const finish = (
+      input: SessionTurnQueueReceipt,
+      id: number,
+      phase: "failed" | "completed",
+    ) => {
+      sessions.appendSessionTerminal({
+        ...savedTarget,
+        expectedMessageCount: seq + 1,
+        assistantMessage: { role: "assistant", text: phase },
+        metadata: {
+          status: "saved",
+          runState: "idle",
+          threadId: "",
+          updatedAt: "finish",
+        },
+        terminalCommit: {
+          turnId: id,
+          sessionId: target.sessionId,
+          phase,
+          assistantMessageSeq: seq + 1,
+          threadId: "",
+          errorMessage: "",
+          completedAt: "finish",
+        },
+      });
       const saved = { receiptId: input.id, turnId: String(id), seq };
       seq += 2;
       return saved;
     };
-    const save = (inputOrigin: SessionTurnQueueOrigin, phase: "failed" | "completed", retrySource?: SessionTurnQueueCapturedInput["retrySource"],
-      replaceAttachment = false, attachments = [attachment("original.txt")]) => {
+    /** 指定の来歴と添付で入力を作り、必要なら添付だけ差し替えて実行結果を保存する。 */
+    const save = (
+      inputOrigin: SessionTurnQueueOrigin,
+      phase: "failed" | "completed",
+      retrySource?: SessionTurnQueueCapturedInput["retrySource"],
+      replaceAttachment = false,
+      attachments = [attachment("original.txt")],
+    ) => {
       const input = enqueue(inputOrigin, retrySource, attachments);
-      if (replaceAttachment) queue.updateQueued(savedTarget, input.id, { userMessage: content, attachments: [attachment("replacement.txt")] });
+      if (replaceAttachment)
+        queue.updateQueued(savedTarget, input.id, {
+          userMessage: content,
+          attachments: [attachment("replacement.txt")],
+        });
       return finish(input, start(input), phase);
     };
     const source = save(savedOriginal, "failed");
-    const retrySource = { receiptId: source.receiptId, turnId: source.turnId, origin: savedOriginal, changedSinceAcceptance: false };
-    const queueEntry = enqueue(savedOrigin, retrySource);
-    const assertOriginalAppearance = () => {
-      const senderCard = container.querySelector<HTMLElement>(".message-card.session-origin.has-sender-theme");
-      assert.ok(senderCard, "the exact replay must use the original sender's themed card");
-      assert.equal(senderCard.style.getPropertyValue("--sender-main"), senderColors.main);
-      assert.equal(container.querySelector(".message-character-name")?.textContent, "Original Agent");
-      assert.equal(senderCard.querySelector(".session-message-mention")?.textContent, "@Owner");
-      assert.ok(senderCard.querySelector('button[aria-label="Open Sender: Sender Workspace"]'));
+    const retrySource = {
+      receiptId: source.receiptId,
+      turnId: source.turnId,
+      origin: savedOriginal,
+      changedSinceAcceptance: false,
     };
-    const readContext = { target: savedTarget, ownerSessionId: target.sessionId };
+    const queueEntry = enqueue(savedOrigin, retrySource);
+    /** 元の発言者名・色・宛先と送信元への導線がカードに揃うことを確かめる。 */
+    const assertOriginalAppearance = () => {
+      const senderCard = container.querySelector<HTMLElement>(
+        ".message-card.session-origin.has-sender-theme",
+      );
+      assert.ok(
+        senderCard,
+        "the exact replay must use the original sender's themed card",
+      );
+      assert.equal(
+        senderCard.style.getPropertyValue("--sender-main"),
+        senderColors.main,
+      );
+      assert.equal(
+        container.querySelector(".message-character-name")?.textContent,
+        "Original Agent",
+      );
+      assert.equal(
+        senderCard.querySelector(".session-message-mention")?.textContent,
+        "@Owner",
+      );
+      assert.ok(
+        senderCard.querySelector(
+          'button[aria-label="Open Sender: Sender Workspace"]',
+        ),
+      );
+    };
+    const readContext = {
+      target: savedTarget,
+      ownerSessionId: target.sessionId,
+    };
     const stageRoot = createRoot(container);
     const stageReader = new SessionExecutionReadStorage(database);
     let holdSavedRead = false;
     let resumeSavedRead: (() => void) | undefined;
-    Object.defineProperty(dom.window, "withmate", { configurable: true, value: { openSession: async () => {},
-      readSessionExecution: async (_owner: string, operation: ExecutionReadInput["operation"], request: ExecutionReadInput["request"]) => {
-        if (operation !== "read_turn_input_display") return { ok: true, items: [], nextCursor: null };
-        if (holdSavedRead && "messageSeq" in request) await new Promise<void>((resolve) => { resumeSavedRead = resolve; });
-        const result = executionWindowResultSchemas.read_turn_input_display.parse(stageReader.execute({ target: savedTarget, operation, request }));
-        assert.equal(result.origin?.kind, "gui");
-        assert.equal(result.retryInputUnchanged, true);
-        assert.deepEqual(result.retrySource, retrySource);
-        assert.deepEqual(result.senderTheme, senderColors);
-        return result;
+    Object.defineProperty(dom.window, "withmate", {
+      configurable: true,
+      value: {
+        /** 送信元を開く操作の存在だけを検証し、ウィンドウの起動は行わない。 */
+        openSession: async () => {},
+        /** 実ストレージから表示用の来歴を取得し、保存済みメッセージの再読込を保留できるようにする。 */
+        readSessionExecution: async (
+          _owner: string,
+          operation: ExecutionReadInput["operation"],
+          request: ExecutionReadInput["request"],
+        ) => {
+          if (operation !== "read_turn_input_display")
+            return { ok: true, items: [], nextCursor: null };
+          if (holdSavedRead && "messageSeq" in request)
+            await new Promise<void>((resolve) => {
+              resumeSavedRead = resolve;
+            });
+          const result =
+            executionWindowResultSchemas.read_turn_input_display.parse(
+              stageReader.execute({ target: savedTarget, operation, request }),
+            );
+          assert.equal(result.origin?.kind, "gui");
+          assert.equal(result.retryInputUnchanged, true);
+          assert.deepEqual(result.retrySource, retrySource);
+          assert.deepEqual(result.senderTheme, senderColors);
+          return result;
+        },
       },
-    } });
+    });
+    /** 会話表示の検証と無関係な操作は実行しない。 */
     const noop = () => {};
-    const liveOrSaved = (receipt?: SessionTurnQueueReceipt) => <SessionMessageColumn sessionId={target.sessionId} character={character}
-      inputReadContext={readContext} messages={[{ role: "user", text: content, historyIndex: seqOfRetry }]} messageKeys={["resolved-retry"]}
-      turnQueueMetadata={receipt ? new Map([["resolved-retry", receipt]]) : undefined}
-      messageListRef={createRef()} expandedArtifacts={{}} isRunning={!!receipt}
-      liveApprovalRequest={null} approvalActionRequestId={null} liveElicitationRequest={null} elicitationActionRequestId={null}
-      liveRunAssistantText="" hasLiveRunAssistantText={false} liveRunErrorMessage="" isMessageListFollowing
-      onMessageListScroll={noop} onToggleArtifact={noop} onOpenDiff={noop} onResolveLiveApproval={noop} onResolveLiveElicitation={noop} />;
+    /** 同じ再試行入力を、待機情報のある実行中と保存履歴に切り替えて描画する。 */
+    const liveOrSaved = (receipt?: SessionTurnQueueReceipt) => (
+      <SessionMessageColumn
+        sessionId={target.sessionId}
+        character={character}
+        inputReadContext={readContext}
+        messages={[{ role: "user", text: content, historyIndex: seqOfRetry }]}
+        messageKeys={["resolved-retry"]}
+        turnQueueMetadata={
+          receipt ? new Map([["resolved-retry", receipt]]) : undefined
+        }
+        messageListRef={createRef()}
+        expandedArtifacts={{}}
+        isRunning={!!receipt}
+        liveApprovalRequest={null}
+        approvalActionRequestId={null}
+        liveElicitationRequest={null}
+        elicitationActionRequestId={null}
+        liveRunAssistantText=""
+        hasLiveRunAssistantText={false}
+        liveRunErrorMessage=""
+        isMessageListFollowing
+        onMessageListScroll={noop}
+        onToggleArtifact={noop}
+        onOpenDiff={noop}
+        onResolveLiveApproval={noop}
+        onResolveLiveElicitation={noop}
+      />
+    );
     const seqOfRetry = seq;
     let unchanged: ReturnType<typeof finish>;
     try {
-      await act(async () => stageRoot.render(<SessionTurnQueueRow receipt={queueEntry} character={character} inputReadContext={readContext} busy={false} onCancel={noop} />));
+      await act(async () =>
+        stageRoot.render(
+          <SessionTurnQueueRow
+            receipt={queueEntry}
+            character={character}
+            inputReadContext={readContext}
+            busy={false}
+            onCancel={noop}
+          />,
+        ),
+      );
       assertOriginalAppearance();
       const id = start(queueEntry);
       const active = queue.getReceiptById(savedTarget, queueEntry.id);
@@ -217,65 +572,188 @@ test("Retry cards preserve the original sender route and theme only for an exact
     const changed = save(savedOrigin, "completed", retrySource, true);
     const unknown = save(savedOrigin, "completed", retrySource);
     const editedSource = save(savedOriginal, "failed", undefined, true);
-    const editedRetrySource = { ...retrySource, receiptId: editedSource.receiptId, turnId: editedSource.turnId, changedSinceAcceptance: true };
-    const retryOfEditedSource = save(savedOrigin, "completed", editedRetrySource, false, [attachment("replacement.txt")]);
-    const staleOriginal = { ...savedOriginal, actorIncarnationId: "old-sender-incarnation" };
+    const editedRetrySource = {
+      ...retrySource,
+      receiptId: editedSource.receiptId,
+      turnId: editedSource.turnId,
+      changedSinceAcceptance: true,
+    };
+    const retryOfEditedSource = save(
+      savedOrigin,
+      "completed",
+      editedRetrySource,
+      false,
+      [attachment("replacement.txt")],
+    );
+    const staleOriginal = {
+      ...savedOriginal,
+      actorIncarnationId: "old-sender-incarnation",
+    };
     const staleSource = save(staleOriginal, "failed");
-    const staleRetrySource = { ...retrySource, receiptId: staleSource.receiptId, turnId: staleSource.turnId, origin: staleOriginal };
+    const staleRetrySource = {
+      ...retrySource,
+      receiptId: staleSource.receiptId,
+      turnId: staleSource.turnId,
+      origin: staleOriginal,
+    };
     const stale = save(savedOrigin, "completed", staleRetrySource);
     // 以前に保存された実行には、固定スナップショットだけがあり、比較元が残っていない場合がある。
     const fixture = new DatabaseSync(database);
-    try { fixture.prepare("UPDATE session_turn_queue_v6 SET accepted_json=NULL WHERE id=?").run(unknown.receiptId); }
-    finally { fixture.close(); }
-    const checks = [[unchanged.seq, true], [changed.seq, false], [unknown.seq, null], [retryOfEditedSource.seq, true], [stale.seq, true]] as const;
+    try {
+      fixture
+        .prepare(
+          "UPDATE session_turn_queue_v6 SET accepted_json=NULL WHERE id=?",
+        )
+        .run(unknown.receiptId);
+    } finally {
+      fixture.close();
+    }
+    const checks = [
+      [unchanged.seq, true],
+      [changed.seq, false],
+      [unknown.seq, null],
+      [retryOfEditedSource.seq, true],
+      [stale.seq, true],
+    ] as const;
     for (const round of ["saved", "reopened"]) {
       const reader = new SessionExecutionReadStorage(database);
-      const history = round === "saved" ? sessions : new SessionStorageV6(database);
+      const history =
+        round === "saved" ? sessions : new SessionStorageV6(database);
       const root = createRoot(container);
       const displayReads = new Map<number, boolean | null>();
       const operations: string[] = [];
-      Object.defineProperty(dom.window, "withmate", { configurable: true, value: { openSession: async () => {},
-        readSessionExecution: async (_owner: string, operation: ExecutionReadInput["operation"], request: ExecutionReadInput["request"]) => {
-          operations.push(operation);
-          if (operation !== "read_turn_input_display") return { ok: true, items: [], nextCursor: null };
-          const result = executionWindowResultSchemas.read_turn_input_display.parse(reader.execute({ target: savedTarget, operation, request }));
-          const messageSeq = "messageSeq" in request ? request.messageSeq : undefined;
-          assert.ok(typeof messageSeq === "number");
-          assert.equal(result.origin?.kind, "gui");
-          assert.deepEqual(result.retrySource, messageSeq === retryOfEditedSource.seq ? editedRetrySource : messageSeq === stale.seq ? staleRetrySource : retrySource);
-          assert.deepEqual(result.senderTheme, messageSeq === unchanged.seq ? senderColors : null);
-          displayReads.set(messageSeq, result.retryInputUnchanged);
-          return result;
+      Object.defineProperty(dom.window, "withmate", {
+        configurable: true,
+        value: {
+          /** 履歴カードに表示される送信元への導線だけを提供する。 */
+          openSession: async () => {},
+          /** 各連番のストレージ読取を実行し、再試行入力の一致結果と読取操作を記録する。 */
+          readSessionExecution: async (
+            _owner: string,
+            operation: ExecutionReadInput["operation"],
+            request: ExecutionReadInput["request"],
+          ) => {
+            operations.push(operation);
+            if (operation !== "read_turn_input_display")
+              return { ok: true, items: [], nextCursor: null };
+            const result =
+              executionWindowResultSchemas.read_turn_input_display.parse(
+                reader.execute({ target: savedTarget, operation, request }),
+              );
+            const messageSeq =
+              "messageSeq" in request ? request.messageSeq : undefined;
+            assert.ok(typeof messageSeq === "number");
+            assert.equal(result.origin?.kind, "gui");
+            assert.deepEqual(
+              result.retrySource,
+              messageSeq === retryOfEditedSource.seq
+                ? editedRetrySource
+                : messageSeq === stale.seq
+                  ? staleRetrySource
+                  : retrySource,
+            );
+            assert.deepEqual(
+              result.senderTheme,
+              messageSeq === unchanged.seq ? senderColors : null,
+            );
+            displayReads.set(messageSeq, result.retryInputUnchanged);
+            return result;
+          },
         },
-      } });
+      });
       try {
-        const messages = history.getConversationPage(target.sessionId)!.messages
-          .filter(({ historyIndex }) => checks.some(([messageSeq]) => messageSeq === historyIndex));
-        assert.deepEqual(messages.map(({ text }) => text), checks.map(() => content));
+        const messages = history
+          .getConversationPage(target.sessionId)!
+          .messages.filter(({ historyIndex }) =>
+            checks.some(([messageSeq]) => messageSeq === historyIndex),
+          );
+        assert.deepEqual(
+          messages.map(({ text }) => text),
+          checks.map(() => content),
+        );
+        /** 保存履歴の表現は固定し、承認やスクロールなどの操作は処理しない。 */
         const noop = () => {};
-        await act(async () => root.render(<SessionMessageColumn sessionId={target.sessionId} character={character}
-          inputReadContext={{ target: savedTarget, ownerSessionId: target.sessionId }} messages={messages} messageListRef={createRef()}
-          expandedArtifacts={{}} isRunning={false} liveApprovalRequest={null} approvalActionRequestId={null}
-          liveElicitationRequest={null} elicitationActionRequestId={null} liveRunAssistantText="" hasLiveRunAssistantText={false}
-          liveRunErrorMessage="" isMessageListFollowing onMessageListScroll={noop} onToggleArtifact={noop} onOpenDiff={noop}
-          onResolveLiveApproval={noop} onResolveLiveElicitation={noop} />));
+        await act(async () =>
+          root.render(
+            <SessionMessageColumn
+              sessionId={target.sessionId}
+              character={character}
+              inputReadContext={{
+                target: savedTarget,
+                ownerSessionId: target.sessionId,
+              }}
+              messages={messages}
+              messageListRef={createRef()}
+              expandedArtifacts={{}}
+              isRunning={false}
+              liveApprovalRequest={null}
+              approvalActionRequestId={null}
+              liveElicitationRequest={null}
+              elicitationActionRequestId={null}
+              liveRunAssistantText=""
+              hasLiveRunAssistantText={false}
+              liveRunErrorMessage=""
+              isMessageListFollowing
+              onMessageListScroll={noop}
+              onToggleArtifact={noop}
+              onOpenDiff={noop}
+              onResolveLiveApproval={noop}
+              onResolveLiveElicitation={noop}
+            />,
+          ),
+        );
         assert.deepEqual(displayReads, new Map(checks));
-        assert.equal(operations.filter((operation) => operation === "read_turn_input_display").length, checks.length);
-        assert.equal(operations.includes("get_execution"), false, "the rendered card must not read full Details");
+        assert.equal(
+          operations.filter(
+            (operation) => operation === "read_turn_input_display",
+          ).length,
+          checks.length,
+        );
+        assert.equal(
+          operations.includes("get_execution"),
+          false,
+          "the rendered card must not read full Details",
+        );
         const cards = [...container.querySelectorAll("article")];
         assert.equal(cards.length, checks.length);
-        assert.deepEqual(cards.map((card) => [...card.querySelectorAll(".message-character-name")].map((node) => node.textContent)),
-          [["Original Agent"], [], [], [], ["Original Agent"]]);
+        assert.deepEqual(
+          cards.map((card) =>
+            [...card.querySelectorAll(".message-character-name")].map(
+              (node) => node.textContent,
+            ),
+          ),
+          [["Original Agent"], [], [], [], ["Original Agent"]],
+        );
         for (const card of cards) {
-          assert.doesNotMatch(card.textContent!, /Retry requested by you|Previous input from|Edited before this Turn started/);
+          assert.doesNotMatch(
+            card.textContent!,
+            /Retry requested by you|Previous input from|Edited before this Turn started/,
+          );
           assert.equal(card.getAttribute("aria-label"), null);
           assert.equal(card.getAttribute("title"), null);
         }
-        assert.deepEqual(cards.map((card) => Boolean(card.querySelector('button[aria-label="Open Sender: Sender Workspace"]'))), [true, false, false, false, true]);
-        assert.equal(cards.at(-1)?.querySelector(".session-message-mention")?.textContent, "@Owner");
+        assert.deepEqual(
+          cards.map((card) =>
+            Boolean(
+              card.querySelector(
+                'button[aria-label="Open Sender: Sender Workspace"]',
+              ),
+            ),
+          ),
+          [true, false, false, false, true],
+        );
+        assert.equal(
+          cards.at(-1)?.querySelector(".session-message-mention")?.textContent,
+          "@Owner",
+        );
         assertOriginalAppearance();
         assert.equal(container.querySelectorAll(".has-sender-theme").length, 1);
-        assert.deepEqual(cards.map((card) => card.querySelector("[data-message-body]")?.textContent), checks.map(() => content));
+        assert.deepEqual(
+          cards.map(
+            (card) => card.querySelector("[data-message-body]")?.textContent,
+          ),
+          checks.map(() => content),
+        );
       } finally {
         await act(async () => root.unmount());
         reader.close();
@@ -284,7 +762,9 @@ test("Retry cards preserve the original sender route and theme only for an exact
     }
   } finally {
     dom.window.close();
-    for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    for (const [key, descriptor] of prior)
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
     queue.close();
     sessions.close();
     await rm(directory, { recursive: true, force: true });

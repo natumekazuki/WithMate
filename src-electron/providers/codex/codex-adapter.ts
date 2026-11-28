@@ -6,14 +6,26 @@ import {
   CodexAppServerTransport,
   type CodexProtocolEvent,
 } from "./app-server-transport.js";
-import { buildCodexAsyncQuestionRequest, CodexTurnInteractions } from "./codex-app-server-interactions.js";
+import {
+  buildCodexAsyncQuestionRequest,
+  CodexTurnInteractions,
+} from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
 import { projectCodexQuotaTelemetry } from "./codex-quota-telemetry.js";
 import { parseCodexModelPage } from "./codex-model-catalog.js";
 import { z } from "zod";
-import { APPROVAL_REVIEW_INSTRUCTIONS, approvalReviewDecisionSchema, type OpenApprovalReviewer } from "../approval-reviewer.js";
+import {
+  APPROVAL_REVIEW_INSTRUCTIONS,
+  approvalReviewDecisionSchema,
+  type OpenApprovalReviewer,
+} from "../approval-reviewer.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
-import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
+import {
+  CODEX_LIVE_PROGRESS_INTERVAL_MS,
+  type CodexProjectionFinal,
+  type CodexProjectionProgress,
+  type CodexProjectionEvent,
+} from "./codex-projection-protocol.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import type {
@@ -37,8 +49,14 @@ import {
   resolveCodexSandboxThreadOptions,
   type CodexSandboxBaseMode,
 } from "../../../src-shared/settings/codex-sandbox-mode.js";
-import { mapCodexSpeedToServiceTier, type CodexServiceTier } from "../../../src-shared/settings/codex-speed.js";
-import { mapCodexReviewerToApprovalsReviewer, type CodexApprovalsReviewer } from "../../../src-shared/settings/codex-reviewer.js";
+import {
+  mapCodexSpeedToServiceTier,
+  type CodexServiceTier,
+} from "../../../src-shared/settings/codex-speed.js";
+import {
+  mapCodexReviewerToApprovalsReviewer,
+  type CodexApprovalsReviewer,
+} from "../../../src-shared/settings/codex-reviewer.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -62,7 +80,17 @@ import {
   composeProviderPrompt,
   isCanceledProviderMessage,
 } from "../provider-prompt.js";
-import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderErrorReason, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import {
+  ProviderTurnError,
+  resolveRunWorkspacePath,
+  type GetProviderQuotaTelemetryInput,
+  type ProviderErrorReason,
+  type ProviderPromptComposition,
+  type ProviderTurnAdapter,
+  type RunSessionTurnInput,
+  type RunSessionTurnProgressHandler,
+  type RunSessionTurnResult,
+} from "../provider-runtime.js";
 import {
   resolveDevelopmentProviderBinaryPath,
   resolvePackagedProviderBinaryPath,
@@ -81,8 +109,16 @@ import {
   type ProviderAgentRuntimeBindingRedactor,
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
-import { buildCodexManagedHttpMcpArguments, buildCodexManagedHttpMcpConfig, buildCodexManagedMcpDisableConfig } from "../managed-http-mcp.js";
-import { buildChangedFilesFromSources as buildChangedFilesProjection, buildCodexProviderMetadata as buildProviderMetadataProjection, toMessageOperations as toMessageOperationsProjection } from "./codex-event-projection.js";
+import {
+  buildCodexManagedHttpMcpArguments,
+  buildCodexManagedHttpMcpConfig,
+  buildCodexManagedMcpDisableConfig,
+} from "../managed-http-mcp.js";
+import {
+  buildChangedFilesFromSources as buildChangedFilesProjection,
+  buildCodexProviderMetadata as buildProviderMetadataProjection,
+  toMessageOperations as toMessageOperationsProjection,
+} from "./codex-event-projection.js";
 import {
   createCodexTurnStreamState,
   collectCodexAssistantResponseFromItems,
@@ -91,6 +127,7 @@ import {
 } from "./codex-turn-events.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
+/** ファイル操作の種別とパスから、成果物に載せる一行の説明を作る。 */
 function summarizeChangedFile(
   kind: ChangedFile["kind"],
   filePath: string,
@@ -105,6 +142,7 @@ function summarizeChangedFile(
   }
 }
 
+/** ワークスペース内として扱えるパスは相対表示にし、それ以外は元のパスの区切りだけを揃える。 */
 function normalizeWorkspaceRelativePath(
   workspacePath: string,
   filePath: string,
@@ -125,6 +163,7 @@ function normalizeWorkspaceRelativePath(
   return filePath.replace(/\\/g, "/");
 }
 
+/** テキストの内容を LF または CRLF で分割し、空または未取得なら行を返さない。 */
 function toLines(content: string | null): string[] {
   if (!content) {
     return [];
@@ -133,6 +172,7 @@ function toLines(content: string | null): string[] {
   return content.split(/\r?\n/);
 }
 
+/** 対応付け前の差分操作。共通行は両側、追加・削除は該当側の行番号と内容を持つ。 */
 type RawDiffOp =
   | {
       kind: "context";
@@ -144,6 +184,7 @@ type RawDiffOp =
   | { kind: "delete"; leftNumber: number; leftText: string }
   | { kind: "add"; rightNumber: number; rightText: string };
 
+/** Codex 実行から診断先へ渡す重要度・種別・説明と、任意のデータやエラー情報。 */
 type CodexAdapterLogInput = {
   level: "debug" | "info" | "warn" | "error";
   kind: string;
@@ -151,25 +192,41 @@ type CodexAdapterLogInput = {
   data?: unknown;
   error?: { name?: string; message: string; stack?: string };
 };
+/** アダプターの診断をアプリのログへ引き渡す処理。 */
 type CodexAdapterLogger = (input: CodexAdapterLogInput) => void;
+/** アダプターに必要な App Server の初期化・RPC・通知と、停止試行・実終了確認の接続境界。 */
 type CodexTransport = Pick<
   CodexAppServerTransport,
   "start" | "request" | "nextEvent" | "close" | "whenClosed"
 >;
 const approvalReviewOutputSchema = z.toJSONSchema(approvalReviewDecisionSchema);
 
+/** 管理 MCP があるときだけ有効設定を読み、旧エントリーの無効化と新しい HTTP 接続の設定を組み合わせる。 */
 async function codexManagedMcpConfig(
-  transport: CodexTransport, workspace: string, binding: ProviderAgentRuntimeBindingProjection | null | undefined, signal?: AbortSignal,
+  transport: CodexTransport,
+  workspace: string,
+  binding: ProviderAgentRuntimeBindingProjection | null | undefined,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | undefined> {
   if (!binding?.managedMcp) return undefined;
   const response = await transport.request<{ config: Record<string, unknown> }>(
-    "config/read", { cwd: workspace, includeLayers: false }, { signal },
+    "config/read",
+    { cwd: workspace, includeLayers: false },
+    { signal },
   );
-  if (!response.config || typeof response.config !== "object" || Array.isArray(response.config)) {
+  if (
+    !response.config ||
+    typeof response.config !== "object" ||
+    Array.isArray(response.config)
+  ) {
     throw new Error("Codex effective MCP configuration could not be resolved");
   }
-  return { ...buildCodexManagedMcpDisableConfig(response.config), ...buildCodexManagedHttpMcpConfig(binding) };
+  return {
+    ...buildCodexManagedMcpDisableConfig(response.config),
+    ...buildCodexManagedHttpMcpConfig(binding),
+  };
 }
+/** クライアントの表示バージョンと差分処理の待機上限、テスト等で置き換える接続ファクトリー。 */
 export type CodexAdapterOptions = {
   appVersion?: string;
   snapshotDeadlineMs?: number;
@@ -180,34 +237,62 @@ export type CodexAdapterOptions = {
 const DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS = 5_000;
 const CODEX_SNAPSHOT_TIMEOUT = Symbol("codex-snapshot-timeout");
 const require = createRequire(import.meta.url);
+/** API キーでの認証失敗を、Turn 本体や接続の失敗と区別する。 */
 class CodexAuthenticationError extends Error {}
 
-function sanitizeCodexError(error: unknown, redactor: ProviderAgentRuntimeBindingRedactor, seen = new WeakSet<Error>()): unknown {
+/** 認証情報が表示用エラーへ残らないよう、メッセージ・スタック・データや原因を秘匿化する。循環する原因は再帰しない。 */
+function sanitizeCodexError(
+  error: unknown,
+  redactor: ProviderAgentRuntimeBindingRedactor,
+  seen = new WeakSet<Error>(),
+): unknown {
   if (error instanceof Error) {
     if (seen.has(error)) return error;
     seen.add(error);
   }
   if (error instanceof CodexAppServerRpcError) {
-    const sanitized = new CodexAppServerRpcError(error.code, redactor.sanitizeText(error.message), redactor.sanitize(error.data));
+    const sanitized = new CodexAppServerRpcError(
+      error.code,
+      redactor.sanitizeText(error.message),
+      redactor.sanitize(error.data),
+    );
     if (error.stack) sanitized.stack = redactor.sanitizeText(error.stack);
     return sanitized;
   }
   if (error instanceof Error) {
     const message = redactor.sanitizeText(error.message);
-    if (message !== error.message) Object.defineProperty(error, "message", { value: message, writable: true, configurable: true });
+    if (message !== error.message)
+      Object.defineProperty(error, "message", {
+        value: message,
+        writable: true,
+        configurable: true,
+      });
     if (error.stack) error.stack = redactor.sanitizeText(error.stack);
     if ("cause" in error) {
-      Object.defineProperty(error, "cause", { value: sanitizeCodexError(error.cause, redactor, seen), writable: true, configurable: true });
+      Object.defineProperty(error, "cause", {
+        value: sanitizeCodexError(error.cause, redactor, seen),
+        writable: true,
+        configurable: true,
+      });
     }
     return error;
   }
   return redactor.sanitize(error);
 }
 
-function resolveCodexApiKey(providerId: string, appSettings: AppSettings): string {
-  return getProviderAppSettings(appSettings, providerId).apiKey.trim() || process.env.CODEX_API_KEY?.trim() || "";
+/** プロバイダー設定を先に使い、空の場合だけ現在の環境の API キーを参照する。 */
+function resolveCodexApiKey(
+  providerId: string,
+  appSettings: AppSettings,
+): string {
+  return (
+    getProviderAppSettings(appSettings, providerId).apiKey.trim() ||
+    process.env.CODEX_API_KEY?.trim() ||
+    ""
+  );
 }
 
+/** 指定された期限までは元の処理を待ち、先に期限が来た場合は呼び出し側の代替値を返す。 */
 async function raceWithDeadline<T, TTimeout>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -226,6 +311,7 @@ async function raceWithDeadline<T, TTimeout>(
     if (timeout) clearTimeout(timeout);
   }
 }
+/** 残高購入と再開時刻を伴う既知の Codex 利用上限メッセージだけを判別する。 */
 export function isCodexUsageLimitMessage(message: string): boolean {
   return (
     /you['’]ve hit your usage limit\./i.test(message) &&
@@ -233,6 +319,7 @@ export function isCodexUsageLimitMessage(message: string): boolean {
     /try again at/i.test(message)
   );
 }
+/** 中断は最優先とし、既知の利用上限に該当しない文言からは原因を断定しない。 */
 function resolveCodexProviderErrorReason(
   message: string,
   canceled: boolean,
@@ -243,6 +330,7 @@ function resolveCodexProviderErrorReason(
       ? "usage_limit"
       : "unknown";
 }
+/** 操作が完了したファイル変更項目だけを差分の確定根拠にする。 */
 function collectCompletedFileChangeItems(
   items: CodexTurnItem[],
 ): Array<Extract<CodexTurnItem, { type: "fileChange" }>> {
@@ -251,6 +339,7 @@ function collectCompletedFileChangeItems(
       item.type === "fileChange" && item.status === "completed",
   );
 }
+/** 完了通知のファイルパスをワークスペース基準に揃え、重複なしの比較候補として返す。 */
 function collectCompletedFileChangePaths(
   workspacePath: string,
   items: CodexTurnItem[],
@@ -265,6 +354,7 @@ function collectCompletedFileChangePaths(
     ),
   ].sort();
 }
+/** コマンド・MCP・協同エージェントなど、通知されたファイル以外も変更し得る操作があったかを判定する。 */
 function hasBroadFilesystemChangeSource(items: CodexTurnItem[]): boolean {
   return items.some(
     (item) =>
@@ -273,17 +363,20 @@ function hasBroadFilesystemChangeSource(items: CodexTurnItem[]): boolean {
       item.type === "collabAgentToolCall",
   );
 }
+/** アシスタント本文を除いた操作の先頭最大 6 件を、短い成果要約にする。 */
 function toActivitySummary(items: CodexTurnItem[]): string[] {
   return toMessageOperationsProjection(items)
     .filter((item) => item.type !== "agent_message")
     .map((item) => item.summary)
     .slice(0, 6);
 }
+/** RPC ペイロードの属性を読むオブジェクトを返す。配列やプリミティブは空として扱う。 */
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
+/** ネイティブスレッド・Turn を設定する作業場所、承認・隔離、モデルと追加ディレクトリ。 */
 export type CodexThreadOptions = {
   workingDirectory: string;
   sandboxMode: CodexSandboxBaseMode;
@@ -293,6 +386,7 @@ export type CodexThreadOptions = {
   networkAccessEnabled?: boolean;
   additionalDirectories?: string[];
 };
+/** カタログでモデルと推論設定を確定し、保存された承認・隔離や作業領域を Codex に渡す条件に変換する。 */
 function buildCodexThreadSettings(
   session: Session,
   providerCatalog: ModelCatalogProvider,
@@ -323,6 +417,7 @@ function buildCodexThreadSettings(
   };
   return { options, selection };
 }
+/** Turn に適用するネイティブ隔離設定を作る。ワークスペース書き込みでは許可された追加パスも含める。 */
 function sandboxPolicy(options: CodexThreadOptions): unknown {
   if (options.sandboxMode === "danger-full-access")
     return { type: "dangerFullAccess" };
@@ -342,12 +437,14 @@ function sandboxPolicy(options: CodexThreadOptions): unknown {
     excludeSlashTmp: false,
   };
 }
+/** 入力本文とローカル画像の参照を、ネイティブ RPC が受け取る項目列にする。 */
 function userInput(text: string, imagePaths: string[]): unknown[] {
   return [
     { type: "text", text, text_elements: [] },
     ...imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
   ];
 }
+/** 追加入力を受け付けている Codex 実行の接続・識別子と、未確定入力および診断状態。 */
 type ActiveCodexTurn = {
   transport: CodexTransport;
   threadId: string;
@@ -357,18 +454,27 @@ type ActiveCodexTurn = {
   diagnostics: CodexTurnDiagnostics;
   redactor: ProviderAgentRuntimeBindingRedactor;
 };
+/** Turn 終了時まで保持する容量制限付きの診断と、後片付けの失敗・最終投影結果。 */
 type CodexTurnDiagnostics = {
   rawItems: BoundedProviderRawItem[];
   cleanupError?: string;
   projection?: CodexProjectionFinal;
 };
-function appendDiagnostic(diagnostics: CodexTurnDiagnostics, item: BoundedProviderRawItem): void {
-  diagnostics.rawItems = JSON.parse(stringifyBoundedProviderRawItems([...diagnostics.rawItems, item])) as BoundedProviderRawItem[];
+/** 診断項目を追加し、元の一覧ごと容量上限内へ戻す。 */
+function appendDiagnostic(
+  diagnostics: CodexTurnDiagnostics,
+  item: BoundedProviderRawItem,
+): void {
+  diagnostics.rawItems = JSON.parse(
+    stringifyBoundedProviderRawItems([...diagnostics.rawItems, item]),
+  ) as BoundedProviderRawItem[];
 }
+/** 終了待ちの比較に使う作業場所を絶対パスにし、Windows では大文字小文字を揃える。 */
 function workspaceKey(workspacePath: string): string {
   const resolved = path.resolve(workspacePath);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
+/** 差分行列の上限を超えたとき、同じ位置の行だけを比較して表示する。 */
 function buildFallbackDiffRows(
   beforeLines: string[],
   afterLines: string[],
@@ -421,6 +527,7 @@ function buildFallbackDiffRows(
   return rows;
 }
 
+/** 最長共通部分列を基にファイルの差分を並べる。行列が大きすぎるときは位置比較を使う。 */
 function buildDiffRows(
   beforeContent: string | null,
   afterContent: string | null,
@@ -575,6 +682,7 @@ function buildDiffRows(
   return rows;
 }
 
+/** 変更前後の内容の有無・一致から追加、削除、編集を区別する。変更がなければ null。 */
 function inferChangedFileKind(
   beforeContent: string | null,
   afterContent: string | null,
@@ -598,6 +706,7 @@ function inferChangedFileKind(
   return null;
 }
 
+/** どちらかのスナップショットに存在する全パスで変更を判定し、パス順に返す。 */
 function compareSnapshotChanges(
   beforeSnapshot: WorkspaceSnapshot,
   afterSnapshot: WorkspaceSnapshot,
@@ -626,7 +735,7 @@ function compareSnapshotChanges(
   return changes.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-
+/** モデル・承認・速度等の実行条件に、観測できた使用量とスナップショット警告を加える。 */
 function toRunChecks(
   executionOptions: SessionExecutionOptions,
   usage: ProviderUsage | null,
@@ -672,12 +781,14 @@ function toRunChecks(
   return checks;
 }
 
+/** 実行で選択された Codex の速度を、成果物の確認項目にする。 */
 export function buildCodexSpeedRunCheck(
   speed: Session["codexSpeed"],
 ): RunCheck {
   return { label: "speed", value: speed };
 }
 
+/** 除外されたファイルの件数と達した取得上限を警告にし、該当しなければ空にする。 */
 function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
   const warnings: string[] = [];
   if (stats.skippedBinaryOrOversizeFiles > 0) {
@@ -696,6 +807,7 @@ function summarizeSnapshotWarning(stats: SnapshotCaptureStats): string {
   return warnings.join(", ");
 }
 
+/** Codex の確定操作・スナップショットを使い、変更ファイルと時系列・実行条件を成果物へまとめる。 */
 async function buildArtifact(
   session: Session,
   executionOptions: SessionExecutionOptions,
@@ -754,18 +866,24 @@ async function buildArtifact(
   };
 }
 
+/** App Server を通じて Codex のモデル・利用枠・Turn・レビューを提供し、並行 Turn の投影を共有 Worker に任せる。 */
 export class CodexAdapter implements ProviderTurnAdapter {
   private readonly projection = new CodexProjectionClient();
   private readonly activeTurns = new Map<string, ActiveCodexTurn>();
-  private readonly pendingCleanups = new Map<CodexTransport, { sessionId?: string; workspace: string; threadId: string | null }>();
+  private readonly pendingCleanups = new Map<
+    CodexTransport,
+    { sessionId?: string; workspace: string; threadId: string | null }
+  >();
   private readonly workspaceSnapshotIndexes = new Map<
     string,
     WorkspaceSnapshotIndex
   >();
+  /** 診断先と接続の構築条件を保持する。接続は操作の開始時に作る。 */
   constructor(
     private readonly logger?: CodexAdapterLogger,
     private readonly options: CodexAdapterOptions = {},
   ) {}
+  /** 診断を登録されたログ先に送る。通知の失敗をプロバイダー側の結果へ反映しない。 */
   private writeLog(input: CodexAdapterLogInput): void {
     try {
       this.logger?.(input);
@@ -773,127 +891,257 @@ export class CodexAdapter implements ProviderTurnAdapter {
       /* ログ記録は実行を左右しない。 */
     }
   }
+  /** Codex に渡すシステム指示と入力の構成を、接続を開始せずに組み立てる。 */
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
 
-  async openApprovalReviewer({ selection, workspacePath, appSettings, binding, signal }: Parameters<OpenApprovalReviewer>[0]) {
+  /** 指定したモデル・推論設定のネイティブ Auto Review を、永続化しない読み取り専用の会話として開始・確認する。 */
+  async openApprovalReviewer({
+    selection,
+    workspacePath,
+    appSettings,
+    binding,
+    signal,
+  }: Parameters<OpenApprovalReviewer>[0]) {
     signal.throwIfAborted();
     this.assertCleanupComplete(workspacePath);
-    const { transport, apiKey } = this.createTransport("codex", appSettings, workspacePath, binding);
+    const { transport, apiKey } = this.createTransport(
+      "codex",
+      appSettings,
+      workspacePath,
+      binding,
+    );
     let closing: Promise<void> | undefined;
     let threadId: string | null = null;
+    /** レビュー接続の停止を一度だけ始める。通常の停止試行が失敗しても実際の終了まで使用領域を保持する。 */
     const close = () => {
       signal.removeEventListener("abort", onAbort);
-      return closing ??= transport.close().catch(async () => {
-        this.pendingCleanups.set(transport, { workspace: workspaceKey(workspacePath), threadId });
+      return (closing ??= transport.close().catch(async () => {
+        this.pendingCleanups.set(transport, {
+          workspace: workspaceKey(workspacePath),
+          threadId,
+        });
         await transport.whenClosed();
         this.pendingCleanups.delete(transport);
-      });
+      }));
     };
-    const onAbort = () => { void close(); };
+    /** 起点のシグナルが中断されたらレビュー接続を閉じる。 */
+    const onAbort = () => {
+      void close();
+    };
     signal.addEventListener("abort", onAbort, { once: true });
-    const approvalsReviewer = mapCodexReviewerToApprovalsReviewer("auto-review");
+    const approvalsReviewer =
+      mapCodexReviewerToApprovalsReviewer("auto-review");
     const approvalPolicy = "on-request";
     const { model, reasoningEffort } = selection;
     try {
       await transport.start(signal);
       if (apiKey) {
-        const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey }, { signal });
-        if (login.type !== "apiKey") throw new Error("Codex authentication failed");
+        const login = await transport.request<{ type: string }>(
+          "account/login/start",
+          { type: "apiKey", apiKey },
+          { signal },
+        );
+        if (login.type !== "apiKey")
+          throw new Error("Codex authentication failed");
       }
-      const mcpServers = await codexManagedMcpConfig(transport, workspacePath, binding, signal);
+      const mcpServers = await codexManagedMcpConfig(
+        transport,
+        workspacePath,
+        binding,
+        signal,
+      );
       const thread = await transport.request<{
-        thread: { id: string }; model: string; approvalPolicy: string; approvalsReviewer: string; reasoningEffort: string | null;
-      }>("thread/start", {
-        cwd: workspacePath, model, approvalPolicy, approvalsReviewer, sandbox: "read-only", ephemeral: true,
-        allowProviderModelFallback: false, developerInstructions: APPROVAL_REVIEW_INSTRUCTIONS,
-        config: { mcp_servers: mcpServers, approvals_reviewer: approvalsReviewer,
-          ...(reasoningEffort ? { model_reasoning_effort: reasoningEffort } : {}) },
-      }, { signal });
-      if (typeof thread.thread?.id !== "string" || !thread.thread.id || thread.model !== model
-        || thread.approvalPolicy !== approvalPolicy || thread.approvalsReviewer !== approvalsReviewer
-        || (reasoningEffort && thread.reasoningEffort !== reasoningEffort)) {
-        throw new Error("Codex did not start the selected native Auto Review conversation.");
+        thread: { id: string };
+        model: string;
+        approvalPolicy: string;
+        approvalsReviewer: string;
+        reasoningEffort: string | null;
+      }>(
+        "thread/start",
+        {
+          cwd: workspacePath,
+          model,
+          approvalPolicy,
+          approvalsReviewer,
+          sandbox: "read-only",
+          ephemeral: true,
+          allowProviderModelFallback: false,
+          developerInstructions: APPROVAL_REVIEW_INSTRUCTIONS,
+          config: {
+            mcp_servers: mcpServers,
+            approvals_reviewer: approvalsReviewer,
+            ...(reasoningEffort
+              ? { model_reasoning_effort: reasoningEffort }
+              : {}),
+          },
+        },
+        { signal },
+      );
+      if (
+        typeof thread.thread?.id !== "string" ||
+        !thread.thread.id ||
+        thread.model !== model ||
+        thread.approvalPolicy !== approvalPolicy ||
+        thread.approvalsReviewer !== approvalsReviewer ||
+        (reasoningEffort && thread.reasoningEffort !== reasoningEffort)
+      ) {
+        throw new Error(
+          "Codex did not start the selected native Auto Review conversation.",
+        );
       }
       signal.throwIfAborted();
       threadId = thread.thread.id;
-      return { close, review: async (prompt: string) => {
-        signal.throwIfAborted();
-        const { turn } = await transport.request<{ turn: { id: string } }>("turn/start", {
-          threadId, model, approvalPolicy, approvalsReviewer, input: userInput(prompt, []),
-          ...(reasoningEffort ? { effort: reasoningEffort } : {}), outputSchema: approvalReviewOutputSchema,
-        }, { signal });
-        if (typeof turn?.id !== "string" || !turn.id) throw new Error("Codex reviewer has no active turn.");
-        let final: string | undefined;
-        let burst = 0;
-        for (;;) {
-          if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
-          const event = await transport.nextEvent();
+      return {
+        close,
+        /** 対象レビュースレッドと Turn で一件の最終項目を確認し、正常終了後に構造化判定を読み出す。 */
+        review: async (prompt: string) => {
           signal.throwIfAborted();
-          // クライアントに対応が委ねられたリクエストは、ネイティブの承認結果ではない。
-          if (event.kind === "serverRequest") throw new Error("Codex reviewer requires user interaction.");
-          const params = asRecord(event.params);
-          if (params.threadId !== threadId) continue;
-          if (event.method === "model/rerouted" && params.turnId === turn.id) {
-            throw new Error("Codex reviewer model changed.");
-          }
-          if (event.method === "item/completed" && params.turnId === turn.id) {
-            const item = asRecord(params.item);
-            if (item.type === "agentMessage" && item.phase === "final_answer" && typeof item.text === "string") {
-              if (final !== undefined) throw new Error("Codex reviewer returned multiple final items.");
-              final = item.text;
+          const { turn } = await transport.request<{ turn: { id: string } }>(
+            "turn/start",
+            {
+              threadId,
+              model,
+              approvalPolicy,
+              approvalsReviewer,
+              input: userInput(prompt, []),
+              ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+              outputSchema: approvalReviewOutputSchema,
+            },
+            { signal },
+          );
+          if (typeof turn?.id !== "string" || !turn.id)
+            throw new Error("Codex reviewer has no active turn.");
+          let final: string | undefined;
+          let burst = 0;
+          for (;;) {
+            if (++burst >= 32) {
+              burst = 0;
+              await new Promise<void>((resolve) => setImmediate(resolve));
             }
-          } else if (event.method === "turn/completed") {
-            const completed = asRecord(params.turn);
-            if (completed.id !== turn.id) continue;
-            if (completed.status !== "completed" || final === undefined) throw new Error("Codex reviewer did not complete.");
-            return JSON.parse(final) as unknown;
+            const event = await transport.nextEvent();
+            signal.throwIfAborted();
+            // クライアントに対応が委ねられたリクエストは、ネイティブの承認結果ではない。
+            if (event.kind === "serverRequest")
+              throw new Error("Codex reviewer requires user interaction.");
+            const params = asRecord(event.params);
+            if (params.threadId !== threadId) continue;
+            if (
+              event.method === "model/rerouted" &&
+              params.turnId === turn.id
+            ) {
+              throw new Error("Codex reviewer model changed.");
+            }
+            if (
+              event.method === "item/completed" &&
+              params.turnId === turn.id
+            ) {
+              const item = asRecord(params.item);
+              if (
+                item.type === "agentMessage" &&
+                item.phase === "final_answer" &&
+                typeof item.text === "string"
+              ) {
+                if (final !== undefined)
+                  throw new Error(
+                    "Codex reviewer returned multiple final items.",
+                  );
+                final = item.text;
+              }
+            } else if (event.method === "turn/completed") {
+              const completed = asRecord(params.turn);
+              if (completed.id !== turn.id) continue;
+              if (completed.status !== "completed" || final === undefined)
+                throw new Error("Codex reviewer did not complete.");
+              return JSON.parse(final) as unknown;
+            }
           }
-        }
-      } };
+        },
+      };
     } catch (error) {
       await close();
       throw error;
     }
   }
-  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
-    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+  /** 非表示を除いたモデルを全ページ取得する。既定モデルが一覧になければ先頭を選び、接続の後片付け失敗を別に伝える。 */
+  async listModels(
+    input: ListProviderModelsInput,
+  ): Promise<ModelCatalogProvider> {
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000);
     signal.throwIfAborted();
     this.assertCleanupComplete(input.workspacePath);
-    const { transport, apiKey } = this.createTransport("codex", input.appSettings, input.workspacePath);
+    const { transport, apiKey } = this.createTransport(
+      "codex",
+      input.appSettings,
+      input.workspacePath,
+    );
     try {
       await transport.start(signal);
       if (apiKey) {
-        const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey }, { signal });
-        if (login.type !== "apiKey") throw new Error("Codex authentication failed");
+        const login = await transport.request<{ type: string }>(
+          "account/login/start",
+          { type: "apiKey", apiKey },
+          { signal },
+        );
+        if (login.type !== "apiKey")
+          throw new Error("Codex authentication failed");
       }
       const models: ModelCatalogProvider["models"] = [];
       const cursors = new Set<string>();
       let cursor: string | null = null;
       let defaultModelId: string | undefined;
       do {
-        const page = parseCodexModelPage(await transport.request<unknown>("model/list", { cursor, limit: 100, includeHidden: false }, { signal }));
+        const page = parseCodexModelPage(
+          await transport.request<unknown>(
+            "model/list",
+            { cursor, limit: 100, includeHidden: false },
+            { signal },
+          ),
+        );
         models.push(...page.models);
         defaultModelId = page.defaultModelId ?? defaultModelId;
         cursor = page.nextCursor;
-        if (cursor && cursors.has(cursor)) throw new Error("Codex model cursor did not advance");
+        if (cursor && cursors.has(cursor))
+          throw new Error("Codex model cursor did not advance");
         if (cursor) cursors.add(cursor);
       } while (cursor);
-      const preferred = models.find((model) => model.id === defaultModelId) ?? models[0];
-      return { id: "codex", label: "Codex", models, defaultModelId: preferred?.id ?? "", defaultReasoningEffort: preferred?.defaultReasoningEffort ?? "" };
+      const preferred =
+        models.find((model) => model.id === defaultModelId) ?? models[0];
+      return {
+        id: "codex",
+        label: "Codex",
+        models,
+        defaultModelId: preferred?.id ?? "",
+        defaultReasoningEffort: preferred?.defaultReasoningEffort ?? "",
+      };
     } catch {
-      throw new Error(signal.aborted ? "Codex model discovery canceled" : "Codex models could not be retrieved");
+      throw new Error(
+        signal.aborted
+          ? "Codex model discovery canceled"
+          : "Codex models could not be retrieved",
+      );
     } finally {
-      try { await transport.close(); }
-      catch {
-        this.pendingCleanups.set(transport, { workspace: workspaceKey(input.workspacePath), threadId: null });
-        void transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+      try {
+        await transport.close();
+      } catch {
+        this.pendingCleanups.set(transport, {
+          workspace: workspaceKey(input.workspacePath),
+          threadId: null,
+        });
+        void transport.whenClosed().then(() => {
+          this.pendingCleanups.delete(transport);
+        });
         throw new Error("Codex model discovery process cleanup failed");
       }
     }
   }
-  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null> {
+  /** API キー利用時は別認証に切り替えず null とし、アカウント利用時に限って利用枠を照会する。 */
+  async getProviderQuotaTelemetry(
+    input: GetProviderQuotaTelemetryInput,
+  ): Promise<ProviderQuotaTelemetry | null> {
     if (resolveCodexApiKey(input.providerId, input.appSettings)) return null;
     const workspace = process.cwd();
     this.assertCleanupComplete(workspace);
@@ -901,10 +1149,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
       ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)])
       : AbortSignal.timeout(30_000);
     signal.throwIfAborted();
-    const { transport } = this.createTransport(input.providerId, input.appSettings, workspace);
+    const { transport } = this.createTransport(
+      input.providerId,
+      input.appSettings,
+      workspace,
+    );
     try {
       await transport.start(signal);
-      const response = await transport.request<unknown>("account/rateLimits/read", undefined, { signal, timeoutMs: 30_000 });
+      const response = await transport.request<unknown>(
+        "account/rateLimits/read",
+        undefined,
+        { signal, timeoutMs: 30_000 },
+      );
       return projectCodexQuotaTelemetry(response, input.providerId);
     } catch {
       throw new Error("Codex quota could not be retrieved");
@@ -912,12 +1168,18 @@ export class CodexAdapter implements ProviderTurnAdapter {
       try {
         await transport.close();
       } catch {
-        this.pendingCleanups.set(transport, { workspace: workspaceKey(workspace), threadId: null });
-        void transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+        this.pendingCleanups.set(transport, {
+          workspace: workspaceKey(workspace),
+          threadId: null,
+        });
+        void transport.whenClosed().then(() => {
+          this.pendingCleanups.delete(transport);
+        });
         throw new Error("Codex quota process cleanup failed");
       }
     }
   }
+  /** 指定 Session の追加入力を閉じ、管理下の接続と該当する終了待ちを片付ける。 */
   async invalidateSessionThread(sessionId: string): Promise<void> {
     const active = this.activeTurns.get(sessionId);
     if (active) {
@@ -925,8 +1187,13 @@ export class CodexAdapter implements ProviderTurnAdapter {
       this.activeTurns.delete(sessionId);
       await active.transport.close();
     }
-    await Promise.all([...this.pendingCleanups].filter(([, cleanup]) => cleanup.sessionId === sessionId).map(([transport]) => transport.close()));
+    await Promise.all(
+      [...this.pendingCleanups]
+        .filter(([, cleanup]) => cleanup.sessionId === sessionId)
+        .map(([transport]) => transport.close()),
+    );
   }
+  /** 全実行の追加入力を閉じて接続を止め、ワークスペース差分のキャッシュも破棄する。 */
   async invalidateAllSessionThreads(): Promise<void> {
     const active = [...this.activeTurns.values()];
     this.activeTurns.clear();
@@ -939,14 +1206,27 @@ export class CodexAdapter implements ProviderTurnAdapter {
       ...[...this.pendingCleanups.keys()].map((transport) => transport.close()),
     ]);
   }
-  private assertCleanupComplete(workspacePath: string, sessionId?: string, threadId?: string | null): void {
+  /** 同じ作業領域・Session・スレッドの停止確認が残っている場合は再実行を拒否する。 */
+  private assertCleanupComplete(
+    workspacePath: string,
+    sessionId?: string,
+    threadId?: string | null,
+  ): void {
     const workspace = workspaceKey(workspacePath);
-    if ([...this.pendingCleanups.values()].some((cleanup) => cleanup.workspace === workspace
-      || (sessionId !== undefined && cleanup.sessionId === sessionId)
-      || (threadId && cleanup.threadId === threadId))) {
-      throw new Error("Codex process cleanup is still pending; execution cannot restart yet");
+    if (
+      [...this.pendingCleanups.values()].some(
+        (cleanup) =>
+          cleanup.workspace === workspace ||
+          (sessionId !== undefined && cleanup.sessionId === sessionId) ||
+          (threadId && cleanup.threadId === threadId),
+      )
+    ) {
+      throw new Error(
+        "Codex process cleanup is still pending; execution cannot restart yet",
+      );
     }
   }
+  /** 同梱または開発依存からバイナリを解決し、今回の接続に必要な認証・MCP・対話機能を設定する。 */
   private createTransport(
     providerId: string,
     appSettings: AppSettings,
@@ -985,8 +1265,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
         version: this.options.appVersion ?? "development",
       },
     };
-    return { transport: this.options.createTransport?.(options) ?? new CodexAppServerTransport(options), apiKey };
+    return {
+      transport:
+        this.options.createTransport?.(options) ??
+        new CodexAppServerTransport(options),
+      apiKey,
+    };
   }
+  /** 想定したネイティブ Turn の追加入力を送る。別 Turn の応答を拒否し、受理された場合だけ秘匿化済み診断を残す。 */
   async steerSessionTurn(input: {
     sessionId: string;
     expectedTurnId: string;
@@ -1002,12 +1288,20 @@ export class CodexAdapter implements ProviderTurnAdapter {
       .join("\n");
     const steerInput = userInput(
       [input.userMessage, attachmentText].filter(Boolean).join("\n\n"),
-      input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => attachment.absolutePath),
+      input.attachments
+        .filter((attachment) => attachment.kind === "image")
+        .map((attachment) => attachment.absolutePath),
     );
-    const acceptedInput = boundProviderRawItem(active.redactor.sanitize({
-      type: "withmate.accepted_steer",
-      data: { threadId: active.threadId, turnId: active.turnId, input: steerInput },
-    }));
+    const acceptedInput = boundProviderRawItem(
+      active.redactor.sanitize({
+        type: "withmate.accepted_steer",
+        data: {
+          threadId: active.threadId,
+          turnId: active.turnId,
+          input: steerInput,
+        },
+      }),
+    );
     const request = active.transport.request<{ turnId: string }>(
       "turn/steer",
       {
@@ -1028,6 +1322,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       active.pendingInputs.delete(request);
     }
   }
+  /** Codex を起動して対象スレッドと Turn を確定し、対話への応答と投影を進めながら終了を監視する。 */
   private async executeTurn(args: {
     transport: CodexTransport;
     apiKey: string;
@@ -1048,7 +1343,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
     let interactionError: unknown;
     const asyncQuestions = new AbortController();
-    const asyncQuestionSignal = signal ? AbortSignal.any([signal, asyncQuestions.signal]) : asyncQuestions.signal;
+    const asyncQuestionSignal = signal
+      ? AbortSignal.any([signal, asyncQuestions.signal])
+      : asyncQuestions.signal;
     const seenAsyncQuestions = new Set<string>();
     const interactions = new CodexTurnInteractions(
       sessionInput,
@@ -1073,75 +1370,127 @@ export class CodexAdapter implements ProviderTurnAdapter {
     let lastLive: CodexProjectionProgress["state"] | null = null;
     let turnFailed = false;
     let turnCanceled = false;
+    /** 最初の投影失敗を記録し、接続待ちを終えるためトランスポートを閉じる。 */
     const failProjection = (error: unknown) => {
       if (!projectionFailed) projectionError = error;
       projectionFailed = true;
       void transport.close().catch(() => undefined);
     };
+    /** 進捗に未配信の変更があることを記録し、直前の配信との間隔を守って一件だけ取得を予約する。 */
     const scheduleLive = () => {
       liveDirty = true;
       if (liveTimer || liveRequest || !sessionInput || !args.onProgress) return;
-      liveTimer = setTimeout(() => {
-        liveTimer = undefined;
-        void progress().catch(failProjection);
-      }, Math.max(0, CODEX_LIVE_PROGRESS_INTERVAL_MS - (Date.now() - lastLiveAt)));
+      liveTimer = setTimeout(
+        () => {
+          liveTimer = undefined;
+          void progress().catch(failProjection);
+        },
+        Math.max(
+          0,
+          CODEX_LIVE_PROGRESS_INTERVAL_MS - (Date.now() - lastLiveAt),
+        ),
+      );
     };
+    /** Worker からライブの差分を取得して配信し、配信中に更新された場合は後続の取得を手配する。 */
     const progress = async (force = false, initial = false): Promise<void> => {
       if (!projectionId || !sessionInput || !args.onProgress) return;
-      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
       if (liveRequest) {
         await liveRequest;
         if (!force) return;
       }
       liveDirty = false;
       const runId = projectionId;
-      const request = this.projection.call<CodexProjectionProgress | null>(runId, { type: "live", inputAvailable: active?.inputAvailable ?? false, force })
+      const request = this.projection
+        .call<CodexProjectionProgress | null>(runId, {
+          type: "live",
+          inputAvailable: active?.inputAvailable ?? false,
+          force,
+        })
         .then(async (result) => {
           if (!result) return;
-          lastLive = { ...result.state, inputAvailable: active?.inputAvailable ?? false };
+          lastLive = {
+            ...result.state,
+            inputAvailable: active?.inputAvailable ?? false,
+          };
           lastLiveAt = Date.now();
           await args.onProgress!(lastLive, result.changes);
         });
       liveRequest = request;
-      try { await request; }
-      finally {
+      try {
+        await request;
+      } finally {
         if (liveRequest === request) liveRequest = null;
-        if (liveDirty && !state.turnCompleted && !signal?.aborted) scheduleLive();
+        if (liveDirty && !state.turnCompleted && !signal?.aborted)
+          scheduleLive();
       }
     };
-    const publishControl = (patch: Partial<CodexProjectionProgress["state"]> = { inputAvailable: false }) => {
+    /** 現在表示中のスカラー値だけを更新し、コレクション差分を送らず完了と失敗を追跡する。 */
+    const publishControl = (
+      patch: Partial<CodexProjectionProgress["state"]> = {
+        inputAvailable: false,
+      },
+    ) => {
       if (!lastLive || !args.onProgress) return;
       lastLive = { ...lastLive, ...patch };
       try {
-        const completion = Promise.resolve(args.onProgress(lastLive, {
-          snapshot: false, steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
-        })).catch(failProjection).finally(() => { pendingControls.delete(completion); });
+        const completion = Promise.resolve(
+          args.onProgress(lastLive, {
+            snapshot: false,
+            steps: { upserts: [], removes: [] },
+            backgroundTasks: { upserts: [], removes: [] },
+          }),
+        )
+          .catch(failProjection)
+          .finally(() => {
+            pendingControls.delete(completion);
+          });
         pendingControls.add(completion);
       } catch (error) {
         failProjection(error);
       }
     };
+    /** 受信済み通知をまとめて Worker へ渡し、未対応通知や進捗変更を返された順に処理する。 */
     const flushEvents = () => {
-      if (batchImmediate) { clearImmediate(batchImmediate); batchImmediate = undefined; }
+      if (batchImmediate) {
+        clearImmediate(batchImmediate);
+        batchImmediate = undefined;
+      }
       if (!projectionId || !eventBatch.length) return;
       const events = eventBatch;
       eventBatch = [];
-      const completion = this.projection.call<(CodexProjectionEvent | null)[]>(projectionId, { type: "events", events })
+      const completion = this.projection
+        .call<(CodexProjectionEvent | null)[]>(projectionId, {
+          type: "events",
+          events,
+        })
         .then(async (results) => {
           for (const result of results) {
             if (!result) continue;
-            if (result.unhandledNotification) this.writeLog({
-              level: "info", kind: "codex.run.unhandled-notification",
-              message: "Codex notification has no dedicated projection handler",
-              data: result.unhandledNotification,
-            });
+            if (result.unhandledNotification)
+              this.writeLog({
+                level: "info",
+                kind: "codex.run.unhandled-notification",
+                message:
+                  "Codex notification has no dedicated projection handler",
+                data: result.unhandledNotification,
+              });
             if (!sessionInput || !args.onProgress) continue;
-            if (result.errorMessage !== undefined) publishControl({ errorMessage: result.errorMessage });
+            if (result.errorMessage !== undefined)
+              publishControl({ errorMessage: result.errorMessage });
             if (result.changed) scheduleLive();
           }
-        }).catch(failProjection).finally(() => { pendingEvents.delete(completion); });
+        })
+        .catch(failProjection)
+        .finally(() => {
+          pendingEvents.delete(completion);
+        });
       pendingEvents.add(completion);
     };
+    /** 追加入力を閉じ、起動済みなら対象 Turn の中断を要求し、対話と接続の後片付けを始める。 */
     const abort = () => {
       if (active) {
         active.inputAvailable = false;
@@ -1154,7 +1503,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
           .catch(() => undefined);
       }
       interactions?.close();
-      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
       publishControl();
       void transport.close().catch(() => undefined);
     };
@@ -1164,13 +1516,29 @@ export class CodexAdapter implements ProviderTurnAdapter {
       await transport.start(signal);
       if (args.apiKey) {
         try {
-          const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey: args.apiKey }, { signal });
-          if (login.type !== "apiKey") throw new Error("Codex App Server API key login response is invalid");
+          const login = await transport.request<{ type: string }>(
+            "account/login/start",
+            { type: "apiKey", apiKey: args.apiKey },
+            { signal },
+          );
+          if (login.type !== "apiKey")
+            throw new Error(
+              "Codex App Server API key login response is invalid",
+            );
         } catch (error) {
-          throw new CodexAuthenticationError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)));
+          throw new CodexAuthenticationError(
+            redactor.sanitizeText(
+              error instanceof Error ? error.message : String(error),
+            ),
+          );
         }
       }
-      const managedMcpConfig = await codexManagedMcpConfig(transport, options.workingDirectory, sessionInput?.agentRuntimeBinding, signal);
+      const managedMcpConfig = await codexManagedMcpConfig(
+        transport,
+        options.workingDirectory,
+        sessionInput?.agentRuntimeBinding,
+        signal,
+      );
       const threadParams = {
         model: options.model,
         cwd: options.workingDirectory,
@@ -1180,7 +1548,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
         serviceTier: args.serviceTier,
         config: {
           ...(managedMcpConfig ? { mcp_servers: managedMcpConfig } : {}),
-          ...(options.modelReasoningEffort ? { model_reasoning_effort: options.modelReasoningEffort } : {}),
+          ...(options.modelReasoningEffort
+            ? { model_reasoning_effort: options.modelReasoningEffort }
+            : {}),
           service_tier: args.serviceTier,
           approvals_reviewer: args.reviewer,
           ...(options.additionalDirectories?.length
@@ -1199,7 +1569,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
         state.threadId ? "thread/resume" : "thread/start",
         {
           ...threadParams,
-          ...(state.threadId ? { threadId: state.threadId, excludeTurns: true } : {}),
+          ...(state.threadId
+            ? { threadId: state.threadId, excludeTurns: true }
+            : {}),
         },
         { signal },
       );
@@ -1219,7 +1591,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
           approvalsReviewer: args.reviewer,
           sandboxPolicy: sandboxPolicy(options),
           model: options.model,
-          ...(options.modelReasoningEffort ? { effort: options.modelReasoningEffort } : {}),
+          ...(options.modelReasoningEffort
+            ? { effort: options.modelReasoningEffort }
+            : {}),
           serviceTier: args.serviceTier,
         },
         { signal },
@@ -1240,8 +1614,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
         this.activeTurns.set(sessionInput.session.id, active);
       }
       projectionId = await this.projection.begin({
-        sessionId: (sessionInput ? sessionInput.session.id : undefined) ?? "", threadId: state.threadId, turnId: state.turnId,
-        binding: sessionInput?.agentRuntimeBinding, apiKey: args.apiKey,
+        sessionId: (sessionInput ? sessionInput.session.id : undefined) ?? "",
+        threadId: state.threadId,
+        turnId: state.turnId,
+        binding: sessionInput?.agentRuntimeBinding,
+        apiKey: args.apiKey,
         progress: Boolean(sessionInput && args.onProgress),
         diagnosticTrace: false,
       });
@@ -1251,7 +1628,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
         signal?.throwIfAborted();
         if (projectionFailed) throw projectionError;
         // nextEvent が解決済みのキュー項目を返し続けても、連続処理に上限を設ける。
-        if (++burst >= 32) { burst = 0; await new Promise<void>((resolve) => setImmediate(resolve)); }
+        if (++burst >= 32) {
+          burst = 0;
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
         let event: CodexProtocolEvent;
         try {
           // close() はトランスポートの待機を拒否し、消費済みのイベントを保持しない。
@@ -1278,11 +1658,17 @@ export class CodexAdapter implements ProviderTurnAdapter {
             });
             continue;
           }
-          if (event.method === "item/tool/requestUserInput" || event.method === "mcpServer/elicitation/request") {
+          if (
+            event.method === "item/tool/requestUserInput" ||
+            event.method === "mcpServer/elicitation/request"
+          ) {
             flushEvents();
             await Promise.all(pendingEvents);
             await progress(true);
-            const textPosition = await this.projection.call<number>(projectionId, { type: "question-position" });
+            const textPosition = await this.projection.call<number>(
+              projectionId,
+              { type: "question-position" },
+            );
             interactions.accept({ ...event, textPosition });
           } else {
             interactions.accept(event);
@@ -1299,40 +1685,72 @@ export class CodexAdapter implements ProviderTurnAdapter {
           continue;
         }
         const turn = asRecord(params.turn);
-        const incomingTurnId = typeof params.turnId === "string" ? params.turnId : turn.id;
-        const inScope = (typeof params.threadId !== "string" || params.threadId === state.threadId)
-          && (typeof incomingTurnId !== "string" || incomingTurnId === state.turnId);
+        const incomingTurnId =
+          typeof params.turnId === "string" ? params.turnId : turn.id;
+        const inScope =
+          (typeof params.threadId !== "string" ||
+            params.threadId === state.threadId) &&
+          (typeof incomingTurnId !== "string" ||
+            incomingTurnId === state.turnId);
         // 以前の Turn のトークン使用量は基準値に使うが、対象外の Turn のその他のデータは表示反映に使わない。
-        if (typeof params.threadId === "string" && params.threadId !== state.threadId
-          || !inScope && event.method !== "thread/tokenUsage/updated") continue;
+        if (
+          (typeof params.threadId === "string" &&
+            params.threadId !== state.threadId) ||
+          (!inScope && event.method !== "thread/tokenUsage/updated")
+        )
+          continue;
         eventBatch.push({ method: event.method, params: event.params });
-        if ((event.method === "item/started" || event.method === "item/completed")
-          && inScope && state.turnId && sessionInput?.onElicitationRequest && !asyncQuestionSignal.aborted) {
-          const request = buildCodexAsyncQuestionRequest(params.item, state.turnId, redactor.sanitizeText);
+        if (
+          (event.method === "item/started" ||
+            event.method === "item/completed") &&
+          inScope &&
+          state.turnId &&
+          sessionInput?.onElicitationRequest &&
+          !asyncQuestionSignal.aborted
+        ) {
+          const request = buildCodexAsyncQuestionRequest(
+            params.item,
+            state.turnId,
+            redactor.sanitizeText,
+          );
           if (request && !seenAsyncQuestions.has(request.requestId)) {
             seenAsyncQuestions.add(request.requestId);
             flushEvents();
             await Promise.all(pendingEvents);
             await progress(true);
+            /** まだ有効な質問の配信失敗を Turn の対話エラーとして記録し、接続を閉じる。 */
             const failQuestion = (error: unknown) => {
               if (asyncQuestionSignal.aborted) return;
-              interactionError = error instanceof Error ? error : new Error(String(error));
+              interactionError =
+                error instanceof Error ? error : new Error(String(error));
               void transport.close().catch(() => undefined);
             };
             try {
               // 非同期配信の回答は通常のユーザーメッセージとして Session サービスから送信する。
-              void Promise.resolve(sessionInput.onElicitationRequest(request, asyncQuestionSignal)).catch(failQuestion);
+              void Promise.resolve(
+                sessionInput.onElicitationRequest(request, asyncQuestionSignal),
+              ).catch(failQuestion);
             } catch (error) {
               failQuestion(error);
             }
           }
         }
-        if (event.method === "turn/completed" && inScope && typeof turn.id === "string" && typeof turn.status === "string") {
+        if (
+          event.method === "turn/completed" &&
+          inScope &&
+          typeof turn.id === "string" &&
+          typeof turn.status === "string"
+        ) {
           state.turnCompleted = true;
           state.terminalStatus = turn.status;
-          state.streamErrorMessage = turn.status === "completed" ? ""
-            : redactor.sanitizeText(typeof asRecord(turn.error).message === "string"
-              ? asRecord(turn.error).message as string : `Codex turn ${turn.status}`);
+          state.streamErrorMessage =
+            turn.status === "completed"
+              ? ""
+              : redactor.sanitizeText(
+                  typeof asRecord(turn.error).message === "string"
+                    ? (asRecord(turn.error).message as string)
+                    : `Codex turn ${turn.status}`,
+                );
         }
         if (state.turnCompleted) {
           asyncQuestions.abort();
@@ -1366,7 +1784,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
       signal?.removeEventListener("abort", abort);
       interactions?.close();
       flushEvents();
-      if (liveTimer) { clearTimeout(liveTimer); liveTimer = undefined; }
+      if (liveTimer) {
+        clearTimeout(liveTimer);
+        liveTimer = undefined;
+      }
       if (active) active.inputAvailable = false;
       if (
         sessionInput &&
@@ -1379,7 +1800,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
         this.writeLog({
           level: "warn",
           kind: "codex.run.final-progress-failed",
-          message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
+          message: redactor.sanitizeText(
+            error instanceof Error ? error.message : String(error),
+          ),
         });
       });
       await Promise.all(pendingControls);
@@ -1389,21 +1812,46 @@ export class CodexAdapter implements ProviderTurnAdapter {
       try {
         await transport.close();
       } catch (error) {
-        const message = toProviderTextPreview(redactor.sanitizeText(error instanceof Error ? error.message : String(error))) ?? "Codex process cleanup failed";
+        const message =
+          toProviderTextPreview(
+            redactor.sanitizeText(
+              error instanceof Error ? error.message : String(error),
+            ),
+          ) ?? "Codex process cleanup failed";
         args.diagnostics.cleanupError = message;
-        appendDiagnostic(args.diagnostics, { type: "withmate.process_cleanup_failed", data: { message } });
-        this.writeLog({ level: "error", kind: "codex.run.cleanup-failed", message });
-        this.pendingCleanups.set(transport, { sessionId: (sessionInput ? sessionInput.session.id : undefined), workspace: workspaceKey(options.workingDirectory), threadId: state.threadId });
-        const completion = transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+        appendDiagnostic(args.diagnostics, {
+          type: "withmate.process_cleanup_failed",
+          data: { message },
+        });
+        this.writeLog({
+          level: "error",
+          kind: "codex.run.cleanup-failed",
+          message,
+        });
+        this.pendingCleanups.set(transport, {
+          sessionId: sessionInput ? sessionInput.session.id : undefined,
+          workspace: workspaceKey(options.workingDirectory),
+          threadId: state.threadId,
+        });
+        const completion = transport.whenClosed().then(() => {
+          this.pendingCleanups.delete(transport);
+        });
         try {
           sessionInput?.onCleanupPending?.(completion);
         } catch (callbackError) {
-          this.writeLog({ level: "error", kind: "codex.run.cleanup-tracking-failed", message: redactor.sanitizeText(String(callbackError)) });
+          this.writeLog({
+            level: "error",
+            kind: "codex.run.cleanup-tracking-failed",
+            message: redactor.sanitizeText(String(callbackError)),
+          });
         }
       }
       if (projectionId) {
         try {
-          const final = await this.projection.call<CodexProjectionFinal>(projectionId, { type: "finish", diagnostics: args.diagnostics.rawItems });
+          const final = await this.projection.call<CodexProjectionFinal>(
+            projectionId,
+            { type: "finish", diagnostics: args.diagnostics.rawItems },
+          );
           args.diagnostics.projection = final;
           state.items = new Map(final.items.map((item) => [item.id, item]));
           state.usage = final.usage;
@@ -1411,17 +1859,27 @@ export class CodexAdapter implements ProviderTurnAdapter {
           state.terminalStatus = final.terminalStatus;
         } catch (error) {
           if (!turnFailed && !projectionFailed) throw error;
-          this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
+          this.writeLog({
+            level: "warn",
+            kind: "codex.run.projection-cleanup-failed",
+            message: redactor.sanitizeText(String(error)),
+          });
         } finally {
           await this.projection.release(projectionId).catch((error) => {
             if (!turnFailed && !projectionFailed) throw error;
-            this.writeLog({ level: "warn", kind: "codex.run.projection-cleanup-failed", message: redactor.sanitizeText(String(error)) });
+            this.writeLog({
+              level: "warn",
+              kind: "codex.run.projection-cleanup-failed",
+              message: redactor.sanitizeText(String(error)),
+            });
           });
         }
       }
-      if ((!turnFailed || turnCanceled) && projectionFailed) throw projectionError;
+      if ((!turnFailed || turnCanceled) && projectionFailed)
+        throw projectionError;
     }
   }
+  /** 差分の取得対象に、実行ワークスペースと正規化済みの追加ディレクトリを含める。 */
   private buildSnapshotRoots(input: RunSessionTurnInput): string[] {
     const workspacePath = resolveRunWorkspacePath(input);
     return [
@@ -1433,6 +1891,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     ];
   }
 
+  /** 同じ取得ルートの組で差分インデックスを共有できるよう、絶対パスでキーを作る。 */
   private buildSnapshotIndexKey(roots: readonly string[]): string {
     return JSON.stringify(
       roots.map((root) => {
@@ -1442,6 +1901,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     );
   }
 
+  /** 取得が有効な場合、実行前の状態を新規取得するかキャッシュから更新する。無効なら空の取得結果を使う。 */
   private async prepareBeforeWorkspaceSnapshot(
     input: RunSessionTurnInput,
   ): Promise<{
@@ -1477,6 +1937,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
+  /** 実行後の状態を更新する。完了通知から変更範囲を限定できる場合だけ対象パスに絞る。 */
   private async captureAfterWorkspaceSnapshot(
     input: RunSessionTurnInput,
     finalItems: CodexTurnItem[],
@@ -1518,6 +1979,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
+  /** 最終投影から本文・使用量・成果物を組み立てる。差分取得が期限切れなら実行結果を残して診断を添える。 */
   private async buildTurnResult(
     input: RunSessionTurnInput,
     items: Map<string, CodexTurnItem>,
@@ -1534,20 +1996,38 @@ export class CodexAdapter implements ProviderTurnAdapter {
       [resolveCodexApiKey(input.providerCatalog.id, input.appSettings)],
     );
     const finalItems = Array.from(items.values());
-    const providerMetadata = diagnostics.projection?.providerMetadata ?? buildProviderMetadataProjection(finalItems);
-    providerMetadata.push(...redactor.sanitize(diagnostics.rawItems).filter((item) => item.type !== "withmate.process_cleanup_failed").map((item) => ({
-      provider: "codex", kind: item.type, summary: item.type, payload: item,
-    })));
-    if (diagnostics.cleanupError) providerMetadata.push({
-      provider: "codex", kind: "postprocess_degraded", source: "codex-adapter.process-cleanup",
-      summary: "Codex process cleanup failed; the native turn outcome is preserved",
-      payload: { message: diagnostics.cleanupError },
-    });
+    const providerMetadata =
+      diagnostics.projection?.providerMetadata ??
+      buildProviderMetadataProjection(finalItems);
+    providerMetadata.push(
+      ...redactor
+        .sanitize(diagnostics.rawItems)
+        .filter((item) => item.type !== "withmate.process_cleanup_failed")
+        .map((item) => ({
+          provider: "codex",
+          kind: item.type,
+          summary: item.type,
+          payload: item,
+        })),
+    );
+    if (diagnostics.cleanupError)
+      providerMetadata.push({
+        provider: "codex",
+        kind: "postprocess_degraded",
+        source: "codex-adapter.process-cleanup",
+        summary:
+          "Codex process cleanup failed; the native turn outcome is preserved",
+        payload: { message: diagnostics.cleanupError },
+      });
     for (const metadata of providerMetadata) {
-      const unsupported = metadata.kind === "unsupported_response" || metadata.kind === "unsupported_event";
+      const unsupported =
+        metadata.kind === "unsupported_response" ||
+        metadata.kind === "unsupported_event";
       this.writeLog({
         level: metadata.kind === "withmate.accepted_steer" ? "info" : "warn",
-        kind: unsupported ? "provider.unsupported-response" : "provider.diagnostic",
+        kind: unsupported
+          ? "provider.unsupported-response"
+          : "provider.diagnostic",
         message: redactor.sanitizeText(metadata.summary),
         data: redactor.sanitize(toProviderMetadataLogData(metadata)),
       });
@@ -1556,7 +2036,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
       assistantText: itemAssistantText,
       lastNonEmptyAssistantMessageText: itemLastNonEmptyAssistantMessageText,
       assistantQuestionRanges,
-    } = diagnostics.projection ?? collectCodexAssistantResponseFromItems(finalItems);
+    } = diagnostics.projection ??
+    collectCodexAssistantResponseFromItems(finalItems);
     const finalAssistantText =
       itemAssistantText.trim().length > 0
         ? itemAssistantText
@@ -1624,8 +2105,27 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(finalAssistantText),
-      output: itemAssistantText.trim() ? diagnostics.projection?.output ?? collectCodexAssistantResponseFromItems(redactor.sanitize(finalItems)).output
-        : finalAssistantText ? { finality: "unknown", units: [{ id: "unclassified-stream", start: 0, end: redactor.sanitizeText(finalAssistantText).length, role: "unclassified", phase: null, completion: "partial", final: false, evidence: null }] } : { finality: "none", units: [] },
+      output: itemAssistantText.trim()
+        ? (diagnostics.projection?.output ??
+          collectCodexAssistantResponseFromItems(redactor.sanitize(finalItems))
+            .output)
+        : finalAssistantText
+          ? {
+              finality: "unknown",
+              units: [
+                {
+                  id: "unclassified-stream",
+                  start: 0,
+                  end: redactor.sanitizeText(finalAssistantText).length,
+                  role: "unclassified",
+                  phase: null,
+                  completion: "partial",
+                  final: false,
+                  evidence: null,
+                },
+              ],
+            }
+          : { finality: "none", units: [] },
       assistantQuestionRanges,
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(
         lastNonEmptyAssistantMessageText,
@@ -1637,11 +2137,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
+  /** 実行条件とスナップショットを準備して Codex Turn を実行し、実行中の失敗は取得済みの部分結果とともに返す。 */
   async runSessionTurn(
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
-    this.assertCleanupComplete(resolveRunWorkspacePath(input), input.session.id, input.session.threadId);
+    this.assertCleanupComplete(
+      resolveRunWorkspacePath(input),
+      input.session.id,
+      input.session.threadId,
+    );
     const prompt = this.composePrompt(input);
     const state = createCodexTurnStreamState(input.session.threadId || null);
     const diagnostics: CodexTurnDiagnostics = { rawItems: [] };
@@ -1671,7 +2176,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
           input.executionOptions.codexSpeed,
         ),
         reviewer: mapCodexReviewerToApprovalsReviewer(
-          input.executionOptions.approvalMode === "safety-focused" ? "user" : input.executionOptions.codexReviewer,
+          input.executionOptions.approvalMode === "safety-focused"
+            ? "user"
+            : input.executionOptions.codexReviewer,
         ),
         input: userInput(prompt.logicalPrompt.composedText, prompt.imagePaths),
         signal: input.signal,
@@ -1707,13 +2214,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
         diagnostics,
       );
       throw new ProviderTurnError(
-        createProviderAgentRuntimeBindingRedactor(
-          input.agentRuntimeBinding,
-          [resolveCodexApiKey(input.providerCatalog.id, input.appSettings)],
-        ).sanitizeText(message),
+        createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [
+          resolveCodexApiKey(input.providerCatalog.id, input.appSettings),
+        ]).sanitizeText(message),
         partial,
         canceled,
-        canceled ? "canceled" : error instanceof CodexAuthenticationError ? "auth" : resolveCodexProviderErrorReason(message, canceled),
+        canceled
+          ? "canceled"
+          : error instanceof CodexAuthenticationError
+            ? "auth"
+            : resolveCodexProviderErrorReason(message, canceled),
       );
     }
   }

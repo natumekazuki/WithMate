@@ -21,7 +21,10 @@ import {
 import { selectWeightedRandomLaunchCharacterId } from "../../src-shared/character/launch-character-selection.js";
 import type { MateProfile } from "../../src-shared/mate/mate-state.js";
 
-function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">): MateProfile {
+/** activeなMateの既定値を用意し、指定されたID・表示名とケース固有の上書きを反映する。 */
+function createMateProfile(
+  partial: Partial<MateProfile> & Pick<MateProfile, "id" | "displayName">,
+): MateProfile {
   const { id, displayName, ...rest } = partial;
   return {
     id,
@@ -43,7 +46,11 @@ function createMateProfile(partial: Partial<MateProfile> & Pick<MateProfile, "id
   };
 }
 
-function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<CharacterCatalogEntry, "id" | "name">): CharacterCatalogEntry {
+/** 抽選や固定選択で使うCharacterカタログの項目を作り、状態と利用時刻を個別に指定できるようにする。 */
+function createCharacterEntry(
+  partial: Partial<CharacterCatalogEntry> &
+    Pick<CharacterCatalogEntry, "id" | "name">,
+): CharacterCatalogEntry {
   return {
     id: partial.id,
     name: partial.name,
@@ -57,6 +64,7 @@ function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<Cha
   };
 }
 
+/** Homeの開始ドラフト、Character選択、Session作成要求への変換を検査する。 */
 describe("home-launch-state", () => {
   // @test-value v2
   // kind = "contract"
@@ -68,6 +76,7 @@ describe("home-launch-state", () => {
   // scope = "home-launch-draft-lifecycle"
   // lifecycle = "permanent"
   // @end-test-value
+  /** New Sessionを開くと起点Role・provider・Random選択の既定値へ戻り、閉じる際も前回のタイトルやWorkspace検証結果を残さない。 */
   it("open と close で launch draft を reset する", () => {
     const opened = openLaunchDraft(
       {
@@ -109,8 +118,12 @@ describe("home-launch-state", () => {
     });
   });
 
+  /** 指定directoryパスから表示ラベルとWorkspace tupleを作り、同じパスを入力欄に保持して検証済みとする。 */
   it("workspace path から launch draft の workspace を更新する", () => {
-    const draft = setLaunchWorkspaceFromPath(createClosedLaunchDraft(), "F:/work/demo");
+    const draft = setLaunchWorkspaceFromPath(
+      createClosedLaunchDraft(),
+      "F:/work/demo",
+    );
 
     assert.deepEqual(draft.workspace, {
       label: "demo",
@@ -121,12 +134,19 @@ describe("home-launch-state", () => {
     assert.equal(draft.workspaceValidation, "valid");
   });
 
+  /** 手入力の検証中や失敗時はWorkspaceを確定せず、成功したときだけ末尾区切り付きの原文パスと表示名の組を作る。 */
   it("manual workspace は valid response のときだけ raw path から canonical tuple を作る", () => {
     const targetPath = "C:\\work space\\demo\\";
-    const debouncing = beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), targetPath);
+    const debouncing = beginLaunchWorkspacePathValidation(
+      createClosedLaunchDraft(),
+      targetPath,
+    );
     assert.equal(debouncing.workspace, null);
     assert.equal(debouncing.workspaceValidation, "debouncing");
-    const pending = markLaunchWorkspacePathValidationPending(debouncing, targetPath);
+    const pending = markLaunchWorkspacePathValidationPending(
+      debouncing,
+      targetPath,
+    );
     assert.equal(pending.workspaceValidation, "pending");
 
     const invalid = applyLaunchWorkspacePathValidation(pending, targetPath, {
@@ -136,7 +156,9 @@ describe("home-launch-state", () => {
     assert.equal(invalid.workspace, null);
     assert.equal(invalid.workspaceValidationMessage, "Not a directory.");
 
-    const valid = applyLaunchWorkspacePathValidation(pending, targetPath, { valid: true });
+    const valid = applyLaunchWorkspacePathValidation(pending, targetPath, {
+      valid: true,
+    });
     assert.deepEqual(valid.workspace, {
       label: "demo",
       path: targetPath,
@@ -144,8 +166,12 @@ describe("home-launch-state", () => {
     });
   });
 
+  /** 別パスの検証開始や成功応答が遅れても、新しい入力のドラフトをそのまま返す。 */
   it("manual workspace validation は別入力の stale response を無視する", () => {
-    const current = beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), "C:\\new");
+    const current = beginLaunchWorkspacePathValidation(
+      createClosedLaunchDraft(),
+      "C:\\new",
+    );
     assert.equal(
       markLaunchWorkspacePathValidationPending(current, "C:\\old"),
       current,
@@ -166,12 +192,16 @@ describe("home-launch-state", () => {
   // scope = "home-launch-session-workspace"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 検証済みの手入力Workspaceを作成要求のdirectoryとして確定し、パスと表示情報を失わない。 */
   it("validated manual workspace は session request に同じ path を投影する", () => {
     const targetPath = "\\\\server\\share\\work space\\";
     const draft = {
       ...applyLaunchWorkspacePathValidation(
         markLaunchWorkspacePathValidationPending(
-          beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), targetPath),
+          beginLaunchWorkspacePathValidation(
+            createClosedLaunchDraft(),
+            targetPath,
+          ),
           targetPath,
         ),
         targetPath,
@@ -198,19 +228,28 @@ describe("home-launch-state", () => {
     }
   });
 
+  /** provider選択でドラフトが指定されたprovider IDを保持することを確認する。 */
   it("provider 選択時に launch draft の providerId を更新する", () => {
-    const draft = updateLaunchDraftForProviderSelection(createClosedLaunchDraft(), "codex");
+    const draft = updateLaunchDraftForProviderSelection(
+      createClosedLaunchDraft(),
+      "codex",
+    );
 
     assert.equal(draft.providerId, "codex");
   });
 
+  /** 特定Characterの選択はIDを保存し、起動条件を固定選択モードへ切り替える。 */
   it("character 選択時に launch draft の characterId を更新する", () => {
-    const draft = updateLaunchDraftForCharacterSelection(createClosedLaunchDraft(), "mia");
+    const draft = updateLaunchDraftForCharacterSelection(
+      createClosedLaunchDraft(),
+      "mia",
+    );
 
     assert.equal(draft.characterId, "mia");
     assert.equal(draft.characterSelectionMode, "specific");
   });
 
+  /** Randomへ戻すと固定選択のIDをドラフトに残したまま、選択モードだけを切り替える。 */
   it("random character 選択時に launch draft の選択modeを更新する", () => {
     const draft = updateLaunchDraftForRandomCharacterSelection({
       ...createClosedLaunchDraft(),
@@ -221,6 +260,7 @@ describe("home-launch-state", () => {
     assert.equal(draft.characterSelectionMode, "random");
   });
 
+  /** 固定選択は指定IDのactive Characterだけを解決し、カタログに無い場合は他の候補で代用しない。 */
   it("specific character selection は指定したactive Characterだけを解決する", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -232,6 +272,7 @@ describe("home-launch-state", () => {
     assert.equal(resolveLaunchCharacterId([], "missing"), "");
   });
 
+  /** 固定選択で指定したCharacterがarchivedなら、起動に使うIDを返さない。 */
   it("character selection は archived Character を候補にしない", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
@@ -251,12 +292,17 @@ describe("home-launch-state", () => {
   // scope = "home-launch-character-random-selection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 通常Sessionの利用履歴が無い候補、最終利用が古い候補、最近の候補の順に抽選範囲を狭め、archivedは抽選しない。 */
   it("random character selection は最近使っていないactive Characterほど選択範囲を広くする", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
       createCharacterEntry({ id: "noa", name: "Noa" }),
       createCharacterEntry({ id: "yui", name: "Yui" }),
-      createCharacterEntry({ id: "archived", name: "Archived", state: "archived" }),
+      createCharacterEntry({
+        id: "archived",
+        name: "Archived",
+        state: "archived",
+      }),
     ];
     const sessions = [
       { characterId: "mia", sessionKind: "default" as const },
@@ -264,7 +310,9 @@ describe("home-launch-state", () => {
       { characterId: "archived", sessionKind: "default" as const },
       { characterId: "noa", sessionKind: "default" as const },
     ];
-    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
+    const selectionCounts = new Map<string, number>(
+      entries.map((entry) => [entry.id, 0]),
+    );
 
     for (let index = 0; index < 600; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
@@ -273,16 +321,27 @@ describe("home-launch-state", () => {
         [],
         () => (index + 0.5) / 600,
       );
-      selectionCounts.set(characterId, (selectionCounts.get(characterId) ?? 0) + 1);
+      selectionCounts.set(
+        characterId,
+        (selectionCounts.get(characterId) ?? 0) + 1,
+      );
     }
 
-    assert.ok((selectionCounts.get("yui") ?? 0) > (selectionCounts.get("noa") ?? 0));
-    assert.ok((selectionCounts.get("noa") ?? 0) > (selectionCounts.get("mia") ?? 0));
+    assert.ok(
+      (selectionCounts.get("yui") ?? 0) > (selectionCounts.get("noa") ?? 0),
+    );
+    assert.ok(
+      (selectionCounts.get("noa") ?? 0) > (selectionCounts.get("mia") ?? 0),
+    );
     assert.equal(selectionCounts.get("archived"), 0);
   });
 
+  /** 抽選対象が空のとき、存在しないCharacterの代替IDを作らず空文字を返す。 */
   it("random character selection はactive Characterがなければ空IDを返す", () => {
-    assert.equal(selectWeightedRandomLaunchCharacterId([], [], [], () => 0.5), "");
+    assert.equal(
+      selectWeightedRandomLaunchCharacterId([], [], [], () => 0.5),
+      "",
+    );
   });
 
   // @test-value v2
@@ -295,12 +354,15 @@ describe("home-launch-state", () => {
   // scope = "home-launch-character-random-selection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** いずれも利用履歴がない2候補の乱数範囲が等しく、200個の等分点で100回ずつ当たることを確認する。 */
   it("random character selection は利用履歴がなければactive Characterを均等に選ぶ", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
       createCharacterEntry({ id: "noa", name: "Noa" }),
     ];
-    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
+    const selectionCounts = new Map<string, number>(
+      entries.map((entry) => [entry.id, 0]),
+    );
 
     for (let index = 0; index < 200; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
@@ -309,12 +371,19 @@ describe("home-launch-state", () => {
         [],
         () => (index + 0.5) / 200,
       );
-      selectionCounts.set(characterId, (selectionCounts.get(characterId) ?? 0) + 1);
+      selectionCounts.set(
+        characterId,
+        (selectionCounts.get(characterId) ?? 0) + 1,
+      );
     }
 
-    assert.deepEqual(Object.fromEntries(selectionCounts), { mia: 100, noa: 100 });
+    assert.deepEqual(Object.fromEntries(selectionCounts), {
+      mia: 100,
+      noa: 100,
+    });
   });
 
+  /** 使用されていないactive Characterが一人でもいれば、現在使用中の候補を抽選から外す。 */
   it("random character selection は未使用のactive Characterがあれば使用中を候補から外す", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -323,7 +392,12 @@ describe("home-launch-state", () => {
     ];
 
     assert.equal(
-      selectWeightedRandomLaunchCharacterId(entries, [], ["mia", "noa"], () => 0),
+      selectWeightedRandomLaunchCharacterId(
+        entries,
+        [],
+        ["mia", "noa"],
+        () => 0,
+      ),
       "yui",
     );
   });
@@ -338,6 +412,7 @@ describe("home-launch-state", () => {
   // scope = "home-launch-character-random-selection"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 使用中を除外してから履歴で重みを付け、残った履歴ありと未使用の候補が1対2になる。 */
   it("random character selection は未使用候補の中で最終利用順の重み付けを維持する", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -348,7 +423,9 @@ describe("home-launch-state", () => {
       { characterId: "mia", sessionKind: "default" as const },
       { characterId: "noa", sessionKind: "default" as const },
     ];
-    const selectionCounts = new Map<string, number>(entries.map((entry) => [entry.id, 0]));
+    const selectionCounts = new Map<string, number>(
+      entries.map((entry) => [entry.id, 0]),
+    );
 
     for (let index = 0; index < 300; index += 1) {
       const characterId = selectWeightedRandomLaunchCharacterId(
@@ -357,12 +434,20 @@ describe("home-launch-state", () => {
         ["mia"],
         () => (index + 0.5) / 300,
       );
-      selectionCounts.set(characterId, (selectionCounts.get(characterId) ?? 0) + 1);
+      selectionCounts.set(
+        characterId,
+        (selectionCounts.get(characterId) ?? 0) + 1,
+      );
     }
 
-    assert.deepEqual(Object.fromEntries(selectionCounts), { mia: 0, noa: 100, yui: 200 });
+    assert.deepEqual(Object.fromEntries(selectionCounts), {
+      mia: 0,
+      noa: 100,
+      yui: 200,
+    });
   });
 
+  /** active候補が全員使用中なら、重複利用を許して候補から選べることを確認する。 */
   it("random character selection は全active Characterが使用中なら重複を許容する", () => {
     const entries = [
       createCharacterEntry({ id: "mia", name: "Mia" }),
@@ -392,6 +477,7 @@ describe("home-launch-state", () => {
   // impact = "利用者が最初に修正すべき入力理由を一貫して識別でき、valid draftは開始可能になる"
   // distinction = "個別validatorの判定だけでなく、複数条件下の優先順位とvalid終端を同じ公開helperで確認する"
   // @end-test-value
+  /** 開始条件の不足はタイトル、Workspace、providerの順で案内し、すべて揃えばエラーを残さない。 */
   it("launch validation message は既存の優先順位で返す", () => {
     const baseDraft = {
       ...createClosedLaunchDraft(),
@@ -461,6 +547,7 @@ describe("home-launch-state", () => {
   // impact = "ユーザーの選択と異なるRole・作業場所・CharacterでSessionを作ることを防ぐ"
   // distinction = "型だけでは値の対応を保証できず、UIの非同期試験より小さな純粋処理で作成条件の対応を確認する"
   // @end-test-value
+  /** directoryを選んだドラフトから起点RoleとCharacterの表示情報を引き継ぎ、実行オプションは要求側で上書きしない。 */
   it("launch draft から directory workspace の session request を組み立てる", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
@@ -516,6 +603,7 @@ describe("home-launch-state", () => {
     assert.equal("customAgentName" in (input ?? {}), false);
   });
 
+  /** Mate未作成でも、WithMateの中立ID・表示名・配色を持つ作成要求を返す。 */
   it("Mate 未作成でも neutral character で session input を組み立てる", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
@@ -538,6 +626,7 @@ describe("home-launch-state", () => {
     });
   });
 
+  /** 固定選択したCharacterがarchivedへ変わった場合は、別のCharacterで作成要求を成立させない。 */
   it("specific Character がarchivedなら別Characterへ置換せずsession開始を拒否する", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
@@ -553,21 +642,18 @@ describe("home-launch-state", () => {
       selectedProviderId: "codex",
       characterEntries: [
         createCharacterEntry({ id: "mia", name: "Mia", state: "archived" }),
-        createCharacterEntry({ id: "noa", name: "Noa", description: "active profile" }),
+        createCharacterEntry({
+          id: "noa",
+          name: "Noa",
+          description: "active profile",
+        }),
       ],
     });
 
     assert.equal(input, null);
   });
 
-
-
-
-
-
-
-
-
+  /** 必須の開始条件を満たさないドラフトからはSession作成要求を返さない。 */
   it("launch 条件が欠けている時は session input を返さない", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: createClosedLaunchDraft(),
@@ -578,6 +664,7 @@ describe("home-launch-state", () => {
     assert.equal(input, null);
   });
 
+  /** Session Folderを選んだ場合はdirectoryパスを事前確定せず、作成要求に選択種別だけを渡す。 */
   it("SessionFolder 選択は path を確定せず session request に保持する", () => {
     const draft = {
       ...setLaunchWorkspaceToSessionFolder(createClosedLaunchDraft()),

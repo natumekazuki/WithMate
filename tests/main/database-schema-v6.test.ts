@@ -25,15 +25,18 @@ import {
   resolveV6FreshDatabasePath,
 } from "../../src-electron/storage/database-schema-v6.js";
 
+/** V6の列定義から名前とNULL制約を調べるための行。 */
 type TableInfoRow = {
   name: string;
   notnull: number;
 };
 
+/** メタデータから実際のCREATE文を参照するための行。 */
 type TableSqlRow = {
   sql: string | null;
 };
 
+/** 参照列と削除時動作を確認するためのSQLiteの外部キー定義。 */
 type ForeignKeyRow = {
   table: string;
   from: string;
@@ -41,6 +44,7 @@ type ForeignKeyRow = {
   on_delete: string;
 };
 
+/** SQLiteのスキーマに登録された索引名を取り出すための行。 */
 type SchemaObjectRow = {
   name: string;
 };
@@ -53,6 +57,7 @@ const LEGACY_MEMORY_TABLES = [
   "character_memory_entries",
 ] as const;
 
+/** 製品のV6定義を適用し、外部キーを有効にした検証用接続を返す。 */
 function createV6Schema(dbPath = ":memory:"): DatabaseSync {
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys = ON;");
@@ -62,42 +67,76 @@ function createV6Schema(dbPath = ":memory:"): DatabaseSync {
   return db;
 }
 
+/** 必須集合の比較対象として、SQLite内部を除いたテーブル名を取得する。 */
 function tableNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as TableInfoRow[])
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+      )
+      .all() as TableInfoRow[]
+  )
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
 }
 
+/** 新旧索引が実際に登録されているかを調べるため、索引名を列挙する。 */
 function indexNames(db: DatabaseSync): string[] {
-  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' ORDER BY name").all() as SchemaObjectRow[])
-    .map((row) => row.name);
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'index' ORDER BY name",
+      )
+      .all() as SchemaObjectRow[]
+  ).map((row) => row.name);
 }
 
+/** 既定値などのテーブル検査に使う列情報をSQLiteから取得する。 */
 function columnInfo(db: DatabaseSync, tableName: string): TableInfoRow[] {
   return db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[];
 }
 
+/** テーブルの列構成を比較できるよう、順序を保って列名を返す。 */
 function columnNames(db: DatabaseSync, tableName: string): string[] {
   return columnInfo(db, tableName).map((row) => row.name);
 }
 
+/** 構造化情報にない制約を確認するため、テーブルのCREATE文を返す。 */
 function tableSql(db: DatabaseSync, tableName: string): string {
-  const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
-    | TableSqlRow
-    | undefined;
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName) as TableSqlRow | undefined;
   return row?.sql ?? "";
 }
 
-function findForeignKey(db: DatabaseSync, tableName: string, fromColumn: string): ForeignKeyRow | undefined {
-  const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as ForeignKeyRow[];
+/** 削除時動作の検査に使う外部キーを、参照元の列から特定する。 */
+function findForeignKey(
+  db: DatabaseSync,
+  tableName: string,
+  fromColumn: string,
+): ForeignKeyRow | undefined {
+  const keys = db
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all() as ForeignKeyRow[];
   return keys.find((row) => row.from === fromColumn);
 }
 
-function hasForeignKey(db: DatabaseSync, tableName: string, fromColumn: string, targetTable: string): boolean {
-  const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as ForeignKeyRow[];
-  return keys.some((row) => row.from === fromColumn && row.table === targetTable);
+/** 指定列の参照先に、期待するテーブルが含まれるかを判定する。 */
+function hasForeignKey(
+  db: DatabaseSync,
+  tableName: string,
+  fromColumn: string,
+  targetTable: string,
+): boolean {
+  const keys = db
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all() as ForeignKeyRow[];
+  return keys.some(
+    (row) => row.from === fromColumn && row.table === targetTable,
+  );
 }
 
+/** 名前と版だけ正しく、実際の列が不足する不正DBを用意する。 */
 function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -110,6 +149,7 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
   }
 }
 
+/** 実SQLiteに対し、V6の初期定義と既存ファイルへの更新結果を確認する。 */
 describe("database-schema-v6", () => {
   // @test-value v2
   // kind = "contract"
@@ -122,24 +162,47 @@ describe("database-schema-v6", () => {
   // lifecycle = "permanent"
   // distinction = "fresh schema検査やFiles型検査では既存SQLite CHECK更新時のPin保持を保証できない"
   // @end-test-value
+  /** 既存のPin行を保ったままCrewフォルダーのPinを追加でき、親削除で両方が消えることを確認する。 */
   it("既存Pinを保持してCrewFolder Pinを許容し親削除をcascadeする", () => {
     const db = createV6Schema();
     try {
       db.exec("DROP TABLE session_file_pins_v6");
-      db.exec(CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace("'session-folder', 'crew-folder'", "'session-folder'"));
+      db.exec(
+        CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace(
+          "'session-folder', 'crew-folder'",
+          "'session-folder'",
+        ),
+      );
       db.exec(`INSERT INTO sessions_v6(id,title,state,provider_id,catalog_revision,model_id,approval_mode,created_at,updated_at,last_active_at)
         VALUES ('main','saved','completed','codex',1,'model','never','now','now','now');
         INSERT INTO session_file_pins_v6 VALUES ('main','workspace','C:/project','note.md','note.md','file','Workspace')`);
-      const previous = { ...db.prepare("SELECT * FROM session_file_pins_v6").get() };
+      const previous = {
+        ...db.prepare("SELECT * FROM session_file_pins_v6").get(),
+      };
       ensureV6Schema(db);
-      assert.deepEqual({ ...db.prepare("SELECT * FROM session_file_pins_v6").get() }, previous);
-      db.exec("INSERT INTO session_file_pins_v6 VALUES ('main','crew-folder','C:/crew','output.md','output.md','file','CrewFolder')");
-      const pins = db.prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind").all();
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM session_file_pins_v6").get() },
+        previous,
+      );
+      db.exec(
+        "INSERT INTO session_file_pins_v6 VALUES ('main','crew-folder','C:/crew','output.md','output.md','file','CrewFolder')",
+      );
+      const pins = db
+        .prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind")
+        .all();
       ensureV6Schema(db);
-      assert.deepEqual(db.prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind").all(), pins);
+      assert.deepEqual(
+        db
+          .prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind")
+          .all(),
+        pins,
+      );
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
       db.exec("DELETE FROM sessions_v6 WHERE id = 'main'");
-      assert.deepEqual(db.prepare("SELECT * FROM session_file_pins_v6").all(), []);
+      assert.deepEqual(
+        db.prepare("SELECT * FROM session_file_pins_v6").all(),
+        [],
+      );
     } finally {
       db.close();
     }
@@ -156,6 +219,7 @@ describe("database-schema-v6", () => {
   // lifecycle = "permanent"
   // distinction = "fresh schemaの列検査では既存行の移行・入力の未知状態保持・再実行時のデータ保持を検証できない"
   // @end-test-value
+  /** スキーマ更新で既存の本文と受付を保持し、旧データで未知だった入力やReviewerを確定値に変えない。 */
   it("既存V6の会話とqueueを保持してCrew列と未知の入力snapshotを追加する", () => {
     const db = createV6Schema();
     try {
@@ -183,38 +247,92 @@ describe("database-schema-v6", () => {
         INSERT INTO session_turn_queue_v6 (id, queue_position, session_id, incarnation_id, request_id, state, captured_json, created_at, updated_at)
           VALUES ('receipt', 7, 'main', 'incarnation', 'request', 'queued', '{"text":"編集済み入力"}', 'now', 'now');
       `);
-      const previousSession = { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() };
-      const previousAuxiliary = { ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() };
-      const previousMessage = { ...db.prepare("SELECT * FROM auxiliary_session_messages").get() };
-      const previousQueue = { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() };
+      const previousSession = {
+        ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get(),
+      };
+      const previousAuxiliary = {
+        ...db
+          .prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'")
+          .get(),
+      };
+      const previousMessage = {
+        ...db.prepare("SELECT * FROM auxiliary_session_messages").get(),
+      };
+      const previousQueue = {
+        ...db.prepare("SELECT * FROM session_turn_queue_v6").get(),
+      };
 
       ensureV6Schema(db);
       ensureV6Schema(db);
 
-      assert.deepEqual({ ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() }, {
-        ...previousSession, session_role: "standalone", root_session_id: "main",
-        parent_session_id: null, created_by_session_id: null, description: "",
-      });
-      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() },
-        { ...previousAuxiliary, description: "", withmate_reviewer_explicit: 0 });
-      assert.throws(() => db.exec("UPDATE auxiliary_sessions SET withmate_reviewer_explicit = 2"), /CHECK constraint failed/);
-      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_session_messages").get() }, previousMessage);
-      assert.deepEqual({ ...db.prepare("SELECT * FROM session_turn_queue_v6").get() }, {
-        ...previousQueue, accepted_json: null, dispatched_json: null,
-      });
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() },
+        {
+          ...previousSession,
+          session_role: "standalone",
+          root_session_id: "main",
+          parent_session_id: null,
+          created_by_session_id: null,
+          description: "",
+        },
+      );
+      assert.deepEqual(
+        {
+          ...db
+            .prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'")
+            .get(),
+        },
+        {
+          ...previousAuxiliary,
+          description: "",
+          withmate_reviewer_explicit: 0,
+        },
+      );
+      assert.throws(
+        () =>
+          db.exec(
+            "UPDATE auxiliary_sessions SET withmate_reviewer_explicit = 2",
+          ),
+        /CHECK constraint failed/,
+      );
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM auxiliary_session_messages").get() },
+        previousMessage,
+      );
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() },
+        {
+          ...previousQueue,
+          accepted_json: null,
+          dispatched_json: null,
+        },
+      );
       assert.ok(indexNames(db).includes("idx_v6_sessions_root"));
       assert.ok(indexNames(db).includes("idx_v6_sessions_parent"));
       for (const name of ["accepted_json", "dispatched_json"]) {
-        assert.throws(() => db.exec(`UPDATE session_turn_queue_v6 SET ${name} = 'invalid'`), /CHECK constraint failed/);
+        assert.throws(
+          () => db.exec(`UPDATE session_turn_queue_v6 SET ${name} = 'invalid'`),
+          /CHECK constraint failed/,
+        );
       }
       db.exec(`UPDATE sessions_v6 SET session_role = 'worker', root_session_id = 'crew-root', parent_session_id = 'parent',
         created_by_session_id = 'creator', description = '担当範囲' WHERE id = 'main';
         UPDATE session_turn_queue_v6 SET accepted_json = '{"text":"受付時入力"}', dispatched_json = '{"text":"採用入力"}'`);
-      const migratedSession = { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() };
-      const migratedQueue = { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() };
+      const migratedSession = {
+        ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get(),
+      };
+      const migratedQueue = {
+        ...db.prepare("SELECT * FROM session_turn_queue_v6").get(),
+      };
       ensureV6Schema(db);
-      assert.deepEqual({ ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() }, migratedSession);
-      assert.deepEqual({ ...db.prepare("SELECT * FROM session_turn_queue_v6").get() }, migratedQueue);
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() },
+        migratedSession,
+      );
+      assert.deepEqual(
+        { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() },
+        migratedQueue,
+      );
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     } finally {
       db.close();
@@ -233,15 +351,20 @@ describe("database-schema-v6", () => {
   // impact = "履歴が長い場合に全turn群の反復検索で会話の読込・保存が長時間占有されることを防ぐ"
   // distinction = "既存の本文・Bookmark・page testは同じ結果を返す低速なplanを検出できない。小さいSQLite fixtureで時間閾値や索引名を固定せず検索範囲を確認する"
   // @end-test-value
+  /** 新規作成時と既存DB更新時の両方で、会話の所有者とメッセージ番号から最新の失敗を索引で引けることを確認する。 */
   it("履歴の失敗情報は新規DBと既存DBのensure後にownerとseqで索引検索する", () => {
     const db = createV6Schema();
     try {
       for (const id of ["target", "other"]) {
-        db.prepare(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision,
+        db.prepare(
+          `INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision,
           model_id, approval_mode, created_at, updated_at, last_active_at)
-          VALUES (?, '', 'active', 'codex', 1, '', 'never', 'now', 'now', 'now')`).run(id);
-        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
-          VALUES (?, 'target', 'now', 'now')`).run(id);
+          VALUES (?, '', 'active', 'codex', 1, '', 'never', 'now', 'now', 'now')`,
+        ).run(id);
+        db.prepare(
+          `INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+          VALUES (?, 'target', 'now', 'now')`,
+        ).run(id);
       }
       const owners = [
         ["session_messages_v6", "session_id"],
@@ -249,8 +372,13 @@ describe("database-schema-v6", () => {
       ] as const;
       for (const [table, owner] of owners) {
         for (const seq of [0, 1]) {
-          db.prepare(`INSERT INTO ${table} (${owner}, seq, role, body, created_at)
-            VALUES ('target', ?, 'assistant', ?, 'now')`).run(seq, JSON.stringify({ text: `message ${seq}`, isBookmarked: true }));
+          db.prepare(
+            `INSERT INTO ${table} (${owner}, seq, role, body, created_at)
+            VALUES ('target', ?, 'assistant', ?, 'now')`,
+          ).run(
+            seq,
+            JSON.stringify({ text: `message ${seq}`, isBookmarked: true }),
+          );
         }
         const turn = db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase,
           assistant_message_seq, error_summary, started_at, updated_at) VALUES (?, ?, ?, ?, 'now', 'now')`);
@@ -260,8 +388,12 @@ describe("database-schema-v6", () => {
         turn.run("other", "failed", 1, "other owner");
         turn.run("target", "failed", null, "no message");
       }
-      const turnsBefore = db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all();
-      const messagesBefore = owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all());
+      const turnsBefore = db
+        .prepare("SELECT * FROM session_turns_v6 ORDER BY id")
+        .all();
+      const messagesBefore = owners.map(([table]) =>
+        db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all(),
+      );
       for (const existing of [false, true]) {
         if (existing) {
           db.exec(`DROP INDEX idx_v6_session_turns_session_failed_message;
@@ -272,15 +404,36 @@ describe("database-schema-v6", () => {
         for (const [table, owner] of owners) {
           const sql = `SELECT ${conversationMessageColumns(table, db)} FROM ${table}
             WHERE ${owner} = ? ORDER BY seq ASC`;
-          const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("target") as Array<{ detail: string }>)
-            .map(({ detail }) => detail).join("\n");
-          assert.match(plan, new RegExp(`SEARCH t USING (?:COVERING )?INDEX .*\\(${owner}=\\? AND assistant_message_seq=\\?\\)`));
+          const plan = (
+            db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("target") as Array<{
+              detail: string;
+            }>
+          )
+            .map(({ detail }) => detail)
+            .join("\n");
+          assert.match(
+            plan,
+            new RegExp(
+              `SEARCH t USING (?:COVERING )?INDEX .*\\(${owner}=\\? AND assistant_message_seq=\\?\\)`,
+            ),
+          );
           assert.doesNotMatch(plan, /TEMP B-TREE/);
           const rows = db.prepare(sql).all("target");
-          assert.deepEqual(rows.map((row) => row.runFailure), [null, `latest ${owner}`]);
+          assert.deepEqual(
+            rows.map((row) => row.runFailure),
+            [null, `latest ${owner}`],
+          );
         }
-        assert.deepEqual(db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all(), turnsBefore);
-        assert.deepEqual(owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all()), messagesBefore);
+        assert.deepEqual(
+          db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all(),
+          turnsBefore,
+        );
+        assert.deepEqual(
+          owners.map(([table]) =>
+            db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all(),
+          ),
+          messagesBefore,
+        );
       }
     } finally {
       db.close();
@@ -297,26 +450,46 @@ describe("database-schema-v6", () => {
   // scope = "既存V6 SessionのPin列schema更新"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 旧V6を更新しても保存済みセッションが残り、追加されたPin列が未固定になることを確かめる。 */
   it("ensureV6Schemaは既存sessionを保持してis_pinnedを既定falseで追加する", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(CREATE_V6_CHARACTERS_TABLE_SQL);
       db.exec(CREATE_V6_PROJECT_SCOPES_TABLE_SQL);
-      db.exec(CREATE_V6_SESSIONS_TABLE_SQL.replace(
-        "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
-        "",
-      ));
-      db.prepare(`
+      db.exec(
+        CREATE_V6_SESSIONS_TABLE_SQL.replace(
+          "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
+          "",
+        ),
+      );
+      db.prepare(
+        `
         INSERT INTO sessions_v6 (
           id, title, state, session_kind, provider_id, catalog_revision, model_id,
           reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
           allowed_additional_directories_json, runtime_policy_json, thread_id,
           workspace_path, created_at, updated_at, last_active_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        "existing-session", "Existing", "active", "default", "codex", 1, "gpt-test",
-        "high", "", "never", "danger-full-access", "[]", "{}", "", "C:/workspace",
-        "2026-08-01T00:00:00.000Z", "2026-08-09T04:38:00.000Z", "2026-08-09T04:38:00.000Z",
+      `,
+      ).run(
+        "existing-session",
+        "Existing",
+        "active",
+        "default",
+        "codex",
+        1,
+        "gpt-test",
+        "high",
+        "",
+        "never",
+        "danger-full-access",
+        "[]",
+        "{}",
+        "",
+        "C:/workspace",
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-09T04:38:00.000Z",
+        "2026-08-09T04:38:00.000Z",
       );
 
       ensureV6Schema(db);
@@ -338,13 +511,26 @@ describe("database-schema-v6", () => {
     assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
     assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
     assert.equal(V6_SCHEMA_STATUS, "foundation");
-    assert.equal(resolveV6FreshDatabasePath("user-data"), join("user-data", APP_DATABASE_V6_FILENAME));
+    assert.equal(
+      resolveV6FreshDatabasePath("user-data"),
+      join("user-data", APP_DATABASE_V6_FILENAME),
+    );
 
     const db = createV6Schema();
     try {
       const names = tableNames(db).sort();
-      assert.deepEqual(names, [...REQUIRED_V6_TABLES, "local_prs_v7", "local_pr_versions_v7", "local_pr_comments_v7"].sort());
-      const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
+      assert.deepEqual(
+        names,
+        [
+          ...REQUIRED_V6_TABLES,
+          "local_prs_v7",
+          "local_pr_versions_v7",
+          "local_pr_comments_v7",
+        ].sort(),
+      );
+      const userVersion = db.prepare("PRAGMA user_version").get() as {
+        user_version: number;
+      };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
     } finally {
       db.close();
@@ -361,6 +547,7 @@ describe("database-schema-v6", () => {
   // scope = "runtime DBのdeep validation入口"
   // lifecycle = "permanent"
   // @end-test-value
+  /** V6として認めるには、ファイル名・版番号だけでなく必要な列を含むスキーマが揃うことを確かめる。 */
   it("isValidV6Database は filename、schema version、required tables を検証する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
     try {
@@ -378,24 +565,43 @@ describe("database-schema-v6", () => {
       mkdirSync(emptyDirPath);
       closeSync(openSync(emptyV6DbPath, "w"));
 
-      const partialV6DbPath = join(dirPath, "partial", APP_DATABASE_V6_FILENAME);
+      const partialV6DbPath = join(
+        dirPath,
+        "partial",
+        APP_DATABASE_V6_FILENAME,
+      );
       mkdirSync(join(dirPath, "partial"));
       const partialV6Db = new DatabaseSync(partialV6DbPath);
-      partialV6Db.exec(`PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`);
+      partialV6Db.exec(
+        `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
+      );
       partialV6Db.close();
 
-      const malformedV6DbPath = join(dirPath, "malformed", APP_DATABASE_V6_FILENAME);
+      const malformedV6DbPath = join(
+        dirPath,
+        "malformed",
+        APP_DATABASE_V6_FILENAME,
+      );
       mkdirSync(join(dirPath, "malformed"));
       createV6DatabaseWithEmptyRequiredTables(malformedV6DbPath);
 
-      const legacyMixedV6DbPath = join(dirPath, "legacy-mixed", APP_DATABASE_V6_FILENAME);
+      const legacyMixedV6DbPath = join(
+        dirPath,
+        "legacy-mixed",
+        APP_DATABASE_V6_FILENAME,
+      );
       mkdirSync(join(dirPath, "legacy-mixed"));
       const legacyMixedDb = createV6Schema(legacyMixedV6DbPath);
-      legacyMixedDb.exec("CREATE TABLE IF NOT EXISTS project_memory_entries (id TEXT PRIMARY KEY);");
+      legacyMixedDb.exec(
+        "CREATE TABLE IF NOT EXISTS project_memory_entries (id TEXT PRIMARY KEY);",
+      );
       legacyMixedDb.close();
 
       assert.equal(isValidV6Database(validDbPath), true);
-      assert.equal(readV6DatabaseUserVersion(validDbPath), APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(
+        readV6DatabaseUserVersion(validDbPath),
+        APP_DATABASE_V6_SCHEMA_VERSION,
+      );
       assert.equal(isValidV6Database(wrongNameDbPath), false);
       assert.equal(readV6DatabaseUserVersion(wrongNameDbPath), null);
       assert.equal(isValidV6Database(emptyV6DbPath), false);
@@ -417,12 +623,17 @@ describe("database-schema-v6", () => {
   // scope = "V6 legacy Memory schema boundary"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 新規V6のテーブル集合に旧Memory用テーブルが混入していないことを検証する。 */
   it("V6 schema は legacy Memory table を再利用しない", () => {
     const db = createV6Schema();
     try {
       const names = tableNames(db);
       for (const tableName of LEGACY_MEMORY_TABLES) {
-        assert.equal(names.includes(tableName), false, `${tableName} must not exist in V6 schema`);
+        assert.equal(
+          names.includes(tableName),
+          false,
+          `${tableName} must not exist in V6 schema`,
+        );
       }
     } finally {
       db.close();
@@ -455,7 +666,12 @@ describe("database-schema-v6", () => {
         "created_at",
         "updated_at",
       ]);
-      assert.equal(tableSql(db, "project_scopes_v6").includes("UNIQUE (project_type, project_key)"), true);
+      assert.equal(
+        tableSql(db, "project_scopes_v6").includes(
+          "UNIQUE (project_type, project_key)",
+        ),
+        true,
+      );
 
       assert.deepEqual(columnNames(db, "sessions_v6"), [
         "id",
@@ -488,11 +704,32 @@ describe("database-schema-v6", () => {
         "last_active_at",
         "instructions_json",
       ]);
-      assert.equal(findForeignKey(db, "sessions_v6", "character_id")?.table, "characters");
-      assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
-      assert.equal(tableSql(db, "sessions_v6").includes("json_valid(character_snapshot_json)"), true);
-      assert.equal(tableSql(db, "sessions_v6").includes("allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]'"), true);
-      assert.equal(tableSql(db, "sessions_v6").includes("is_pinned INTEGER NOT NULL DEFAULT 0"), true);
+      assert.equal(
+        findForeignKey(db, "sessions_v6", "character_id")?.table,
+        "characters",
+      );
+      assert.equal(
+        findForeignKey(db, "sessions_v6", "project_scope_id")?.table,
+        "project_scopes_v6",
+      );
+      assert.equal(
+        tableSql(db, "sessions_v6").includes(
+          "json_valid(character_snapshot_json)",
+        ),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "sessions_v6").includes(
+          "allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]'",
+        ),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "sessions_v6").includes(
+          "is_pinned INTEGER NOT NULL DEFAULT 0",
+        ),
+        true,
+      );
 
       assert.deepEqual(columnNames(db, "session_messages_v6"), [
         "id",
@@ -503,7 +740,14 @@ describe("database-schema-v6", () => {
         "artifact_body",
         "created_at",
       ]);
-      assert.equal(findForeignKey(db, "session_messages_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(
+        findForeignKey(
+          db,
+          "session_messages_v6",
+          "session_id",
+        )?.on_delete.toUpperCase(),
+        "CASCADE",
+      );
 
       assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
         "id",
@@ -535,11 +779,26 @@ describe("database-schema-v6", () => {
         "creation_request_json",
         "instructions_json",
       ]);
-      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
+      assert.equal(
+        findForeignKey(db, "auxiliary_sessions", "parent_session_id"),
+        undefined,
+      );
       assert.deepEqual(columnNames(db, "auxiliary_session_messages"), [
-        "auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at",
+        "auxiliary_session_id",
+        "seq",
+        "role",
+        "body",
+        "artifact_body",
+        "created_at",
       ]);
-      assert.equal(findForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(
+        findForeignKey(
+          db,
+          "auxiliary_session_messages",
+          "auxiliary_session_id",
+        )?.on_delete.toUpperCase(),
+        "CASCADE",
+      );
 
       assert.deepEqual(columnNames(db, "session_turns_v6"), [
         "id",
@@ -559,32 +818,72 @@ describe("database-schema-v6", () => {
         "completed_at",
         "updated_at",
       ]);
-      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.table, "sessions_v6");
-      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
-      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
-      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
-      assert.equal(tableSql(db, "session_turns_v6").includes("phase IN ('running', 'completed', 'failed', 'canceled')"), true);
-      assert.equal(tableSql(db, "session_turns_v6").includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL"), true);
-      assert.equal(tableSql(db, "session_turns_v6").includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)"), true);
-
+      assert.equal(
+        findForeignKey(db, "session_turns_v6", "session_id")?.table,
+        "sessions_v6",
+      );
+      assert.equal(
+        findForeignKey(
+          db,
+          "session_turns_v6",
+          "session_id",
+        )?.on_delete.toUpperCase(),
+        "CASCADE",
+      );
+      assert.equal(
+        findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.table,
+        "auxiliary_sessions",
+      );
+      assert.equal(
+        findForeignKey(
+          db,
+          "session_turns_v6",
+          "auxiliary_session_id",
+        )?.on_delete.toUpperCase(),
+        "CASCADE",
+      );
+      assert.equal(
+        tableSql(db, "session_turns_v6").includes(
+          "phase IN ('running', 'completed', 'failed', 'canceled')",
+        ),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "session_turns_v6").includes(
+          "session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL",
+        ),
+        true,
+      );
+      assert.equal(
+        tableSql(db, "session_turns_v6").includes(
+          "NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)",
+        ),
+        true,
+      );
     } finally {
       db.close();
     }
   });
 
-
-
+  /** Characterの参照だけがある不完全なセッション行を拒否し、有効なJSONスナップショット付きの行を受け入れる。 */
   it("Character付きsessionではvalid JSON snapshotを必須にする", () => {
     const db = createV6Schema();
     try {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO characters (
           id,
           name,
           created_at,
           updated_at
         ) VALUES (?, ?, ?, ?)
-      `).run("char-a", "Character A", "2026-06-23T00:00:00.000Z", "2026-06-23T00:00:00.000Z");
+      `,
+      ).run(
+        "char-a",
+        "Character A",
+        "2026-06-23T00:00:00.000Z",
+        "2026-06-23T00:00:00.000Z",
+      );
 
       const insertSession = db.prepare(`
         INSERT INTO sessions_v6 (
@@ -619,13 +918,19 @@ describe("database-schema-v6", () => {
         "session-valid",
         "Valid",
         "char-a",
-        JSON.stringify({ characterId: "char-a", definitionSha256: "sha", snapshotAt: "2026-06-23T00:00:00.000Z" }),
+        JSON.stringify({
+          characterId: "char-a",
+          definitionSha256: "sha",
+          snapshotAt: "2026-06-23T00:00:00.000Z",
+        }),
         "2026-06-23T00:00:00.000Z",
         "2026-06-23T00:00:00.000Z",
         "2026-06-23T00:00:00.000Z",
       );
 
-      const count = db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number };
+      const count = db
+        .prepare("SELECT COUNT(*) AS count FROM sessions_v6")
+        .get() as { count: number };
       assert.equal(count.count, 1);
     } finally {
       db.close();
@@ -673,9 +978,11 @@ describe("database-schema-v6", () => {
         "created_at",
         "instructions_json",
       ]);
-      const row = db.prepare("SELECT created_at, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-1") as
-        | { created_at: string; updated_at: string }
-        | undefined;
+      const row = db
+        .prepare(
+          "SELECT created_at, updated_at FROM auxiliary_sessions WHERE id = ?",
+        )
+        .get("aux-1") as { created_at: string; updated_at: string } | undefined;
       assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
       assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
     } finally {
@@ -695,6 +1002,7 @@ describe("database-schema-v6", () => {
   // distinction = "isValidV6Databaseは余分なindexを許容するため、ensureV6Schemaの既存DB修復を直接確認する"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 作成時刻順の旧Auxiliary索引を落とし、最終利用順の索引は残ることを検証する。 */
   it("ensureV6Schema は既存の旧Auxiliary indexを削除する", () => {
     const db = createV6Schema();
     try {
@@ -706,18 +1014,18 @@ describe("database-schema-v6", () => {
 
       ensureV6Schema(db);
 
-      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_updated"), true);
-      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_created"), false);
+      assert.equal(
+        indexNames(db).includes("idx_auxiliary_sessions_parent_updated"),
+        true,
+      );
+      assert.equal(
+        indexNames(db).includes("idx_auxiliary_sessions_parent_created"),
+        false,
+      );
     } finally {
       db.close();
     }
   });
-
-
-
-
-
-
 
   // @test-value v2
   // kind = "invariant"
@@ -729,6 +1037,7 @@ describe("database-schema-v6", () => {
   // scope = "ensureV6Schema transactional repair rollback"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Auxiliary再構築に制約違反が起きたら、元の行とDDLを保ち、作業用の中間テーブルを残さない。 */
   it("ensureV6Schema は auxiliary_sessions repair 失敗時に部分適用を rollback する", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -738,8 +1047,8 @@ describe("database-schema-v6", () => {
 
       for (const statement of CREATE_V6_SCHEMA_SQL) {
         if (
-          statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
-          && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
+          statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL &&
+          statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
         ) {
           db.exec(statement);
         }
@@ -820,7 +1129,6 @@ describe("database-schema-v6", () => {
 
       assert.throws(() => ensureV6Schema(db), /NOT NULL constraint failed/);
 
-
       assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
         "id",
         "parent_session_id",
@@ -828,15 +1136,21 @@ describe("database-schema-v6", () => {
         "updated_at",
         "payload_json",
       ]);
-      assert.equal(tableNames(db).includes("auxiliary_sessions_v6_rebuild"), false);
-      const auxiliaryRow = db.prepare("SELECT id, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-rollback") as
-        | { id: string; updated_at: string | null }
-        | undefined;
+      assert.equal(
+        tableNames(db).includes("auxiliary_sessions_v6_rebuild"),
+        false,
+      );
+      const auxiliaryRow = db
+        .prepare("SELECT id, updated_at FROM auxiliary_sessions WHERE id = ?")
+        .get("aux-rollback") as
+        { id: string; updated_at: string | null } | undefined;
       assert.equal(auxiliaryRow?.id, "aux-rollback");
       assert.equal(auxiliaryRow?.updated_at, null);
-      const auditRow = db.prepare("SELECT metadata_json FROM audit_events_v6 WHERE session_id = ?").get("session-1") as
-        | { metadata_json: string }
-        | undefined;
+      const auditRow = db
+        .prepare(
+          "SELECT metadata_json FROM audit_events_v6 WHERE session_id = ?",
+        )
+        .get("session-1") as { metadata_json: string } | undefined;
       assert.equal(auditRow?.metadata_json, '{"prompt":"kept"}');
     } finally {
       db.close();

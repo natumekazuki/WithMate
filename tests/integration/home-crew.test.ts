@@ -4,7 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { BrowserWindow, IpcMain, MenuItemConstructorOptions, MessageBoxOptions, PopupOptions } from "electron";
+import type {
+  BrowserWindow,
+  IpcMain,
+  MenuItemConstructorOptions,
+  MessageBoxOptions,
+  PopupOptions,
+} from "electron";
 import { AuxiliaryLiveRunParents } from "../../src-electron/auxiliary/auxiliary-live-run-parents.js";
 import { registerMainIpcHandlers } from "../../src-electron/ipc/register-main-ipc.js";
 import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.js";
@@ -17,79 +23,207 @@ import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-
 import type { DraftFlushRequest } from "../../src-electron/platform/draft-flush-coordinator.js";
 import { TerminalService } from "../../src-electron/terminal/terminal-service.js";
 import type { TerminalPty } from "../../src-electron/terminal/utility-terminal-pty.js";
-import { SessionWindowBridge, type SessionWindowCloseEvent } from "../../src-electron/windows/session-window-bridge.js";
+import {
+  SessionWindowBridge,
+  type SessionWindowCloseEvent,
+} from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { buildNewSession, getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+  type Session,
+} from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 
+/** 実画面を生成せず、ウィンドウと WebContents の破棄状態や閉じるイベントを再現する。 */
 class TestWindow {
   private readonly events = new EventEmitter();
   private destroyed = false;
-  readonly webContents = new EventEmitter() as EventEmitter & { isDestroyed(): boolean; send(): void };
+  readonly webContents = new EventEmitter() as EventEmitter & {
+    /** WebContents の破棄状態を参照するためのメソッド。 */ isDestroyed(): boolean;
+    /** 実 Electron を使わずに通知送信を受け付ける。 */ send(): void;
+  };
   failClose = false;
+  /** 識別子を保持し、WebContents とウィンドウの破棄状態を同期する。 */
   constructor(readonly id: number) {
     this.webContents.isDestroyed = () => this.destroyed;
     this.webContents.send = () => {};
   }
-  isDestroyed() { return this.destroyed; }
-  isMinimized() { return false; }
+  /** ウィンドウの現在の破棄状態を返す。 */
+  isDestroyed() {
+    return this.destroyed;
+  }
+  /** テスト用のウィンドウは最小化されていないものとして扱う。 */
+  isMinimized() {
+    return false;
+  }
+  /** このテストでは最小化要求で表示状態を変えない。 */
   minimize() {}
+  /** 実画面を伴わずにウィンドウの復元要求を受け付ける。 */
   restore() {}
+  /** 実デスクトップではフォーカスを移さない。 */
   focus() {}
+  /** ネイティブ画面を表示せず、呼び出しを受け付ける。 */
   show() {}
-  once(event: "ready-to-show", listener: () => void) { this.events.once(event, listener); }
-  on(event: "close" | "closed", listener: ((event: SessionWindowCloseEvent) => void) | (() => void)) { this.events.on(event, listener); }
+  /** 表示準備を待つ一回限りのリスナーを保持する。 */
+  once(event: "ready-to-show", listener: () => void) {
+    this.events.once(event, listener);
+  }
+  /** 閉じる直前と閉じた後のイベントに Window Bridge を接続できるようにする。 */
+  on(
+    event: "close" | "closed",
+    listener: ((event: SessionWindowCloseEvent) => void) | (() => void),
+  ) {
+    this.events.on(event, listener);
+  }
+  /** リスナーによる閉鎖の取消を扱い、失敗設定時は通知前に例外を投げる。 */
   close() {
     if (this.failClose) throw new Error("BrowserWindow could not close");
     let prevented = false;
-    this.events.emit("close", { preventDefault() { prevented = true; } });
+    this.events.emit("close", {
+      /** 閉じるイベントを受けた側にウィンドウ破棄の取消を許す。 */ preventDefault() {
+        prevented = true;
+      },
+    });
     if (!prevented) this.destroy();
   }
+  /** 初回だけ破棄済みとし、閉じたことを通知する。 */
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
     this.events.emit("closed");
   }
-  asBrowserWindow() { return this as unknown as BrowserWindow; }
+  /** テストダブルを BrowserWindow を受け取る境界に渡す。 */
+  asBrowserWindow() {
+    return this as unknown as BrowserWindow;
+  }
 }
 
-function newSession(id: string, parentSessionId: string | null = null, sessionRole: Session["sessionRole"] = "standalone", rootSessionId = "root"): Session {
+/** 親・ルート・役割を指定でき、固定のタイトルと世代を持つ保存 Session を組み立てる。 */
+function newSession(
+  id: string,
+  parentSessionId: string | null = null,
+  sessionRole: Session["sessionRole"] = "standalone",
+  rootSessionId = "root",
+): Session {
   return {
-    ...buildNewSession({ id, parentSessionId, rootSessionId, createdBySessionId: parentSessionId, sessionRole, taskTitle: `Title ${id}`,
-      workspaceLabel: "test", workspacePath: process.cwd(), branch: "test",
-      characterId: "mate", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#000000", sub: "#ffffff" },
-      approvalMode: DEFAULT_APPROVAL_MODE }),
+    ...buildNewSession({
+      id,
+      parentSessionId,
+      rootSessionId,
+      createdBySessionId: parentSessionId,
+      sessionRole,
+      taskTitle: `Title ${id}`,
+      workspaceLabel: "test",
+      workspacePath: process.cwd(),
+      branch: "test",
+      characterId: "mate",
+      character: "Mate",
+      characterIconPath: "",
+      characterThemeColors: { main: "#000000", sub: "#ffffff" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
     incarnationId: `${id}-incarnation`,
     updatedAt: "2026-11-01T00:00:00.000Z",
   };
 }
 
+/** 親の実行・キャラクター設定を引き継ぐ未実行の Auxiliary を作る。 */
 function newAuxiliary(parent: Session, id: string): AuxiliarySession {
-  const { provider, catalogRevision, model, reasoningEffort, approvalMode, codexSandboxMode, codexSpeed, codexReviewer, characterId } = parent;
+  const {
+    provider,
+    catalogRevision,
+    model,
+    reasoningEffort,
+    approvalMode,
+    codexSandboxMode,
+    codexSpeed,
+    codexReviewer,
+    characterId,
+  } = parent;
   return {
-    id, parentSessionId: parent.id, runState: "idle", title: id, provider, catalogRevision, model, reasoningEffort,
-    approvalMode, codexSandboxMode, codexSpeed, codexReviewer, customAgentName: "", threadId: "", composerDraft: "",
-    messages: [], displayAfterMessageIndex: null, createdAt: parent.updatedAt, updatedAt: parent.updatedAt, characterId,
-    characterRuntimeSnapshot: parent.characterRuntimeSnapshot, characterIconPath: parent.characterIconPath,
+    id,
+    parentSessionId: parent.id,
+    runState: "idle",
+    title: id,
+    provider,
+    catalogRevision,
+    model,
+    reasoningEffort,
+    approvalMode,
+    codexSandboxMode,
+    codexSpeed,
+    codexReviewer,
+    customAgentName: "",
+    threadId: "",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: parent.updatedAt,
+    updatedAt: parent.updatedAt,
+    characterId,
+    characterRuntimeSnapshot: parent.characterRuntimeSnapshot,
+    characterIconPath: parent.characterIconPath,
   };
 }
 
-function connectIpc(home: TestWindow, ports: Pick<Parameters<typeof registerMainIpcHandlers>[1]["window"], "listHomeCrewPage" | "showHomeCrewContextMenu">) {
-  const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
-  const ipcMain = { handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => handlers.set(channel, handler), on() {} };
+/** Home の公開 API と本番 Main IPC を直接つなぎ、メインフレーム・iframe・別ウィンドウを送信元にできるようにする。 */
+function connectIpc(
+  home: TestWindow,
+  ports: Pick<
+    Parameters<typeof registerMainIpcHandlers>[1]["window"],
+    "listHomeCrewPage" | "showHomeCrewContextMenu"
+  >,
+) {
+  const handlers = new Map<
+    string,
+    (event: unknown, ...args: unknown[]) => unknown
+  >();
+  const ipcMain = {
+    /** 公開 API から呼べるよう Main の登録ハンドラーをチャネル別に捕捉する。 */ handle:
+      (
+        channel: string,
+        handler: (event: unknown, ...args: unknown[]) => unknown,
+      ) => handlers.set(channel, handler),
+    /** 一方向通知の登録を実際の転送には接続しない。 */ on() {},
+  };
   const homeFrame = {};
   const homeSender = { mainFrame: homeFrame, session: {}, window: home };
-  const window = { ...ports, resolveHomeWindow: () => home.asBrowserWindow(),
-    resolveEventWindow: (event: { sender: { window: TestWindow } }) => event.sender.window.asBrowserWindow() };
-  registerMainIpcHandlers(ipcMain as unknown as IpcMain, {
-    window, common: {}, auxiliary: {}, catalog: {}, settings: {}, promptTemplates: {},
-    sessionQuery: {}, sessionRuntime: {}, mate: {}, character: {},
-  } as unknown as Parameters<typeof registerMainIpcHandlers>[1]);
-  const apiFor = (sender: typeof homeSender, senderFrame: object | null) => createWithMateWindowApi({
-    invoke: async (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender, senderFrame }, ...args), on() {}, removeListener() {}, send() {},
-  } as unknown as Parameters<typeof createWithMateWindowApi>[0]);
+  const window = {
+    ...ports,
+    /** 信頼判定が参照する Home を返す。 */ resolveHomeWindow: () =>
+      home.asBrowserWindow(),
+    /** IPC イベントに付けた送信元からウィンドウを得る。 */
+    resolveEventWindow: (event: { sender: { window: TestWindow } }) =>
+      event.sender.window.asBrowserWindow(),
+  };
+  registerMainIpcHandlers(
+    ipcMain as unknown as IpcMain,
+    {
+      window,
+      common: {},
+      auxiliary: {},
+      catalog: {},
+      settings: {},
+      promptTemplates: {},
+      sessionQuery: {},
+      sessionRuntime: {},
+      mate: {},
+      character: {},
+    } as unknown as Parameters<typeof registerMainIpcHandlers>[1],
+  );
+  /** 指定したウィンドウとフレームから要求を送る公開 API を作る。 */
+  const apiFor = (sender: typeof homeSender, senderFrame: object | null) =>
+    createWithMateWindowApi({
+      /** 実 IPC の代わりに、送信元イベントを付けて登録済みハンドラーを呼ぶ。 */
+      invoke: async (channel: string, ...args: unknown[]) =>
+        handlers.get(channel)!({ sender, senderFrame }, ...args),
+      /** 要求応答だけを検証するため、preload の通知リスナーを登録しない。 */ on() {},
+      /** 購読が存在しないため解除呼び出しは処理しない。 */ removeListener() {},
+      /** 実 Electron の一方向送信を行わない。 */ send() {},
+    } as unknown as Parameters<typeof createWithMateWindowApi>[0]);
   return {
     api: apiFor(homeSender, homeFrame),
     iframe: apiFor(homeSender, {}),
@@ -108,12 +242,23 @@ function connectIpc(home: TestWindow, ports: Pick<Parameters<typeof registerMain
 // lifecycle = "permanent"
 // distinction = "SQL単体やrenderer fixtureではWorker allowlist・open registry・ページ境界の組合せを検証できない"
 // @end-test-value
+/** 現世代の Window を持つ Crew の保存階層を閉じた枝も含めて実ストレージから取得し、一覧更新後は古いページの続きが拒否されることを確かめる。 */
 test("Home Crew pages join real Window IDs to the saved hierarchy through preload, IPC and SQLite Worker", async () => {
   const userDataPath = await mkdtemp(join(tmpdir(), "withmate-home-crew-"));
   const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
-  const bundle = createV6StorageWorkerBundle({ dbPath: bootstrap.dbPath, userDataPath,
-    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
-    handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url), workerOptions: { execArgv: ["--import", "tsx"] } });
+  const bundle = createV6StorageWorkerBundle({
+    dbPath: bootstrap.dbPath,
+    userDataPath,
+    workerUrl: new URL(
+      "../../src-electron/storage/storage-worker-entry.ts",
+      import.meta.url,
+    ),
+    handlerModule: new URL(
+      "../../src-electron/storage/storage-worker-bundle.ts",
+      import.meta.url,
+    ),
+    workerOptions: { execArgv: ["--import", "tsx"] },
+  });
   try {
     await bundle.initialize();
     const root = newSession("root", null, "overall-coordinator");
@@ -123,16 +268,46 @@ test("Home Crew pages join real Window IDs to the saved hierarchy through preloa
     const lone = newSession("standalone");
     const retained = newSession("monitor-only");
     const stale = newSession("stale-window");
-    const sessions = new Map([root, middle, open, closed, lone, retained, stale].map((session) => [session.id, session]));
-    for (const session of sessions.values()) sessions.set(session.id, await bundle.stores.session.insertSession(session));
+    const sessions = new Map(
+      [root, middle, open, closed, lone, retained, stale].map((session) => [
+        session.id,
+        session,
+      ]),
+    );
+    for (const session of sessions.values())
+      sessions.set(
+        session.id,
+        await bundle.stores.session.insertSession(session),
+      );
     const auxiliary = newAuxiliary(middle, "middle-aux");
     await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
     const home = new TestWindow(1);
-    const broadcast = new WindowBroadcastService({ getAllWindows: () => [], getHomeWindows: () => [home],
-      getPrimaryHomeWindow: () => home, getSessionWindows: () => [], getLiveSessionRunStatusWindows: () => [], getLiveSessionRunWindow: () => null });
-    const bridge = new SessionWindowBridge({ createWindow: () => new TestWindow(2), async loadChatEntry() {},
-      getSession: (id) => sessions.get(id) ?? null, isRunInFlight: () => false, confirmCloseWhileRunning: () => false,
-      broadcastOpenSessionWindowIds: (ids) => broadcast.broadcastOpenSessionWindowIds(ids) });
+    const broadcast = new WindowBroadcastService({
+      /** 全 Window 配信の対象を置かない。 */ getAllWindows: () => [],
+      /** Crew 更新に対応する Home を一つ返す。 */ getHomeWindows: () => [home],
+      /** 固定の Home を主ウィンドウとして返す。 */
+      getPrimaryHomeWindow: () => home,
+      /** 通知先の Session Window の一覧は与えない。 */ getSessionWindows:
+        () => [],
+      /** 軽量実行状態の配信対象は置かない。 */ getLiveSessionRunStatusWindows:
+        () => [],
+      /** 指定実行の通知先 Window は返さない。 */ getLiveSessionRunWindow: () =>
+        null,
+    });
+    const bridge = new SessionWindowBridge({
+      /** Bridge が追跡するテスト用 Session Window を生成する。 */ createWindow:
+        () => new TestWindow(2),
+      /** 画面を描画せず、Window Bridge の登録だけを進める。 */ async loadChatEntry() {},
+      /** 差し替えた世代も含む現在の保存 Session を参照する。 */
+      getSession: (id) => sessions.get(id) ?? null,
+      /** このページ取得の試験では実行中の Session を持たない。 */ isRunInFlight:
+        () => false,
+      /** 閉じる確認が要求されても承認しない。 */ confirmCloseWhileRunning:
+        () => false,
+      /** ウィンドウ一覧の変更を本番配信サービスの Crew 世代更新につなぐ。 */
+      broadcastOpenSessionWindowIds: (ids) =>
+        broadcast.broadcastOpenSessionWindowIds(ids),
+    });
     await bridge.openSessionWindow(open.id);
     await bridge.openSessionWindow(lone.id);
     const saved = sessions.get(stale.id)!;
@@ -142,43 +317,115 @@ test("Home Crew pages join real Window IDs to the saved hierarchy through preloa
     bridge.retainSessionForMonitor(retained.id);
     let invalidateWhileReadingAuxiliaries = false;
     const { api } = connectIpc(home, {
-      listHomeCrewPage: (request) => readHomeCrewPage({
-        getGeneration: () => `${bundle.client.generationId}:${broadcast.getHomeCrewRevision()}`,
-        listOpenSessionWindows: () => bridge.listOpenSessionWindowIdentities(),
-        readMembers: (...args) => bundle.stores.session.listHomeCrewMembersPage(...args),
-        readAuxiliarySummaries: async (ids) => {
-          const rows = await bundle.stores.auxiliary.listAuxiliarySessionSummaries(ids);
-          if (invalidateWhileReadingAuxiliaries) broadcast.broadcastSessionInvalidation({ scope: "all" });
-          return rows;
-        },
-        getLiveSessionRun: (id) => id === auxiliary.id ? {
-          sessionId: id, threadId: "thread", assistantText: "", reasoningText: "", steps: [], backgroundTasks: [],
-          usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null, runState: "running", cancellationState: "requested",
-        } : null,
-        hasUnreadResult: (id) => id === middle.id,
-      }, request),
-      showHomeCrewContextMenu: () => assert.fail("No menu is required for listing"),
+      /** Home IPC の一覧要求を本番のページ取得に渡す。 */
+      listHomeCrewPage: (request) =>
+        readHomeCrewPage(
+          {
+            /** Worker の世代と Home Crew の更新番号を合わせてページの世代とする。 */
+            getGeneration: () =>
+              `${bundle.client.generationId}:${broadcast.getHomeCrewRevision()}`,
+            /** 現在 Bridge が追跡している Window の識別情報を得る。 */
+            listOpenSessionWindows: () =>
+              bridge.listOpenSessionWindowIdentities(),
+            /** Crew メンバーのページを実 Worker のストアから取得する。 */
+            readMembers: (...args) =>
+              bundle.stores.session.listHomeCrewMembersPage(...args),
+            /** Auxiliary の要約を実 Worker から取得し、必要に応じて読取途中で一覧を無効化する。 */
+            readAuxiliarySummaries: async (ids) => {
+              const rows =
+                await bundle.stores.auxiliary.listAuxiliarySessionSummaries(
+                  ids,
+                );
+              if (invalidateWhileReadingAuxiliaries)
+                broadcast.broadcastSessionInvalidation({ scope: "all" });
+              return rows;
+            },
+            /** 対象の Auxiliary だけ、取消要求済みの実行状態を返す。 */
+            getLiveSessionRun: (id) =>
+              id === auxiliary.id
+                ? {
+                    sessionId: id,
+                    threadId: "thread",
+                    assistantText: "",
+                    reasoningText: "",
+                    steps: [],
+                    backgroundTasks: [],
+                    usage: null,
+                    errorMessage: "",
+                    approvalRequest: null,
+                    elicitationRequest: null,
+                    runState: "running",
+                    cancellationState: "requested",
+                  }
+                : null,
+            /** 閉じている中間メンバーの未読状態を有効にする。 */
+            hasUnreadResult: (id) => id === middle.id,
+          },
+          request,
+        ),
+      /** 一覧取得からメニューに委譲された場合は失敗させる。 */
+      showHomeCrewContextMenu: () =>
+        assert.fail("No menu is required for listing"),
     });
+    /** 小さなページを最後まで読み、保存階層・開閉・未読と Auxiliary 状態を照合し、先頭のカーソルを返す。 */
     const readAll = async () => {
       const first = await api.listHomeCrewPage({ limit: 2 });
       assert.equal(first.entries.length, 2);
       assert.ok(first.hasMore && first.nextCursor);
-      const second = await api.listHomeCrewPage({ limit: 2, cursor: first.nextCursor });
+      const second = await api.listHomeCrewPage({
+        limit: 2,
+        cursor: first.nextCursor,
+      });
       assert.ok(second.hasMore && second.nextCursor);
-      const last = await api.listHomeCrewPage({ limit: 2, cursor: second.nextCursor });
+      const last = await api.listHomeCrewPage({
+        limit: 2,
+        cursor: second.nextCursor,
+      });
       assert.equal(last.hasMore, false);
       assert.equal(last.nextCursor, null);
       const entries = [first, second, last].flatMap((page) => page.entries);
-      assert.deepEqual(entries.map(({ id, parentSessionId, rootSessionId, isWindowOpen }) => [id, parentSessionId, rootSessionId, isWindowOpen]), [
-        [closed.id, middle.id, root.id, false], [middle.id, root.id, root.id, false], [open.id, middle.id, root.id, true],
-        [root.id, null, root.id, false], [lone.id, null, lone.id, true],
-      ]);
-      assert.equal(entries.find(({ id }) => id === root.id)?.incarnationId, sessions.get(root.id)?.incarnationId);
-      assert.equal(entries.find(({ id }) => id === root.id)?.createdAt, root.updatedAt);
-      assert.equal(entries.find(({ id }) => id === middle.id)?.hasUnreadResult, true);
-      assert.deepEqual(first.auxiliarySessions.map(({ id, parentSessionId, runState, cancellationState }) => [id, parentSessionId, runState, cancellationState]),
-        [[auxiliary.id, middle.id, "running", "requested"]]);
-      assert.equal(second.auxiliarySessions.length + last.auxiliarySessions.length, 0);
+      assert.deepEqual(
+        entries.map(({ id, parentSessionId, rootSessionId, isWindowOpen }) => [
+          id,
+          parentSessionId,
+          rootSessionId,
+          isWindowOpen,
+        ]),
+        [
+          [closed.id, middle.id, root.id, false],
+          [middle.id, root.id, root.id, false],
+          [open.id, middle.id, root.id, true],
+          [root.id, null, root.id, false],
+          [lone.id, null, lone.id, true],
+        ],
+      );
+      assert.equal(
+        entries.find(({ id }) => id === root.id)?.incarnationId,
+        sessions.get(root.id)?.incarnationId,
+      );
+      assert.equal(
+        entries.find(({ id }) => id === root.id)?.createdAt,
+        root.updatedAt,
+      );
+      assert.equal(
+        entries.find(({ id }) => id === middle.id)?.hasUnreadResult,
+        true,
+      );
+      assert.deepEqual(
+        first.auxiliarySessions.map(
+          ({ id, parentSessionId, runState, cancellationState }) => [
+            id,
+            parentSessionId,
+            runState,
+            cancellationState,
+          ],
+        ),
+        [[auxiliary.id, middle.id, "running", "requested"]],
+      );
+      assert.equal(
+        second.auxiliarySessions.length + last.auxiliarySessions.length,
+        0,
+      );
       return first.nextCursor;
     };
     const oldCursor = await readAll();
@@ -188,8 +435,14 @@ test("Home Crew pages join real Window IDs to the saved hierarchy through preloa
     const beforeClose = await api.listHomeCrewPage({ limit: 2 });
     assert.ok(beforeClose.nextCursor && beforeClose.nextCursor !== oldCursor);
     assert.equal(await bridge.requestCloseSessionWindow(open.id), true);
-    await assert.rejects(api.listHomeCrewPage({ cursor: beforeClose.nextCursor }), /changed while loading/);
-    assert.deepEqual((await api.listHomeCrewPage()).entries.map(({ id }) => id), [lone.id]);
+    await assert.rejects(
+      api.listHomeCrewPage({ cursor: beforeClose.nextCursor }),
+      /changed while loading/,
+    );
+    assert.deepEqual(
+      (await api.listHomeCrewPage()).entries.map(({ id }) => id),
+      [lone.id],
+    );
   } finally {
     await bundle.client.close();
     await rm(userDataPath, { recursive: true, force: true });
@@ -207,29 +460,58 @@ test("Home Crew pages join real Window IDs to the saved hierarchy through preloa
 // lifecycle = "permanent"
 // risk_tags = ["authorization"]
 // @end-test-value
+/** Home のメインフレームだけが一覧とメニューを呼べ、メニューに対象の識別情報と座標以外の操作指示を渡せないことを確かめる。 */
 test("Home Crew IPC invokes only from the Home main frame and accepts identity and point, not batch inputs", async () => {
   const menuRequests: unknown[] = [];
   let reads = 0;
   const { api, iframe, other } = connectIpc(new TestWindow(1), {
-    listHomeCrewPage: () => { reads++; return { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false }; },
-    showHomeCrewContextMenu: (_home, request) => { menuRequests.push(request); return { status: "dismissed" }; },
+    /** 認可された一覧取得を数え、空ページを返す。 */
+    listHomeCrewPage: () => {
+      reads++;
+      return {
+        entries: [],
+        auxiliarySessions: [],
+        nextCursor: null,
+        hasMore: false,
+      };
+    },
+    /** 認可と入力検証を通過したメニュー要求だけを記録する。 */
+    showHomeCrewContextMenu: (_home, request) => {
+      menuRequests.push(request);
+      return { status: "dismissed" };
+    },
   });
-  const request = { sessionId: "parent", incarnationId: "incarnation", point: { x: 10, y: 20 } };
+  const request = {
+    sessionId: "parent",
+    incarnationId: "incarnation",
+    point: { x: 10, y: 20 },
+  };
   assert.equal((await api.listHomeCrewPage()).entries.length, 0);
-  assert.deepEqual(await api.showHomeCrewContextMenu(request), { status: "dismissed" });
+  assert.deepEqual(await api.showHomeCrewContextMenu(request), {
+    status: "dismissed",
+  });
   for (const client of [iframe, other]) {
     await assert.rejects(client.listHomeCrewPage(), /Home main frame/);
-    await assert.rejects(client.showHomeCrewContextMenu(request), /Home main frame/);
+    await assert.rejects(
+      client.showHomeCrewContextMenu(request),
+      /Home main frame/,
+    );
   }
   await assert.rejects(api.listHomeCrewPage({ limit: 101 }), /page request/i);
-  for (const invalid of [{ ...request, targets: ["child"] }, { ...request, skipConfirmation: true },
-    { ...request, approved: true }, { ...request, incarnationId: " " }, { ...request, point: { x: -1, y: 20 } }]) {
+  for (const invalid of [
+    { ...request, targets: ["child"] },
+    { ...request, skipConfirmation: true },
+    { ...request, approved: true },
+    { ...request, incarnationId: " " },
+    { ...request, point: { x: -1, y: 20 } },
+  ]) {
     await assert.rejects(api.showHomeCrewContextMenu(invalid), TypeError);
   }
   assert.equal(reads, 1);
   assert.deepEqual(menuRequests, [request]);
 });
 
+/** 本番メニュー、Window Bridge、Terminal Service、実行の受付を組み合わせ、確認と下書き応答を制御できる環境を作る。 */
 function menuFixture() {
   const owner = {};
   const root = newSession("root", null, "overall-coordinator");
@@ -238,106 +520,305 @@ function menuFixture() {
   const second = newSession("second", parent.id, "executor");
   const third = newSession("third", parent.id, "executor");
   const sibling = newSession("sibling", root.id, "executor");
-  const sessions = new Map([root, parent, first, second, third, sibling].map((entry) => [entry.id, entry]));
-  const ptys: { activity: ReturnType<TerminalPty["getActivity"]>; kills: number }[] = [];
+  const sessions = new Map(
+    [root, parent, first, second, third, sibling].map((entry) => [
+      entry.id,
+      entry,
+    ]),
+  );
+  const ptys: {
+    activity: ReturnType<TerminalPty["getActivity"]>;
+    kills: number;
+  }[] = [];
   const confirmations: MessageBoxOptions[] = [];
   const singleConfirmations: string[] = [];
   const clipboard: string[] = [];
   const flushes: string[] = [];
   const releases: { window: TestWindow; success: boolean }[] = [];
-  const currentAdmissions = new Map<string, { promise: Promise<void>; finish(): void }>();
-  const unexpected = () => assert.fail("Fixture must stop at admission, before provider work");
+  const currentAdmissions = new Map<
+    string,
+    {
+      promise: Promise<void>;
+      /** 保留した受付を後で解放できるようにする。 */ finish(): void;
+    }
+  >();
+  /** 受付待ちの検証から実 Provider 処理へ進んだ場合に失敗させる。 */
+  const unexpected = () =>
+    assert.fail("Fixture must stop at admission, before provider work");
   const runtime = new SessionRuntimeService({
+    /** 実行を指定 ID ごとに受付段階で保留し、解放後も実 Provider は呼ばない。 */
     runSessionAdmissionExclusive: async (id) => {
       await currentAdmissions.get(id)!.promise;
       throw new Error("fixture admission finished");
     },
-    getSession: unexpected, persistRunningTurnStart: unexpected, appendRunningInput: unexpected,
-    appendTerminalSession: unexpected, checkpointRuntimeMetadata: unexpected,
-    resolveComposerPreview: unexpected, getAppSettings: unexpected, resolveProviderCatalog: unexpected,
-    getProviderCodingAdapter: unexpected, createSessionTurn: unexpected, updateSessionTurn: unexpected,
-    setLiveSessionRun() {}, getLiveSessionRun: () => null, broadcastLiveSessionRun() {},
-    waitForApprovalDecision: unexpected, waitForElicitationResponse: unexpected,
-    setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, invalidateProviderSessionThread() {},
-    scheduleProviderQuotaTelemetryRefresh() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    getSession: unexpected,
+    persistRunningTurnStart: unexpected,
+    appendRunningInput: unexpected,
+    appendTerminalSession: unexpected,
+    checkpointRuntimeMetadata: unexpected,
+    resolveComposerPreview: unexpected,
+    getAppSettings: unexpected,
+    resolveProviderCatalog: unexpected,
+    getProviderCodingAdapter: unexpected,
+    createSessionTurn: unexpected,
+    updateSessionTurn: unexpected,
+    /** この受付 fixture ではライブ実行状態を保存しない。 */
+    setLiveSessionRun() {},
+    /** 受付中の実行に公表済みのライブ状態はないものとする。 */ getLiveSessionRun:
+      () => null,
+    /** ライブ実行状態をウィンドウへ配信しない。 */ broadcastLiveSessionRun() {},
+    waitForApprovalDecision: unexpected,
+    waitForElicitationResponse: unexpected,
+    /** 利用残量の計測を受付 fixture では保存しない。 */
+    setProviderQuotaTelemetry() {},
+    /** Session 文脈のテレメトリーを保存しない。 */ setSessionContextTelemetry() {},
+    /** Provider にスレッド無効化を通知しない。 */ invalidateProviderSessionThread() {},
+    /** 利用残量のバックグラウンド更新を予約しない。 */
+    scheduleProviderQuotaTelemetryRefresh() {},
+    /** 受付段階では承認要求を解決しない。 */ resolvePendingApprovalRequest() {},
+    /** 受付段階では追加質問の要求を解決しない。 */ resolvePendingElicitationRequest() {},
   });
-  const parents = new AuxiliaryLiveRunParents({ getStorageOwner: () => owner, isRunPending: (id) => runtime.isRunInFlight(id),
-    hasLiveSessionRun: () => false, broadcastLiveSessionRun() {} });
-  const readRuns = (id: string) => readHomeCrewCloseRunIdentities(id, { mainRuntime: runtime, auxiliaryRuntime: runtime,
-    directAuxiliaryRuns: new Map(), liveAuxiliaryParents: parents });
+  const parents = new AuxiliaryLiveRunParents({
+    /** 親追跡に使う固定の保存所有者を返す。 */ getStorageOwner: () => owner,
+    /** Auxiliary がまだ受付中かを実ランタイムで調べる。 */ isRunPending: (
+      id,
+    ) => runtime.isRunInFlight(id),
+    /** 追跡対象のライブ実行状態はないものとする。 */
+    hasLiveSessionRun: () => false,
+    /** 親へのライブ実行通知は発行しない。 */ broadcastLiveSessionRun() {},
+  });
+  /** 指定した親の閉鎖に影響する実行識別子を本番集計で取得する。 */
+  const readRuns = (id: string) =>
+    readHomeCrewCloseRunIdentities(id, {
+      mainRuntime: runtime,
+      auxiliaryRuntime: runtime,
+      directAuxiliaryRuns: new Map(),
+      liveAuxiliaryParents: parents,
+    });
   let nextWindowId = 2;
   const controls = {
+    /** 既定で一括確認に同意し、各シナリオで差し替えられるようにする。 */
     beforeConfirm: async () => true,
+    /** 下書き保存要求に対し、既定では成功を返す。 */
     beforeDraftAcknowledgment: async (_request: DraftFlushRequest) => true,
+    /** その時点の保存マップから Session を取得する。 */
     readSession: async (id: string) => sessions.get(id) ?? null,
   };
   const bridge: SessionWindowBridge<TestWindow> = new SessionWindowBridge({
-    createWindow: () => new TestWindow(nextWindowId++), async loadChatEntry() {}, getSession: (id) => sessions.get(id) ?? null,
-    isRunInFlight: (id) => runtime.isRunInFlight(id) || parents.hasPendingRunForParent(id),
-    getTerminalCloseConfirmationCount: (window) => terminals.countRequiringCloseConfirmation(window),
-    confirmCloseWhileRunning: (_window, id) => { singleConfirmations.push(id); return false; },
-    broadcastOpenSessionWindowIds() {}, onSessionWindowClosed: (id) => terminals.releaseSession(id),
+    /** 再生成時にも別の閉鎖対象として観測できる Window を作る。 */
+    createWindow: () => new TestWindow(nextWindowId++),
+    /** チャット画面を描画しないまま Bridge の登録を進める。 */ async loadChatEntry() {},
+    /** Window Bridge に対象の現在の保存状態を渡す。 */ getSession: (id) =>
+      sessions.get(id) ?? null,
+    /** 対象の Main または配下の Auxiliary に処理中の実行があるか判定する。 */
+    isRunInFlight: (id) =>
+      runtime.isRunInFlight(id) || parents.hasPendingRunForParent(id),
+    /** 個別確認が必要な端末数を Terminal Service から得る。 */
+    getTerminalCloseConfirmationCount: (window) =>
+      terminals.countRequiringCloseConfirmation(window),
+    /** 個別の閉じる確認を受けた Session を記録し、閉鎖を許可しない。 */
+    confirmCloseWhileRunning: (_window, id) => {
+      singleConfirmations.push(id);
+      return false;
+    },
+    /** この fixture ではウィンドウ一覧変更を配信しない。 */
+    broadcastOpenSessionWindowIds() {},
+    /** Session Window を閉じたら、その Session の端末を解放する。 */ onSessionWindowClosed:
+      (id) => terminals.releaseSession(id),
+    /** 下書きの応答元を対象 Window 自身として扱う。 */
     getWindowSender: (window) => window,
+    /** 下書き保存要求を記録し、テストで制御した結果を Window Bridge に応答する。 */
     sendDraftFlushRequest: (window, request) => {
       flushes.push(request.sessionId);
-      void controls.beforeDraftAcknowledgment(request).then((ok) => bridge.acknowledgeDraftFlush(request.requestId, window, ok));
+      void controls
+        .beforeDraftAcknowledgment(request)
+        .then((ok) =>
+          bridge.acknowledgeDraftFlush(request.requestId, window, ok),
+        );
     },
-    sendDraftFlushRelease: (window, { success }) => releases.push({ window, success }),
+    /** 下書き凍結の解除対象と保存可否を記録する。 */
+    sendDraftFlushRelease: (window, { success }) =>
+      releases.push({ window, success }),
   });
+  /** 閉鎖時の端末への影響は本番 Terminal Service に任せ、OS の代わりに疑似 PTY を使う。 */
   const terminals = new TerminalService<TestWindow>({
+    /** Bridge の現在の登録から、Window が所有する Session と作業ディレクトリを返す。 */
     resolveOwner: (window) => {
-      const id = bridge.listOpenSessionWindowIds().find((id) => bridge.getWindow(id) === window);
-      return id && window instanceof TestWindow ? { window, sessionId: id, workspacePath: process.cwd() } : null;
+      const id = bridge
+        .listOpenSessionWindowIds()
+        .find((id) => bridge.getWindow(id) === window);
+      return id && window instanceof TestWindow
+        ? { window, sessionId: id, workspacePath: process.cwd() }
+        : null;
     },
-    confirmClose: async () => assert.fail("Batch must not show an individual Terminal prompt"), sendEvent() {},
+    /** 一括閉鎖で個別端末の確認が出た場合、二重確認として失敗させる。 */
+    confirmClose: async () =>
+      assert.fail("Batch must not show an individual Terminal prompt"),
+    /** 疑似端末から実 Window へデータや状態を配信しない。 */ sendEvent() {},
+    /** OS のシェルを探索せず、fixture 用の実行ファイル情報を返す。 */
     resolveShell: async () => ({ file: "fixture", shellName: "fixture" }),
+    /** 稼働状態と停止回数を観測できる疑似 PTY を生成する。 */
     async spawn() {
-      const pty = { activity: "idle" as ReturnType<TerminalPty["getActivity"]>, kills: 0 };
+      const pty = {
+        activity: "idle" as ReturnType<TerminalPty["getActivity"]>,
+        kills: 0,
+      };
       ptys.push(pty);
-      const listener = () => ({ dispose() {} });
-      return { getActivity: () => pty.activity, kill: () => { pty.kills++; }, onData: listener, onError: listener, onExit: listener,
-        write() {}, resize() {}, pause() {}, resume() {} };
+      /** 発火しない PTY リスナーの登録に対して解除ハンドルを返す。 */
+      const listener = () => ({
+        /** 実イベントを購読しないため解除時に処理を行わない。 */ dispose() {},
+      });
+      return {
+        /** 閉じるときの保護判定に使う、現在の端末状態を返す。 */ getActivity:
+          () => pty.activity,
+        /** 端末停止の要求回数を記録する。 */ kill: () => {
+          pty.kills++;
+        },
+        onData: listener,
+        onError: listener,
+        onExit: listener,
+        /** 疑似端末への入力を実際のシェルへ送らない。 */
+        write() {},
+        /** 疑似端末のサイズ変更は行わない。 */ resize() {},
+        /** 疑似端末のデータ転送停止を受け付けるが状態は変えない。 */ pause() {},
+        /** 疑似端末のデータ転送再開を受け付けるが状態は変えない。 */ resume() {},
+      };
     },
   });
-  const createTerminal = async (window: TestWindow, ordinal: number, activity: ReturnType<TerminalPty["getActivity"]> = "idle") => {
+  /** 同じ番号で再作成できる端末 ID を使い、指定 Window に端末を登録して稼働状態を設定する。 */
+  const createTerminal = async (
+    window: TestWindow,
+    ordinal: number,
+    activity: ReturnType<TerminalPty["getActivity"]> = "idle",
+  ) => {
     const id = `a0000000-0000-4000-8000-${String(ordinal).padStart(12, "0")}`;
     await terminals.create(window, { terminalId: id, cols: 100, rows: 30 });
     const pty = ptys.at(-1)!;
     pty.activity = activity;
-    return { id, pty, release: () => terminals.release(window, id) };
+    return {
+      id,
+      pty,
+      /** 対応する一つの端末を本番サービスで解放する。 */ release: () =>
+        terminals.release(window, id),
+    };
   };
+  /** Auxiliary の実行を親に関連付け、実ランタイムの Provider 実行前で保留する。 */
   const runAuxiliary = (session: Session, id: string) => {
     const admission = Promise.withResolvers<void>();
-    currentAdmissions.set(id, { promise: admission.promise, finish: () => admission.resolve() });
-    const pending = parents.trackRun({ id, parentSessionId: session.id }, owner, () => runtime.runSessionTurn(id, {
-      userMessage: "fixture", executionOptions: captureSessionExecutionOptions(session),
-    }));
+    currentAdmissions.set(id, {
+      promise: admission.promise,
+      /** 指定実行の保留中の受付を解放する。 */ finish: () =>
+        admission.resolve(),
+    });
+    const pending = parents.trackRun(
+      { id, parentSessionId: session.id },
+      owner,
+      () =>
+        runtime.runSessionTurn(id, {
+          userMessage: "fixture",
+          executionOptions: captureSessionExecutionOptions(session),
+        }),
+    );
     const settled = assert.rejects(pending, /fixture admission finished/);
-    return { finish: async () => { admission.resolve(); await settled; currentAdmissions.delete(id); } };
+    return {
+      /** 保留を解放して想定の拒否まで待ち、同じ ID で再試行できるよう登録を消す。 */ finish:
+        async () => {
+          admission.resolve();
+          await settled;
+          currentAdmissions.delete(id);
+        },
+    };
   };
-  let menuReady = Promise.withResolvers<{ template: MenuItemConstructorOptions[]; popup: PopupOptions }>();
+  let menuReady = Promise.withResolvers<{
+    template: MenuItemConstructorOptions[];
+    popup: PopupOptions;
+  }>();
   const home = new TestWindow(1);
-  const menu = new HomeCrewContextMenuService({ bridge, getStoreOwner: () => owner,
-    listSessions: () => [...sessions.values()], readSavedSession: (_owner, id) => controls.readSession(id),
-    getCloseEffects: (id, window) => ({ runs: readRuns(id), terminals: terminals.getWindowCloseImpacts(window) }),
-    confirm: async (_home, options) => { confirmations.push(options); return controls.beforeConfirm(); },
+  const menu = new HomeCrewContextMenuService({
+    bridge,
+    /** メニューの保存参照に使う固定の所有者を返す。 */ getStoreOwner: () =>
+      owner,
+    /** 閉じたメンバーも含め、保存マップにある Session を列挙する。 */
+    listSessions: () => [...sessions.values()],
+    /** メニュー選択時の保存読み取りを差し替え可能な制御に委ねる。 */ readSavedSession:
+      (_owner, id) => controls.readSession(id),
+    /** 同じ閉鎖対象の実行と端末の影響を本番サービスで集める。 */
+    getCloseEffects: (id, window) => ({
+      runs: readRuns(id),
+      terminals: terminals.getWindowCloseImpacts(window),
+    }),
+    /** ダイアログの文面を捕捉し、テストで設定した許否を返す。 */
+    confirm: async (_home, options) => {
+      confirmations.push(options);
+      return controls.beforeConfirm();
+    },
+    /** システムのクリップボードは使わず、コピーされた文字列を記録する。 */
     writeText: (value) => clipboard.push(value),
-    buildMenu: (template) => ({ popup: (options) => menuReady.resolve({ template, popup: options! }) }),
+    /** メニュー項目を保持し、実 UI を出さない popup に接続する。 */
+    buildMenu: (template) => ({
+      /** メニュー表示の項目とオプションをテスト側へ渡す。 */ popup: (
+        options,
+      ) => menuReady.resolve({ template, popup: options! }),
+    }),
   });
+  /** 現在の Session 世代でメニューを開き、表示済み項目を選べるハンドルを返す。 */
   const openMenu = async (session: Session) => {
     menuReady = Promise.withResolvers();
-    const result = menu.show(home.asBrowserWindow(), { sessionId: session.id, incarnationId: getSessionIncarnationId(session), point: { x: 0, y: 0 } });
-    const shown = await Promise.race([menuReady.promise, result.then((value) => assert.fail(`Menu not opened: ${JSON.stringify(value)}`))]);
-    const find = (label: string) => shown.template.find((entry) => entry.label === label)!;
-    return { find, choose: (label: string) => { find(label).click?.(null as never, home.asBrowserWindow(), null as never); shown.popup.callback?.(); return result; } };
+    const result = menu.show(home.asBrowserWindow(), {
+      sessionId: session.id,
+      incarnationId: getSessionIncarnationId(session),
+      point: { x: 0, y: 0 },
+    });
+    const shown = await Promise.race([
+      menuReady.promise,
+      result.then((value) =>
+        assert.fail(`Menu not opened: ${JSON.stringify(value)}`),
+      ),
+    ]);
+    /** 描画されたメニュー項目をラベルで探す。 */
+    const find = (label: string) =>
+      shown.template.find((entry) => entry.label === label)!;
+    return {
+      find,
+      /** 項目をクリックし、メニューの表示終了を通知して操作結果を返す。 */ choose:
+        (label: string) => {
+          find(label).click?.(
+            null as never,
+            home.asBrowserWindow(),
+            null as never,
+          );
+          shown.popup.callback?.();
+          return result;
+        },
+    };
   };
+  /** すべての保留受付を解放して完了を待ち、作成した端末を解放する。 */
   const dispose = async () => {
     for (const pending of currentAdmissions.values()) pending.finish();
     await runtime.waitForPendingRuns();
     terminals.releaseAll();
   };
-  return { root, parent, first, second, third, sibling, sessions, bridge, confirmations, singleConfirmations, clipboard, flushes, releases,
-    controls, createTerminal, runAuxiliary, openMenu, dispose, runtime };
+  return {
+    root,
+    parent,
+    first,
+    second,
+    third,
+    sibling,
+    sessions,
+    bridge,
+    confirmations,
+    singleConfirmations,
+    clipboard,
+    flushes,
+    releases,
+    controls,
+    createTerminal,
+    runAuxiliary,
+    openMenu,
+    dispose,
+    runtime,
+  };
 }
 
 // @test-value v2
@@ -350,8 +831,10 @@ function menuFixture() {
 // scope = "ネイティブメニューservice・Window Bridge・Terminal Service"
 // lifecycle = "permanent"
 // @end-test-value
+/** 閉じた親を起点に子孫 Window だけを閉じ、idle の端末では確認せず通常の下書き保存と端末停止を行うことを確かめる。 */
 test("Batch from a closed parent skips confirmation for idle terminals and closes descendants only", async (t) => {
   const f = menuFixture();
+  /** 閉鎖の対象外を含め、fixture の残る端末と受付を終了時に解放する。 */
   t.after(f.dispose);
   const outside = newSession("outside");
   f.sessions.set(outside.id, outside);
@@ -362,7 +845,9 @@ test("Batch from a closed parent skips confirmation for idle terminals and close
   const menu = await f.openMenu(f.root);
   assert.equal(menu.find("Close").enabled, false);
   assert.equal(menu.find("Close Descendant Windows").enabled, true);
-  assert.deepEqual(await menu.choose("Close Descendant Windows"), { status: "closed" });
+  assert.deepEqual(await menu.choose("Close Descendant Windows"), {
+    status: "closed",
+  });
   assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [outside.id]);
   assert.deepEqual(f.flushes, [f.first.id, f.second.id]);
   assert.equal(f.confirmations.length + f.singleConfirmations.length, 0);
@@ -379,8 +864,10 @@ test("Batch from a closed parent skips confirmation for idle terminals and close
 // scope = "一括確認の文言と取消・承認、実Window Bridge・Terminal Service・Auxiliary実行判定"
 // lifecycle = "permanent"
 // @end-test-value
+/** 複数の Auxiliary 実行を所属する一つの Window として数え、停止端末は全件表示することを確かめる。取消では何も閉じず、了承後も実行を止めないことを検証する。 */
 test("Batch uses one facts-only confirmation for Aux-only runs and all stopped terminals; cancellation closes zero", async (t) => {
   const f = menuFixture();
+  /** 取消・了承の両経路を実行した後、残る端末と受付を解放する。 */
   t.after(f.dispose);
   const first = await f.bridge.openSessionWindow(f.first.id);
   const second = await f.bridge.openSessionWindow(f.second.id);
@@ -391,13 +878,25 @@ test("Batch uses one facts-only confirmation for Aux-only runs and all stopped t
   f.runAuxiliary(f.first, "aux-a");
   f.runAuxiliary(f.first, "aux-b");
   f.controls.beforeConfirm = async () => {
-    assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [f.first.id, f.second.id, f.parent.id, f.sibling.id]);
+    assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [
+      f.first.id,
+      f.second.id,
+      f.parent.id,
+      f.sibling.id,
+    ]);
     assert.deepEqual(f.flushes, []);
     return false;
   };
-  const batch = async () => (await f.openMenu(f.parent)).choose("Close Descendant Windows");
+  /** 同じ親のメニューを開き直し、子孫 Window の閉鎖を選択する。 */
+  const batch = async () =>
+    (await f.openMenu(f.parent)).choose("Close Descendant Windows");
   assert.deepEqual(await batch(), { status: "dismissed" });
-  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [f.first.id, f.second.id, f.parent.id, f.sibling.id]);
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [
+    f.first.id,
+    f.second.id,
+    f.parent.id,
+    f.sibling.id,
+  ]);
   assert.deepEqual(f.flushes, []);
   assert.equal(idle.pty.kills + busy.pty.kills, 0);
   assert.equal(f.confirmations.length, 1);
@@ -406,14 +905,23 @@ test("Batch uses one facts-only confirmation for Aux-only runs and all stopped t
   assert.equal(f.confirmations.length, 2);
   for (const dialog of f.confirmations) {
     assert.equal(dialog.message, "Close Descendant Windows?");
-    assert.equal(dialog.detail, "Title first\nTitle second\n\nRuns Will Continue: 1 Window\n\nTerminals Will Stop: 2");
+    assert.equal(
+      dialog.detail,
+      "Title first\nTitle second\n\nRuns Will Continue: 1 Window\n\nTerminals Will Stop: 2",
+    );
     assert.deepEqual(dialog.buttons, ["Cancel", "Close 2 Windows"]);
     assert.equal(dialog.cancelId, 0);
   }
   assert.deepEqual(f.singleConfirmations, []);
-  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [f.parent.id, f.sibling.id]);
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [
+    f.parent.id,
+    f.sibling.id,
+  ]);
   assert.equal(idle.pty.kills + busy.pty.kills, 2);
-  assert.equal(f.runtime.isRunInFlight("aux-a") && f.runtime.isRunInFlight("aux-b"), true);
+  assert.equal(
+    f.runtime.isRunInFlight("aux-a") && f.runtime.isRunInFlight("aux-b"),
+    true,
+  );
 });
 
 // @test-value v2
@@ -426,19 +934,25 @@ test("Batch uses one facts-only confirmation for Aux-only runs and all stopped t
 // scope = "Crewネイティブメニューの選択時認可と従来Close経路"
 // lifecycle = "permanent"
 // @end-test-value
+/** Copy は選択時の保存世代と最新タイトルを使い、単体 Close は従来どおり確認で拒否できることを確かめる。 */
 test("Crew Copy uses the current saved incarnation and title, and single Close still offers Keep Open", async (t) => {
   const f = menuFixture();
+  /** コピーと単体確認の後で残るテスト用リソースを解放する。 */
   t.after(f.dispose);
   const menu = await f.openMenu(f.parent);
   f.sessions.set(f.parent.id, { ...f.parent, taskTitle: "Latest full title" });
-  assert.deepEqual(await menu.choose("Copy Session Title"), { status: "copied" });
+  assert.deepEqual(await menu.choose("Copy Session Title"), {
+    status: "copied",
+  });
   const stale = await f.openMenu(f.parent);
   f.sessions.set(f.parent.id, { ...f.parent, incarnationId: "recreated" });
   assert.equal((await stale.choose("Copy Session ID")).status, "failed");
   assert.deepEqual(f.clipboard, ["Latest full title"]);
   const first = await f.bridge.openSessionWindow(f.first.id);
   await f.createTerminal(first, 1, "busy");
-  assert.deepEqual(await (await f.openMenu(f.first)).choose("Close"), { status: "dismissed" });
+  assert.deepEqual(await (await f.openMenu(f.first)).choose("Close"), {
+    status: "dismissed",
+  });
   assert.deepEqual(f.singleConfirmations, [f.first.id]);
   assert.deepEqual(f.flushes, []);
   assert.equal(first.isDestroyed(), false);
@@ -454,9 +968,18 @@ test("Crew Copy uses the current saved incarnation and title, and single Close s
 // scope = "一括Closeの初回事前照合、実runtime admissionとTerminal Serviceによる同数差替え"
 // lifecycle = "permanent"
 // @end-test-value
+/** 選択後の Window・実行・端末の差し替えや保護の拡大を、影響件数が同じでも検出し、閉鎖前に停止することを確かめる。 */
 test("Batch refuses new and recreated Windows or increased activity even when impact counts match", async (t) => {
-  for (const change of ["Window during selection read", "new Window", "recreated Window", "same-number run", "same-ID terminal", "new terminal protection"] as const) {
+  for (const change of [
+    "Window during selection read",
+    "new Window",
+    "recreated Window",
+    "same-number run",
+    "same-ID terminal",
+    "new terminal protection",
+  ] as const) {
     const f = menuFixture();
+    /** 各競合パターンに残った受付や端末を終了時に解放する。 */
     t.after(f.dispose);
     const first = await f.bridge.openSessionWindow(f.first.id);
     const second = await f.bridge.openSessionWindow(f.second.id);
@@ -471,22 +994,42 @@ test("Batch refuses new and recreated Windows or increased activity even when im
     }
     f.controls.beforeConfirm = async () => {
       switch (change) {
-        case "new Window": await f.bridge.openSessionWindow(f.third.id); break;
-        case "recreated Window": second.destroy(); await f.bridge.openSessionWindow(f.second.id); break;
-        case "same-number run": await run.finish(); f.runAuxiliary(f.first, "aux"); break;
-        case "same-ID terminal": terminal.release(); await f.createTerminal(second, 1); break;
-        case "new terminal protection": terminal.pty.activity = "busy"; break;
+        case "new Window":
+          await f.bridge.openSessionWindow(f.third.id);
+          break;
+        case "recreated Window":
+          second.destroy();
+          await f.bridge.openSessionWindow(f.second.id);
+          break;
+        case "same-number run":
+          await run.finish();
+          f.runAuxiliary(f.first, "aux");
+          break;
+        case "same-ID terminal":
+          terminal.release();
+          await f.createTerminal(second, 1);
+          break;
+        case "new terminal protection":
+          terminal.pty.activity = "busy";
+          break;
       }
       return true;
     };
     const result = await menu.choose("Close Descendant Windows");
     assert.equal(result.status, "failed", change);
-    if (result.status === "failed") assert.match(result.message, /^0 closed .*not attempted.*changed/i, change);
+    if (result.status === "failed")
+      assert.match(
+        result.message,
+        /^0 closed .*not attempted.*changed/i,
+        change,
+      );
     assert.deepEqual(f.flushes, [], change);
     assert.equal(first.isDestroyed(), false, change);
     assert.ok(f.bridge.getWindow(f.second.id), change);
-    if (change === "Window during selection read" || change === "new Window") assert.ok(f.bridge.getWindow(f.third.id));
-    if (change === "Window during selection read") assert.deepEqual(f.confirmations, []);
+    if (change === "Window during selection read" || change === "new Window")
+      assert.ok(f.bridge.getWindow(f.third.id));
+    if (change === "Window during selection read")
+      assert.deepEqual(f.confirmations, []);
   }
 });
 
@@ -500,9 +1043,11 @@ test("Batch refuses new and recreated Windows or increased activity even when im
 // scope = "一括Close・実Session Window Bridgeのdraft ACK後のguard"
 // lifecycle = "permanent"
 // @end-test-value
+/** 最後の下書き確認中に未承認の端末が増えたら、成功・失敗どちらの応答でも閉鎖を止め、済んだ件と残る件を分けて報告することを確かめる。 */
 test("Batch stops in the final draft-flush interval before close or destroy and reports partial progress", async (t) => {
   for (const ack of [true, false]) {
     const f = menuFixture();
+    /** ACK の成否それぞれで、保護されて閉じなかった端末を終了時に解放する。 */
     t.after(f.dispose);
     const first = await f.bridge.openSessionWindow(f.first.id);
     const second = await f.bridge.openSessionWindow(f.second.id);
@@ -513,9 +1058,15 @@ test("Batch stops in the final draft-flush interval before close or destroy and 
       created = await f.createTerminal(second, 1, "busy");
       return ack;
     };
-    const result = await (await f.openMenu(f.parent)).choose("Close Descendant Windows");
+    const result = await (
+      await f.openMenu(f.parent)
+    ).choose("Close Descendant Windows");
     assert.equal(result.status, "failed");
-    if (result.status === "failed") assert.match(result.message, /1 closed · 2 remaining \(1 not attempted\) · 0 already closed.*activity changed/);
+    if (result.status === "failed")
+      assert.match(
+        result.message,
+        /1 closed · 2 remaining \(1 not attempted\) · 0 already closed.*activity changed/,
+      );
     assert.deepEqual(f.flushes, [f.first.id, f.second.id]);
     assert.equal(first.isDestroyed(), true);
     assert.equal(second.isDestroyed() || third.isDestroyed(), false);
@@ -534,8 +1085,10 @@ test("Batch stops in the final draft-flush interval before close or destroy and 
 // scope = "一括Closeの縮小・例外・結果の報告"
 // lifecycle = "permanent"
 // @end-test-value
+/** 途中で既に閉じた Window は自分の成功件数に含めず、閉鎖例外に遭った後続は未試行のまま報告することを確かめる。 */
 test("Batch distinguishes completed, independently closed, failed and untouched targets", async (t) => {
   const f = menuFixture();
+  /** 途中停止後に残った受付と端末を終了時に解放する。 */
   t.after(f.dispose);
   await f.bridge.openSessionWindow(f.first.id);
   const disappears = await f.bridge.openSessionWindow(f.second.id);
@@ -544,14 +1097,23 @@ test("Batch distinguishes completed, independently closed, failed and untouched 
   f.sessions.set(extra.id, extra);
   await f.bridge.openSessionWindow(extra.id);
   await f.createTerminal(f.bridge.getWindow(f.first.id)!, 1, "busy");
-  f.controls.beforeConfirm = async () => { fails.failClose = true; return true; };
+  f.controls.beforeConfirm = async () => {
+    fails.failClose = true;
+    return true;
+  };
   f.controls.beforeDraftAcknowledgment = async ({ sessionId }) => {
     if (sessionId === f.second.id) disappears.destroy();
     return true;
   };
-  const result = await (await f.openMenu(f.parent)).choose("Close Descendant Windows");
+  const result = await (
+    await f.openMenu(f.parent)
+  ).choose("Close Descendant Windows");
   assert.equal(result.status, "failed");
-  if (result.status === "failed") assert.match(result.message, /1 closed · 2 remaining \(1 not attempted\) · 1 already closed/);
+  if (result.status === "failed")
+    assert.match(
+      result.message,
+      /1 closed · 2 remaining \(1 not attempted\) · 1 already closed/,
+    );
   assert.deepEqual(f.bridge.listOpenSessionWindowIds(), [f.third.id, extra.id]);
   assert.deepEqual(f.flushes, [f.first.id, f.second.id]);
 });

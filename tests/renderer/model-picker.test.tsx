@@ -4,16 +4,27 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { buildModelSelectOptions } from "../../src/settings/model-select-options.js";
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
-import type { ModelCatalogItem, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
-import { normalizeAuxiliarySession, type AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type {
+  ModelCatalogItem,
+  ModelCatalogProvider,
+} from "../../src-shared/settings/model-catalog.js";
+import {
+  buildNewSession,
+  type Session,
+} from "../../src-shared/session/session-state.js";
+import {
+  normalizeAuxiliarySession,
+  type AuxiliarySession,
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { runMainRuntimeOptionOperation } from "../../src/chat/runtime/main-session-mutation-operations.js";
 import { runAuxiliaryModelChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "../../src/chat/auxiliary-runtime-option-routing.js";
 import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -27,66 +38,162 @@ import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-
 // impact = "設定を戻しても候補を選べないか、無効Modelの選択受付や意図しないDepth変更に見える"
 // distinction = "shared判定や投影単体ではsnapshot固定と呼出側の事前除外の組合せを検出できない"
 // @end-test-value
+/** 開いた一覧に許可設定の変更を反映しながら、現在の選択、検索フォーカス、表示したSDK定義を保つことを確かめる。 */
 test("開いているModel候補に再有効化と無効化を適用しSDK候補定義と現在値を保持する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
-  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
-  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
+  const globals = [
+    "window",
+    "document",
+    "Node",
+    "HTMLElement",
+    "HTMLInputElement",
+    "Event",
+    "MouseEvent",
+    "KeyboardEvent",
+  ] as const;
+  const previous = Object.fromEntries(
+    globals.map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const key of globals)
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: dom.window[key],
+    });
   const { createRoot } = await import("react-dom/client");
-  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const { ModelPicker } =
+    await import("../../src/chat/composer/model-picker.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
   const selected: ModelCatalogItem[] = [];
-  let availability: ModelAvailabilitySettings = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["other/allowed"] } };
+  let availability: ModelAvailabilitySettings = {
+    opencode: {
+      disabledServiceIds: ["openai"],
+      disabledModelIds: ["other/allowed"],
+    },
+  };
   let models: ModelCatalogItem[] = [
     { id: "openai/current", label: "Current Model", reasoningEfforts: [] },
-    { id: "openai/other", label: "Other Model", reasoningEfforts: ["snapshot-depth"] },
+    {
+      id: "openai/other",
+      label: "Other Model",
+      reasoningEfforts: ["snapshot-depth"],
+    },
     { id: "other/allowed", label: "Allowed Model", reasoningEfforts: [] },
   ];
   const initialModels = models;
   let discoveryStatus: "loading" | "ready" = "ready";
   let discoveryHasCache = true;
+  /** 現在のカタログと許可設定でPickerを描画し、保持中の推論深度候補も確認する。 */
   const render = () => {
-    const catalog = { id: "opencode", label: "OpenCode", defaultModelId: "openai/current", defaultReasoningEffort: "", models };
-    const options = buildRuntimeSelectionOptions({ providerId: catalog.id, providerCatalog: catalog, models,
-      selectedModel: "openai/current", selectedReasoningEffort: "saved-depth", reasoningEfforts: ["high"],
-      selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard" });
-    assert.deepEqual(options.reasoningSelectOptions.map((option) => option.value), ["saved-depth", "", "high"]);
-    root.render(<ModelPicker providerId="opencode" modelAvailability={availability}
-      options={options.modelSelectOptions} value="openai/current" fallbackLabel={options.selectedModelFallbackLabel}
-      discoveryStatus={discoveryStatus} discoveryHasCache={discoveryHasCache} onChange={(model) => selected.push(model)} />);
+    const catalog = {
+      id: "opencode",
+      label: "OpenCode",
+      defaultModelId: "openai/current",
+      defaultReasoningEffort: "",
+      models,
+    };
+    const options = buildRuntimeSelectionOptions({
+      providerId: catalog.id,
+      providerCatalog: catalog,
+      models,
+      selectedModel: "openai/current",
+      selectedReasoningEffort: "saved-depth",
+      reasoningEfforts: ["high"],
+      selectedCodexSandboxMode: "workspace-write",
+      selectedCodexSpeed: "standard",
+    });
+    assert.deepEqual(
+      options.reasoningSelectOptions.map((option) => option.value),
+      ["saved-depth", "", "high"],
+    );
+    root.render(
+      <ModelPicker
+        providerId="opencode"
+        modelAvailability={availability}
+        options={options.modelSelectOptions}
+        value="openai/current"
+        fallbackLabel={options.selectedModelFallbackLabel}
+        discoveryStatus={discoveryStatus}
+        discoveryHasCache={discoveryHasCache}
+        onChange={(model) => selected.push(model)}
+      />,
+    );
   };
   try {
     await act(async () => render());
-    const trigger = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>(
+      '[aria-label="Model"]',
+    )!;
     await act(async () => trigger.click());
-    const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
-    const labels = () => [...dom.window.document.querySelectorAll('[role="option"]')].map((option) => option.textContent?.trim());
+    const search =
+      dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    /** 仮想行のうち現在表示されている候補のラベルを読む。 */
+    const labels = () =>
+      [...dom.window.document.querySelectorAll('[role="option"]')].map(
+        (option) => option.textContent?.trim(),
+      );
     assert.deepEqual(labels(), []);
     assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
-    availability = { opencode: { disabledServiceIds: [], disabledModelIds: ["other/allowed"] } };
+    availability = {
+      opencode: { disabledServiceIds: [], disabledModelIds: ["other/allowed"] },
+    };
     await act(async () => render());
     assert.deepEqual(labels(), ["✓Current Model", "Other Model"]);
     const snapshotOther = structuredClone(models[1]);
-    models = [{ id: "new/model", label: "New Model", reasoningEfforts: ["new-depth"] }];
+    models = [
+      { id: "new/model", label: "New Model", reasoningEfforts: ["new-depth"] },
+    ];
     availability = {};
     await act(async () => render());
-    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
+    assert.deepEqual(labels(), [
+      "Allowed Model",
+      "✓Current Model",
+      "Other Model",
+    ]);
     assert.deepEqual(selected, []);
-    availability = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: [] } };
+    availability = {
+      opencode: { disabledServiceIds: ["openai"], disabledModelIds: [] },
+    };
     await act(async () => render());
     assert.equal(dom.window.document.activeElement, search);
     assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
-    assert.deepEqual([...dom.window.document.querySelectorAll('[role="option"]')].map((option) => option.textContent?.trim()), ["Allowed Model"]);
-    await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    assert.deepEqual(
+      [...dom.window.document.querySelectorAll('[role="option"]')].map(
+        (option) => option.textContent?.trim(),
+      ),
+      ["Allowed Model"],
+    );
+    await act(async () =>
+      search.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+        }),
+      ),
+    );
     assert.deepEqual(selected, []);
-    availability = { opencode: { disabledServiceIds: [], disabledModelIds: ["openai/other"] } };
+    availability = {
+      opencode: { disabledServiceIds: [], disabledModelIds: ["openai/other"] },
+    };
     await act(async () => render());
     assert.deepEqual(labels(), ["Allowed Model", "✓Current Model"]);
     availability = {};
     await act(async () => render());
     assert.equal(dom.window.document.activeElement, search);
-    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
-    await act(async () => [...dom.window.document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "Other Model")!.click());
+    assert.deepEqual(labels(), [
+      "Allowed Model",
+      "✓Current Model",
+      "Other Model",
+    ]);
+    await act(async () =>
+      [...dom.window.document.querySelectorAll<HTMLElement>('[role="option"]')]
+        .find((option) => option.textContent === "Other Model")!
+        .click(),
+    );
     assert.deepEqual(selected, [snapshotOther]);
     await act(async () => trigger.click());
     assert.deepEqual(labels(), ["New Model", "✓openai/current"]);
@@ -94,10 +201,16 @@ test("開いているModel候補に再有効化と無効化を適用しSDK候補
     models = [];
     discoveryStatus = "loading";
     discoveryHasCache = false;
-    availability = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["other/allowed"] } };
+    availability = {
+      opencode: {
+        disabledServiceIds: ["openai"],
+        disabledModelIds: ["other/allowed"],
+      },
+    };
     await act(async () => render());
     await act(async () => trigger.click());
-    const firstResultSearch = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    const firstResultSearch =
+      dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
     models = initialModels;
     discoveryStatus = "ready";
     discoveryHasCache = true;
@@ -105,7 +218,11 @@ test("開いているModel候補に再有効化と無効化を適用しSDK候補
     assert.deepEqual(labels(), []);
     availability = {};
     await act(async () => render());
-    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
+    assert.deepEqual(labels(), [
+      "Allowed Model",
+      "✓Current Model",
+      "Other Model",
+    ]);
     assert.equal(dom.window.document.activeElement, firstResultSearch);
   } finally {
     await act(async () => root.unmount());
@@ -129,38 +246,131 @@ test("開いているModel候補に再有効化と無効化を適用しSDK候補
 // impact = "大量候補で入力が滞るか、検索・日本語入力中に意図しないmodelで次turnを送る"
 // distinction = "helper testや型検査が扱わないDOM・keyboard・snapshot境界を一つの利用flowで確認する"
 // @end-test-value
+/** 大量の候補を仮想化し、空状態を区別しつつ検索、IME、Escapeで選択や焦点を不意に変えないことを確かめる。 */
 test("Model picker virtualizes, freezes open options and preserves keyboard/IME selection", async () => {
-  const dom = new JSDOM('<!doctype html><body><div id="root"></div><button id="outside">Outside</button></body>', { pretendToBeVisual: true });
-  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
-  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const dom = new JSDOM(
+    '<!doctype html><body><div id="root"></div><button id="outside">Outside</button></body>',
+    { pretendToBeVisual: true },
+  );
+  const globals = [
+    "window",
+    "document",
+    "Node",
+    "HTMLElement",
+    "HTMLInputElement",
+    "Event",
+    "MouseEvent",
+    "KeyboardEvent",
+  ] as const;
+  const previous = Object.fromEntries(
+    globals.map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const key of globals)
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: dom.window[key],
+    });
   const { createRoot } = await import("react-dom/client");
-  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const { ModelPicker } =
+    await import("../../src/chat/composer/model-picker.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const options = buildModelSelectOptions(Array.from({ length: 5000 }, (_, index) => ({ id: `id-${index}`, label: `Model ${index}`, sourceLabel: "Source", reasoningEfforts: [] })));
+  const options = buildModelSelectOptions(
+    Array.from({ length: 5000 }, (_, index) => ({
+      id: `id-${index}`,
+      label: `Model ${index}`,
+      sourceLabel: "Source",
+      reasoningEfforts: [],
+    })),
+  );
   const selected: string[] = [];
-  const render = (items = options, value = "id-4500", disabled = false, discoveryStatus?: "idle" | "loading" | "ready" | "error", discoveryHasCache?: boolean) => root.render(<ModelPicker options={items} value={value} onChange={(next) => selected.push(next.id)} disabled={disabled} discoveryStatus={discoveryStatus} discoveryError="Provider is unavailable." discoveryHasCache={discoveryHasCache} />);
-  const trigger = () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
-  const search = () => dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
-  const key = async (name: string, isComposing = false) => act(async () => search().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: name, isComposing, bubbles: true })));
+  /** 候補、保存済みの選択値、取得状態、キャッシュ有無を差し替えて描画する。 */
+  const render = (
+    items = options,
+    value = "id-4500",
+    disabled = false,
+    discoveryStatus?: "idle" | "loading" | "ready" | "error",
+    discoveryHasCache?: boolean,
+  ) =>
+    root.render(
+      <ModelPicker
+        options={items}
+        value={value}
+        onChange={(next) => selected.push(next.id)}
+        disabled={disabled}
+        discoveryStatus={discoveryStatus}
+        discoveryError="Provider is unavailable."
+        discoveryHasCache={discoveryHasCache}
+      />,
+    );
+  /** 現在のモデル名とフォーカスの戻り先を確認するトリガーを取る。 */
+  const trigger = () =>
+    dom.window.document.querySelector<HTMLButtonElement>(
+      '[aria-label="Model"]',
+    )!;
+  /** 開いた一覧の検索入力と現在のフォーカスを確認できるようにする。 */
+  const search = () =>
+    dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+  /** 変換中かどうかを指定して検索入力にキー操作を送る。 */
+  const key = async (name: string, isComposing = false) =>
+    act(async () =>
+      search().dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: name,
+          isComposing,
+          bubbles: true,
+        }),
+      ),
+    );
   try {
     await act(async () => render());
     await act(async () => render(options, "id-4500", false, "loading"));
-    assert.ok(dom.window.document.querySelector('[aria-label="Loading Models"][aria-busy="true"]'));
+    assert.ok(
+      dom.window.document.querySelector(
+        '[aria-label="Loading Models"][aria-busy="true"]',
+      ),
+    );
     assert.match(trigger().textContent!, /Model 4500/);
     await act(async () => render(options, "id-4500", false, "error"));
-    assert.match(dom.window.document.querySelector('[role="status"]')!.textContent!, /Provider is unavailable/);
+    assert.match(
+      dom.window.document.querySelector('[role="status"]')!.textContent!,
+      /Provider is unavailable/,
+    );
     assert.match(trigger().textContent!, /Model 4500/);
     assert.match(trigger().title, /Provider is unavailable/);
     assert.deepEqual(selected, []);
     await act(async () => render());
     await act(async () => trigger().click());
     assert.equal(dom.window.document.activeElement, search());
-    assert.ok(dom.window.document.querySelectorAll('[role="option"]').length < 30);
-    assert.match(dom.window.document.querySelector('[aria-selected="true"]')!.textContent!, /Model 4500/);
-    assert.ok(dom.window.document.querySelector<HTMLDivElement>('[role="listbox"]')!.scrollTop > 0);
-    await act(async () => render(buildModelSelectOptions([{ id: "replacement", label: "Replacement", sourceLabel: "Other", reasoningEfforts: [] }])));
-    assert.match(dom.window.document.querySelector('[aria-selected="true"]')!.textContent!, /Model 4500/);
+    assert.ok(
+      dom.window.document.querySelectorAll('[role="option"]').length < 30,
+    );
+    assert.match(
+      dom.window.document.querySelector('[aria-selected="true"]')!.textContent!,
+      /Model 4500/,
+    );
+    assert.ok(
+      dom.window.document.querySelector<HTMLDivElement>('[role="listbox"]')!
+        .scrollTop > 0,
+    );
+    await act(async () =>
+      render(
+        buildModelSelectOptions([
+          {
+            id: "replacement",
+            label: "Replacement",
+            sourceLabel: "Other",
+            reasoningEfforts: [],
+          },
+        ]),
+      ),
+    );
+    assert.match(
+      dom.window.document.querySelector('[aria-selected="true"]')!.textContent!,
+      /Model 4500/,
+    );
     await key("Enter", true);
     assert.deepEqual(selected, []);
     assert.ok(search());
@@ -170,22 +380,35 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
     await act(async () => render());
     await act(async () => trigger().click());
     await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(search(), "Model 12");
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search(), "Model 12");
       search().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
-    assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /Model 12/);
+    assert.match(
+      dom.window.document.querySelector('[role="option"]')!.textContent!,
+      /Model 12/,
+    );
     await key("Enter");
     assert.deepEqual(selected, ["id-12"]);
     assert.equal(dom.window.document.activeElement, trigger());
     await act(async () => render([], "saved-model"));
     assert.match(trigger().textContent!, /saved-model/);
     await act(async () => trigger().click());
-    assert.equal(dom.window.document.querySelector('[role="option"]')?.getAttribute("aria-disabled"), "true");
+    assert.equal(
+      dom.window.document
+        .querySelector('[role="option"]')
+        ?.getAttribute("aria-disabled"),
+      "true",
+    );
     await key("Enter");
     assert.deepEqual(selected, ["id-12"]);
     const outside = dom.window.document.getElementById("outside")!;
     await act(async () => {
-      outside.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true }));
+      outside.dispatchEvent(
+        new dom.window.MouseEvent("pointerdown", { bubbles: true }),
+      );
       outside.focus();
     });
     assert.equal(dom.window.document.activeElement, outside);
@@ -197,46 +420,107 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
     await act(async () => trigger().click());
     const firstSearch = search();
     await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(firstSearch, "Model 12");
-      firstSearch.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(firstSearch, "Model 12");
+      firstSearch.dispatchEvent(
+        new dom.window.Event("input", { bubbles: true }),
+      );
     });
     await act(async () => render([], "saved-model", false, "error", false));
     await act(async () => render(options, "saved-model", false, "ready", true));
     assert.equal(search(), firstSearch);
     assert.equal(dom.window.document.activeElement, firstSearch);
     assert.equal(search().value, "Model 12");
-    assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /Model 12/);
-    await act(async () => render(buildModelSelectOptions([{ id: "replacement", label: "Replacement", sourceLabel: "Other", reasoningEfforts: [] }]), "saved-model", false, "ready", true));
-    assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /Model 12/);
+    assert.match(
+      dom.window.document.querySelector('[role="option"]')!.textContent!,
+      /Model 12/,
+    );
+    await act(async () =>
+      render(
+        buildModelSelectOptions([
+          {
+            id: "replacement",
+            label: "Replacement",
+            sourceLabel: "Other",
+            reasoningEfforts: [],
+          },
+        ]),
+        "saved-model",
+        false,
+        "ready",
+        true,
+      ),
+    );
+    assert.match(
+      dom.window.document.querySelector('[role="option"]')!.textContent!,
+      /Model 12/,
+    );
     await key("Escape");
     await act(async () => render([], "saved-model", false, "loading", false));
     await act(async () => trigger().click());
     await act(async () => render([], "saved-model", false, "ready", true));
     await act(async () => render(options, "saved-model", false, "ready", true));
-    assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 1);
-    assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /saved-model/);
+    assert.equal(
+      dom.window.document.querySelectorAll('[role="option"]').length,
+      1,
+    );
+    assert.match(
+      dom.window.document.querySelector('[role="option"]')!.textContent!,
+      /saved-model/,
+    );
     await key("Escape");
     await act(async () => render([], "", false, "loading", false));
     await act(async () => trigger().click());
-    const empty = dom.window.document.querySelector('.composer-model-empty');
+    const empty = dom.window.document.querySelector(".composer-model-empty");
     assert.equal(empty?.textContent, "");
-    assert.ok(empty?.querySelector('[role="status"][aria-label="Loading Models"][aria-busy="true"]'));
-    assert.equal(dom.window.document.querySelector('[role="listbox"]')?.getAttribute("aria-busy"), "true");
-    assert.equal(dom.window.document.querySelectorAll('[role="status"][aria-label="Loading Models"]').length, 1);
+    assert.ok(
+      empty?.querySelector(
+        '[role="status"][aria-label="Loading Models"][aria-busy="true"]',
+      ),
+    );
+    assert.equal(
+      dom.window.document
+        .querySelector('[role="listbox"]')
+        ?.getAttribute("aria-busy"),
+      "true",
+    );
+    assert.equal(
+      dom.window.document.querySelectorAll(
+        '[role="status"][aria-label="Loading Models"]',
+      ).length,
+      1,
+    );
     await act(async () => render([], "", false, "error", false));
-    assert.equal(dom.window.document.querySelector('.composer-model-empty')?.textContent, "Could not load models.");
+    assert.equal(
+      dom.window.document.querySelector(".composer-model-empty")?.textContent,
+      "Could not load models.",
+    );
     await act(async () => render([], "", false, "ready", true));
-    assert.equal(dom.window.document.querySelector('.composer-model-empty')?.textContent, "No models available.");
+    assert.equal(
+      dom.window.document.querySelector(".composer-model-empty")?.textContent,
+      "No models available.",
+    );
     await key("Escape");
     await act(async () => render());
     await act(async () => trigger().click());
     await act(async () => {
-      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(search(), "no-such-model");
+      Object.getOwnPropertyDescriptor(
+        dom.window.HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search(), "no-such-model");
       search().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     });
-    assert.equal(dom.window.document.querySelector('.composer-model-empty')?.textContent, "No matching models.");
+    assert.equal(
+      dom.window.document.querySelector(".composer-model-empty")?.textContent,
+      "No matching models.",
+    );
     await act(async () => render(options, "id-4500", false, "loading", true));
-    assert.equal(dom.window.document.querySelector('.composer-model-empty')?.textContent, "No matching models.");
+    assert.equal(
+      dom.window.document.querySelector(".composer-model-empty")?.textContent,
+      "No matching models.",
+    );
     assert.equal(dom.window.document.activeElement, search());
     assert.deepEqual(selected, ["id-12"]);
   } finally {
@@ -261,70 +545,198 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
 // impact = "見えている候補を選べないか意図と異なるModel/Depthで次turnを送る"
 // distinction = "既存picker単体testはID callbackまで、operation単体testは確定済み入力からだけを検証し、更新中のsnapshotと両保存経路の結線を検出できない"
 // @end-test-value
+/** 背景更新でモデルが消失したり深度定義が変わったりしても、表示時の候補でMainとAuxiliaryを確定する。 */
 test("Model pickerは背景更新前の候補定義でMainとAuxiliaryの選択を確定する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
-  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
-  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
+  const globals = [
+    "window",
+    "document",
+    "Node",
+    "HTMLElement",
+    "HTMLInputElement",
+    "Event",
+    "MouseEvent",
+    "KeyboardEvent",
+  ] as const;
+  const previous = Object.fromEntries(
+    globals.map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const key of globals)
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: dom.window[key],
+    });
   const { createRoot } = await import("react-dom/client");
-  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const { ModelPicker } =
+    await import("../../src/chat/composer/model-picker.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     for (const target of ["main", "auxiliary"] as const) {
       for (const change of ["removed", "depth-changed"] as const) {
-        const picked: ModelCatalogItem = { id: "vendor/picked", label: "Picked Model", sourceLabel: "vendor",
-          reasoningEfforts: change === "removed" ? ["low", "high"] : ["low"], defaultReasoningEffort: "low" };
+        const picked: ModelCatalogItem = {
+          id: "vendor/picked",
+          label: "Picked Model",
+          sourceLabel: "vendor",
+          reasoningEfforts: change === "removed" ? ["low", "high"] : ["low"],
+          defaultReasoningEffort: "low",
+        };
         const displayed = structuredClone(picked);
-        const original = { ...buildNewSession({ id: "main", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/workspace",
-          branch: "main", approvalMode: "on-request", characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#654321" } }),
-          model: "vendor/current", reasoningEffort: "medium" };
+        const original = {
+          ...buildNewSession({
+            id: "main",
+            taskTitle: "Task",
+            workspaceLabel: "Workspace",
+            workspacePath: "C:/workspace",
+            branch: "main",
+            approvalMode: "on-request",
+            characterId: "character",
+            character: "Character",
+            characterIconPath: "",
+            characterThemeColors: { main: "#123456", sub: "#654321" },
+          }),
+          model: "vendor/current",
+          reasoningEffort: "medium",
+        };
         const captured = captureSessionExecutionOptions(original);
         let main: Session = original;
-        const initialAuxiliary = normalizeAuxiliarySession({ ...original, id: "auxiliary", parentSessionId: "main", status: "active" });
+        const initialAuxiliary = normalizeAuxiliarySession({
+          ...original,
+          id: "auxiliary",
+          parentSessionId: "main",
+          status: "active",
+        });
         assert.ok(initialAuxiliary);
         let auxiliary: AuxiliarySession = initialAuxiliary;
-        let latest: ModelCatalogProvider = { id: "opencode", label: "OpenCode", defaultModelId: "vendor/current", defaultReasoningEffort: "",
-          models: [{ id: "vendor/current", label: "Current Model", reasoningEfforts: ["medium", "high"] }, picked] };
+        let latest: ModelCatalogProvider = {
+          id: "opencode",
+          label: "OpenCode",
+          defaultModelId: "vendor/current",
+          defaultReasoningEffort: "",
+          models: [
+            {
+              id: "vendor/current",
+              label: "Current Model",
+              reasoningEfforts: ["medium", "high"],
+            },
+            picked,
+          ],
+        };
         let operation: Promise<unknown> | undefined;
         let payload: ModelCatalogItem | undefined;
         let writes = 0;
-        const onChange = buildAuxiliaryAwareRuntimeOptionChangeHandler<ModelCatalogItem>({
-          shouldUseAuxiliary: target === "auxiliary",
-          onSelectedSessionChange: (model) => {
-            payload = model;
-            operation = runMainRuntimeOptionOperation({ session: main, isReadOnly: false, providerCatalog: latest,
-              option: { kind: "model", value: model }, createTimestampLabel: () => "selected",
-              persist: async (next) => { writes++; main = next; return next; } });
-          },
-          onAuxiliaryChange: (model) => {
-            payload = model;
-            operation = runAuxiliaryModelChangeOperation({ model, createTimestampLabel: () => "selected",
-              updateActiveAuxiliarySession: async (recipe) => { writes++; auxiliary = recipe(auxiliary); } });
-          },
+        const onChange =
+          buildAuxiliaryAwareRuntimeOptionChangeHandler<ModelCatalogItem>({
+            shouldUseAuxiliary: target === "auxiliary",
+            /** 選択時に受け取った候補定義を控えてMainの更新処理へ渡す。 */
+            onSelectedSessionChange: (model) => {
+              payload = model;
+              operation = runMainRuntimeOptionOperation({
+                session: main,
+                isReadOnly: false,
+                providerCatalog: latest,
+                option: { kind: "model", value: model },
+                /** Mainの選択に使う更新日時を固定する。 */ createTimestampLabel:
+                  () => "selected",
+                /** Mainで実際に保存する値と回数を記録し、その値を返す。 */
+                persist: async (next) => {
+                  writes++;
+                  main = next;
+                  return next;
+                },
+              });
+            },
+            /** 同じ選択候補をAuxiliaryのモデル更新処理へ渡す。 */
+            onAuxiliaryChange: (model) => {
+              payload = model;
+              operation = runAuxiliaryModelChangeOperation({
+                model,
+                /** Auxiliaryの選択にも同じ更新日時を与える。 */ createTimestampLabel:
+                  () => "selected",
+                /** 保存レシピを最新のAuxiliaryへ適用し、更新回数を数える。 */
+                updateActiveAuxiliarySession: async (recipe) => {
+                  writes++;
+                  auxiliary = recipe(auxiliary);
+                },
+              });
+            },
+          });
+        /** カタログの現在値から候補を作り、開いた一覧に背景更新を届ける。 */
+        const render = () =>
+          root.render(
+            <ModelPicker
+              options={buildModelSelectOptions(latest.models)}
+              value="vendor/current"
+              onChange={onChange}
+              discoveryStatus="ready"
+            />,
+          );
+        await act(async () => {
+          render();
         });
-        const render = () => root.render(<ModelPicker options={buildModelSelectOptions(latest.models)} value="vendor/current" onChange={onChange} discoveryStatus="ready" />);
-        await act(async () => { render(); });
-        const trigger = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
-        await act(async () => { trigger.click(); });
-        const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+        const trigger = dom.window.document.querySelector<HTMLButtonElement>(
+          '[aria-label="Model"]',
+        )!;
+        await act(async () => {
+          trigger.click();
+        });
+        const search =
+          dom.window.document.querySelector<HTMLInputElement>(
+            '[role="combobox"]',
+          )!;
         main = { ...main, reasoningEffort: "high" };
-        auxiliary = { ...auxiliary, reasoningEffort: "high", composerDraft: "latest draft" };
+        auxiliary = {
+          ...auxiliary,
+          reasoningEffort: "high",
+          composerDraft: "latest draft",
+        };
         // 表示中の定義は、変更可能なバリアント配列を新しい入力データと共有してはならない。
-        picked.reasoningEfforts.splice(0, picked.reasoningEfforts.length, "max");
-        latest = { ...latest, models: change === "removed" ? [] : [{ ...picked, defaultReasoningEffort: "max" }] };
-        await act(async () => { render(); });
+        picked.reasoningEfforts.splice(
+          0,
+          picked.reasoningEfforts.length,
+          "max",
+        );
+        latest = {
+          ...latest,
+          models:
+            change === "removed"
+              ? []
+              : [{ ...picked, defaultReasoningEffort: "max" }],
+        };
+        await act(async () => {
+          render();
+        });
         assert.equal(dom.window.document.activeElement, search);
-        const option = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((item) => item.textContent?.includes("Picked Model"));
+        const option = [
+          ...dom.window.document.querySelectorAll<HTMLButtonElement>(
+            '[role="option"]',
+          ),
+        ].find((item) => item.textContent?.includes("Picked Model"));
         assert.ok(option);
-        await act(async () => { option.click(); await operation; render(); });
+        await act(async () => {
+          option.click();
+          await operation;
+          render();
+        });
         assert.equal(writes, 1, `${target}/${change}`);
         assert.deepEqual(payload, displayed);
         const selected = target === "main" ? main : auxiliary;
         assert.equal(selected.model, "vendor/picked");
-        assert.equal(selected.reasoningEffort, change === "removed" ? "high" : "low");
-        if (target === "auxiliary") assert.equal(auxiliary.composerDraft, "latest draft");
+        assert.equal(
+          selected.reasoningEffort,
+          change === "removed" ? "high" : "low",
+        );
+        if (target === "auxiliary")
+          assert.equal(auxiliary.composerDraft, "latest draft");
         assert.deepEqual(captureSessionExecutionOptions(original), captured);
-        assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+        assert.equal(
+          dom.window.document.querySelector('[role="listbox"]'),
+          null,
+        );
         assert.equal(dom.window.document.activeElement, trigger);
       }
     }

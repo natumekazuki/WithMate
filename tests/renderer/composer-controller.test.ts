@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { AuxiliaryDraftPersistenceOwner } from "../../src/chat/auxiliary-draft-persistence-owner.js";
 
+/** Composerの所有者別の入力管理と、送信・保存時のリビジョン保護を検証する。 */
 describe("ComposerControllerRegistry", () => {
   // @test-value v2
   // kind = "invariant"
@@ -15,12 +16,15 @@ describe("ComposerControllerRegistry", () => {
   // scope = "composer-owner-controller"
   // lifecycle = "permanent"
   // @end-test-value
+  /** MainとAuxiliaryの下書きを分離し、値が変わらない操作では版も通知も進まないことを確認する。 */
   it("keeps owner state separate and suppresses no-op notifications", () => {
     const registry = new ComposerControllerRegistry();
     const main = { kind: "main" as const, id: "main-1" };
     const auxiliary = { kind: "auxiliary" as const, id: "aux-1" };
     let notifications = 0;
-    registry.subscribe(main, () => { notifications += 1; });
+    registry.subscribe(main, () => {
+      notifications += 1;
+    });
 
     assert.equal(registry.setDraft(main, "hello", { start: 5, end: 5 }), 1);
     assert.equal(registry.setDraft(main, "hello", { start: 5, end: 5 }), 1);
@@ -43,12 +47,15 @@ describe("ComposerControllerRegistry", () => {
   // scope = "composer-owner-controller"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 凍結中は入力編集を拒み、凍結解除の通知で操作可能になったことを伝えるか確かめる。 */
   it("freezes owner mutations and releases them with a notification", () => {
     const registry = new ComposerControllerRegistry();
     const owner = { kind: "auxiliary" as const, id: "aux-1" };
     registry.setDraft(owner, "draft");
     let notifications = 0;
-    registry.subscribe(owner, () => { notifications += 1; });
+    registry.subscribe(owner, () => {
+      notifications += 1;
+    });
     registry.freeze();
     assert.equal(registry.isFrozen, true);
     assert.equal(registry.setDraft(owner, "blocked"), 1);
@@ -70,44 +77,69 @@ describe("ComposerControllerRegistry", () => {
   // scope = "auxiliary-draft-persistence-owner"
   // lifecycle = "permanent"
   // @end-test-value
-  it("keeps only the latest pending text and waits for flush", { timeout: 1000 }, async () => {
-    let now = 0;
-    const saves: string[] = [];
-    const control: { releaseFirstSave: (() => void) | null; releaseSecondSave: (() => void) | null } = { releaseFirstSave: null, releaseSecondSave: null };
-    let secondSaveStarted!: () => void;
-    const secondSave = new Promise<void>((resolve) => { secondSaveStarted = resolve; });
-    const owner = new AuxiliaryDraftPersistenceOwner({
-      load: async () => ({ auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 0, text: "", updatedAt: "" }),
-      now: () => `t-${++now}`,
-      debounceMs: 0,
-      save: async (input) => {
-        saves.push(input.text);
-        await new Promise<void>((resolve) => {
-          if (input.text === "A") control.releaseFirstSave = resolve;
-          else {
-            control.releaseSecondSave = resolve;
-            secondSaveStarted();
-          }
-        });
-        return { outcome: "saved" as const, record: { ...input, durableRevision: input.durableRevision + 1 } };
-      },
-    });
-    const first = owner.enqueue("A");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    owner.enqueue("AB");
-    owner.enqueue("ABC");
-    assert.deepEqual(saves, ["A"]);
-    if (control.releaseFirstSave) control.releaseFirstSave();
-    await secondSave;
-    assert.deepEqual(saves, ["A", "ABC"]);
-    let flushCompleted = false;
-    const flush = owner.flush().then(() => { flushCompleted = true; });
-    await Promise.resolve();
-    assert.equal(flushCompleted, false);
-    if (control.releaseSecondSave) control.releaseSecondSave();
-    await flush;
-    await first;
-  });
+  /** 保存中に続けて編集した場合は最新テキストだけを保留し、flushがその保存を待つことを確認する。 */
+  it(
+    "keeps only the latest pending text and waits for flush",
+    { timeout: 1000 },
+    async () => {
+      let now = 0;
+      const saves: string[] = [];
+      const control: {
+        releaseFirstSave: (() => void) | null;
+        releaseSecondSave: (() => void) | null;
+      } = { releaseFirstSave: null, releaseSecondSave: null };
+      let secondSaveStarted!: () => void;
+      const secondSave = new Promise<void>((resolve) => {
+        secondSaveStarted = resolve;
+      });
+      const owner = new AuxiliaryDraftPersistenceOwner({
+        /** 既存の内容がない永続下書きを初期状態として返す。 */
+        load: async () => ({
+          auxiliarySessionId: "a",
+          parentSessionId: "p",
+          incarnation: "i",
+          durableRevision: 0,
+          text: "",
+          updatedAt: "",
+        }),
+        /** 下書き保存の更新時刻を単調に進める。 */
+        now: () => `t-${++now}`,
+        debounceMs: 0,
+        /** 保存の開始順を記録し、最初と次の保存をテストが別々に完了させる。 */
+        save: async (input) => {
+          saves.push(input.text);
+          await new Promise<void>((resolve) => {
+            if (input.text === "A") control.releaseFirstSave = resolve;
+            else {
+              control.releaseSecondSave = resolve;
+              secondSaveStarted();
+            }
+          });
+          return {
+            outcome: "saved" as const,
+            record: { ...input, durableRevision: input.durableRevision + 1 },
+          };
+        },
+      });
+      const first = owner.enqueue("A");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      owner.enqueue("AB");
+      owner.enqueue("ABC");
+      assert.deepEqual(saves, ["A"]);
+      if (control.releaseFirstSave) control.releaseFirstSave();
+      await secondSave;
+      assert.deepEqual(saves, ["A", "ABC"]);
+      let flushCompleted = false;
+      const flush = owner.flush().then(() => {
+        flushCompleted = true;
+      });
+      await Promise.resolve();
+      assert.equal(flushCompleted, false);
+      if (control.releaseSecondSave) control.releaseSecondSave();
+      await flush;
+      await first;
+    },
+  );
 
   // @test-value v2
   // kind = "contract"
@@ -121,6 +153,7 @@ describe("ComposerControllerRegistry", () => {
   // impact = "入力直後の送信・closeが不要な待機を受けるか、保存順逆転で下書きを失う"
   // distinction = "既存の直列保存testはdebounceMs=0で残りtimerのflush解除を検証しない"
   // @end-test-value
+  /** flushによる即時保存がデバウンス時間を待たず、既に始まった書込みとは直列になることを確認する。 */
   it("flushはdebounceを解除して保存を直列に完了する", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const saves: string[] = [];
@@ -130,27 +163,51 @@ describe("ComposerControllerRegistry", () => {
     let releaseFirst!: () => void;
     let secondStarted!: () => void;
     let releaseSecond!: () => void;
-    const firstSaveStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
-    const secondSaveStarted = new Promise<void>((resolve) => { secondStarted = resolve; });
+    const firstSaveStarted = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const secondSaveStarted = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
     const owner = new AuxiliaryDraftPersistenceOwner({
-      load: async () => ({ auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 0, text: "", updatedAt: "" }),
+      /** デバウンス中に編集を始める空の下書きを返す。 */
+      load: async () => ({
+        auxiliarySessionId: "a",
+        parentSessionId: "p",
+        incarnation: "i",
+        durableRevision: 0,
+        text: "",
+        updatedAt: "",
+      }),
+      /** 保存順と無関係な時刻表記を固定する。 */
       now: () => "now",
+      /** 同時に進行した保存件数を測り、各保存をテストが指定した順序で完了させる。 */
       save: async (record) => {
         saves.push(record.text);
         activeSaves += 1;
         maximumActiveSaves = Math.max(maximumActiveSaves, activeSaves);
         await new Promise<void>((resolve) => {
-          if (record.text === "AB") { releaseFirst = resolve; firstStarted(); }
-          else { releaseSecond = resolve; secondStarted(); }
+          if (record.text === "AB") {
+            releaseFirst = resolve;
+            firstStarted();
+          } else {
+            releaseSecond = resolve;
+            secondStarted();
+          }
         });
         activeSaves -= 1;
-        return { outcome: "saved" as const, record: { ...record, durableRevision: record.durableRevision + 1 } };
+        return {
+          outcome: "saved" as const,
+          record: { ...record, durableRevision: record.durableRevision + 1 },
+        };
       },
     });
     owner.enqueue("A");
     owner.enqueue("AB");
     let flushed = false;
-    const flush = owner.flush().then(() => { flushed = true; });
+    const flush = owner.flush().then(() => {
+      flushed = true;
+    });
     await firstSaveStarted;
     assert.deepEqual(saves, ["AB"]);
     owner.enqueue("ABC");
@@ -175,6 +232,7 @@ describe("ComposerControllerRegistry", () => {
   // scope = "composer-send-lifecycle"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 本文が以前の値に戻っても編集後の版なら古い送信結果で消去・復元しないことを確認する。 */
   it("does not clear or restore after a newer revision", () => {
     const registry = new ComposerControllerRegistry();
     const owner = { kind: "main" as const, id: "main" };
@@ -188,7 +246,10 @@ describe("ComposerControllerRegistry", () => {
     const cleared = registry.clearIfRevision(owner, currentRevision);
     assert.equal(cleared, currentRevision + 1);
     registry.setDraft(owner, "same");
-    assert.equal(registry.restoreIfRevision(owner, cleared!, () => "old restore"), null);
+    assert.equal(
+      registry.restoreIfRevision(owner, cleared!, () => "old restore"),
+      null,
+    );
     assert.equal(registry.capture(owner).draft, "same");
   });
 
@@ -203,6 +264,7 @@ describe("ComposerControllerRegistry", () => {
   // lifecycle = "permanent"
   // distinction = "一般編集と異なり、revision guardedな受付ACK消去・失敗復元は凍結中も反映する"
   // @end-test-value
+  /** 終了時の編集凍結中でも、送信失敗で必要な下書きの復元が許可されることを確認する。 */
   it("restores a failed send while shutdown freeze blocks user edits", () => {
     const registry = new ComposerControllerRegistry();
     const owner = { kind: "auxiliary" as const, id: "auxiliary" };
@@ -213,14 +275,24 @@ describe("ComposerControllerRegistry", () => {
     assert.equal(clearedRevision, capturedRevision + 1);
 
     registry.freeze();
-    assert.equal(registry.setDraft(owner, "user edit during shutdown"), clearedRevision);
-    const restoredRevision = registry.restoreIfRevision(owner, clearedRevision!, () => "draft before send");
+    assert.equal(
+      registry.setDraft(owner, "user edit during shutdown"),
+      clearedRevision,
+    );
+    const restoredRevision = registry.restoreIfRevision(
+      owner,
+      clearedRevision!,
+      () => "draft before send",
+    );
     assert.equal(restoredRevision, clearedRevision! + 1);
     assert.equal(registry.capture(owner).draft, "draft before send");
     assert.equal(registry.isFrozen, true);
 
     registry.unfreeze();
-    assert.equal(registry.setDraft(owner, "follow-up edit"), restoredRevision! + 1);
+    assert.equal(
+      registry.setDraft(owner, "follow-up edit"),
+      restoredRevision! + 1,
+    );
     assert.equal(registry.capture(owner).draft, "follow-up edit");
   });
 
@@ -236,6 +308,7 @@ describe("ComposerControllerRegistry", () => {
   // impact = "受付済み指示の下書き再表示と重複送信を防ぐ"
   // distinction = "window integrationとは異なりMain/Aux共通controllerのrevision一致と不一致を直接検証する"
   // @end-test-value
+  /** 凍結中でも受理済み版の消去を適用し、後から編集された版はMain・Auxiliaryともに保つことを確認する。 */
   it("consumes accepted revisions during freeze without clearing newer edits", () => {
     for (const kind of ["main", "auxiliary"] as const) {
       const registry = new ComposerControllerRegistry();
@@ -252,7 +325,11 @@ describe("ComposerControllerRegistry", () => {
       const newer = registry.setDraft(owner, "follow-up");
       registry.freeze();
       assert.equal(registry.clearIfRevision(owner, stale), null);
-      assert.deepEqual(registry.capture(owner), { owner, draft: "follow-up", revision: newer });
+      assert.deepEqual(registry.capture(owner), {
+        owner,
+        draft: "follow-up",
+        revision: newer,
+      });
       registry.clearDraft(owner);
       assert.equal(registry.capture(owner).draft, "follow-up");
       registry.unfreeze();
@@ -270,23 +347,37 @@ describe("ComposerControllerRegistry", () => {
   // scope = "auxiliary-draft-persistence-owner"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 保存結果の不明を失敗として扱い、最新テキストを保持したまま再試行できることを確認する。 */
   it("surfaces save failure and retries the latest value", async () => {
     let attempts = 0;
     let loads = 0;
     const saved: string[] = [];
     const owner = new AuxiliaryDraftPersistenceOwner({
+      /** 競合後に下書きを読み直す頻度を数え、空の永続値を返す。 */
       load: async () => {
         loads += 1;
-        return { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 0, text: "", updatedAt: "" };
+        return {
+          auxiliarySessionId: "a",
+          parentSessionId: "p",
+          incarnation: "i",
+          durableRevision: 0,
+          text: "",
+          updatedAt: "",
+        };
       },
+      /** 再取得後も同一のテスト用時刻を利用する。 */
       now: () => "now",
       debounceMs: 0,
+      /** 版の競合、結果不明の例外、成功を順に返し、最終的に保存された本文を記録する。 */
       save: async (input) => {
         attempts += 1;
         if (attempts === 1) return { outcome: "stale" as const };
         if (attempts === 2) throw new Error("save outcome unknown");
         saved.push(input.text);
-        return { outcome: "saved" as const, record: { ...input, durableRevision: input.durableRevision + 1 } };
+        return {
+          outcome: "saved" as const,
+          record: { ...input, durableRevision: input.durableRevision + 1 },
+        };
       },
     });
     await assert.rejects(owner.enqueue("latest draft"));
@@ -310,23 +401,48 @@ describe("ComposerControllerRegistry", () => {
   // impact = "ACK待ち中に編集した未保存本文を保存障害で失ったり保存済みと誤認したりせず、利用者が明示再試行できる"
   // distinction = "SessionWindowの正常ACK/拒否testではconsume後の再取得障害とpending保存失敗後のflush再試行を検証しない"
   // @end-test-value
+  /** 受理済み下書きの消費後に永続版を読み直せなくても、保留中の編集を残して再試行できることを確認する。 */
   it("retains queued edits when consumption revision reload fails", async () => {
-    let durable = { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 7, text: "sent draft", updatedAt: "" };
+    let durable = {
+      auxiliarySessionId: "a",
+      parentSessionId: "p",
+      incarnation: "i",
+      durableRevision: 7,
+      text: "sent draft",
+      updatedAt: "",
+    };
     let loadFailed = false;
     let finish!: () => void;
     const owner = new AuxiliaryDraftPersistenceOwner({
-      load: async () => { if (loadFailed) throw new Error("draft load failed"); return { ...durable }; },
-      now: () => "now", debounceMs: 0,
+      /** その時点で永続化された下書きのコピーを返し、必要に応じて再取得障害を再現する。 */
+      load: async () => {
+        if (loadFailed) throw new Error("draft load failed");
+        return { ...durable };
+      },
+      /** 保存値の比較を容易にするため時刻を固定する。 */
+      now: () => "now",
+      debounceMs: 0,
+      /** 世代と永続版が合う場合だけ書き込み、版の競合を見逃さないようにする。 */
       save: async (record) => {
-        if (record.incarnation !== durable.incarnation || record.durableRevision !== durable.durableRevision) return { outcome: "stale" };
+        if (
+          record.incarnation !== durable.incarnation ||
+          record.durableRevision !== durable.durableRevision
+        )
+          return { outcome: "stale" };
         durable = { ...record, durableRevision: record.durableRevision + 1 };
         return { outcome: "saved", record: { ...durable } };
       },
     });
     await owner.ensureLoaded();
     const consuming = owner.withDraftConsumption(async () => {
-      durable = { ...durable, text: "", durableRevision: durable.durableRevision + 1 };
-      await new Promise<void>((resolve) => { finish = resolve; });
+      durable = {
+        ...durable,
+        text: "",
+        durableRevision: durable.durableRevision + 1,
+      };
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
     });
     const queued = owner.enqueue("newer local draft");
     const queuedFailure = assert.rejects(queued, /draft load failed/);
@@ -339,7 +455,14 @@ describe("ComposerControllerRegistry", () => {
     loadFailed = false;
     await owner.flush();
     assert.equal(owner.hasPending, false);
-    assert.deepEqual(durable, { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 9, text: "newer local draft", updatedAt: "now" });
+    assert.deepEqual(durable, {
+      auxiliarySessionId: "a",
+      parentSessionId: "p",
+      incarnation: "i",
+      durableRevision: 9,
+      text: "newer local draft",
+      updatedAt: "now",
+    });
   });
 
   // @test-value v2
@@ -353,15 +476,26 @@ describe("ComposerControllerRegistry", () => {
   // lifecycle = "permanent"
   // distinction = "通常enqueueの集約testと異なり、Mainによるconsume/復元が保存owner外でrevisionを進めた後の限定復元を検証する"
   // @end-test-value
+  /** 消費された下書きを保存障害から復旧できる一方、後から保存された編集は上書きしないことを確認する。 */
   it("recovers a consumed draft without overwriting a later durable edit", async () => {
-    const captured = { auxiliarySessionId: "a", parentSessionId: "p", incarnation: "i", durableRevision: 4, text: "restore me", updatedAt: "before" };
+    const captured = {
+      auxiliarySessionId: "a",
+      parentSessionId: "p",
+      incarnation: "i",
+      durableRevision: 4,
+      text: "restore me",
+      updatedAt: "before",
+    };
     let durable = { ...captured, durableRevision: 5, text: "" };
     let failSave = true;
     const saves: number[] = [];
     const owner = new AuxiliaryDraftPersistenceOwner({
+      /** 復旧対象の永続版を再確認できるよう、現在の保存値を返す。 */
       load: async () => ({ ...durable }),
+      /** 復元保存で時刻依存が生じないようにする。 */
       now: () => "now",
       debounceMs: 0,
+      /** 復元が使った版を記録して保存障害を再現し、成功時は現在の永続版との一致を確認する。 */
       save: async (record) => {
         saves.push(record.durableRevision);
         if (failSave) throw new Error("disk unavailable");
@@ -381,12 +515,24 @@ describe("ComposerControllerRegistry", () => {
     assert.deepEqual(saves, [5, 5]);
 
     await owner.enqueue(captured.text, captured);
-    assert.equal(durable.durableRevision, 6, "a Main-restored value needs no additional write");
+    assert.equal(
+      durable.durableRevision,
+      6,
+      "a Main-restored value needs no additional write",
+    );
     durable = { ...durable, durableRevision: 7, text: "newer durable draft" };
-    await assert.rejects(owner.enqueue(captured.text, captured), /changed after the failed send/);
+    await assert.rejects(
+      owner.enqueue(captured.text, captured),
+      /changed after the failed send/,
+    );
     await assert.rejects(owner.flush(), /changed after the failed send/);
     assert.equal(durable.text, "newer durable draft");
-    durable = { ...captured, incarnation: "replacement", durableRevision: 5, text: "" };
+    durable = {
+      ...captured,
+      incarnation: "replacement",
+      durableRevision: 5,
+      text: "",
+    };
     await assert.rejects(owner.flush(), /changed after the failed send/);
     assert.equal(durable.incarnation, "replacement");
     assert.equal(durable.text, "");

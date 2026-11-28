@@ -5,19 +5,33 @@ import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useSessionGlossary, type SessionGlossarySelection } from "../../src/glossary/use-session-glossary.js";
+import {
+  useSessionGlossary,
+  type SessionGlossarySelection,
+} from "../../src/glossary/use-session-glossary.js";
 import { SessionGlossaryPane } from "../../src/glossary/SessionGlossaryPane.js";
 import type { SessionGlossaryProjection } from "../../src-shared/glossary/glossary-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
-type GlossaryApi = Pick<WithMateWindowApi, "getSessionGlossaryProjection" | "searchSessionGlossary" | "subscribeSessionGlossary">;
+/** 用語集の取得・検索・変更購読に絞ったテスト用 API。 */
+type GlossaryApi = Pick<
+  WithMateWindowApi,
+  | "getSessionGlossaryProjection"
+  | "searchSessionGlossary"
+  | "subscribeSessionGlossary"
+>;
 
+/** 同じ用語を持ちながら、通知順とファイルの版を更新できる用語集状態を作る。 */
 function projection(revision: string): SessionGlossaryProjection {
   return {
     sessionId: "session-1",
     scopeRevision: "scope-1",
     sequence: Number(revision),
-    checkout: { repositoryName: "Repository", branch: "main", pathLabel: "workspace" },
+    checkout: {
+      repositoryName: "Repository",
+      branch: "main",
+      pathLabel: "workspace",
+    },
     state: {
       status: "valid",
       relativePath: ".withmate/glossary.yaml",
@@ -27,18 +41,29 @@ function projection(revision: string): SessionGlossaryProjection {
   };
 }
 
+/** 初回取得や検索の応答を任意の順番で成功・失敗させる。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
-  const promise = new Promise<T>((nextResolve, nextReject) => { resolve = nextResolve; reject = nextReject; });
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
   return { promise, resolve, reject };
 }
 
+/** 実フックと詳細ペインを描画し、選択中の会話を切り替えられるようにする。 */
 function setup(api: GlossaryApi) {
-  const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test" });
+  const dom = new JSDOM("<div id='root'></div>", {
+    url: "https://withmate.test",
+  });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   let current: ReturnType<typeof useSessionGlossary> | null = null;
   let selection: SessionGlossarySelection = {
     id: "session-1",
@@ -46,19 +71,43 @@ function setup(api: GlossaryApi) {
     workspaceLabel: "workspace",
     branch: "main",
   };
+  /** 現在の会話のフックを実ペインへ接続して、公開状態を記録する。 */
   function Probe() {
-    current = useSessionGlossary({ api, selectedSession: selection, onActivatePane: () => undefined });
+    current = useSessionGlossary({
+      api,
+      selectedSession: selection,
+      /** 注釈選択時のペイン切り替えは、この用語集の検証では省く。 */ onActivatePane:
+        () => undefined,
+    });
     return React.createElement(SessionGlossaryPane, current.paneProps);
   }
-  const root: Root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+  const root: Root = createRoot(
+    dom.window.document.getElementById("root") as HTMLElement,
+  );
   return {
     document: dom.window.document,
-    get current() { return current as ReturnType<typeof useSessionGlossary>; },
+    /** 最後の描画における用語集の表示状態と操作を返す。 */
+    get current() {
+      return current as ReturnType<typeof useSessionGlossary>;
+    },
+    /** 指定された会話に選択を切り替えて、同じ React ルートを描画する。 */
     async render(sessionId?: string) {
       if (sessionId) selection = { ...selection, id: sessionId };
-      await act(async () => { root.render(React.createElement(Probe)); });
+      await act(async () => {
+        root.render(React.createElement(Probe));
+      });
     },
-    async unmount() { await act(async () => { root.unmount(); }); Object.assign(globalThis, { window: previousWindow, document: previousDocument }); dom.window.close(); },
+    /** ペインと購読を解除し、元の DOM 環境に戻す。 */
+    async unmount() {
+      await act(async () => {
+        root.unmount();
+      });
+      Object.assign(globalThis, {
+        window: previousWindow,
+        document: previousDocument,
+      });
+      dom.window.close();
+    },
   };
 }
 
@@ -73,16 +122,26 @@ function setup(api: GlossaryApi) {
 // lifecycle = "permanent"
 // distinction = "source文字列ではなく、projection購読と遅延検索responseを通した公開viewのstale guardを検証する"
 // @end-test-value
+/** 検索語の変更と用語集更新が重なっても、現行の検索語と版に合う結果だけを表示する。 */
 test("Glossary検索は別queryの結果と旧revisionの遅延応答を混ぜない", async () => {
   let notify!: (next: SessionGlossaryProjection) => void;
   const initial = deferred<SessionGlossaryProjection>();
-  const oldSearch = deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
-  const staleSearch = deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
-  const newSearch = deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
+  const oldSearch =
+    deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
+  const staleSearch =
+    deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
+  const newSearch =
+    deferred<Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>>();
   let searchCount = 0;
   const api: GlossaryApi = {
+    /** 最初の用語集取得を保留し、検索開始前にテスト側で内容を確定する。 */
     getSessionGlossaryProjection: async () => initial.promise,
-    subscribeSessionGlossary: (listener) => { notify = listener; return () => undefined; },
+    /** 用語集の版変更を直接通知するため、購読コールバックを捕捉する。 */
+    subscribeSessionGlossary: (listener) => {
+      notify = listener;
+      return () => undefined;
+    },
+    /** 旧検索語、旧版、新版で異なる応答タイミングを選べるようにする。 */
     searchSessionGlossary: async (_sessionId, request) => {
       searchCount += 1;
       if (request.query === "old") return oldSearch.promise;
@@ -92,31 +151,66 @@ test("Glossary検索は別queryの結果と旧revisionの遅延応答を混ぜ�
   const view = setup(api);
   try {
     await view.render();
-    await act(async () => { initial.resolve(projection("1")); await initial.promise; });
-    assert.equal(view.current.view.searchTotal, 0);
-    await act(async () => { view.current.actions.onSearchQueryChange("old"); });
     await act(async () => {
-      oldSearch.resolve({ ok: true, revision: "1", entries: [{ term: "Old", aliases: [], definition: "old" }], total: 1, offset: 0, pageSize: 100 });
+      initial.resolve(projection("1"));
+      await initial.promise;
+    });
+    assert.equal(view.current.view.searchTotal, 0);
+    await act(async () => {
+      view.current.actions.onSearchQueryChange("old");
+    });
+    await act(async () => {
+      oldSearch.resolve({
+        ok: true,
+        revision: "1",
+        entries: [{ term: "Old", aliases: [], definition: "old" }],
+        total: 1,
+        offset: 0,
+        pageSize: 100,
+      });
       await oldSearch.promise;
     });
-    assert.deepEqual(view.current.view.searchEntries.map((entry) => entry.term), ["Old"]);
+    assert.deepEqual(
+      view.current.view.searchEntries.map((entry) => entry.term),
+      ["Old"],
+    );
 
-    await act(async () => { view.current.actions.onSearchQueryChange("term"); });
-    await act(async () => { notify(projection("2")); });
+    await act(async () => {
+      view.current.actions.onSearchQueryChange("term");
+    });
+    await act(async () => {
+      notify(projection("2"));
+    });
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchLoading, true);
 
     await act(async () => {
-      staleSearch.resolve({ ok: true, revision: "1", entries: [{ term: "Stale", aliases: [], definition: "stale" }], total: 1, offset: 0, pageSize: 100 });
+      staleSearch.resolve({
+        ok: true,
+        revision: "1",
+        entries: [{ term: "Stale", aliases: [], definition: "stale" }],
+        total: 1,
+        offset: 0,
+        pageSize: 100,
+      });
       await staleSearch.promise;
     });
     assert.deepEqual(view.current.view.searchEntries, []);
 
     await act(async () => {
-      newSearch.resolve({ ok: true, revision: "2", entries: [{ term: "New", aliases: [], definition: "new" }], total: 1, offset: 0, pageSize: 100 });
+      newSearch.resolve({
+        ok: true,
+        revision: "2",
+        entries: [{ term: "New", aliases: [], definition: "new" }],
+        total: 1,
+        offset: 0,
+        pageSize: 100,
+      });
       await newSearch.promise;
     });
-    assert.deepEqual(view.current.view.searchEntries, [{ term: "New", aliases: [], definition: "new" }]);
+    assert.deepEqual(view.current.view.searchEntries, [
+      { term: "New", aliases: [], definition: "new" },
+    ]);
     assert.equal(view.current.view.searchTotal, 1);
   } finally {
     await view.unmount();
@@ -134,12 +228,29 @@ test("Glossary検索は別queryの結果と旧revisionの遅延応答を混ぜ�
 // lifecycle = "permanent"
 // distinction = "検索revision testとは異なる、会話注釈用の公開matcherとactivationを購読通知とSession切替から検証する"
 // @end-test-value
+/** 内容不変なら注釈の識別子を維持し、定義や会話の範囲が変わったら現在有効な注釈だけを開く。 */
 test("注釈matcherは内容とownerへ結び付きactivationは現在のscopeを確認する", async () => {
   let notify!: (next: SessionGlossaryProjection) => void;
   const api: GlossaryApi = {
-    getSessionGlossaryProjection: async (sessionId) => ({ ...projection("1"), sessionId }),
-    subscribeSessionGlossary: (listener) => { notify = listener; return () => undefined; },
-    searchSessionGlossary: async () => ({ ok: true, revision: "1", entries: [], total: 0, offset: 0, pageSize: 100 }),
+    /** 会話の切り替えに追従するよう、返却データに要求された Session ID を付ける。 */
+    getSessionGlossaryProjection: async (sessionId) => ({
+      ...projection("1"),
+      sessionId,
+    }),
+    /** 内容・表示名・スコープが変わる通知を任意の順で流すために購読を捕捉する。 */
+    subscribeSessionGlossary: (listener) => {
+      notify = listener;
+      return () => undefined;
+    },
+    /** 注釈動作に関係しない検索には空の結果を返す。 */
+    searchSessionGlossary: async () => ({
+      ok: true,
+      revision: "1",
+      entries: [],
+      total: 0,
+      offset: 0,
+      pageSize: 100,
+    }),
   };
   const view = setup(api);
   try {
@@ -147,26 +258,59 @@ test("注釈matcherは内容とownerへ結び付きactivationは現在のscope�
     const first = view.current.annotationMatcher!;
     const activate = view.current.actions.onActivateGlossaryEntry;
     await act(async () => {
-      notify({ ...projection("1"), sequence: 2, checkout: { repositoryName: "Renamed", branch: "feature", pathLabel: "label" } });
+      notify({
+        ...projection("1"),
+        sequence: 2,
+        checkout: {
+          repositoryName: "Renamed",
+          branch: "feature",
+          pathLabel: "label",
+        },
+      });
     });
     assert.equal(view.current.annotationMatcher, first);
     assert.equal(view.current.actions.onActivateGlossaryEntry, activate);
     const changed = projection("1");
     changed.sequence = 3;
-    changed.state = { status: "valid", relativePath: ".withmate/glossary.yaml", revision: "new", entries: [{ term: "New", aliases: ["Old"], definition: "new definition" }] };
+    changed.state = {
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "new",
+      entries: [
+        { term: "New", aliases: ["Old"], definition: "new definition" },
+      ],
+    };
     await act(async () => notify(changed));
     assert.notEqual(view.current.annotationMatcher, first);
-    assert.equal(view.current.annotationMatcher!.matchText("Old", view.current.annotationMatcher!.createMessageBudget())[0]?.definition, "new definition");
+    assert.equal(
+      view.current.annotationMatcher!.matchText(
+        "Old",
+        view.current.annotationMatcher!.createMessageBudget(),
+      )[0]?.definition,
+      "new definition",
+    );
     await act(async () => activate("Old"));
     assert.equal(view.current.view.selectedTerm, null);
     await act(async () => activate("New"));
     assert.equal(view.current.view.selectedTerm, "New");
-    await act(async () => notify({ ...changed, sequence: 4, state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null } }));
+    await act(async () =>
+      notify({
+        ...changed,
+        sequence: 4,
+        state: {
+          status: "missing",
+          relativePath: ".withmate/glossary.yaml",
+          revision: null,
+        },
+      }),
+    );
     assert.equal(view.current.annotationMatcher, undefined);
     await act(async () => view.current.actions.onBackToList());
     await act(async () => activate("New"));
     assert.equal(view.current.view.selectedTerm, null);
-    await act(async () => notify({ ...changed, sequence: 5, scopeRevision: "other-scope" }));
+    await act(async () =>
+      notify({ ...changed, sequence: 5, scopeRevision: "other-scope" }),
+    );
     await act(async () => activate("New"));
     assert.equal(view.current.view.selectedTerm, null);
     await act(async () => view.current.actions.onActivateGlossaryEntry("New"));
@@ -191,36 +335,59 @@ test("注釈matcherは内容とownerへ結び付きactivationは現在のscope�
 // lifecycle = "permanent"
 // distinction = "型検査やstatic markupでは取得の順序と同一tickの重複操作を検出できない。制御promiseのみで検証する"
 // @end-test-value
+/** 初回取得が失敗しても詳細に理由を残し、同じ会話へ一度だけ再試行して一覧を復元する。 */
 test("Glossary初回取得は同じ会話で理由を保持して一度だけRetryする", async () => {
-  const requests: { id: string; pending: ReturnType<typeof deferred<SessionGlossaryProjection>> }[] = [];
+  const requests: {
+    id: string;
+    pending: ReturnType<typeof deferred<SessionGlossaryProjection>>;
+  }[] = [];
   const view = setup({
+    /** 取得対象と制御可能な応答を記録し、初回と再試行を区別する。 */
     getSessionGlossaryProjection: (id) => {
       const pending = deferred<SessionGlossaryProjection>();
       requests.push({ id, pending });
       return pending.promise;
     },
+    /** 取得の再試行だけで回復し、購読による更新は発生させない。 */
     subscribeSessionGlossary: () => () => undefined,
-    searchSessionGlossary: async () => { throw new Error("Unexpected search"); },
+    /** 初回取得と再試行の範囲で検索が起きたら失敗とする。 */
+    searchSessionGlossary: async () => {
+      throw new Error("Unexpected search");
+    },
   });
   try {
     await view.render();
-    await act(async () => requests[0]!.pending.reject(new Error("Projection offline")));
-    assert.equal(view.document.querySelector('[role="alert"]')!.textContent, "Glossary Load Failed");
-    const details = view.document.querySelector<HTMLButtonElement>('button[aria-label="Glossary Load Failed: Details"]')!;
-    const popup = view.document.getElementById(details.getAttribute("popovertarget")!)!;
+    await act(async () =>
+      requests[0]!.pending.reject(new Error("Projection offline")),
+    );
+    assert.equal(
+      view.document.querySelector('[role="alert"]')!.textContent,
+      "Glossary Load Failed",
+    );
+    const details = view.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Glossary Load Failed: Details"]',
+    )!;
+    const popup = view.document.getElementById(
+      details.getAttribute("popovertarget")!,
+    )!;
     assert.equal(details.getAttribute("aria-controls"), popup.id);
     assert.equal(popup.getAttribute("popover"), "auto");
     assert.equal(popup.getAttribute("role"), "dialog");
     assert.ok(popup.querySelector('button[aria-label="Close Error Details"]'));
     const detail = popup.querySelector(".glossary-error-detail")!;
     assert.equal(detail.textContent, "Projection offline");
-    const retry = view.document.querySelector<HTMLButtonElement>('button[aria-label="Retry"]')!;
+    const retry = view.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Retry"]',
+    )!;
     await act(async () => {
       retry.click();
       assert.equal(requests.length, 2);
       view.current.actions.onRetryProjection();
     });
-    assert.deepEqual(requests.map((request) => request.id), ["session-1", "session-1"]);
+    assert.deepEqual(
+      requests.map((request) => request.id),
+      ["session-1", "session-1"],
+    );
     assert.equal(retry.disabled, true);
     assert.equal(retry.getAttribute("aria-busy"), "true");
     assert.equal(retry.getAttribute("aria-label"), "Retry");
@@ -228,8 +395,13 @@ test("Glossary初回取得は同じ会話で理由を保持して一度だけRet
     await act(async () => requests[1]!.pending.resolve(projection("1")));
     assert.equal(view.current.view.projectionError, "");
     assert.equal(view.current.view.projectionLoading, false);
-    assert.equal(view.document.querySelector(".glossary-entry-term")?.textContent, "Old");
-  } finally { await view.unmount(); }
+    assert.equal(
+      view.document.querySelector(".glossary-entry-term")?.textContent,
+      "Old",
+    );
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -244,13 +416,26 @@ test("Glossary初回取得は同じ会話で理由を保持して一度だけRet
 // impact = "取得済みの用語を参照しながら作業する利用者の閲覧を中断する"
 // distinction = "既存matcher testや型では非同期get失敗との競合を通らない。遅延promiseで待ち時間なく検証する"
 // @end-test-value
+/** 後から届く取得失敗で通知済みの表示や matcher を消さず、会話切り替え後の旧成功も無視する。 */
 test("Glossaryは通知済み内容を旧get失敗から保護し旧ownerの成功を破棄する", async () => {
   let notify!: (next: SessionGlossaryProjection) => void;
   const requests: ReturnType<typeof deferred<SessionGlossaryProjection>>[] = [];
   const view = setup({
-    getSessionGlossaryProjection: () => { const request = deferred<SessionGlossaryProjection>(); requests.push(request); return request.promise; },
-    subscribeSessionGlossary: (listener) => { notify = listener; return () => undefined; },
-    searchSessionGlossary: async () => { throw new Error("Unexpected search"); },
+    /** 会話ごとの取得を別々に保留し、旧会話の応答も切り替え後に返せるようにする。 */
+    getSessionGlossaryProjection: () => {
+      const request = deferred<SessionGlossaryProjection>();
+      requests.push(request);
+      return request.promise;
+    },
+    /** 初回取得より先に状態を通知するためにコールバックを保存する。 */
+    subscribeSessionGlossary: (listener) => {
+      notify = listener;
+      return () => undefined;
+    },
+    /** 一覧と定義を開くための操作が検索を発行したら失敗とする。 */
+    searchSessionGlossary: async () => {
+      throw new Error("Unexpected search");
+    },
   });
   try {
     await view.render();
@@ -260,22 +445,49 @@ test("Glossaryは通知済み内容を旧get失敗から保護し旧ownerの成�
     await act(async () => requests[0]!.reject(new Error("Late failure")));
     assert.equal(view.current.view.projection?.sequence, 2);
     assert.equal(view.current.view.projectionError, "");
-    assert.equal(view.document.querySelector(".glossary-entry-definition")?.textContent, "Old definition");
+    assert.equal(
+      view.document.querySelector(".glossary-entry-definition")?.textContent,
+      "Old definition",
+    );
     assert.equal(view.current.annotationMatcher, matcher);
     await act(async () => view.current.actions.onBackToList());
-    assert.equal(view.document.querySelector(".glossary-entry-term")?.textContent, "Old");
+    assert.equal(
+      view.document.querySelector(".glossary-entry-term")?.textContent,
+      "Old",
+    );
     await act(async () => view.current.actions.onRetryProjection());
     await view.render("session-2");
-    await act(async () => requests[2]!.resolve({ ...projection("1"), sessionId: "session-2" }));
+    await act(async () =>
+      requests[2]!.resolve({ ...projection("1"), sessionId: "session-2" }),
+    );
     await act(async () => requests[1]!.resolve(projection("99")));
     assert.equal(view.current.view.projection?.sessionId, "session-2");
     assert.equal(view.current.view.projection?.sequence, 1);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
+/** テストから完了させる用語検索応答の型。 */
 type SearchResult = Awaited<ReturnType<GlossaryApi["searchSessionGlossary"]>>;
-function searchResult(revision: string, terms: string[], total = terms.length): SearchResult {
-  return { ok: true, revision, entries: terms.map((term) => ({ term, aliases: [], definition: `${term} definition` })), total, offset: 0, pageSize: 100 };
+/** 指定した版と用語を持ち、ページ外の残件があれば総件数へ反映した成功応答を作る。 */
+function searchResult(
+  revision: string,
+  terms: string[],
+  total = terms.length,
+): SearchResult {
+  return {
+    ok: true,
+    revision,
+    entries: terms.map((term) => ({
+      term,
+      aliases: [],
+      definition: `${term} definition`,
+    })),
+    total,
+    offset: 0,
+    pageSize: 100,
+  };
 }
 
 // @test-value v2
@@ -290,32 +502,71 @@ function searchResult(revision: string, terms: string[], total = terms.length): 
 // impact = "一時的な検索障害で参照内容を失う、または別checkoutの用語を現在の検索結果と誤認する"
 // distinction = "既存revision testは別queryの遅延結果だけを扱う。同queryの再取得保持とscope境界は型/static checkで代替できず制御promiseで検証する"
 // @end-test-value
+/** 同じ検索語なら以前の結果を再試行中も保持し、旧検索語や旧 checkout の結果は適用しない。 */
 test("Glossaryは同queryの再取得失敗中も結果を保持しRetryとowner境界を守る", async () => {
   let notify!: (next: SessionGlossaryProjection) => void;
-  const requests: { query: string; pending: ReturnType<typeof deferred<SearchResult>> }[] = [];
+  const requests: {
+    query: string;
+    pending: ReturnType<typeof deferred<SearchResult>>;
+  }[] = [];
   const view = setup({
+    /** 検索語を変える前に既知の版を取得できるようにする。 */
     getSessionGlossaryProjection: async () => projection("1"),
-    subscribeSessionGlossary: (listener) => { notify = listener; return () => undefined; },
+    /** 用語集の改版と checkout の切替を明示的に発行する。 */
+    subscribeSessionGlossary: (listener) => {
+      notify = listener;
+      return () => undefined;
+    },
+    /** 個々の検索語と保留応答を対応付け、到着順を独立して操作する。 */
     searchSessionGlossary: (_id, { query }) => {
-      const pending = deferred<SearchResult>(); requests.push({ query, pending }); return pending.promise;
+      const pending = deferred<SearchResult>();
+      requests.push({ query, pending });
+      return pending.promise;
     },
   });
   try {
     await view.render();
     await act(async () => view.current.actions.onSearchQueryChange("Old"));
-    await act(async () => requests[0]!.pending.resolve(searchResult("1", ["Old"])));
+    await act(async () =>
+      requests[0]!.pending.resolve(searchResult("1", ["Old"])),
+    );
     await act(async () => notify(projection("2")));
     assert.equal(view.current.view.searchLoading, true);
-    assert.deepEqual(view.current.view.searchEntries.map((entry) => entry.term), ["Old"]);
-    assert.match(view.document.querySelector('[role="status"]')!.textContent!, /previous search results/);
-    await act(async () => requests[1]!.pending.resolve({ ok: false, code: "GLOSSARY_TARGET_INVALID", message: "Search offline", effect: "none", retryable: true }));
+    assert.deepEqual(
+      view.current.view.searchEntries.map((entry) => entry.term),
+      ["Old"],
+    );
+    assert.match(
+      view.document.querySelector('[role="status"]')!.textContent!,
+      /previous search results/,
+    );
+    await act(async () =>
+      requests[1]!.pending.resolve({
+        ok: false,
+        code: "GLOSSARY_TARGET_INVALID",
+        message: "Search offline",
+        effect: "none",
+        retryable: true,
+      }),
+    );
     assert.equal(view.current.view.searchError, "Search offline");
-    assert.equal(view.document.querySelector(".glossary-entry-term")?.textContent, "Old");
-    await act(async () => { view.current.actions.onRetrySearch(); view.current.actions.onRetrySearch(); });
+    assert.equal(
+      view.document.querySelector(".glossary-entry-term")?.textContent,
+      "Old",
+    );
+    await act(async () => {
+      view.current.actions.onRetrySearch();
+      view.current.actions.onRetrySearch();
+    });
     assert.equal(requests.length, 3);
     assert.equal(requests[2]!.query, "Old");
     assert.equal(view.current.view.searchLoading, true);
-    assert.equal(view.document.querySelector<HTMLButtonElement>('.glossary-error-actions button[aria-label="Retry"]')!.disabled, true);
+    assert.equal(
+      view.document.querySelector<HTMLButtonElement>(
+        '.glossary-error-actions button[aria-label="Retry"]',
+      )!.disabled,
+      true,
+    );
     await act(async () => requests[2]!.pending.resolve(searchResult("2", [])));
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchTotal, 0);
@@ -324,19 +575,35 @@ test("Glossaryは同queryの再取得失敗中も結果を保持しRetryとowner
 
     await act(async () => view.current.actions.onSearchQueryChange("First"));
     await act(async () => view.current.actions.onSearchQueryChange("Second"));
-    await act(async () => requests[3]!.pending.resolve(searchResult("2", ["First"])));
+    await act(async () =>
+      requests[3]!.pending.resolve(searchResult("2", ["First"])),
+    );
     assert.deepEqual(view.current.view.searchEntries, []);
-    await act(async () => requests[4]!.pending.resolve(searchResult("2", ["Second"])));
+    await act(async () =>
+      requests[4]!.pending.resolve(searchResult("2", ["Second"])),
+    );
     await act(async () => notify(projection("3")));
-    await act(async () => notify({ ...projection("3"), scopeRevision: "other-checkout", sequence: 4 }));
+    await act(async () =>
+      notify({
+        ...projection("3"),
+        scopeRevision: "other-checkout",
+        sequence: 4,
+      }),
+    );
     assert.deepEqual(view.current.view.searchEntries, []);
-    await act(async () => requests[5]!.pending.resolve(searchResult("3", ["Wrong checkout"])));
+    await act(async () =>
+      requests[5]!.pending.resolve(searchResult("3", ["Wrong checkout"])),
+    );
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchLoading, true);
-    await act(async () => requests[6]!.pending.reject(new Error("Other checkout offline")));
+    await act(async () =>
+      requests[6]!.pending.reject(new Error("Other checkout offline")),
+    );
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchError, "Other checkout offline");
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -350,39 +617,76 @@ test("Glossaryは同queryの再取得失敗中も結果を保持しRetryとowner
 // lifecycle = "permanent"
 // distinction = "初回検索とは異なる追加取得経路の取消とoffset継続を制御promiseで確認し、実時間待機や外部I/Oを要しない"
 // @end-test-value
+/** 追加取得は前の表示と失敗した開始位置を保持し、会話切替や破棄後に旧操作を反映しない。 */
 test("Glossary追加検索はoffsetを保持してRetryし旧owner応答を破棄する", async () => {
-  const requests: { offset: number; pending: ReturnType<typeof deferred<SearchResult>> }[] = [];
+  const requests: {
+    offset: number;
+    pending: ReturnType<typeof deferred<SearchResult>>;
+  }[] = [];
   const view = setup({
-    getSessionGlossaryProjection: async (sessionId) => ({ ...projection("1"), sessionId }),
+    /** 検索する会話の ID を初回取得結果にも付与する。 */
+    getSessionGlossaryProjection: async (sessionId) => ({
+      ...projection("1"),
+      sessionId,
+    }),
+    /** 版の変更通知は使わず、会話選択だけを切り替えて検索を分離する。 */
     subscribeSessionGlossary: () => () => undefined,
+    /** 追加取得と再試行がどの開始位置を要求したか記録し、応答を保留する。 */
     searchSessionGlossary: (_id, { offset = 0 }) => {
-      const pending = deferred<SearchResult>(); requests.push({ offset, pending }); return pending.promise;
+      const pending = deferred<SearchResult>();
+      requests.push({ offset, pending });
+      return pending.promise;
     },
   });
   let unmounted = false;
   try {
     await view.render();
     await act(async () => view.current.actions.onSearchQueryChange("Old"));
-    await act(async () => requests[0]!.pending.resolve(searchResult("1", ["Old"], 3)));
-    await act(async () => { view.current.actions.onLoadMoreSearchResults(); view.current.actions.onLoadMoreSearchResults(); });
+    await act(async () =>
+      requests[0]!.pending.resolve(searchResult("1", ["Old"], 3)),
+    );
+    await act(async () => {
+      view.current.actions.onLoadMoreSearchResults();
+      view.current.actions.onLoadMoreSearchResults();
+    });
     assert.equal(requests.length, 2);
-    await act(async () => requests[1]!.pending.reject(new Error("Page offline")));
-    assert.deepEqual(view.current.view.searchEntries.map((entry) => entry.term), ["Old"]);
+    await act(async () =>
+      requests[1]!.pending.reject(new Error("Page offline")),
+    );
+    assert.deepEqual(
+      view.current.view.searchEntries.map((entry) => entry.term),
+      ["Old"],
+    );
     assert.equal(view.current.view.searchError, "Page offline");
     await act(async () => view.current.actions.onRetrySearch());
     assert.equal(requests[2]!.offset, 1);
-    await act(async () => requests[2]!.pending.resolve(searchResult("1", ["More"], 3)));
-    assert.deepEqual(view.current.view.searchEntries.map((entry) => entry.term), ["Old", "More"]);
+    await act(async () =>
+      requests[2]!.pending.resolve(searchResult("1", ["More"], 3)),
+    );
+    assert.deepEqual(
+      view.current.view.searchEntries.map((entry) => entry.term),
+      ["Old", "More"],
+    );
     await act(async () => view.current.actions.onLoadMoreSearchResults());
     await view.render("session-2");
-    await act(async () => requests[3]!.pending.resolve(searchResult("1", ["Wrong owner"], 3)));
+    await act(async () =>
+      requests[3]!.pending.resolve(searchResult("1", ["Wrong owner"], 3)),
+    );
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchError, "");
     await act(async () => view.current.actions.onSearchQueryChange("New"));
-    await act(async () => requests[4]!.pending.resolve(searchResult("1", ["New"], 2)));
+    await act(async () =>
+      requests[4]!.pending.resolve(searchResult("1", ["New"], 2)),
+    );
     const actions = view.current.actions;
-    await view.unmount(); unmounted = true;
-    await act(async () => { actions.onRetrySearch(); actions.onLoadMoreSearchResults(); });
+    await view.unmount();
+    unmounted = true;
+    await act(async () => {
+      actions.onRetrySearch();
+      actions.onLoadMoreSearchResults();
+    });
     assert.equal(requests.length, 5);
-  } finally { if (!unmounted) await view.unmount(); }
+  } finally {
+    if (!unmounted) await view.unmount();
+  }
 });

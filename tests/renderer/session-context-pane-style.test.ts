@@ -14,6 +14,7 @@ import test from "node:test";
 // lifecycle = "permanent"
 // distinction = "reasoning内容やstream状態ではなく、本文scroll ownershipのCSS契約を確認する"
 // @end-test-value
+/** 理由説明の本文に高さや独立したスクロールを課さず、詳細領域全体でスクロールする宣言を確認する。 */
 test("Reasoning live details は内側 pre スクロールを作らない", async () => {
   const [componentSource, stylesSource] = await Promise.all([
     readFile("src/chat/shell/session-context-pane.tsx", "utf8"),
@@ -41,6 +42,7 @@ test("Reasoning live details は内側 pre スクロールを作らない", asyn
 // lifecycle = "permanent"
 // distinction = "command実行結果や文字列変換ではなく、長文表示のwrap CSS契約を確認する"
 // @end-test-value
+/** 長いコマンドと一行の結果が横へはみ出さないよう、折返しと縮小の宣言を確認する。 */
 test("Command details は長い command と single-line result を折り返せる", async () => {
   const stylesSource = await readStylesheet();
 
@@ -69,6 +71,7 @@ test("Command details は長い command と single-line result を折り返せ�
 // lifecycle = "permanent"
 // distinction = "artifact生成やpath解決ではなく、結果表示のoverflow containmentを確認する"
 // @end-test-value
+/** 成果物の長いパスと操作本文を折り返せるスタイル契約を確認する。 */
 test("Artifact result details は長い path と本文を折り返せる", async () => {
   const stylesSource = await readStylesheet();
 
@@ -97,6 +100,7 @@ test("Artifact result details は長い path と本文を折り返せる", async
 // lifecycle = "permanent"
 // distinction = "menuの開閉状態やpointer操作ではなく、overlayを許容するstacking/overflow境界を確認する"
 // @end-test-value
+/** ヘッダーのメニューを固定高の枠で切らず、中央領域の前面へ配置できる宣言を確認する。 */
 test("Session header menu は固定高の Header Dock に切られず中央領域へ重ねて表示する", async () => {
   const stylesSource = await readStylesheet();
 
@@ -121,6 +125,7 @@ test("Session header menu は固定高の Header Dock に切られず中央領�
 // lifecycle = "permanent"
 // distinction = "selection stateやmodal実装ではなく、CSS stacking contextとpointer boundaryを確認する。overlayのz-indexがmodalより低いことはこのrecordで直接確認し、modalの固定値自体はvertical track recordでも確認する"
 // @end-test-value
+/** 選択時の操作を本文より前、モーダルより後ろに重ね、操作部だけがクリックを受ける境界を確認する。 */
 test("selection action overlay は Session layout の stacking context 内で surface と modal の間を所有する", async () => {
   const stylesSource = await readStylesheet();
 
@@ -154,6 +159,7 @@ test("selection action overlay は Session layout の stacking context 内で su
 // impact = "幅0からの操作でペインを復元できない、または左右を同時表示できない"
 // distinction = "hookのpointer testでは評価しないCSS gridへのサイズ反映を確認する。実機の操作感は別途確認する"
 // @end-test-value
+/** 左右の開閉で別々のトラックを使い、狭い幅では同じサイズ指定を上下配置と縦ドラッグに活かす。 */
 test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readStylesheet();
 
@@ -195,6 +201,7 @@ test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉�
 // impact = "ドラッグ値と表示されるgrid rowがずれて、ActionDockまたは中央surfaceが画面外へはみ出す"
 // distinction = "hookの数値clampやpointer経路、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの固定dockとexpanded rowのCSS境界を確認する"
 // @end-test-value
+/** 広い画面で上下のドックを全幅にし、ヘッダー表示とアクションドック展開の縦寸法を確認する。 */
 test("wide layout はHeaderとActionDockを全幅dockとして表示する", async () => {
   const [componentSource, stylesSource] = await Promise.all([
     readFile("src/chat/shell/session-header.tsx", "utf8"),
@@ -202,11 +209,26 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
   ]);
 
   assert.match(componentSource, /session-chat-layout/);
-  assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
-  assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
-  assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
-  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
-  assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*48px;/);
+  assert.match(
+    componentSource,
+    /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/,
+  );
+  assert.match(
+    componentSource,
+    /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/,
+  );
+  assert.doesNotMatch(
+    componentSource,
+    /className="session-header-dock-slot"\s+hidden=/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*48px;/,
+  );
   assert.match(stylesSource, /--session-central-min-height:\s*160px;/);
   assert.match(
     stylesSource,
@@ -226,6 +248,7 @@ test("wide layout はHeaderとActionDockを全幅dockとして表示する", asy
 // impact = "ActionDockを拡張した時に中央最小高160pxを守りつつsplitterへ到達できない"
 // distinction = "expanded ActionDockの95%上限式、narrow layoutの縦stack、full-width ActionDock内のcomposer制約とは分け、wide layoutの基底gridとsplitter geometryを確認する"
 // @end-test-value
+/** 広い画面の上下スプリッターを専用トラックに置き、拡張した操作領域やモーダルと重ならない宣言を確認する。 */
 test("splitter の枠は各 track に収まり、modal より背面に残る", async () => {
   const stylesSource = await readStylesheet();
 
@@ -279,18 +302,37 @@ test("splitter の枠は各 track に収まり、modal より背面に残る", a
 // impact = "全幅ActionDockでtextareaまたは操作群がdock外へ押し出される"
 // distinction = "expanded rowの残余高計算とside-pane gridは別recordで検証し、wide layoutのfull-width dock gridとcontent containment、composerの固定・可変flex制約、textareaの高さ・scroll・resizeだけを確認する"
 // @end-test-value
+/** 全幅の操作ドックの中で操作群を固定し、引き伸ばした入力欄に縦スクロールを収める。 */
 test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
   const [chatWindowSource, stylesSource] = await Promise.all([
     readFile("src/chat/chat-window.tsx", "utf8"),
     readStylesheet(),
   ]);
 
-  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/);
-  assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?overflow-y:\s*auto;[\s\S]*?resize:\s*none;/);
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\s*{[\s\S]*?"header header header header header"[\s\S]*?"action-dock action-dock action-dock action-dock action-dock"/,
+  );
+  assert.match(
+    chatWindowSource,
+    /session-action-dock-content session-action-dock-expanded-content/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?overflow-y:\s*auto;[\s\S]*?resize:\s*none;/,
+  );
 });
 
 // @test-value v2
@@ -304,12 +346,18 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
 // lifecycle = "permanent"
 // distinction = "header control stateや文字列ではなく、固定高と残余幅のCSS契約を確認する"
 // @end-test-value
+/** タイトルに残り幅を譲って操作群を折り返さず、狭いコンテナーでの代替表示も確認する。 */
 test("固定高のSession Headerは操作群を折り返さずタイトルを残り幅へ収める", async () => {
   const stylesSource = await readStylesheet();
-  const controlsRule = stylesSource.match(/\.session-window-controls\s*{([^}]*)}/)?.[1] ?? "";
-  const titleRule = stylesSource.match(/\.session-title-shell\s*{([^}]*)}/)?.[1] ?? "";
+  const controlsRule =
+    stylesSource.match(/\.session-window-controls\s*{([^}]*)}/)?.[1] ?? "";
+  const titleRule =
+    stylesSource.match(/\.session-title-shell\s*{([^}]*)}/)?.[1] ?? "";
 
-  assert.match(stylesSource, /\.session-page \.session-top-bar\s*{\s*container-type:\s*inline-size;/);
+  assert.match(
+    stylesSource,
+    /\.session-page \.session-top-bar\s*{\s*container-type:\s*inline-size;/,
+  );
   assert.match(controlsRule, /flex:\s*0 0 auto;/);
   assert.match(controlsRule, /flex-wrap:\s*nowrap;/);
   assert.match(titleRule, /flex:\s*1 1 0;/);
@@ -330,6 +378,7 @@ test("固定高のSession Headerは操作群を折り返さずタイトルを残
 // lifecycle = "permanent"
 // distinction = "resize hookの数値計算ではなく、共通motionと停止条件のCSS境界を確認する"
 // @end-test-value
+/** 四辺の開閉を共通の遷移に揃え、ドラッグ中と動きを減らす設定では遷移しない宣言を確認する。 */
 test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-motion で補間を止める", async () => {
   const stylesSource = await readStylesheet();
 
@@ -362,6 +411,7 @@ test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-
 // lifecycle = "permanent"
 // distinction = "find状態やfeedback生成ではなく、本文rowの固定とscroll境界を確認する"
 // @end-test-value
+/** ファイルプレビューに検索や通知の行が追加されても、本文を専用のスクロール行に収める。 */
 test("file preview は条件付き find / feedback の有無にかかわらず本文を固定 scroll row に置く", async () => {
   const stylesSource = await readStylesheet();
 
@@ -369,8 +419,14 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
     stylesSource,
     /\.session-file-preview\s*{[\s\S]*?grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)\s+auto;[\s\S]*?grid-template-areas:\s*"header"\s*"find"\s*"content"\s*"feedback";/,
   );
-  assert.match(stylesSource, /\.session-file-preview-header\s*{[\s\S]*?grid-area:\s*header;/);
-  assert.match(stylesSource, /\.session-file-preview\s*>\s*\.session-content-find\s*{\s*grid-area:\s*find;/);
+  assert.match(
+    stylesSource,
+    /\.session-file-preview-header\s*{[\s\S]*?grid-area:\s*header;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-preview\s*>\s*\.session-content-find\s*{\s*grid-area:\s*find;/,
+  );
   assert.match(
     stylesSource,
     /\.session-file-text-scroll,\s*\.session-file-markdown-scroll,\s*\.session-file-image-scroll\s*{\s*grid-area:\s*content;/,
@@ -383,7 +439,10 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
     stylesSource,
     /\.session-file-preview-loading,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
   );
-  assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
+  assert.match(
+    stylesSource,
+    /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/,
+  );
 });
 
 // @test-value v2
@@ -397,6 +456,7 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
 // lifecycle = "permanent"
 // distinction = "preview固有のskeleton layoutと全画面共通spinner CSSを別々に確認する"
 // @end-test-value
+/** ファイルプレビューの読み込み表示を本文に閉じ込め、動きを減らす設定では共通スピナーを止める。 */
 test("個別の file preview window は外周surfaceを保ちDiff本文だけをloading表示にする", async () => {
   const stylesSource = await readStylesheet();
 
@@ -408,7 +468,10 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
     stylesSource,
     /\.file-preview-window-page\s*>\s*\.session-file-preview\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
   );
-  assert.match(stylesSource, /\.file-preview-loading-content\s*{[\s\S]*?grid-area:\s*content;/);
+  assert.match(
+    stylesSource,
+    /\.file-preview-loading-content\s*{[\s\S]*?grid-area:\s*content;/,
+  );
   assert.match(
     stylesSource,
     /\.loading-indicator-spinner\s*{[\s\S]*?width:\s*1rem;[\s\S]*?animation:\s*loading-indicator-spin\s+720ms\s+linear\s+infinite;/,
@@ -434,6 +497,7 @@ test("個別の file preview window は外周surfaceを保ちDiff本文だけを
 // lifecycle = "permanent"
 // distinction = "renderer testの構文やtargetではなく、linkの非色依存の識別とpreviewのcontrastの宣言を検査する。実描画での下線の識別やcontrastの確認とは観測境界が異なる"
 // @end-test-value
+/** リンク内の強調やコードまで下線を維持し、フォーカス表示とコード・Mermaidエラーの色の境界を確認する。 */
 test("Markdown link は強調内codeにも下線を指定し、previewのcodeとerrorのcontrastを保つ", async () => {
   const stylesSource = await readStylesheet();
 
@@ -461,7 +525,10 @@ test("Markdown link は強調内codeにも下線を指定し、previewのcodeと
     stylesSource,
     /\.rich-text a:focus-visible\s*{\s*outline:\s*2px solid currentColor;\s*outline-offset:\s*2px;\s*}/,
   );
-  assert.match(stylesSource, /\.rich-text a \.message-inline-code\s*{\s*max-width:\s*100%;\s*}/);
+  assert.match(
+    stylesSource,
+    /\.rich-text a \.message-inline-code\s*{\s*max-width:\s*100%;\s*}/,
+  );
 });
 
 // @test-value v2
@@ -475,6 +542,7 @@ test("Markdown link は強調内codeにも下線を指定し、previewのcodeと
 // lifecycle = "permanent"
 // distinction = "Markdown変換結果ではなく、chatとpreviewで共有する本文typography契約を確認する"
 // @end-test-value
+/** Markdownプレビューとチャット本文が同じ行送りとブロック間隔を使う宣言を確認する。 */
 test("Markdown preview はchatと同じ本文line-heightとblock間隔を使う", async () => {
   const stylesSource = await readStylesheet();
 
@@ -482,7 +550,10 @@ test("Markdown preview はchatと同じ本文line-heightとblock間隔を使う"
     stylesSource,
     /\.message-body\.rich-text,\s*\.session-file-markdown\.rich-text\s*{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*8px;[\s\S]*?line-height:\s*1\.6;/,
   );
-  assert.match(stylesSource, /\.message-paragraph\s*{[\s\S]*?margin:\s*0;[\s\S]*?line-height:\s*1\.6;/);
+  assert.match(
+    stylesSource,
+    /\.message-paragraph\s*{[\s\S]*?margin:\s*0;[\s\S]*?line-height:\s*1\.6;/,
+  );
 });
 
 // @test-value v2
@@ -496,15 +567,34 @@ test("Markdown preview はchatと同じ本文line-heightとblock間隔を使う"
 // lifecycle = "permanent"
 // distinction = "Markdown ASTの見出し生成ではなく、階層と区切りの視覚表現契約を確認する"
 // @end-test-value
+/** 見出しの大きさを階層ごとに変え、水平線を利用可能な本文幅に広げる。 */
 test("Markdown heading と thematic break は階層と全幅の区切りを視認できる", async () => {
   const stylesSource = await readStylesheet();
 
-  assert.match(stylesSource, /\.message-heading\.level-1\s*{[\s\S]*?font-size:\s*1\.25rem;/);
-  assert.match(stylesSource, /\.message-heading\.level-2\s*{[\s\S]*?font-size:\s*1\.125rem;/);
-  assert.match(stylesSource, /\.message-heading\.level-3\s*{[\s\S]*?font-size:\s*1\.05rem;/);
-  assert.match(stylesSource, /\.message-heading\.level-4\s*{[\s\S]*?font-size:\s*1rem;/);
-  assert.match(stylesSource, /\.message-heading\.level-5\s*{[\s\S]*?font-size:\s*0\.95rem;/);
-  assert.match(stylesSource, /\.message-heading\.level-6\s*{[\s\S]*?font-size:\s*0\.9rem;/);
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-1\s*{[\s\S]*?font-size:\s*1\.25rem;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-2\s*{[\s\S]*?font-size:\s*1\.125rem;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-3\s*{[\s\S]*?font-size:\s*1\.05rem;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-4\s*{[\s\S]*?font-size:\s*1rem;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-5\s*{[\s\S]*?font-size:\s*0\.95rem;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-heading\.level-6\s*{[\s\S]*?font-size:\s*0\.9rem;/,
+  );
   assert.match(
     stylesSource,
     /\.message-divider\s*{[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-block-start:\s*1px solid var\(--line\);/,
@@ -522,6 +612,7 @@ test("Markdown heading と thematic break は階層と全幅の区切りを視�
 // lifecycle = "permanent"
 // distinction = "list parserのnesting結果ではなく、logical layoutとmarker表現を確認する"
 // @end-test-value
+/** 書字方向に従うインデントと、入れ子ごとのマーカーを定義していることを確かめる。 */
 test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async () => {
   const stylesSource = await readStylesheet();
 
@@ -529,7 +620,10 @@ test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async 
     stylesSource,
     /\.message-list\s*{[\s\S]*?padding-inline-start:\s*1\.5em;[\s\S]*?list-style-position:\s*outside;/,
   );
-  assert.match(stylesSource, /\.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*disc;/);
+  assert.match(
+    stylesSource,
+    /\.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*disc;/,
+  );
   assert.match(
     stylesSource,
     /\.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*circle;/,
@@ -538,7 +632,10 @@ test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async 
     stylesSource,
     /\.message-list \.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*square;/,
   );
-  assert.match(stylesSource, /\.message-list\s*>\s*li::marker\s*{\s*color:\s*currentColor;/);
+  assert.match(
+    stylesSource,
+    /\.message-list\s*>\s*li::marker\s*{\s*color:\s*currentColor;/,
+  );
   assert.doesNotMatch(stylesSource, /\.message-list\s*{[^}]*padding-left:/);
 });
 
@@ -553,9 +650,11 @@ test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async 
 // lifecycle = "permanent"
 // distinction = "Markdown itemの生成順ではなく、CSS block flowと余白の契約を確認する"
 // @end-test-value
+/** リストの改行による余白やグリッド化を避け、ネイティブマーカーと本文を同じ流れに置く。 */
 test("Markdown list はitem間の改行を余白にせずnative markerと本文を同じblock flowに置く", async () => {
   const stylesSource = await readStylesheet();
-  const listRule = stylesSource.match(/\.message-list\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const listRule =
+    stylesSource.match(/\.message-list\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
   assert.match(listRule, /display:\s*block;/);
   assert.doesNotMatch(listRule, /display:\s*grid;/);
@@ -585,6 +684,7 @@ test("Markdown list はitem間の改行を余白にせずnative markerと本文�
 // lifecycle = "permanent"
 // distinction = "本文内容やviewport測定ではなく、content領域を使うCSS width契約を確認する"
 // @end-test-value
+/** ファイル内のMarkdownを固定の読み幅に制限せず、スクロール領域の利用可能な幅を使う。 */
 test("Markdown preview は中央本文を固定幅にせずcontent領域を使う", async () => {
   const stylesSource = await readStylesheet();
 

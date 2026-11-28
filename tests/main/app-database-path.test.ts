@@ -32,9 +32,13 @@ import {
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   isValidV6Database,
 } from "../../src-electron/storage/database-schema-v6.js";
-import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/storage/app-database-path.js";
+import {
+  resolveAppDatabasePath,
+  resolveOrMigrateAppDatabasePath,
+} from "../../src-electron/storage/app-database-path.js";
 import { hasV4ToV6ReleaseDataMigrationMarker } from "../../src-electron/storage/migrations/migrate-database-v4-to-v6.js";
 
+/** V2 の DDL を適用した候補ファイルを指定位置に作る。 */
 function createV2Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -46,6 +50,7 @@ function createV2Database(dbPath: string): void {
   }
 }
 
+/** バージョン番号を設定しなかった旧 V2 のテーブル構成を再現する。 */
 function createLegacyV2DatabaseWithoutUserVersion(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -59,6 +64,7 @@ function createLegacyV2DatabaseWithoutUserVersion(dbPath: string): void {
   }
 }
 
+/** V3 の DDL を適用し、選択や移行に使える候補を作る。 */
 function createV3Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -70,6 +76,7 @@ function createV3Database(dbPath: string): void {
   }
 }
 
+/** テーブルは揃うが user_version が未設定だった旧 V3 を再現する。 */
 function createLegacyV3DatabaseWithoutUserVersion(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -83,6 +90,7 @@ function createLegacyV3DatabaseWithoutUserVersion(dbPath: string): void {
   }
 }
 
+/** 起動判定に通る V4 の候補を指定位置へ用意する。 */
 function createV4Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -94,14 +102,13 @@ function createV4Database(dbPath: string): void {
   }
 }
 
+/** 旧形式の Auxiliary と未作成の Turn テーブルを持ち、修復後の保持を識別できる V6 を作る。 */
 function createRepairableLegacyV6Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec("PRAGMA foreign_keys = ON;");
     for (const statement of CREATE_V6_SCHEMA_SQL) {
-      if (
-        statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
-      ) {
+      if (statement === CREATE_V6_SESSION_TURNS_TABLE_SQL) {
         continue;
       }
       if (statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL) {
@@ -128,6 +135,7 @@ function createRepairableLegacyV6Database(dbPath: string): void {
   }
 }
 
+/** セッションテーブルの名前をビューが占有し、通常の修復では使えない V6 を作る。 */
 function createUnrepairableV6Database(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
@@ -140,31 +148,39 @@ function createUnrepairableV6Database(dbPath: string): void {
   }
 }
 
+/** 読み取り専用で開き、検査対象の名前が実テーブルとして存在するかを確認する。 */
 function hasTable(dbPath: string, tableName: string): boolean {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
-      | { name?: string }
-      | undefined;
+    const row = db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      )
+      .get(tableName) as { name?: string } | undefined;
     return row?.name === tableName;
   } finally {
     db.close();
   }
 }
 
+/** 保存対象の設定キーが V6 の DB に残っているかを、書き込まずに確認する。 */
 function hasV6Setting(dbPath: string, settingKey: string): boolean {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const row = db.prepare("SELECT setting_key FROM app_settings WHERE setting_key = ?").get(settingKey) as
-      | { setting_key?: string }
-      | undefined;
+    const row = db
+      .prepare("SELECT setting_key FROM app_settings WHERE setting_key = ?")
+      .get(settingKey) as { setting_key?: string } | undefined;
     return row?.setting_key === settingKey;
   } finally {
     db.close();
   }
 }
 
-function createV4DatabaseWithUserVersion(dbPath: string, userVersion: number): void {
+/** テーブルを作らず、検証に使う任意のスキーマバージョンだけを設定する。 */
+function createV4DatabaseWithUserVersion(
+  dbPath: string,
+  userVersion: number,
+): void {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec(`PRAGMA user_version = ${userVersion};`);
@@ -173,9 +189,13 @@ function createV4DatabaseWithUserVersion(dbPath: string, userVersion: number): v
   }
 }
 
+/** パス解決だけを行うときの優先順位と、無効な候補の扱いを確認する。 */
 describe("resolveAppDatabasePath", () => {
+  /** 複数世代の有効な候補から V4 を選び、古いファイルへ戻らないことを確認する。 */
   it("有効な V4/V3/V2/V1 がある場合は withmate-v4.db を最優先する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -194,8 +214,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** V4 が未配置なら、V3 が V2 と V1 より先に選ばれる。 */
   it("有効な V3/V2/V1 がある場合は withmate-v3.db を最優先する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -212,8 +235,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 有効な V2 の候補をそのまま利用する。 */
   it("有効な withmate-v2.db が存在すれば V2 を返す", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
@@ -226,8 +252,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** V2 が見つからない既存環境で V1 の保存先を認識する。 */
   it("withmate-v2.db が無い場合でも legacy withmate.db があれば返す", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -240,8 +269,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 旧 V1 が残っていても、検証に通った V2 を優先する。 */
   it("有効な V2 と V1 が両方ある場合は withmate-v2.db を優先する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -256,8 +288,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 初回起動では未作成でも現行 V6 のファイルパスを選ぶ。 */
   it("どの DB も無い場合は withmate-v6.db を返す（初回起動 canonical path）", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -268,8 +303,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 現行 V6 がすでに有効なら、そのファイルを実行時の保存先にする。 */
   it("有効な withmate-v6.db が存在すれば active runtime DB path selection は V6 を選ぶ", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -283,8 +321,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 修復不能な V6 があっても、有効な V4 を候補にできることを確認する。 */
   it("V6 repair が失敗しても valid V4 があれば active path selection は V4 へ fallback する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -302,8 +343,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 空の領域に対するパス解決は、移行も新規ファイル作成も行わない。 */
   it("どの DB も存在しない場合でも起動時 migration や DB 作成を呼び出さない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -322,8 +366,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** ファイル名だけが V2 と一致しても、空ファイルなら既存 V1 を隠さない。 */
   it("空の withmate-v2.db が V1 を shadow しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -338,8 +385,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 中身のない V3 候補より、検証に通る既存 V2 を優先する。 */
   it("空の withmate-v3.db が V2 を shadow しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
@@ -354,8 +404,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 中身のない V4 候補より、検証に通る既存 V3 を優先する。 */
   it("空の withmate-v4.db が V3 を shadow しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -370,8 +423,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** バージョン番号が未設定でも、必要テーブルの揃った V3 を有効とみなす。 */
   it("user_version=0 の既存 V3 DB は required tables が揃っていれば有効扱いにする", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -385,8 +441,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 旧 V2 の user_version が未設定でも、スキーマ構成から V2 と判断する。 */
   it("user_version=0 の既存 V2 DB は required tables が揃っていれば有効扱いにする", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
@@ -400,8 +459,11 @@ describe("resolveAppDatabasePath", () => {
     }
   });
 
+  /** 構造が無効な V3 のファイル名があっても、既存 V1 を選択できることを確認する。 */
   it("invalid な withmate-v3.db が V1 を shadow しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-path-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-path-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);
@@ -417,6 +479,7 @@ describe("resolveAppDatabasePath", () => {
   });
 });
 
+/** 起動時に実際の保存先を準備する処理の移行・修復・保護条件を確認する。 */
 describe("resolveOrMigrateAppDatabasePath", () => {
   // @test-value v2
   // kind = "contract"
@@ -428,8 +491,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // scope = "resolveOrMigrateAppDatabasePath valid V4"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 有効な V4 を移行しても、移行元を残したまま有効な V6 で起動できる。 */
   it("有効な withmate-v4.db が存在する場合は V6 へ移行して V6 を返す", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -445,8 +511,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** 既に有効な V6 がある起動時は、同じ保存先を使う。 */
   it("V6 DB は起動時 migration target として選ばれる", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -460,8 +529,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** 廃止された Memory テーブルだけが残る場合は、既存 V6 を使いながらそのテーブルを取り除く。 */
   it("既存 V6 DB に legacy Memory table だけが残っている場合は起動時に cleanup する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
@@ -469,7 +541,9 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const db = new DatabaseSync(v6Path);
       try {
         db.exec("CREATE TABLE project_memory_entries (id TEXT PRIMARY KEY);");
-        db.prepare("INSERT INTO project_memory_entries (id) VALUES (?)").run("legacy-memory-1");
+        db.prepare("INSERT INTO project_memory_entries (id) VALUES (?)").run(
+          "legacy-memory-1",
+        );
       } finally {
         db.close();
       }
@@ -484,8 +558,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** 修復できる V6 を優先し、V6 固有の行が V4 の再移行で失われないことを確認する。 */
   it("旧 V6 DB と valid V4 が併存する場合は V6 を repair して overwrite migration しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -504,8 +581,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** V6 を修復できなければ有効な V4 から V6 を再構成し、V4 は保持する。 */
   it("V6 repair が失敗しても valid V4 があれば V4 から V6 へ移行する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -536,8 +616,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // impact = "既存データの再移行による重複処理や上書きが起きる"
   // distinction = "同じ管理DBを2回解決し、2回目のprogressにmigrationが含まれないことを直接確認する"
   // @end-test-value
+  /** 初回移行で完了マーカーを記録し、次回起動に移行の進捗を出さないことを確認する。 */
   it("V6 DB と V4 DB が併存しても release data migration marker 済みなら再移行しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
@@ -545,17 +628,23 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
 
       const firstProgress: string[] = [];
-      const firstSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
-        firstProgress.push(progress.title);
-      });
+      const firstSelectedPath = await resolveOrMigrateAppDatabasePath(
+        userDataPath,
+        (progress) => {
+          firstProgress.push(progress.title);
+        },
+      );
       assert.equal(firstSelectedPath, v6Path);
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(v6Path), true);
       assert.equal(firstProgress.includes("Migrating saved data"), true);
 
       const secondProgress: string[] = [];
-      const secondSelectedPath = await resolveOrMigrateAppDatabasePath(userDataPath, (progress) => {
-        secondProgress.push(progress.title);
-      });
+      const secondSelectedPath = await resolveOrMigrateAppDatabasePath(
+        userDataPath,
+        (progress) => {
+          secondProgress.push(progress.title);
+        },
+      );
       assert.equal(secondSelectedPath, v6Path);
       assert.equal(secondProgress.includes("Migrating saved data"), false);
     } finally {
@@ -573,8 +662,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // scope = "startup cleanup failure and source database preservation"
   // lifecycle = "permanent"
   // @end-test-value
+  /** SQLite として開けない V4 の片付けに失敗したら既存 DB を保持し、V6 を作らない。 */
   it("SQLiteとして読めないV4のcleanup失敗は既存DBを残して起動を拒否する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -582,19 +674,28 @@ describe("resolveOrMigrateAppDatabasePath", () => {
       createV3Database(v3Path);
       await writeFile(v4Path, "not sqlite");
 
-      await assert.rejects(() => resolveOrMigrateAppDatabasePath(userDataPath), /Companion data removal is incomplete/);
+      await assert.rejects(
+        () => resolveOrMigrateAppDatabasePath(userDataPath),
+        /Companion data removal is incomplete/,
+      );
       assert.equal(existsSync(v3Path), true);
       assert.equal(isValidV3Database(v3Path), true);
       assert.equal(existsSync(v4Path), true);
       assert.equal(isValidV4Database(v4Path), false);
-      assert.equal(existsSync(path.join(userDataPath, APP_DATABASE_V6_FILENAME)), false);
+      assert.equal(
+        existsSync(path.join(userDataPath, APP_DATABASE_V6_FILENAME)),
+        false,
+      );
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
     }
   });
 
+  /** バージョン番号だけが正しい不完全な V4 で、有効な V3 からの移行を妨げない。 */
   it("user_version=4 でも required tables が欠けた withmate-v4.db は有効な V3 を shadow しない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -623,8 +724,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
   // scope = "newer managed database version"
   // lifecycle = "permanent"
   // @end-test-value
+  /** アプリが対応しない新しい V4 は拒否し、バージョン番号を変更しない。 */
   it("対応外の新しい withmate-v4.db は legacy migration で上書きしない", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -644,8 +748,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** 既存 V3 を残し、同じユーザーデータ領域に有効な V4 と V6 を用意する。 */
   it("withmate-v4.db が無く V3 がある場合は同じ userData 内に V4 を作成し、V3 を残す", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -663,8 +770,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** バージョン番号がない旧 V3 からでも、有効な V4 と V6 を準備する。 */
   it("user_version=0 の既存 V3 DB から V4 へ自動移行する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v3Path = path.join(userDataPath, APP_DATABASE_V3_FILENAME);
@@ -681,8 +791,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** V2 だけがある環境では移行元を保持して V3 と V4 を経由し、V6 を有効にする。 */
   it("V2 しか無い場合は V2 を残したまま V3 経由で V4 を作成する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
@@ -702,8 +815,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** バージョン番号のない旧 V2 でも、元のファイルを残して V6 まで更新する。 */
   it("user_version=0 の既存 V2 DB から V4 へ自動移行する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v2Path = path.join(userDataPath, APP_DATABASE_V2_FILENAME);
@@ -723,8 +839,11 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  /** 最も古い V1 だけがある場合も、中間世代の保存先を用意して V6 を選ぶ。 */
   it("V1 しか無い場合は V1 を残したまま V2/V3 経由で V4 を作成する", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
+    const userDataPath = await mkdtemp(
+      path.join(tmpdir(), "withmate-app-db-migrate-"),
+    );
 
     try {
       const v1Path = path.join(userDataPath, APP_DATABASE_V1_FILENAME);

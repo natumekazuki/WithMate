@@ -7,16 +7,22 @@ import { createRoot } from "react-dom/client";
 import { MermaidViewport } from "../../src/ui/markdown/mermaid-viewport.js";
 import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function withViewport(run: (fixture: {
-  container: HTMLElement;
-  render: (sourceKey?: string, step?: number) => Promise<void>;
-  resize: (width: number, height: number) => Promise<void>;
-}) => Promise<void>, options: {
-  svg?: string;
-  onOpenPath?: (target: string) => void;
-} = {}) {
+/** 固定寸法の DOM に二つの図を表示し、再描画・領域変更・リンク委譲を試せるようにする。 */
+async function withViewport(
+  run: (fixture: {
+    container: HTMLElement;
+    render: (sourceKey?: string, step?: number) => Promise<void>;
+    resize: (width: number, height: number) => Promise<void>;
+  }) => Promise<void>,
+  options: {
+    svg?: string;
+    onOpenPath?: (target: string) => void;
+  } = {},
+) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const previous = Object.getOwnPropertyDescriptors(globalThis);
   const callbacks = new Set<() => void>();
@@ -25,50 +31,89 @@ async function withViewport(run: (fixture: {
   Object.defineProperties(globalThis, {
     window: { configurable: true, value: dom.window },
     document: { configurable: true, value: dom.window.document },
-    ResizeObserver: { configurable: true, value: class {
-      constructor(private callback: () => void) {}
-      observe() { callbacks.add(this.callback); }
-      disconnect() { callbacks.delete(this.callback); }
-    } },
+    ResizeObserver: {
+      configurable: true,
+      value: class {
+        /** 領域変更を擬似通知するための再計測コールバックを保持する。 */
+        constructor(private callback: () => void) {}
+        /** この表示領域の再計測を通知先に追加する。 */
+        observe() {
+          callbacks.add(this.callback);
+        }
+        /** 破棄済み領域が次のサイズ通知を受けないよう登録を外す。 */
+        disconnect() {
+          callbacks.delete(this.callback);
+        }
+      },
+    },
   });
   Object.defineProperties(dom.window.HTMLElement.prototype, {
-    clientWidth: { configurable: true, get: () => viewportWidth },
-    clientHeight: { configurable: true, get: () => viewportHeight },
+    clientWidth: {
+      configurable: true,
+      /** リサイズ後の最新の表示幅をレイアウトの代わりに返す。 */ get: () =>
+        viewportWidth,
+    },
+    clientHeight: {
+      configurable: true,
+      /** リサイズ後の最新の表示高をレイアウトの代わりに返す。 */ get: () =>
+        viewportHeight,
+    },
   });
   Object.defineProperty(dom.window.SVGElement.prototype, "viewBox", {
+    /** Fit の基準となる SVG の原寸を返す。 */
     get: () => ({ baseVal: { width: 2000, height: 1000 } }),
   });
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
+  /** 最初の図だけ識別子を変更でき、二つの図で共通のホイール刻みを適用する。 */
   const render = async (sourceKey = "first", step = 5) => {
-    await act(async () => root.render(<PreviewWheelZoomStepContext.Provider value={step}>
-      <MermaidViewport
-        key={sourceKey}
-        svg={options.svg ?? '<svg viewBox="0 0 2000 1000"><text>First diagram</text></svg>'}
-        onOpenPath={options.onOpenPath}
-      />
-      <MermaidViewport key="second" svg='<svg viewBox="0 0 2000 1000"><text>Second diagram</text></svg>' />
-    </PreviewWheelZoomStepContext.Provider>));
+    await act(async () =>
+      root.render(
+        <PreviewWheelZoomStepContext.Provider value={step}>
+          <MermaidViewport
+            key={sourceKey}
+            svg={
+              options.svg ??
+              '<svg viewBox="0 0 2000 1000"><text>First diagram</text></svg>'
+            }
+            onOpenPath={options.onOpenPath}
+          />
+          <MermaidViewport
+            key="second"
+            svg='<svg viewBox="0 0 2000 1000"><text>Second diagram</text></svg>'
+          />
+        </PreviewWheelZoomStepContext.Provider>,
+      ),
+    );
   };
   try {
     await render();
-    await run({ container, render, resize: async (width, height) => {
-      viewportWidth = width;
-      viewportHeight = height;
-      await act(async () => callbacks.forEach((callback) => callback()));
-    } });
+    await run({
+      container,
+      render,
+      /** 領域の疑似寸法を変え、監視コールバックを React の更新内で発火する。 */
+      resize: async (width, height) => {
+        viewportWidth = width;
+        viewportHeight = height;
+        await act(async () => callbacks.forEach((callback) => callback()));
+      },
+    });
   } finally {
     await act(async () => root.unmount());
     for (const name of ["window", "document", "ResizeObserver"]) {
-      if (previous[name]) Object.defineProperty(globalThis, name, previous[name]);
+      if (previous[name])
+        Object.defineProperty(globalThis, name, previous[name]);
       else Reflect.deleteProperty(globalThis, name);
     }
     dom.window.close();
   }
 }
 
+/** 対象の図の範囲でアクセシブル名が一致する操作ボタンを取得する。 */
 function button(container: Element, name: string): HTMLButtonElement {
-  const result = container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+  const result = container.querySelector<HTMLButtonElement>(
+    `button[aria-label="${name}"]`,
+  );
   assert.ok(result);
   return result;
 }
@@ -84,16 +129,27 @@ function button(container: Element, name: string): HTMLButtonElement {
 // lifecycle = "permanent"
 // distinction = "既存の画像Fit計算testでは確認しないSVGへの倍率適用と図ごとの状態分離を、小さいDOM fixtureで確認する"
 // @end-test-value
+/** Fit の実効倍率から拡縮して等倍や Fit に戻せ、別の図の倍率とスクロール位置には影響しないことを確認する。 */
 test("Mermaidの拡縮・100%・Fitは図ごとに独立する", async () => {
   await withViewport(async ({ container }) => {
-    const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
-    const firstCanvas = first.querySelector<HTMLElement>(".message-mermaid-canvas")!;
+    const [first, second] = Array.from(
+      container.querySelectorAll<HTMLElement>(".message-mermaid"),
+    );
+    const firstCanvas = first.querySelector<HTMLElement>(
+      ".message-mermaid-canvas",
+    )!;
     const firstViewport = first.querySelector<HTMLElement>("[role=region]")!;
     const secondViewport = second.querySelector<HTMLElement>("[role=region]")!;
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
     assert.equal(firstCanvas.style.width, "800px");
     await act(async () => button(first, "Zoom diagram in").click());
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "50%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "50%",
+    );
     assert.equal(firstCanvas.style.width, "1000px");
     assert.equal(firstCanvas.style.height, "500px");
     await act(async () => button(first, "Zoom diagram out").click());
@@ -109,7 +165,10 @@ test("Mermaidの拡縮・100%・Fitは図ごとに独立する", async () => {
     assert.equal(firstCanvas.style.width, "800px");
     assert.equal(firstViewport.scrollLeft, 0);
     assert.equal(firstViewport.scrollTop, 0);
-    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(
+      button(second, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
     assert.equal(secondViewport.scrollLeft, 15);
     assert.equal(secondViewport.scrollTop, 20);
     assert.equal(firstViewport.tabIndex, 0);
@@ -128,40 +187,83 @@ test("Mermaidの拡縮・100%・Fitは図ごとに独立する", async () => {
 // impact = "図からのリンク操作でElectronの表示面やファイル相対解決を失う"
 // distinction = "通常Markdownのanchor testでは通らないSVG DOMの委譲とpanの入力競合を小さいfixtureで確認する"
 // @end-test-value
+/** SVG と HTML のリンクで元の宛先だけを委譲し、中クリックやパニングでナビゲーションしないことを確認する。 */
 test("Mermaid linkはraw targetを委譲しauxiliary clickとpanで遷移しない", async () => {
   const opened: string[] = [];
-  await withViewport(async ({ container }) => {
-    const viewport = container.querySelector<HTMLElement>("[role=region]")!;
-    const svgText = viewport.querySelector("a text")!;
-    const htmlText = viewport.querySelector("a span")!;
-    const Mouse = container.ownerDocument.defaultView!.MouseEvent;
-    const dispatch = async (target: Element, type: string, init: MouseEventInit = {}) => {
-      const event = new Mouse(type, { bubbles: true, cancelable: true, ...init });
-      Object.defineProperty(event, "pointerId", { value: 1 });
-      await act(async () => target.dispatchEvent(event));
-      return event;
-    };
-    assert.equal((await dispatch(svgText, "click")).defaultPrevented, true);
-    assert.equal((await dispatch(htmlText, "click", { detail: 0 })).defaultPrevented, true);
-    assert.deepEqual(opened, ["../target%20file.md#L10", "https://example.com/path"]);
-    assert.equal((await dispatch(svgText, "auxclick", { button: 1 })).defaultPrevented, true);
-    assert.equal((await dispatch(htmlText, "auxclick", { button: 2 })).defaultPrevented, true);
-    assert.equal(opened.length, 2);
-    Object.defineProperty(viewport, "scrollWidth", { get: () => 2000 });
-    viewport.setPointerCapture = () => {};
-    viewport.hasPointerCapture = () => false;
-    await dispatch(svgText, "pointerdown", { ctrlKey: true, clientX: 100, clientY: 100 });
-    await dispatch(viewport, "pointermove", { ctrlKey: true, clientX: 80, clientY: 90 });
-    await dispatch(viewport, "pointerup", { ctrlKey: true });
-    assert.equal((await dispatch(svgText, "click", { ctrlKey: true })).defaultPrevented, true);
-    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, opened.length], [20, 10, 2]);
-    await dispatch(svgText, "pointerdown");
-    await dispatch(svgText, "click");
-    assert.equal(opened.length, 3);
-  }, {
-    onOpenPath: (target) => opened.push(target),
-    svg: '<svg viewBox="0 0 2000 1000"><a xlink:href="../target%20file.md#L10"><text>File</text></a><foreignObject><a href="//example.com/path"><span>Website</span></a></foreignObject></svg>',
-  });
+  await withViewport(
+    async ({ container }) => {
+      const viewport = container.querySelector<HTMLElement>("[role=region]")!;
+      const svgText = viewport.querySelector("a text")!;
+      const htmlText = viewport.querySelector("a span")!;
+      const Mouse = container.ownerDocument.defaultView!.MouseEvent;
+      /** リンク内要素へマウスイベントを送り、ブラウザー既定動作の抑止も調べられるようにする。 */
+      const dispatch = async (
+        target: Element,
+        type: string,
+        init: MouseEventInit = {},
+      ) => {
+        const event = new Mouse(type, {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        });
+        Object.defineProperty(event, "pointerId", { value: 1 });
+        await act(async () => target.dispatchEvent(event));
+        return event;
+      };
+      assert.equal((await dispatch(svgText, "click")).defaultPrevented, true);
+      assert.equal(
+        (await dispatch(htmlText, "click", { detail: 0 })).defaultPrevented,
+        true,
+      );
+      assert.deepEqual(opened, [
+        "../target%20file.md#L10",
+        "https://example.com/path",
+      ]);
+      assert.equal(
+        (await dispatch(svgText, "auxclick", { button: 1 })).defaultPrevented,
+        true,
+      );
+      assert.equal(
+        (await dispatch(htmlText, "auxclick", { button: 2 })).defaultPrevented,
+        true,
+      );
+      assert.equal(opened.length, 2);
+      Object.defineProperty(viewport, "scrollWidth", {
+        /** 横方向に移動可能な領域としてスクロール幅を与える。 */ get: () =>
+          2000,
+      });
+      viewport.setPointerCapture = () => {};
+      viewport.hasPointerCapture = () => false;
+      await dispatch(svgText, "pointerdown", {
+        ctrlKey: true,
+        clientX: 100,
+        clientY: 100,
+      });
+      await dispatch(viewport, "pointermove", {
+        ctrlKey: true,
+        clientX: 80,
+        clientY: 90,
+      });
+      await dispatch(viewport, "pointerup", { ctrlKey: true });
+      assert.equal(
+        (await dispatch(svgText, "click", { ctrlKey: true })).defaultPrevented,
+        true,
+      );
+      assert.deepEqual(
+        [viewport.scrollLeft, viewport.scrollTop, opened.length],
+        [20, 10, 2],
+      );
+      await dispatch(svgText, "pointerdown");
+      await dispatch(svgText, "click");
+      assert.equal(opened.length, 3);
+    },
+    {
+      /** 有効なリンクから外部処理へ委譲される加工前の宛先を記録する。 */
+      onOpenPath: (target) => opened.push(target),
+      svg: '<svg viewBox="0 0 2000 1000"><a xlink:href="../target%20file.md#L10"><text>File</text></a><foreignObject><a href="//example.com/path"><span>Website</span></a></foreignObject></svg>',
+    },
+  );
 });
 
 // @test-value v2
@@ -176,32 +278,43 @@ test("Mermaid linkはraw targetを委譲しauxiliary clickとpanで遷移しな�
 // impact = "開けないリンクから復帰不能になるか失敗理由を確認できなくなる"
 // distinction = "Mermaidのsanitizer自体のtestではなくsanitization後のanchorを操作したときの利用者向け境界を確認する"
 // @end-test-value
+/** 無効な宛先では図を残してエラーを表示し、同一ページのフラグメントでは遷移させずエラーとも扱わないことを確認する。 */
 test("Mermaidの無効linkは図を保持してerrorを示す", async () => {
   for (const invalidLink of [
-    '<a><text>Removed</text></a>',
+    "<a><text>Removed</text></a>",
     '<a href="about:blank"><text>Unsupported</text></a>',
   ]) {
     const opened: string[] = [];
-    await withViewport(async ({ container }) => {
-      const diagram = container.querySelector(".message-mermaid-canvas svg")!;
-      const Mouse = container.ownerDocument.defaultView!.MouseEvent;
-      assert.equal(container.querySelector("[role=alert]"), null);
-      for (const link of diagram.querySelectorAll("a")) {
-        const event = new Mouse("click", { bubbles: true, cancelable: true });
-        await act(async () => link.dispatchEvent(event));
-        assert.equal(event.defaultPrevented, true);
-        assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
-        if (link.getAttribute("href") === "#node") {
-          assert.equal(container.querySelector("[role=alert]"), null);
-        } else {
-          assert.match(container.querySelector("[role=alert]")?.textContent ?? "", /no supported destination/);
+    await withViewport(
+      async ({ container }) => {
+        const diagram = container.querySelector(".message-mermaid-canvas svg")!;
+        const Mouse = container.ownerDocument.defaultView!.MouseEvent;
+        assert.equal(container.querySelector("[role=alert]"), null);
+        for (const link of diagram.querySelectorAll("a")) {
+          const event = new Mouse("click", { bubbles: true, cancelable: true });
+          await act(async () => link.dispatchEvent(event));
+          assert.equal(event.defaultPrevented, true);
+          assert.equal(
+            container.querySelector(".message-mermaid-canvas svg"),
+            diagram,
+          );
+          if (link.getAttribute("href") === "#node") {
+            assert.equal(container.querySelector("[role=alert]"), null);
+          } else {
+            assert.match(
+              container.querySelector("[role=alert]")?.textContent ?? "",
+              /no supported destination/,
+            );
+          }
         }
-      }
-      assert.deepEqual(opened, []);
-    }, {
-      onOpenPath: (target) => opened.push(target),
-      svg: `<svg viewBox="0 0 2000 1000">${invalidLink}<a href="#node"><text>Fragment</text></a></svg>`,
-    });
+        assert.deepEqual(opened, []);
+      },
+      {
+        /** 無効なリンクが外部処理へ誤って委譲されないか記録する。 */
+        onOpenPath: (target) => opened.push(target),
+        svg: `<svg viewBox="0 0 2000 1000">${invalidLink}<a href="#node"><text>Fragment</text></a></svg>`,
+      },
+    );
   }
 });
 
@@ -216,20 +329,43 @@ test("Mermaidの無効linkは図を保持してerrorを示す", async () => {
 // lifecycle = "permanent"
 // distinction = "型検査や画像用testはSVG寸法とresize通知から実効倍率への接続を確認しない"
 // @end-test-value
+/** 領域のサイズ変更には Fit だけが追従し、同じ図の手動倍率は維持しつつ別の図に切り替えると Fit に戻ることを確認する。 */
 test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () => {
   await withViewport(async ({ container, resize, render }) => {
     await resize(319, 400);
-    assert.equal(button(container, "Reset diagram zoom to 100%").textContent, "15.9%");
-    assert.equal(container.querySelector<HTMLElement>(".message-mermaid-canvas")?.style.width, "318px");
-    await act(async () => button(container, "Reset diagram zoom to 100%").click());
+    assert.equal(
+      button(container, "Reset diagram zoom to 100%").textContent,
+      "15.9%",
+    );
+    assert.equal(
+      container.querySelector<HTMLElement>(".message-mermaid-canvas")?.style
+        .width,
+      "318px",
+    );
+    await act(async () =>
+      button(container, "Reset diagram zoom to 100%").click(),
+    );
     await resize(600, 200);
-    assert.equal(button(container, "Reset diagram zoom to 100%").textContent, "100%");
+    assert.equal(
+      button(container, "Reset diagram zoom to 100%").textContent,
+      "100%",
+    );
     await act(async () => button(container, "Fit diagram to preview").click());
-    assert.equal(button(container, "Reset diagram zoom to 100%").textContent, "20%");
+    assert.equal(
+      button(container, "Reset diagram zoom to 100%").textContent,
+      "20%",
+    );
     await act(async () => button(container, "Zoom diagram in").click());
     await render("new-source");
-    assert.equal(button(container, "Reset diagram zoom to 100%").textContent, "20%");
-    assert.equal(container.querySelector<HTMLElement>(".message-mermaid-canvas")?.style.height, "200px");
+    assert.equal(
+      button(container, "Reset diagram zoom to 100%").textContent,
+      "20%",
+    );
+    assert.equal(
+      container.querySelector<HTMLElement>(".message-mermaid-canvas")?.style
+        .height,
+      "200px",
+    );
   });
 });
 
@@ -244,42 +380,84 @@ test("MermaidのFitはresizeへ追従し手動倍率は維持する", async () =
 // lifecycle = "permanent"
 // distinction = "button操作testが通らないnative wheelの接続と通常scrollのイベント境界を確認する"
 // @end-test-value
+/** Ctrl 付きホイールは対象の図だけを設定刻みで拡縮し、設定変更そのものや通常ホイールでは倍率を変えないことを確認する。 */
 test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持する", async () => {
   await withViewport(async ({ container, render }) => {
-    const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
+    const [first, second] = Array.from(
+      container.querySelectorAll<HTMLElement>(".message-mermaid"),
+    );
     const viewport = first.querySelector<HTMLElement>("[role=region]")!;
     const canvas = first.querySelector<HTMLElement>(".message-mermaid-canvas")!;
     const Wheel = container.ownerDocument.defaultView!.WheelEvent;
     let parentWheels = 0;
     container.addEventListener("wheel", () => parentWheels++);
+    /** 対象へホイールを発火し、React 反映後にイベントの抑止状態を返す。 */
     const wheel = async (deltaY: number, ctrlKey: boolean) => {
-      const event = new Wheel("wheel", { deltaY, ctrlKey, bubbles: true, cancelable: true });
+      const event = new Wheel("wheel", {
+        deltaY,
+        ctrlKey,
+        bubbles: true,
+        cancelable: true,
+      });
       await act(async () => viewport.dispatchEvent(event));
       return event;
     };
     assert.equal((await wheel(-100, true)).defaultPrevented, true);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "45%");
-    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "45%",
+    );
+    assert.equal(
+      button(second, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
     assert.equal(canvas.style.width, "900px");
     assert.equal((await wheel(100, true)).defaultPrevented, true);
     assert.equal(canvas.style.width, "800px");
     assert.equal(parentWheels, 0);
     assert.equal((await wheel(100, false)).defaultPrevented, false);
     assert.equal(parentWheels, 1);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "40%");
-    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
+    assert.equal(
+      button(second, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
     await act(async () => button(first, "Fit diagram to preview").click());
-    assert.equal(button(first, "Fit diagram to preview").getAttribute("aria-pressed"), "true");
+    assert.equal(
+      button(first, "Fit diagram to preview").getAttribute("aria-pressed"),
+      "true",
+    );
     await render("first", 20);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "40%");
-    assert.equal(button(first, "Fit diagram to preview").getAttribute("aria-pressed"), "true");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
+    assert.equal(
+      button(first, "Fit diagram to preview").getAttribute("aria-pressed"),
+      "true",
+    );
     await wheel(-100, true);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "60%");
-    assert.equal(button(second, "Reset diagram zoom to 100%").textContent, "40%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "60%",
+    );
+    assert.equal(
+      button(second, "Reset diagram zoom to 100%").textContent,
+      "40%",
+    );
     await render("first", 1);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "60%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "60%",
+    );
     await wheel(100, true);
-    assert.equal(button(first, "Reset diagram zoom to 100%").textContent, "59%");
+    assert.equal(
+      button(first, "Reset diagram zoom to 100%").textContent,
+      "59%",
+    );
   });
 });
 
@@ -294,23 +472,51 @@ test("MermaidのCtrl＋wheelは対象だけを拡縮し通常wheelを保持す�
 // lifecycle = "permanent"
 // distinction = "倍率testでは観測できない共通panの修飾key条件、別図の独立性とpointer中断を実componentで検証する"
 // @end-test-value
+/** Ctrl を押した左ドラッグだけが対象図を移動し、終了・中断で止まり、文字選択と右クリックを妨げないことを確認する。 */
 test("MermaidはCtrl＋左dragで移動し文字選択と右clickを保持する", async () => {
   await withViewport(async ({ container }) => {
-    const [first, second] = Array.from(container.querySelectorAll<HTMLElement>(".message-mermaid"));
+    const [first, second] = Array.from(
+      container.querySelectorAll<HTMLElement>(".message-mermaid"),
+    );
     const viewport = first.querySelector<HTMLElement>("[role=region]")!;
     const other = second.querySelector<HTMLElement>("[role=region]")!;
     const canvas = first.querySelector<HTMLElement>(".message-mermaid-canvas")!;
     Object.defineProperties(viewport, {
-      scrollWidth: { get: () => Number.parseFloat(canvas.style.width) },
-      scrollHeight: { get: () => Number.parseFloat(canvas.style.height) },
+      scrollWidth: {
+        /** ズーム後の描画幅を横スクロールの範囲として返す。 */ get: () =>
+          Number.parseFloat(canvas.style.width),
+      },
+      scrollHeight: {
+        /** ズーム後の描画高を縦スクロールの範囲として返す。 */ get: () =>
+          Number.parseFloat(canvas.style.height),
+      },
     });
     let captured: number | null = null;
-    viewport.setPointerCapture = (id) => { captured = id; };
+    viewport.setPointerCapture = (id) => {
+      captured = id;
+    };
     viewport.hasPointerCapture = (id) => captured === id;
-    viewport.releasePointerCapture = () => { captured = null; };
+    viewport.releasePointerCapture = () => {
+      captured = null;
+    };
     const Mouse = container.ownerDocument.defaultView!.MouseEvent;
-    const pointer = async (type: string, button = 0, x = 200, y = 160, id = 7, ctrlKey = true) => {
-      const event = new Mouse(type, { button, ctrlKey, clientX: x, clientY: y, bubbles: true, cancelable: true });
+    /** ボタン・座標・修飾キーを明示した操作を送ってパンの開始から終了までを再現する。 */
+    const pointer = async (
+      type: string,
+      button = 0,
+      x = 200,
+      y = 160,
+      id = 7,
+      ctrlKey = true,
+    ) => {
+      const event = new Mouse(type, {
+        button,
+        ctrlKey,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      });
       Object.defineProperty(event, "pointerId", { value: id });
       await act(async () => viewport.dispatchEvent(event));
       return event;
@@ -318,22 +524,39 @@ test("MermaidはCtrl＋左dragで移動し文字選択と右clickを保持する
     await act(async () => button(first, "Reset diagram zoom to 100%").click());
     viewport.scrollLeft = 120;
     viewport.scrollTop = 90;
-    for (const [mouseButton, ctrlKey] of [[0, false], [2, false], [2, true]] as const) {
-      assert.equal((await pointer("pointerdown", mouseButton, 200, 160, 7, ctrlKey)).defaultPrevented, false);
+    for (const [mouseButton, ctrlKey] of [
+      [0, false],
+      [2, false],
+      [2, true],
+    ] as const) {
+      assert.equal(
+        (await pointer("pointerdown", mouseButton, 200, 160, 7, ctrlKey))
+          .defaultPrevented,
+        false,
+      );
       await pointer("pointermove", mouseButton, 150, 120, 7, ctrlKey);
-      assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [120, 90, null]);
+      assert.deepEqual(
+        [viewport.scrollLeft, viewport.scrollTop, captured],
+        [120, 90, null],
+      );
     }
     assert.equal((await pointer("contextmenu", 2)).defaultPrevented, false);
     assert.equal((await pointer("pointerdown")).defaultPrevented, true);
     await pointer("pointermove", 0, 150, 120);
-    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [170, 130, 7]);
+    assert.deepEqual(
+      [viewport.scrollLeft, viewport.scrollTop, captured],
+      [170, 130, 7],
+    );
     assert.deepEqual([other.scrollLeft, other.scrollTop], [0, 0]);
     assert.equal(viewport.classList.contains("is-panning"), true);
     await pointer("pointermove", 0, 100, 80, 8);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [170, 130]);
     await pointer("pointerup");
     await pointer("pointermove", 0, 100, 80);
-    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop, captured], [170, 130, null]);
+    assert.deepEqual(
+      [viewport.scrollLeft, viewport.scrollTop, captured],
+      [170, 130, null],
+    );
     assert.equal(viewport.classList.contains("is-panning"), false);
     assert.equal((await pointer("contextmenu", 2)).defaultPrevented, false);
 

@@ -2,49 +2,180 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { JSDOM } from "jsdom";
-import { useSessionTurnQueue, type SessionTurnQueueApi } from "../../src/chat/conversation/use-session-turn-queue.js";
-import { SessionTurnQueueRow, SessionTurnQueueStatus } from "../../src/chat/conversation/session-turn-queue-row.js";
+import {
+  useSessionTurnQueue,
+  type SessionTurnQueueApi,
+} from "../../src/chat/conversation/use-session-turn-queue.js";
+import {
+  SessionTurnQueueRow,
+  SessionTurnQueueStatus,
+} from "../../src/chat/conversation/session-turn-queue-row.js";
 import { projectSessionTurnQueue } from "../../src/chat/conversation/session-turn-queue-projection.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
-function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
-  return { sessionId: "session", incarnationId: "incarnation", id: "item", requestId: "request", sequence: 1, queuePosition: overrides.sequence ?? 1, state: "running",
-    captured: { request: { clientRequestId: "request", userMessage: "original prompt", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
-    turnId: "turn", userMessageSeq: 42, reason: null, releasedAt: null, createdAt: "2026-10-10T00:00:00Z", updatedAt: "2026-10-10T00:00:00Z", ...overrides };
+/** 状態や連番を差し替えられる受理済みキュー項目を作り、元の入力本文は固定する。 */
+function receipt(
+  overrides: Partial<SessionTurnQueueReceipt> = {},
+): SessionTurnQueueReceipt {
+  return {
+    sessionId: "session",
+    incarnationId: "incarnation",
+    id: "item",
+    requestId: "request",
+    sequence: 1,
+    queuePosition: overrides.sequence ?? 1,
+    state: "running",
+    captured: {
+      request: {
+        clientRequestId: "request",
+        userMessage: "original prompt",
+        executionOptions: {
+          model: "model",
+          reasoningEffort: "medium",
+          approvalMode: "on-request",
+          codexSandboxMode: "workspace-write",
+          codexSpeed: "standard",
+          codexReviewer: "user",
+          customAgentName: "",
+        },
+      },
+      attachments: [],
+      provider: "codex",
+      workspacePath: "workspace",
+    },
+    turnId: "turn",
+    userMessageSeq: 42,
+    reason: null,
+    releasedAt: null,
+    createdAt: "2026-10-10T00:00:00Z",
+    updatedAt: "2026-10-10T00:00:00Z",
+    ...overrides,
+  };
 }
 
+/** キュー購読フックと投影、実際の待機カードをJSDOMへ組み込む。 */
 async function mount(api: SessionTurnQueueApi) {
-  const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test", pretendToBeVisual: true });
-  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
-  const originals = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  const dom = new JSDOM("<div id='root'></div>", {
+    url: "https://withmate.test",
+    pretendToBeVisual: true,
+  });
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const originals = new Map(
+    Object.keys(globals).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      writable: true,
+      value,
+    });
   let current!: ReturnType<typeof useSessionTurnQueue>;
+  /** 保存連番と現在の受理情報を合わせ、本文・操作・末尾の待機項目を表示する。 */
   function View({ seqs }: { seqs: number[] }) {
     current = useSessionTurnQueue(api, "session", "incarnation", true, seqs);
-    const { projection, metadata, tail } = projectSessionTurnQueue({
-      messages: seqs.map(() => ({ role: "user" as const, text: "saved prompt" })),
-      keys: seqs.map((seq) => `saved-${seq}`), sources: seqs.map((seq) => ({ kind: "session" as const, messageIndex: seq })), groups: seqs.map(() => null),
-    }, current.receipts, { sessionId: "session", incarnationId: "incarnation" });
-    const row = (item: SessionTurnQueueReceipt) => <SessionTurnQueueRow key={item.id} character={{ name: "Mate", iconPath: "" }} receipt={item} busy={current.busyId !== null} busyKind={current.busyId === item.id ? current.busyKind : null} onCancel={current.cancel} onSendInput={(selected) => current.sendInput(selected, "current-turn")} />;
-    return <>
-      {projection.messages.map((message, index) => <div key={projection.keys[index]}><p>{message.text}</p>{metadata.has(projection.keys[index]) ? <SessionTurnQueueStatus receipt={metadata.get(projection.keys[index])!} busy={current.busyId !== null} busyKind={current.busyId === metadata.get(projection.keys[index])!.id ? current.busyKind : null} onCancel={current.cancel} onSendInput={(selected) => current.sendInput(selected, "current-turn")} /> : null}</div>)}
-      {tail.map(row)}
-      {current.error ? <div role="alert">{current.error}<button onClick={current.reload}>Retry Queue</button></div> : null}
-    </>;
+    const { projection, metadata, tail } = projectSessionTurnQueue(
+      {
+        messages: seqs.map(() => ({
+          role: "user" as const,
+          text: "saved prompt",
+        })),
+        keys: seqs.map((seq) => `saved-${seq}`),
+        sources: seqs.map((seq) => ({
+          kind: "session" as const,
+          messageIndex: seq,
+        })),
+        groups: seqs.map(() => null),
+      },
+      current.receipts,
+      { sessionId: "session", incarnationId: "incarnation" },
+    );
+    /** キュー項目ごとの処理状態を渡し、現在Turnへの追加入力操作に接続する。 */
+    const row = (item: SessionTurnQueueReceipt) => (
+      <SessionTurnQueueRow
+        key={item.id}
+        character={{ name: "Mate", iconPath: "" }}
+        receipt={item}
+        busy={current.busyId !== null}
+        busyKind={current.busyId === item.id ? current.busyKind : null}
+        onCancel={current.cancel}
+        onSendInput={(selected) => current.sendInput(selected, "current-turn")}
+      />
+    );
+    return (
+      <>
+        {projection.messages.map((message, index) => (
+          <div key={projection.keys[index]}>
+            <p>{message.text}</p>
+            {metadata.has(projection.keys[index]) ? (
+              <SessionTurnQueueStatus
+                receipt={metadata.get(projection.keys[index])!}
+                busy={current.busyId !== null}
+                busyKind={
+                  current.busyId === metadata.get(projection.keys[index])!.id
+                    ? current.busyKind
+                    : null
+                }
+                onCancel={current.cancel}
+                onSendInput={(selected) =>
+                  current.sendInput(selected, "current-turn")
+                }
+              />
+            ) : null}
+          </div>
+        ))}
+        {tail.map(row)}
+        {current.error ? (
+          <div role="alert">
+            {current.error}
+            <button onClick={current.reload}>Retry Queue</button>
+          </div>
+        ) : null}
+      </>
+    );
   }
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(dom.window.document.getElementById("root")!);
-  await act(async () => { root.render(<View seqs={[]} />); });
+  await act(async () => {
+    root.render(<View seqs={[]} />);
+  });
   return {
-    get current() { return current; }, document: dom.window.document,
-    async canonical(seqs: number[]) { await act(async () => { root.render(<View seqs={seqs} />); }); },
-    async click(text: string) { await act(async () => {
-      const button = [...dom.window.document.querySelectorAll("button")].find((item) => item.textContent === text);
-      assert.ok(button, text); button.click();
-    }); },
-    async unmount() { await act(async () => root.unmount()); dom.window.close(); for (const [key, descriptor] of originals) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
-    } },
+    /** 最後の描画で得たフックの状態を取得する。 */
+    get current() {
+      return current;
+    },
+    document: dom.window.document,
+    /** 与えた連番を保存履歴として描画し、受理情報からの引き継ぎを進める。 */
+    async canonical(seqs: number[]) {
+      await act(async () => {
+        root.render(<View seqs={seqs} />);
+      });
+    },
+    /** ラベルに一致する実DOMのボタンを押し、フックまで操作を届ける。 */
+    async click(text: string) {
+      await act(async () => {
+        const button = [...dom.window.document.querySelectorAll("button")].find(
+          (item) => item.textContent === text,
+        );
+        assert.ok(button, text);
+        button.click();
+      });
+    },
+    /** 購読を終了してからDOMを閉じ、グローバルのテスト設定を復元する。 */
+    async unmount() {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
   };
 }
 
@@ -60,42 +191,74 @@ async function mount(api: SessionTurnQueueApi) {
 // impact = "履歴量に比例した再取得と通知逆順による本文消失を防ぐ"
 // distinction = "純粋projection testは実購読通知・API失敗・terminal照会の境界を通らない"
 // @end-test-value
+/** アクティブ一覧から消えた実行だけを個別に照会し、更新失敗でも取得済みの受理情報を保持することを確認する。 */
 test("active subscription bridges only disappeared runs and retains failures", async () => {
-  let active = [receipt()]; let fail = true; let historyCalls = 0;
+  let active = [receipt()];
+  let fail = true;
+  let historyCalls = 0;
   let activeCalls = 0;
   let resumeRefresh: (() => void) | undefined;
   let holdRefresh = false;
   let listener!: (id: string) => void;
   const lookups: string[] = [];
   const view = await mount({
+    /** 一覧の呼出を数え、応答の保留と失敗を切り替えられるようにする。 */
     listSessionTurnQueue: async () => {
       ++activeCalls;
-      if (holdRefresh) await new Promise<void>((resolve) => { resumeRefresh = resolve; });
-      if (fail) throw new Error("active unavailable"); return active;
+      if (holdRefresh)
+        await new Promise<void>((resolve) => {
+          resumeRefresh = resolve;
+        });
+      if (fail) throw new Error("active unavailable");
+      return active;
     },
-    getSessionTurnQueueReceipt: async (_session, id) => { lookups.push(id); return receipt({ state: "completed" }); },
-    listSessionTurnQueueReceipts: async () => { ++historyCalls; return { receipts: [], nextCursor: null }; },
-    onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
+    /** 終端を確認した入力のIDを集め、完了済みの状態を返す。 */
+    getSessionTurnQueueReceipt: async (_session, id) => {
+      lookups.push(id);
+      return receipt({ state: "completed" });
+    },
+    /** アクティブ購読では不要な履歴全体の読取を数えて検出する。 */
+    listSessionTurnQueueReceipts: async () => {
+      ++historyCalls;
+      return { receipts: [], nextCursor: null };
+    },
+    /** テストがキュー変更を通知するための購読先を控える。 */
+    onSessionTurnQueueChanged: (next) => {
+      listener = next;
+      return () => {};
+    },
   });
   try {
     assert.equal(view.current.receipts.length, 0);
     assert.match(view.current.error, /active unavailable/);
-    fail = false; holdRefresh = true;
+    fail = false;
+    holdRefresh = true;
     await act(async () => view.current.reload());
-    assert.equal(view.current.loading, true, "an initial failure has not established a ready queue");
+    assert.equal(
+      view.current.loading,
+      true,
+      "an initial failure has not established a ready queue",
+    );
     await act(async () => resumeRefresh?.());
     holdRefresh = false;
     assert.equal(view.current.loading, false);
     assert.equal(view.current.receipts[0]?.state, "running");
     holdRefresh = true;
     await act(async () => listener("session"));
-    assert.equal(view.current.loading, false, "refresh preserves the ready conversation instead of restoring initial loading");
+    assert.equal(
+      view.current.loading,
+      false,
+      "refresh preserves the ready conversation instead of restoring initial loading",
+    );
     assert.equal(view.current.receipts[0]?.state, "running");
-    holdRefresh = false; fail = true;
+    holdRefresh = false;
+    fail = true;
     await act(async () => resumeRefresh?.());
     assert.equal(view.current.receipts[0]?.state, "running");
     assert.match(view.current.error, /active unavailable/);
-    fail = false; active = []; await act(async () => view.current.reload());
+    fail = false;
+    active = [];
+    await act(async () => view.current.reload());
     assert.deepEqual(lookups, ["request"]);
     assert.equal(view.current.receipts[0]?.state, "completed");
     const callsBeforeCanonical = activeCalls;
@@ -103,12 +266,18 @@ test("active subscription bridges only disappeared runs and retains failures", a
     assert.equal(view.current.receipts.length, 1);
     await view.canonical([40, 42]);
     assert.equal(view.current.receipts.length, 0);
-    assert.equal(activeCalls, callsBeforeCanonical, "canonical arrival only retires the resolved bridge");
+    assert.equal(
+      activeCalls,
+      callsBeforeCanonical,
+      "canonical arrival only retires the resolved bridge",
+    );
     assert.equal(historyCalls, 0);
     await act(async () => listener("session"));
     assert.equal(lookups.length, 1);
     assert.equal(historyCalls, 0);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -123,20 +292,29 @@ test("active subscription bridges only disappeared runs and retains failures", a
 // impact = "ACK後にdraftが消えた受付済み本文を読取障害や短時間の実行で見失うことを防ぐ"
 // distinction = "runningからの既存購読testとSteer応答testは通常queuedの開始通知を観測しない経路を通らない。実hookとprojectionの小さい検証で通知順序の契約を守る"
 // @end-test-value
+/** 実行開始の通知が届かず受理情報の単独取得にも失敗しても、保存履歴へつながるまで本文が残ることを確認する。 */
 test("queued receipts bridge skipped starts and failed receipt reads until canonical arrival", async () => {
   for (const terminalState of ["completed", "failed", "canceled"] as const) {
-    let active = [receipt({ state: "queued", turnId: null, userMessageSeq: null })];
+    let active = [
+      receipt({ state: "queued", turnId: null, userMessageSeq: null }),
+    ];
     let lookupFails = true;
     let listener!: (id: string) => void;
     const lookups: Array<[string, string]> = [];
     const view = await mount({
+      /** 通知時点におけるアクティブな入力だけを返す。 */
       listSessionTurnQueue: async () => active,
+      /** 消えた項目の問い合わせ先を記録し、失敗後に各終端状態へ復帰できるようにする。 */
       getSessionTurnQueueReceipt: async (sessionId, requestId) => {
         lookups.push([sessionId, requestId]);
         if (lookupFails) throw new Error("receipt unavailable");
         return receipt({ state: terminalState });
       },
-      onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
+      /** アクティブ一覧の開始・終端通知をテストから送れるようにする。 */
+      onSessionTurnQueueChanged: (next) => {
+        listener = next;
+        return () => {};
+      },
     });
     try {
       assert.match(view.document.body.textContent!, /original prompt/);
@@ -144,19 +322,35 @@ test("queued receipts bridge skipped starts and failed receipt reads until canon
       await act(async () => listener("session"));
       assert.deepEqual(lookups, [["session", "request"]]);
       assert.match(view.document.body.textContent!, /original prompt/);
-      assert.match(view.document.querySelector("[role=alert]")!.textContent!, /receipt unavailable/);
+      assert.match(
+        view.document.querySelector("[role=alert]")!.textContent!,
+        /receipt unavailable/,
+      );
       lookupFails = false;
       await view.click("Retry Queue");
       assert.equal(view.current.receipts[0]?.state, terminalState);
       assert.equal(view.current.error, "");
-      assert.equal([...view.document.querySelectorAll("p")].filter((item) => item.textContent === "original prompt").length, 1);
+      assert.equal(
+        [...view.document.querySelectorAll("p")].filter(
+          (item) => item.textContent === "original prompt",
+        ).length,
+        1,
+      );
       assert.match(view.document.body.textContent!, /original prompt/);
       await view.canonical([42]);
       assert.equal(view.current.receipts.length, 0);
       assert.equal(view.document.querySelectorAll("p").length, 1);
-      assert.equal(view.document.querySelector("p")!.textContent, "saved prompt");
-      assert.deepEqual(lookups, [["session", "request"], ["session", "request"]]);
-    } finally { await view.unmount(); }
+      assert.equal(
+        view.document.querySelector("p")!.textContent,
+        "saved prompt",
+      );
+      assert.deepEqual(lookups, [
+        ["session", "request"],
+        ["session", "request"],
+      ]);
+    } finally {
+      await view.unmount();
+    }
   }
 });
 
@@ -172,37 +366,62 @@ test("queued receipts bridge skipped starts and failed receipt reads until canon
 // impact = "予約本文の二重入力とACK先着による本文消失を防ぐ"
 // distinction = "service/storage testsはチャット操作とrenderer bridgeを通らない"
 // @end-test-value
+/** 同じ待機入力を二重送信せず、保存履歴やACKが先着しても入力を引き継げることを確認する。 */
 test("queued chat input captures the turn once and bridges a fast canonical acceptance", async () => {
-  const queued = receipt({ state: "queued", turnId: null, userMessageSeq: null });
+  const queued = receipt({
+    state: "queued",
+    turnId: null,
+    userMessageSeq: null,
+  });
   let active = [queued];
   let resolve!: (value: SessionTurnQueueReceipt) => void;
   const calls: Array<[string, string, string]> = [];
   const view = await mount({
+    /** 追加入力操作の前後で現在のアクティブ一覧を返す。 */
     listSessionTurnQueue: async () => active,
+    /** 送信先のセッション、待機項目とTurnを記録し、テストが決める時点までACKを保留する。 */
     sendQueuedSessionInput: async (sessionId, id, turnId) => {
       calls.push([sessionId, id, turnId]);
-      return new Promise((accept) => { resolve = accept; });
+      return new Promise((accept) => {
+        resolve = accept;
+      });
     },
   });
   try {
     await view.click("Steer");
     await view.click("Steer");
     assert.deepEqual(calls, [["session", "item", "current-turn"]]);
-    assert.equal([...view.document.querySelectorAll("button")].find((button) => button.textContent === "Steer")!.disabled, true);
-    const steer = [...view.document.querySelectorAll("button")].find((button) => button.textContent === "Steer")!;
-    const cancel = view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!;
+    assert.equal(
+      [...view.document.querySelectorAll("button")].find(
+        (button) => button.textContent === "Steer",
+      )!.disabled,
+      true,
+    );
+    const steer = [...view.document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Steer",
+    )!;
+    const cancel = view.document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Cancel queued turn"]',
+    )!;
     assert.equal(steer.getAttribute("aria-busy"), "true");
     assert.ok(steer.querySelector(".button-content-spinner"));
     assert.equal(cancel.disabled, true);
     assert.equal(cancel.querySelector(".button-content-spinner"), null);
     active = [];
-    await act(async () => resolve(receipt({ state: "completed", inputTurnId: "current-turn" })));
-    assert.equal(view.current.receipts[0]?.captured.request.userMessage, "original prompt");
+    await act(async () =>
+      resolve(receipt({ state: "completed", inputTurnId: "current-turn" })),
+    );
+    assert.equal(
+      view.current.receipts[0]?.captured.request.userMessage,
+      "original prompt",
+    );
     assert.equal(view.current.receipts[0]?.state, "completed");
     await view.canonical([42]);
     assert.equal(view.current.receipts.length, 0);
     assert.equal(calls.length, 1);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -217,31 +436,61 @@ test("queued chat input captures the turn once and bridges a fast canonical acce
 // impact = "旧値でも追加操作を求めず失敗が分かり、取得障害から回復しても受付本文と理由を見失わない"
 // distinction = "純粋projectionやstorage testでは取得障害を挟んだ実bubbleとRetry Queueの共存を検証しない"
 // @end-test-value
+/** 旧形式の中断予約が、キュー取得の失敗と回復を挟んでも元本文と一つの失敗表示を維持することを確認する。 */
 test("legacy interrupted reservation keeps its prompt and one Failed response through a queue read retry", async () => {
-  const interrupted = receipt({ state: "interrupted", turnId: null, userMessageSeq: null, reason: "Execution outcome is unknown." });
+  const interrupted = receipt({
+    state: "interrupted",
+    turnId: null,
+    userMessageSeq: null,
+    reason: "Execution outcome is unknown.",
+  });
   let fail = false;
   let listener!: (id: string) => void;
   const view = await mount({
-    listSessionTurnQueue: async () => { if (fail) throw new Error("queue unavailable"); return [interrupted]; },
-    onSessionTurnQueueChanged: (next) => { listener = next; return () => {}; },
+    /** 中断予約を保持したまま、必要な時点でキュー読取障害を発生させる。 */
+    listSessionTurnQueue: async () => {
+      if (fail) throw new Error("queue unavailable");
+      return [interrupted];
+    },
+    /** 読取エラーとその回復の両方をキュー更新として通知できるようにする。 */
+    onSessionTurnQueueChanged: (next) => {
+      listener = next;
+      return () => {};
+    },
   });
   try {
+    /** 予約された元本文と一つだけの失敗応答、利用者向け理由が揃っていることを確かめる。 */
     const assertFailedResponse = () => {
-      assert.match(view.document.querySelector(".message-card.user")!.textContent!, /original prompt/);
-      assert.equal(view.document.querySelectorAll(".session-run-failure").length, 1);
-      assert.match(view.document.querySelector(".message-row.assistant [role=alert]")!.textContent!, /FailedExecution outcome is unknown/);
+      assert.match(
+        view.document.querySelector(".message-card.user")!.textContent!,
+        /original prompt/,
+      );
+      assert.equal(
+        view.document.querySelectorAll(".session-run-failure").length,
+        1,
+      );
+      assert.match(
+        view.document.querySelector(".message-row.assistant [role=alert]")!
+          .textContent!,
+        /FailedExecution outcome is unknown/,
+      );
     };
     assertFailedResponse();
     assert.equal(view.document.querySelectorAll("button").length, 0);
     fail = true;
     await act(async () => listener("session"));
     assertFailedResponse();
-    assert.match([...view.document.querySelectorAll("[role=alert]")].at(-1)!.textContent!, /queue unavailable/);
+    assert.match(
+      [...view.document.querySelectorAll("[role=alert]")].at(-1)!.textContent!,
+      /queue unavailable/,
+    );
     fail = false;
     await view.click("Retry Queue");
     assert.equal(view.current.error, "");
     assertFailedResponse();
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -256,16 +505,25 @@ test("legacy interrupted reservation keeps its prompt and one Failed response th
 // impact = "取消対象の誤りと未確定時の受付本文消失を防ぐ"
 // distinction = "storage取消testはbubble操作からhookへの接続と待機中表示を確認しない"
 // @end-test-value
+/** 取消の確定まで待機中の本文を保ち、同じ項目を複数回取り消さないことを確認する。 */
 test("queued bubble preserves input until its single cancellation settles", async () => {
-  let active = [receipt({ state: "queued", turnId: null, userMessageSeq: null })];
+  let active = [
+    receipt({ state: "queued", turnId: null, userMessageSeq: null }),
+  ];
   let completeCancel!: () => void;
   const canceled: Array<[string, string]> = [];
   const view = await mount({
+    /** 取消が確定するまでアクティブな項目を返す。 */
     listSessionTurnQueue: async () => active,
-    getSessionTurnQueueReceipt: async () => receipt({ state: "canceled", turnId: null, userMessageSeq: null }),
+    /** 一覧から消えた項目を個別に照会した場合、確定した取消を返す。 */
+    getSessionTurnQueueReceipt: async () =>
+      receipt({ state: "canceled", turnId: null, userMessageSeq: null }),
+    /** 対象を記録し、確定をテストで進めるまではアクティブ一覧から削除しない。 */
     cancelQueuedSessionTurn: async (sessionId, id) => {
       canceled.push([sessionId, id]);
-      await new Promise<void>((resolve) => { completeCancel = resolve; });
+      await new Promise<void>((resolve) => {
+        completeCancel = resolve;
+      });
       active = [];
       return receipt({ state: "canceled", turnId: null, userMessageSeq: null });
     },
@@ -274,13 +532,27 @@ test("queued bubble preserves input until its single cancellation settles", asyn
     await view.click("Cancel");
     await view.click("Cancel");
     assert.deepEqual(canceled, [["session", "item"]]);
-    assert.match(view.document.querySelector(".message-card.user")!.textContent!, /original prompt/);
-    assert.equal(view.document.querySelector<HTMLButtonElement>('button[aria-label="Cancel queued turn"]')!.disabled, true);
-    assert.ok(view.document.querySelector('button[aria-label="Cancel queued turn"] .button-content-spinner'));
+    assert.match(
+      view.document.querySelector(".message-card.user")!.textContent!,
+      /original prompt/,
+    );
+    assert.equal(
+      view.document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Cancel queued turn"]',
+      )!.disabled,
+      true,
+    );
+    assert.ok(
+      view.document.querySelector(
+        'button[aria-label="Cancel queued turn"] .button-content-spinner',
+      ),
+    );
     assert.equal(view.current.busyKind, "cancel");
     await act(async () => completeCancel());
     assert.equal(view.current.receipts.length, 0);
     assert.equal(view.document.querySelectorAll("p").length, 0);
     assert.equal(canceled.length, 1);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });

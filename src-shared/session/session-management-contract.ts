@@ -17,12 +17,24 @@ import { CODEX_SANDBOX_MODE_VALUES } from "../settings/codex-sandbox-mode.js";
 import { CODEX_REVIEWER_VALUES } from "../settings/codex-reviewer.js";
 import { SESSION_HISTORY_USAGE_NOTICE } from "../session-history/session-history-contract.js";
 import { localPrAgentInput } from "../local-pr/local-pr-contract.js";
-import { LOCAL_PR_AGENT_DESCRIPTIONS, LOCAL_PR_AGENT_READS, localPrAgentSuccessSchemas } from "../local-pr/local-pr-agent-operations.js";
-import { sessionOperatingPolicyRequestSchemas, sessionOperatingPolicySuccessSchemas, SESSION_OPERATING_POLICY_READS, SESSION_OPERATING_POLICY_DESCRIPTIONS } from "./session-operating-policy.js";
+import {
+  LOCAL_PR_AGENT_DESCRIPTIONS,
+  LOCAL_PR_AGENT_READS,
+  localPrAgentSuccessSchemas,
+} from "../local-pr/local-pr-agent-operations.js";
+import {
+  sessionOperatingPolicyRequestSchemas,
+  sessionOperatingPolicySuccessSchemas,
+  SESSION_OPERATING_POLICY_READS,
+  SESSION_OPERATING_POLICY_DESCRIPTIONS,
+} from "./session-operating-policy.js";
 export { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 
 const id = z.string().trim().min(1).max(256);
-const queueRequestId = z.string().trim().regex(SESSION_TURN_CLIENT_REQUEST_ID_PATTERN, "requestId must be a UUID.");
+const queueRequestId = z
+  .string()
+  .trim()
+  .regex(SESSION_TURN_CLIENT_REQUEST_ID_PATTERN, "requestId must be a UUID.");
 const page = {
   offset: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(100).optional(),
@@ -40,6 +52,7 @@ const child = z
     description: z.string().max(10000).optional(),
   })
   .strict();
+/** Session 管理ランタイムと公開ツールで共用する操作別の入力スキーマ。履歴・相談・運用方針・ローカル PR の操作も含む。 */
 export const sessionOperationRequestSchemas = {
   ...localPrAgentInput,
   ...executionOperationRequestSchemas,
@@ -75,8 +88,18 @@ export const sessionOperationRequestSchemas = {
     .strict(),
   get: z.object({ target: sessionTargetSchema }).strict(),
   list_directories: z.object({ target: sessionTargetSchema }).strict(),
-  add_directory: z.object({ target: sessionTargetSchema, directoryPath: z.string().min(1).max(32768) }).strict(),
-  remove_directory: z.object({ target: sessionTargetSchema, directoryPath: z.string().min(1).max(32768) }).strict(),
+  add_directory: z
+    .object({
+      target: sessionTargetSchema,
+      directoryPath: z.string().min(1).max(32768),
+    })
+    .strict(),
+  remove_directory: z
+    .object({
+      target: sessionTargetSchema,
+      directoryPath: z.string().min(1).max(32768),
+    })
+    .strict(),
   update_metadata: z
     .object({
       title: z.string().trim().min(1).max(500).optional(),
@@ -104,12 +127,21 @@ export const sessionOperationRequestSchemas = {
     .object({ target: sessionTargetSchema, receiptId: id })
     .strict(),
   stop_turn: z.object({ target: sessionTargetSchema, turnId: id }).strict(),
-  steer: z.object({ target: sessionTargetSchema, turnId: z.string().regex(/^[1-9]\d*$/), message: z.string().trim().min(1).max(100000) }).strict(),
+  steer: z
+    .object({
+      target: sessionTargetSchema,
+      turnId: z.string().regex(/^[1-9]\d*$/),
+      message: z.string().trim().min(1).max(100000),
+    })
+    .strict(),
 } as const;
+/** GUI 専用の実行読取を含まない、Session 管理ランタイムの登録操作名。 */
 export type SessionOperation = keyof typeof sessionOperationRequestSchemas;
+/** 指定した管理操作の入力スキーマから導出した型。入力検証後のハンドラーで使う。 */
 export type SessionOperationRequest<K extends SessionOperation> = z.infer<
   (typeof sessionOperationRequestSchemas)[K]
 >;
+/** 操作別の成功データと共通失敗を区別する応答型。失敗は副作用なしと結果不明を分ける。 */
 export type SessionOperationResult =
   | { ok: true; [key: string]: unknown }
   | {
@@ -119,6 +151,7 @@ export type SessionOperationResult =
       effect: "none" | "unknown";
       [key: string]: unknown;
     };
+/** 共通失敗応答を検証し、操作別の回復情報などの追加フィールドを保持する。 */
 export const sessionOperationFailureSchema = z
   .object({
     ok: z.literal(false),
@@ -127,6 +160,7 @@ export const sessionOperationFailureSchema = z
     effect: z.enum(["none", "unknown"]),
   })
   .passthrough();
+/** 管理応答を成功か失敗かに振り分ける共通スキーマ。成功データの詳細は操作別に検証する。 */
 export const sessionOperationResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }).passthrough(),
   sessionOperationFailureSchema,
@@ -165,12 +199,14 @@ const relatedSessionSchema = z
 const crewFolderSchema = z
   .object({ rootSessionId: id, path: z.string().min(1) })
   .strict();
-const directoriesSchema = z.object({
-  workspacePath: z.string(),
-  sessionFolderPath: z.string(),
-  crewFolder: crewFolderSchema,
-  additionalDirectories: z.array(z.string()),
-}).strict();
+const directoriesSchema = z
+  .object({
+    workspacePath: z.string(),
+    sessionFolderPath: z.string(),
+    crewFolder: crewFolderSchema,
+    additionalDirectories: z.array(z.string()),
+  })
+  .strict();
 const receiptSchema = z
   .object({
     id,
@@ -193,6 +229,7 @@ const receiptSchema = z
     sourceTurnPendingRelease: z.boolean().optional(),
   })
   .passthrough();
+/** 管理操作の成功データを検証するスキーマ。子の作成、設定変更、送信などの操作固有の結果を保持する。 */
 export const sessionOperationSuccessSchemas = {
   ...localPrAgentSuccessSchemas,
   ...executionOperationResultSchemas,
@@ -249,7 +286,13 @@ export const sessionOperationSuccessSchemas = {
               z.object({ value: z.string(), label: z.string() }).passthrough(),
             ),
             reviewers: z.array(
-              z.object({ value: z.enum(CODEX_REVIEWER_VALUES), label: z.string(), disabled: z.boolean().optional() }).strict(),
+              z
+                .object({
+                  value: z.enum(CODEX_REVIEWER_VALUES),
+                  label: z.string(),
+                  disabled: z.boolean().optional(),
+                })
+                .strict(),
             ),
           })
           .strict(),
@@ -282,15 +325,31 @@ export const sessionOperationSuccessSchemas = {
     .object({
       ok: z.literal(true),
       session: relatedSessionSchema,
-      currentTurn: z.object({ turnId: z.string().nullable(), receipt: z.unknown().nullable(), origin: z.unknown().nullable() }).strict(),
+      currentTurn: z
+        .object({
+          turnId: z.string().nullable(),
+          receipt: z.unknown().nullable(),
+          origin: z.unknown().nullable(),
+        })
+        .strict(),
       crewFolder: crewFolderSchema,
     })
     .strict(),
-  list_directories: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
-  get_instructions: z.object({ ok: z.literal(true), body: z.string() }).strict(),
-  set_instructions: z.object({ ok: z.literal(true), byteLength: z.number().int().nonnegative() }).strict(),
-  add_directory: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
-  remove_directory: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
+  list_directories: z
+    .object({ ok: z.literal(true), directories: directoriesSchema })
+    .strict(),
+  get_instructions: z
+    .object({ ok: z.literal(true), body: z.string() })
+    .strict(),
+  set_instructions: z
+    .object({ ok: z.literal(true), byteLength: z.number().int().nonnegative() })
+    .strict(),
+  add_directory: z
+    .object({ ok: z.literal(true), directories: directoriesSchema })
+    .strict(),
+  remove_directory: z
+    .object({ ok: z.literal(true), directories: directoriesSchema })
+    .strict(),
   update_metadata: z
     .object({
       ok: z.literal(true),
@@ -305,7 +364,19 @@ export const sessionOperationSuccessSchemas = {
     })
     .strict(),
   enqueue: z.object({ ok: z.literal(true), receipt: receiptSchema }).strict(),
-  steer: z.object({ ok: z.literal(true), result: z.object({ outcome: z.enum(["applied", "not-applied"]), turnId: id, messageSeq: z.number().int().nonnegative().nullable(), reason: z.string().optional() }).strict() }).strict(),
+  steer: z
+    .object({
+      ok: z.literal(true),
+      result: z
+        .object({
+          outcome: z.enum(["applied", "not-applied"]),
+          turnId: id,
+          messageSeq: z.number().int().nonnegative().nullable(),
+          reason: z.string().optional(),
+        })
+        .strict(),
+    })
+    .strict(),
   get_receipt: z
     .object({ ok: z.literal(true), receipt: receiptSchema.nullable() })
     .strict(),
@@ -346,31 +417,37 @@ export function sessionOperationOutputSchema(operation: SessionOperation) {
       ],
     });
 }
+/** 登録操作名のアンダースコアをハイフンに変換し、ランタイムで呼び出す HTTP パスを引く。 */
 export const SESSION_RUNTIME_OPERATION_PATHS = Object.fromEntries(
   Object.keys(sessionOperationRequestSchemas).map((key) => [
     key,
     `/v1/session/${key.replaceAll("_", "-")}`,
   ]),
 ) as Record<SessionOperation, string>;
+/** 受信した HTTP パスを登録済みの管理操作名に戻すための逆引き。 */
 export const sessionRuntimeOperationByPath = new Map(
   Object.entries(SESSION_RUNTIME_OPERATION_PATHS).map(([operation, path]) => [
     path,
     operation as SessionOperation,
   ]),
 );
+/** 操作名からエージェントランタイムへの登録・照合に使う Session ルート識別子を組み立てる。 */
 export const sessionAgentRuntimeOperation = (
   operation: SessionOperation,
 ): string => `session.route.${operation}`;
+/** 登録済み Session 操作すべてのルート識別子を列挙し、エージェントランタイムの公開操作に渡す。 */
 export const getSessionAgentRuntimeOperations = (): string[] =>
   Object.keys(sessionOperationRequestSchemas).map((operation) =>
     sessionAgentRuntimeOperation(operation as SessionOperation),
   );
+/** 公開ツール名を、対応するエージェントランタイムのルート識別子に引き当てる。 */
 export const SESSION_TOOL_OPERATIONS = Object.fromEntries(
   Object.keys(sessionOperationRequestSchemas).map((operation) => [
     `session.${operation}`,
     sessionAgentRuntimeOperation(operation as SessionOperation),
   ]),
 );
+/** 状態を変更しない管理操作の一覧。MCP の読取ヒントと応答未確認時の副作用判定で共用する。 */
 export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
   ...LOCAL_PR_AGENT_READS,
   ...SESSION_OPERATING_POLICY_READS,
@@ -386,6 +463,7 @@ export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
     executionOperationRequestSchemas,
   ) as (keyof typeof executionOperationRequestSchemas)[]),
 ];
+/** Session MCP に表示する操作別の説明。対象の指定方法、受理と完了の違い、応答不明時の回復手順などを示す。 */
 export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
   {
     ...(Object.fromEntries(
@@ -404,14 +482,20 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     get_catalog:
       "Read available Provider/model/depth catalog and the same Approval choices as the GUI. options[].approvalModes lists Auto Run, Auto Review, User and Safety Focused on all four Providers. For inheritance exceptions see create_child. disabled identifies an unavailable choice. Sandbox choices are separate and only listed for Codex. Permission options are not create_child or enqueue inputs. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\". Use exact available values; no silent Model/Depth substitution.",
     self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
-    get_instructions: "Read the bound Session's saved fixed instructions as body (empty string if unset). Main and Auxiliary have independent bodies. No target is accepted. Read only when needed, not on every Turn.",
-    set_instructions: "Replace the bound Session's entire fixed instructions body (empty string clears it). Main and Auxiliary have independent bodies. No target is accepted. The limit is 8,192 UTF-8 bytes including whitespace and line breaks; oversized input is rejected without changing the saved body. Changes apply from the next Turn and do not change the running Turn. Success returns byteLength, not body. Update only when needed.",
+    get_instructions:
+      "Read the bound Session's saved fixed instructions as body (empty string if unset). Main and Auxiliary have independent bodies. No target is accepted. Read only when needed, not on every Turn.",
+    set_instructions:
+      "Replace the bound Session's entire fixed instructions body (empty string clears it). Main and Auxiliary have independent bodies. No target is accepted. The limit is 8,192 UTF-8 bytes including whitespace and line breaks; oversized input is rejected without changing the saved body. Changes apply from the next Turn and do not change the running Turn. Success returns byteLength, not body. Update only when needed.",
     list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
     get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
-    steer: "Send this parent's additional instruction to one exact running WithMate Turn of its saved direct normal child. Use get.currentTurn.turnId (not the Provider native ID) and the exact Session/incarnation. Only Codex currently supports Steer. Uses the running Turn's Model/Depth/permissions; no settings change, new Turn, queue receipt or automatic fallback. applied confirms delivery and saved additional input, not task completion; not-applied means no Provider dispatch. Unknown delivery returns SESSION_STEER_UNKNOWN with effect unknown and result.messageSeq when known. Inspect list_execution_inputs/get_execution_input for this Turn, including unresolved inputs; never automatically resend an unknown result. Saved inputOrigin identifies the actual parent, not a GUI user. Child reports and Coordination use their existing delivery routes.",
-    list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
-    add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
-    remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
+    steer:
+      "Send this parent's additional instruction to one exact running WithMate Turn of its saved direct normal child. Use get.currentTurn.turnId (not the Provider native ID) and the exact Session/incarnation. Only Codex currently supports Steer. Uses the running Turn's Model/Depth/permissions; no settings change, new Turn, queue receipt or automatic fallback. applied confirms delivery and saved additional input, not task completion; not-applied means no Provider dispatch. Unknown delivery returns SESSION_STEER_UNKNOWN with effect unknown and result.messageSeq when known. Inspect list_execution_inputs/get_execution_input for this Turn, including unresolved inputs; never automatically resend an unknown result. Saved inputOrigin identifies the actual parent, not a GUI user. Child reports and Coordination use their existing delivery routes.",
+    list_directories:
+      "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
+    add_directory:
+      "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
+    remove_directory:
+      "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
     update_metadata:
       "Update only this actor's title and/or description. Title is a short purpose/subject/target name: keep it for progress alone, but update it when the purpose or target materially changes. Description is a few sentences of scope and current situation; replace it rather than appending history, and retain the handled subject after completion. Omit fields that remain accurate. This does not change Role, execution settings or another Session's metadata.",
     enqueue:

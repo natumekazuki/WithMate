@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -8,7 +14,10 @@ import { describe, it } from "node:test";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
-import { CREATE_V3_SCHEMA_SQL, V3_TEXT_PREVIEW_MAX_LENGTH } from "../../src-electron/storage/database-schema-v3.js";
+import {
+  CREATE_V3_SCHEMA_SQL,
+  V3_TEXT_PREVIEW_MAX_LENGTH,
+} from "../../src-electron/storage/database-schema-v3.js";
 import { isValidV4Database } from "../../src-electron/storage/database-schema-v4.js";
 import { SessionStorage } from "../../src-electron/session/session-storage.js";
 import { SessionStorageV3 } from "../../src-electron/session/session-storage-v3.js";
@@ -18,13 +27,16 @@ import {
   createMigrationWriteReport,
 } from "../../src-electron/storage/migrations/migrate-database-v3-to-v4.js";
 
+/** ソース DB と外部 blob を一緒に作成し、指定パスから参照した後で片付けるための fixture。 */
 type Fixture = {
   dirPath: string;
   dbPath: string;
   blobRootPath: string;
+  /** テストが用意した DB と blob を含む一時ディレクトリを削除する。 */
   cleanup(): void;
 };
 
+/** 外部キーを有効にして実 V3 スキーマを作り、閉じた DB と対応する blob ルートを渡す。 */
 function createV3FixtureDatabase(): Fixture {
   const dirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-"));
   const dbPath = join(dirPath, "withmate-v3.db");
@@ -43,22 +55,34 @@ function createV3FixtureDatabase(): Fixture {
     dirPath,
     dbPath,
     blobRootPath,
+    /** fixture の DB・blob を一度に片付ける。 */
     cleanup: () => rmSync(dirPath, { recursive: true, force: true }),
   };
 }
 
-function readRequiredRow<T>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T {
+/** 移行先の必須行を読み、欠落を型変換で隠さずその場でテスト失敗にする。 */
+function readRequiredRow<T>(
+  db: DatabaseSync,
+  sql: string,
+  ...params: SQLInputValue[]
+): T {
   const row = db.prepare(sql).get(...params) as T | undefined;
   assert.ok(row);
   return row;
 }
 
+/** 廃止されたテーブルが V4 に残っていないか、スキーマの定義行で判定する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  return db
-    .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1")
-    .get(tableName) !== undefined;
+  return (
+    db
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
+      )
+      .get(tableName) !== undefined
+  );
 }
 
+/** 同じソースが保たれたか比較できるよう、読み取り専用でバイト列、スキーマ、各テーブルの行、ジャーナルモードを採る。 */
 function readDatabaseSnapshot(dbPath: string): {
   bytes: Buffer;
   journalMode: string;
@@ -68,36 +92,64 @@ function readDatabaseSnapshot(dbPath: string): {
   const bytes = readFileSync(dbPath);
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const schema = db.prepare(
-      "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name",
-    ).all() as Array<Record<string, unknown>>;
-    const tableNames = (db.prepare(
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    ).all() as Array<{ name: string }>).map((row) => row.name);
-    const rows = Object.fromEntries(tableNames.map((tableName) => {
-      const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name);
-      return [tableName, db.prepare(`SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`).all() as Array<Record<string, unknown>>];
-    }));
-    const journalMode = (db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+    const schema = db
+      .prepare(
+        "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name",
+      )
+      .all() as Array<Record<string, unknown>>;
+    const tableNames = (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const rows = Object.fromEntries(
+      tableNames.map((tableName) => {
+        const columns = (
+          db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+            name: string;
+          }>
+        ).map((row) => row.name);
+        return [
+          tableName,
+          db
+            .prepare(
+              `SELECT ${columns.join(", ")} FROM ${tableName} ORDER BY rowid`,
+            )
+            .all() as Array<Record<string, unknown>>,
+        ];
+      }),
+    );
+    const journalMode = (
+      db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }
+    ).journal_mode;
     return { bytes, journalMode, schema, rows };
   } finally {
     db.close();
   }
 }
 
+/** 任意列がまだ存在しない旧 V3 と、変更を観測しやすい DELETE ジャーナル状態を再現する。 */
 function prepareLegacyV3Source(dbPath: string): void {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec("PRAGMA journal_mode = DELETE;");
-    db.exec("ALTER TABLE sessions DROP COLUMN character_runtime_snapshot_json;");
+    db.exec(
+      "ALTER TABLE sessions DROP COLUMN character_runtime_snapshot_json;",
+    );
     db.exec("ALTER TABLE session_messages DROP COLUMN is_bookmarked;");
   } finally {
     db.close();
   }
 }
 
+/** プレビュー上限を超える本文と設定・Model catalog を V3 に入れ、実移行で本文末尾まで残るか調べられるようにする。 */
 async function seedV3Fixture(fixture: Fixture): Promise<void> {
-  const sessionStorage = new SessionStorageV3(fixture.dbPath, fixture.blobRootPath);
+  const sessionStorage = new SessionStorageV3(
+    fixture.dbPath,
+    fixture.blobRootPath,
+  );
   const session = buildNewSession({
     taskTitle: "V3 import fixture",
     workspaceLabel: "workspace",
@@ -117,39 +169,48 @@ async function seedV3Fixture(fixture: Fixture): Promise<void> {
       id: "session-v3-to-v4",
       threadId: "thread-v3-to-v4",
       messages: [
-        { role: "user", text: `${"u".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:user` },
+        {
+          role: "user",
+          text: `${"u".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:user`,
+        },
         { role: "assistant", text: `${sentinel}:assistant` },
       ],
     });
-
   } finally {
     sessionStorage.close();
   }
 
   const db = new DatabaseSync(fixture.dbPath);
   try {
-    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)").run(
+    db.prepare(
+      "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+    ).run(
       "auto_collapse_action_dock_on_send",
       "true",
       "2026-05-14T00:00:00.000Z",
     );
-    db.prepare("INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)").run(
-      77,
-      "fixture",
-      "2026-05-14T00:00:00.000Z",
-      1,
-    );
+    db.prepare(
+      "INSERT INTO model_catalog_revisions (revision, source, imported_at, is_active) VALUES (?, ?, ?, ?)",
+    ).run(77, "fixture", "2026-05-14T00:00:00.000Z", 1);
     db.prepare(
       "INSERT INTO model_catalog_providers (revision, provider_id, label, default_model_id, default_reasoning_effort, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(77, "codex", "Codex", "gpt-5.4-mini", "medium", 1);
     db.prepare(
       "INSERT INTO model_catalog_models (revision, provider_id, model_id, label, reasoning_efforts_json, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-    ).run(77, "codex", "gpt-5.4-mini", "GPT 5.4 mini", JSON.stringify(["medium"]), 1);
+    ).run(
+      77,
+      "codex",
+      "gpt-5.4-mini",
+      "GPT 5.4 mini",
+      JSON.stringify(["medium"]),
+      1,
+    );
   } finally {
     db.close();
   }
 }
 
+/** V3 ソースの件数集計、実 V4 への保存と原本保護、失敗時の片付けを検査する。 */
 describe("migrate-database-v3-to-v4", () => {
   // @test-value v2
   // kind = "contract"
@@ -161,11 +222,14 @@ describe("migrate-database-v3-to-v4", () => {
   // scope = "database-v3-to-v4 dry-run"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Dry-run が指定された blob の場所を報告し、予定件数にソース側の対象件数を漏れなく反映する。 */
   it("dry-run で v3 から v4 への import 対象件数を返す", async () => {
     const fixture = createV3FixtureDatabase();
     try {
       await seedV3Fixture(fixture);
-      const report = createMigrationDryRunReport(fixture.dbPath, { blobRootPath: fixture.blobRootPath });
+      const report = createMigrationDryRunReport(fixture.dbPath, {
+        blobRootPath: fixture.blobRootPath,
+      });
       assert.equal(report.mode, "dry-run");
       assert.deepEqual(report.plannedV4Counts, report.v3Counts);
       assert.equal(report.input.blobRootPath, fixture.blobRootPath);
@@ -184,9 +248,12 @@ describe("migrate-database-v3-to-v4", () => {
   // scope = "database-v3-to-v4 write"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 生成した V4 で旧履歴の全文・設定・Model catalog を読み出せ、V3 の廃止テーブルや blob ディレクトリを持ち込まない。 */
   it("write で v4 DB を作成し、session / settings / model catalog を import する", async () => {
     const fixture = createV3FixtureDatabase();
-    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-target-"));
+    const targetDirPath = mkdtempSync(
+      join(tmpdir(), "withmate-v3-to-v4-target-"),
+    );
     const targetDbPath = join(targetDirPath, "withmate-v4.db");
     const targetBlobRootPath = join(targetDirPath, "blobs", "v3");
     try {
@@ -200,21 +267,30 @@ describe("migrate-database-v3-to-v4", () => {
       assert.equal(report.mode, "write");
       assert.equal(isValidV4Database(targetDbPath), true);
       assert.equal(
-        readdirSync(targetDirPath).some((entry) => entry.includes("withmate-v4.db.migration-")),
+        readdirSync(targetDirPath).some((entry) =>
+          entry.includes("withmate-v4.db.migration-"),
+        ),
         false,
       );
 
       const sessionStorage = new SessionStorage(targetDbPath);
       const db = new DatabaseSync(targetDbPath);
       try {
-        const importedSession = await sessionStorage.getSession("session-v3-to-v4");
+        const importedSession =
+          await sessionStorage.getSession("session-v3-to-v4");
         assert.ok(importedSession);
         assert.equal(importedSession.accessMode, "legacy_readonly");
         assert.equal(importedSession.sourceSchemaVersion, 3);
         assert.equal(importedSession.characterIconPath, "");
-        assert.match(importedSession.messages[0]?.text ?? "", /SENTINEL_V3_TO_V4:user/);
+        assert.match(
+          importedSession.messages[0]?.text ?? "",
+          /SENTINEL_V3_TO_V4:user/,
+        );
         assert.equal(importedSession.messages[1]?.role, "assistant");
-        assert.equal(importedSession.messages[1]?.text, "SENTINEL_V3_TO_V4:assistant");
+        assert.equal(
+          importedSession.messages[1]?.text,
+          "SENTINEL_V3_TO_V4:assistant",
+        );
         assert.equal(existsSync(targetBlobRootPath), false);
         const setting = readRequiredRow<{ setting_value: string }>(
           db,
@@ -230,7 +306,11 @@ describe("migrate-database-v3-to-v4", () => {
         );
         assert.equal(catalog.model_id, "gpt-5.4-mini");
         for (const tableName of OBSOLETE_V4_IMPORT_TARGET_TABLES) {
-          assert.equal(tableExists(db, tableName), false, `${tableName} は V4 import target に残さない`);
+          assert.equal(
+            tableExists(db, tableName),
+            false,
+            `${tableName} は V4 import target に残さない`,
+          );
         }
       } finally {
         db.close();
@@ -253,9 +333,12 @@ describe("migrate-database-v3-to-v4", () => {
   // lifecycle = "permanent"
   // risk_tags = ["irreversible-data-loss"]
   // @end-test-value
+  /** 任意列のない旧 V3 から一件を移行しても、ソースのバイト列・行・スキーマ・ジャーナルモードは変化しない。 */
   it("旧V3任意列が不足していても source DB を変更しない", async () => {
     const fixture = createV3FixtureDatabase();
-    const targetDirPath = mkdtempSync(join(tmpdir(), "withmate-v3-to-v4-read-only-source-"));
+    const targetDirPath = mkdtempSync(
+      join(tmpdir(), "withmate-v3-to-v4-read-only-source-"),
+    );
     const targetDbPath = join(targetDirPath, "withmate-v4.db");
     try {
       await seedV3Fixture(fixture);
@@ -292,6 +375,7 @@ describe("migrate-database-v3-to-v4", () => {
   // scope = "database-v3-to-v4 failure cleanup"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 本文 blob がなく移行に失敗した場合、出力 DB・WAL・共有メモリ・中間ファイルを残さない。 */
   it("write 失敗時は中途半端な v4 DB を残さない", async () => {
     const fixture = createV3FixtureDatabase();
     const targetDbPath = join(fixture.dirPath, "withmate-v4.db");
@@ -299,18 +383,21 @@ describe("migrate-database-v3-to-v4", () => {
       await seedV3Fixture(fixture);
       rmSync(fixture.blobRootPath, { recursive: true, force: true });
       await assert.rejects(
-        () => createMigrationWriteReport({
-          sourceDatabaseFile: fixture.dbPath,
-          targetDatabaseFile: targetDbPath,
-          blobRootPath: fixture.blobRootPath,
-        }),
+        () =>
+          createMigrationWriteReport({
+            sourceDatabaseFile: fixture.dbPath,
+            targetDatabaseFile: targetDbPath,
+            blobRootPath: fixture.blobRootPath,
+          }),
         /blob|ENOENT|no such file/i,
       );
       assert.equal(existsSync(targetDbPath), false);
       assert.equal(existsSync(`${targetDbPath}-wal`), false);
       assert.equal(existsSync(`${targetDbPath}-shm`), false);
       assert.equal(
-        readdirSync(fixture.dirPath).some((entry) => entry.includes("withmate-v4.db.migration-")),
+        readdirSync(fixture.dirPath).some((entry) =>
+          entry.includes("withmate-v4.db.migration-"),
+        ),
         false,
       );
     } finally {
