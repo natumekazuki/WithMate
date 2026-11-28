@@ -20,6 +20,8 @@ Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Au
 
 `WithMate Local PR`は、mergeする変更をローカルPRに提出し、GUIでのユーザー承認を待ってから同じPR経由でmergeするルールを示す。通常SessionのMCP／CLI操作と、CIがProvider sandboxではなくWithMateアプリのOS権限で動くことを案内する。Git操作を技術的には遮断しない。
 
+PRからの議論送信は通常のGUI入力として受け付け、入力本文に`Local Pull Request`と`Pull Request Context`の見出しを付ける。対象版のID・commit、本文、選択コメントと固定差分の抜粋は引用したYAML値として示し、PRの原文と指示を区別する。情報が不足すればAgentが通常のPR操作から取得し、同じPRに返信する。これはsystem側への昇格や、Agentの操作成功を意味しない。
+
 input側は次の順序とする。
 
 1. `Current Date`（通常Sessionで設定が有効な場合）
