@@ -6,6 +6,7 @@ import type { SessionTurnNotificationTarget } from "../session/session-turn-noti
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
 import type { AgentRuntimeSourceRef } from "../../src-shared/agent-runtime/agent-runtime-source.js";
+import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 
 type AuxiliaryRuntimeOwner = {
   assertActive(operation: string): void;
@@ -49,6 +50,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   };
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    readSessionInstructions(target: Extract<SessionInstructionsTarget, { kind: "auxiliary" }>): Promise<string>;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: {
@@ -93,6 +95,18 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
+    readSessionInstructions: (session) => guarded("instructions read", async () => {
+      const source = await resolveSource(session);
+      // This assembly resolves only Auxiliary owners; never fall back to Main instructions.
+      if (source.kind !== "auxiliary") throw new Error("Auxiliary conversation owner is unavailable.");
+      return deps.context.readSessionInstructions({
+        kind: "auxiliary",
+        sessionId: source.sessionId,
+        incarnationId: source.incarnationId,
+        mainSessionId: source.parent.sessionId,
+        mainIncarnationId: source.parent.incarnationId,
+      });
+    }),
     appendRunningInput: (...args) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(...args)),
     beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,

@@ -15,6 +15,7 @@
 @import "./file-explorer/pdf-file-preview.css";
 @import "./ui/markdown/markdown-file-preview.css";
 @import "./chat/session.css";
+@import "./chat/composer/session-instructions-control.css";
 @import "./chat/conversation/turn-input-details.css";
 @import "./terminal/terminal.css";
 @import "./diff/diff-shell.css";

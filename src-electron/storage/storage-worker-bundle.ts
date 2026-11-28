@@ -13,6 +13,7 @@ import { MateStorage } from "../mate/mate-storage.js";
 import { ModelCatalogStorage } from "../settings/model-catalog-storage.js";
 import { PromptTemplateStorage } from "../prompt-templates/prompt-template-storage.js";
 import { SessionStorageV6 } from "../session/session-storage-v6.js";
+import { SessionInstructionsStorage } from "../session/session-instructions-storage.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
 import { openAppDatabase, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
@@ -42,6 +43,7 @@ const STORE_METHODS = {
   localPr: ["listLocalPrs", "readLocalPr", "createLocalPr", "saveLocalPr"],
   coordination: ["execute", "deliveryTarget", "readStatus"],
   execution: ["execute"],
+  instructions: ["get", "set"],
   session: [
     "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
@@ -138,6 +140,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const turn = new SessionTurnStorageV6(data.dbPath);
   const queue = new SessionTurnQueueStorageV6(data.dbPath, changed);
   const execution = new SessionExecutionReadStorage(data.dbPath);
+  const instructions = new SessionInstructionsStorage(data.dbPath);
   const coordination = new CoordinationStorageV7(data.dbPath);
   const localPr = new LocalPrStorage(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
@@ -148,7 +151,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const catalog = new ModelCatalogStorage(data.dbPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
-  instances = { session, turn, queue, execution, coordination, localPr, auxiliary, character, settings, catalog, mate, prompt };
+  instances = { session, turn, queue, execution, instructions, coordination, localPr, auxiliary, character, settings, catalog, mate, prompt };
   const currentInstances = instances;
 
   return {
@@ -182,7 +185,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "instructions" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -241,13 +244,13 @@ export function createV6StorageWorkerBundle(options: {
             ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
           const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
             && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
-          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || store === "coordination" || store === "execution" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || store === "coordination" || store === "execution" || store === "instructions" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
             property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
-            mutation: store === "coordination" ? coordinationMutation : MUTATIONS.has(property),
+            mutation: store === "coordination" ? coordinationMutation : store === "instructions" ? property === "set" : MUTATIONS.has(property),
             operation: `${store}.${property}`,
           });
         };
@@ -270,6 +273,7 @@ export type V6StorageWorkerBundle = {
     localPr: LocalPrStore;
     coordination: AsyncStore<CoordinationStorageV7>;
     execution: AsyncStore<SessionExecutionReadStorage>;
+    instructions: Pick<AsyncStore<SessionInstructionsStorage>, "get" | "set">;
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
     queue: AsyncStore<SessionTurnQueueStorageV6>;

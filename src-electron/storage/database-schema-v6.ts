@@ -437,6 +437,7 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
+    instructions_json TEXT NOT NULL DEFAULT '""',
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE SET NULL,
     FOREIGN KEY (project_scope_id) REFERENCES project_scopes_v6(id) ON DELETE SET NULL,
     CHECK (
@@ -538,7 +539,8 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     character_icon_path TEXT,
     client_request_id TEXT,
     creation_context_json TEXT,
-    creation_request_json TEXT
+    creation_request_json TEXT,
+    instructions_json TEXT NOT NULL DEFAULT '""'
   );
 
   CREATE INDEX IF NOT EXISTS idx_auxiliary_sessions_parent_updated
@@ -767,6 +769,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   const sessionColumns = tableColumnNames(db, "sessions_v6");
+  // Existing sessions start with no instructions; no conversation or settings fields are rewritten.
+  if (!sessionColumns.has("instructions_json")) {
+    db.exec(`ALTER TABLE sessions_v6 ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
+  }
   if (!sessionColumns.has("is_pinned")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
@@ -806,6 +812,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
+  // Add the column after the legacy Auxiliary table shape has been resolved.
+  if (!auxiliaryColumns.has("instructions_json")) {
+    db.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
+  }
   if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("withmate_reviewer_explicit")) {
     db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))");
   }

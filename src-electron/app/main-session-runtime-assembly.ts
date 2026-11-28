@@ -1,4 +1,5 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
+import type { MainSessionTarget } from "../../src-shared/session/session-target.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
 
 type CreateSessionTurnInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createSessionTurn"]>>[0];
@@ -22,6 +23,7 @@ export type MainSessionRuntimeAssemblyDeps = {
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    readSessionInstructions(target: MainSessionTarget): Promise<string>;
     assertSavedReplyTo?: SessionRuntimeServiceDeps["assertSavedReplyTo"];
     readMainMessageThread?: SessionRuntimeServiceDeps["readMainMessageThread"];
   };
@@ -48,6 +50,9 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => { assertOwner("session read"); return deps.sessions.getSession(sessionId); },
+    readSessionInstructions: (session) => guarded("instructions read", () => deps.context.readSessionInstructions({
+      kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
+    })),
     appendRunningInput: (...args) => guarded("Session input append", () => deps.sessions.appendRunningInput(...args)),
     beginRunningInput: deps.sessions.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.sessions.beginRunningInput!(...args)) : undefined,
     settleRunningInput: deps.sessions.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.sessions.settleRunningInput!(...args)) : undefined,

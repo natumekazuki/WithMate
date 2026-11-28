@@ -262,6 +262,7 @@ async function fixture(provider = "codex") {
     const extra: RelatedSession[] = [];
     const application = new SessionManagementApplication({
       operatingPolicy: unused,
+      getInstructions: unused, setInstructions: unused,
       readSessionScope: async (actor, selection) => {
         const fixtureAuxiliary = actor.kind === "auxiliary" && extra.find((entry) => entry.id === actor.sessionId);
         if (!fixtureAuxiliary || actor.kind !== "auxiliary") return bundle.stores.session.readSessionManagementScope(actor, selection);

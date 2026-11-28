@@ -251,6 +251,10 @@ export type WithMateWindowSessionApi = {
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
   promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): Promise<SessionSummary>;
+  /** Reads the saved body of the identified Main or Auxiliary owned by this Window. */
+  getSessionInstructions(target: import("../session/session-instructions.js").SessionInstructionsTarget): Promise<string>;
+  /** Replaces the saved body for future Turns; an empty body clears it. */
+  setSessionInstructions(target: import("../session/session-instructions.js").SessionInstructionsTarget, body: string): Promise<{ byteLength: number }>;
   getCrewDeletionStatus(sessionId: string, incarnationId: string): Promise<import("../session/session-crew-deletion.js").CrewDeletionStatus>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;

@@ -34,6 +34,8 @@ export type RunSessionTurnInput = {
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   currentDateTime?: string;
+  /** Verbatim saved body captured once at the start of this Turn. */
+  readonly sessionInstructions?: string;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
   /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */

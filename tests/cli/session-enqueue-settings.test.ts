@@ -114,6 +114,7 @@ async function fixture(provider = "codex") {
   const operatingPolicy = new SessionOperatingPolicyService({ getStore: () => bundle.stores.settings, getQuota: () => null });
   const application = new SessionManagementApplication({
     operatingPolicy: (actor, operation, request, current) => operatingPolicy.execute(operation, request, actor.workspacePath, current),
+    getInstructions: unused, setInstructions: unused,
     readSessionScope: (actor, selection) => bundle.stores.session.readSessionManagementScope(actor, selection),
     currentTurn: async (actor) => ({ turnId: sourceTurns.get(actor.id)!, receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: parent.id, path: directory }),

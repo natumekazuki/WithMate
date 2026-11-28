@@ -7048,6 +7048,8 @@ var sessionOperationRequestSchemas = {
 		workspacePath: string().min(1).max(32768).optional()
 	}).strict(),
 	self: object({}).strict(),
+	get_instructions: object({}).strict(),
+	set_instructions: object({ body: string() }).strict(),
 	list: object({
 		rootSessionId: id.optional(),
 		allCrews: boolean().optional(),
@@ -7251,6 +7253,14 @@ var sessionOperationSuccessSchemas = {
 		ok: literal(true),
 		directories: directoriesSchema
 	}).strict(),
+	get_instructions: object({
+		ok: literal(true),
+		body: string()
+	}).strict(),
+	set_instructions: object({
+		ok: literal(true),
+		byteLength: number().int().nonnegative()
+	}).strict(),
 	add_directory: object({
 		ok: literal(true),
 		directories: directoriesSchema
@@ -7311,6 +7321,7 @@ var SESSION_READ_OPERATIONS = [
 	...LOCAL_PR_AGENT_READS,
 	...SESSION_OPERATING_POLICY_READS,
 	"self",
+	"get_instructions",
 	"list",
 	"get",
 	"list_directories",
@@ -7327,6 +7338,8 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	create_child: "Create a saved normal direct child without opening a Session Window: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Specify Provider, model, reasoningEffort and a prepared workspacePath. The child inherits the calling Turn's Auto Run, Auto Review, User or Safety Focused choice across all four Providers. This controls responses to approval requests; it does not copy native policy or grant OS access. Restricted Codex Sandbox and legacy provider-specific modes cannot transfer. A selected Copilot custom agent also prevents cross-Provider creation because its tool restrictions cannot be verified. A new Codex child from another Provider starts read-only. A legacy unset Copilot/OpenCode reviewer remains unset on a mediated child, and becomes native User on Codex/Claude. Approval, Sandbox, Reviewer and inheritance switches are not request inputs. Character selection is automatic, never caller-selected. For a new selection, exclude the direct parent's Character if another active candidate exists, then choose uniformly among the remaining active candidates with the lowest usage by normal Mains in this Crew. Use the parent's Character if it is the only active candidate; fail if there are no active candidates. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
 	get_catalog: "Read available Provider/model/depth catalog and the same Approval choices as the GUI. options[].approvalModes lists Auto Run, Auto Review, User and Safety Focused on all four Providers. For inheritance exceptions see create_child. disabled identifies an unavailable choice. Sandbox choices are separate and only listed for Codex. Permission options are not create_child or enqueue inputs. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\". Use exact available values; no silent Model/Depth substitution.",
 	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
+	get_instructions: "Read the bound Session's saved fixed instructions as body (empty string if unset). Main and Auxiliary have independent bodies. No target is accepted. Read only when needed, not on every Turn.",
+	set_instructions: "Replace the bound Session's entire fixed instructions body (empty string clears it). Main and Auxiliary have independent bodies. No target is accepted. The limit is 8,192 UTF-8 bytes including whitespace and line breaks; oversized input is rejected without changing the saved body. Changes apply from the next Turn and do not change the running Turn. Success returns byteLength, not body. Update only when needed.",
 	list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
 	get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
 	steer: "Send this parent's additional instruction to one exact running WithMate Turn of its saved direct normal child. Use get.currentTurn.turnId (not the Provider native ID) and the exact Session/incarnation. Only Codex currently supports Steer. Uses the running Turn's Model/Depth/permissions; no settings change, new Turn, queue receipt or automatic fallback. applied confirms delivery and saved additional input, not task completion; not-applied means no Provider dispatch. Unknown delivery returns SESSION_STEER_UNKNOWN with effect unknown and result.messageSeq when known. Inspect list_execution_inputs/get_execution_input for this Turn, including unresolved inputs; never automatically resend an unknown result. Saved inputOrigin identifies the actual parent, not a GUI user. Child reports and Coordination use their existing delivery routes.",
@@ -9285,7 +9298,7 @@ function createSessionTransportError(operation, body) {
 	return {
 		ok: false,
 		code: "SESSION_TRANSPORT_ERROR",
-		message: operation && isLocalPrAgentOperation(operation) ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation." : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
+		message: operation && isLocalPrAgentOperation(operation) ? "The local PR response was not confirmed. Read the PR or CI state before deciding whether to retry. Do not automatically resend a mutation." : operation === "set_instructions" ? "The Session instructions update was not confirmed. Read the saved body with get_instructions before deciding whether to retry. Do not automatically resend the replacement." : "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
 		effect: operation && !SESSION_READ_OPERATIONS.includes(operation) ? "unknown" : "none",
 		...request?.success ? { recovery: {
 			operation: "get_receipt",
@@ -9376,6 +9389,8 @@ Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. 
 list-messages optionally takes thread with a Main history target: null for its initial frame or the exact peer Main SessionTarget. Omit thread for the entire target history. Filtering preserves the owner's message seqs.
 Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
 Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
+get-instructions: ${SESSION_OPERATION_DESCRIPTIONS.get_instructions}
+set-instructions (JSON input: {"body":"..."}): ${SESSION_OPERATION_DESCRIPTIONS.set_instructions}
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.
 Enqueue captures the recipient's saved Approval, Sandbox and Reviewer in both directions. Permission overrides and inheritance switches are not accepted. Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.

@@ -8,6 +8,8 @@ export function createSessionApi(
   platform: NodeJS.Platform,
 ): WithMateWindowSessionApi {
   return {
+    getSessionInstructions: (target) => ipcRenderer.invoke(channels.WITHMATE_GET_SESSION_INSTRUCTIONS_CHANNEL, target),
+    setSessionInstructions: (target, body) => ipcRenderer.invoke(channels.WITHMATE_SET_SESSION_INSTRUCTIONS_CHANNEL, target, body),
     getCrewDeletionStatus: (sessionId, incarnationId) => ipcRenderer.invoke("withmate:get-crew-deletion-status", sessionId, incarnationId),
     readSessionHtmlPreview(request) {
       return ipcRenderer.invoke(READ_SESSION_HTML_PREVIEW, request);

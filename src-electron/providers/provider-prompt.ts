@@ -125,6 +125,8 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
       LOCAL_PR_CI_EXECUTION_NOTICE,
     ].join("\n") : "",
     !isCharacterAuthoringSession ? "# Session Role\n\n" + (input.runtimeOwner?.kind === "auxiliary" ? "auxiliary" : input.session.sessionRole ?? "standalone") : "",
+    // Only the empty string disables instructions; preserve whitespace in a nonempty body.
+    input.sessionInstructions ? "# Session Instructions\n\n" + input.sessionInstructions : "",
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");

@@ -23,6 +23,18 @@ function input(): RunSessionTurnInput {
     sessionFolderPath: "C:/session-files/sample", crewFolderPath: "C:/crew-files/sample" };
 }
 
+/** Nonempty fixed instructions stay on the system side without trimming; empty text removes the section. */
+it("composes verbatim Session Instructions or omits the section", () => {
+  const base = input();
+  const baseline = composeProviderPrompt(base);
+  for (const body of [" \r\n手順 🧪\n  ", " \n "]) {
+    const prompt = composeProviderPrompt({ ...base, sessionInstructions: body });
+    assert.equal(prompt.systemBodyText, baseline.systemBodyText + "\n\n# Session Instructions\n\n" + body);
+    assert.equal(prompt.inputBodyText, baseline.inputBodyText);
+  }
+  assert.deepEqual(composeProviderPrompt({ ...base, sessionInstructions: "" }), baseline);
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "失敗Turnの再実行はGUI要求と元のSession送信者を分け、固定入力が変わった場合はGUI編集としてProviderへ渡す"

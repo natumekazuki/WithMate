@@ -76,6 +76,7 @@ export type SessionComposerExpandedProps = {
   targetDock?: ReactNode;
   recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
+  sessionInstructionsControl?: ReactNode;
   providerQuota?: ReactNode;
   attentionControl?: ReactNode;
   composerBlocked: boolean;
@@ -180,6 +181,7 @@ export function SessionComposerExpanded({
   targetDock = null,
   recoveryActions = null,
   dockModeSwitch = null,
+  sessionInstructionsControl,
   providerQuota = null,
   attentionControl = null,
   composerBlocked,
@@ -728,6 +730,7 @@ export function SessionComposerExpanded({
               disabled={executionControlsDisabled}
             />
           ) : null}
+          {sessionInstructionsControl}
         </div>
 
         <span

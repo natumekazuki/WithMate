@@ -534,6 +534,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
   - popover の `Session Files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
   - `Skill` は別カテゴリの単独 button として区別する
+  - `Instructions`はModel・Approvalと同じ設定列に置く。ActionDockで選択中のMainまたはAuxiliaryの保存本文を、対象Session名とUTF-8の使用量・上限（8,192バイト）を表示する共通の`Session Instructions`ダイアログで編集する。実行中も編集でき、`Save`による全置換（空で解除）は次のTurnから適用する。超過時は保存できず、保存失敗時も入力を保持する。`Cancel`や対象切替は未保存編集を破棄し、切替前の読込・保存応答を新しいエディターへ適用しない。
   - Copilotの`Custom Agent`は入口に現在値のtooltipとaccessible nameを持ち、候補はDockの寸法を変えない非modal popoverで開く。画面内に収めた一覧に名前・説明・選択checkを表示し、多い候補は内部でscrollする。開くと選択中、なければ先頭候補へfocusし、矢印／Home／Endで移動、Enter／Spaceで選択する。Escape／Closeは変更せず閉じて入口へ戻し、選択時も入口にfocusを保つ。Tab／Shift+Tabは入口を基点にComposerの操作順へ戻り、外側の操作はfocusを奪わず閉じる。Main／Auxiliaryの既存の保存・実行設定経路を使う
   - 添付popoverをTab／Shift+Tabで抜ける時も、入口を基点にComposerの操作順を継続する
 - 添付 toolbar は Agent の作業 chat 用であり、メイトークでは表示しない

@@ -51,6 +51,7 @@ async function fixture() {
   const application = new SessionManagementApplication({
     readSessionScope: (actor, selection) => bundle.stores.session.readSessionManagementScope(actor, selection),
     operatingPolicy: (actor, operation, request, current) => operating.execute(operation, request, actor.workspacePath, current),
+    getInstructions: unused, setInstructions: unused,
     currentTurn: unused, crewFolder: unused, directories: unused, updateMetadata: unused, enqueue: unused,
     getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,
   });

@@ -36,6 +36,8 @@ function setup(entries: RelatedSession[]) {
   const calls: string[] = [];
   const deps: SessionManagementApplicationDeps = {
     operatingPolicy: async () => { throw new Error("unused"); },
+    getInstructions: () => { throw new Error("unused"); },
+    setInstructions: () => { throw new Error("unused"); },
     readSessionScope: fixtureSessionManagementScope(() => entries),
     currentTurn: async () => ({
       turnId: "turn-actual",

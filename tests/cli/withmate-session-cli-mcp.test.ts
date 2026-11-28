@@ -124,6 +124,7 @@ test("bundled CLI and MCP read the same Main thread through the persisted runtim
     const application = new SessionManagementApplication({
       readSessionScope: async (actor, selection) => sessions.readSessionManagementScope(actor, selection),
       operatingPolicy: unused, directories: unused, currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
+      getInstructions: unused, setInstructions: unused,
       updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
       createChild: unused, catalog: unused, coordinate: unused,
       readExecution: async (destination, operation, request, assertCurrent) => {
@@ -326,6 +327,8 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get_worktree_policy: {}, set_worktree_root: { rootPath: null }, set_worktree_repository: { rule: null },
       resolve_worktree: { branch: "feat/task" },
       self: {},
+      get_instructions: {},
+      set_instructions: { body: " Fixed instructions.\n" },
       list: { allCrews: true, limit: 2 },
       get: { target },
       list_directories: { target },
@@ -500,6 +503,8 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       list_directories: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
       add_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
       remove_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: [] } },
+      get_instructions: { body: " Fixed instructions.\n" },
+      set_instructions: { byteLength: 21 },
       update_metadata: {
         metadata: { id: "child", taskTitle: "updated", description: "full" },
       },
@@ -701,6 +706,15 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     );
     assert.equal(invalid.exit, 2);
     assert.equal(calls.length, Object.keys(inputs).length * 4 + 2);
+    // A lost replacement response may have applied; only the dedicated body read can clarify it.
+    const lostInstructions = await cli("set-instructions", inputs.set_instructions, runtimeCall);
+    assert.equal(lostInstructions.exit, 3);
+    assert.equal(lostInstructions.value.effect, "unknown");
+    assert.match(String(lostInstructions.value.message), /get_instructions/);
+    assert.deepEqual(
+      (await client.callTool({ name: "session.set_instructions", arguments: inputs.set_instructions })).structuredContent,
+      lostInstructions.value,
+    );
     for (const [operation, effect] of [["pr_diff", "none"], ["pr_ci_start", "unknown"], ["pr_merge", "unknown"]] as const) {
       const command = await cli(operation.replaceAll("_", "-"), inputs[operation], runtimeCall);
       const tool = await client.callTool({ name: `session.${operation}`, arguments: inputs[operation] });
@@ -841,6 +855,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
   const unused = async () => { throw new Error("Unexpected operation"); };
   const application = new SessionManagementApplication({
     readSessionScope: async (actor, selection) => storage.readSessionManagementScope(actor, selection),
+    getInstructions: unused, setInstructions: unused,
     operatingPolicy: unused,
     directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
@@ -965,6 +980,7 @@ test("saved Coordination details cross the real application and both public sche
   };
   const application = new SessionManagementApplication({
     readSessionScope: fixtureSessionManagementScope(() => resolveRelatedSessions([source], [])),
+    getInstructions: unused, setInstructions: unused,
     operatingPolicy: unused,
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: source.id, path: directory }),

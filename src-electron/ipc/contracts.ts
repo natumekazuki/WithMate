@@ -654,6 +654,7 @@ export type MainIpcRegistrationDeps = {
   sessionQuery: MainIpcSessionQueryDeps;
   auxiliary: MainIpcAuxiliaryDeps;
   sessionRuntime: MainIpcSessionRuntimeDeps;
+  sessionInstructions: import("./session-instructions.js").MainIpcSessionInstructionsDeps;
   mate: MainIpcMateDeps;
   character: MainIpcCharacterDeps;
 };

@@ -440,6 +440,7 @@ describe("database-schema-v6", () => {
   // lifecycle = "permanent"
   // distinction = "TypeScript型はSQLite owner制約を保証しない"
   // @end-test-value
+  /** Retains the owner tables and adds independent instructions columns without changing history ownership. */
   it("V6 project scope と session/message/turn の最小 schema を固定する", () => {
     const db = createV6Schema();
     try {
@@ -485,6 +486,7 @@ describe("database-schema-v6", () => {
         "created_at",
         "updated_at",
         "last_active_at",
+        "instructions_json",
       ]);
       assert.equal(findForeignKey(db, "sessions_v6", "character_id")?.table, "characters");
       assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
@@ -531,6 +533,7 @@ describe("database-schema-v6", () => {
         "client_request_id",
         "creation_context_json",
         "creation_request_json",
+        "instructions_json",
       ]);
       assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
       assert.deepEqual(columnNames(db, "auxiliary_session_messages"), [
@@ -629,6 +632,7 @@ describe("database-schema-v6", () => {
     }
   });
 
+  /** Backfills legacy Auxiliary identity and initializes the new instructions column without changing legacy payload. */
   it("ensureV6Schema は旧 auxiliary_sessions の created_at を updated_at で backfill する", () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -667,6 +671,7 @@ describe("database-schema-v6", () => {
         "updated_at",
         "payload_json",
         "created_at",
+        "instructions_json",
       ]);
       const row = db.prepare("SELECT created_at, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-1") as
         | { created_at: string; updated_at: string }

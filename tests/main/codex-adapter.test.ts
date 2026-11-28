@@ -1449,6 +1449,7 @@ it("同scopeのitem再開だけでretry diagnosticを解除しterminal failure�
 // impact = "長い履歴の不要な一括返送による有限受信上限超過で再開が失敗する、または会話継続・履歴・権限が失われる"
 // distinction = "型検査やtransport単体では検出できないadapterの新規/再開request選択とparamsを、既存の軽量mockで検証する"
 // @end-test-value
+/** Resume keeps the thread while sending this Turn's saved instructions in the composed input. */
 it("foregroundは保存thread resumeとnative設定、履歴結果を維持する", async () => workspace(async (directory) => {
   const fresh = new FakeTransport();
   fresh.events = [completed([message("answer", "fresh")])];
@@ -1461,7 +1462,7 @@ it("foregroundは保存thread resumeとnative設定、履歴結果を維持す�
   assert.equal(fresh.closed, true);
   const transport = new FakeTransport();
   transport.events = [notification("item/completed", { item: message("answer", "done") }), completed([message("answer", "done")])];
-  const input = createCodexRunSessionTurnInput(directory);
+  const input = { ...createCodexRunSessionTurnInput(directory), sessionInstructions: "Codex 固定指示 🧭" };
   input.session.threadId = "thread-1";
   input.session.allowedAdditionalDirectories = [path.join(directory, "..", "additional")];
   input.executionOptions = { ...input.executionOptions, codexSandboxMode: "workspace-write-network", codexSpeed: "fast", codexReviewer: "auto-review" };
@@ -1477,6 +1478,7 @@ it("foregroundは保存thread resumeとnative設定、履歴結果を維持す�
   assert.equal(start.sandboxPolicy.networkAccess, true);
   assert.deepEqual(start.sandboxPolicy.writableRoots, [directory, path.resolve(directory, "..", "additional")]);
   assert.equal(start.input[0].text, adapter.composePrompt(input).logicalPrompt.composedText);
+  assert.match(start.input[0].text, /# Session Instructions\n\nCodex 固定指示 🧭\n\n#/);
   assert.equal(result.assistantText, "done");
   assert.equal(result.threadId, "thread-1");
   assert.equal(transport.closed, true);

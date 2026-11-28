@@ -64,6 +64,7 @@ test("normal runtime requires captured saved identity and active provider Turn",
   let owner = { storageWorker: { stores: { session: { readSessionManagementScope } } } };
   const application = new SessionManagementApplication({
     operatingPolicy: unused,
+    getInstructions: unused, setInstructions: unused,
     readSessionScope: createSessionManagementScopeReader(() => owner),
     currentTurn: async () => {
       currentTurnReads++;

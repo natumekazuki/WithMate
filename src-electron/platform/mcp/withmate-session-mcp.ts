@@ -29,9 +29,10 @@ export function createWithMateSessionMcpServer(
     const read = SESSION_READ_OPERATIONS.includes(operation);
     const runsCi = operation === "pr_ci_start" || operation === "pr_ci_rerun";
     const requestSchema = sessionOperationRequestSchemas[operation];
-    // Advertise the strict PR schema but let the shared client validate arguments, so the SDK
+    // Advertise strict schemas but let the shared client validate these arguments, so the SDK
     // does not replace the common SESSION_INVALID_REQUEST/effect envelope with a text-only error.
-    const inputSchema = isLocalPrAgentOperation(operation)
+    const inputSchema = isLocalPrAgentOperation(operation) ||
+      operation === "get_instructions" || operation === "set_instructions"
       ? z.looseObject({}).meta(z.toJSONSchema(requestSchema, { unrepresentable: "any" }))
       : requestSchema;
     server.registerTool(
@@ -45,6 +46,7 @@ export function createWithMateSessionMcpServer(
           destructiveHint:
             operation === "cancel_receipt" || operation === "stop_turn" ||
             operation === "set_selection_policy" || operation === "set_worktree_root" ||
+            operation === "set_instructions" ||
             operation === "set_worktree_repository" || operation === "pr_close" ||
             operation === "pr_merge" || operation === "pr_ci_cancel" || runsCi,
           idempotentHint: read || operation === "enqueue" || operation === "coordination_get",

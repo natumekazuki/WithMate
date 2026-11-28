@@ -141,6 +141,7 @@ import { createAuxiliaryIpcDeps } from "../ipc/auxiliary.js";
 import { createCatalogIpcDeps } from "../ipc/catalog.js";
 import { createSessionQueryIpcDeps } from "../ipc/session-query.js";
 import { createSessionRuntimeIpcDeps, type MainIpcSessionRuntimeServiceDeps } from "../ipc/session-runtime.js";
+import type { MainIpcSessionInstructionsDeps } from "../ipc/session-instructions.js";
 import { createSettingsIpcDeps } from "../ipc/settings.js";
 import { createWindowIpcDeps } from "../ipc/window.js";
 import type { SessionWindowRestoreResult } from "../../src-shared/window/session-window-restore.js";
@@ -391,6 +392,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   sessionQuery: MainIpcSessionQueryDepsArgs;
   auxiliary?: MainIpcAuxiliaryDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
+  sessionInstructions: Omit<MainIpcSessionInstructionsDeps, "resolveEventWindow">;
   mate: MainIpcMateDepsArgs;
   character: MainIpcCharacterDepsArgs;
 };
@@ -500,6 +502,7 @@ export function createMainIpcRegistrationDeps(
       args.sessionRuntime,
       sessionRuntimeContext,
     ),
+    sessionInstructions: { ...args.sessionInstructions, ...eventWindow },
     mate: args.mate,
     character: args.character,
   };

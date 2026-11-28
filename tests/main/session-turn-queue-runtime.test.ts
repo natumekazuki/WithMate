@@ -131,7 +131,7 @@ test("子の作成・復旧と実行にはWindowを作らずMonitorから明示o
         }
         return { assistantText: "fixture result", threadId: "fixture-thread", usage: null };
       } }) },
-    context: { getAppSettings: () => settings }, turn: { createSessionTurn: bundle.stores.turn.createSessionTurn, updateSessionTurn: bundle.stores.turn.updateSessionTurn },
+    context: { getAppSettings: () => settings, readSessionInstructions: async () => "" }, turn: { createSessionTurn: bundle.stores.turn.createSessionTurn, updateSessionTurn: bundle.stores.turn.updateSessionTurn },
     live: { setLiveSessionRun: live.setLiveSessionRun.bind(live), getLiveSessionRun: live.getLiveSessionRun.bind(live),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {} },
     interaction: { waitForApprovalDecision: approvals.waitForLiveApprovalDecision.bind(approvals), waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -270,6 +270,7 @@ test("子の作成・復旧と実行にはWindowを作らずMonitorから明示o
 // impact = "受付した指示が異なる設定/pathで実行される、同じ会話が重複実行される、receiptと履歴が乖離することを防ぐ"
 // distinction = "個別fake port testではMain owner guard・async Worker proxy・partial persistenceの実結合を検証できない"
 // @end-test-value
+/** Queue acceptance captures input and settings, but instructions are read from the Worker only at dispatch. */
 test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合する", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-queue-runtime-"));
   const bundle = createV6StorageWorkerBundle({ dbPath: path.join(temporary, "withmate-v6.db"), userDataPath: temporary });
@@ -287,6 +288,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
       model: "captured-native-model", reasoningEffort: "native-depth" }), sessionRole: "overall-coordinator", rootSessionId: "queue-runtime" });
     const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
     const target = { kind: "main" as const, ...owner };
+    await bundle.stores.instructions.set(target, "before acceptance");
     const [a, b] = await Promise.all(["peer-a", "peer-b"].map(async (id) => {
       const peer = await bundle.stores.session.insertSession({ ...saved, id, incarnationId: id + "-v1", sessionRole: "executor",
         parentSessionId: saved.id, createdBySessionId: saved.id });
@@ -359,7 +361,11 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
         assertCapturedComposerAttachmentsAvailable, resolveSessionFolderPath: () => temporary,
         resolveProviderCatalog: () => ({ snapshot, provider }) },
       provider: { getProviderCodingAdapter: () => adapter },
-      context: { getAppSettings: () => normalizeAppSettings({}),  },
+      context: { getAppSettings: () => normalizeAppSettings({}), readSessionInstructions: async (owner) => {
+        const body = await bundle.stores.instructions.get(owner);
+        assert.ok(body !== null);
+        return body;
+      } },
       turn: { createSessionTurn: (input) => bundle.stores.turn.createSessionTurn(input), updateSessionTurn: (id, input) => bundle.stores.turn.updateSessionTurn(id, input) },
       live: { setLiveSessionRun: (_, next) => { live = next; }, getLiveSessionRun: () => live,
         setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {} },
@@ -413,8 +419,11 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     assert.equal(reconciled.id, first.id);
     assert.equal(reconciled.state, "starting");
     assert.equal(acceptanceWrites, 2);
+    await bundle.stores.instructions.set(target, "before first dispatch");
     allowDispatch.resolve();
     await startedFirst.promise;
+    await bundle.stores.instructions.set(target, "after first dispatch");
+    assert.match(composeProviderPrompt(providerInputs[0]).systemBodyText, /# Session Instructions\n\nbefore first dispatch$/);
     secondInput.userMessage = "Edited after durable ACK";
     secondInput.executionOptions = { ...secondInput.executionOptions, model: "invalid-after-ACK" };
     secondInput.mainConversationFrame = a;
@@ -426,6 +435,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
       { text: "First @input.txt", thread: "", model: options.model, depth: options.reasoningEffort, attachment: path.join(temporary, "input.txt") },
       { text: "Second @input.txt", thread: "thread-1", model: options.model, depth: "medium", attachment: path.join(temporary, "input.txt") },
     ]);
+    assert.match(composeProviderPrompt(providerInputs[1]).systemBodyText, /# Session Instructions\n\nafter first dispatch$/);
     assert.equal(previews, 2);
     const page = await bundle.stores.queue.listReceipts(owner);
     assert.deepEqual(page.receipts.map((receipt) => [receipt.id, receipt.state, receipt.userMessageSeq]), [[first.id, "completed", 0], [second.id, "completed", 2]]);

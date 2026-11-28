@@ -12,6 +12,7 @@ import { registerMateHandlers } from "./mate.js";
 import { registerPromptTemplateHandlers } from "./prompt-template.js";
 import { registerSessionQueryHandlers } from "./session-query.js";
 import { registerSessionRuntimeHandlers } from "./session-runtime.js";
+import { registerSessionInstructionsHandlers } from "./session-instructions.js";
 import { registerSettingsHandlers } from "./settings.js";
 import { registerWindowHandlers } from "./window.js";
 
@@ -40,6 +41,7 @@ export function registerMainIpcHandlers(
   registerPromptTemplateHandlers(wrappedIpcMain, deps.promptTemplates);
   registerSessionQueryHandlers(wrappedIpcMain, deps.sessionQuery);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps.sessionRuntime);
+  registerSessionInstructionsHandlers(wrappedIpcMain, deps.sessionInstructions);
   registerMateHandlers(wrappedIpcMain, deps.mate);
   registerCharacterHandlers(wrappedIpcMain, deps.character);
 

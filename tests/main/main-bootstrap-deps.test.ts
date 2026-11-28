@@ -232,6 +232,11 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
           throw new Error("unused session query fixture method");
         },
       } satisfies MainIpcSessionQueryDepsArgs,
+      sessionInstructions: {
+        resolveOwningSessionWindow: () => null,
+        getSessionInstructions: () => "",
+        setSessionInstructions: () => ({ byteLength: 0 }),
+      },
       sessionRuntime: {
         getLiveSessionRun: () => null,
         getProviderQuotaTelemetry: async () => null,

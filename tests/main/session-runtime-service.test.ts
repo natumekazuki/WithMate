@@ -51,6 +51,7 @@ import { registerAuxiliaryHandlers } from "../../src-electron/ipc/auxiliary.js";
 import type { IpcHandleRegistrar, MainIpcAuxiliaryDeps, MainIpcSessionRuntimeDeps } from "../../src-electron/ipc/contracts.js";
 import { WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL, WITHMATE_CANCEL_SESSION_RUN_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
+import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -554,7 +555,10 @@ it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再�
   }
 });
 
-function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps, parent: Session): ProductionSessionRuntimeService {
+/** Assembles the production owner-specific runtime around test callbacks. */
+function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps, parent: Session,
+  readSessionInstructions: (target: SessionInstructionsTarget) => Promise<string> = async () => "",
+): ProductionSessionRuntimeService {
   const writes = {
     getSession: deps.getSession,
     persistRunningTurnStart: deps.persistRunningTurnStart ?? ((session: Session) => deps.upsertSession(session)),
@@ -575,7 +579,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     sessions: { ...writes, clearCharacterAuthoringRuntimeState: (session) => session },
     resolution: { ...resolution, resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture" },
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter },
-    context: { getAppSettings: deps.getAppSettings },
+    context: { getAppSettings: deps.getAppSettings, readSessionInstructions },
     turn, live, interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
       resolvePendingApprovalRequest: deps.resolvePendingApprovalRequest, resolvePendingElicitationRequest: deps.resolvePendingElicitationRequest,
       invalidateProviderSessionThread: deps.invalidateProviderSessionThread },
@@ -592,7 +596,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter, resetProviderSessionThread: async () => {},
       resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture",
       issueRuntimeBinding: async (session, provider) => new AgentRuntimeBindingRegistry().issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
-    context: { getAppSettings: deps.getAppSettings }, turn, live,
+    context: { getAppSettings: deps.getAppSettings, readSessionInstructions }, turn, live,
     interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
       cancelApprovals: (id) => deps.resolvePendingApprovalRequest(id, "deny"), cancelElicitations: (id) => deps.resolvePendingElicitationRequest(id, { action: "cancel" }),
       invalidateProviderSessionThread: async (provider, id) => { await deps.invalidateProviderSessionThread(provider, id); } },
@@ -600,6 +604,47 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
   });
 }
 
+/** A write while the adapter is running cannot alter the captured body, and the next Turn reads its own owner again. */
+it("snapshots the exact Main or Auxiliary instructions for each new Turn", async () => {
+  const parent = createSession({ id: "instructions-main", incarnationId: "main-inc" });
+  for (const kind of ["main", "auxiliary"] as const) {
+    const session = kind === "main" ? parent : createSession({ id: "instructions-aux", incarnationId: "aux-inc" });
+    const target: SessionInstructionsTarget = kind === "main"
+      ? { kind, sessionId: parent.id, incarnationId: "main-inc" }
+      : { kind, sessionId: session.id, incarnationId: "aux-inc", mainSessionId: parent.id, mainIncarnationId: "main-inc" };
+    const targets: SessionInstructionsTarget[] = [];
+    const observed: string[] = [];
+    let saved = "固定本文 A 🐈";
+    const running = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const runtime = createProgressRuntime(session, async (input) => {
+      observed.push(input.sessionInstructions ?? "");
+      if (observed.length === 1) {
+        running.resolve();
+        await release.promise;
+        assert.match(composeProviderPrompt(input).systemBodyText, /固定本文 A 🐈$/);
+      }
+      assert.equal(input.session.threadId, observed.length === 1 ? "" : "unchanged-thread");
+      return createPartialResult({ assistantText: "ok", threadId: "unchanged-thread" });
+    }, {}, (deps) => assembleBackgroundEventRuntime(kind, deps, parent, async (requested) => {
+      targets.push(requested);
+      return saved;
+    }));
+    const submit = (userMessage: string) => runtime.runSessionTurn(session.id, {
+      userMessage, executionOptions: captureSessionExecutionOptions(session),
+    });
+    const active = submit("first");
+    await Promise.race([running.promise, active]);
+    saved = "固定本文 B";
+    release.resolve();
+    await active;
+    await submit("second");
+    saved = "";
+    await submit("third");
+    assert.deepEqual(targets, [target, target, target]);
+    assert.deepEqual(observed, ["固定本文 A 🐈", "固定本文 B", ""]);
+  }
+});
 
 
 

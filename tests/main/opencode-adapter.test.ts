@@ -272,12 +272,15 @@ async function migrationFixture(turn: RunSessionTurnInput) {
 // impact = "回答の欠落・二重表示と実行中の後続turn開始を防ぐ"
 // distinction = "型検査はlive-only購読の順序やnative終端の意味を検査しない"
 // @end-test-value
+/** The native root request receives fixed instructions alongside the normal prompt. */
 it("OpenCode completes only the current root request and replaces provisional text", async () => {
-  const turn = input(); const run = fixture(turn);
+  const turn = { ...input(), sessionInstructions: "OpenCode 固定指示 🧭" };
+  const run = fixture(turn);
   const result = await run.adapter.runSessionTurn(turn);
   assert.equal(run.calls.filter((call) => call === "prompt").length, 1);
   assert.ok(run.calls.indexOf("connected") < run.calls.indexOf("prompt"));
   assert.equal(run.getPrompt()!.text, run.adapter.composePrompt(turn).logicalPrompt.composedText);
+  assert.match(run.getPrompt()!.text, /# Session Instructions\n\nOpenCode 固定指示 🧭\n\n#/);
   assert.equal(run.getPrompt()!.metadata?.withmateRequestID, run.getPrompt()!.id);
   assert.equal(result.threadId, "native:root"); assert.equal(result.assistantText, "final");
   assert.deepEqual(result.usage, { inputTokens: 12, cachedInputTokens: 2, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 17 });

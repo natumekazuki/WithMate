@@ -265,6 +265,11 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         throw new Error("unused session query fixture method");
       },
     } satisfies MainIpcSessionQueryDepsArgs,
+    sessionInstructions: {
+      resolveOwningSessionWindow: () => null,
+      getSessionInstructions: () => "",
+      setSessionInstructions: () => ({ byteLength: 0 }),
+    },
     sessionRuntime: {
       getLiveSessionRun: () => null,
       async getProviderQuotaTelemetry() {

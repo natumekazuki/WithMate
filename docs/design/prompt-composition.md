@@ -13,10 +13,13 @@ system側は次の順序とする。
 3. `Workspace`、`SessionFolder`、`Crew Folder`、実効`Additional Directories`
 4. `WithMate Local PR`
 5. `Session Role`
+6. `Session Instructions`（そのSessionの保存済み本文が空文字でない場合）
 
 `Output Boundary`は、会話・他Sessionへのmessage・非公開メモで自身のCharacter表現を使い、コード・文書・提出用草案等では明示指定がなければrepository・提出先の文体と形式を優先する2文とする。Character設定OFFでもsnapshotのある通常Sessionには残す。folder用途は共有資料とSession固有の添付・一時物の保存先を1文で示す。path表示はfilesystem grantを追加せず、認可は既存allowlistとadapterが所有する。
 
-Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerから`auxiliary`を渡す。Role名以外の分担・報告方針やユーザー管理ルールを注入・同期しない。
+Roleは通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerから`auxiliary`を渡す。Role名から分担・報告方針を生成・同期しない。
+
+Session Instructionsは、Turnの実行開始時にMain／Auxiliaryの実行ownerから本文を一度取得し、改行や空白を変更せずsystem側へ追加する。queue受付時やSteer時には取得しない。編集中または実行中に保存しても、そのTurnが使う本文は変わらず、次の新規Turnから反映する。空文字は見出しごと省略し、保存・変更・解除に伴うProvider threadのリセットや履歴の破棄は行わない。同一TurnのCompact前後でProviderが指示を保持するかは保証しない。
 
 `WithMate Local PR`は、mergeする変更をローカルPRに提出し、GUIでのユーザー承認を待ってから同じPR経由でmergeするルールを示す。通常SessionのMCP／CLI操作と、CIがProvider sandboxではなくWithMateアプリのOS権限で動くことを案内する。Git操作を技術的には遮断しない。
 

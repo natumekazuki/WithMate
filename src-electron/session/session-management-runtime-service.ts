@@ -145,10 +145,10 @@ export class SessionManagementRuntimeService {
             executionOptions: admission.handle.executionOptions,
           },
         });
-      // Reads, PR, Coordination, policy and directory changes carry admission into Worker.
+      // Reads and scoped writes carry admission into Worker, including instruction replacement.
       // Coordination detaches its postcommit queue wake from this sender scope.
       const result = await (isLocalPr || SESSION_READ_OPERATIONS.includes(operation) ||
-      isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory"
+      isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory" || operation === "set_instructions"
         ? runWithRuntimeTurnAdmission(
             {
               state: admission.handle.revocationState,

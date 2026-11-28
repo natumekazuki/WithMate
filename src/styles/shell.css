@@ -26,6 +26,7 @@
 }
 
 .session-page,
+.session-instructions-modal,
 .message-image-lightbox,
 .message-copy-toast {
   --surface: rgba(25, 29, 38, 0.94);

@@ -78,6 +78,8 @@ import {
   resolveAuxiliaryLaunchStartProvider,
 } from "../chat/auxiliary-launch-state.js";
 import { AuxiliaryLaunchProviderDialog } from "../chat/AuxiliaryLaunchProviderDialog.js";
+import { SessionInstructionsControl } from "../chat/composer/session-instructions-control.js";
+import type { SessionInstructionsTarget } from "../../src-shared/session/session-instructions.js";
 import { useAuxiliaryCreation } from "../chat/use-auxiliary-creation.js";
 import { useAuxiliaryLaunchDialogState } from "../chat/use-auxiliary-launch-dialog-state.js";
 import { useAuxiliaryWorkspace } from "../chat/use-auxiliary-workspace.js";
@@ -2487,6 +2489,15 @@ export default function AgentSessionWindowApp() {
     ? <LoadError id="session-main-read-error" message={mainSessionRuntime.readError} onRetry={mainSessionRuntime.retryRead} />
     : !loadedSession ? <LoadingIndicator className="concurrent-chat-state" label="Loading conversation" /> : null;
 
+  // Use the ActionDock target, not the focused conversation or the active Turn.
+  const instructionTarget: SessionInstructionsTarget | null = !loadedSession || isSelectedSessionReadOnly ? null
+    : auxiliaryWorkspace.target === "main"
+      ? { kind: "main", sessionId: selectedSession.id, incarnationId: mainIncarnation }
+      : activeAuxiliarySession?.parentSessionId === selectedSession.id
+        ? { kind: "auxiliary", sessionId: activeAuxiliarySession.id, incarnationId: activeAuxiliarySession.createdAt,
+            mainSessionId: selectedSession.id, mainIncarnationId: mainIncarnation }
+        : null;
+
   return (
     <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
@@ -2512,6 +2523,14 @@ export default function AgentSessionWindowApp() {
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors, ...(failedRetryFeedback?.ownerId === renderedSession.id && failedRetryFeedback.incarnationId === feedbackIncarnation && failedRetryFeedback.lastUserSeq === feedbackLastUserSeq ? [{ id: "failed-turn-retry", message: failedRetryFeedback.message, dismissLabel: "Dismiss resend error", onDismiss: () => setFailedRetryFeedback(null) }] : [])]}
         composerProps={{
           ...chatWindowProps.composerProps,
+          sessionInstructionsControl: withmateApi && instructionTarget ? (
+            <SessionInstructionsControl
+              key={JSON.stringify(instructionTarget)}
+              api={withmateApi}
+              target={instructionTarget}
+              title={instructionTarget.kind === "main" ? selectedSession.taskTitle : activeAuxiliarySession?.title.trim() || "Auxiliary"}
+            />
+          ) : null,
           replyUnavailableReason: selectedReply && !selectedReply.reference ? selectedReply.error ?? "Loading the reply target." : undefined,
           externalErrorDescriptionIds: auxiliaryWorkspace.target === "main" && !loadedSession && mainSessionRuntime.readError
             ? "session-main-read-error" : undefined,

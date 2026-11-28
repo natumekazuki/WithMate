@@ -8,6 +8,8 @@
 
 V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存操作はstorage Workerが所有する。Mainは許可されたtyped commandを非同期で送る。close、reset、reopen後に旧storage generationの遅延応答を新しいDBへ適用しない。
 
+固定指示は `sessions_v6.instructions_json` と `auxiliary_sessions.instructions_json` に各Sessionの全文をJSON文字列として独立保存する。既存V6 DBへ空文字を既定値とする列を追加し、既存の会話・実行設定・threadは書き換えない。本文はSession一覧・履歴の投影に含めず、Workerで対象incarnation（Auxiliaryは所属Mainも）を照合し、UTF-8で8,192 byte以内の本文だけを全文置換する。
+
 ## Storage Overview
 
 通常Sessionの端末共通運用設定は、`app_settings`の`session_selection_policy_json`（選定基準・実行設定の目安・順序付き契約経路）と`worktree_policy_json`（root・Git common directoryごとの配置ルール）に保存する。Storage Workerのtyped commandだけで更新し、未設定の読取で値を生成しない。通常の設定保存では保持し、設定全体resetでは解除する。実測quota、認証情報、Session実行設定とは独立し、schema migrationは追加しない。公開操作は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。

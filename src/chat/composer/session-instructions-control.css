@@ -1,0 +1,93 @@
+.composer-instructions-trigger {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.composer-instructions-trigger:hover {
+  background: var(--surface-strong);
+}
+
+.composer-instructions-trigger:focus-visible {
+  outline: 2px solid var(--character-main);
+  outline-offset: 2px;
+}
+
+.session-instructions-dialog {
+  width: min(780px, 100%);
+}
+
+.session-instructions-editor {
+  display: grid;
+  gap: 10px;
+  padding: 22px 22px 0;
+}
+
+.session-instructions-target {
+  margin: 6px 0 0;
+  max-height: 3lh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.session-instructions-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 6rem;
+  height: min(40vh, 26rem);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+}
+
+.session-instructions-body:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
+.session-instructions-body[aria-invalid="true"] {
+  border-color: #f87171;
+}
+
+.session-instructions-meta,
+.session-instructions-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 0.84rem;
+}
+
+.session-instructions-meta {
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+.session-instructions-meta > :last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-instructions-feedback {
+  min-height: 34px;
+}
+
+.session-instructions-feedback [role="alert"] {
+  color: #fca5a5;
+}
+
+.session-instructions-dialog > .launch-dialog-foot {
+  gap: 8px;
+  padding-top: 8px;
+}

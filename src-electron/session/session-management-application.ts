@@ -37,7 +37,9 @@ import { getSessionApprovalChoices } from "../../src-shared/settings/session-app
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSteerResult } from "../../src-shared/session/session-turn-queue.js";
 import { isSessionOperatingPolicyOperation, type SessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
+import { validateSessionInstructions } from "../../src-shared/session/session-instructions.js";
 import type { LocalPrAgentOperation } from "../../src-shared/local-pr/local-pr-contract.js";
+import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 export type SessionCurrentTurn = {
   turnId: string | null;
@@ -53,6 +55,10 @@ export type SessionManagementApplicationDeps = {
   operatingPolicy(actor: RelatedSession, operation: SessionOperatingPolicyOperation, request: unknown, assertCurrent: () => void): Promise<SessionOperationResult>;
   readSessionScope(actor: SessionTarget, selection: SessionManagementSelection): Promise<SessionManagementScope>;
   currentTurn(actor: RelatedSession): Promise<SessionCurrentTurn>;
+  /** Reads the exact bound actor's body, without falling back from Auxiliary to Main. */
+  getInstructions(target: SessionTarget): Awaitable<string>;
+  /** Replaces only the bound actor's body; invalid input must be rejected before writing. */
+  setInstructions(target: SessionTarget, body: string): Awaitable<{ byteLength: number }>;
   crewFolder(
     actor: RelatedSession,
   ): Promise<{ rootSessionId: string; path: string }>;
@@ -336,6 +342,27 @@ export class SessionManagementApplication {
           directoryPath: (request as SessionOperationRequest<"add_directory">).directoryPath,
         };
         return { ok: true, directories: await this.deps.directories(destination, change, context.assertCurrent) };
+      }
+      case "get_instructions": {
+        // The saved actor was matched to the authenticated binding above; the request has no target.
+        const body = await this.deps.getInstructions(context.actor);
+        context.assertCurrent();
+        return { ok: true, body };
+      }
+      case "set_instructions": {
+        // Reject invalid bytes before dispatch, so this error has a known no-write outcome.
+        let instructions: string;
+        try {
+          instructions = validateSessionInstructions((parsed.data as SessionOperationRequest<"set_instructions">).body);
+        } catch (error) {
+          // Only the known validation error is a guaranteed no-op.
+          if (error instanceof TypeError || error instanceof RangeError) {
+            return { ok: false, code: "SESSION_INVALID_REQUEST", effect: "none", message: error.message };
+          }
+          throw error;
+        }
+        const { byteLength } = await this.deps.setInstructions(context.actor, instructions);
+        return { ok: true, byteLength };
       }
       case "update_metadata": {
         context.assertCurrent();

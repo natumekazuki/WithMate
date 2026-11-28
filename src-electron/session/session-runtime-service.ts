@@ -58,6 +58,8 @@ export type SessionRuntimeServiceDeps = {
     signal: AbortSignal,
   ): Promise<T>;
   getSession(sessionId: string): Awaitable<Session | null>;
+  /** Reads the exact owner once per new Turn; never used for Steer. */
+  readSessionInstructions?(session: Session): Awaitable<string>;
   persistRunningTurnStart(session: Session, expectedMessageCount: number): Awaitable<Session>;
   persistQueuedTurnStart?(session: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Awaitable<{ session: Session; turn: SessionTurnRecord }>;
   assertCapturedComposerAttachmentsAvailable?(session: Session, attachments: ComposerAttachment[]): Promise<void>;
@@ -1004,6 +1006,8 @@ export class SessionRuntimeService {
       }
     };
     assertCapturedOwner(storedSession);
+    // Snapshot once, before asynchronous provider preparation and before any in-turn edits.
+    const sessionInstructions = await this.deps.readSessionInstructions?.(storedSession) ?? "";
     const resolvedSession = await Promise.resolve(
       this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
     );
@@ -1303,6 +1307,7 @@ export class SessionRuntimeService {
         appSettings,
         attachments: composerPreview.attachments,
         currentDateTime: appSettings.currentDateEnabled && session.sessionKind === "default" ? formatCurrentDateTime(observedAt) : undefined,
+        sessionInstructions,
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),

@@ -990,6 +990,7 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
 // impact = "Characterの現行投影が失われ、Sessionに重複した応答が出る"
 // distinction = "型検査ではSDK option値とstream/final連結の実行結果を確認できない"
 // @end-test-value
+/** Claude appends the current fixed instructions, including on resume, without adding them to user input. */
 it("resumes by explicit id with the current system prompt and deduplicates streamed text", async () => {
   const seen: Array<{ options: Options; prompt: unknown }> = [];
   const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
@@ -1018,13 +1019,14 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     // Recreate the adapter for explicit resume: freshness must not rely on an in-memory query cache.
     const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },
       (options, prompt) => seen.push({ options, prompt })) }) : adapter;
-    completed = await currentAdapter.runSessionTurn(request, (state) => { progress.push(state.assistantText); });
+    completed = await currentAdapter.runSessionTurn({ ...request, sessionInstructions: `Instructions ${marker} 🧭` }, (state) => { progress.push(state.assistantText); });
     assert.equal(seen[index].options.resume, index === 0 ? undefined : "thread-1");
     const system = seen[index].options.systemPrompt;
     assert.ok(system && typeof system === "object" && !Array.isArray(system) && system.type === "preset");
     assert.equal(system.preset, "claude_code");
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
+    assert.ok(system.append?.endsWith(`# Session Instructions\n\nInstructions ${marker} 🧭`));
     for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}`));
     }

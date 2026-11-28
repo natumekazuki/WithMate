@@ -78,6 +78,7 @@ function fixture(t: TestContext) {
     currentTurn: async () => ({ turnId: null, receipt: null, origin: null }),
     crewFolder: async (actor) => ({ rootSessionId: actor.rootSessionId, path: `fixture/${actor.rootSessionId}` }),
     operatingPolicy: unused, directories: unused, updateMetadata: unused, enqueue: unused, getReceipt: unused,
+    getInstructions: unused, setInstructions: unused,
     cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, coordinate: unused,
     createChild: unused, catalog: unused,
   });

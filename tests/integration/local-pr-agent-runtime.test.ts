@@ -45,6 +45,7 @@ test("bundled Local PR CLI and managed HTTP MCP share the bound application and 
   const unused = async () => { throw new Error("Unexpected non-PR operation."); };
   const application = new SessionManagementApplication({ readSessionScope: fixtureSessionManagementScope(() => [saved]),
     operatingPolicy: unused, directories: unused, currentTurn: unused, crewFolder: unused, updateMetadata: unused,
+    getInstructions: unused, setInstructions: unused,
     enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, createChild: unused, catalog: unused,
     coordinate: unused, readExecution: unused });
   const operations: string[] = [];

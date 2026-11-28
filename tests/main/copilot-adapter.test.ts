@@ -1336,22 +1336,29 @@ it("Session generationごとのclientを分離しsettings-only clientをunbound�
   // impact = "CopilotがCharacterの現行定義を受け取れないか、可変contextの配置を誤る"
   // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
   // @end-test-value
-  it("character prompt だけをCopilot systemMessageへ変換し、現在日時はinput側に留める", () => {
-    const input = createRunSessionInput();
+  /** Copilot appends fixed instructions to its system config and switches cache key when they are cleared. */
+  it("固定指示とCharacterをCopilot systemMessageへ渡し、現在日時はinput側に留める", () => {
+    const input = { ...createRunSessionInput(), sessionInstructions: "Copilot 固定指示 🧭" };
     input.session.characterRuntimeSnapshot = {
       characterId: "char-a", name: "A", description: "Saved metadata", iconFilePath: "C:/Character Data/キャラ/icon.png",
       theme: input.session.characterThemeColors, definitionMarkdown: "あなたは頼れる相棒です。",
       definitionSha256: "definition", definitionByteSize: 48, snapshotAt: "2026-10-03T00:00:00Z",
     };
     input.currentDateTime = "2026-08-04T21:32:00+09:00";
-    const prompt = new CopilotAdapter().composePrompt(input);
-    const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
+    const adapter = new CopilotAdapter();
+    const prompt = adapter.composePrompt(input);
+    const { config, settingsKey } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
+    const cleared = { ...input, sessionInstructions: "" };
+    const clearedSettings = buildCopilotSessionSettings(cleared, adapter.composePrompt(cleared), "client-key", resolveCustomAgents);
 
     assert.deepEqual(config.systemMessage, {
       mode: "append",
       content: prompt.systemBodyText,
     });
     assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
+    assert.match(config.systemMessage?.content ?? "", /# Session Instructions\n\nCopilot 固定指示 🧭$/);
+    assert.doesNotMatch(clearedSettings.config.systemMessage?.content ?? "", /# Session Instructions/);
+    assert.notEqual(clearedSettings.settingsKey, settingsKey);
     assert.doesNotMatch(config.systemMessage?.content ?? "", /Current Date|2026-08-04|# User Input/);
     assert.match(prompt.inputBodyText, /# Current Date[\s\S]*# User Input\n\nhello/);
     assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);

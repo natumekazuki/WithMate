@@ -6,6 +6,72 @@ import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.
 import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
 import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 
+/** Exercises the private Instructions channels through preload, rejecting invalid identities and callers before delegation. */
+test("Instructions IPC accepts only the owning incarnation and main frame", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const frame = {};
+  const sender = { mainFrame: frame, isDestroyed: () => false, session: {} };
+  const owner = { webContents: sender, isDestroyed: () => false };
+  const calls: unknown[][] = [];
+  let event: { sender: typeof sender; senderFrame: object | null } = { sender, senderFrame: frame };
+  let currentOwner: typeof owner | null = owner;
+  let eventWindow: typeof owner | null = owner;
+  let finishRead: ((value: string) => void) | undefined;
+  let deferRead = false;
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveOwningSessionWindow: (id: string, incarnation: string) => id === "main" && incarnation === "main-v1" ? currentOwner : null,
+    getSessionInstructions: (target: unknown) => {
+      calls.push(["get", target]);
+      return deferRead ? new Promise<string>((resolve) => { finishRead = resolve; }) : "既存😀";
+    },
+    setSessionInstructions: (target: unknown, body: string) => {
+      calls.push(["set", target, body]);
+      return { byteLength: Buffer.byteLength(body) };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({
+    invoke: (channel: string, ...args: unknown[]) => handlers.get(channel)!(event, ...args),
+  } as never);
+  const main = { kind: "main", sessionId: "main", incarnationId: "main-v1" } as const;
+  const auxiliary = { kind: "auxiliary", sessionId: "aux", incarnationId: "created-at", mainSessionId: "main", mainIncarnationId: "main-v1" } as const;
+  assert.equal(await api.getSessionInstructions(main), "既存😀");
+  assert.deepEqual(await api.setSessionInstructions(auxiliary, " 本文😀\n"), { byteLength: 12 });
+  assert.deepEqual(await api.setSessionInstructions(main, ""), { byteLength: 0 });
+  assert.deepEqual(calls, [["get", main], ["set", auxiliary, " 本文😀\n"], ["set", main, ""]]);
+
+  // Both channels reject extra fields, missing identities, and a replaced Main incarnation.
+  for (const target of [
+    { ...main, body: "extra" }, { ...main, sessionId: " " }, { ...main, incarnationId: "main-v2" },
+    { ...auxiliary, mainIncarnationId: undefined }, { ...auxiliary, mainSessionId: "other" },
+  ]) {
+    await assert.rejects(async () => handlers.get("withmate:get-session-instructions")!(event, target));
+    await assert.rejects(async () => handlers.get("withmate:set-session-instructions")!(event, target, ""));
+  }
+  // A subframe, absent frame, and unrelated Window cannot reach storage.
+  for (const senderFrame of [{}, null]) {
+    event = { sender, senderFrame };
+    await assert.rejects(() => api.getSessionInstructions(auxiliary), /owning Session Window/);
+    await assert.rejects(() => api.setSessionInstructions(auxiliary, ""), /owning Session Window/);
+  }
+  event = { sender, senderFrame: frame };
+  eventWindow = { ...owner };
+  await assert.rejects(() => api.getSessionInstructions(main), /owning Session Window/);
+  await assert.rejects(() => api.setSessionInstructions(main, ""), /owning Session Window/);
+  assert.equal(calls.length, 3);
+
+  // The late read must not disclose text after the owning Window was replaced.
+  eventWindow = owner;
+  deferRead = true;
+  const pending = api.getSessionInstructions(auxiliary);
+  assert.ok(finishRead);
+  currentOwner = { ...owner };
+  finishRead("private body");
+  await assert.rejects(pending, /owning Session Window/);
+  assert.deepEqual(calls.at(-1), ["get", auxiliary]);
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "enqueue IPCは専用preflight rejectだけをstructured未受付replyにしgeneric保存errorを伝播する"
@@ -731,6 +797,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     sessionQuery: featureDeps,
     auxiliary: featureDeps,
     sessionRuntime: featureDeps,
+    sessionInstructions: featureDeps,
     mate: featureDeps,
     character: featureDeps,
   };

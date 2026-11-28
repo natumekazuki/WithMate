@@ -28,6 +28,7 @@ import { conversationThreadsResultSchema, savedMessageConversationFrame } from "
 import { initiatingReply } from "./session/initiating-reply.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
+import { validateSessionInstructions, type SessionInstructionsTarget } from "../src-shared/session/session-instructions.js";
 import type { AgentRuntimeSourceRef } from "../src-shared/agent-runtime/agent-runtime-source.js";
 import {
   type DiffPreviewPayload,
@@ -946,6 +947,8 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       const receipt = receipts.find((entry) => entry.turnId === turnId && !entry.inputTurnId) ?? null;
       return { turnId, receipt: receipt ? { sessionId: receipt.sessionId, incarnationId: receipt.incarnationId, receiptId: receipt.id, requestId: receipt.requestId, turnId: receipt.turnId } : null, origin: receipt?.accepted?.origin ?? null };
     },
+    getInstructions: (target) => getSessionInstructions(target),
+    setInstructions: setSessionInstructions,
     updateMetadata: async (actor, patch, assertCurrent) => {
       assertCurrent();
       if (actor.kind === "main") return requireSessionPersistenceService().patchSessionMetadata(actor.id, actor.incarnationId, patch, assertCurrent);
@@ -1370,6 +1373,34 @@ function assertPersistentStoreOwnerIsActive(
   assertPersistentStoreOwnerActive(() => mainStoreContext.activePersistentStoreOwner, owner, operation);
 }
 
+/** Reads instructions for a trusted GUI, authenticated agent or Turn target. */
+async function getSessionInstructions(
+  target: SessionInstructionsTarget,
+  owner = requireActivePersistentStoreOwnerForFactory("Session instructions"),
+): Promise<string> {
+  assertPersistentStoreOwnerIsActive(owner, "Session instructions");
+  const worker = owner.storageWorker;
+  // Do not reinterpret unavailable storage as a saved empty body.
+  if (!worker || databaseMaintenanceRequested) throw new Error("Session instructions storage is unavailable.");
+  const body = await worker.stores.instructions.get(target);
+  assertPersistentStoreOwnerIsActive(owner, "Session instructions");
+  // Null means that the exact saved identity no longer exists.
+  if (body === null) throw new SessionManagementError("SESSION_REPLACED", "The Session was replaced or deleted.");
+  return body;
+}
+
+/** Replaces instructions without writing execution options, activity or history. */
+async function setSessionInstructions(target: SessionInstructionsTarget, body: string): Promise<{ byteLength: number }> {
+  const owner = requireActivePersistentStoreOwnerForFactory("Session instructions");
+  const worker = owner.storageWorker;
+  // Only the active Worker may commit a replacement.
+  if (!worker || databaseMaintenanceRequested) throw new Error("Session instructions storage is unavailable.");
+  const result = await worker.stores.instructions.set(target, body);
+  // No row was updated when the exact identity did not match.
+  if (!result) throw new SessionManagementError("SESSION_REPLACED", "The Session was replaced or deleted.");
+  return result;
+}
+
 function isSessionRunInFlight(sessionId: string, scope: "self" | "with-auxiliary" = "with-auxiliary"): boolean {
   if (sessionRuntimeService?.isRunInFlight(sessionId) ||
       auxiliarySessionRuntimeService?.isRunInFlight(sessionId) || auxiliaryRunParents.has(sessionId)) {
@@ -1589,6 +1620,17 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
+              sessionInstructions: {
+                resolveOwningSessionWindow: (sessionId, incarnationId) => {
+                  const bridge = requireSessionWindowBridge();
+                  const window = bridge.getWindow(sessionId);
+                  // A retained Window from a replaced database generation is not an owner.
+                  return window && bridge.getWindowIncarnation(window) === incarnationId
+                    && bridge.getWindowStorageGeneration(window) === mainStoreContext.storageWorker ? window : null;
+                },
+                getSessionInstructions: (target) => getSessionInstructions(target),
+                setSessionInstructions: (target, body) => setSessionInstructions(target, validateSessionInstructions(body)),
+              },
               window: {
                 acknowledgeSessionDraftFlush: (event, payload) => {
                   requireSessionWindowBridge().acknowledgeDraftFlush(payload.requestId, event.sender, payload.success);
@@ -2829,6 +2871,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        readSessionInstructions: (target) => getSessionInstructions(target, owner),
         assertSavedReplyTo,
         readMainMessageThread: async (target, seq) => {
           const result = await owner.storageWorker!.stores.execution.execute({
@@ -2980,6 +3023,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       },
       context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        readSessionInstructions: (target) => getSessionInstructions(target, owner),
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: {
