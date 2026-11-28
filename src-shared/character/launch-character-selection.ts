@@ -1,8 +1,13 @@
 import type { CharacterCatalogEntry } from "./character-catalog.js";
 import type { HomeSessionSummary } from "../session/session-state.js";
 
-export type CharacterUsageSessionSource = Pick<HomeSessionSummary, "characterId" | "sessionKind">;
+/** 最近使われたCharacterの順位付けに必要なIDと、集計対象を選ぶSession種別。 */
+export type CharacterUsageSessionSource = Pick<
+  HomeSessionSummary,
+  "characterId" | "sessionKind"
+>;
 
+/** 開いているSessionで未使用の有効候補を優先し、通常Sessionで最近使われていない候補を重くする。 */
 export function selectWeightedRandomLaunchCharacterId(
   entries: readonly CharacterCatalogEntry[],
   sessionsByLastActiveDesc: readonly CharacterUsageSessionSource[],
@@ -15,9 +20,14 @@ export function selectWeightedRandomLaunchCharacterId(
   }
 
   const openSessionCharacterIdSet = new Set(openSessionCharacterIds);
-  const unusedEntries = activeEntries.filter((entry) => !openSessionCharacterIdSet.has(entry.id));
-  const eligibleEntries = unusedEntries.length > 0 ? unusedEntries : activeEntries;
-  const eligibleCharacterIds = new Set(eligibleEntries.map((entry) => entry.id));
+  const unusedEntries = activeEntries.filter(
+    (entry) => !openSessionCharacterIdSet.has(entry.id),
+  );
+  const eligibleEntries =
+    unusedEntries.length > 0 ? unusedEntries : activeEntries;
+  const eligibleCharacterIds = new Set(
+    eligibleEntries.map((entry) => entry.id),
+  );
   const recencyRanks = new Map<string, number>();
   for (const session of sessionsByLastActiveDesc) {
     if (
@@ -34,7 +44,10 @@ export function selectWeightedRandomLaunchCharacterId(
     entry,
     weight: (recencyRanks.get(entry.id) ?? recencyRanks.size) + 1,
   }));
-  const totalWeight = weightedEntries.reduce((total, candidate) => total + candidate.weight, 0);
+  const totalWeight = weightedEntries.reduce(
+    (total, candidate) => total + candidate.weight,
+    0,
+  );
   const randomValue = random();
   const normalizedRandomValue = Number.isFinite(randomValue)
     ? Math.min(Math.max(randomValue, 0), 1 - Number.EPSILON)

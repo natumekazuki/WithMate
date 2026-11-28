@@ -4,4 +4,6 @@ export type MemoryFileAccess = Readonly<{
   exportRoot: string | null;
 }>;
 
-export const MEMORY_FILE_ACCESS_USAGE = "Session-bound attachments may only be imported from the Session Workspace, allowed Additional Directories, or SessionFolder. Normal turns may explicitly restore files within those roots; background restoration is restricted to SessionFolder/memory-exports. Auxiliary uses its own Workspace and Additional Directories and its parent Main SessionFolder. Restoration is a local write: plan and Codex read-only modes forbid it. Missing file authority and symlink/junction escapes are rejected; existing output files are never overwritten.";
+/** Sessionに紐づく添付の参照範囲と、通常時・バックグラウンド時の復元条件を利用者へ案内する。 */
+export const MEMORY_FILE_ACCESS_USAGE =
+  "Session-bound attachments may only be imported from the Session Workspace, allowed Additional Directories, or SessionFolder. Normal turns may explicitly restore files within those roots; background restoration is restricted to SessionFolder/memory-exports. Auxiliary uses its own Workspace and Additional Directories and its parent Main SessionFolder. Restoration is a local write: plan and Codex read-only modes forbid it. Missing file authority and symlink/junction escapes are rejected; existing output files are never overwritten.";

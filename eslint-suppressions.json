@@ -1124,19 +1124,9 @@
       "count": 39
     }
   },
-  "src-shared/character/character-authoring.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
   "src-shared/character/character-catalog.ts": {
     "jsdoc/require-jsdoc": {
       "count": 15
-    }
-  },
-  "src-shared/character/character-definition-template.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "src-shared/character/character-definition.ts": {
@@ -1147,11 +1137,6 @@
   "src-shared/character/character-icon.ts": {
     "jsdoc/require-jsdoc": {
       "count": 10
-    }
-  },
-  "src-shared/character/character-owner.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
     }
   },
   "src-shared/character/character-participant.ts": {
@@ -1169,16 +1154,6 @@
       "count": 10
     }
   },
-  "src-shared/character/launch-character-selection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 2
-    }
-  },
-  "src-shared/file-explorer/file-content-detection.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
   "src-shared/file-explorer/file-explorer-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 90
@@ -1192,11 +1167,6 @@
   "src-shared/file-explorer/session-file-object-copy-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 7
-    }
-  },
-  "src-shared/file-explorer/session-html-preview-contract.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "src-shared/file-explorer/unified-diff.ts": {
@@ -1247,16 +1217,6 @@
   "src-shared/memory/memory-contract.ts": {
     "jsdoc/require-jsdoc": {
       "count": 36
-    }
-  },
-  "src-shared/memory/memory-diagnostics-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "src-shared/memory/memory-file-access.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 1
     }
   },
   "src-shared/memory/memory-response-contract.ts": {

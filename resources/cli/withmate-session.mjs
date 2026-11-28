@@ -6201,11 +6201,14 @@ var LOCAL_PR_AGENT_DESCRIPTIONS = {
 	pr_ci_log: "Read a page of log output from a specific CI run and submitted version."
 };
 // src-shared/character/character-owner.ts
+/** 保存値から所有者を復元できない場合に割り当てる予約ID。 */
 var UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
+/** 文字列の前後の空白を除き、空や文字列以外は有効なIDとして扱わない。 */
 function normalizeCharacterOwnerId(value) {
 	if (typeof value !== "string") return null;
 	return value.trim() || null;
 }
+/** 空白を除いた値が、復元不能を表す予約IDと一致するか調べる。 */
 function isUnknownCharacterOwnerId(value) {
 	return normalizeCharacterOwnerId(value) === UNKNOWN_CHARACTER_OWNER_ID;
 }

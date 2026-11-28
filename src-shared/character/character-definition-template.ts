@@ -1,10 +1,15 @@
 import { CHARACTER_DEFINITION_SCHEMA } from "./character-definition.js";
 
+/** 二重引用符で囲めるように本文中のバックスラッシュと二重引用符をエスケープする。 */
 function quoteFrontmatterValue(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function buildDefaultCharacterDefinition(name: string, description = ""): string {
+/** 名前が空なら既定名を使い、公開情報のfrontmatterと定義の記入ガイドを生成する。 */
+export function buildDefaultCharacterDefinition(
+  name: string,
+  description = "",
+): string {
   const normalizedName = name.trim() || "New Character";
   return [
     "---",
@@ -74,6 +79,7 @@ export function buildDefaultCharacterDefinition(name: string, description = ""):
   ].join("\n");
 }
 
+/** 実行時の定義とは別に、調査対象・根拠・評価範囲を記入する下書きを生成する。 */
 export function buildDefaultCharacterNotes(): string {
   return [
     "# Character Notes",

@@ -3,6 +3,7 @@ import type {
   SessionFileResourceKind,
 } from "./file-explorer-contract.js";
 
+/** 拡張子と先頭の特徴から表示形式を選び、画像等に該当しない入力は文字・バイナリを判定する。 */
 export function detectSessionFileResourceKind(
   fileName: string,
   bytes: Uint8Array,
@@ -10,7 +11,14 @@ export function detectSessionFileResourceKind(
   const normalizedName = fileName.toLocaleLowerCase("en-US");
   const dotIndex = normalizedName.lastIndexOf(".");
   const extension = dotIndex >= 0 ? normalizedName.slice(dotIndex) : "";
-  if (extension === ".pdf" || (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d)) {
+  if (
+    extension === ".pdf" ||
+    (bytes[0] === 0x25 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x44 &&
+      bytes[3] === 0x46 &&
+      bytes[4] === 0x2d)
+  ) {
     return { kind: "pdf", mimeType: "application/pdf" };
   }
   const isMarkdown = extension === ".md" || extension === ".markdown";
@@ -24,9 +32,14 @@ export function detectSessionFileResourceKind(
     ".ico": "image/x-icon",
     ".avif": "image/avif",
   };
-  const headerText = new TextDecoder("utf-8").decode(bytes.subarray(0, Math.min(bytes.length, 1024))).trimStart();
+  const headerText = new TextDecoder("utf-8")
+    .decode(bytes.subarray(0, Math.min(bytes.length, 1024)))
+    .trimStart();
   const detectedImageMime =
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
       ? "image/png"
       : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
         ? "image/jpeg"
@@ -37,11 +50,18 @@ export function detectSessionFileResourceKind(
             : bytes[0] === 0x42 && bytes[1] === 0x4d
               ? "image/bmp"
               : null;
-  if (extension === ".svg" || /^<\?xml[\s\S]*?<svg\b/i.test(headerText) || /^<svg\b/i.test(headerText)) {
+  if (
+    extension === ".svg" ||
+    /^<\?xml[\s\S]*?<svg\b/i.test(headerText) ||
+    /^<svg\b/i.test(headerText)
+  ) {
     return { kind: "svg", mimeType: "image/svg+xml" };
   }
   if (detectedImageMime || imageTypes[extension]) {
-    return { kind: "image", mimeType: detectedImageMime ?? imageTypes[extension] };
+    return {
+      kind: "image",
+      mimeType: detectedImageMime ?? imageTypes[extension],
+    };
   }
   if (isUtf16SessionFile(bytes)) {
     return isMarkdown
@@ -57,6 +77,7 @@ export function detectSessionFileResourceKind(
   return { kind: "text", mimeType: "text/plain" };
 }
 
+/** 先頭のBOMがUTF-16のリトルエンディアンまたはビッグエンディアンか調べる。 */
 export function isUtf16SessionFile(bytes: Uint8Array): boolean {
   return (
     (bytes[0] === 0xff && bytes[1] === 0xfe) ||
@@ -64,6 +85,7 @@ export function isUtf16SessionFile(bytes: Uint8Array): boolean {
   );
 }
 
+/** 置換文字によるエラー回復を許可せず、指定の符号化で全入力を復号できるか調べる。 */
 function canDecode(bytes: Uint8Array, encoding: SessionFileEncoding): boolean {
   try {
     new TextDecoder(encoding, { fatal: true }).decode(bytes);
@@ -73,7 +95,10 @@ function canDecode(bytes: Uint8Array, encoding: SessionFileEncoding): boolean {
   }
 }
 
-export function detectSessionFileEncoding(bytes: Uint8Array): SessionFileEncoding {
+/** BOMを優先し、なければ厳格なUTF-8、Shift_JISの順で試し、どちらでもなければUTF-8へ戻す。 */
+export function detectSessionFileEncoding(
+  bytes: Uint8Array,
+): SessionFileEncoding {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
     return "utf-8";
   }
@@ -92,15 +117,22 @@ export function detectSessionFileEncoding(bytes: Uint8Array): SessionFileEncodin
   return "utf-8";
 }
 
+/** UTF-16のBOMを除外し、NULまたは通常の空白以外の制御バイトが多い内容をバイナリと見なす。 */
 export function isLikelyBinarySessionFile(bytes: Uint8Array): boolean {
   if (isUtf16SessionFile(bytes)) {
     return false;
   }
   let suspiciousControlBytes = 0;
   for (const byte of bytes) {
-    if (byte === 0 || (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d)) {
+    if (
+      byte === 0 ||
+      (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d)
+    ) {
       suspiciousControlBytes += 1;
     }
   }
-  return bytes.includes(0) || (bytes.length > 0 && suspiciousControlBytes / bytes.length > 0.1);
+  return (
+    bytes.includes(0) ||
+    (bytes.length > 0 && suspiciousControlBytes / bytes.length > 0.1)
+  );
 }
