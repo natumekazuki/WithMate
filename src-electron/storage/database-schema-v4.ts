@@ -6,11 +6,15 @@ import { APP_DATABASE_V2_FILENAME } from "./database-schema-v2.js";
 import { APP_DATABASE_V3_FILENAME } from "./database-schema-v3.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
+/** 旧Mate専用テーブルを含むV4 DBのファイル名。 */
 export const APP_DATABASE_V4_FILENAME = "withmate-v4.db";
+/** V4の作成と判定に用いるSQLiteのユーザー版番号。 */
 export const APP_DATABASE_V4_SCHEMA_VERSION = 4;
 
+/** V4のスキーマ定義に付随する設計ステータス。 */
 export const V4_SCHEMA_STATUS = "ready-for-implementation";
 
+/** V4と判定するために全ての存在を確認する旧Mate・投影用テーブル。 */
 export const REQUIRED_V4_TABLES = [
   "mate_profile",
   "mate_profile_sections",
@@ -39,6 +43,7 @@ export const REQUIRED_V4_TABLES = [
   "provider_instruction_sync_runs",
 ] as const;
 
+/** V4の名前を持つDBから、変更を加えずにユーザー版番号を取得する。名前違い・読取失敗はnullを返す。 */
 export function readV4DatabaseUserVersion(dbPath: string): number | null {
   if (basename(dbPath) !== APP_DATABASE_V4_FILENAME) {
     return null;
@@ -47,7 +52,8 @@ export function readV4DatabaseUserVersion(dbPath: string): number | null {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
     return null;
@@ -56,6 +62,7 @@ export function readV4DatabaseUserVersion(dbPath: string): number | null {
   }
 }
 
+/** 版番号と必須テーブルの両方でV4を識別する。V4以外の名前や開けないDBは対象外とする。 */
 export function isValidV4Database(dbPath: string): boolean {
   if (basename(dbPath) !== APP_DATABASE_V4_FILENAME) {
     return false;
@@ -64,17 +71,24 @@ export function isValidV4Database(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V4_SCHEMA_VERSION) {
       return false;
     }
 
     const existingTables = new Set(
-      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+      (
+        db
+          .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+          .all() as Array<{ name?: unknown }>
+      )
         .map((table) => table.name)
         .filter((name): name is string => typeof name === "string"),
     );
-    return REQUIRED_V4_TABLES.every((tableName) => existingTables.has(tableName));
+    return REQUIRED_V4_TABLES.every((tableName) =>
+      existingTables.has(tableName),
+    );
   } catch {
     return false;
   } finally {
@@ -82,26 +96,37 @@ export function isValidV4Database(dbPath: string): boolean {
   }
 }
 
+/** V4のファイル名を再利用した新しい版を検出し、既知のV4として扱うことを防ぐ。 */
 export function isUnsupportedNewerV4Database(dbPath: string): boolean {
   const userVersion = readV4DatabaseUserVersion(dbPath);
   return userVersion !== null && userVersion > APP_DATABASE_V4_SCHEMA_VERSION;
 }
 
+/** 初期版からV3までのファイル名に該当し、V4の初期化先にしてはならないかを判定する。 */
 export function isLegacyAppDatabasePath(dbPath: string): boolean {
   const fileName = basename(dbPath);
-  return fileName === APP_DATABASE_V1_FILENAME
-    || fileName === APP_DATABASE_V2_FILENAME
-    || fileName === APP_DATABASE_V3_FILENAME;
+  return (
+    fileName === APP_DATABASE_V1_FILENAME ||
+    fileName === APP_DATABASE_V2_FILENAME ||
+    fileName === APP_DATABASE_V3_FILENAME
+  );
 }
 
-export function assertV4SchemaInitializationAllowed(dbPath: string, storageName: string): void {
+/** 旧DB名が初期化先なら例外にし、V4のDDLが旧DBへ適用されないようにする。 */
+export function assertV4SchemaInitializationAllowed(
+  dbPath: string,
+  storageName: string,
+): void {
   if (!isLegacyAppDatabasePath(dbPath)) {
     return;
   }
 
-  throw new Error(`${storageName} requires ${APP_DATABASE_V4_FILENAME}; refusing to initialize V4 schema in legacy DB.`);
+  throw new Error(
+    `${storageName} requires ${APP_DATABASE_V4_FILENAME}; refusing to initialize V4 schema in legacy DB.`,
+  );
 }
 
+/** 旧Mateプロフィールの基本情報と現行プロフィールの参照を保持するDDL。 */
 export const CREATE_V4_MATE_PROFILE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile (
     id TEXT PRIMARY KEY CHECK (id = 'current'),
@@ -121,6 +146,7 @@ export const CREATE_V4_MATE_PROFILE_TABLE_SQL = `
   );
 `;
 
+/** 旧Mateプロフィールをセクション単位で保存するDDL。 */
 export const CREATE_V4_MATE_PROFILE_SECTIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_sections (
     mate_id TEXT NOT NULL,
@@ -135,6 +161,7 @@ export const CREATE_V4_MATE_PROFILE_SECTIONS_TABLE_SQL = `
   );
 `;
 
+/** 旧Mateプロフィールの変更版と、版の作成に関わった成長イベントを追跡するDDL。 */
 export const CREATE_V4_MATE_PROFILE_REVISIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_revisions (
     id TEXT PRIMARY KEY,
@@ -181,6 +208,7 @@ export const CREATE_V4_MATE_PROFILE_REVISIONS_TABLE_SQL = `
     ON mate_profile_revisions(source_growth_event_id);
 `;
 
+/** 旧Mateプロフィールの変更版ごとにセクション内容を保持するDDL。 */
 export const CREATE_V4_MATE_PROFILE_REVISION_SECTIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_revision_sections (
     revision_id TEXT NOT NULL,
@@ -197,6 +225,7 @@ export const CREATE_V4_MATE_PROFILE_REVISION_SECTIONS_TABLE_SQL = `
   );
 `;
 
+/** 旧Mateの成長処理を制御する設定のDDL。 */
 export const CREATE_V4_MATE_GROWTH_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_settings (
     mate_id TEXT PRIMARY KEY,
@@ -219,6 +248,7 @@ export const CREATE_V4_MATE_GROWTH_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 旧Mate成長処理に使うモデル候補の設定を保持し、有効な候補を検索できるようにするDDL。 */
 export const CREATE_V4_MATE_GROWTH_MODEL_PREFERENCES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_model_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -251,6 +281,7 @@ export const CREATE_V4_MATE_GROWTH_MODEL_PREFERENCES_TABLE_SQL = `
     ON mate_growth_model_preferences(mate_id, purpose, enabled, priority);
 `;
 
+/** 旧Mate成長処理の入力元と実行状態を記録し、操作IDの重複を防ぐDDL。 */
 export const CREATE_V4_MATE_GROWTH_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,6 +331,7 @@ export const CREATE_V4_MATE_GROWTH_RUNS_TABLE_SQL = `
     WHERE operation_id <> '';
 `;
 
+/** 旧Mate成長処理が読み取った位置を再開用カーソルとして保持するDDL。 */
 export const CREATE_V4_MATE_GROWTH_CURSORS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_cursors (
     mate_id TEXT NOT NULL,
@@ -324,6 +356,7 @@ export const CREATE_V4_MATE_GROWTH_CURSORS_TABLE_SQL = `
   );
 `;
 
+/** 旧Mate成長イベントの状態・対象・出典などを記録し、処理や検索に必要な索引を作るDDL。 */
 export const CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_events (
     id TEXT PRIMARY KEY,
@@ -411,6 +444,7 @@ export const CREATE_V4_MATE_GROWTH_EVENTS_TABLE_SQL = `
     ON mate_growth_events(last_seen_at DESC, salience_score DESC);
 `;
 
+/** 旧Mate成長イベント間の関連を元イベントと宛先からたどれるようにするDDL。 */
 export const CREATE_V4_MATE_GROWTH_EVENT_LINKS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_event_links (
     source_growth_event_id TEXT NOT NULL,
@@ -432,6 +466,7 @@ export const CREATE_V4_MATE_GROWTH_EVENT_LINKS_TABLE_SQL = `
     ON mate_growth_event_links(target_growth_event_id, link_type);
 `;
 
+/** 旧Mate成長イベントとプロフィール項目の関連を保持し、項目からもたどれるようにするDDL。 */
 export const CREATE_V4_MATE_GROWTH_EVENT_PROFILE_ITEM_LINKS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_event_profile_item_links (
     growth_event_id TEXT NOT NULL,
@@ -453,6 +488,7 @@ export const CREATE_V4_MATE_GROWTH_EVENT_PROFILE_ITEM_LINKS_TABLE_SQL = `
     ON mate_growth_event_profile_item_links(profile_item_id, link_type);
 `;
 
+/** 旧Mateメモリとタグの紐付けを管理し、メモリ起点とタグ起点の両方の検索を支えるDDL。 */
 export const CREATE_V4_MATE_MEMORY_TAGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_memory_tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -471,6 +507,7 @@ export const CREATE_V4_MATE_MEMORY_TAGS_TABLE_SQL = `
     ON mate_memory_tags(tag_type, tag_value_normalized);
 `;
 
+/** 旧Mateメモリのタグ候補を管理し、スコープでの重複を防ぐDDL。 */
 export const CREATE_V4_MATE_MEMORY_TAG_CATALOG_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_memory_tag_catalog (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -494,6 +531,7 @@ export const CREATE_V4_MATE_MEMORY_TAG_CATALOG_TABLE_SQL = `
     ON mate_memory_tag_catalog(tag_type, usage_count DESC, updated_at DESC);
 `;
 
+/** 旧Mateメモリの埋め込み生成に用いたサービスとモデル等の設定を保持するDDL。 */
 export const CREATE_V4_MATE_EMBEDDING_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_embedding_settings (
     mate_id TEXT PRIMARY KEY,
@@ -533,6 +571,7 @@ export const CREATE_V4_MATE_EMBEDDING_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 旧Mateの意味検索用埋め込みを所有元とモデルで識別し、検索に利用できるようにするDDL。 */
 export const CREATE_V4_MATE_SEMANTIC_EMBEDDINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_semantic_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -557,6 +596,7 @@ export const CREATE_V4_MATE_SEMANTIC_EMBEDDINGS_TABLE_SQL = `
     ON mate_semantic_embeddings(embedding_backend_type, embedding_model_id, dimension);
 `;
 
+/** 旧Mate成長イベントで扱う操作をイベント単位で追跡するDDL。 */
 export const CREATE_V4_MATE_GROWTH_EVENT_ACTIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_event_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -585,6 +625,7 @@ export const CREATE_V4_MATE_GROWTH_EVENT_ACTIONS_TABLE_SQL = `
     ON mate_growth_event_actions(growth_event_id, id);
 `;
 
+/** 旧Mate成長イベントの根拠を記録し、元イベントから検索できるようにするDDL。 */
 export const CREATE_V4_MATE_GROWTH_EVENT_EVIDENCE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_growth_event_evidence (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -624,6 +665,7 @@ export const CREATE_V4_MATE_GROWTH_EVENT_EVIDENCE_TABLE_SQL = `
     ON mate_growth_event_evidence(growth_event_id, id);
 `;
 
+/** 旧Mateプロフィールの個別項目を保持し、有効な主張のキーを全体・Project別のスコープで一意にするDDL。 */
 export const CREATE_V4_MATE_PROFILE_ITEMS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_items (
     id TEXT PRIMARY KEY,
@@ -678,6 +720,7 @@ export const CREATE_V4_MATE_PROFILE_ITEMS_TABLE_SQL = `
     ON mate_profile_items(mate_id, section_key, projection_allowed, state, salience_score DESC);
 `;
 
+/** 旧Mateプロフィール項目とタグの対応を保存し、タグから項目を引けるようにするDDL。 */
 export const CREATE_V4_MATE_PROFILE_ITEM_TAGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_item_tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -696,6 +739,7 @@ export const CREATE_V4_MATE_PROFILE_ITEM_TAGS_TABLE_SQL = `
     ON mate_profile_item_tags(tag_type, tag_value_normalized);
 `;
 
+/** 旧Mateプロフィール項目の出典を関連イベントまでたどれるようにするDDL。 */
 export const CREATE_V4_MATE_PROFILE_ITEM_SOURCES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_item_sources (
     profile_item_id TEXT NOT NULL,
@@ -713,6 +757,7 @@ export const CREATE_V4_MATE_PROFILE_ITEM_SOURCES_TABLE_SQL = `
     ON mate_profile_item_sources(growth_event_id);
 `;
 
+/** 旧Mateプロフィール項目間の関係を保存し、関係先からも引けるようにするDDL。 */
 export const CREATE_V4_MATE_PROFILE_ITEM_RELATIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_profile_item_relations (
     from_profile_item_id TEXT NOT NULL,
@@ -732,6 +777,7 @@ export const CREATE_V4_MATE_PROFILE_ITEM_RELATIONS_TABLE_SQL = `
     ON mate_profile_item_relations(to_profile_item_id, relation_type);
 `;
 
+/** 忘却した旧Mateプロフィール情報の識別情報を保持するDDL。 */
 export const CREATE_V4_MATE_FORGOTTEN_TOMBSTONES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_forgotten_tombstones (
     id TEXT PRIMARY KEY,
@@ -756,6 +802,7 @@ export const CREATE_V4_MATE_FORGOTTEN_TOMBSTONES_TABLE_SQL = `
   );
 `;
 
+/** 旧MateのProject別ダイジェストを保持し、Projectキーから取得できるようにするDDL。 */
 export const CREATE_V4_MATE_PROJECT_DIGESTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS mate_project_digests (
     id TEXT PRIMARY KEY,
@@ -783,6 +830,7 @@ export const CREATE_V4_MATE_PROJECT_DIGESTS_TABLE_SQL = `
     ON mate_project_digests(project_key);
 `;
 
+/** 旧Mateの指示をプロバイダーへ反映する対象と有効設定を管理するDDL。 */
 export const CREATE_V4_PROVIDER_INSTRUCTION_TARGETS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS provider_instruction_targets (
     provider_id TEXT NOT NULL,
@@ -807,6 +855,7 @@ export const CREATE_V4_PROVIDER_INSTRUCTION_TARGETS_TABLE_SQL = `
     ON provider_instruction_targets(enabled, provider_id, target_id);
 `;
 
+/** 旧Mateのプロバイダー指示同期の履歴を、プロバイダーとプロフィール版から検索できるようにするDDL。 */
 export const CREATE_V4_PROVIDER_INSTRUCTION_SYNC_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS provider_instruction_sync_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -832,6 +881,7 @@ export const CREATE_V4_PROVIDER_INSTRUCTION_SYNC_RUNS_TABLE_SQL = `
     ON provider_instruction_sync_runs(mate_revision_id, id DESC);
 `;
 
+/** 旧Mateとプロバイダー指示用のテーブルを一括で初期化するためのSQL定義。 */
 export const CREATE_V4_SCHEMA_SQL = [
   CREATE_V4_MATE_PROFILE_TABLE_SQL,
   CREATE_V4_MATE_PROFILE_SECTIONS_TABLE_SQL,

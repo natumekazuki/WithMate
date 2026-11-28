@@ -1,41 +1,111 @@
 import { SelectionActionOverlayContext } from "./selection-action-overlay-context.js";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type ReactNode, type RefObject, type UIEventHandler } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEventHandler,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  type UIEventHandler,
+} from "react";
 import { createPortal } from "react-dom";
-import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
+import {
+  defaultRangeExtractor,
+  useVirtualizer,
+  type Range,
+} from "@tanstack/react-virtual";
 
-import type { ChangedFile, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, ElicitationRecord } from "../../../src-shared/session/runtime-state.js";
+import type {
+  ChangedFile,
+  LiveApprovalRequest,
+  LiveElicitationRequest,
+  LiveElicitationResponse,
+  ElicitationRecord,
+} from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
-import type { Message, MessageArtifact } from "../../../src-shared/session/session-state.js";
-import { getMessageHistoryIndex, type ConversationSearchMatch, type ConversationSearchRequest, type ConversationQueryOutcome, type ConversationQueryCancelRequest } from "../../../src-shared/session/conversation-page.js";
+import type {
+  Message,
+  MessageArtifact,
+} from "../../../src-shared/session/session-state.js";
+import {
+  getMessageHistoryIndex,
+  type ConversationSearchMatch,
+  type ConversationSearchRequest,
+  type ConversationQueryOutcome,
+  type ConversationQueryCancelRequest,
+} from "../../../src-shared/session/conversation-page.js";
 import { useConversationQueryPages } from "./use-conversation-query-pages.js";
 import { useStreamedResponseText } from "./use-streamed-response-text.js";
 
-import { MessageRichText, type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
-import { useMarkdownImageResolver, type MarkdownImageContext, type MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
+import {
+  MessageRichText,
+  type MessageViewMode,
+} from "../../ui/markdown/MessageRichText.js";
+import {
+  useMarkdownImageResolver,
+  type MarkdownImageContext,
+  type MarkdownImageResolver,
+} from "../../ui/markdown/image-resource-loader.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
-import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
+import {
+  approvalModeLabel,
+  CharacterAvatar,
+  liveRunStepStatusLabel,
+  operationTypeLabel,
+} from "../../ui/ui-utils.js";
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
-import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
+import {
+  InlineResponseContent,
+  LiveRequestSurface,
+  type LiveElicitationDrafts,
+} from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import { FailedTurnRetry } from "./failed-turn-retry.js";
-import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
-import { useSentDeliveries, sentInstructionKey } from "./use-sent-deliveries.js";
+import {
+  TurnInputReadBoundary,
+  TurnExecutionDetails,
+  TurnInputStatus,
+  TurnInputOriginAvatar,
+  SessionOriginRoute,
+  type TurnInputReadContext,
+} from "./turn-input-details.js";
+import {
+  useSentDeliveries,
+  sentInstructionKey,
+} from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import { ReplyQuote } from "./reply-quote.js";
 import type { SessionReply } from "../../../src-shared/session/session-reply.js";
 import { conversationPeerKey } from "../../../src-shared/session/conversation-threads.js";
 import type { ConversationThread } from "../../../src-shared/session/conversation-threads.js";
 import type { SentInstruction } from "./use-sent-deliveries.js";
-import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
+import {
+  CoordinationNotice,
+  ReceivedCoordinationContent,
+} from "./coordination-notice.js";
 import { useIssuedCoordinations } from "./use-issued-coordinations.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
-import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
-import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterateMessageSearchMatches, messageSearchSourceRangesCorrespond, type MessageSearchProjection } from "../../../src-shared/session/message-find.js";
+import {
+  clampFindMatchIndex,
+  findTextMatches,
+} from "../../../src-shared/text/find-text-matches.js";
+import {
+  createMessageSearchProjection,
+  getMessageSearchMatchSourceRange,
+  iterateMessageSearchMatches,
+  messageSearchSourceRangesCorrespond,
+  type MessageSearchProjection,
+} from "../../../src-shared/session/message-find.js";
 import type { TextSearchMatch } from "../../../src-shared/text/find-text-matches.js";
 
 import { resolveSelectionActionOverlayPosition } from "../../chat/selection-action-overlay.js";
@@ -45,7 +115,10 @@ import {
   isMessageRenderedSearchTextNode,
   resolveMessageSourceMatchTarget,
 } from "./message-rendered-search-text.js";
-import { projectMessagePlainText, projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
+import {
+  projectMessagePlainText,
+  projectMessageRenderedSearchText,
+} from "../../../src-shared/session/message-search.js";
 import {
   appendRenderedTextMatches,
   applyRenderedTextHighlights,
@@ -56,17 +129,29 @@ import {
   scrollRenderedTextMatchIntoView,
   type RenderedTextMatch,
 } from "../../file-explorer/rendered-text-search.js";
-import { SHORTCUT_COMMAND_IDS, useShortcutCommandHandler, useShortcutScope } from "../../settings/shortcut-registry.js";
-import type { MessageCollapseTarget, MessageJumpRequest } from "./session-message-collapse.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "../../settings/shortcut-registry.js";
+import type {
+  MessageCollapseTarget,
+  MessageJumpRequest,
+} from "./session-message-collapse.js";
 
+/** 保存された承認モードを設定画面と同じ表示名にする。 */
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
 }
 
+/** 実行チェックでは承認の値だけを表示名に変え、他の値は記録のまま示す。 */
 function displayRunCheckValue(check: { label: string; value: string }): string {
-  return check.label.trim().toLowerCase() === "approval" ? displayApprovalValue(check.value) : check.value;
+  return check.label.trim().toLowerCase() === "approval"
+    ? displayApprovalValue(check.value)
+    : check.value;
 }
 
+/** 折りたたみ行の要約を、改行や連続空白のない一行にする。 */
 function collapseSummaryText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -77,26 +162,49 @@ const SESSION_MESSAGE_OVERSCAN = 6;
 const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
-type FindSourceAnchor = TextSearchMatch & ({ kind: "message"; messageKey: string; historyIndex: number } | { kind: "pending" });
+/** 表示形式を変更しても同じ検索箇所を特定するための原文範囲と、通常行または処理中の応答の出所。 */
+type FindSourceAnchor = TextSearchMatch &
+  (
+    | { kind: "message"; messageKey: string; historyIndex: number }
+    | { kind: "pending" }
+  );
 
-function findSourceOccurrenceIndex(projection: MessageSearchProjection, query: string, mode: MessageViewMode, anchor: TextSearchMatch): number {
+/** 原文範囲に対応する一致の、指定表示形式での番号を返す。一致を引き継げなければ -1。 */
+function findSourceOccurrenceIndex(
+  projection: MessageSearchProjection,
+  query: string,
+  mode: MessageViewMode,
+  anchor: TextSearchMatch,
+): number {
   let occurrenceIndex = 0;
   for (const match of iterateMessageSearchMatches(projection, query, mode)) {
     const range = getMessageSearchMatchSourceRange(projection, match);
-    if (range && messageSearchSourceRangesCorrespond(range, anchor)) return occurrenceIndex;
+    if (range && messageSearchSourceRangesCorrespond(range, anchor))
+      return occurrenceIndex;
     occurrenceIndex++;
   }
   return -1;
 }
 
-export function shouldAdjustSessionMessageScrollPosition(input: { itemEnd: number; scrollOffset: number }): boolean {
+/** 行の再計測で閲覧位置を補正するのは、行全体が閲覧領域より上にある場合に限る。 */
+export function shouldAdjustSessionMessageScrollPosition(input: {
+  itemEnd: number;
+  scrollOffset: number;
+}): boolean {
   return input.itemEnd <= input.scrollOffset;
 }
 
+/** 応答詳細の操作一覧と個々の操作で、開閉状態を別に管理する区分。 */
 type MessageArtifactFoldSection = "operation" | "operations";
-function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
+/** 行を再描画しても復元できるよう、成果物・区分・必要なら操作位置から開閉キーを作る。 */
+function messageArtifactFoldKey(
+  artifactKey: string,
+  section: MessageArtifactFoldSection,
+  index?: number,
+): string {
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
+/** 投影済みの履歴と実行中の表示入力、および閲覧・操作を所有側へ委譲するインターフェース。 */
 export type SessionMessageColumnProps = {
   selectedReplyKey?: string;
   onSelectReply?: (key: string, reference: SessionReply) => void;
@@ -105,19 +213,39 @@ export type SessionMessageColumnProps = {
   liveWithMateTurnId?: string;
   sentReadLiveTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
-  onTurnReceiptsObserved?: (receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string; kind: "main" | "auxiliary" }) => void;
+  onTurnReceiptsObserved?: (
+    receipts: readonly import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt[],
+    owner: {
+      sessionId: string;
+      incarnationId: string;
+      kind: "main" | "auxiliary";
+    },
+  ) => void;
   responsePending?: boolean;
   submissionError?: string;
   submissionUncertain?: boolean;
-  turnQueueMetadata?: ReadonlyMap<string, import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt>;
-  onCancelQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
-  onSendQueuedTurnInput?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => void;
-  onMoveQueuedTurn?: (receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./use-session-turn-queue.js").SessionTurnQueueMoveDirection) => void;
+  turnQueueMetadata?: ReadonlyMap<
+    string,
+    import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt
+  >;
+  onCancelQueuedTurn?: (
+    receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt,
+  ) => void;
+  onSendQueuedTurnInput?: (
+    receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt,
+  ) => void;
+  onMoveQueuedTurn?: (
+    receipt: import("../../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt,
+    direction: import("./use-session-turn-queue.js").SessionTurnQueueMoveDirection,
+  ) => void;
   queuedTurnIds?: readonly string[];
   queueReorderDisabled?: boolean;
   queueBusyId?: string | null;
   queueBusyKind?: SessionTurnQueueActionKind | null;
-  renderQueueTail?: (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => ReactNode;
+  renderQueueTail?: (
+    resolveImageSource: MarkdownImageResolver,
+    markdownImageContext: MarkdownImageContext,
+  ) => ReactNode;
   sessionId: string;
   workspacePath?: string | null;
   elicitationDisabled?: boolean;
@@ -135,11 +263,16 @@ export type SessionMessageColumnProps = {
   messageJumpRequest?: MessageJumpRequest | null;
   savedReplySourceIndexes?: readonly (number | undefined)[];
   conversationPaging?: {
-    loading: boolean; error: string;
+    loading: boolean;
+    error: string;
     onRetry: () => void;
   };
-  searchConversation?: (request: ConversationSearchRequest) => Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
-  cancelConversationQuery?: (request: ConversationQueryCancelRequest) => Promise<void>;
+  searchConversation?: (
+    request: ConversationSearchRequest,
+  ) => Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
+  cancelConversationQuery?: (
+    request: ConversationQueryCancelRequest,
+  ) => Promise<void>;
   conversationQueryOwner?: string;
   conversationQueryRevision?: string | number;
   searchTailMessages?: readonly Message[];
@@ -178,11 +311,19 @@ export type SessionMessageColumnProps = {
   onToggleAllMessageCollapse?: () => void;
   onToggleMessageBookmark?: (target: MessageCollapseTarget) => void;
   onToggleArtifact: (artifactKey: string) => void;
-  onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
+  onLoadArtifactDetail?: (
+    messageIndex: number,
+  ) => Promise<MessageArtifact | null>;
   artifactDetailsEnabled?: boolean;
   onOpenDiff: (title: string, file: ChangedFile) => void;
-  onResolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => void;
-  onResolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => void;
+  onResolveLiveApproval: (
+    request: LiveApprovalRequest,
+    decision: "approve" | "deny",
+  ) => void;
+  onResolveLiveElicitation: (
+    request: LiveElicitationRequest,
+    response: LiveElicitationResponse,
+  ) => void;
   onOpenPath?: (target: string) => void;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
@@ -192,12 +333,16 @@ export type SessionMessageColumnProps = {
   onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
+/** 空白だけの選択を操作対象から外し、それ以外では選択文字列をそのまま返す。 */
 function getNonBlankSelectionText(selection: Selection): string | null {
   const text = selection.toString();
   return text.trim() ? text : null;
 }
 
-function getSelectionDetailsWithinMessageList(element: Element | null): { anchorRect: DOMRect; text: string } | null {
+/** 列内のテキスト操作対象の本文だけから、選択文字列とツールバーを寄せる矩形を取得する。 */
+function getSelectionDetailsWithinMessageList(
+  element: Element | null,
+): { anchorRect: DOMRect; text: string } | null {
   if (!element || typeof window === "undefined") {
     return null;
   }
@@ -211,9 +356,10 @@ function getSelectionDetailsWithinMessageList(element: Element | null): { anchor
   const commonAncestor = range.commonAncestorContainer;
   const commonElement =
     commonAncestor.nodeType === Node.ELEMENT_NODE
-      ? commonAncestor as Element
+      ? (commonAncestor as Element)
       : commonAncestor.parentElement;
-  const messageBody = commonElement?.closest("[data-message-body='true']") ?? null;
+  const messageBody =
+    commonElement?.closest("[data-message-body='true']") ?? null;
   if (
     !messageBody ||
     !element.contains(messageBody) ||
@@ -236,6 +382,7 @@ function getSelectionDetailsWithinMessageList(element: Element | null): { anchor
   return fallbackRect ? { anchorRect: fallbackRect, text } : null;
 }
 
+/** 選択の上側を優先して操作バーを置き、上に収まらなければ下へ移して表示境界内に補正する。 */
 function clampToolbarPosition(input: {
   anchorRect: DOMRect;
   boundaryRect: DOMRect;
@@ -245,9 +392,11 @@ function clampToolbarPosition(input: {
   const padding = input.padding ?? 8;
   const toolbarWidth = input.toolbarRect.width || 112;
   const toolbarHeight = input.toolbarRect.height || 32;
-  const preferredLeft = input.anchorRect.left + (input.anchorRect.width - toolbarWidth) / 2;
+  const preferredLeft =
+    input.anchorRect.left + (input.anchorRect.width - toolbarWidth) / 2;
   const preferredTop =
-    input.anchorRect.top - toolbarHeight - padding >= input.boundaryRect.top + padding
+    input.anchorRect.top - toolbarHeight - padding >=
+    input.boundaryRect.top + padding
       ? input.anchorRect.top - toolbarHeight - padding
       : input.anchorRect.bottom + padding;
   const left = Math.min(
@@ -262,10 +411,14 @@ function clampToolbarPosition(input: {
   return { left, top };
 }
 
+/** 選択と表示領域が面積を持って重なるかを判定する。辺が接するだけなら対象外。 */
 function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  return (
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+  );
 }
 
+/** コピー・引用に渡す文字列と、選択に追従して操作バーを配置するための入力。 */
 type MessageResponseActionsProps = {
   actionText: string;
   onCopyMessageText?: (text: string) => void;
@@ -274,6 +427,7 @@ type MessageResponseActionsProps = {
   toolbarRef?: RefObject<HTMLDivElement | null>;
 };
 
+/** 利用できるコピー・引用の操作だけを表示し、マウス操作で本文の選択を失わないようにする。 */
 function MessageResponseActions({
   actionText,
   onCopyMessageText,
@@ -312,6 +466,7 @@ function MessageResponseActions({
   );
 }
 
+/** 選択操作を提供する表示領域。全選択で DOM の選択文字列と異なる内容をコピーする場合は明示できる。 */
 export type SelectionTextActionSurfaceProps = {
   children: ReactNode;
   className?: string;
@@ -321,6 +476,7 @@ export type SelectionTextActionSurfaceProps = {
   surfaceRef?: RefObject<HTMLDivElement | null>;
 };
 
+/** 指定した本文の範囲内だけでコピー・引用を出し、全選択では指定された論理テキストを優先する。 */
 export function SelectionTextActionSurface({
   children,
   className = "",
@@ -333,33 +489,53 @@ export function SelectionTextActionSurface({
   const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const logicalSelectAllTextRef = useRef<string | null>(null);
-  const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<{
+    style: CSSProperties;
+    text: string;
+  } | null>(null);
 
   const updateSelectionToolbar = useCallback(() => {
     const surface = surfaceRef.current;
-    const selection = typeof window === "undefined" ? null : window.getSelection();
-    if (!surface || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    const selection =
+      typeof window === "undefined" ? null : window.getSelection();
+    if (
+      !surface ||
+      !selection ||
+      selection.rangeCount === 0 ||
+      selection.isCollapsed
+    ) {
       setSelectionToolbar(null);
       return;
     }
 
     const range = selection.getRangeAt(0);
     const commonAncestor = range.commonAncestorContainer;
-    const commonElement = commonAncestor.nodeType === Node.ELEMENT_NODE
-      ? commonAncestor as Element
-      : commonAncestor.parentElement;
-    const selectableBody = commonElement?.closest("[data-selection-copy-body='true']") ?? null;
-    const selectedText = logicalSelectAllTextRef.current ?? getNonBlankSelectionText(selection);
-    if (!selectableBody || !surface.contains(selectableBody) || selectedText === null) {
+    const commonElement =
+      commonAncestor.nodeType === Node.ELEMENT_NODE
+        ? (commonAncestor as Element)
+        : commonAncestor.parentElement;
+    const selectableBody =
+      commonElement?.closest("[data-selection-copy-body='true']") ?? null;
+    const selectedText =
+      logicalSelectAllTextRef.current ?? getNonBlankSelectionText(selection);
+    if (
+      !selectableBody ||
+      !surface.contains(selectableBody) ||
+      selectedText === null
+    ) {
       setSelectionToolbar(null);
       return;
     }
 
     const anchorRect = range.getBoundingClientRect();
     const fallbackRect = range.getClientRects()[0] ?? null;
-    const resolvedAnchorRect = anchorRect.width > 0 || anchorRect.height > 0 ? anchorRect : fallbackRect;
+    const resolvedAnchorRect =
+      anchorRect.width > 0 || anchorRect.height > 0 ? anchorRect : fallbackRect;
     const boundaryRect = surface.getBoundingClientRect();
-    if (!resolvedAnchorRect || !rectsIntersect(resolvedAnchorRect, boundaryRect)) {
+    if (
+      !resolvedAnchorRect ||
+      !rectsIntersect(resolvedAnchorRect, boundaryRect)
+    ) {
       setSelectionToolbar(null);
       return;
     }
@@ -380,15 +556,23 @@ export function SelectionTextActionSurface({
   const clearLogicalSelectAll = useCallback((clearBrowserSelection = false) => {
     const wasLogicalSelectAll = logicalSelectAllTextRef.current !== null;
     logicalSelectAllTextRef.current = null;
-    if (wasLogicalSelectAll && clearBrowserSelection && typeof window !== "undefined") {
+    if (
+      wasLogicalSelectAll &&
+      clearBrowserSelection &&
+      typeof window !== "undefined"
+    ) {
       window.getSelection()?.removeAllRanges();
     }
   }, []);
 
   const handleSelectAllShortcut = useCallback((): boolean => {
     const surface = surfaceRef.current;
-    const selectableBody = surface?.querySelector<HTMLElement>("[data-selection-copy-body='true']") ?? null;
-    const selection = typeof window === "undefined" ? null : window.getSelection();
+    const selectableBody =
+      surface?.querySelector<HTMLElement>(
+        "[data-selection-copy-body='true']",
+      ) ?? null;
+    const selection =
+      typeof window === "undefined" ? null : window.getSelection();
     if (!surface || !selectableBody || !selection) {
       return false;
     }
@@ -409,18 +593,29 @@ export function SelectionTextActionSurface({
     logicalSelectAllTextRef.current = resolvedText;
     updateSelectionToolbar();
     return true;
-  }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);
+  }, [
+    clearLogicalSelectAll,
+    selectAllText,
+    surfaceRef,
+    updateSelectionToolbar,
+  ]);
 
-  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewSelectAll, handleSelectAllShortcut);
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.filePreviewSelectAll,
+    handleSelectAllShortcut,
+  );
 
-  const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>((event) => {
-    const logicalText = logicalSelectAllTextRef.current;
-    if (logicalText === null) {
-      return;
-    }
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", logicalText);
-  }, []);
+  const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>(
+    (event) => {
+      const logicalText = logicalSelectAllTextRef.current;
+      if (logicalText === null) {
+        return;
+      }
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", logicalText);
+    },
+    [],
+  );
 
   useEffect(() => {
     clearLogicalSelectAll();
@@ -435,7 +630,9 @@ export function SelectionTextActionSurface({
     document.addEventListener("selectionchange", updateSelectionToolbar);
     window.addEventListener("resize", updateSelectionToolbar);
     const surface = surfaceRef.current;
-    surface?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+    surface?.addEventListener("scroll", updateSelectionToolbar, {
+      passive: true,
+    });
     return () => {
       document.removeEventListener("selectionchange", updateSelectionToolbar);
       window.removeEventListener("resize", updateSelectionToolbar);
@@ -450,7 +647,10 @@ export function SelectionTextActionSurface({
       tabIndex={0}
       onCopy={handleCopy}
       onPointerDownCapture={(event) => {
-        if (!(event.target instanceof HTMLElement) || !event.target.closest(".message-response-actions")) {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.closest(".message-response-actions")
+        ) {
           clearLogicalSelectAll();
         }
       }}
@@ -475,10 +675,18 @@ export function SelectionTextActionSurface({
   );
 }
 
-function insertPendingRowValue<T>(values: readonly T[] | undefined, index: number, empty: T): readonly T[] | undefined {
-  return values && index >= 0 ? [...values.slice(0, index), empty, ...values.slice(index)] : values;
+/** 処理中の応答を差し込む位置に対応する補助配列の値を加え、未指定の配列は作らない。 */
+function insertPendingRowValue<T>(
+  values: readonly T[] | undefined,
+  index: number,
+  empty: T,
+): readonly T[] | undefined {
+  return values && index >= 0
+    ? [...values.slice(0, index), empty, ...values.slice(index)]
+    : values;
 }
 
+/** 仮想化された会話行にライブ応答と操作を配置し、検索や選択を表示位置と同期する。 */
 export function SessionMessageColumn({
   selectedReplyKey,
   onSelectReply,
@@ -564,81 +772,233 @@ export function SessionMessageColumn({
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const peer = thread && conversationPeerKey(thread.target);
-  const threadMessages = useMemo(() => thread && new Set(thread.messageIndexes), [thread]);
-  const isSentOnly = (messageIndex: number | undefined) => messageIndex !== undefined && !!threadMessages && !threadMessages.has(messageIndex);
+  const threadMessages = useMemo(
+    () => thread && new Set(thread.messageIndexes),
+    [thread],
+  );
+  /** 相手別の履歴に含まれず、送信カードを配置するためだけに取得された位置かを判定する。 */
+  const isSentOnly = (messageIndex: number | undefined) =>
+    messageIndex !== undefined &&
+    !!threadMessages &&
+    !threadMessages.has(messageIndex);
   const sentTurnId = sentReadLiveTurnId ?? liveWithMateTurnId;
-  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, sentTurnId,
-    (isContentActive || inputReadContext?.target.kind === "main") && artifactDetailsEnabled,
-    suppliedSavedReplySourceIndexes, suppliedResponseExecutionTurnIds);
+  const sentDeliveries = useSentDeliveries(
+    inputReadContext,
+    suppliedMessages,
+    sentTurnId,
+    (isContentActive || inputReadContext?.target.kind === "main") &&
+      artifactDetailsEnabled,
+    suppliedSavedReplySourceIndexes,
+    suppliedResponseExecutionTurnIds,
+  );
   const sent = sentDeliveries.items;
-  const issued = useIssuedCoordinations(inputReadContext, suppliedMessages, sentTurnId, isContentActive && artifactDetailsEnabled,
-    suppliedSavedReplySourceIndexes, suppliedResponseExecutionTurnIds);
-  const issuedWithoutReceipt = issued.items.filter((record) =>
-    !sent.some((receipt) => "receiptId" in receipt && receipt.coordination?.id === record.id && receipt.sourceTurnId === record.sourceTurnId));
-  const renderIssued = (record: typeof issued.items[number], tail = false) => inputReadContext ? <div key={record.id} className={`issued-coordination-notice${tail ? " issued-coordination-tail" : ""}`} data-source-turn-id={record.sourceTurnId}><CoordinationNotice id={record.id} consultation={record.consultation} target={inputReadContext.target} /></div> : null;
+  const issued = useIssuedCoordinations(
+    inputReadContext,
+    suppliedMessages,
+    sentTurnId,
+    isContentActive && artifactDetailsEnabled,
+    suppliedSavedReplySourceIndexes,
+    suppliedResponseExecutionTurnIds,
+  );
+  const issuedWithoutReceipt = issued.items.filter(
+    (record) =>
+      !sent.some(
+        (receipt) =>
+          "receiptId" in receipt &&
+          receipt.coordination?.id === record.id &&
+          receipt.sourceTurnId === record.sourceTurnId,
+      ),
+  );
+  /** 読み取り対象がある場合に限り、送信元 Turn に結び付いた発行済み相談の通知を描画する。 */
+  const renderIssued = (record: (typeof issued.items)[number], tail = false) =>
+    inputReadContext ? (
+      <div
+        key={record.id}
+        className={`issued-coordination-notice${tail ? " issued-coordination-tail" : ""}`}
+        data-source-turn-id={record.sourceTurnId}
+      >
+        <CoordinationNotice
+          id={record.id}
+          consultation={record.consultation}
+          target={inputReadContext.target}
+        />
+      </div>
+    ) : null;
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
-  const responseRowKeys = useRef({ owner: conversationQueryOwner, keys: new Map<string, string>() });
-  if (responseRowKeys.current.owner !== conversationQueryOwner) responseRowKeys.current = { owner: conversationQueryOwner, keys: new Map() };
+  const responseRowKeys = useRef({
+    owner: conversationQueryOwner,
+    keys: new Map<string, string>(),
+  });
+  if (responseRowKeys.current.owner !== conversationQueryOwner)
+    responseRowKeys.current = {
+      owner: conversationQueryOwner,
+      keys: new Map(),
+    };
   const rowKeys = responseRowKeys.current.keys;
-  const existingResponseKey = suppliedPendingResponseKey && suppliedMessageKeys?.includes(suppliedPendingResponseKey)
-    ? suppliedPendingResponseKey
-    : suppliedMessageKeys?.find((key) => key === responsePresentationKey || rowKeys.get(key) === responsePresentationKey && rowKeys.has(key));
-  const sharedPending = !!responsePresentationKey && hasResponseStatus && !existingResponseKey;
-  const sharedPendingIndex = sharedPending ? pendingResponseInsertIndex ?? suppliedMessages.length : -1;
-  const rawMessages = useMemo(() => sharedPendingIndex < 0 ? suppliedMessages : [
-    ...suppliedMessages.slice(0, sharedPendingIndex), { role: "assistant" as const, text: "" }, ...suppliedMessages.slice(sharedPendingIndex),
-  ], [suppliedMessages, sharedPendingIndex]);
+  const existingResponseKey =
+    suppliedPendingResponseKey &&
+    suppliedMessageKeys?.includes(suppliedPendingResponseKey)
+      ? suppliedPendingResponseKey
+      : suppliedMessageKeys?.find(
+          (key) =>
+            key === responsePresentationKey ||
+            (rowKeys.get(key) === responsePresentationKey && rowKeys.has(key)),
+        );
+  const sharedPending =
+    !!responsePresentationKey && hasResponseStatus && !existingResponseKey;
+  const sharedPendingIndex = sharedPending
+    ? (pendingResponseInsertIndex ?? suppliedMessages.length)
+    : -1;
+  const rawMessages = useMemo(
+    () =>
+      sharedPendingIndex < 0
+        ? suppliedMessages
+        : [
+            ...suppliedMessages.slice(0, sharedPendingIndex),
+            { role: "assistant" as const, text: "" },
+            ...suppliedMessages.slice(sharedPendingIndex),
+          ],
+    [suppliedMessages, sharedPendingIndex],
+  );
   const messageKeys = useMemo(() => {
     if (sharedPendingIndex < 0) return suppliedMessageKeys;
-    const keys = suppliedMessages.map((_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`);
+    const keys = suppliedMessages.map(
+      (_, index) => suppliedMessageKeys?.[index] ?? `${sessionId}-${index}`,
+    );
     keys.splice(sharedPendingIndex, 0, responsePresentationKey!);
     return keys;
-  }, [suppliedMessages, suppliedMessageKeys, sharedPendingIndex, responsePresentationKey, sessionId]);
+  }, [
+    suppliedMessages,
+    suppliedMessageKeys,
+    sharedPendingIndex,
+    responsePresentationKey,
+    sessionId,
+  ]);
   // 挿入する表示要素には保存済みの seq、検索順序番号、メッセージグループがない。
-  const savedReplySourceIndexes = useMemo(() => insertPendingRowValue(suppliedSavedReplySourceIndexes, sharedPendingIndex, undefined), [suppliedSavedReplySourceIndexes, sharedPendingIndex]);
-  const responseExecutionTurnIds = useMemo(() => insertPendingRowValue(suppliedResponseExecutionTurnIds, sharedPendingIndex, undefined), [suppliedResponseExecutionTurnIds, sharedPendingIndex]);
-  const searchMessageIndexes = useMemo(() => insertPendingRowValue(suppliedSearchMessageIndexes, sharedPendingIndex, -1), [suppliedSearchMessageIndexes, sharedPendingIndex]);
-  const messageGroups = useMemo(() => insertPendingRowValue(suppliedMessageGroups, sharedPendingIndex, null), [suppliedMessageGroups, sharedPendingIndex]);
-  const pendingResponseMessageKey = sharedPending ? responsePresentationKey! : existingResponseKey ?? suppliedPendingResponseKey;
-  for (const key of rowKeys.keys()) if (!messageKeys?.includes(key)) rowKeys.delete(key);
-  if (responsePresentationKey && pendingResponseMessageKey && !rowKeys.has(pendingResponseMessageKey)) rowKeys.set(pendingResponseMessageKey, responsePresentationKey);
-  const streamingIndex = streamingResponseMessageKey ? suppliedMessageKeys?.indexOf(streamingResponseMessageKey) ?? -1 : -1;
-  const responseTextIndex = pendingResponseMessageKey ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1 : -1;
+  const savedReplySourceIndexes = useMemo(
+    () =>
+      insertPendingRowValue(
+        suppliedSavedReplySourceIndexes,
+        sharedPendingIndex,
+        undefined,
+      ),
+    [suppliedSavedReplySourceIndexes, sharedPendingIndex],
+  );
+  const responseExecutionTurnIds = useMemo(
+    () =>
+      insertPendingRowValue(
+        suppliedResponseExecutionTurnIds,
+        sharedPendingIndex,
+        undefined,
+      ),
+    [suppliedResponseExecutionTurnIds, sharedPendingIndex],
+  );
+  const searchMessageIndexes = useMemo(
+    () =>
+      insertPendingRowValue(
+        suppliedSearchMessageIndexes,
+        sharedPendingIndex,
+        -1,
+      ),
+    [suppliedSearchMessageIndexes, sharedPendingIndex],
+  );
+  const messageGroups = useMemo(
+    () =>
+      insertPendingRowValue(suppliedMessageGroups, sharedPendingIndex, null),
+    [suppliedMessageGroups, sharedPendingIndex],
+  );
+  const pendingResponseMessageKey = sharedPending
+    ? responsePresentationKey!
+    : (existingResponseKey ?? suppliedPendingResponseKey);
+  for (const key of rowKeys.keys())
+    if (!messageKeys?.includes(key)) rowKeys.delete(key);
+  if (
+    responsePresentationKey &&
+    pendingResponseMessageKey &&
+    !rowKeys.has(pendingResponseMessageKey)
+  )
+    rowKeys.set(pendingResponseMessageKey, responsePresentationKey);
+  const streamingIndex = streamingResponseMessageKey
+    ? (suppliedMessageKeys?.indexOf(streamingResponseMessageKey) ?? -1)
+    : -1;
+  const responseTextIndex = pendingResponseMessageKey
+    ? (messageKeys?.indexOf(pendingResponseMessageKey) ?? -1)
+    : -1;
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
-  const elicitationDrafts = useMemo<LiveElicitationDrafts>(() => new Map(), [sessionId]);
+  const elicitationDrafts = useMemo<LiveElicitationDrafts>(
+    () => new Map(),
+    [sessionId],
+  );
   useEffect(() => {
-    const requests = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
+    const requests =
+      liveElicitationRequests ??
+      (liveElicitationRequest ? [liveElicitationRequest] : []);
     for (const key of elicitationDrafts.keys()) {
-      if (!requests.some((request) => request.requestId === key)) elicitationDrafts.delete(key);
+      if (!requests.some((request) => request.requestId === key))
+        elicitationDrafts.delete(key);
     }
   }, [elicitationDrafts, liveElicitationRequests, liveElicitationRequest]);
-  const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
+  const [openArtifactFolds, setOpenArtifactFolds] = useState<
+    Record<string, boolean>
+  >({});
   const loadedArtifactDetails = useRef(new Map<string, MessageArtifact>());
   const [, refreshArtifactDetails] = useState(0);
-  const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
-  const [artifactDetailErrors, setArtifactDetailErrors] = useState<Record<string, string>>({});
+  const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<
+    Record<string, boolean>
+  >({});
+  const [artifactDetailErrors, setArtifactDetailErrors] = useState<
+    Record<string, string>
+  >({});
   const artifactAttempts = useRef(new Map<string, object>());
   const activeArtifactKeys = useRef(new Set<string>());
-  const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<{
+    style: CSSProperties;
+    text: string;
+  } | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
-  const presentedText = useStreamedResponseText(conversationQueryOwner, pendingResponseMessageKey,
-    responseTextIndex >= 0 ? rawMessages[responseTextIndex].text : "", streamingIndex >= 0 && !(findOpen && findQuery.trim()), artifactDetailsEnabled);
-  const messages = useMemo(() => streamingIndex < 0 || rawMessages[streamingIndex].text === presentedText ? rawMessages
-    : rawMessages.map((message, index) => index === streamingIndex ? { ...message, text: presentedText } : message), [rawMessages, streamingIndex, presentedText]);
+  const presentedText = useStreamedResponseText(
+    conversationQueryOwner,
+    pendingResponseMessageKey,
+    responseTextIndex >= 0 ? rawMessages[responseTextIndex].text : "",
+    streamingIndex >= 0 && !(findOpen && findQuery.trim()),
+    artifactDetailsEnabled,
+  );
+  const messages = useMemo(
+    () =>
+      streamingIndex < 0 || rawMessages[streamingIndex].text === presentedText
+        ? rawMessages
+        : rawMessages.map((message, index) =>
+            index === streamingIndex
+              ? { ...message, text: presentedText }
+              : message,
+          ),
+    [rawMessages, streamingIndex, presentedText],
+  );
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const [conversationFindError, setConversationFindError] = useState("");
-  const [messageJumpHighlight, setMessageJumpHighlight] = useState<MessageJumpRequest | null>(null);
+  const [messageJumpHighlight, setMessageJumpHighlight] =
+    useState<MessageJumpRequest | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const scrolledSourceMatchRef = useRef<string | null>(null);
-  const findSelectionSnapshot = useRef<{ owner: string; query: string; mode: MessageViewMode; anchor?: FindSourceAnchor } | null>(null);
-  const [appliedModeAnchor, setAppliedModeAnchor] = useState<FindSourceAnchor>();
+  const findSelectionSnapshot = useRef<{
+    owner: string;
+    query: string;
+    mode: MessageViewMode;
+    anchor?: FindSourceAnchor;
+  } | null>(null);
+  const [appliedModeAnchor, setAppliedModeAnchor] =
+    useState<FindSourceAnchor>();
   const handledMessageJumpRef = useRef<MessageJumpRequest | null>(null);
   const requestedMessageJumpRef = useRef<MessageJumpRequest | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
-  const resolveImageSource = useMarkdownImageResolver(getWithMateApi(), markdownLinkFileContext, messageViewMode);
+  const resolveImageSource = useMarkdownImageResolver(
+    getWithMateApi(),
+    markdownLinkFileContext,
+    messageViewMode,
+  );
   const messageCollapseTargetByKey = useMemo(
     () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
     [messageCollapseTargets],
@@ -648,15 +1008,34 @@ export function SessionMessageColumn({
   const openFind = useCallback(() => {
     if (isContentActive) setFindOpen(true);
   }, [isContentActive]);
-  const sentMessageContext = { onOpenPath, markdownLinkFileContext, markdownImageContext: markdownLinkFileContext,
-    resolveImageSource, displayMode: messageViewMode, responseProvider: provider, onFind: openFind,
-    onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
-  const renderSent = (item: SentInstruction, inline = false) => inputReadContext
-    ? <SentDeliveryRow key={sentInstructionKey(item)} item={item} context={inputReadContext} inline={inline}
-        replyJumpHighlighted={!!messageJumpHighlight?.reply?.sentKey && messageJumpHighlight.reply.isCurrent()
-          && messageJumpHighlight.reply.sentKey === sentInstructionKey(item)
-          && messageJumpHighlight.reply.seq === item.sourceMessageSeq} {...sentMessageContext} />
-    : null;
+  const sentMessageContext = {
+    onOpenPath,
+    markdownLinkFileContext,
+    markdownImageContext: markdownLinkFileContext,
+    resolveImageSource,
+    displayMode: messageViewMode,
+    responseProvider: provider,
+    onFind: openFind,
+    onCopyText: onCopyMessageText,
+    onQuoteText: onQuoteMessageText,
+  };
+  /** 会話の本文表示設定を添えて送信カードを描き、現在の返信移動先と一致するカードだけを強調する。 */
+  const renderSent = (item: SentInstruction, inline = false) =>
+    inputReadContext ? (
+      <SentDeliveryRow
+        key={sentInstructionKey(item)}
+        item={item}
+        context={inputReadContext}
+        inline={inline}
+        replyJumpHighlighted={
+          !!messageJumpHighlight?.reply?.sentKey &&
+          messageJumpHighlight.reply.isCurrent() &&
+          messageJumpHighlight.reply.sentKey === sentInstructionKey(item) &&
+          messageJumpHighlight.reply.seq === item.sourceMessageSeq
+        }
+        {...sentMessageContext}
+      />
+    ) : null;
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
     () => {
@@ -695,11 +1074,22 @@ export function SessionMessageColumn({
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
   );
-  const getRowKey = useCallback((index: number) => rowKeys.get(getMessageKey(index)) ?? getMessageKey(index), [getMessageKey, rowKeys]);
+  const getRowKey = useCallback(
+    (index: number) =>
+      rowKeys.get(getMessageKey(index)) ?? getMessageKey(index),
+    [getMessageKey, rowKeys],
+  );
   const artifactPageKeys = useRef<Set<string> | null>(null);
-  artifactPageKeys.current = new Set(messages.map((_, index) => getMessageKey(index)));
-  activeArtifactKeys.current = new Set(artifactDetailsEnabled
-    ? Object.keys(expandedArtifacts).filter((key) => expandedArtifacts[key] && artifactPageKeys.current!.has(key)) : []);
+  artifactPageKeys.current = new Set(
+    messages.map((_, index) => getMessageKey(index)),
+  );
+  activeArtifactKeys.current = new Set(
+    artifactDetailsEnabled
+      ? Object.keys(expandedArtifacts).filter(
+          (key) => expandedArtifacts[key] && artifactPageKeys.current!.has(key),
+        )
+      : [],
+  );
   useEffect(() => {
     const keys = activeArtifactKeys.current;
     for (const key of artifactAttempts.current.keys()) {
@@ -707,40 +1097,93 @@ export function SessionMessageColumn({
     }
     let released = false;
     for (const key of loadedArtifactDetails.current.keys()) {
-      if (!keys.has(key)) { loadedArtifactDetails.current.delete(key); released = true; }
+      if (!keys.has(key)) {
+        loadedArtifactDetails.current.delete(key);
+        released = true;
+      }
     }
     if (released) refreshArtifactDetails((revision) => revision + 1);
-    setLoadingArtifactDetails((current) => Object.keys(current).some((key) => !keys.has(key))
-      ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
-    setArtifactDetailErrors((current) => Object.keys(current).some((key) => !keys.has(key))
-      ? Object.fromEntries(Object.entries(current).filter(([key]) => keys.has(key))) : current);
+    setLoadingArtifactDetails((current) =>
+      Object.keys(current).some((key) => !keys.has(key))
+        ? Object.fromEntries(
+            Object.entries(current).filter(([key]) => keys.has(key)),
+          )
+        : current,
+    );
+    setArtifactDetailErrors((current) =>
+      Object.keys(current).some((key) => !keys.has(key))
+        ? Object.fromEntries(
+            Object.entries(current).filter(([key]) => keys.has(key)),
+          )
+        : current,
+    );
   }, [artifactDetailsEnabled, expandedArtifacts, messageKeys, messages]);
-  useEffect(() => () => { artifactAttempts.current.clear(); loadedArtifactDetails.current.clear(); }, []);
-  const pendingResponseMessageIndex = (isRunning || responsePending || !!submissionError) && pendingResponseMessageKey !== null
-    ? messageKeys?.indexOf(pendingResponseMessageKey) ?? -1
+  useEffect(
+    () => () => {
+      artifactAttempts.current.clear();
+      loadedArtifactDetails.current.clear();
+    },
+    [],
+  );
+  const pendingResponseMessageIndex =
+    (isRunning || responsePending || !!submissionError) &&
+    pendingResponseMessageKey !== null
+      ? (messageKeys?.indexOf(pendingResponseMessageKey) ?? -1)
+      : -1;
+  const hasElicitationRequests = liveElicitationRequests
+    ? liveElicitationRequests.length > 0
+    : liveElicitationRequest !== null;
+  const persistedQuestionIds = new Set(
+    messages.flatMap(
+      (message) =>
+        message.elicitationRecords?.map((record) => record.requestId) ?? [],
+    ),
+  );
+  const visibleLiveElicitationRecords = liveElicitationRecords?.filter(
+    (record) => !persistedQuestionIds.has(record.requestId),
+  );
+  const visibleAnsweredQuestionIds = new Set(
+    [
+      ...messages.flatMap((message) => message.elicitationRecords ?? []),
+      ...(visibleLiveElicitationRecords ?? []),
+    ]
+      .filter(
+        (record) =>
+          record.status === "answered" &&
+          record.fields.length > 0 &&
+          record.fields.every((field) => field.answer !== undefined),
+      )
+      .map((record) => record.requestId),
+  );
+  const activeQuestions =
+    liveElicitationRequests ??
+    (liveElicitationRequest ? [liveElicitationRequest] : []);
+  const hasLiveRequests =
+    hasElicitationRequests || (isRunning && liveApprovalRequest !== null);
+  const liveRequestMessageIndex = hasLiveRequests
+    ? pendingResponseMessageIndex
     : -1;
-  const hasElicitationRequests = liveElicitationRequests ? liveElicitationRequests.length > 0 : liveElicitationRequest !== null;
-  const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
-  const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
-  const visibleAnsweredQuestionIds = new Set([...messages.flatMap((message) => message.elicitationRecords ?? []), ...visibleLiveElicitationRecords ?? []]
-    .filter((record) => record.status === "answered" && record.fields.length > 0 && record.fields.every((field) => field.answer !== undefined))
-    .map((record) => record.requestId));
-  const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
-  const hasLiveRequests = hasElicitationRequests || isRunning && liveApprovalRequest !== null;
-  const liveRequestMessageIndex = hasLiveRequests ? pendingResponseMessageIndex : -1;
-  const extractMessageRange = useCallback((range: Range) => {
-    const indexes = defaultRangeExtractor(range);
-    // 判断・入力中のcontrolを保持するため、要求を持つ応答行はviewport外でもunmountしない。
-    if (liveRequestMessageIndex >= 0 && !indexes.includes(liveRequestMessageIndex)) {
-      indexes.push(liveRequestMessageIndex);
-      indexes.sort((left, right) => left - right);
-    }
-    return indexes;
-  }, [liveRequestMessageIndex]);
+  const extractMessageRange = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range);
+      // 判断・入力中のcontrolを保持するため、要求を持つ応答行はviewport外でもunmountしない。
+      if (
+        liveRequestMessageIndex >= 0 &&
+        !indexes.includes(liveRequestMessageIndex)
+      ) {
+        indexes.push(liveRequestMessageIndex);
+        indexes.sort((left, right) => left - right);
+      }
+      return indexes;
+    },
+    [liveRequestMessageIndex],
+  );
   const messageVirtualizer = useVirtualizer({
     enabled: artifactDetailsEnabled,
     count: messages.length,
+    /** 仮想リストの計測と移動に使う、実際のメッセージ列のスクロール要素を返す。 */
     getScrollElement: () => messageListRef.current,
+    /** 描画前に実測できない行は、共通の見積もり高で配置する。 */
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
     getItemKey: getRowKey,
     rangeExtractor: extractMessageRange,
@@ -751,27 +1194,43 @@ export function SessionMessageColumn({
     initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
     initialOffset: Math.max(
       0,
-      messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
+      messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT -
+        SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
     directDomUpdates: true,
     directDomUpdatesMode: "position",
     useFlushSync: false,
     useAnimationFrameWithResizeObserver: false,
   });
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+    item,
+    _delta,
+    instance,
+  ) => {
     const shouldAdjust = shouldAdjustSessionMessageScrollPosition({
       itemEnd: item.end,
       scrollOffset: instance.scrollOffset ?? 0,
     });
     if (!shouldAdjust) return false;
     const jump = handledMessageJumpRef.current;
-    if (jump === messageJumpRequest && jump?.reply?.sentKey && jump.reply.isCurrent()
-      && savedReplySourceIndexes?.[item.index] === jump.reply.seq) {
+    if (
+      jump === messageJumpRequest &&
+      jump?.reply?.sentKey &&
+      jump.reply.isCurrent() &&
+      savedReplySourceIndexes?.[item.index] === jump.reply.seq
+    ) {
       // フレーム切り替え時、移動後のスクロールイベントより先にサイズ変更処理が以前のオフセットを読む場合がある。
       // まだ表示範囲と重なる行のサイズ変更では、スクロール位置をずらさない。
       const list = messageListRef.current;
-      const row = list?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${item.index}"]`);
-      if (list && row && row.getBoundingClientRect().bottom > list.getBoundingClientRect().top) return false;
+      const row = list?.querySelector<HTMLElement>(
+        `.session-message-virtual-row[data-index="${item.index}"]`,
+      );
+      if (
+        list &&
+        row &&
+        row.getBoundingClientRect().bottom > list.getBoundingClientRect().top
+      )
+        return false;
     }
     return true;
   };
@@ -797,11 +1256,18 @@ export function SessionMessageColumn({
       if (messageIndex < 0) return;
       const list = messageListRef.current;
       if (!list) return;
-      const row = list.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      const row = list.querySelector<HTMLElement>(
+        `.session-message-virtual-row[data-index="${messageIndex}"]`,
+      );
       const target = reply.sentKey
-        ? [...(row?.querySelectorAll<HTMLElement>("[data-sent-instruction-key]") ?? [])]
-          .find((card) => card.dataset.sentInstructionKey === reply.sentKey)
-        : row?.querySelector<HTMLElement>(":scope > .message-row > .message-card");
+        ? [
+            ...(row?.querySelectorAll<HTMLElement>(
+              "[data-sent-instruction-key]",
+            ) ?? []),
+          ].find((card) => card.dataset.sentInstructionKey === reply.sentKey)
+        : row?.querySelector<HTMLElement>(
+            ":scope > .message-row > .message-card",
+          );
       if (!target) {
         if (!row && requestedMessageJumpRef.current !== messageJumpRequest) {
           requestedMessageJumpRef.current = messageJumpRequest;
@@ -810,7 +1276,11 @@ export function SessionMessageColumn({
         return;
       }
       handledMessageJumpRef.current = messageJumpRequest;
-      messageVirtualizer.scrollToOffset(list.scrollTop + target.getBoundingClientRect().top - list.getBoundingClientRect().top);
+      messageVirtualizer.scrollToOffset(
+        list.scrollTop +
+          target.getBoundingClientRect().top -
+          list.getBoundingClientRect().top,
+      );
       list.focus({ preventScroll: true });
       setMessageJumpHighlight(messageJumpRequest);
       return;
@@ -822,11 +1292,18 @@ export function SessionMessageColumn({
 
     if (messageJumpRequest.offset !== undefined) {
       const element = messageListRef.current;
-      const row = element?.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${messageIndex}"]`);
+      const row = element?.querySelector<HTMLElement>(
+        `.session-message-virtual-row[data-index="${messageIndex}"]`,
+      );
       if (element && row) {
         handledMessageJumpRef.current = messageJumpRequest;
         // 行インデックスを指定した移動を置き換え、後続の整合処理で表示位置のオフセットが取り消されないようにする。
-        messageVirtualizer.scrollToOffset(element.scrollTop + row.getBoundingClientRect().top - element.getBoundingClientRect().top - messageJumpRequest.offset);
+        messageVirtualizer.scrollToOffset(
+          element.scrollTop +
+            row.getBoundingClientRect().top -
+            element.getBoundingClientRect().top -
+            messageJumpRequest.offset,
+        );
         return;
       }
     }
@@ -837,14 +1314,25 @@ export function SessionMessageColumn({
       handledMessageJumpRef.current = messageJumpRequest;
       setMessageJumpHighlight(messageJumpRequest);
     }
-  }, [artifactDetailsEnabled, messageJumpRequest, messageKeys, messageVirtualizer, sessionId, virtualMessages, savedReplySourceIndexes, sent]);
+  }, [
+    artifactDetailsEnabled,
+    messageJumpRequest,
+    messageKeys,
+    messageVirtualizer,
+    sessionId,
+    virtualMessages,
+    savedReplySourceIndexes,
+    sent,
+  ]);
 
   useEffect(() => {
     if (!messageJumpHighlight || typeof window === "undefined") {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      setMessageJumpHighlight((current) => current === messageJumpHighlight ? null : current);
+      setMessageJumpHighlight((current) =>
+        current === messageJumpHighlight ? null : current,
+      );
     }, 1200);
     return () => window.clearTimeout(timeoutId);
   }, [messageJumpHighlight]);
@@ -862,56 +1350,125 @@ export function SessionMessageColumn({
     !hasElicitationRequests &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
-  const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
+  const canUsePendingMessageTextActions = !!(
+    onCopyMessageText || onQuoteMessageText
+  );
   const hasFindQuery = findQuery.trim().length > 0;
   const modeAnchor = useMemo(() => {
     const previous = findSelectionSnapshot.current;
-    return findOpen && isContentActive && previous?.owner === conversationQueryOwner && previous.query === findQuery && previous.mode !== messageViewMode
-      ? previous.anchor : undefined;
-  }, [conversationQueryOwner, findQuery, findOpen, isContentActive, messageViewMode]);
-  const projectMessageSearchTexts = useMemo(() => createMessageSearchProjectionCache(provider), [sessionId, provider]);
+    return findOpen &&
+      isContentActive &&
+      previous?.owner === conversationQueryOwner &&
+      previous.query === findQuery &&
+      previous.mode !== messageViewMode
+      ? previous.anchor
+      : undefined;
+  }, [
+    conversationQueryOwner,
+    findQuery,
+    findOpen,
+    isContentActive,
+    messageViewMode,
+  ]);
+  const projectMessageSearchTexts = useMemo(
+    () => createMessageSearchProjectionCache(provider),
+    [sessionId, provider],
+  );
   const conversationFind = useConversationQueryPages({
     identity: `${conversationQueryOwner}:${conversationQueryRevision}:${messageViewMode}:${findQuery}`,
-    enabled: isContentActive && artifactDetailsEnabled && findOpen && hasFindQuery,
+    enabled:
+      isContentActive && artifactDetailsEnabled && findOpen && hasFindQuery,
     ordinal: currentFindMatch,
-    read: searchConversation ? (request) => searchConversation({ ...request, query: findQuery, mode: messageViewMode,
-      ...(!request.stamp && modeAnchor?.kind === "message" ? { anchor: { messageIndex: modeAnchor.historyIndex, startOffset: modeAnchor.startOffset, endOffset: modeAnchor.endOffset } } : {}),
-    }) : undefined,
+    read: searchConversation
+      ? (request) =>
+          searchConversation({
+            ...request,
+            query: findQuery,
+            mode: messageViewMode,
+            ...(!request.stamp && modeAnchor?.kind === "message"
+              ? {
+                  anchor: {
+                    messageIndex: modeAnchor.historyIndex,
+                    startOffset: modeAnchor.startOffset,
+                    endOffset: modeAnchor.endOffset,
+                  },
+                }
+              : {}),
+          })
+      : undefined,
     cancel: cancelConversationQuery,
   });
-  useEffect(() => { setConversationFindError(""); }, [findQuery, messageViewMode, conversationQueryOwner]);
+  useEffect(() => {
+    setConversationFindError("");
+  }, [findQuery, messageViewMode, conversationQueryOwner]);
   const messageSearchProjections = useMemo(
-    () => projectMessageSearchTexts(messages, messageKeys, messageViewMode, hasFindQuery),
-    [hasFindQuery, messageKeys, messageViewMode, messages, projectMessageSearchTexts],
+    () =>
+      projectMessageSearchTexts(
+        messages,
+        messageKeys,
+        messageViewMode,
+        hasFindQuery,
+      ),
+    [
+      hasFindQuery,
+      messageKeys,
+      messageViewMode,
+      messages,
+      projectMessageSearchTexts,
+    ],
   );
   const pendingSearchProjection = useMemo(
-    () => (hasFindQuery && isRunning && hasPendingMessageText
-      ? createMessageSearchProjection(pendingMessageText, provider, messageViewMode)
-      : null),
-    [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText, provider],
+    () =>
+      hasFindQuery && isRunning && hasPendingMessageText
+        ? createMessageSearchProjection(
+            pendingMessageText,
+            provider,
+            messageViewMode,
+          )
+        : null,
+    [
+      hasFindQuery,
+      hasPendingMessageText,
+      isRunning,
+      messageViewMode,
+      pendingMessageText,
+      provider,
+    ],
   );
-  const pendingMessageGroupEndIndex = useMemo(
-    () => {
-      if (!isRunning || pendingMessageGroupId === null) {
-        return -1;
-      }
+  const pendingMessageGroupEndIndex = useMemo(() => {
+    if (!isRunning || pendingMessageGroupId === null) {
+      return -1;
+    }
 
-      return messageGroups?.findIndex((messageGroup, index) => (
-        messageGroup?.id === pendingMessageGroupId &&
-        messageGroups[index + 1]?.id !== messageGroup.id
-      )) ?? -1;
-    },
-    [isRunning, messageGroups, pendingMessageGroupId],
+    return (
+      messageGroups?.findIndex(
+        (messageGroup, index) =>
+          messageGroup?.id === pendingMessageGroupId &&
+          messageGroups[index + 1]?.id !== messageGroup.id,
+      ) ?? -1
+    );
+  }, [isRunning, messageGroups, pendingMessageGroupId]);
+  const pendingSearchMatches = useMemo(
+    () =>
+      pendingSearchProjection
+        ? [
+            ...iterateMessageSearchMatches(
+              pendingSearchProjection,
+              findQuery,
+              messageViewMode,
+            ),
+          ]
+        : [],
+    [pendingSearchProjection, findQuery, messageViewMode],
   );
-  const pendingSearchMatches = useMemo(() => pendingSearchProjection
-    ? [...iterateMessageSearchMatches(pendingSearchProjection, findQuery, messageViewMode)] : [],
-  [pendingSearchProjection, findQuery, messageViewMode]);
+  /** 保存履歴検索を使わない列で、通常行と処理中の応答の一致を描画順に数える。 */
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
       | { kind: "pending"; occurrenceIndex: number }
     > = [];
     if (searchConversation) return matches;
+    /** 処理中の応答の一致を、その応答が置かれる位置で検索結果に加える。 */
     const appendPendingMatches = () => {
       pendingSearchMatches.forEach((_, occurrenceIndex) => {
         matches.push({ kind: "pending", occurrenceIndex });
@@ -919,8 +1476,16 @@ export function SessionMessageColumn({
     };
     messageSearchProjections.forEach((projection, messageIndex) => {
       let occurrenceIndex = 0;
-      for (const _match of iterateMessageSearchMatches(projection, findQuery, messageViewMode)) {
-        matches.push({ kind: "message", messageIndex, occurrenceIndex: occurrenceIndex++ });
+      for (const _match of iterateMessageSearchMatches(
+        projection,
+        findQuery,
+        messageViewMode,
+      )) {
+        matches.push({
+          kind: "message",
+          messageIndex,
+          occurrenceIndex: occurrenceIndex++,
+        });
       }
       if (messageIndex === pendingMessageGroupEndIndex) {
         appendPendingMatches();
@@ -930,26 +1495,76 @@ export function SessionMessageColumn({
       appendPendingMatches();
     }
     return matches;
-  }, [searchConversation, messageSearchProjections, findQuery, messageViewMode, pendingMessageGroupEndIndex, pendingSearchMatches]);
-  const tailSearchProjection = useMemo(() => createMessageSearchProjectionCache(provider), [conversationQueryOwner, provider]);
+  }, [
+    searchConversation,
+    messageSearchProjections,
+    findQuery,
+    messageViewMode,
+    pendingMessageGroupEndIndex,
+    pendingSearchMatches,
+  ]);
+  const tailSearchProjection = useMemo(
+    () => createMessageSearchProjectionCache(provider),
+    [conversationQueryOwner, provider],
+  );
   const tailFind = useMemo(() => {
-    type TailMatch = { kind: "message"; messageIndex: number; historyIndex: number; occurrenceIndex: number } | { kind: "pending"; occurrenceIndex: number };
+    /** 保存履歴の検索件数に含まれない、履歴末尾または処理中の応答の一致位置。 */
+    type TailMatch =
+      | {
+          kind: "message";
+          messageIndex: number;
+          historyIndex: number;
+          occurrenceIndex: number;
+        }
+      | { kind: "pending"; occurrenceIndex: number };
     let totalCount = 0;
     let selected: TailMatch | undefined;
     let anchorOrdinal: number | undefined;
-    if (!searchConversation || conversationFind.messageCount === undefined) return { totalCount, selected, anchorOrdinal };
-    const candidates = (searchTailMessages ?? messages).filter((message, index) => getMessageHistoryIndex(message, index) >= conversationFind.messageCount!);
-    const texts = tailSearchProjection(candidates, undefined, messageViewMode, hasFindQuery);
+    if (!searchConversation || conversationFind.messageCount === undefined)
+      return { totalCount, selected, anchorOrdinal };
+    const candidates = (searchTailMessages ?? messages).filter(
+      (message, index) =>
+        getMessageHistoryIndex(message, index) >=
+        conversationFind.messageCount!,
+    );
+    const texts = tailSearchProjection(
+      candidates,
+      undefined,
+      messageViewMode,
+      hasFindQuery,
+    );
     const selectedIndex = currentFindMatch - conversationFind.totalCount;
     candidates.forEach((message, index) => {
       const historyIndex = getMessageHistoryIndex(message, index);
       if (historyIndex < conversationFind.messageCount!) return;
       let occurrenceIndex = 0;
-      for (const match of iterateMessageSearchMatches(texts[index], findQuery, messageViewMode)) {
-        if (totalCount === selectedIndex) selected = { kind: "message", historyIndex, messageIndex: messages.findIndex((loaded, localIndex) => (searchMessageIndexes?.[localIndex] ?? getMessageHistoryIndex(loaded, localIndex)) === historyIndex), occurrenceIndex };
-        if (modeAnchor?.kind === "message" && modeAnchor.historyIndex === historyIndex) {
+      for (const match of iterateMessageSearchMatches(
+        texts[index],
+        findQuery,
+        messageViewMode,
+      )) {
+        if (totalCount === selectedIndex)
+          selected = {
+            kind: "message",
+            historyIndex,
+            messageIndex: messages.findIndex(
+              (loaded, localIndex) =>
+                (searchMessageIndexes?.[localIndex] ??
+                  getMessageHistoryIndex(loaded, localIndex)) === historyIndex,
+            ),
+            occurrenceIndex,
+          };
+        if (
+          modeAnchor?.kind === "message" &&
+          modeAnchor.historyIndex === historyIndex
+        ) {
           const range = getMessageSearchMatchSourceRange(texts[index], match);
-          if (range && messageSearchSourceRangesCorrespond(range, modeAnchor) && anchorOrdinal === undefined) anchorOrdinal = conversationFind.totalCount + totalCount;
+          if (
+            range &&
+            messageSearchSourceRangesCorrespond(range, modeAnchor) &&
+            anchorOrdinal === undefined
+          )
+            anchorOrdinal = conversationFind.totalCount + totalCount;
         }
         totalCount++;
         occurrenceIndex++;
@@ -957,97 +1572,274 @@ export function SessionMessageColumn({
     });
     let occurrenceIndex = 0;
     for (const match of pendingSearchMatches) {
-      if (totalCount === selectedIndex) selected = { kind: "pending", occurrenceIndex };
+      if (totalCount === selectedIndex)
+        selected = { kind: "pending", occurrenceIndex };
       if (modeAnchor?.kind === "pending" && pendingSearchProjection) {
-        const range = getMessageSearchMatchSourceRange(pendingSearchProjection, match);
-        if (range && messageSearchSourceRangesCorrespond(range, modeAnchor) && anchorOrdinal === undefined) anchorOrdinal = conversationFind.totalCount + totalCount;
+        const range = getMessageSearchMatchSourceRange(
+          pendingSearchProjection,
+          match,
+        );
+        if (
+          range &&
+          messageSearchSourceRangesCorrespond(range, modeAnchor) &&
+          anchorOrdinal === undefined
+        )
+          anchorOrdinal = conversationFind.totalCount + totalCount;
       }
       totalCount++;
       occurrenceIndex++;
     }
     return { totalCount, selected, anchorOrdinal };
-  }, [searchConversation, conversationFind.messageCount, conversationFind.totalCount, currentFindMatch, searchTailMessages, searchMessageIndexes, messages, tailSearchProjection, messageViewMode, hasFindQuery, findQuery, pendingSearchMatches, pendingSearchProjection, modeAnchor]);
-  const findMatchCount = searchConversation ? conversationFind.totalCount + tailFind.totalCount : messageFindMatches.length;
+  }, [
+    searchConversation,
+    conversationFind.messageCount,
+    conversationFind.totalCount,
+    currentFindMatch,
+    searchTailMessages,
+    searchMessageIndexes,
+    messages,
+    tailSearchProjection,
+    messageViewMode,
+    hasFindQuery,
+    findQuery,
+    pendingSearchMatches,
+    pendingSearchProjection,
+    modeAnchor,
+  ]);
+  const findMatchCount = searchConversation
+    ? conversationFind.totalCount + tailFind.totalCount
+    : messageFindMatches.length;
   const findMatchMessageIndexes = useMemo(
-    () => searchConversation ? new Set(messageSearchProjections.flatMap((projection, index) =>
-      iterateMessageSearchMatches(projection, findQuery, messageViewMode).next().done ? [] : [index])) : new Set(
-      messageFindMatches
-        .filter((match): match is Extract<typeof match, { kind: "message" }> => match.kind === "message")
-        .map((match) => match.messageIndex),
-    ),
-    [messageFindMatches, searchConversation, messageSearchProjections, findQuery, messageViewMode],
+    () =>
+      searchConversation
+        ? new Set(
+            messageSearchProjections.flatMap((projection, index) =>
+              iterateMessageSearchMatches(
+                projection,
+                findQuery,
+                messageViewMode,
+              ).next().done
+                ? []
+                : [index],
+            ),
+          )
+        : new Set(
+            messageFindMatches
+              .filter(
+                (match): match is Extract<typeof match, { kind: "message" }> =>
+                  match.kind === "message",
+              )
+              .map((match) => match.messageIndex),
+          ),
+    [
+      messageFindMatches,
+      searchConversation,
+      messageSearchProjections,
+      findQuery,
+      messageViewMode,
+    ],
   );
-  const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, findMatchCount);
-  const savedFindMatch = searchConversation && activeCurrentFindMatch < conversationFind.totalCount ? conversationFind.itemAt(activeCurrentFindMatch) : undefined;
+  const activeCurrentFindMatch = clampFindMatchIndex(
+    currentFindMatch,
+    findMatchCount,
+  );
+  const savedFindMatch =
+    searchConversation && activeCurrentFindMatch < conversationFind.totalCount
+      ? conversationFind.itemAt(activeCurrentFindMatch)
+      : undefined;
   const tailFindMatch = tailFind.selected;
-  const remappingFindSelection = !!modeAnchor && appliedModeAnchor !== modeAnchor;
-  const selectedFindMatch = remappingFindSelection ? undefined : searchConversation ? savedFindMatch
-    ? { kind: "message" as const, messageIndex: messages.findIndex((message, index) => getMessageHistoryIndex(message, index) === savedFindMatch.messageIndex), occurrenceIndex: savedFindMatch.occurrenceIndex }
-    : tailFindMatch
-    : messageFindMatches[activeCurrentFindMatch];
+  const remappingFindSelection =
+    !!modeAnchor && appliedModeAnchor !== modeAnchor;
+  const selectedFindMatch = remappingFindSelection
+    ? undefined
+    : searchConversation
+      ? savedFindMatch
+        ? {
+            kind: "message" as const,
+            messageIndex: messages.findIndex(
+              (message, index) =>
+                getMessageHistoryIndex(message, index) ===
+                savedFindMatch.messageIndex,
+            ),
+            occurrenceIndex: savedFindMatch.occurrenceIndex,
+          }
+        : tailFindMatch
+      : messageFindMatches[activeCurrentFindMatch];
   const selectedSearchMatch = useMemo(() => {
-    if (selectedFindMatch?.kind === "pending") return pendingSearchMatches[selectedFindMatch.occurrenceIndex];
+    if (selectedFindMatch?.kind === "pending")
+      return pendingSearchMatches[selectedFindMatch.occurrenceIndex];
     if (!selectedFindMatch) return undefined;
     const projection = messageSearchProjections[selectedFindMatch.messageIndex];
     if (!projection) return undefined;
     let occurrenceIndex = 0;
-    for (const match of iterateMessageSearchMatches(projection, findQuery, messageViewMode)) {
+    for (const match of iterateMessageSearchMatches(
+      projection,
+      findQuery,
+      messageViewMode,
+    )) {
       if (occurrenceIndex++ === selectedFindMatch.occurrenceIndex) return match;
     }
     return undefined;
-  }, [selectedFindMatch?.kind, selectedFindMatch?.occurrenceIndex,
+  }, [
+    selectedFindMatch?.kind,
+    selectedFindMatch?.occurrenceIndex,
     selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
-    pendingSearchMatches, messageSearchProjections, findQuery, messageViewMode]);
-  const sourceMatch = findOpen && messageViewMode === "preview" && selectedSearchMatch?.kind === "source"
-    ? selectedSearchMatch : undefined;
+    pendingSearchMatches,
+    messageSearchProjections,
+    findQuery,
+    messageViewMode,
+  ]);
+  const sourceMatch =
+    findOpen &&
+    messageViewMode === "preview" &&
+    selectedSearchMatch?.kind === "source"
+      ? selectedSearchMatch
+      : undefined;
   const canRenderGroupedPending =
     pendingResponseMessageIndex < 0 &&
     pendingMessageGroupEndIndex >= 0 &&
-    virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
-  const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
-    if (!match) {
-      return null;
-    }
-    if (match.kind === "message") {
-      return match.messageIndex < 0 ? null : match.messageIndex;
-    }
-    if (pendingMessageGroupEndIndex >= 0) {
-      return pendingMessageGroupEndIndex;
-    }
-    return messages.length > 0 ? messages.length - 1 : null;
-  }, [messages.length, pendingMessageGroupEndIndex]);
+    virtualMessages.some(
+      (virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex,
+    );
+  const getFindMatchScrollIndex = useCallback(
+    (match: (typeof messageFindMatches)[number] | undefined) => {
+      if (!match) {
+        return null;
+      }
+      if (match.kind === "message") {
+        return match.messageIndex < 0 ? null : match.messageIndex;
+      }
+      if (pendingMessageGroupEndIndex >= 0) {
+        return pendingMessageGroupEndIndex;
+      }
+      return messages.length > 0 ? messages.length - 1 : null;
+    },
+    [messages.length, pendingMessageGroupEndIndex],
+  );
   const firstFindScrollIndex = getFindMatchScrollIndex(selectedFindMatch);
-  const findHistoryIndex = remappingFindSelection ? undefined : savedFindMatch?.messageIndex ?? (tailFindMatch?.kind === "message" ? tailFindMatch.historyIndex : undefined);
+  const findHistoryIndex = remappingFindSelection
+    ? undefined
+    : (savedFindMatch?.messageIndex ??
+      (tailFindMatch?.kind === "message"
+        ? tailFindMatch.historyIndex
+        : undefined));
   useEffect(() => {
-    if (!modeAnchor || appliedModeAnchor === modeAnchor || searchConversation && conversationFind.messageCount === undefined) return;
-    let ordinal = searchConversation ? conversationFind.anchorOrdinal ?? tailFind.anchorOrdinal : undefined;
+    if (
+      !modeAnchor ||
+      appliedModeAnchor === modeAnchor ||
+      (searchConversation && conversationFind.messageCount === undefined)
+    )
+      return;
+    let ordinal = searchConversation
+      ? (conversationFind.anchorOrdinal ?? tailFind.anchorOrdinal)
+      : undefined;
     if (!searchConversation) {
-      const messageIndex = modeAnchor.kind === "message" ? messages.findIndex((_, index) => getMessageKey(index) === modeAnchor.messageKey) : -1;
-      const projection = modeAnchor.kind === "pending" ? pendingSearchProjection : messageSearchProjections[messageIndex];
-      const occurrence = projection ? findSourceOccurrenceIndex(projection, findQuery, messageViewMode, modeAnchor) : -1;
-      if (occurrence >= 0) ordinal = messageFindMatches.findIndex((match) => match.kind === modeAnchor.kind && match.occurrenceIndex === occurrence
-        && (match.kind === "pending" || match.messageIndex === messageIndex));
+      const messageIndex =
+        modeAnchor.kind === "message"
+          ? messages.findIndex(
+              (_, index) => getMessageKey(index) === modeAnchor.messageKey,
+            )
+          : -1;
+      const projection =
+        modeAnchor.kind === "pending"
+          ? pendingSearchProjection
+          : messageSearchProjections[messageIndex];
+      const occurrence = projection
+        ? findSourceOccurrenceIndex(
+            projection,
+            findQuery,
+            messageViewMode,
+            modeAnchor,
+          )
+        : -1;
+      if (occurrence >= 0)
+        ordinal = messageFindMatches.findIndex(
+          (match) =>
+            match.kind === modeAnchor.kind &&
+            match.occurrenceIndex === occurrence &&
+            (match.kind === "pending" || match.messageIndex === messageIndex),
+        );
     }
     setAppliedModeAnchor(modeAnchor);
     if (ordinal !== undefined && ordinal >= 0) setCurrentFindMatch(ordinal);
-  }, [modeAnchor, appliedModeAnchor, searchConversation, conversationFind.messageCount, conversationFind.anchorOrdinal, tailFind.anchorOrdinal,
-    messages, getMessageKey, pendingSearchProjection, messageSearchProjections, findQuery, messageViewMode, messageFindMatches]);
+  }, [
+    modeAnchor,
+    appliedModeAnchor,
+    searchConversation,
+    conversationFind.messageCount,
+    conversationFind.anchorOrdinal,
+    tailFind.anchorOrdinal,
+    messages,
+    getMessageKey,
+    pendingSearchProjection,
+    messageSearchProjections,
+    findQuery,
+    messageViewMode,
+    messageFindMatches,
+  ]);
   useLayoutEffect(() => {
-    const projection = selectedFindMatch?.kind === "pending" ? pendingSearchProjection
-      : selectedFindMatch ? messageSearchProjections[selectedFindMatch.messageIndex] : undefined;
-    const range = selectedSearchMatch && projection ? getMessageSearchMatchSourceRange(projection, selectedSearchMatch) : undefined;
-    const anchor: FindSourceAnchor | undefined = modeAnchor && appliedModeAnchor !== modeAnchor ? modeAnchor
-      : range && selectedFindMatch ? selectedFindMatch.kind === "pending" ? { ...range, kind: "pending" }
-        : { ...range, kind: "message", messageKey: getMessageKey(selectedFindMatch.messageIndex),
-          historyIndex: findHistoryIndex ?? getMessageHistoryIndex(messages[selectedFindMatch.messageIndex], selectedFindMatch.messageIndex) } : undefined;
-    findSelectionSnapshot.current = { owner: conversationQueryOwner, query: findQuery, mode: messageViewMode,
-      anchor: findOpen && isContentActive ? anchor : undefined };
-  }, [selectedFindMatch, selectedSearchMatch, pendingSearchProjection, messageSearchProjections, modeAnchor, appliedModeAnchor,
-    getMessageKey, findHistoryIndex, messages, conversationQueryOwner, findQuery, messageViewMode, findOpen, isContentActive]);
+    const projection =
+      selectedFindMatch?.kind === "pending"
+        ? pendingSearchProjection
+        : selectedFindMatch
+          ? messageSearchProjections[selectedFindMatch.messageIndex]
+          : undefined;
+    const range =
+      selectedSearchMatch && projection
+        ? getMessageSearchMatchSourceRange(projection, selectedSearchMatch)
+        : undefined;
+    const anchor: FindSourceAnchor | undefined =
+      modeAnchor && appliedModeAnchor !== modeAnchor
+        ? modeAnchor
+        : range && selectedFindMatch
+          ? selectedFindMatch.kind === "pending"
+            ? { ...range, kind: "pending" }
+            : {
+                ...range,
+                kind: "message",
+                messageKey: getMessageKey(selectedFindMatch.messageIndex),
+                historyIndex:
+                  findHistoryIndex ??
+                  getMessageHistoryIndex(
+                    messages[selectedFindMatch.messageIndex],
+                    selectedFindMatch.messageIndex,
+                  ),
+              }
+          : undefined;
+    findSelectionSnapshot.current = {
+      owner: conversationQueryOwner,
+      query: findQuery,
+      mode: messageViewMode,
+      anchor: findOpen && isContentActive ? anchor : undefined,
+    };
+  }, [
+    selectedFindMatch,
+    selectedSearchMatch,
+    pendingSearchProjection,
+    messageSearchProjections,
+    modeAnchor,
+    appliedModeAnchor,
+    getMessageKey,
+    findHistoryIndex,
+    messages,
+    conversationQueryOwner,
+    findQuery,
+    messageViewMode,
+    findOpen,
+    isContentActive,
+  ]);
   useEffect(() => {
     let active = true;
-    if (findHistoryIndex !== undefined && onLoadMessagePage) void onLoadMessagePage(findHistoryIndex).catch((error: unknown) => { if (active) setConversationFindError(error instanceof Error ? error.message : String(error)); });
-    return () => { active = false; };
+    if (findHistoryIndex !== undefined && onLoadMessagePage)
+      void onLoadMessagePage(findHistoryIndex).catch((error: unknown) => {
+        if (active)
+          setConversationFindError(
+            error instanceof Error ? error.message : String(error),
+          );
+      });
+    return () => {
+      active = false;
+    };
   }, [findHistoryIndex, onLoadMessagePage]);
 
   useEffect(() => {
@@ -1066,6 +1858,7 @@ export function SessionMessageColumn({
     }
   }, [isContentActive]);
 
+  /** 列のスクロール通知を、追尾と閲覧状態を管理する呼び出し側に渡す。 */
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
   };
@@ -1077,7 +1870,8 @@ export function SessionMessageColumn({
       return;
     }
     const messageListElement = messageListRef.current;
-    const selectionDetails = getSelectionDetailsWithinMessageList(messageListElement);
+    const selectionDetails =
+      getSelectionDetailsWithinMessageList(messageListElement);
     setSelectionActive(Boolean(selectionDetails));
     if (!selectionDetails) {
       setSelectionToolbar(null);
@@ -1085,10 +1879,15 @@ export function SessionMessageColumn({
     }
     const sourceRect = messageListElement?.getBoundingClientRect() ?? null;
     const overlayRect = selectionActionOverlay?.getBoundingClientRect() ?? null;
-    const actionDockRect = document.getElementById(SESSION_ACTION_DOCK_ID)?.getBoundingClientRect() ?? null;
+    const actionDockRect =
+      document
+        .getElementById(SESSION_ACTION_DOCK_ID)
+        ?.getBoundingClientRect() ?? null;
     const toolbarRect =
-      selectionToolbarRef.current?.getBoundingClientRect() ??
-      { width: 112, height: 32 };
+      selectionToolbarRef.current?.getBoundingClientRect() ?? {
+        width: 112,
+        height: 32,
+      };
     if (
       !sourceRect ||
       !overlayRect ||
@@ -1137,130 +1936,236 @@ export function SessionMessageColumn({
     return () => {
       document.removeEventListener("selectionchange", updateSelectionToolbar);
       window.removeEventListener("resize", updateSelectionToolbar);
-      messageListElement?.removeEventListener("scroll", updateSelectionToolbar, { capture: true });
+      messageListElement?.removeEventListener(
+        "scroll",
+        updateSelectionToolbar,
+        { capture: true },
+      );
     };
   }, [messageListRef, updateSelectionToolbar]);
 
   useEffect(() => {
-    if (!isContentActive || !selectionActive || typeof window === "undefined") return;
+    if (!isContentActive || !selectionActive || typeof window === "undefined")
+      return;
     const messageListElement = messageListRef.current;
     const actionDockElement = document.getElementById(SESSION_ACTION_DOCK_ID);
-    const resizeObserver = typeof window.ResizeObserver === "undefined"
-      ? null : new window.ResizeObserver(updateSelectionToolbar);
+    const resizeObserver =
+      typeof window.ResizeObserver === "undefined"
+        ? null
+        : new window.ResizeObserver(updateSelectionToolbar);
     if (messageListElement) resizeObserver?.observe(messageListElement);
     if (selectionActionOverlay) resizeObserver?.observe(selectionActionOverlay);
     if (actionDockElement) resizeObserver?.observe(actionDockElement);
-    const mutationObserver = messageListElement && typeof window.MutationObserver !== "undefined"
-      ? new window.MutationObserver(updateSelectionToolbar) : null;
-    if (messageListElement) mutationObserver?.observe(messageListElement, {
-      attributeFilter: ["data-index", "style"],
-      attributes: true,
-      childList: true,
-      subtree: true,
-    });
+    const mutationObserver =
+      messageListElement && typeof window.MutationObserver !== "undefined"
+        ? new window.MutationObserver(updateSelectionToolbar)
+        : null;
+    if (messageListElement)
+      mutationObserver?.observe(messageListElement, {
+        attributeFilter: ["data-index", "style"],
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
     return () => {
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
     };
-  }, [isContentActive, messageListRef, selectionActionOverlay, selectionActive, updateSelectionToolbar]);
+  }, [
+    isContentActive,
+    messageListRef,
+    selectionActionOverlay,
+    selectionActive,
+    updateSelectionToolbar,
+  ]);
 
   useEffect(() => {
     setCurrentFindMatch(0);
   }, [findQuery, sessionId]);
 
   useEffect(() => {
-    if (!conversationFind.loading) setCurrentFindMatch((current) => clampFindMatchIndex(current, findMatchCount));
+    if (!conversationFind.loading)
+      setCurrentFindMatch((current) =>
+        clampFindMatchIndex(current, findMatchCount),
+      );
   }, [findMatchCount, conversationFind.loading]);
 
   useEffect(() => {
     if (firstFindScrollIndex !== null) {
       onBrowseMessages?.();
-      messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
+      messageVirtualizer.scrollToIndex(firstFindScrollIndex, {
+        align: "center",
+      });
     }
-  }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId, onBrowseMessages]);
+  }, [
+    findQuery,
+    firstFindScrollIndex,
+    messageVirtualizer,
+    sessionId,
+    onBrowseMessages,
+  ]);
 
-  const navigateFindMatch = useCallback((direction: 1 | -1) => {
-    if (findMatchCount === 0 || conversationFind.error || conversationFindError) {
-      return;
-    }
-    onBrowseMessages?.();
-    setAppliedModeAnchor(modeAnchor);
-    setCurrentFindMatch((current) => {
-      const next = (
-        clampFindMatchIndex(current, findMatchCount)
-        + direction
-        + findMatchCount
-      ) % findMatchCount;
-      const scrollIndex = searchConversation ? null : getFindMatchScrollIndex(messageFindMatches[next]);
-      if (scrollIndex !== null) {
-        messageVirtualizer.scrollToIndex(scrollIndex, { align: "center" });
+  const navigateFindMatch = useCallback(
+    (direction: 1 | -1) => {
+      if (
+        findMatchCount === 0 ||
+        conversationFind.error ||
+        conversationFindError
+      ) {
+        return;
       }
-      return next;
-    });
-  }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer, findMatchCount, searchConversation, conversationFind.error, conversationFindError, onBrowseMessages, modeAnchor]);
+      onBrowseMessages?.();
+      setAppliedModeAnchor(modeAnchor);
+      setCurrentFindMatch((current) => {
+        const next =
+          (clampFindMatchIndex(current, findMatchCount) +
+            direction +
+            findMatchCount) %
+          findMatchCount;
+        const scrollIndex = searchConversation
+          ? null
+          : getFindMatchScrollIndex(messageFindMatches[next]);
+        if (scrollIndex !== null) {
+          messageVirtualizer.scrollToIndex(scrollIndex, { align: "center" });
+        }
+        return next;
+      });
+    },
+    [
+      getFindMatchScrollIndex,
+      messageFindMatches,
+      messageVirtualizer,
+      findMatchCount,
+      searchConversation,
+      conversationFind.error,
+      conversationFindError,
+      onBrowseMessages,
+      modeAnchor,
+    ],
+  );
 
-  const visibleMessageSignature = virtualMessages.map((message) => {
-    const key = getMessageKey(message.index);
-    const target = messageCollapseTargetByKey.get(key);
-    const isCollapsed = !!target && collapsedMessageKeys.has(key);
-    const isTemporarilyExpanded = findOpen && hasFindQuery && findMatchMessageIndexes.has(message.index);
-    return `${message.index}:${isCollapsed && !isTemporarilyExpanded ? "collapsed" : "expanded"}`;
-  }).join(",");
+  const visibleMessageSignature = virtualMessages
+    .map((message) => {
+      const key = getMessageKey(message.index);
+      const target = messageCollapseTargetByKey.get(key);
+      const isCollapsed = !!target && collapsedMessageKeys.has(key);
+      const isTemporarilyExpanded =
+        findOpen && hasFindQuery && findMatchMessageIndexes.has(message.index);
+      return `${message.index}:${isCollapsed && !isTemporarilyExpanded ? "collapsed" : "expanded"}`;
+    })
+    .join(",");
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
-    if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
+    if (
+      !isContentActive ||
+      !findOpen ||
+      !findQuery.trim() ||
+      !messageListElement
+    ) {
       scrolledSourceMatchRef.current = null;
       return;
     }
     const ownerDocument = messageListElement.ownerDocument;
     const current = selectedFindMatch ?? null;
-    const sourceMatchKey = sourceMatch && current ? JSON.stringify([
-      conversationQueryOwner, findQuery, activeCurrentFindMatch, current.kind,
-      current.kind === "message" ? findHistoryIndex ?? messageKeys?.[current.messageIndex] ?? current.messageIndex : null,
-      current.occurrenceIndex,
-    ]) : null;
+    const sourceMatchKey =
+      sourceMatch && current
+        ? JSON.stringify([
+            conversationQueryOwner,
+            findQuery,
+            activeCurrentFindMatch,
+            current.kind,
+            current.kind === "message"
+              ? (findHistoryIndex ??
+                messageKeys?.[current.messageIndex] ??
+                current.messageIndex)
+              : null,
+            current.occurrenceIndex,
+          ])
+        : null;
     if (!sourceMatchKey) scrolledSourceMatchRef.current = null;
     let sourceScrollFrame: number | null = null;
     let sourceTarget: HTMLElement | null = null;
+    /** 現在描画されている本文から一致範囲を組み直し、選択された検索結果だけを移動先にする。 */
     const applyHighlights = () => {
       sourceTarget?.classList.remove("message-find-source-target");
       sourceTarget = null;
       const resolvedMatches: RenderedTextMatch[] = [];
       let resolvedCurrentMatch: RenderedTextMatch | null = null;
+      /** 描画済みの処理中応答があれば一致を加え、選択がその応答にある場合は該当範囲も取得する。 */
       const appendPendingHighlights = (container: ParentNode) => {
         const pendingRichText = container.querySelector<HTMLElement>(
-          "[data-pending-message-body=\"true\"] > .rich-text",
+          '[data-pending-message-body="true"] > .rich-text',
         );
         if (!pendingRichText) {
           return false;
         }
-        const index = createRenderedTextSearchIndex(pendingRichText, isMessageRenderedSearchTextNode);
+        const index = createRenderedTextSearchIndex(
+          pendingRichText,
+          isMessageRenderedSearchTextNode,
+        );
         const matches = findRenderedTextMatchOffsets(index, findQuery);
         appendRenderedTextMatches(resolvedMatches, index, matches);
         if (current?.kind === "pending" && !sourceMatch) {
-          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, selectedSearchMatch?.renderedOccurrenceIndex ?? current.occurrenceIndex);
+          resolvedCurrentMatch = resolveRenderedTextMatch(
+            index,
+            matches,
+            selectedSearchMatch?.renderedOccurrenceIndex ??
+              current.occurrenceIndex,
+          );
         }
         return true;
       };
       let pendingHighlightsAppended = false;
-      for (const row of messageListElement.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+      for (const row of messageListElement.querySelectorAll<HTMLElement>(
+        ".session-message-virtual-row",
+      )) {
         const messageIndex = Number(row.dataset.index);
-        const body = row.querySelector<HTMLElement>("[data-message-body=\"true\"]:not([data-pending-message-body])");
+        const body = row.querySelector<HTMLElement>(
+          '[data-message-body="true"]:not([data-pending-message-body])',
+        );
         if (!Number.isInteger(messageIndex) || !body) {
           continue;
         }
-        for (const richText of body.querySelectorAll<HTMLElement>(":scope > .rich-text")) {
-          const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+        for (const richText of body.querySelectorAll<HTMLElement>(
+          ":scope > .rich-text",
+        )) {
+          const index = createRenderedTextSearchIndex(
+            richText,
+            isMessageRenderedSearchTextNode,
+          );
           const matches = findRenderedTextMatchOffsets(index, findQuery);
           appendRenderedTextMatches(resolvedMatches, index, matches);
-          if (current?.kind === "message" && current.messageIndex === messageIndex && !sourceMatch) {
+          if (
+            current?.kind === "message" &&
+            current.messageIndex === messageIndex &&
+            !sourceMatch
+          ) {
             // 現在コントロールに置き換えられている質問も含め、元の先頭部分を数える。
             // フォームのラベルやツールだけが挿入した質問はメッセージ本文に含まれない。
             const sourceStart = Number(richText.dataset.sourceStart ?? 0);
-            const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
-            const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix, messages[messageIndex].role === "assistant" ? provider : undefined);
-            const precedingMatches = findTextMatches(prefixText, findQuery).length;
-            resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, (selectedSearchMatch?.renderedOccurrenceIndex ?? current.occurrenceIndex) - precedingMatches);
+            const prefix =
+              sourceStart > 0
+                ? messages[messageIndex].text.slice(0, sourceStart)
+                : "";
+            const prefixText =
+              messageViewMode === "source" || !prefix
+                ? prefix
+                : projectMessageRenderedSearchText(
+                    prefix,
+                    messages[messageIndex].role === "assistant"
+                      ? provider
+                      : undefined,
+                  );
+            const precedingMatches = findTextMatches(
+              prefixText,
+              findQuery,
+            ).length;
+            resolvedCurrentMatch ??= resolveRenderedTextMatch(
+              index,
+              matches,
+              (selectedSearchMatch?.renderedOccurrenceIndex ??
+                current.occurrenceIndex) - precedingMatches,
+            );
           }
         }
         if (messageIndex === pendingMessageGroupEndIndex) {
@@ -1270,37 +2175,73 @@ export function SessionMessageColumn({
       if (!pendingHighlightsAppended) {
         appendPendingHighlights(messageListElement);
       }
-      applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
+      applyRenderedTextHighlights(
+        ownerDocument,
+        resolvedMatches,
+        resolvedCurrentMatch,
+      );
       if (sourceMatch) {
-        const body = current?.kind === "pending"
-          ? messageListElement.querySelector<HTMLElement>("[data-pending-message-body=\"true\"]")
-          : current?.kind === "message" ? messageListElement.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${current.messageIndex}"] [data-message-body="true"]:not([data-pending-message-body])`) : null;
-        sourceTarget = body ? resolveMessageSourceMatchTarget(body, sourceMatch) ?? body : null;
+        const body =
+          current?.kind === "pending"
+            ? messageListElement.querySelector<HTMLElement>(
+                '[data-pending-message-body="true"]',
+              )
+            : current?.kind === "message"
+              ? messageListElement.querySelector<HTMLElement>(
+                  `.session-message-virtual-row[data-index="${current.messageIndex}"] [data-message-body="true"]:not([data-pending-message-body])`,
+                )
+              : null;
+        sourceTarget = body
+          ? (resolveMessageSourceMatchTarget(body, sourceMatch) ?? body)
+          : null;
         sourceTarget?.classList.add("message-find-source-target");
         const view = ownerDocument.defaultView;
-        if (sourceMatchKey && scrolledSourceMatchRef.current !== sourceMatchKey && sourceScrollFrame === null && sourceTarget && view) {
+        if (
+          sourceMatchKey &&
+          scrolledSourceMatchRef.current !== sourceMatchKey &&
+          sourceScrollFrame === null &&
+          sourceTarget &&
+          view
+        ) {
           sourceScrollFrame = view.requestAnimationFrame(() => {
             sourceScrollFrame = null;
             if (!sourceTarget?.isConnected) return;
             const rect = sourceTarget.getBoundingClientRect();
             const containerRect = messageListElement.getBoundingClientRect();
             const top = containerRect.top + messageListElement.clientTop;
-            if (rect.top < top || rect.bottom > top + messageListElement.clientHeight) {
-              messageListElement.scrollTop += rect.top + rect.height / 2 - (top + messageListElement.clientHeight / 2);
+            if (
+              rect.top < top ||
+              rect.bottom > top + messageListElement.clientHeight
+            ) {
+              messageListElement.scrollTop +=
+                rect.top +
+                rect.height / 2 -
+                (top + messageListElement.clientHeight / 2);
             }
             scrolledSourceMatchRef.current = sourceMatchKey;
           });
         }
       } else {
-        scrollRenderedTextMatchIntoView(resolvedCurrentMatch, messageListElement);
+        scrollRenderedTextMatchIntoView(
+          resolvedCurrentMatch,
+          messageListElement,
+        );
       }
     };
     applyHighlights();
-    const MutationObserverConstructor = ownerDocument.defaultView?.MutationObserver;
-    const observer = MutationObserverConstructor ? new MutationObserverConstructor(applyHighlights) : null;
-    observer?.observe(messageListElement, { childList: true, characterData: true, subtree: true });
+    const MutationObserverConstructor =
+      ownerDocument.defaultView?.MutationObserver;
+    const observer = MutationObserverConstructor
+      ? new MutationObserverConstructor(applyHighlights)
+      : null;
+    observer?.observe(messageListElement, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
     return () => {
-      if (sourceScrollFrame !== null) ownerDocument.defaultView?.cancelAnimationFrame(sourceScrollFrame);
+      if (sourceScrollFrame !== null)
+        ownerDocument.defaultView?.cancelAnimationFrame(sourceScrollFrame);
       observer?.disconnect();
       sourceTarget?.classList.remove("message-find-source-target");
       clearRenderedTextHighlights(ownerDocument);
@@ -1329,54 +2270,97 @@ export function SessionMessageColumn({
     visibleMessageSignature,
   ]);
 
-  const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
-    Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
+  /** 行を仮想化で取り外しても保持される、成果物の区分別の開閉状態を参照する。 */
+  const isArtifactFoldOpen = (
+    artifactKey: string,
+    section: MessageArtifactFoldSection,
+    index?: number,
+  ) =>
+    Boolean(
+      openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)],
+    );
 
-  const loadArtifactDetail = useCallback((artifactKey: string, messageIndex: number, artifact: MessageArtifact | undefined) => {
-    if (!artifactDetailsEnabled || !artifact?.detailAvailable || !onLoadArtifactDetail || loadedArtifactDetails.current.has(artifactKey) || artifactAttempts.current.has(artifactKey)) {
-      return;
-    }
+  /** 詳細を取得できる開いた成果物だけを重複なく読み取り、閉じた間に届いた結果は適用しない。 */
+  const loadArtifactDetail = useCallback(
+    (
+      artifactKey: string,
+      messageIndex: number,
+      artifact: MessageArtifact | undefined,
+    ) => {
+      if (
+        !artifactDetailsEnabled ||
+        !artifact?.detailAvailable ||
+        !onLoadArtifactDetail ||
+        loadedArtifactDetails.current.has(artifactKey) ||
+        artifactAttempts.current.has(artifactKey)
+      ) {
+        return;
+      }
 
-    const request = {};
-    artifactAttempts.current.set(artifactKey, request);
-    const isCurrentAttempt = () => artifactAttempts.current.get(artifactKey) === request && activeArtifactKeys.current.has(artifactKey);
-    const reportError = (message: string) => {
-      if (isCurrentAttempt()) setArtifactDetailErrors((current) => ({ ...current, [artifactKey]: message }));
-    };
-    setLoadingArtifactDetails((current) => ({ ...current, [artifactKey]: true }));
-    void onLoadArtifactDetail(messageIndex)
-      .then((detail) => {
-        if (!isCurrentAttempt()) {
-          return;
-        }
-        if (!detail) {
-          reportError("Details are unavailable. Close and reopen to retry.");
-          return;
-        }
-        loadedArtifactDetails.current.set(artifactKey, detail);
-        refreshArtifactDetails((revision) => revision + 1);
-      })
-      .catch(() => reportError("Failed to load details. Close and reopen to retry."))
-      .finally(() => {
-        if (!isCurrentAttempt()) return;
-        setLoadingArtifactDetails((current) => {
-          if (!current[artifactKey]) {
-            return current;
+      const request = {};
+      artifactAttempts.current.set(artifactKey, request);
+      /** 読取要求が置き換わっておらず、成果物が現在も詳細の対象にあるかを判定する。 */
+      const isCurrentAttempt = () =>
+        artifactAttempts.current.get(artifactKey) === request &&
+        activeArtifactKeys.current.has(artifactKey);
+      /** 現在の読取だけに詳細を表示できなかった理由を記録する。 */
+      const reportError = (message: string) => {
+        if (isCurrentAttempt())
+          setArtifactDetailErrors((current) => ({
+            ...current,
+            [artifactKey]: message,
+          }));
+      };
+      setLoadingArtifactDetails((current) => ({
+        ...current,
+        [artifactKey]: true,
+      }));
+      void onLoadArtifactDetail(messageIndex)
+        .then((detail) => {
+          if (!isCurrentAttempt()) {
+            return;
           }
-          const next = { ...current };
-          delete next[artifactKey];
-          return next;
+          if (!detail) {
+            reportError("Details are unavailable. Close and reopen to retry.");
+            return;
+          }
+          loadedArtifactDetails.current.set(artifactKey, detail);
+          refreshArtifactDetails((revision) => revision + 1);
+        })
+        .catch(() =>
+          reportError("Failed to load details. Close and reopen to retry."),
+        )
+        .finally(() => {
+          if (!isCurrentAttempt()) return;
+          setLoadingArtifactDetails((current) => {
+            if (!current[artifactKey]) {
+              return current;
+            }
+            const next = { ...current };
+            delete next[artifactKey];
+            return next;
+          });
         });
-      });
-  }, [artifactDetailsEnabled, onLoadArtifactDetail]);
+    },
+    [artifactDetailsEnabled, onLoadArtifactDetail],
+  );
 
   useEffect(() => {
     for (const row of virtualMessages) {
       const key = getMessageKey(row.index);
-      if (activeArtifactKeys.current.has(key)) loadArtifactDetail(key, row.index, messages[row.index]?.artifact);
+      if (activeArtifactKeys.current.has(key))
+        loadArtifactDetail(key, row.index, messages[row.index]?.artifact);
     }
-  }, [artifactDetailsEnabled, expandedArtifacts, getMessageKey, loadArtifactDetail, messages, virtualMessages]);
+  }, [
+    artifactDetailsEnabled,
+    expandedArtifacts,
+    getMessageKey,
+    loadArtifactDetail,
+    messages,
+    virtualMessages,
+  ]);
 
+  /** 操作一覧または個々の操作の開閉を、成果物と区分の固定キーに保存する。 */
   const handleArtifactFoldToggle = (
     artifactKey: string,
     section: MessageArtifactFoldSection,
@@ -1399,45 +2383,81 @@ export function SessionMessageColumn({
     });
   };
 
-  const inlineApproval = isRunning && liveApprovalRequest ? {
-    key: `approval-${liveApprovalRequest.requestId}`,
-    position: liveApprovalRequest.textPosition ?? liveRunAssistantText.length,
-    stableOwner: true,
-    content: <LiveRequestSurface
-      liveApprovalRequest={liveApprovalRequest}
-      approvalActionRequestId={approvalActionRequestId}
-      approvalActionDecision={approvalActionDecision}
-      liveElicitationRequest={null}
-      elicitationActionRequestId={elicitationActionRequestId}
-      onResolveLiveApproval={onResolveLiveApproval}
-      onResolveLiveElicitation={onResolveLiveElicitation}
-      onOpenPath={onOpenPath}
-    />,
-  } : undefined;
-  const liveSent = sent.filter((item) => item.sourceTurnId === sentTurnId
-    && (item.sourceTurnId === liveWithMateTurnId || conversationPeerKey(item.target) === peer));
-  const inlineLivePossible = !!liveWithMateTurnId && isRunning
-    && (pendingResponseMessageIndex < 0 || messages[pendingResponseMessageIndex]?.role === "assistant");
+  const inlineApproval =
+    isRunning && liveApprovalRequest
+      ? {
+          key: `approval-${liveApprovalRequest.requestId}`,
+          position:
+            liveApprovalRequest.textPosition ?? liveRunAssistantText.length,
+          stableOwner: true,
+          content: (
+            <LiveRequestSurface
+              liveApprovalRequest={liveApprovalRequest}
+              approvalActionRequestId={approvalActionRequestId}
+              approvalActionDecision={approvalActionDecision}
+              liveElicitationRequest={null}
+              elicitationActionRequestId={elicitationActionRequestId}
+              onResolveLiveApproval={onResolveLiveApproval}
+              onResolveLiveElicitation={onResolveLiveElicitation}
+              onOpenPath={onOpenPath}
+            />
+          ),
+        }
+      : undefined;
+  const liveSent = sent.filter(
+    (item) =>
+      item.sourceTurnId === sentTurnId &&
+      (item.sourceTurnId === liveWithMateTurnId ||
+        conversationPeerKey(item.target) === peer),
+  );
+  const inlineLivePossible =
+    !!liveWithMateTurnId &&
+    isRunning &&
+    (pendingResponseMessageIndex < 0 ||
+      messages[pendingResponseMessageIndex]?.role === "assistant");
   const outgoingResponseRows = new Map<string, number>();
   const outgoingSavedRows = new Map<number, number>();
   messages.forEach((message, index) => {
-    const savedSeq = savedReplySourceIndexes ? savedReplySourceIndexes[index] : message.historyIndex;
+    const savedSeq = savedReplySourceIndexes
+      ? savedReplySourceIndexes[index]
+      : message.historyIndex;
     if (savedSeq !== undefined) outgoingSavedRows.set(savedSeq, index);
     if (message.role === "assistant" && !isSentOnly(savedSeq)) {
-      const turn = responseExecutionTurnIds?.[index] ?? (index === pendingResponseMessageIndex ? liveWithMateTurnId : undefined);
+      const turn =
+        responseExecutionTurnIds?.[index] ??
+        (index === pendingResponseMessageIndex
+          ? liveWithMateTurnId
+          : undefined);
       if (turn) outgoingResponseRows.set(turn, index);
     }
   });
   // 確認済みの応答にカードを紐付ける。保存済み入力の位置は
   // その応答を取得できるまでの代替であり、カードを二重に描画するための場所ではない。
-  const sourceRow = ({ sourceTurnId, sourceMessageSeq }: { sourceTurnId: string; sourceMessageSeq: number | null }) => {
-    const savedRow = sourceMessageSeq === null ? undefined : outgoingSavedRows.get(sourceMessageSeq);
-    return savedRow !== undefined && messages[savedRow].role === "assistant" ? savedRow : outgoingResponseRows.get(sourceTurnId) ?? savedRow;
+  /** 保存済みの応答行を優先し、なければ Turn に対応する応答行、最後に保存済みの入力行を使う。 */
+  const sourceRow = ({
+    sourceTurnId,
+    sourceMessageSeq,
+  }: {
+    sourceTurnId: string;
+    sourceMessageSeq: number | null;
+  }) => {
+    const savedRow =
+      sourceMessageSeq === null
+        ? undefined
+        : outgoingSavedRows.get(sourceMessageSeq);
+    return savedRow !== undefined && messages[savedRow].role === "assistant"
+      ? savedRow
+      : (outgoingResponseRows.get(sourceTurnId) ?? savedRow);
   };
   const outgoingRows = new Map<number, typeof sent>();
   const assignedOutgoing = new Set<(typeof sent)[number]>();
   for (const item of sent) {
-    if (inlineLivePossible && pendingResponseMessageIndex < 0 && liveSent.includes(item)) continue;
+    if (
+      inlineLivePossible &&
+      pendingResponseMessageIndex < 0 &&
+      liveSent.includes(item)
+    )
+      continue;
     const index = sourceRow(item);
     if (index === undefined) continue;
     assignedOutgoing.add(item);
@@ -1450,48 +2470,96 @@ export function SessionMessageColumn({
   for (const record of issuedWithoutReceipt) {
     const index = sourceRow(record);
     if (index === undefined) {
-      if (record.sourceMessageSeq === null && record.sourceTurnId === liveWithMateTurnId) issuedTail.push(record);
+      if (
+        record.sourceMessageSeq === null &&
+        record.sourceTurnId === liveWithMateTurnId
+      )
+        issuedTail.push(record);
       continue;
     }
-    const seq = savedReplySourceIndexes ? savedReplySourceIndexes[index] : messages[index].historyIndex;
+    const seq = savedReplySourceIndexes
+      ? savedReplySourceIndexes[index]
+      : messages[index].historyIndex;
     if (isSentOnly(seq)) continue;
     const row = issuedRows.get(index);
     if (row) row.push(record);
     else issuedRows.set(index, [record]);
   }
-  const renderInlineSent = (items: typeof liveSent, text: string) => !inputReadContext ? [] : items
-    .map((item) => {
-      const position = "sourceDisplayPosition" in item ? item.sourceDisplayPosition : null;
-      const positionUnknown = position == null || position > text.length;
-      return { key: `sent-${sentInstructionKey(item)}`, position: positionUnknown ? text.length : position!, content: renderSent(item, true) };
-    });
+  /** 送信カードを応答内の記録済み位置へ割り当て、位置未確定または本文より先なら末尾に添える。 */
+  const renderInlineSent = (items: typeof liveSent, text: string) =>
+    !inputReadContext
+      ? []
+      : items.map((item) => {
+          const position =
+            "sourceDisplayPosition" in item ? item.sourceDisplayPosition : null;
+          const positionUnknown = position == null || position > text.length;
+          return {
+            key: `sent-${sentInstructionKey(item)}`,
+            position: positionUnknown ? text.length : position!,
+            content: renderSent(item, true),
+          };
+        });
+  /** 実行中の本文と要求フォームを既存の応答行と重ねずに描き、エラーと実行中の状態を添える。 */
   const renderPendingContent = () => (
     <div className="pending-response-content">
-      {pendingResponseMessageIndex < 0 ? <InlineResponseContent
-        sessionId={sessionId}
-        workspacePath={workspacePath}
-        disabled={elicitationDisabled}
-        text={liveRunAssistantText}
-        responseProvider={provider}
-        records={visibleLiveElicitationRecords}
-        requests={activeQuestions}
-        inlineContent={[...renderInlineSent(inlineLivePossible ? liveSent : [], liveRunAssistantText), ...(inlineApproval ? [inlineApproval] : [])]}
-        inputAvailable={elicitationInputAvailable}
-        drafts={elicitationDrafts}
-        elicitationActionRequestId={elicitationActionRequestId}
-        elicitationAction={elicitationAction}
-        onResolveLiveElicitation={onResolveLiveElicitation}
-        onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} selectedRanges={selectedRanges} isStreaming={isRunning} responseProvider={provider}
-          resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath} onFind={openFind}
-          onCopyText={onCopyMessageText} onQuoteText={onQuoteMessageText}
-          markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-          glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
-      /> : null}
+      {pendingResponseMessageIndex < 0 ? (
+        <InlineResponseContent
+          sessionId={sessionId}
+          workspacePath={workspacePath}
+          disabled={elicitationDisabled}
+          text={liveRunAssistantText}
+          responseProvider={provider}
+          records={visibleLiveElicitationRecords}
+          requests={activeQuestions}
+          inlineContent={[
+            ...renderInlineSent(
+              inlineLivePossible ? liveSent : [],
+              liveRunAssistantText,
+            ),
+            ...(inlineApproval ? [inlineApproval] : []),
+          ]}
+          inputAvailable={elicitationInputAvailable}
+          drafts={elicitationDrafts}
+          elicitationActionRequestId={elicitationActionRequestId}
+          elicitationAction={elicitationAction}
+          onResolveLiveElicitation={onResolveLiveElicitation}
+          onOpenPath={onOpenPath}
+          renderText={(
+            text,
+            key,
+            sourceStart,
+            inlineContent,
+            selectedRanges,
+          ) => (
+            <MessageRichText
+              key={key}
+              text={text}
+              sourceStart={sourceStart}
+              inlineContent={inlineContent}
+              selectedRanges={selectedRanges}
+              isStreaming={isRunning}
+              responseProvider={provider}
+              resolveImageSource={resolveImageSource}
+              displayMode={messageViewMode}
+              onOpenPath={onOpenPath}
+              onFind={openFind}
+              onCopyText={onCopyMessageText}
+              onQuoteText={onQuoteMessageText}
+              markdownLinkFileContext={markdownLinkFileContext}
+              markdownImageContext={markdownLinkFileContext}
+              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+              glossaryAnnotationScopeKey={`${sessionId}:pending`}
+              onActivateGlossaryEntry={onActivateGlossaryEntry}
+            />
+          )}
+        />
+      ) : null}
       {hasPendingMessageText ? (
         <div
           data-message-body="true"
-          data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+          data-message-text-actions={
+            canUsePendingMessageTextActions ? "true" : undefined
+          }
           data-pending-message-body="true"
         >
           <MessageRichText
@@ -1514,20 +2582,50 @@ export function SessionMessageColumn({
         </div>
       ) : null}
       {liveRunErrorMessage ? (
-        <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
+        <p className="pending-run-error-note" role="alert">
+          {liveRunErrorMessage}
+        </p>
       ) : null}
-      <PendingRunIndicator phase="running" announcement={pendingRunIndicatorAnnouncement} />
+      <PendingRunIndicator
+        phase="running"
+        announcement={pendingRunIndicatorAnnouncement}
+      />
     </div>
   );
 
-  const renderResponseStatus = () => isRunning ? renderPendingContent() : <div className="pending-response-content">
-    {submissionError ? submissionUncertain ? <p className="pending-run-error-note" role="alert">{submissionError}</p> : <SessionRunFailure reason={submissionError} />
-      : <PendingRunIndicator phase="waiting" announcement="Waiting for response" />}
-  </div>;
+  /** 実行中の本文、受理結果が不明な案内、確定失敗、応答待ちを区別して描画する。 */
+  const renderResponseStatus = () =>
+    isRunning ? (
+      renderPendingContent()
+    ) : (
+      <div className="pending-response-content">
+        {submissionError ? (
+          submissionUncertain ? (
+            <p className="pending-run-error-note" role="alert">
+              {submissionError}
+            </p>
+          ) : (
+            <SessionRunFailure reason={submissionError} />
+          )
+        ) : (
+          <PendingRunIndicator
+            phase="waiting"
+            announcement="Waiting for response"
+          />
+        )}
+      </div>
+    );
+  /** 確定した応答行が到着するまで、応答の状態をアバター付きの行として表示する。 */
   const renderPendingResponse = (className = "") => (
-    <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
+    <article
+      className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}
+    >
       <div className="message-avatar-stack">
-        <CharacterAvatar character={character} size="small" className="message-avatar" />
+        <CharacterAvatar
+          character={character}
+          size="small"
+          className="message-avatar"
+        />
       </div>
       <div className="message-card assistant pending-message-card">
         {renderResponseStatus()}
@@ -1536,26 +2634,66 @@ export function SessionMessageColumn({
   );
 
   return (
-    <div className={`session-message-column${conversationPaging ? " is-paged" : ""}`}>
+    <div
+      className={`session-message-column${conversationPaging ? " is-paged" : ""}`}
+    >
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
         currentMatch={activeCurrentFindMatch}
         matchDescription={sourceMatch ? "Source Match" : undefined}
         matchCount={findMatchCount}
-        loading={!!searchConversation && conversationFind.loading || remappingFindSelection && !conversationFind.error}
-        unavailable={!!conversationFind.error || !!conversationFindError || remappingFindSelection}
+        loading={
+          (!!searchConversation && conversationFind.loading) ||
+          (remappingFindSelection && !conversationFind.error)
+        }
+        unavailable={
+          !!conversationFind.error ||
+          !!conversationFindError ||
+          remappingFindSelection
+        }
         onQueryChange={setFindQuery}
         onPrevious={() => navigateFindMatch(-1)}
         onNext={() => navigateFindMatch(1)}
         onClose={() => setFindOpen(false)}
       />
-      {findOpen && (conversationFindError || conversationFind.error) ? <div role="alert">{conversationFindError || conversationFind.error}<button className="drawer-toggle compact secondary" type="button" onClick={() => { setConversationFindError(""); conversationFind.retry(); }}>Retry</button></div> : null}
-      {conversationPaging && (conversationPaging.loading || conversationPaging.error) ? (
+      {findOpen && (conversationFindError || conversationFind.error) ? (
+        <div role="alert">
+          {conversationFindError || conversationFind.error}
+          <button
+            className="drawer-toggle compact secondary"
+            type="button"
+            onClick={() => {
+              setConversationFindError("");
+              conversationFind.retry();
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {conversationPaging &&
+      (conversationPaging.loading || conversationPaging.error) ? (
         <div className="conversation-page-feedback">
-          <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
-            {conversationPaging.loading ? <LoadingIndicator inline label="Loading Messages" /> : null}
-            {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
+          <div
+            className="conversation-page-controls"
+            aria-busy={conversationPaging.loading}
+          >
+            {conversationPaging.loading ? (
+              <LoadingIndicator inline label="Loading Messages" />
+            ) : null}
+            {conversationPaging.error ? (
+              <>
+                <span role="alert">{conversationPaging.error}</span>
+                <button
+                  className="drawer-toggle compact secondary"
+                  type="button"
+                  onClick={conversationPaging.onRetry}
+                >
+                  Retry
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1575,413 +2713,1064 @@ export function SessionMessageColumn({
           </svg>
         </button>
       ) : null}
-      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} data-message-count={messages.length} tabIndex={0} role="region" aria-label="Conversation messages">
-        {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail || liveSent.length || sentDeliveries.error ? (
+      <div
+        className="session-message-list"
+        ref={messageListRef}
+        onScroll={handleMessageListScroll}
+        data-message-count={messages.length}
+        tabIndex={0}
+        role="region"
+        aria-label="Conversation messages"
+      >
+        {messages.length > 0 ||
+        isRunning ||
+        responsePending ||
+        submissionError ||
+        renderQueueTail ||
+        liveSent.length ||
+        sentDeliveries.error ? (
           <div className="session-message-list-window">
             <div
               ref={messageVirtualizer.containerRef}
               className="session-message-list-window-items"
               style={{ position: "relative" }}
             >
-          {virtualMessages.map((virtualMessage) => {
-            const absoluteIndex = virtualMessage.index;
-            const message = messages[absoluteIndex];
-            if (!message) {
-              return null;
-            }
-            const savedSeq = savedReplySourceIndexes ? savedReplySourceIndexes[absoluteIndex] : message.historyIndex;
-            if (isSentOnly(savedSeq)) {
-              return <div key={getRowKey(absoluteIndex)} ref={messageVirtualizer.measureElement} className="session-message-virtual-row" data-index={absoluteIndex}>
-                {outgoingRows.get(absoluteIndex)?.filter((item) => conversationPeerKey(item.target) === peer)
-                  .map((item) => renderSent(item))}
-              </div>;
-            }
-            if (message.role === "user" && message.turnInput?.state === "confirmed" && message.turnInput.questionRequestId
-              && visibleAnsweredQuestionIds.has(message.turnInput.questionRequestId)) {
-              return <div key={`question-answer-${getRowKey(absoluteIndex)}`} ref={messageVirtualizer.measureElement} data-index={absoluteIndex} aria-hidden="true" />;
-            }
-            const messageKey = getMessageKey(absoluteIndex);
-            const messageGroup = messageGroups?.[absoluteIndex] ?? null;
-            const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
-            const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
-            const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
-            const isMessageGroupEnd = !!messageGroup && nextMessageGroup?.id !== messageGroup.id;
-            const doesMessageGroupContinue = !!messageGroup && nextMessageGroup?.id === messageGroup.id;
-            const shouldRenderGroupedPending =
-              isRunning &&
-              canRenderGroupedPending &&
-              isMessageGroupEnd &&
-              messageGroup?.id === pendingMessageGroupId;
-            const shouldCloseMessageGroup = isMessageGroupEnd && !shouldRenderGroupedPending;
-            const artifactKey = messageKey;
-            const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
-            const isAssistant = message.role === "assistant";
-            const executionTurnId = isAssistant ? responseExecutionTurnIds?.[absoluteIndex]
-              ?? ((sharedPending || !responseExecutionTurnIds) && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined) : undefined;
-            const hasExecutionDetails = isAssistant && inputReadContext && (savedSeq !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
-            const queueReceipt = turnQueueMetadata?.get(messageKey);
-            const queuedState = queueReceipt?.state;
-            const isAwaitingSavedResponse = isAssistant && (queuedState === "completed" || queuedState === "canceled");
-            const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
-            const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
-            const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
-            const artifactDetailError = artifactDetailErrors[artifactKey];
-            const artifactOperations: import("../../../src-shared/session/runtime-state.js").MessageOperation[] =
-              artifact?.operationTimeline ??
-              artifact?.activitySummary.map((item) => ({
-                type: "summary",
-                summary: item,
-                details: undefined,
-              })) ??
-              [];
-            const artifactOperationsOpen = isArtifactFoldOpen(artifactKey, "operations");
-            const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
-            const messageCollapseTarget = messageCollapseTargetByKey.get(messageKey);
-            const isMessageCollapsed = !!messageCollapseTarget && collapsedMessageKeys.has(messageKey);
-            const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
-            const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch)
-              || (hasLiveRequests && absoluteIndex === pendingResponseMessageIndex);
-            const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
-            const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
-            const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
-            const messageBookmarkLabel = isMessageBookmarked ? "Remove bookmark" : "Add bookmark";
-            const canRetryFailedTurn = isAssistant && message.runFailure !== undefined && savedSeq !== undefined && !!inputReadContext;
-            const replyTarget = onSelectReply && inputReadContext && savedSeq !== undefined && message.text.trim()
-              ? { target: inputReadContext.target, seq: savedSeq } : undefined;
-            const replyKey = replyTarget ? JSON.stringify(["message", conversationPeerKey(replyTarget.target), replyTarget.seq]) : undefined;
-            const replySelected = replyKey !== undefined && selectedReplyKey === replyKey;
-            const hasMessageActions = !!replyTarget || !!(messageCollapseTarget && (onToggleMessageCollapse || onToggleMessageBookmark)) || canRetryFailedTurn;
-
-            return (
-              <div
-                key={`${message.role}-${getRowKey(absoluteIndex)}`}
-                ref={messageVirtualizer.measureElement}
-                className={`session-message-virtual-row${
-                  doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
-                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
-                  messageJumpHighlight?.key === messageKey ? " message-jump-highlight" : ""
-                }`}
-                data-index={absoluteIndex}
-                data-conversation-row-key={messageKey}
-              >
-                {isMessageGroupStart && messageGroup ? (
-                  <div
-                    className="auxiliary-message-group-label"
-                    role="separator"
-                    aria-label={messageGroup.label}
-                  >
-                    <span>{messageGroup.label}</span>
-                  </div>
-                ) : null}
-              <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
-                const author = message.role === "user" ? read.displayOrigin : undefined;
-                const displayOrigin = author?.kind === "session" ? author : undefined;
-                const isSessionOrigin = displayOrigin !== undefined;
-                const senderTheme = displayOrigin ? read.senderTheme : null;
-                const messageSent = isAssistant ? outgoingRows.get(absoluteIndex) ?? [] : [];
-                const collapsedPreview = read.coordination ? projectMessagePlainText(read.coordination.consultation ?? read.text) : read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
-                const displayedRole = isSessionOrigin ? "session-origin" : message.role;
-                return <article
-                className={`message-row ${displayedRole}${isAwaitingSavedResponse || absoluteIndex === sharedPendingIndex ? " pending-row" : ""}${message.accent ? " accent" : ""}${
-                  messageGroup ? " auxiliary-message-group-item" : ""
-                }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
-                  shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
-                }`}
-              >
-                {isAssistant ? (
-                  <div className="message-avatar-stack">
-                    <CharacterAvatar character={character} size="small" className="message-avatar" />
-                    {artifact || hasExecutionDetails ? (
-                      <button
-                        className="artifact-toggle artifact-toggle-icon"
-                        type="button"
-                        onClick={() => {
-                          if (artifact && !artifactExpanded) {
-                            loadArtifactDetail(artifactKey, absoluteIndex, message.artifact);
-                          }
-                          onToggleArtifact(artifactKey);
-                        }}
-                        aria-expanded={artifactExpanded}
-                        aria-controls={`artifact-panel-${artifactKey}`}
-                        aria-label={artifactExpanded ? "Hide details" : "Show details"}
-                        title={artifactExpanded ? "Hide details" : "Details"}
-                      >
-                        {artifactExpanded ? "−" : "i"}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {displayOrigin ? <TurnInputOriginAvatar read={read} origin={displayOrigin} /> : null}
-                <div className={`message-card ${displayedRole}${senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.sentKey && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
-                  style={senderTheme ? { "--sender-main": senderTheme.main } as CSSProperties : undefined}>
-                  <div className="message-card-content">
-                    {displayOrigin ? <SessionOriginRoute origin={displayOrigin} onError={read.setReadError} /> : null}
-                    {artifact && !isAssistant ? (
-                      <button
-                        className="artifact-toggle artifact-toggle-icon"
-                        type="button"
-                        onClick={() => {
-                          if (!artifactExpanded) {
-                            loadArtifactDetail(artifactKey, absoluteIndex, message.artifact);
-                          }
-                          onToggleArtifact(artifactKey);
-                        }}
-                        aria-expanded={artifactExpanded}
-                        aria-controls={`artifact-panel-${artifactKey}`}
-                        aria-label={artifactExpanded ? "Hide details" : "Show details"}
-                        title={artifactExpanded ? "Hide details" : "Details"}
-                      >
-                        {artifactExpanded ? "−" : "i"}
-                      </button>
-                    ) : null}
-                    {message.replyTo && inputReadContext && shouldRenderFullMessage ? <ReplyQuote ownerSessionId={inputReadContext.ownerSessionId} reference={message.replyTo} navigable /> : null}
-                    <div className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}>
-                      {hasMessageActions ? (
-                        <div className="message-collapse-control">
-                          {canRetryFailedTurn && inputReadContext ? <FailedTurnRetry message={message} context={inputReadContext} read={read} /> : null}
-                          {replyTarget && replyKey ? <button className="message-bookmark-toggle reply-toggle" type="button" aria-label="Reply to message"
-                            aria-pressed={replySelected} title={replySelected ? "Clear reply target" : "Reply to message"}
-                            onClick={() => onSelectReply?.(replyKey, replyTarget)}>↩</button> : null}
-                          {messageCollapseTarget && onToggleMessageCollapse ? (
-                            <button
-                              className="message-collapse-toggle"
-                              type="button"
-                              onClick={() => onToggleMessageCollapse(messageKey)}
-                              aria-expanded={!isMessageCollapsed}
-                              aria-controls={messageBodyId}
-                              aria-label={collapsedPreview ? `${messageCollapseLabel}: ${collapsedPreview}` : messageCollapseLabel}
-                              title={messageCollapseLabel}
-                            >
-                              <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                              <span className="visually-hidden">{messageCollapseLabel}</span>
-                            </button>
-                          ) : null}
-                          {messageCollapseTarget && onToggleMessageBookmark ? (
-                            <button
-                              className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
-                              type="button"
-                              aria-pressed={isMessageBookmarked}
-                              aria-label={messageBookmarkLabel}
-                              title={messageBookmarkLabel}
-                              onClick={() => void onToggleMessageBookmark(messageCollapseTarget)}
-                            >
-                              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-                                <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
-                              </svg>
-                              <span className="visually-hidden">{messageBookmarkLabel}</span>
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {/* 開閉操作の対象は残すが、折りたたまれて空の本文を表示中の結果として扱わない。 */}
-                      <div
-                        id={messageBodyId}
-                        data-message-body={shouldRenderFullMessage || collapsedPreview ? "true" : "false"}
-                        data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                      >
-                        {shouldRenderFullMessage && read.coordination && inputReadContext ? <>
-                          <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={inputReadContext.target} />
-                          <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
-                            <MessageRichText text={read.text} displayMode={messageViewMode} onOpenPath={onOpenPath} resolveImageSource={resolveImageSource} markdownImageContext={markdownLinkFileContext} markdownLinkFileContext={markdownLinkFileContext} />
-                          </ReceivedCoordinationContent>
-                        </> : shouldRenderFullMessage ? (
-                          <InlineResponseContent
-                            sessionId={sessionId}
-                            workspacePath={workspacePath}
-                            disabled={elicitationDisabled}
-                            text={read.text}
-                            responseProvider={message.role === "assistant" ? provider : undefined}
-                            records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
-                            requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
-                            inlineContent={[...renderInlineSent(messageSent, read.text), ...(absoluteIndex === pendingResponseMessageIndex && inlineApproval ? [inlineApproval] : [])]}
-                            inputAvailable={elicitationInputAvailable}
-                            drafts={elicitationDrafts}
-                            elicitationActionRequestId={elicitationActionRequestId}
-                            elicitationAction={elicitationAction}
-                            onResolveLiveElicitation={onResolveLiveElicitation}
-                            onOpenPath={onOpenPath}
-                            renderText={(text, key, sourceStart, inlineContent, selectedRanges) => <MessageRichText
-                              key={key}
-                              sourceStart={sourceStart}
-                              inlineContent={inlineContent}
-                              selectedRanges={selectedRanges}
-                              resolveImageSource={resolveImageSource}
-                              text={text}
-                              responseProvider={message.role === "assistant" ? provider : undefined}
-                              isStreaming={isRunning && absoluteIndex === pendingResponseMessageIndex}
-                              streamingTextPresented={responsePresentationKey !== undefined}
-                              forceFullRender={findOpen && hasFindQuery}
-                              displayMode={messageViewMode}
-                              onOpenPath={onOpenPath}
-                              onCopyText={onCopyMessageText}
-                              onQuoteText={onQuoteMessageText}
-                              onFind={openFind}
-                              markdownLinkFileContext={markdownLinkFileContext}
-                              markdownImageContext={markdownLinkFileContext}
-                              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-                              glossaryAnnotationScopeKey={messageKey}
-                              onActivateGlossaryEntry={onActivateGlossaryEntry}
-                            />}
-                          />
-                        ) : collapsedPreview ? (
-                          <p className="message-collapsed-preview">{collapsedPreview}</p>
-                        ) : null}
-                      </div>
+              {virtualMessages.map((virtualMessage) => {
+                const absoluteIndex = virtualMessage.index;
+                const message = messages[absoluteIndex];
+                if (!message) {
+                  return null;
+                }
+                const savedSeq = savedReplySourceIndexes
+                  ? savedReplySourceIndexes[absoluteIndex]
+                  : message.historyIndex;
+                if (isSentOnly(savedSeq)) {
+                  return (
+                    <div
+                      key={getRowKey(absoluteIndex)}
+                      ref={messageVirtualizer.measureElement}
+                      className="session-message-virtual-row"
+                      data-index={absoluteIndex}
+                    >
+                      {outgoingRows
+                        .get(absoluteIndex)
+                        ?.filter(
+                          (item) => conversationPeerKey(item.target) === peer,
+                        )
+                        .map((item) => renderSent(item))}
                     </div>
-                    {shouldRenderFullMessage ? issuedRows.get(absoluteIndex)?.map((record) => renderIssued(record)) : null}
-                    <TurnInputStatus message={message} />
-                    {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
-                    {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
-                    {artifact || hasExecutionDetails ? (
-                      <section className="artifact-shell">
-                      {artifactExpanded ? (
-                        <div
-                          id={`artifact-panel-${artifactKey}`}
-                          className="artifact-block"
-                          data-result-details-ready={artifactDetailsEnabled && !artifactLoading && !artifactDetailError
-                            && (!message.artifact?.detailAvailable || loadedArtifactDetails.current.has(artifactKey)) ? "true" : undefined}
-                        >
-                          {artifactLoading ? (
-                            <div className="artifact-detail-loading">
-                              <LoadingIndicator inline label="Loading details" />
-                            </div>
-                          ) : null}
-                          {artifactDetailError ? <p className="pending-run-error-note" role="alert">{artifactDetailError}</p> : null}
-                          {visibleRunChecks.length ? <div className="artifact-grid artifact-grid-single">
-                            <section className="artifact-section compact">
-                              <details className="artifact-fold" aria-label="Run Checks" open>
-                              <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Run Checks</strong></span></summary>
-                              <div className="check-list artifact-fold-body">
-                                {visibleRunChecks.map((check) => (
-                                  <div key={check.label} className="check-item">
-                                    <span>{check.label}</span>
-                                    <strong>{displayRunCheckValue(check)}</strong>
-                                  </div>
-                                ))}
-                              </div>
-                              </details>
-                            </section>
-                          </div> : null}
+                  );
+                }
+                if (
+                  message.role === "user" &&
+                  message.turnInput?.state === "confirmed" &&
+                  message.turnInput.questionRequestId &&
+                  visibleAnsweredQuestionIds.has(
+                    message.turnInput.questionRequestId,
+                  )
+                ) {
+                  return (
+                    <div
+                      key={`question-answer-${getRowKey(absoluteIndex)}`}
+                      ref={messageVirtualizer.measureElement}
+                      data-index={absoluteIndex}
+                      aria-hidden="true"
+                    />
+                  );
+                }
+                const messageKey = getMessageKey(absoluteIndex);
+                const messageGroup = messageGroups?.[absoluteIndex] ?? null;
+                const previousMessageGroup =
+                  absoluteIndex > 0
+                    ? (messageGroups?.[absoluteIndex - 1] ?? null)
+                    : null;
+                const nextMessageGroup =
+                  messageGroups?.[absoluteIndex + 1] ?? null;
+                const isMessageGroupStart =
+                  !!messageGroup &&
+                  previousMessageGroup?.id !== messageGroup.id;
+                const isMessageGroupEnd =
+                  !!messageGroup && nextMessageGroup?.id !== messageGroup.id;
+                const doesMessageGroupContinue =
+                  !!messageGroup && nextMessageGroup?.id === messageGroup.id;
+                const shouldRenderGroupedPending =
+                  isRunning &&
+                  canRenderGroupedPending &&
+                  isMessageGroupEnd &&
+                  messageGroup?.id === pendingMessageGroupId;
+                const shouldCloseMessageGroup =
+                  isMessageGroupEnd && !shouldRenderGroupedPending;
+                const artifactKey = messageKey;
+                const artifactExpanded =
+                  expandedArtifacts[artifactKey] ?? false;
+                const isAssistant = message.role === "assistant";
+                const executionTurnId = isAssistant
+                  ? (responseExecutionTurnIds?.[absoluteIndex] ??
+                    ((sharedPending || !responseExecutionTurnIds) &&
+                    messageKey === pendingResponseMessageKey
+                      ? liveWithMateTurnId
+                      : undefined))
+                  : undefined;
+                const hasExecutionDetails =
+                  isAssistant &&
+                  inputReadContext &&
+                  (savedSeq !== undefined ||
+                    executionTurnId ||
+                    turnQueueMetadata?.get(messageKey));
+                const queueReceipt = turnQueueMetadata?.get(messageKey);
+                const queuedState = queueReceipt?.state;
+                const isAwaitingSavedResponse =
+                  isAssistant &&
+                  (queuedState === "completed" || queuedState === "canceled");
+                const artifact = artifactExpanded
+                  ? (loadedArtifactDetails.current.get(artifactKey) ??
+                    message.artifact)
+                  : message.artifact;
+                const visibleRunChecks =
+                  artifact?.runChecks.filter(
+                    (check) => check.label !== "thread",
+                  ) ?? [];
+                const artifactLoading =
+                  loadingArtifactDetails[artifactKey] ?? false;
+                const artifactDetailError = artifactDetailErrors[artifactKey];
+                const artifactOperations: import("../../../src-shared/session/runtime-state.js").MessageOperation[] =
+                  artifact?.operationTimeline ??
+                  artifact?.activitySummary.map((item) => ({
+                    type: "summary",
+                    summary: item,
+                    details: undefined,
+                  })) ??
+                  [];
+                const artifactOperationsOpen = isArtifactFoldOpen(
+                  artifactKey,
+                  "operations",
+                );
+                const canUseMessageTextActions =
+                  isAssistant && (onCopyMessageText || onQuoteMessageText);
+                const messageCollapseTarget =
+                  messageCollapseTargetByKey.get(messageKey);
+                const isMessageCollapsed =
+                  !!messageCollapseTarget &&
+                  collapsedMessageKeys.has(messageKey);
+                const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
+                const shouldRenderFullMessage =
+                  !isMessageCollapsed ||
+                  (findOpen && hasFindQuery && isFindMatch) ||
+                  (hasLiveRequests &&
+                    absoluteIndex === pendingResponseMessageIndex);
+                const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
+                const messageCollapseLabel = isMessageCollapsed
+                  ? "Expand message"
+                  : "Collapse message";
+                const isMessageBookmarked =
+                  messageCollapseTarget?.isBookmarked === true;
+                const messageBookmarkLabel = isMessageBookmarked
+                  ? "Remove bookmark"
+                  : "Add bookmark";
+                const canRetryFailedTurn =
+                  isAssistant &&
+                  message.runFailure !== undefined &&
+                  savedSeq !== undefined &&
+                  !!inputReadContext;
+                const replyTarget =
+                  onSelectReply &&
+                  inputReadContext &&
+                  savedSeq !== undefined &&
+                  message.text.trim()
+                    ? { target: inputReadContext.target, seq: savedSeq }
+                    : undefined;
+                const replyKey = replyTarget
+                  ? JSON.stringify([
+                      "message",
+                      conversationPeerKey(replyTarget.target),
+                      replyTarget.seq,
+                    ])
+                  : undefined;
+                const replySelected =
+                  replyKey !== undefined && selectedReplyKey === replyKey;
+                const hasMessageActions =
+                  !!replyTarget ||
+                  !!(
+                    messageCollapseTarget &&
+                    (onToggleMessageCollapse || onToggleMessageBookmark)
+                  ) ||
+                  canRetryFailedTurn;
 
-                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}
-                            turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length}
-                            displayReadError={canRetryFailedTurn ? read.readError : undefined}
-                            onRetryDisplay={canRetryFailedTurn && read.readError ? () => read.setRevision((value) => value + 1) : undefined} /> : null}
-
-                          {artifactOperations.length > 0 ? (
-                            <section className="artifact-section compact">
-                              <details
-                                className="artifact-fold artifact-operations-fold"
-                                open={artifactOperationsOpen}
-                                onToggle={(event) => {
-                                  handleArtifactFoldToggle(artifactKey, "operations", event.currentTarget.open);
-                                }}
-                              >
-                                <summary
-                                  className="artifact-fold-summary artifact-operations-summary"
-                                  aria-controls={`artifact-operations-panel-${artifactKey}`}
-                                  aria-expanded={artifactOperationsOpen}
-                                >
-                                  <span className="artifact-fold-summary-copy">
-                                    <strong>Operations</strong>
-                                    <span>{artifactOperations.length} {artifactOperations.length === 1 ? "operation" : "operations"}</span>
-                                  </span>
-                                </summary>
-                                <div id={`artifact-operations-panel-${artifactKey}`} className="artifact-fold-body artifact-operations-body">
-                                  {artifactOperations.map((operation, operationIndex) => {
-                                    const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
-                                    const operationOpen = isArtifactFoldOpen(artifactKey, "operation", operationIndex);
-                                    const operationPanelId = `artifact-operation-panel-${artifactKey}-${operationIndex}`;
-                                    return (
-                                      <article key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                        <details
-                                          className="artifact-operation-fold"
-                                          open={operationOpen}
-                                          onToggle={(event) => {
-                                            handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
-                                          }}
-                                        >
-                                          <summary
-                                            className="artifact-operation-summary"
-                                            title={operationSummary}
-                                            aria-controls={operationPanelId}
-                                            aria-expanded={operationOpen}
-                                          >
-                                            <div className="artifact-operation-head">
-                                              <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
-                                              <span className="artifact-operation-summary-text">{operationSummary}</span>
-                                            </div>
-                                          </summary>
-                                          <div id={operationPanelId} className="artifact-operation-body">
-                                            {operation.type === "agent_message" ? (
-                                              <div className="artifact-operation-message">
-                                                <MessageRichText
-                                                  resolveImageSource={resolveImageSource}
-                                                  text={operation.summary}
-                                                  responseProvider={provider}
-                                                  onOpenPath={onOpenPath}
-                                                  onCopyText={onCopyMessageText}
-                                                  onQuoteText={onQuoteMessageText}
-                                                  onFind={openFind}
-                                                  markdownLinkFileContext={markdownLinkFileContext}
-                                                  markdownImageContext={markdownLinkFileContext}
-                                                />
-                                              </div>
-                                            ) : (
-                                              <p>{operation.summary}</p>
-                                            )}
-                                            {operation.status ? <p>{liveRunStepStatusLabel(operation.status)}</p> : null}
-                                            {operation.exitCode !== undefined ? <p>Exit Code: {operation.exitCode}</p> : null}
-                                            {operation.error ? <p className="pending-run-error-note" role="alert">{operation.error.message}</p> : null}
-                                            {operation.truncated ? <p>Output Truncated</p> : null}
-                                            {operation.details ? <pre>{operation.details}</pre> : null}
-                                          </div>
-                                        </details>
-                                      </article>
-                                    );
-                                  })}
-                                </div>
-                              </details>
-                            </section>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      </section>
+                return (
+                  <div
+                    key={`${message.role}-${getRowKey(absoluteIndex)}`}
+                    ref={messageVirtualizer.measureElement}
+                    className={`session-message-virtual-row${
+                      doesMessageGroupContinue
+                        ? " auxiliary-message-group-continues"
+                        : ""
+                    }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
+                      messageJumpHighlight?.key === messageKey
+                        ? " message-jump-highlight"
+                        : ""
+                    }`}
+                    data-index={absoluteIndex}
+                    data-conversation-row-key={messageKey}
+                  >
+                    {isMessageGroupStart && messageGroup ? (
+                      <div
+                        className="auxiliary-message-group-label"
+                        role="separator"
+                        aria-label={messageGroup.label}
+                      >
+                        <span>{messageGroup.label}</span>
+                      </div>
                     ) : null}
-                    {queueReceipt && message.turnInput?.queueId !== queueReceipt.id ? <SessionTurnQueueStatus receipt={queueReceipt} position={queuedTurnIds?.includes(queueReceipt.id) ? queuedTurnIds.indexOf(queueReceipt.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === queueReceipt.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onSendInput={onSendQueuedTurnInput} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
-                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator phase="waiting" announcement="Loading response" /></div>
-                      : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
+                    <TurnInputReadBoundary
+                      message={message}
+                      receipt={turnQueueMetadata?.get(messageKey)}
+                      context={inputReadContext}
+                    >
+                      {(read) => {
+                        const author =
+                          message.role === "user"
+                            ? read.displayOrigin
+                            : undefined;
+                        const displayOrigin =
+                          author?.kind === "session" ? author : undefined;
+                        const isSessionOrigin = displayOrigin !== undefined;
+                        const senderTheme = displayOrigin
+                          ? read.senderTheme
+                          : null;
+                        const messageSent = isAssistant
+                          ? (outgoingRows.get(absoluteIndex) ?? [])
+                          : [];
+                        const collapsedPreview = read.coordination
+                          ? projectMessagePlainText(
+                              read.coordination.consultation ?? read.text,
+                            )
+                          : read.text === message.text
+                            ? messageCollapseTarget?.preview
+                            : projectMessagePlainText(read.text);
+                        const displayedRole = isSessionOrigin
+                          ? "session-origin"
+                          : message.role;
+                        return (
+                          <article
+                            className={`message-row ${displayedRole}${isAwaitingSavedResponse || absoluteIndex === sharedPendingIndex ? " pending-row" : ""}${message.accent ? " accent" : ""}${
+                              messageGroup
+                                ? " auxiliary-message-group-item"
+                                : ""
+                            }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
+                              shouldCloseMessageGroup
+                                ? " auxiliary-message-group-end"
+                                : ""
+                            }`}
+                          >
+                            {isAssistant ? (
+                              <div className="message-avatar-stack">
+                                <CharacterAvatar
+                                  character={character}
+                                  size="small"
+                                  className="message-avatar"
+                                />
+                                {artifact || hasExecutionDetails ? (
+                                  <button
+                                    className="artifact-toggle artifact-toggle-icon"
+                                    type="button"
+                                    onClick={() => {
+                                      if (artifact && !artifactExpanded) {
+                                        loadArtifactDetail(
+                                          artifactKey,
+                                          absoluteIndex,
+                                          message.artifact,
+                                        );
+                                      }
+                                      onToggleArtifact(artifactKey);
+                                    }}
+                                    aria-expanded={artifactExpanded}
+                                    aria-controls={`artifact-panel-${artifactKey}`}
+                                    aria-label={
+                                      artifactExpanded
+                                        ? "Hide details"
+                                        : "Show details"
+                                    }
+                                    title={
+                                      artifactExpanded
+                                        ? "Hide details"
+                                        : "Details"
+                                    }
+                                  >
+                                    {artifactExpanded ? "−" : "i"}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {displayOrigin ? (
+                              <TurnInputOriginAvatar
+                                read={read}
+                                origin={displayOrigin}
+                              />
+                            ) : null}
+                            <div
+                              className={`message-card ${displayedRole}${senderTheme ? " has-sender-theme" : ""}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}${replySelected ? " is-reply-selected" : ""}${messageJumpHighlight?.reply && messageJumpHighlight.reply.isCurrent() && !messageJumpHighlight.reply.sentKey && messageJumpHighlight.reply.seq === savedReplySourceIndexes?.[absoluteIndex] ? " is-reply-jump-target" : ""}`}
+                              style={
+                                senderTheme
+                                  ? ({
+                                      "--sender-main": senderTheme.main,
+                                    } as CSSProperties)
+                                  : undefined
+                              }
+                            >
+                              <div className="message-card-content">
+                                {displayOrigin ? (
+                                  <SessionOriginRoute
+                                    origin={displayOrigin}
+                                    onError={read.setReadError}
+                                  />
+                                ) : null}
+                                {artifact && !isAssistant ? (
+                                  <button
+                                    className="artifact-toggle artifact-toggle-icon"
+                                    type="button"
+                                    onClick={() => {
+                                      if (!artifactExpanded) {
+                                        loadArtifactDetail(
+                                          artifactKey,
+                                          absoluteIndex,
+                                          message.artifact,
+                                        );
+                                      }
+                                      onToggleArtifact(artifactKey);
+                                    }}
+                                    aria-expanded={artifactExpanded}
+                                    aria-controls={`artifact-panel-${artifactKey}`}
+                                    aria-label={
+                                      artifactExpanded
+                                        ? "Hide details"
+                                        : "Show details"
+                                    }
+                                    title={
+                                      artifactExpanded
+                                        ? "Hide details"
+                                        : "Details"
+                                    }
+                                  >
+                                    {artifactExpanded ? "−" : "i"}
+                                  </button>
+                                ) : null}
+                                {message.replyTo &&
+                                inputReadContext &&
+                                shouldRenderFullMessage ? (
+                                  <ReplyQuote
+                                    ownerSessionId={
+                                      inputReadContext.ownerSessionId
+                                    }
+                                    reference={message.replyTo}
+                                    navigable
+                                  />
+                                ) : null}
+                                <div
+                                  className={`message-text-wrapper${hasMessageActions ? " has-message-collapse-control" : ""}`}
+                                >
+                                  {hasMessageActions ? (
+                                    <div className="message-collapse-control">
+                                      {canRetryFailedTurn &&
+                                      inputReadContext ? (
+                                        <FailedTurnRetry
+                                          message={message}
+                                          context={inputReadContext}
+                                          read={read}
+                                        />
+                                      ) : null}
+                                      {replyTarget && replyKey ? (
+                                        <button
+                                          className="message-bookmark-toggle reply-toggle"
+                                          type="button"
+                                          aria-label="Reply to message"
+                                          aria-pressed={replySelected}
+                                          title={
+                                            replySelected
+                                              ? "Clear reply target"
+                                              : "Reply to message"
+                                          }
+                                          onClick={() =>
+                                            onSelectReply?.(
+                                              replyKey,
+                                              replyTarget,
+                                            )
+                                          }
+                                        >
+                                          ↩
+                                        </button>
+                                      ) : null}
+                                      {messageCollapseTarget &&
+                                      onToggleMessageCollapse ? (
+                                        <button
+                                          className="message-collapse-toggle"
+                                          type="button"
+                                          onClick={() =>
+                                            onToggleMessageCollapse(messageKey)
+                                          }
+                                          aria-expanded={!isMessageCollapsed}
+                                          aria-controls={messageBodyId}
+                                          aria-label={
+                                            collapsedPreview
+                                              ? `${messageCollapseLabel}: ${collapsedPreview}`
+                                              : messageCollapseLabel
+                                          }
+                                          title={messageCollapseLabel}
+                                        >
+                                          <span aria-hidden="true">
+                                            {isMessageCollapsed ? "+" : "−"}
+                                          </span>
+                                          <span className="visually-hidden">
+                                            {messageCollapseLabel}
+                                          </span>
+                                        </button>
+                                      ) : null}
+                                      {messageCollapseTarget &&
+                                      onToggleMessageBookmark ? (
+                                        <button
+                                          className={`message-bookmark-toggle${isMessageBookmarked ? " is-bookmarked" : ""}`}
+                                          type="button"
+                                          aria-pressed={isMessageBookmarked}
+                                          aria-label={messageBookmarkLabel}
+                                          title={messageBookmarkLabel}
+                                          onClick={() =>
+                                            void onToggleMessageBookmark(
+                                              messageCollapseTarget,
+                                            )
+                                          }
+                                        >
+                                          <svg
+                                            viewBox="0 0 16 16"
+                                            aria-hidden="true"
+                                            focusable="false"
+                                          >
+                                            <path d="M4 2.25h8a.75.75 0 0 1 .75.75v10.2l-4.75-2.55-4.75 2.55V3a.75.75 0 0 1 .75-.75Z" />
+                                          </svg>
+                                          <span className="visually-hidden">
+                                            {messageBookmarkLabel}
+                                          </span>
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                  {/* 開閉操作の対象は残すが、折りたたまれて空の本文を表示中の結果として扱わない。 */}
+                                  <div
+                                    id={messageBodyId}
+                                    data-message-body={
+                                      shouldRenderFullMessage ||
+                                      collapsedPreview
+                                        ? "true"
+                                        : "false"
+                                    }
+                                    data-message-text-actions={
+                                      canUseMessageTextActions
+                                        ? "true"
+                                        : undefined
+                                    }
+                                  >
+                                    {shouldRenderFullMessage &&
+                                    read.coordination &&
+                                    inputReadContext ? (
+                                      <>
+                                        <CoordinationNotice
+                                          id={read.coordination.id}
+                                          consultation={
+                                            read.coordination.consultation ??
+                                            read.text
+                                          }
+                                          target={inputReadContext.target}
+                                        />
+                                        <ReceivedCoordinationContent
+                                          text={read.text}
+                                          consultation={
+                                            read.coordination.consultation
+                                          }
+                                        >
+                                          <MessageRichText
+                                            text={read.text}
+                                            displayMode={messageViewMode}
+                                            onOpenPath={onOpenPath}
+                                            resolveImageSource={
+                                              resolveImageSource
+                                            }
+                                            markdownImageContext={
+                                              markdownLinkFileContext
+                                            }
+                                            markdownLinkFileContext={
+                                              markdownLinkFileContext
+                                            }
+                                          />
+                                        </ReceivedCoordinationContent>
+                                      </>
+                                    ) : shouldRenderFullMessage ? (
+                                      <InlineResponseContent
+                                        sessionId={sessionId}
+                                        workspacePath={workspacePath}
+                                        disabled={elicitationDisabled}
+                                        text={read.text}
+                                        responseProvider={
+                                          message.role === "assistant"
+                                            ? provider
+                                            : undefined
+                                        }
+                                        records={
+                                          absoluteIndex ===
+                                          pendingResponseMessageIndex
+                                            ? [
+                                                ...(message.elicitationRecords ??
+                                                  []),
+                                                ...(visibleLiveElicitationRecords ??
+                                                  []),
+                                              ]
+                                            : message.elicitationRecords
+                                        }
+                                        requests={
+                                          absoluteIndex ===
+                                          pendingResponseMessageIndex
+                                            ? activeQuestions
+                                            : []
+                                        }
+                                        inlineContent={[
+                                          ...renderInlineSent(
+                                            messageSent,
+                                            read.text,
+                                          ),
+                                          ...(absoluteIndex ===
+                                            pendingResponseMessageIndex &&
+                                          inlineApproval
+                                            ? [inlineApproval]
+                                            : []),
+                                        ]}
+                                        inputAvailable={
+                                          elicitationInputAvailable
+                                        }
+                                        drafts={elicitationDrafts}
+                                        elicitationActionRequestId={
+                                          elicitationActionRequestId
+                                        }
+                                        elicitationAction={elicitationAction}
+                                        onResolveLiveElicitation={
+                                          onResolveLiveElicitation
+                                        }
+                                        onOpenPath={onOpenPath}
+                                        renderText={(
+                                          text,
+                                          key,
+                                          sourceStart,
+                                          inlineContent,
+                                          selectedRanges,
+                                        ) => (
+                                          <MessageRichText
+                                            key={key}
+                                            sourceStart={sourceStart}
+                                            inlineContent={inlineContent}
+                                            selectedRanges={selectedRanges}
+                                            resolveImageSource={
+                                              resolveImageSource
+                                            }
+                                            text={text}
+                                            responseProvider={
+                                              message.role === "assistant"
+                                                ? provider
+                                                : undefined
+                                            }
+                                            isStreaming={
+                                              isRunning &&
+                                              absoluteIndex ===
+                                                pendingResponseMessageIndex
+                                            }
+                                            streamingTextPresented={
+                                              responsePresentationKey !==
+                                              undefined
+                                            }
+                                            forceFullRender={
+                                              findOpen && hasFindQuery
+                                            }
+                                            displayMode={messageViewMode}
+                                            onOpenPath={onOpenPath}
+                                            onCopyText={onCopyMessageText}
+                                            onQuoteText={onQuoteMessageText}
+                                            onFind={openFind}
+                                            markdownLinkFileContext={
+                                              markdownLinkFileContext
+                                            }
+                                            markdownImageContext={
+                                              markdownLinkFileContext
+                                            }
+                                            glossaryAnnotationMatcher={
+                                              glossaryAnnotationMatcher
+                                            }
+                                            glossaryAnnotationScopeKey={
+                                              messageKey
+                                            }
+                                            onActivateGlossaryEntry={
+                                              onActivateGlossaryEntry
+                                            }
+                                          />
+                                        )}
+                                      />
+                                    ) : collapsedPreview ? (
+                                      <p className="message-collapsed-preview">
+                                        {collapsedPreview}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                {shouldRenderFullMessage
+                                  ? issuedRows
+                                      .get(absoluteIndex)
+                                      ?.map((record) => renderIssued(record))
+                                  : null}
+                                <TurnInputStatus message={message} />
+                                {isSessionOrigin && read.readError ? (
+                                  <p
+                                    className="pending-run-error-note"
+                                    role="alert"
+                                  >
+                                    {read.readError}
+                                  </p>
+                                ) : null}
+                                {isAssistant &&
+                                message.runFailure !== undefined ? (
+                                  <SessionRunFailure
+                                    reason={message.runFailure}
+                                  />
+                                ) : null}
+                                {artifact || hasExecutionDetails ? (
+                                  <section className="artifact-shell">
+                                    {artifactExpanded ? (
+                                      <div
+                                        id={`artifact-panel-${artifactKey}`}
+                                        className="artifact-block"
+                                        data-result-details-ready={
+                                          artifactDetailsEnabled &&
+                                          !artifactLoading &&
+                                          !artifactDetailError &&
+                                          (!message.artifact?.detailAvailable ||
+                                            loadedArtifactDetails.current.has(
+                                              artifactKey,
+                                            ))
+                                            ? "true"
+                                            : undefined
+                                        }
+                                      >
+                                        {artifactLoading ? (
+                                          <div className="artifact-detail-loading">
+                                            <LoadingIndicator
+                                              inline
+                                              label="Loading details"
+                                            />
+                                          </div>
+                                        ) : null}
+                                        {artifactDetailError ? (
+                                          <p
+                                            className="pending-run-error-note"
+                                            role="alert"
+                                          >
+                                            {artifactDetailError}
+                                          </p>
+                                        ) : null}
+                                        {visibleRunChecks.length ? (
+                                          <div className="artifact-grid artifact-grid-single">
+                                            <section className="artifact-section compact">
+                                              <details
+                                                className="artifact-fold"
+                                                aria-label="Run Checks"
+                                                open
+                                              >
+                                                <summary className="artifact-fold-summary">
+                                                  <span className="artifact-fold-summary-copy">
+                                                    <strong>Run Checks</strong>
+                                                  </span>
+                                                </summary>
+                                                <div className="check-list artifact-fold-body">
+                                                  {visibleRunChecks.map(
+                                                    (check) => (
+                                                      <div
+                                                        key={check.label}
+                                                        className="check-item"
+                                                      >
+                                                        <span>
+                                                          {check.label}
+                                                        </span>
+                                                        <strong>
+                                                          {displayRunCheckValue(
+                                                            check,
+                                                          )}
+                                                        </strong>
+                                                      </div>
+                                                    ),
+                                                  )}
+                                                </div>
+                                              </details>
+                                            </section>
+                                          </div>
+                                        ) : null}
+
+                                        {hasExecutionDetails ? (
+                                          <TurnExecutionDetails
+                                            message={message}
+                                            receipt={turnQueueMetadata?.get(
+                                              messageKey,
+                                            )}
+                                            context={inputReadContext}
+                                            turnId={
+                                              executionTurnId ?? undefined
+                                            }
+                                            active={
+                                              isContentActive &&
+                                              artifactDetailsEnabled
+                                            }
+                                            hasRunChecks={
+                                              !!visibleRunChecks.length
+                                            }
+                                            displayReadError={
+                                              canRetryFailedTurn
+                                                ? read.readError
+                                                : undefined
+                                            }
+                                            onRetryDisplay={
+                                              canRetryFailedTurn &&
+                                              read.readError
+                                                ? () =>
+                                                    read.setRevision(
+                                                      (value) => value + 1,
+                                                    )
+                                                : undefined
+                                            }
+                                          />
+                                        ) : null}
+
+                                        {artifactOperations.length > 0 ? (
+                                          <section className="artifact-section compact">
+                                            <details
+                                              className="artifact-fold artifact-operations-fold"
+                                              open={artifactOperationsOpen}
+                                              onToggle={(event) => {
+                                                handleArtifactFoldToggle(
+                                                  artifactKey,
+                                                  "operations",
+                                                  event.currentTarget.open,
+                                                );
+                                              }}
+                                            >
+                                              <summary
+                                                className="artifact-fold-summary artifact-operations-summary"
+                                                aria-controls={`artifact-operations-panel-${artifactKey}`}
+                                                aria-expanded={
+                                                  artifactOperationsOpen
+                                                }
+                                              >
+                                                <span className="artifact-fold-summary-copy">
+                                                  <strong>Operations</strong>
+                                                  <span>
+                                                    {artifactOperations.length}{" "}
+                                                    {artifactOperations.length ===
+                                                    1
+                                                      ? "operation"
+                                                      : "operations"}
+                                                  </span>
+                                                </span>
+                                              </summary>
+                                              <div
+                                                id={`artifact-operations-panel-${artifactKey}`}
+                                                className="artifact-fold-body artifact-operations-body"
+                                              >
+                                                {artifactOperations.map(
+                                                  (
+                                                    operation,
+                                                    operationIndex,
+                                                  ) => {
+                                                    const operationSummary =
+                                                      collapseSummaryText(
+                                                        operation.summary,
+                                                      ) ||
+                                                      operationTypeLabel(
+                                                        operation.type,
+                                                      );
+                                                    const operationOpen =
+                                                      isArtifactFoldOpen(
+                                                        artifactKey,
+                                                        "operation",
+                                                        operationIndex,
+                                                      );
+                                                    const operationPanelId = `artifact-operation-panel-${artifactKey}-${operationIndex}`;
+                                                    return (
+                                                      <article
+                                                        key={`${operation.type}-${operationIndex}`}
+                                                        className={`artifact-operation-item ${operation.type}`}
+                                                      >
+                                                        <details
+                                                          className="artifact-operation-fold"
+                                                          open={operationOpen}
+                                                          onToggle={(event) => {
+                                                            handleArtifactFoldToggle(
+                                                              artifactKey,
+                                                              "operation",
+                                                              event
+                                                                .currentTarget
+                                                                .open,
+                                                              operationIndex,
+                                                            );
+                                                          }}
+                                                        >
+                                                          <summary
+                                                            className="artifact-operation-summary"
+                                                            title={
+                                                              operationSummary
+                                                            }
+                                                            aria-controls={
+                                                              operationPanelId
+                                                            }
+                                                            aria-expanded={
+                                                              operationOpen
+                                                            }
+                                                          >
+                                                            <div className="artifact-operation-head">
+                                                              <span
+                                                                className={`artifact-operation-type ${operation.type}`}
+                                                              >
+                                                                {operationTypeLabel(
+                                                                  operation.type,
+                                                                )}
+                                                              </span>
+                                                              <span className="artifact-operation-summary-text">
+                                                                {
+                                                                  operationSummary
+                                                                }
+                                                              </span>
+                                                            </div>
+                                                          </summary>
+                                                          <div
+                                                            id={
+                                                              operationPanelId
+                                                            }
+                                                            className="artifact-operation-body"
+                                                          >
+                                                            {operation.type ===
+                                                            "agent_message" ? (
+                                                              <div className="artifact-operation-message">
+                                                                <MessageRichText
+                                                                  resolveImageSource={
+                                                                    resolveImageSource
+                                                                  }
+                                                                  text={
+                                                                    operation.summary
+                                                                  }
+                                                                  responseProvider={
+                                                                    provider
+                                                                  }
+                                                                  onOpenPath={
+                                                                    onOpenPath
+                                                                  }
+                                                                  onCopyText={
+                                                                    onCopyMessageText
+                                                                  }
+                                                                  onQuoteText={
+                                                                    onQuoteMessageText
+                                                                  }
+                                                                  onFind={
+                                                                    openFind
+                                                                  }
+                                                                  markdownLinkFileContext={
+                                                                    markdownLinkFileContext
+                                                                  }
+                                                                  markdownImageContext={
+                                                                    markdownLinkFileContext
+                                                                  }
+                                                                />
+                                                              </div>
+                                                            ) : (
+                                                              <p>
+                                                                {
+                                                                  operation.summary
+                                                                }
+                                                              </p>
+                                                            )}
+                                                            {operation.status ? (
+                                                              <p>
+                                                                {liveRunStepStatusLabel(
+                                                                  operation.status,
+                                                                )}
+                                                              </p>
+                                                            ) : null}
+                                                            {operation.exitCode !==
+                                                            undefined ? (
+                                                              <p>
+                                                                Exit Code:{" "}
+                                                                {
+                                                                  operation.exitCode
+                                                                }
+                                                              </p>
+                                                            ) : null}
+                                                            {operation.error ? (
+                                                              <p
+                                                                className="pending-run-error-note"
+                                                                role="alert"
+                                                              >
+                                                                {
+                                                                  operation
+                                                                    .error
+                                                                    .message
+                                                                }
+                                                              </p>
+                                                            ) : null}
+                                                            {operation.truncated ? (
+                                                              <p>
+                                                                Output Truncated
+                                                              </p>
+                                                            ) : null}
+                                                            {operation.details ? (
+                                                              <pre>
+                                                                {
+                                                                  operation.details
+                                                                }
+                                                              </pre>
+                                                            ) : null}
+                                                          </div>
+                                                        </details>
+                                                      </article>
+                                                    );
+                                                  },
+                                                )}
+                                              </div>
+                                            </details>
+                                          </section>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </section>
+                                ) : null}
+                                {queueReceipt &&
+                                message.turnInput?.queueId !==
+                                  queueReceipt.id ? (
+                                  <SessionTurnQueueStatus
+                                    receipt={queueReceipt}
+                                    position={
+                                      queuedTurnIds?.includes(queueReceipt.id)
+                                        ? queuedTurnIds.indexOf(
+                                            queueReceipt.id,
+                                          ) + 1
+                                        : undefined
+                                    }
+                                    queueSize={queuedTurnIds?.length}
+                                    busy={queueBusyId != null}
+                                    busyKind={
+                                      queueBusyId === queueReceipt.id
+                                        ? queueBusyKind
+                                        : null
+                                    }
+                                    onCancel={onCancelQueuedTurn ?? (() => {})}
+                                    onSendInput={onSendQueuedTurnInput}
+                                    onMove={onMoveQueuedTurn}
+                                    moveDisabled={queueReorderDisabled}
+                                  />
+                                ) : null}
+                                {isAwaitingSavedResponse ? (
+                                  <div className="pending-response-content">
+                                    <PendingRunIndicator
+                                      phase="waiting"
+                                      announcement="Loading response"
+                                    />
+                                  </div>
+                                ) : message.runFailure === undefined &&
+                                  (isRunning ||
+                                    responsePending ||
+                                    submissionError) &&
+                                  absoluteIndex ===
+                                    pendingResponseMessageIndex ? (
+                                  renderResponseStatus()
+                                ) : null}
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      }}
+                    </TurnInputReadBoundary>
+                    {inputReadContext &&
+                    !(isAssistant && shouldRenderFullMessage)
+                      ? outgoingRows
+                          .get(absoluteIndex)
+                          ?.map((item) => renderSent(item))
+                      : null}
+                    {shouldRenderGroupedPending
+                      ? renderPendingResponse(
+                          "auxiliary-message-group-item auxiliary-message-group-end",
+                        )
+                      : null}
                   </div>
-                </div>
-                </article>;
-              }}</TurnInputReadBoundary>
-                {inputReadContext && !(isAssistant && shouldRenderFullMessage) ? outgoingRows.get(absoluteIndex)?.map((item) => renderSent(item)) : null}
-                {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
-              </div>
-            );
-          })}
+                );
+              })}
             </div>
-            {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext && !inlineLivePossible ? liveSent.filter((item) => item.sourceMessageSeq === null && !assignedOutgoing.has(item)).map((item) => renderSent(item)) : null}
+            {(isRunning || responsePending || submissionError) &&
+            pendingResponseMessageIndex < 0 &&
+            !canRenderGroupedPending
+              ? renderPendingResponse()
+              : null}
+            {inputReadContext && !inlineLivePossible
+              ? liveSent
+                  .filter(
+                    (item) =>
+                      item.sourceMessageSeq === null &&
+                      !assignedOutgoing.has(item),
+                  )
+                  .map((item) => renderSent(item))
+              : null}
             {issuedTail.map((record) => renderIssued(record, true))}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
-            {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
-            {issued.busy ? <LoadingIndicator inline label="Loading Coordination" /> : null}
-            {issued.error ? <p role="alert">{issued.error} <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.retry}>Retry Coordination</button></p> : null}
-            {issued.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={issued.busy} onClick={issued.loadMore}>Load More Coordination</button> : null}
+            {sentDeliveries.error ? (
+              <p role="alert">
+                {sentDeliveries.error}{" "}
+                <button
+                  type="button"
+                  className="drawer-toggle compact secondary"
+                  disabled={sentDeliveries.busy}
+                  onClick={sentDeliveries.retry}
+                >
+                  Retry Sent Messages
+                </button>
+              </p>
+            ) : null}
+            {issued.busy ? (
+              <LoadingIndicator inline label="Loading Coordination" />
+            ) : null}
+            {issued.error ? (
+              <p role="alert">
+                {issued.error}{" "}
+                <button
+                  type="button"
+                  className="drawer-toggle compact secondary"
+                  disabled={issued.busy}
+                  onClick={issued.retry}
+                >
+                  Retry Coordination
+                </button>
+              </p>
+            ) : null}
+            {issued.nextCursor !== null ? (
+              <button
+                type="button"
+                className="drawer-toggle compact secondary"
+                disabled={issued.busy}
+                onClick={issued.loadMore}
+              >
+                Load More Coordination
+              </button>
+            ) : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
-        {selectionToolbar && selectionActionOverlay ? createPortal(
-          <MessageResponseActions
-            actionText={selectionToolbar.text}
-            onCopyMessageText={onCopyMessageText}
-            onQuoteMessageText={onQuoteMessageText}
-            style={selectionToolbar.style}
-            toolbarRef={selectionToolbarRef}
-          />,
-          selectionActionOverlay,
-        ) : null}
+        {selectionToolbar && selectionActionOverlay
+          ? createPortal(
+              <MessageResponseActions
+                actionText={selectionToolbar.text}
+                onCopyMessageText={onCopyMessageText}
+                onQuoteMessageText={onQuoteMessageText}
+                style={selectionToolbar.style}
+                toolbarRef={selectionToolbarRef}
+              />,
+              selectionActionOverlay,
+            )
+          : null}
       </div>
     </div>
   );

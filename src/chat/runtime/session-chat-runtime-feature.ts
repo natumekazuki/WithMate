@@ -7,8 +7,12 @@ import {
   type LiveSessionRecoveryActionsInput,
 } from "../live-session-projection.js";
 
-type ComposerFeedback = Parameters<typeof buildLiveSessionErrorNotices>[0]["composerFeedback"];
+/** 実行時のエラー通知へ引き渡す入力欄のフィードバック。 */
+type ComposerFeedback = Parameters<
+  typeof buildLiveSessionErrorNotices
+>[0]["composerFeedback"];
 
+/** 会話シェルに結合する復旧操作、通知、および任意のコンテキスト欄の入力。 */
 export type SessionChatRuntimeFeatureInput = {
   recovery: LiveSessionRecoveryActionsInput;
   composerFeedback: ComposerFeedback;
@@ -22,6 +26,7 @@ export type SessionChatRuntimeFeatureInput = {
   contextPane?: SessionContextPaneProps;
 };
 
+/** 会話シェル用に投影した復旧操作、エラー通知、右側ペインの設定。 */
 export type SessionChatRuntimeFeature = {
   recoveryActions: ReturnType<typeof buildLiveSessionRecoveryActions>;
   errorNotices: ChatErrorNotice[];
@@ -38,31 +43,37 @@ export function buildSessionChatRuntimeFeature(
 ): SessionChatRuntimeFeature {
   const additionalNotices: ChatErrorNotice[] = [
     ...(input.workspaceAvailabilityMessage.trim()
-      ? [{
-          id: "workspace-unavailable",
-          message: input.workspaceAvailabilityMessage,
-          relatedControl: "composer" as const,
-          actionLabel: "Recheck",
-          isActionDisabled: input.isWorkspaceAvailabilityCheckPending,
-          onAction: input.onRecheckWorkspaceAvailability,
-        }]
+      ? [
+          {
+            id: "workspace-unavailable",
+            message: input.workspaceAvailabilityMessage,
+            relatedControl: "composer" as const,
+            actionLabel: "Recheck",
+            isActionDisabled: input.isWorkspaceAvailabilityCheckPending,
+            onAction: input.onRecheckWorkspaceAvailability,
+          },
+        ]
       : []),
     ...(input.inlinePathFeedback.trim()
-      ? [{
-          id: "inline-path-open",
-          message: input.inlinePathFeedback,
-          dismissLabel: "Dismiss path result",
-          onDismiss: input.onDismissInlinePathFeedback,
-        }]
+      ? [
+          {
+            id: "inline-path-open",
+            message: input.inlinePathFeedback,
+            dismissLabel: "Dismiss path result",
+            onDismiss: input.onDismissInlinePathFeedback,
+          },
+        ]
       : []),
     ...(input.executionOptionsFeedback?.trim()
-      ? [{
-          id: "execution-options",
-          message: input.executionOptionsFeedback,
-          relatedControl: "composer" as const,
-          dismissLabel: "Dismiss execution options error",
-          onDismiss: input.onDismissExecutionOptionsFeedback,
-        }]
+      ? [
+          {
+            id: "execution-options",
+            message: input.executionOptionsFeedback,
+            relatedControl: "composer" as const,
+            dismissLabel: "Dismiss execution options error",
+            onDismiss: input.onDismissExecutionOptionsFeedback,
+          },
+        ]
       : []),
   ];
 
@@ -72,6 +83,8 @@ export function buildSessionChatRuntimeFeature(
       composerFeedback: input.composerFeedback,
       additionalNotices,
     }),
-    rightPaneProps: input.contextPane ? buildLiveSessionCommonContextPaneProps(input.contextPane) : undefined,
+    rightPaneProps: input.contextPane
+      ? buildLiveSessionCommonContextPaneProps(input.contextPane)
+      : undefined,
   };
 }

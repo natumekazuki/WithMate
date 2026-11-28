@@ -5,6 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 // 親テーブルより先に子テーブルを並べる。エントリの置換関係に使う外部キー制約は、
 // 外側のスキーマトランザクションの終了まで検証を遅延するが、無効にはしない。
+/** 旧Memory・Affectの専用テーブルを、子から削除できる順序で列挙する。 */
 export const RETIRED_MEMORY_AFFECT_TABLES = [
   "character_affect_turn_settlements",
   "character_affect_observations_v6",
@@ -36,11 +37,16 @@ const RETIRED_SETTING_KEYS = [
 
 /** ストレージ所有者が実行する既存のスキーマセーブポイント内でだけ呼び出す。 */
 export function removeRetiredMemoryAffectDatabaseData(db: DatabaseSync): void {
-  const existing = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all()
-    .map((row) => String(row.name)));
+  const existing = new Set(
+    db
+      .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+      .all()
+      .map((row) => String(row.name)),
+  );
   if (RETIRED_MEMORY_AFFECT_TABLES.some((name) => existing.has(name))) {
     db.exec("PRAGMA defer_foreign_keys = ON;");
-    for (const name of RETIRED_MEMORY_AFFECT_TABLES) db.exec(`DROP TABLE IF EXISTS ${name};`);
+    for (const name of RETIRED_MEMORY_AFFECT_TABLES)
+      db.exec(`DROP TABLE IF EXISTS ${name};`);
   }
   if (existing.has("app_settings")) {
     const remove = db.prepare("DELETE FROM app_settings WHERE setting_key = ?");
@@ -48,20 +54,37 @@ export function removeRetiredMemoryAffectDatabaseData(db: DatabaseSync): void {
   }
 }
 
+/** パスを絶対パスとして比較し、Windowsでは大文字と小文字の違いを無視する。 */
 function samePath(left: string, right: string): boolean {
-  const normalize = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+  /** 比較用にパスを絶対化し、Windowsの場合だけ小文字へ正規化する。 */
+  const normalize = (value: string) =>
+    process.platform === "win32"
+      ? path.resolve(value).toLowerCase()
+      : path.resolve(value);
   return normalize(left) === normalize(right);
 }
 
+/** 検査対象が管理ルートの配下にあることを要求し、ルート自体や外部パスを拒否する。 */
 function assertWithin(root: string, candidate: string): void {
   const relative = path.relative(root, candidate);
-  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error("Retired Memory data is outside the managed directory.");
   }
 }
 
+/** ファイルの不存在だけを判別し、権限不足など他の失敗とは区別する。 */
 function isMissing(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "ENOENT",
+  );
 }
 
 /** 既存データベースに変更を加える前に、DB 自体やその祖先がリンクなら拒否する。 */
@@ -69,19 +92,28 @@ export function assertRetiredMemoryAffectDatabasePath(dbPath: string): void {
   const absolute = path.resolve(dbPath);
   const root = path.dirname(absolute);
   const stats = lstatSync(absolute);
-  if (!stats.isFile() || stats.isSymbolicLink() || !samePath(realpathSync(root), root)
-    || !samePath(realpathSync(absolute), absolute)) {
-    throw new Error("Retired Memory cleanup requires an unlinked managed database.");
+  if (
+    !stats.isFile() ||
+    stats.isSymbolicLink() ||
+    !samePath(realpathSync(root), root) ||
+    !samePath(realpathSync(absolute), absolute)
+  ) {
+    throw new Error(
+      "Retired Memory cleanup requires an unlinked managed database.",
+    );
   }
 }
 
+/** 管理ルートから対象までの各階層を辿り、リンクや解決先の不一致を拒否する。不在ならnullを返す。 */
 async function inspect(root: string, candidate: string) {
   assertWithin(root, candidate);
   let current = root;
   for (const segment of path.relative(root, candidate).split(path.sep)) {
     current = path.join(current, segment);
     let stats;
-    try { stats = await lstat(current); } catch (error) {
+    try {
+      stats = await lstat(current);
+    } catch (error) {
       if (isMissing(error)) return null;
       throw error;
     }
@@ -92,11 +124,17 @@ async function inspect(root: string, candidate: string) {
   return lstat(candidate);
 }
 
-async function visit(root: string, candidate: string, remove: boolean): Promise<void> {
+/** ファイルツリーを検査し、削除モードでのみ子から順に除去する。リンクや想定外の種別は処理しない。 */
+async function visit(
+  root: string,
+  candidate: string,
+  remove: boolean,
+): Promise<void> {
   const stats = await inspect(root, candidate);
   if (!stats) return;
   if (stats.isDirectory()) {
-    for (const name of await readdir(candidate)) await visit(root, path.join(candidate, name), remove);
+    for (const name of await readdir(candidate))
+      await visit(root, path.join(candidate, name), remove);
     if (remove) {
       await inspect(root, candidate);
       await rmdir(candidate);
@@ -112,22 +150,33 @@ async function visit(root: string, candidate: string, remove: boolean): Promise<
 }
 
 /** 所有範囲にある V6 のペイロードとステージングデータ、およびラップ済み鍵だけを削除する。外部の登録は削除しない。 */
-export async function removeRetiredMemoryAffectFiles(userDataPath: string): Promise<void> {
+export async function removeRetiredMemoryAffectFiles(
+  userDataPath: string,
+): Promise<void> {
   const root = path.resolve(userDataPath);
   let stats;
-  try { stats = await lstat(root); } catch (error) {
+  try {
+    stats = await lstat(root);
+  } catch (error) {
     if (isMissing(error)) return;
     throw error;
   }
-  if (!stats.isDirectory() || stats.isSymbolicLink() || !samePath(await realpath(root), root)) {
-    throw new Error("Retired Memory cleanup requires a real managed directory.");
+  if (
+    !stats.isDirectory() ||
+    stats.isSymbolicLink() ||
+    !samePath(await realpath(root), root)
+  ) {
+    throw new Error(
+      "Retired Memory cleanup requires a real managed directory.",
+    );
   }
   const objects = path.join(root, "memory-objects", "v6");
   const keyring = path.join(root, "memory-keys", "v6-keyring.json");
   // どちらかを削除する前に両方の対象を検査する。再帰処理中にリンクをたどらない。
   await visit(root, objects, false);
   const key = await inspect(root, keyring);
-  if (key && !key.isFile()) throw new Error("Retired Memory keyring is not a regular file.");
+  if (key && !key.isFile())
+    throw new Error("Retired Memory keyring is not a regular file.");
   await visit(root, objects, true);
   if (key) {
     await inspect(root, keyring);

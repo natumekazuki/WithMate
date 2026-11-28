@@ -20,27 +20,41 @@ if (!parentPort) {
 }
 
 const entryData = workerData as StorageWorkerEntryData;
-if (!entryData || typeof entryData.generationId !== "string" || typeof entryData.handlerModule !== "string") {
+if (
+  !entryData ||
+  typeof entryData.generationId !== "string" ||
+  typeof entryData.handlerModule !== "string"
+) {
   throw new Error("Storage worker entry data is invalid.");
 }
 
 const handlersModule = await import(entryData.handlerModule);
-const createHandlers = handlersModule[entryData.handlerExport ?? "createStorageWorkerCommandHandlers"] as
-  | ((workerData: StorageWorkerEntryData) => StorageWorkerCommandHandlers | Promise<StorageWorkerCommandHandlers>)
+const createHandlers = handlersModule[
+  entryData.handlerExport ?? "createStorageWorkerCommandHandlers"
+] as
+  | ((
+      workerData: StorageWorkerEntryData,
+    ) => StorageWorkerCommandHandlers | Promise<StorageWorkerCommandHandlers>)
   | undefined;
 if (!createHandlers) {
   throw new Error("Storage worker command handler factory was not found.");
 }
 const handlers = await createHandlers(entryData);
-const closeHandlers = handlersModule.closeStorageWorker as (() => void | Promise<void>) | undefined;
-const stopQueries = handlersModule.stopStorageConversationQueries as (() => void | Promise<void>) | undefined;
+const closeHandlers = handlersModule.closeStorageWorker as
+  (() => void | Promise<void>) | undefined;
+const stopQueries = handlersModule.stopStorageConversationQueries as
+  (() => void | Promise<void>) | undefined;
 
-parentPort.postMessage({ type: "ready", generationId: entryData.generationId } satisfies StorageWorkerMessage);
+parentPort.postMessage({
+  type: "ready",
+  generationId: entryData.generationId,
+} satisfies StorageWorkerMessage);
 
 let tail = Promise.resolve();
 const resourceLanes = new Map<string, Promise<void>>();
 let shuttingDown = false;
 
+/** 通常のコマンド応答で扱えない障害を、Worker の未捕捉例外として報告する。 */
 function scheduleFatalWorkerError(error: unknown): void {
   const fatal = error instanceof Error ? error : new Error(String(error));
   setImmediate(() => {
@@ -48,8 +62,15 @@ function scheduleFatalWorkerError(error: unknown): void {
   });
 }
 
-function resourceLaneForRequest(request: Parameters<typeof dispatchStorageWorkerCall>[1]): string | null {
-  if (request.command !== "store.call" || !request.payload || typeof request.payload !== "object") {
+/** Character と Mate のストア操作をそれぞれ専用の実行列へ振り分ける。 */
+function resourceLaneForRequest(
+  request: Parameters<typeof dispatchStorageWorkerCall>[1],
+): string | null {
+  if (
+    request.command !== "store.call" ||
+    !request.payload ||
+    typeof request.payload !== "object"
+  ) {
     return null;
   }
   const payload = request.payload as { store?: unknown };
@@ -58,6 +79,7 @@ function resourceLaneForRequest(request: Parameters<typeof dispatchStorageWorker
   return null;
 }
 
+/** 要求の世代を確認して処理を実行し、開始・最終結果と時間計測を親に送る。 */
 async function executeRequest(
   request: Parameters<typeof dispatchStorageWorkerCall>[1],
   receivedAt: number,
@@ -74,11 +96,16 @@ async function executeRequest(
       throw new Error("Storage worker request generation does not match.");
     }
     const value = await dispatchStorageWorkerCall(handlers, request, {
+      /** 会話処理からの DB 読み取りを通常操作と同じ列に載せ、読取失敗で後続の処理を止めない。 */
       scheduleDb: <T>(read: () => T): Promise<T> => {
         const scheduled = tail.then(read);
-        tail = scheduled.then(() => {}, () => {});
+        tail = scheduled.then(
+          () => {},
+          () => {},
+        );
         return scheduled;
       },
+      /** 途中経過を元の要求 ID と世代を付けて親へ返す。 */
       reportProgress: (progress) => {
         parentPort!.postMessage({
           type: "progress",
@@ -93,7 +120,10 @@ async function executeRequest(
       requestId: request.context.requestId,
       generationId: entryData.generationId,
       value,
-      timing: { queueWaitMs: startedAt - receivedAt, executionMs: performance.now() - startedAt },
+      timing: {
+        queueWaitMs: startedAt - receivedAt,
+        executionMs: performance.now() - startedAt,
+      },
     } satisfies StorageWorkerMessage);
   } catch (error) {
     const errorMessage = serializeStorageWorkerError(
@@ -102,11 +132,15 @@ async function executeRequest(
       error,
       request.mutation ? "unknown" : "not-executed",
     );
-    errorMessage.timing = { queueWaitMs: startedAt - receivedAt, executionMs: performance.now() - startedAt };
+    errorMessage.timing = {
+      queueWaitMs: startedAt - receivedAt,
+      executionMs: performance.now() - startedAt,
+    };
     parentPort!.postMessage(errorMessage);
   }
 }
 
+/** 同じリソースの要求を到着順に処理し、最後の処理が終わった列の参照を外す。 */
 function enqueueResourceRequest(
   lane: string,
   request: Parameters<typeof dispatchStorageWorkerCall>[1],
@@ -131,20 +165,22 @@ parentPort.on("message", (rawRequest: unknown) => {
     const request = rawRequest;
     shuttingDown = true;
     const stopped = Promise.resolve(stopQueries?.());
-    tail = tail.then(async () => {
-      await stopped;
-      await Promise.all([...resourceLanes.values()]);
-      return Promise.resolve(closeHandlers?.()).then(() => {
-        parentPort!.postMessage({
-          type: "shutdown-complete",
-          requestId: request.requestId,
-          generationId: entryData.generationId,
-        } satisfies StorageWorkerMessage);
-        parentPort!.close();
+    tail = tail
+      .then(async () => {
+        await stopped;
+        await Promise.all([...resourceLanes.values()]);
+        return Promise.resolve(closeHandlers?.()).then(() => {
+          parentPort!.postMessage({
+            type: "shutdown-complete",
+            requestId: request.requestId,
+            generationId: entryData.generationId,
+          } satisfies StorageWorkerMessage);
+          parentPort!.close();
+        });
+      })
+      .catch((error) => {
+        scheduleFatalWorkerError(error);
       });
-    }).catch((error) => {
-      scheduleFatalWorkerError(error);
-    });
     return;
   }
   if (!isStorageWorkerCallRequest(rawRequest)) {
@@ -152,16 +188,21 @@ parentPort.on("message", (rawRequest: unknown) => {
   }
   const request = rawRequest;
   if (shuttingDown) {
-    parentPort!.postMessage(serializeStorageWorkerError(
-      request.context.requestId,
-      entryData.generationId,
-      new Error("Storage worker is shutting down."),
-    ));
+    parentPort!.postMessage(
+      serializeStorageWorkerError(
+        request.context.requestId,
+        entryData.generationId,
+        new Error("Storage worker is shutting down."),
+      ),
+    );
     return;
   }
 
   const receivedAt = performance.now();
-  if (request.command === "conversation.query" || request.command === "conversation.cancel") {
+  if (
+    request.command === "conversation.query" ||
+    request.command === "conversation.cancel"
+  ) {
     void executeRequest(request, receivedAt).catch(scheduleFatalWorkerError);
     return;
   }
@@ -169,8 +210,10 @@ parentPort.on("message", (rawRequest: unknown) => {
   if (lane) {
     enqueueResourceRequest(lane, request, receivedAt);
   } else {
-    tail = tail.then(() => executeRequest(request, receivedAt)).catch((error) => {
-      scheduleFatalWorkerError(error);
-    });
+    tail = tail
+      .then(() => executeRequest(request, receivedAt))
+      .catch((error) => {
+        scheduleFatalWorkerError(error);
+      });
   }
 });

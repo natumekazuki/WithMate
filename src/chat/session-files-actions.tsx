@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 import { SessionHeaderIcon } from "./shell/session-header-icon.js";
 
+/** 同じ Session Folder を Explorer または外部ターミナルで開く処理。 */
 export type SessionFilesActionsInput = {
   onOpenExplorer: () => void;
   onOpenTerminal: () => void;
 };
 
+/** Session Folder の二つの開き方を、ヘッダー用のアイコンボタンとして並べる。 */
 export function createSessionFilesActions({
   onOpenExplorer,
   onOpenTerminal,

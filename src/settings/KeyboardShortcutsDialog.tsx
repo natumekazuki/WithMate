@@ -15,6 +15,7 @@ import {
 } from "./shortcut-registry.js";
 import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 
+/** ショートカット一覧の開閉、対象プラットフォーム、既存設定と任意の編集通知。 */
 export type KeyboardShortcutsDialogProps = {
   open: boolean;
   onClose: () => void;
@@ -23,6 +24,7 @@ export type KeyboardShortcutsDialogProps = {
   onChange?: (settings: KeyboardShortcutSettings) => void;
 };
 
+/** 設定のヘルプからショートカット一覧を開き、編集時は親の設定変更処理につなぐ。 */
 export function KeyboardShortcutsHelpSection({
   settings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   onChange,
@@ -35,7 +37,11 @@ export function KeyboardShortcutsHelpSection({
     <details className="settings-section-card settings-help-section" open>
       <summary>Help</summary>
       <div className="settings-field">
-        <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
+        <button
+          className="launch-toggle"
+          type="button"
+          onClick={() => setOpen(true)}
+        >
           Keyboard Shortcuts
         </button>
       </div>
@@ -49,6 +55,7 @@ export function KeyboardShortcutsHelpSection({
   );
 }
 
+/** 現在のプラットフォームで有効なショートカットを一覧化する。変更通知がなければ閲覧専用にする。 */
 export function KeyboardShortcutsDialog({
   open,
   onClose,
@@ -57,7 +64,9 @@ export function KeyboardShortcutsDialog({
   onChange,
 }: KeyboardShortcutsDialogProps) {
   const firstActionButtonRef = useRef<HTMLButtonElement | null>(null);
-  const [capturingCommandId, setCapturingCommandId] = useState<string | null>(null);
+  const [capturingCommandId, setCapturingCommandId] = useState<string | null>(
+    null,
+  );
   const [captureError, setCaptureError] = useState("");
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open,
@@ -78,6 +87,7 @@ export function KeyboardShortcutsDialog({
     }
 
     const effectiveSettings = normalizeKeyboardShortcutSettings(settings);
+    /** 捕捉中のキーを既存ショートカットへ伝播させず、登録できる組み合わせだけを設定に反映する。 */
     const handleCaptureKeyDown = (event: KeyboardEvent) => {
       const result = captureShortcutAccelerator(event);
       event.preventDefault();
@@ -88,7 +98,14 @@ export function KeyboardShortcutsDialog({
       }
 
       try {
-        onChange(updateShortcutBinding(effectiveSettings, capturingCommandId, platform, result.accelerator));
+        onChange(
+          updateShortcutBinding(
+            effectiveSettings,
+            capturingCommandId,
+            platform,
+            result.accelerator,
+          ),
+        );
         setCapturingCommandId(null);
         setCaptureError("");
       } catch (error) {
@@ -97,7 +114,8 @@ export function KeyboardShortcutsDialog({
     };
 
     window.addEventListener("keydown", handleCaptureKeyDown, true);
-    return () => window.removeEventListener("keydown", handleCaptureKeyDown, true);
+    return () =>
+      window.removeEventListener("keydown", handleCaptureKeyDown, true);
   }, [capturingCommandId, onChange, open, platform, settings]);
 
   if (!open) {
@@ -109,8 +127,8 @@ export function KeyboardShortcutsDialog({
   const isEditable = onChange !== undefined;
   const firstActionId = isEditable
     ? groups
-      .flatMap((group) => group.items)
-      .find((item) => getShortcutEntry(item.id).customizable)?.id
+        .flatMap((group) => group.items)
+        .find((item) => getShortcutEntry(item.id).customizable)?.id
     : undefined;
   return (
     <LaunchDialogShell
@@ -125,11 +143,22 @@ export function KeyboardShortcutsDialog({
         <div className="settings-keyboard-shortcuts-head">
           <h2>Keyboard Shortcuts</h2>
           <p>Shortcuts are active while this WithMate window is focused.</p>
-          {captureError ? <p className="settings-feedback settings-keyboard-shortcuts-error" role="alert">{captureError}</p> : null}
+          {captureError ? (
+            <p
+              className="settings-feedback settings-keyboard-shortcuts-error"
+              role="alert"
+            >
+              {captureError}
+            </p>
+          ) : null}
         </div>
         <div className="settings-keyboard-shortcuts-groups">
           {groups.map((group) => (
-            <section key={group.scope} className="settings-keyboard-shortcuts-group" aria-labelledby={`shortcut-group-${group.scope}`}>
+            <section
+              key={group.scope}
+              className="settings-keyboard-shortcuts-group"
+              aria-labelledby={`shortcut-group-${group.scope}`}
+            >
               <h3 id={`shortcut-group-${group.scope}`}>{group.scopeLabel}</h3>
               <dl>
                 {group.items.map((item) => (
@@ -140,7 +169,11 @@ export function KeyboardShortcutsDialog({
                       {isEditable && getShortcutEntry(item.id).customizable ? (
                         <span className="settings-keyboard-shortcut-actions">
                           <button
-                            ref={item.id === firstActionId ? firstActionButtonRef : undefined}
+                            ref={
+                              item.id === firstActionId
+                                ? firstActionButtonRef
+                                : undefined
+                            }
                             className="launch-toggle compact"
                             type="button"
                             aria-pressed={capturingCommandId === item.id}
@@ -149,7 +182,9 @@ export function KeyboardShortcutsDialog({
                               setCaptureError("");
                             }}
                           >
-                            {capturingCommandId === item.id ? "PressKeys..." : "Change"}
+                            {capturingCommandId === item.id
+                              ? "PressKeys..."
+                              : "Change"}
                           </button>
                           {effectiveSettings.overrides[item.id]?.[platform] ? (
                             <button
@@ -157,11 +192,20 @@ export function KeyboardShortcutsDialog({
                               type="button"
                               onClick={() => {
                                 try {
-                                  onChange?.(updateShortcutBinding(effectiveSettings, item.id, platform, null));
+                                  onChange?.(
+                                    updateShortcutBinding(
+                                      effectiveSettings,
+                                      item.id,
+                                      platform,
+                                      null,
+                                    ),
+                                  );
                                   setCapturingCommandId(null);
                                   setCaptureError("");
                                 } catch (error) {
-                                  setCaptureError(resolveShortcutUpdateError(error));
+                                  setCaptureError(
+                                    resolveShortcutUpdateError(error),
+                                  );
                                 }
                               }}
                             >
@@ -182,6 +226,7 @@ export function KeyboardShortcutsDialog({
   );
 }
 
+/** レジストリが拒否した組み合わせには競合を案内し、その他の失敗には登録不能と表示する。 */
 function resolveShortcutUpdateError(error: unknown): string {
   if (error instanceof ShortcutRegistryError) {
     return "That key combination conflicts with another shortcut.";
@@ -189,8 +234,12 @@ function resolveShortcutUpdateError(error: unknown): string {
   return "That key combination cannot be registered.";
 }
 
+/** IME 入力や修飾キーのみなど、捕捉時に拒否された理由を利用者向けに説明する。 */
 function resolveCaptureErrorMessage(
-  reason: Exclude<ReturnType<typeof captureShortcutAccelerator>, { kind: "accepted" }>["reason"],
+  reason: Exclude<
+    ReturnType<typeof captureShortcutAccelerator>,
+    { kind: "accepted" }
+  >["reason"],
 ): string {
   switch (reason) {
     case "modifier-only":

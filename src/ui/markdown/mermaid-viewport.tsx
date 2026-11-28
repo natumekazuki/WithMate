@@ -1,11 +1,23 @@
-import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 
-import { calculateImageFitZoom, ImageZoomControls, useCtrlWheelZoom, type ImageZoom } from "../image-viewport.js";
+import {
+  calculateImageFitZoom,
+  ImageZoomControls,
+  useCtrlWheelZoom,
+  type ImageZoom,
+} from "../image-viewport.js";
 import { useViewportPan } from "../viewport-pan.js";
 import { isAllowedMarkdownHref, openMarkdownLink } from "./markdown-links.js";
 import type { MermaidImageError } from "./mermaid-images.js";
 
 // MermaidDiagram の strict レンダラーが生成した SVG だけを受け付ける。
+/** 図ごとの拡大・パン状態を持ち、リンク操作と個別画像のエラーを図の閲覧から分離する。 */
 export function MermaidViewport({
   svg,
   onOpenPath,
@@ -27,22 +39,31 @@ export function MermaidViewport({
   const pan = useViewportPan(svg);
   useCtrlWheelZoom(viewportRef, fitZoom, setZoom);
 
+  /** SVGリンクでの文書遷移を抑え、パンや補助クリックを除いた有効な外向きリンクだけを開く。 */
   const handleLinkClick = (event: MouseEvent<HTMLDivElement>) => {
     const suppressClick = suppressLinkClickRef.current;
     suppressLinkClickRef.current = false;
     const link = (event.target as Element).closest?.("a");
-    if (!link || !event.currentTarget.contains(link) || event.defaultPrevented) return;
+    if (!link || !event.currentTarget.contains(link) || event.defaultPrevented)
+      return;
     // 補助ボタンでのクリックも含め、SVG のアンカーで Electron の文書を遷移させてはいけない。
     event.preventDefault();
     if (event.button !== 0 || suppressClick) return;
-    const target = (link.getAttribute("href") ?? link.getAttribute("xlink:href") ?? "").trim();
+    const target = (
+      link.getAttribute("href") ??
+      link.getAttribute("xlink:href") ??
+      ""
+    ).trim();
     if (!target || !isAllowedMarkdownHref(target)) {
       setLinkError("This diagram link has no supported destination.");
       return;
     }
     setLinkError("");
     if (target.startsWith("#")) return;
-    openMarkdownLink(target.startsWith("//") ? `https:${target}` : target, onOpenPath);
+    openMarkdownLink(
+      target.startsWith("//") ? `https:${target}` : target,
+      onOpenPath,
+    );
   };
 
   useLayoutEffect(() => {
@@ -55,12 +76,16 @@ export function MermaidViewport({
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const updateFit = () => setFitZoom(calculateImageFitZoom(
-      viewport.clientWidth,
-      viewport.clientHeight,
-      size.width,
-      size.height,
-    ));
+    /** ビューポートの現在寸法からFitの倍率を求め、手動倍率の選択は変更しない。 */
+    const updateFit = () =>
+      setFitZoom(
+        calculateImageFitZoom(
+          viewport.clientWidth,
+          viewport.clientHeight,
+          size.width,
+          size.height,
+        ),
+      );
     updateFit();
     const observer = new ResizeObserver(updateFit);
     observer.observe(viewport);
@@ -103,18 +128,31 @@ export function MermaidViewport({
         <div
           ref={canvasRef}
           className="message-mermaid-canvas"
-          style={size.width > 0 ? {
-            width: size.width * effectiveZoom / 100,
-            height: size.height * effectiveZoom / 100,
-          } : undefined}
+          style={
+            size.width > 0
+              ? {
+                  width: (size.width * effectiveZoom) / 100,
+                  height: (size.height * effectiveZoom) / 100,
+                }
+              : undefined
+          }
           dangerouslySetInnerHTML={diagramHtml}
         />
       </div>
-      {linkError ? <p className="message-mermaid-error" role="alert">{linkError}</p> : null}
+      {linkError ? (
+        <p className="message-mermaid-error" role="alert">
+          {linkError}
+        </p>
+      ) : null}
       {imageErrors.length ? (
-        <ul className="message-mermaid-error message-mermaid-image-errors" role="alert">
+        <ul
+          className="message-mermaid-error message-mermaid-image-errors"
+          role="alert"
+        >
           {imageErrors.map((error) => (
-            <li key={error.nodeId}><strong>{error.nodeId}</strong>: {error.target} — {error.message}</li>
+            <li key={error.nodeId}>
+              <strong>{error.nodeId}</strong>: {error.target} — {error.message}
+            </li>
           ))}
         </ul>
       ) : null}

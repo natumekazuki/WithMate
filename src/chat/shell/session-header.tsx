@@ -1,6 +1,18 @@
 import { SelectionActionOverlayBoundary } from "../conversation/selection-action-overlay-context.js";
 import { ButtonContent } from "../../ui/button-content.js";
-import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import {
+  createContext,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEventHandler,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import type { LiveBackgroundTask } from "../../../src-shared/session/runtime-state.js";
 
@@ -15,6 +27,7 @@ const SESSION_ROLE_LABELS: Record<SessionRole, string> = {
   executor: "Worker",
 };
 
+/** タイトル編集の状態と、Workspace・Session Folder・管理メニューの操作を受け取る。 */
 export type SessionHeaderProps = {
   sessionRole?: SessionRole;
   isRoleChangePending?: boolean;
@@ -45,6 +58,7 @@ export type SessionHeaderProps = {
   onDeleteSession: () => void;
 };
 
+/** 通常表示とタイトル編集を切り替え、低頻度のセッション操作をメニューにまとめる。 */
 export function SessionHeader({
   sessionRole,
   isRoleChangePending = false,
@@ -83,16 +97,22 @@ export function SessionHeader({
       return;
     }
 
+    /** メニュー内部の操作は残し、外側でポインターを押したら閉じる。 */
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      if (event.target && !sessionActionsRef.current?.contains(event.target as Node)) {
+      if (
+        event.target &&
+        !sessionActionsRef.current?.contains(event.target as Node)
+      ) {
         setIsSessionActionsOpen(false);
       }
     };
 
     document.addEventListener("pointerdown", closeOnOutsidePointerDown);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
   }, [isSessionActionsOpen]);
 
+  /** メニューを閉じた状態で選んだ管理操作を開始する。 */
   const runSessionAction = (action: () => void) => {
     setIsSessionActionsOpen(false);
     action();
@@ -100,11 +120,22 @@ export function SessionHeader({
 
   return (
     <header className="session-window-bar session-top-bar rise-1">
-      <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
+      <div
+        className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}
+      >
         {!isEditingTitle ? (
           <div className="session-title-shell">
-            <span className="session-window-title session-title-accent">{taskTitle}</span>
-            {sessionRole ? <span className="session-window-control-group-label" aria-label={`Role: ${SESSION_ROLE_LABELS[sessionRole]}`}>{SESSION_ROLE_LABELS[sessionRole]}</span> : null}
+            <span className="session-window-title session-title-accent">
+              {taskTitle}
+            </span>
+            {sessionRole ? (
+              <span
+                className="session-window-control-group-label"
+                aria-label={`Role: ${SESSION_ROLE_LABELS[sessionRole]}`}
+              >
+                {SESSION_ROLE_LABELS[sessionRole]}
+              </span>
+            ) : null}
           </div>
         ) : (
           <>
@@ -117,10 +148,18 @@ export function SessionHeader({
               />
             </label>
             <div className="session-title-actions">
-              <button className="drawer-toggle compact" type="button" onClick={onSaveTitle}>
+              <button
+                className="drawer-toggle compact"
+                type="button"
+                onClick={onSaveTitle}
+              >
                 Save
               </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onCancelTitleEdit}>
+              <button
+                className="drawer-toggle compact secondary"
+                type="button"
+                onClick={onCancelTitleEdit}
+              >
                 Cancel
               </button>
             </div>
@@ -129,8 +168,14 @@ export function SessionHeader({
         {!isEditingTitle ? (
           <div className="session-window-controls">
             {workspaceActions || showTerminalButton ? (
-              <div className="session-window-control-group" role="group" aria-label="Workspace actions">
-                <span className="session-window-control-group-label">Workspace</span>
+              <div
+                className="session-window-control-group"
+                role="group"
+                aria-label="Workspace actions"
+              >
+                <span className="session-window-control-group-label">
+                  Workspace
+                </span>
                 {workspaceActions}
                 {showTerminalButton ? (
                   <button
@@ -159,13 +204,22 @@ export function SessionHeader({
               </div>
             ) : null}
             {sessionFilesActions ? (
-              <div className="session-window-control-group" role="group" aria-label="Session files actions">
-                <span className="session-window-control-group-label">Session</span>
+              <div
+                className="session-window-control-group"
+                role="group"
+                aria-label="Session files actions"
+              >
+                <span className="session-window-control-group-label">
+                  Session
+                </span>
                 {sessionFilesActions}
               </div>
             ) : null}
             {actions}
-            {onTogglePin || showRenameButton || showDeleteButton || onPromoteToOverallCoordinator ? (
+            {onTogglePin ||
+            showRenameButton ||
+            showDeleteButton ||
+            onPromoteToOverallCoordinator ? (
               <details
                 ref={sessionActionsRef}
                 className="session-header-more"
@@ -201,15 +255,31 @@ export function SessionHeader({
                       role="menuitem"
                       aria-pressed={isPinned}
                       aria-busy={isPinPending || undefined}
-                      aria-label={isPinPending ? "Updating pin" : isPinned ? "Unpin" : "Pin"}
+                      aria-label={
+                        isPinPending
+                          ? "Updating pin"
+                          : isPinned
+                            ? "Unpin"
+                            : "Pin"
+                      }
                       onClick={() => runSessionAction(onTogglePin)}
                       disabled={isPinPending}
                     >
-                      <ButtonContent busy={isPinPending} busyLabel="Updating pin.">{isPinned ? "Unpin" : "Pin"}</ButtonContent>
+                      <ButtonContent
+                        busy={isPinPending}
+                        busyLabel="Updating pin."
+                      >
+                        {isPinned ? "Unpin" : "Pin"}
+                      </ButtonContent>
                     </button>
                   ) : null}
                   {showRenameButton ? (
-                    <button type="button" role="menuitem" onClick={() => runSessionAction(onStartTitleEdit)} disabled={isRunning || isReadOnly}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runSessionAction(onStartTitleEdit)}
+                      disabled={isRunning || isReadOnly}
+                    >
                       Rename
                     </button>
                   ) : null}
@@ -225,14 +295,25 @@ export function SessionHeader({
                       disabled={isRunning || isReadOnly || isRoleChangePending}
                       aria-busy={isRoleChangePending || undefined}
                     >
-                      <ButtonContent busy={isRoleChangePending} busyLabel="Changing session role.">Change Role…</ButtonContent>
+                      <ButtonContent
+                        busy={isRoleChangePending}
+                        busyLabel="Changing session role."
+                      >
+                        Change Role…
+                      </ButtonContent>
                     </button>
                   ) : null}
                   {showDeleteButton ? (
-                    <button className="danger" type="button" role="menuitem" onClick={() => {
-                      sessionActionsTriggerRef.current?.focus();
-                      runSessionAction(onDeleteSession);
-                    }} disabled={isRunning}>
+                    <button
+                      className="danger"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        sessionActionsTriggerRef.current?.focus();
+                        runSessionAction(onDeleteSession);
+                      }}
+                      disabled={isRunning}
+                    >
                       {deleteActionLabel}
                     </button>
                   ) : null}
@@ -246,7 +327,10 @@ export function SessionHeader({
   );
 }
 
-function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): string {
+/** バックグラウンドタスクの実行状態を配色用クラスへ変換する。 */
+function liveBackgroundTaskToneClassName(
+  status: LiveBackgroundTask["status"],
+): string {
   switch (status) {
     case "running":
       return "in_progress";
@@ -258,24 +342,36 @@ function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): 
   }
 }
 
+/** 折りたたんだヘッダーに見せるタイトルと展開操作。 */
 type SessionHeaderHandleProps = {
   taskTitle: string;
   onClick: () => void;
 };
 
-export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleProps) {
+/** 展開時と同じタイトルを表示し、押すとヘッダーを開ける取っ手にする。 */
+export function SessionHeaderHandle({
+  taskTitle,
+  onClick,
+}: SessionHeaderHandleProps) {
   return (
     <button className="session-header-handle" type="button" onClick={onClick}>
-      <span className="session-window-title session-title-accent">{taskTitle}</span>
+      <span className="session-window-title session-title-accent">
+        {taskTitle}
+      </span>
     </button>
   );
 }
 
+/** 右ペインの区切りボタンが操作対象として参照する ID。 */
 export const SESSION_RIGHT_PANE_ID = "session-right-pane";
+/** ファイルペインの区切りボタンが操作対象として参照する ID。 */
 export const SESSION_LEFT_PANE_ID = "session-left-pane";
+/** ヘッダーの開閉を行う区切りとドックを関連付ける ID。 */
 export const SESSION_HEADER_DOCK_ID = "session-header-dock";
+/** 下部ドックの開閉を行う区切りとドックを関連付ける ID。 */
 export const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
+/** 会話列、差し替え用の作業領域、各ドックとペインを共通の配置に渡す契約。 */
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
   className?: string;
@@ -312,6 +408,7 @@ export type SessionChatScreenProps = {
   modals?: ReactNode;
 };
 
+/** ドックと作業領域を配置し、併設チャットが最小幅を満たせない場合は選択中の会話を表示する。 */
 export function SessionChatScreen({
   mode,
   className = "",
@@ -349,46 +446,73 @@ export function SessionChatScreen({
 }: SessionChatScreenProps) {
   const ownLayoutRef = useRef<HTMLDivElement | null>(null);
   const centralRef = useRef<HTMLElement | null>(null);
-  const previousSidePanesRef = useRef(`${isLeftPaneVisible}:${isRightPaneVisible}`);
+  const previousSidePanesRef = useRef(
+    `${isLeftPaneVisible}:${isRightPaneVisible}`,
+  );
   const sidePaneAnimationRef = useRef<Animation | null>(null);
   const previousActionDockExpandedRef = useRef(isActionDockExpanded);
-  const [isActionDockTransitioning, setIsActionDockTransitioning] = useState(false);
+  const [isActionDockTransitioning, setIsActionDockTransitioning] =
+    useState(false);
   const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
-  const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
-    ownLayoutRef.current = node;
-    if (layoutRef) {
-      layoutRef.current = node;
-    }
-    if (workbenchRef) {
-      workbenchRef.current = node;
-    }
-  }, [layoutRef, workbenchRef]);
-  const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
-  const actionDockHeight = (style as Record<string, unknown> | undefined)?.["--session-action-dock-height"];
+  const setLayoutElementRefs = useCallback(
+    (node: HTMLDivElement | null) => {
+      ownLayoutRef.current = node;
+      if (layoutRef) {
+        layoutRef.current = node;
+      }
+      if (workbenchRef) {
+        workbenchRef.current = node;
+      }
+    },
+    [layoutRef, workbenchRef],
+  );
+  const layoutStyle = useMemo(
+    () => ({ ...style, ...workbenchStyle }),
+    [style, workbenchStyle],
+  );
+  const actionDockHeight = (style as Record<string, unknown> | undefined)?.[
+    "--session-action-dock-height"
+  ];
   useLayoutEffect(() => {
     const sidePanes = `${isLeftPaneVisible}:${isRightPaneVisible}`;
     if (previousSidePanesRef.current === sidePanes) return;
     previousSidePanesRef.current = sidePanes;
     const layout = ownLayoutRef.current;
     const view = layout?.ownerDocument.defaultView;
-    const content = centralRef.current?.querySelector<HTMLElement>(".session-central-surface:not([hidden])");
-    const opacity = content && sidePaneAnimationRef.current ? view?.getComputedStyle(content).opacity : "0";
+    const content = centralRef.current?.querySelector<HTMLElement>(
+      ".session-central-surface:not([hidden])",
+    );
+    const opacity =
+      content && sidePaneAnimationRef.current
+        ? view?.getComputedStyle(content).opacity
+        : "0";
     sidePaneAnimationRef.current?.cancel();
     sidePaneAnimationRef.current = null;
     // テキストを再配置するのは、離散的な横方向のペイン変更だけ。ドラッグと縦方向のサイズ変更は直接反映する。
     if (!layout || !view || !content || view.innerWidth < 1400) return;
     const media = view.matchMedia("(prefers-reduced-motion: reduce)");
     if (media.matches) return;
-    const duration = Number.parseFloat(view.getComputedStyle(layout).getPropertyValue("--session-dock-motion-duration"));
+    const duration = Number.parseFloat(
+      view
+        .getComputedStyle(layout)
+        .getPropertyValue("--session-dock-motion-duration"),
+    );
     if (duration > 0) {
-      const animation = content.animate?.([{ opacity: opacity ?? "0" }, { opacity: 1 }], { duration: duration * 0.6, easing: "ease-out" });
+      const animation = content.animate?.(
+        [{ opacity: opacity ?? "0" }, { opacity: 1 }],
+        { duration: duration * 0.6, easing: "ease-out" },
+      );
       if (animation) {
         sidePaneAnimationRef.current = animation;
-        const reduceMotion = () => { if (media.matches) animation.cancel(); };
+        /** アニメーションの実行中でも、動きの軽減が選ばれたら停止する。 */
+        const reduceMotion = () => {
+          if (media.matches) animation.cancel();
+        };
         media.addEventListener("change", reduceMotion);
         animation.oncancel = animation.onfinish = () => {
           media.removeEventListener("change", reduceMotion);
-          if (sidePaneAnimationRef.current === animation) sidePaneAnimationRef.current = null;
+          if (sidePaneAnimationRef.current === animation)
+            sidePaneAnimationRef.current = null;
         };
       }
     }
@@ -401,42 +525,66 @@ export function SessionChatScreen({
 
     previousActionDockExpandedRef.current = isActionDockExpanded;
     const layout = ownLayoutRef.current;
-    const motionDuration = layout?.ownerDocument.defaultView
-      ?.getComputedStyle(layout)
-      .getPropertyValue("--session-dock-motion-duration")
-      .trim() ?? "0ms";
+    const motionDuration =
+      layout?.ownerDocument.defaultView
+        ?.getComputedStyle(layout)
+        .getPropertyValue("--session-dock-motion-duration")
+        .trim() ?? "0ms";
     const motionDurationMs = motionDuration.endsWith("ms")
       ? Number.parseFloat(motionDuration)
       : motionDuration.endsWith("s")
         ? Number.parseFloat(motionDuration) * 1000
         : Number.parseFloat(motionDuration);
-    setIsActionDockTransitioning(Number.isFinite(motionDurationMs) && motionDurationMs > 0);
+    setIsActionDockTransitioning(
+      Number.isFinite(motionDurationMs) && motionDurationMs > 0,
+    );
   }, [isActionDockExpanded]);
-  const handleLayoutTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || event.propertyName !== "grid-template-rows") {
-      return;
-    }
-    setIsActionDockTransitioning(false);
-  }, []);
+  const handleLayoutTransitionEnd = useCallback(
+    (event: React.TransitionEvent<HTMLDivElement>) => {
+      if (
+        event.target !== event.currentTarget ||
+        event.propertyName !== "grid-template-rows"
+      ) {
+        return;
+      }
+      setIsActionDockTransitioning(false);
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const layout = ownLayoutRef.current;
     const central = centralRef.current;
     if (!layout || !central) return;
     const view = layout.ownerDocument.defaultView!;
+    /** ドックやペインが占める高さを引き、作業領域の最小高を下回るか判定する。 */
     const measure = () => {
       const css = view.getComputedStyle(layout);
+      /** 計算済みの寸法を数値にし、空や数値でない指定を寸法なしとして扱う。 */
       const pixel = (value: string) => Number.parseFloat(value) || 0;
-      const height = layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
+      const height =
+        layout.clientHeight - pixel(css.paddingTop) - pixel(css.paddingBottom);
       const narrow = view.innerWidth < 1400;
-      const sideHeight = narrow && !isSidePaneBudgetCollapsed
-        ? pixel(css.getPropertyValue("--session-left-pane-track-width"))
-          + pixel(css.getPropertyValue("--session-right-pane-track-width")) : 0;
-      const remaining = height - sideHeight
-        - pixel(css.getPropertyValue("--session-header-dock-row-height"))
-        - pixel(css.getPropertyValue("--session-dock-splitter-size")) * (narrow ? 4 : 2)
-        - (isActionDockExpanded ? pixel(css.getPropertyValue("--session-action-dock-height"))
-          : pixel(css.getPropertyValue("--session-action-dock-compact-height")));
-      const minimum = pixel(view.getComputedStyle(central).getPropertyValue("--session-region-min-height"));
+      const sideHeight =
+        narrow && !isSidePaneBudgetCollapsed
+          ? pixel(css.getPropertyValue("--session-left-pane-track-width")) +
+            pixel(css.getPropertyValue("--session-right-pane-track-width"))
+          : 0;
+      const remaining =
+        height -
+        sideHeight -
+        pixel(css.getPropertyValue("--session-header-dock-row-height")) -
+        pixel(css.getPropertyValue("--session-dock-splitter-size")) *
+          (narrow ? 4 : 2) -
+        (isActionDockExpanded
+          ? pixel(css.getPropertyValue("--session-action-dock-height"))
+          : pixel(
+              css.getPropertyValue("--session-action-dock-compact-height"),
+            ));
+      const minimum = pixel(
+        view
+          .getComputedStyle(central)
+          .getPropertyValue("--session-region-min-height"),
+      );
       setIsCentralCollapsed(remaining < minimum);
     };
     measure();
@@ -447,27 +595,67 @@ export function SessionChatScreen({
       observer?.observe(dock);
     }
     const styleObserver = new view.MutationObserver(measure);
-    styleObserver.observe(layout, { attributes: true, attributeFilter: ["style"] });
+    styleObserver.observe(layout, {
+      attributes: true,
+      attributeFilter: ["style"],
+    });
     window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); styleObserver.disconnect(); window.removeEventListener("resize", measure); };
-  }, [actionDockHeight, isActionDockExpanded, isHeaderVisible, isLeftPaneVisible, isRightPaneVisible, isSidePaneBudgetCollapsed]);
+    return () => {
+      observer?.disconnect();
+      styleObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [
+    actionDockHeight,
+    isActionDockExpanded,
+    isHeaderVisible,
+    isLeftPaneVisible,
+    isRightPaneVisible,
+    isSidePaneBudgetCollapsed,
+  ]);
   const columnsRef = useRef<HTMLDivElement | null>(null);
-  const [columnSizes, setColumnSizes] = useState({ width: 0, main: 0, auxiliary: 0, splitter: 0 });
+  const [columnSizes, setColumnSizes] = useState({
+    width: 0,
+    main: 0,
+    auxiliary: 0,
+    splitter: 0,
+  });
   useLayoutEffect(() => {
     const columns = columnsRef.current;
     if (!columns || !isAuxiliaryVisible) return;
+    /** 二つの会話列と区切りの必要幅を測り、単独表示へ切り替える判定に使う。 */
     const measure = () => {
+      /** 会話列ごとの CSS 最小幅を読み、列や有効な値がなければ制約なしとする。 */
       const minimum = (selector: string) => {
         const element = columns.querySelector<HTMLElement>(selector);
-        return element ? Number.parseFloat(element.ownerDocument.defaultView!.getComputedStyle(element).getPropertyValue("--session-region-min-width")) || 0 : 0;
+        return element
+          ? Number.parseFloat(
+              element.ownerDocument
+                .defaultView!.getComputedStyle(element)
+                .getPropertyValue("--session-region-min-width"),
+            ) || 0
+          : 0;
       };
       const next = {
         width: columns.getBoundingClientRect().width,
         main: minimum(".session-concurrent-chat-main"),
         auxiliary: minimum(".session-concurrent-chat-auxiliary"),
-        splitter: Number.parseFloat(columns.ownerDocument.defaultView!.getComputedStyle(columns).getPropertyValue("--session-dock-splitter-size")) || 0,
+        splitter:
+          Number.parseFloat(
+            columns.ownerDocument
+              .defaultView!.getComputedStyle(columns)
+              .getPropertyValue("--session-dock-splitter-size"),
+          ) || 0,
       };
-      setColumnSizes((current) => Object.keys(next).every((key) => current[key as keyof typeof next] === next[key as keyof typeof next]) ? current : next);
+      setColumnSizes((current) =>
+        Object.keys(next).every(
+          (key) =>
+            current[key as keyof typeof next] ===
+            next[key as keyof typeof next],
+        )
+          ? current
+          : next,
+      );
     };
     measure();
     const Observer = columns.ownerDocument.defaultView?.ResizeObserver;
@@ -475,13 +663,27 @@ export function SessionChatScreen({
     observer?.observe(columns);
     return () => observer?.disconnect();
   }, [isAuxiliaryVisible, mainContent !== undefined]);
-  const singleChat = auxiliaryWidthRatio > 0 && auxiliaryWidthRatio < 1 && columnSizes.width > 0
-    && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
+  const singleChat =
+    auxiliaryWidthRatio > 0 &&
+    auxiliaryWidthRatio < 1 &&
+    columnSizes.width > 0 &&
+    columnSizes.width <
+      columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
   const contentWidth = columnSizes.width - columnSizes.splitter;
-  const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0 : auxiliaryWidthRatio >= 1 ? 1
-    : contentWidth > 0 && !singleChat
-      ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
-      : auxiliaryWidthRatio;
+  const effectiveRatio =
+    auxiliaryWidthRatio <= 0
+      ? 0
+      : auxiliaryWidthRatio >= 1
+        ? 1
+        : contentWidth > 0 && !singleChat
+          ? Math.max(
+              columnSizes.auxiliary / contentWidth,
+              Math.min(
+                1 - columnSizes.main / contentWidth,
+                auxiliaryWidthRatio,
+              ),
+            )
+          : auxiliaryWidthRatio;
   const hasAuxiliaryHeader = auxiliaryHeader != null;
 
   return (
@@ -500,97 +702,144 @@ export function SessionChatScreen({
       onTransitionCancel={handleLayoutTransitionEnd}
     >
       <SelectionActionOverlayBoundary>
-      <div
-        id={SESSION_HEADER_DOCK_ID}
-        ref={headerDockRef}
-        className={`session-header-dock-slot${isHeaderVisible ? "" : " is-hidden"}`}
-        aria-hidden={!isHeaderVisible}
-        inert={!isHeaderVisible}
-      >
-        {header}
-      </div>
-
-      {headerSplitter}
-
-      <div
-        id={SESSION_LEFT_PANE_ID}
-        className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
-        aria-hidden={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
-        inert={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
-      >
-        {leftPane}
-      </div>
-
-      {leftSplitter}
-      <section
-        ref={centralRef}
-        aria-hidden={isCentralCollapsed}
-        inert={isCentralCollapsed}
-        className="chat-panel session-work-surface session-message-stack rise-3"
-        style={isAuxiliaryVisible && mainContent === undefined && columnSizes.main > 0
-          ? { "--session-region-min-width": `${(auxiliaryWidthRatio <= 0 ? columnSizes.main : auxiliaryWidthRatio >= 1 ? columnSizes.auxiliary : columnSizes.main + columnSizes.auxiliary) + columnSizes.splitter}px` } as CSSProperties
-          : undefined}
-      >
         <div
-          className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
-          style={{
-            ...(isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } : {}),
-          } as CSSProperties}
-          hidden={mainContent !== undefined}
+          id={SESSION_HEADER_DOCK_ID}
+          ref={headerDockRef}
+          className={`session-header-dock-slot${isHeaderVisible ? "" : " is-hidden"}`}
+          aria-hidden={!isHeaderVisible}
+          inert={!isHeaderVisible}
         >
-          {isAuxiliaryVisible ? (
-            <div
-              ref={columnsRef}
-              className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
-              style={{ gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)` }}
-            >
-              <div className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`} inert={singleChat ? concurrentTarget !== "main" : auxiliaryWidthRatio >= 1} aria-hidden={singleChat ? concurrentTarget !== "main" : auxiliaryWidthRatio >= 1}>{messageColumn}</div>
-              {auxiliarySplitter}
+          {header}
+        </div>
+
+        {headerSplitter}
+
+        <div
+          id={SESSION_LEFT_PANE_ID}
+          className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
+          aria-hidden={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
+          inert={!isLeftPaneVisible || isSidePaneBudgetCollapsed}
+        >
+          {leftPane}
+        </div>
+
+        {leftSplitter}
+        <section
+          ref={centralRef}
+          aria-hidden={isCentralCollapsed}
+          inert={isCentralCollapsed}
+          className="chat-panel session-work-surface session-message-stack rise-3"
+          style={
+            isAuxiliaryVisible &&
+            mainContent === undefined &&
+            columnSizes.main > 0
+              ? ({
+                  "--session-region-min-width": `${(auxiliaryWidthRatio <= 0 ? columnSizes.main : auxiliaryWidthRatio >= 1 ? columnSizes.auxiliary : columnSizes.main + columnSizes.auxiliary) + columnSizes.splitter}px`,
+                } as CSSProperties)
+              : undefined
+          }
+        >
+          <div
+            className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
+            style={
+              {
+                ...(isAuxiliaryVisible
+                  ? { "--auxiliary-width-ratio": auxiliaryWidthRatio }
+                  : {}),
+              } as CSSProperties
+            }
+            hidden={mainContent !== undefined}
+          >
+            {isAuxiliaryVisible ? (
               <div
-                className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}${hasAuxiliaryHeader ? " has-header" : ""}`}
-                inert={singleChat ? concurrentTarget !== "auxiliary" : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
-                aria-hidden={singleChat ? concurrentTarget !== "auxiliary" : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader}
+                ref={columnsRef}
+                className={`session-concurrent-chat-columns${singleChat ? " is-single-chat" : ""}`}
+                style={{
+                  gridTemplateColumns: `minmax(0, ${Math.max(0, 1 - effectiveRatio)}fr) var(--session-dock-splitter-size) minmax(0, ${Math.max(0, effectiveRatio)}fr)`,
+                }}
               >
-                {auxiliaryHeader}
                 <div
-                  className="session-concurrent-chat-message-content"
-                  inert={!singleChat && auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader}
-                  aria-hidden={!singleChat && auxiliaryWidthRatio <= 0 && hasAuxiliaryHeader}
+                  className={`session-concurrent-chat-column session-concurrent-chat-main${auxiliaryWidthRatio >= 1 ? " is-zero-width" : ""}`}
+                  inert={
+                    singleChat
+                      ? concurrentTarget !== "main"
+                      : auxiliaryWidthRatio >= 1
+                  }
+                  aria-hidden={
+                    singleChat
+                      ? concurrentTarget !== "main"
+                      : auxiliaryWidthRatio >= 1
+                  }
                 >
-                  {auxiliaryMessageColumn}
+                  {messageColumn}
+                </div>
+                {auxiliarySplitter}
+                <div
+                  className={`session-concurrent-chat-column session-concurrent-chat-auxiliary${auxiliaryWidthRatio <= 0 ? " is-zero-width" : ""}${hasAuxiliaryHeader ? " has-header" : ""}`}
+                  inert={
+                    singleChat
+                      ? concurrentTarget !== "auxiliary"
+                      : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader
+                  }
+                  aria-hidden={
+                    singleChat
+                      ? concurrentTarget !== "auxiliary"
+                      : auxiliaryWidthRatio <= 0 && !hasAuxiliaryHeader
+                  }
+                >
+                  {auxiliaryHeader}
+                  <div
+                    className="session-concurrent-chat-message-content"
+                    inert={
+                      !singleChat &&
+                      auxiliaryWidthRatio <= 0 &&
+                      hasAuxiliaryHeader
+                    }
+                    aria-hidden={
+                      !singleChat &&
+                      auxiliaryWidthRatio <= 0 &&
+                      hasAuxiliaryHeader
+                    }
+                  >
+                    {auxiliaryMessageColumn}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : messageColumn}
+            ) : (
+              messageColumn
+            )}
+          </div>
+          <div
+            className="session-central-surface"
+            hidden={mainContent === undefined}
+          >
+            {mainContent}
+          </div>
+          {workSurfaceOverlay}
+          {supportingSurface}
+          {errorSurface}
+        </section>
+
+        {splitter}
+        <div
+          id={SESSION_RIGHT_PANE_ID}
+          className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
+          aria-hidden={!isRightPaneVisible || isSidePaneBudgetCollapsed}
+          inert={!isRightPaneVisible || isSidePaneBudgetCollapsed}
+        >
+          {rightPane}
         </div>
-        <div className="session-central-surface" hidden={mainContent === undefined}>
-          {mainContent}
+
+        {actionDockSplitter}
+        <div
+          id={SESSION_ACTION_DOCK_ID}
+          ref={actionDockRef}
+          className={`session-action-dock-slot${isActionDockExpanded ? " is-expanded" : " is-compact"}`}
+        >
+          {actionDock}
         </div>
-        {workSurfaceOverlay}
-        {supportingSurface}
-        {errorSurface}
-      </section>
 
-      {splitter}
-      <div
-        id={SESSION_RIGHT_PANE_ID}
-        className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
-        aria-hidden={!isRightPaneVisible || isSidePaneBudgetCollapsed}
-        inert={!isRightPaneVisible || isSidePaneBudgetCollapsed}
-      >
-        {rightPane}
-      </div>
-
-      {actionDockSplitter}
-      <div
-        id={SESSION_ACTION_DOCK_ID}
-        ref={actionDockRef}
-        className={`session-action-dock-slot${isActionDockExpanded ? " is-expanded" : " is-compact"}`}
-      >
-        {actionDock}
-      </div>
-
-      {modals}
+        {modals}
       </SelectionActionOverlayBoundary>
     </div>
   );

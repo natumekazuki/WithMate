@@ -1,5 +1,7 @@
+/** 類似度計算に渡せる数値列。通常の配列と単精度浮動小数点配列を受け付ける。 */
 export type Vector = readonly number[] | Float32Array;
 
+/** 空の数値列や非有限の要素を拒否し、例外に対象の名前を含める。 */
 function validateVector(vector: Vector, name: string): void {
   if (vector.length === 0) {
     throw new Error(`${name} が空です`);
@@ -13,6 +15,7 @@ function validateVector(vector: Vector, name: string): void {
   }
 }
 
+/** 等しい次元の空でない有限ベクトルのコサイン類似度を求める。一方でもノルムがゼロなら 0 を返す。 */
 export function computeCosineSimilarity(left: Vector, right: Vector): number {
   if (left.length !== right.length) {
     throw new Error("ベクトルの長さが一致しません");
@@ -36,9 +39,12 @@ export function computeCosineSimilarity(left: Vector, right: Vector): number {
     return 0;
   }
 
-  return dotProduct / (Math.sqrt(leftNormSquared) * Math.sqrt(rightNormSquared));
+  return (
+    dotProduct / (Math.sqrt(leftNormSquared) * Math.sqrt(rightNormSquared))
+  );
 }
 
+/** 候補を類似度の降順に並べ、同点は入力順を保つ。指定された下限以上の候補から件数上限まで返す。 */
 export function rankByCosineSimilarity<T>(
   queryVector: Vector,
   candidates: readonly T[],
@@ -46,8 +52,8 @@ export function rankByCosineSimilarity<T>(
   options: { minScore?: number; limit?: number } = {},
 ): Array<{ item: T; score: number }> {
   if (
-    options.limit !== undefined
-    && (!Number.isInteger(options.limit) || options.limit < 1)
+    options.limit !== undefined &&
+    (!Number.isInteger(options.limit) || options.limit < 1)
   ) {
     throw new Error("limit は正の整数である必要があります");
   }
@@ -63,9 +69,10 @@ export function rankByCosineSimilarity<T>(
   });
 
   const minScore = options.minScore;
-  const filtered = minScore === undefined
-    ? scoredCandidates
-    : scoredCandidates.filter((candidate) => candidate.score >= minScore);
+  const filtered =
+    minScore === undefined
+      ? scoredCandidates
+      : scoredCandidates.filter((candidate) => candidate.score >= minScore);
 
   const ranked = filtered.sort((left, right) => {
     if (right.score !== left.score) {
@@ -74,7 +81,10 @@ export function rankByCosineSimilarity<T>(
     return left.index - right.index;
   });
 
-  const result = ranked.map((candidate) => ({ item: candidate.item, score: candidate.score }));
+  const result = ranked.map((candidate) => ({
+    item: candidate.item,
+    score: candidate.score,
+  }));
 
   if (options.limit === undefined) {
     return result;

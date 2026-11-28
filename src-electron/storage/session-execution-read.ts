@@ -1,13 +1,38 @@
 import type { DatabaseSync } from "node:sqlite";
-import { coordinationDeliveryText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
-import type { ExecutionReadInput, SentInstructionBodyRequest, SentInstructionCardRequest } from "../../src-shared/session/session-execution-read.js";
-import { executionOperationRequestSchemas, executionWindowRequestSchemas } from "../../src-shared/session/session-execution-read.js";
+import {
+  coordinationDeliveryText,
+  readCoordinationNotification,
+} from "../../src-shared/coordination/coordination-delivery.js";
+import type {
+  ExecutionReadInput,
+  SentInstructionBodyRequest,
+  SentInstructionCardRequest,
+} from "../../src-shared/session/session-execution-read.js";
+import {
+  executionOperationRequestSchemas,
+  executionWindowRequestSchemas,
+} from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
-import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
-import { projectRetryInputAuthor, type SessionSteerOrigin, type SessionTurnQueueCapturedInput, type SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
+import type {
+  SessionHistoryResult,
+  SessionHistoryOperation,
+  SessionHistoryRequest,
+} from "../../src-shared/session-history/session-history-contract.js";
+import {
+  projectRetryInputAuthor,
+  type SessionSteerOrigin,
+  type SessionTurnQueueCapturedInput,
+  type SessionTurnQueueOrigin,
+} from "../../src-shared/session/session-turn-queue.js";
 import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";
-import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
-import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
+import {
+  isUnknownCharacterOwnerId,
+  NEUTRAL_CHARACTER_ID,
+} from "../../src-shared/character/character-owner.js";
+import {
+  normalizeMessage,
+  type Message,
+} from "../../src-shared/session/session-state.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
 import { readConversationThreads } from "./conversation-threads.js";
@@ -16,100 +41,336 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { conversationPeerKey } from "../../src-shared/session/conversation-threads.js";
-import { listSentInstructionCards, readSentInstructionBodies } from "./sent-instruction-card-read.js";
+import {
+  listSentInstructionCards,
+  readSentInstructionBodies,
+} from "./sent-instruction-card-read.js";
 
-type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
-type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };
-type Turn = { id: number; phase: string; provider_id: string; model_id: string; reasoning_effort: string; approval_mode: string; sandbox_mode: string; user_message_seq: number | null; assistant_message_seq: number | null };
-const turnColumns = "id, phase, provider_id, model_id, reasoning_effort, approval_mode, sandbox_mode, user_message_seq, assistant_message_seq";
-type SavedMessage = { seq: number; role: string; body: string; text_chars?: number };
-const failure = (code: string, message: string): Result => ({ ok: false, code, message, effect: "none" });
-const attachments = (items: ComposerAttachment[]) => items.map(({ id, kind, displayPath, workspaceRelativePath }) => ({ id, kind, name: displayPath.split(/[\\/]/).at(-1) ?? "", reference: workspaceRelativePath ?? id }));
-const captured = (json: string | null) => json === null ? null : JSON.parse(json) as SessionTurnQueueCapturedInput;
-const publicInput = (value: SessionTurnQueueCapturedInput | null) => value ? { text: value.request.userMessage, attachments: attachments(value.attachments) } : null;
-const comparisonInput = (value: SessionTurnQueueCapturedInput | null) => value ? JSON.stringify([value.request.userMessage, value.attachments.map(({ id, kind, absolutePath }) => [id, kind, absolutePath])]) : null;
-function isInputUnchanged(acceptedJson: string | null, comparisonJson: string | null): boolean | null {
+/** 実行情報の取得結果。業務上の拒否は保存への副作用がない失敗として返す。 */
+type Result =
+  | { ok: true; [key: string]: unknown }
+  | { ok: false; code: string; message: string; effect: "none" };
+/** 受領記録の状態・入力スナップショットと、保存された Turn および入力 seq への参照。 */
+type Receipt = {
+  id: string;
+  sequence: number;
+  state: string;
+  captured_json: string;
+  accepted_json: string | null;
+  dispatched_json: string | null;
+  turn_id: string | null;
+  input_turn_id: string | null;
+  user_message_seq: number | null;
+  updated_at: string;
+};
+/** 実行設定、実行フェーズ、保存された入出力の位置を持つ Turn 行。 */
+type Turn = {
+  id: number;
+  phase: string;
+  provider_id: string;
+  model_id: string;
+  reasoning_effort: string;
+  approval_mode: string;
+  sandbox_mode: string;
+  user_message_seq: number | null;
+  assistant_message_seq: number | null;
+};
+const turnColumns =
+  "id, phase, provider_id, model_id, reasoning_effort, approval_mode, sandbox_mode, user_message_seq, assistant_message_seq";
+/** 会話テーブルに保存されたメッセージ。本文を除く一覧読み取りでは文字数を個別に持てる。 */
+type SavedMessage = {
+  seq: number;
+  role: string;
+  body: string;
+  text_chars?: number;
+};
+/** 利用側に返せる、保存への副作用を伴わない失敗結果を組み立てる。 */
+const failure = (code: string, message: string): Result => ({
+  ok: false,
+  code,
+  message,
+  effect: "none",
+});
+/** 添付から表示名と参照用の識別子だけを取り出し、絶対パスを返却しない。 */
+const attachments = (items: ComposerAttachment[]) =>
+  items.map(({ id, kind, displayPath, workspaceRelativePath }) => ({
+    id,
+    kind,
+    name: displayPath.split(/[\\/]/).at(-1) ?? "",
+    reference: workspaceRelativePath ?? id,
+  }));
+/** 保存入力を読み、スナップショットが存在しない状態は null のまま保持する。 */
+const captured = (json: string | null) =>
+  json === null ? null : (JSON.parse(json) as SessionTurnQueueCapturedInput);
+/** 保存入力の本文と公開可能な添付情報だけを取得する。 */
+const publicInput = (value: SessionTurnQueueCapturedInput | null) =>
+  value
+    ? {
+        text: value.request.userMessage,
+        attachments: attachments(value.attachments),
+      }
+    : null;
+/** 入力比較用に、本文と添付の順序・種別・ID・絶対パスを直列化する。 */
+const comparisonInput = (value: SessionTurnQueueCapturedInput | null) =>
+  value
+    ? JSON.stringify([
+        value.request.userMessage,
+        value.attachments.map(({ id, kind, absolutePath }) => [
+          id,
+          kind,
+          absolutePath,
+        ]),
+      ])
+    : null;
+/** 両方の入力が保存されている場合に本文と添付の一致を判定し、比較不能なら null を返す。 */
+function isInputUnchanged(
+  acceptedJson: string | null,
+  comparisonJson: string | null,
+): boolean | null {
   const accepted = comparisonInput(captured(acceptedJson));
   const comparison = comparisonInput(captured(comparisonJson));
-  return accepted === null || comparison === null ? null : accepted === comparison;
+  return accepted === null || comparison === null
+    ? null
+    : accepted === comparison;
 }
-const page = <T>(all: T[], offset = 0, limit = 32) => ({ items: all.slice(offset, offset + limit), total: all.length, offset, nextOffset: offset + limit < all.length ? offset + limit : null });
+/** 入力または出力の一覧から指定ページを切り出し、全件数と次のオフセットを返す。 */
+const page = <T>(all: T[], offset = 0, limit = 32) => ({
+  items: all.slice(offset, offset + limit),
+  total: all.length,
+  offset,
+  nextOffset: offset + limit < all.length ? offset + limit : null,
+});
 
-function senderTheme(db: DatabaseSync, origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): { main: string; sub: string } | null {
-  if (origin?.kind !== "session" || !origin.actorSessionId || !origin.actorIncarnationId || !origin.actorKind) return null;
+/** 保存された送信元と Character の識別が一致する場合だけテーマを取得する。必要な同一性を確認できなければ null を返す。 */
+function senderTheme(
+  db: DatabaseSync,
+  origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined,
+): { main: string; sub: string } | null {
+  if (
+    origin?.kind !== "session" ||
+    !origin.actorSessionId ||
+    !origin.actorIncarnationId ||
+    !origin.actorKind
+  )
+    return null;
   const expected = origin.actorSnapshot?.character.id;
-  if (!expected || isUnknownCharacterOwnerId(expected) || expected === NEUTRAL_CHARACTER_ID) return null;
-  const readMain = (id: string) => db.prepare("SELECT incarnation_id, character_id, character_snapshot_json, runtime_policy_json FROM sessions_v6 WHERE id = ?").get(id) as
-    { incarnation_id: string; character_id: string | null; character_snapshot_json: string | null; runtime_policy_json: string } | undefined;
+  if (
+    !expected ||
+    isUnknownCharacterOwnerId(expected) ||
+    expected === NEUTRAL_CHARACTER_ID
+  )
+    return null;
+  /** 送信元 Main または Auxiliary の親 Main の保存済み Character 設定を取得する。 */
+  const readMain = (id: string) =>
+    db
+      .prepare(
+        "SELECT incarnation_id, character_id, character_snapshot_json, runtime_policy_json FROM sessions_v6 WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          incarnation_id: string;
+          character_id: string | null;
+          character_snapshot_json: string | null;
+          runtime_policy_json: string;
+        }
+      | undefined;
   if (origin.actorKind === "main") {
     const row = readMain(origin.actorSessionId);
-    if (!row || (row.incarnation_id?.trim() || `legacy:${origin.actorSessionId}`) !== origin.actorIncarnationId) return null;
-    const policy = JSON.parse(row.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
-    if ((row.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
-    const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
-    if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== expected)) return null;
+    if (
+      !row ||
+      (row.incarnation_id?.trim() || `legacy:${origin.actorSessionId}`) !==
+        origin.actorIncarnationId
+    )
+      return null;
+    const policy = JSON.parse(row.runtime_policy_json) as {
+      characterId?: string;
+      characterThemeColors?: { main?: string; sub?: string };
+    };
+    if ((row.character_id?.trim() || policy.characterId?.trim()) !== expected)
+      return null;
+    const snapshot = parseCharacterRuntimeSnapshotJson(
+      row.character_snapshot_json,
+    );
+    if (
+      row.character_snapshot_json &&
+      (!snapshot || snapshot.characterId !== expected)
+    )
+      return null;
     const theme = snapshot?.theme ?? policy.characterThemeColors;
-    return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+    return theme &&
+      typeof theme.main === "string" &&
+      typeof theme.sub === "string"
+      ? { main: theme.main, sub: theme.sub }
+      : null;
   }
-  const row = db.prepare("SELECT parent_session_id, created_at, character_id, character_snapshot_json, character_snapshot_invalid FROM auxiliary_sessions WHERE id = ?").get(origin.actorSessionId) as
-    { parent_session_id: string; created_at: string; character_id: string | null; character_snapshot_json: string | null; character_snapshot_invalid: number } | undefined;
-  if (!row || row.character_snapshot_invalid || row.created_at !== origin.actorIncarnationId || !readMain(row.parent_session_id)) return null;
-  if ("actorMainSessionId" in origin && origin.actorMainSessionId && row.parent_session_id !== origin.actorMainSessionId) return null;
-  const snapshot = parseCharacterRuntimeSnapshotJson(row.character_snapshot_json);
-  if (row.character_snapshot_json && (!snapshot || snapshot.characterId !== row.character_id)) return null;
+  const row = db
+    .prepare(
+      "SELECT parent_session_id, created_at, character_id, character_snapshot_json, character_snapshot_invalid FROM auxiliary_sessions WHERE id = ?",
+    )
+    .get(origin.actorSessionId) as
+    | {
+        parent_session_id: string;
+        created_at: string;
+        character_id: string | null;
+        character_snapshot_json: string | null;
+        character_snapshot_invalid: number;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.character_snapshot_invalid ||
+    row.created_at !== origin.actorIncarnationId ||
+    !readMain(row.parent_session_id)
+  )
+    return null;
+  if (
+    "actorMainSessionId" in origin &&
+    origin.actorMainSessionId &&
+    row.parent_session_id !== origin.actorMainSessionId
+  )
+    return null;
+  const snapshot = parseCharacterRuntimeSnapshotJson(
+    row.character_snapshot_json,
+  );
+  if (
+    row.character_snapshot_json &&
+    (!snapshot || snapshot.characterId !== row.character_id)
+  )
+    return null;
   if (snapshot && row.character_id === expected) return snapshot.theme;
   if (row.character_id || row.character_snapshot_json) return null;
   const parent = readMain(row.parent_session_id)!;
-  const policy = JSON.parse(parent.runtime_policy_json) as { characterId?: string; characterThemeColors?: { main?: string; sub?: string } };
-  if ((parent.character_id?.trim() || policy.characterId?.trim()) !== expected) return null;
-  const parentSnapshot = parseCharacterRuntimeSnapshotJson(parent.character_snapshot_json);
-  if (parent.character_snapshot_json && (!parentSnapshot || parentSnapshot.characterId !== expected)) return null;
+  const policy = JSON.parse(parent.runtime_policy_json) as {
+    characterId?: string;
+    characterThemeColors?: { main?: string; sub?: string };
+  };
+  if ((parent.character_id?.trim() || policy.characterId?.trim()) !== expected)
+    return null;
+  const parentSnapshot = parseCharacterRuntimeSnapshotJson(
+    parent.character_snapshot_json,
+  );
+  if (
+    parent.character_snapshot_json &&
+    (!parentSnapshot || parentSnapshot.characterId !== expected)
+  )
+    return null;
   const theme = parentSnapshot?.theme ?? policy.characterThemeColors;
-  return theme && typeof theme.main === "string" && typeof theme.sub === "string" ? { main: theme.main, sub: theme.sub } : null;
+  return theme &&
+    typeof theme.main === "string" &&
+    typeof theme.sub === "string"
+    ? { main: theme.main, sub: theme.sub }
+    : null;
 }
 
-type TurnInputDisplayReference = { target: SessionTarget; receiptId?: string; turnId?: string; messageSeq?: number };
-type DisplayReceipt = Pick<Receipt, "id" | "state" | "turn_id" | "input_turn_id" | "user_message_seq"> & {
+/** 実行表示の対象を、受領 ID・Turn ID・保存メッセージ seq のいずれかで示す参照。 */
+type TurnInputDisplayReference = {
+  target: SessionTarget;
+  receiptId?: string;
+  turnId?: string;
+  messageSeq?: number;
+};
+/** 入力表示に必要な受領情報。確定の有無と、出所・再試行元・Coordination の保存値を取り出したもの。 */
+type DisplayReceipt = Pick<
+  Receipt,
+  "id" | "state" | "turn_id" | "input_turn_id" | "user_message_seq"
+> & {
   fixed: number;
   origin_json: string | null;
   theme_origin_json: string | null;
   retry_source_json: string | null;
   coordination_input_json: string | null;
 };
-type DisplayTurn = Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">;
+/** 入力と応答の正確な結び付きを照合するために読む Turn の情報。 */
+type DisplayTurn = Pick<
+  Turn,
+  "id" | "phase" | "user_message_seq" | "assistant_message_seq"
+>;
 
-function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference: TurnInputDisplayReference): Result {
+/** 受領記録・保存メッセージ・Turn から入力表示とその出所を解決する。別 incarnation や曖昧な関連付けは拒否する。 */
+function readTurnInputDisplay(
+  db: DatabaseSync,
+  target: SessionTarget,
+  reference: TurnInputDisplayReference,
+): Result {
   const mainTarget = target.kind === "main";
-  const table = mainTarget ? "session_messages_v6" : "auxiliary_session_messages";
+  const table = mainTarget
+    ? "session_messages_v6"
+    : "auxiliary_session_messages";
   const owner = mainTarget ? "session_id" : "auxiliary_session_id";
-  const targetRow = (mainTarget
-    ? db.prepare("SELECT incarnation_id FROM sessions_v6 WHERE id = ?")
-    : db.prepare(`SELECT a.created_at AS incarnation_id, a.parent_session_id, p.incarnation_id AS parent_incarnation
+  const targetRow = (
+    mainTarget
+      ? db.prepare("SELECT incarnation_id FROM sessions_v6 WHERE id = ?")
+      : db.prepare(`SELECT a.created_at AS incarnation_id, a.parent_session_id, p.incarnation_id AS parent_incarnation
         FROM auxiliary_sessions a JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
-        JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`)).get(target.sessionId) as
-    { incarnation_id: string; parent_session_id?: string; parent_incarnation?: string } | undefined;
-  if (!targetRow) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
-  const incarnation = mainTarget ? targetRow.incarnation_id?.trim() || `legacy:${target.sessionId}` : targetRow.incarnation_id;
-  if (incarnation !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
-  if (!mainTarget && (targetRow.parent_session_id !== target.mainSessionId
-    || (targetRow.parent_incarnation?.trim() || `legacy:${target.mainSessionId}`) !== target.mainIncarnationId)) {
-    return failure("EXECUTION_TARGET_REPLACED", "The Auxiliary parent identity does not match.");
+        JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`)
+  ).get(target.sessionId) as
+    | {
+        incarnation_id: string;
+        parent_session_id?: string;
+        parent_incarnation?: string;
+      }
+    | undefined;
+  if (!targetRow)
+    return failure(
+      "EXECUTION_TARGET_DELETED",
+      "The saved Session no longer exists.",
+    );
+  const incarnation = mainTarget
+    ? targetRow.incarnation_id?.trim() || `legacy:${target.sessionId}`
+    : targetRow.incarnation_id;
+  if (incarnation !== target.incarnationId)
+    return failure(
+      "EXECUTION_TARGET_REPLACED",
+      "The Session incarnation does not match.",
+    );
+  if (
+    !mainTarget &&
+    (targetRow.parent_session_id !== target.mainSessionId ||
+      (targetRow.parent_incarnation?.trim() ||
+        `legacy:${target.mainSessionId}`) !== target.mainIncarnationId)
+  ) {
+    return failure(
+      "EXECUTION_TARGET_REPLACED",
+      "The Auxiliary parent identity does not match.",
+    );
   }
 
-  const where = mainTarget ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
+  const where = mainTarget
+    ? "session_id = ? AND auxiliary_session_id IS NULL"
+    : "auxiliary_session_id = ?";
   const receiptInput = "COALESCE(dispatched_json, captured_json)";
-  const readReceipts = (column: "id" | "user_message_seq", value: string | number) => db.prepare(`
+  /** 同じ対象 incarnation に属する受領記録を ID または入力 seq で最大二件読み、入力 seq の重複を識別できるようにする。 */
+  const readReceipts = (
+    column: "id" | "user_message_seq",
+    value: string | number,
+  ) =>
+    db
+      .prepare(
+        `
     SELECT id, state, turn_id, input_turn_id, user_message_seq, dispatched_json IS NOT NULL AS fixed,
       COALESCE(json_extract(dispatched_json, '$.origin'), json_extract(accepted_json, '$.origin')) AS origin_json,
       json_extract(COALESCE(dispatched_json, accepted_json, captured_json), '$.origin') AS theme_origin_json,
       COALESCE(json_extract(dispatched_json, '$.retrySource'), json_extract(accepted_json, '$.retrySource')) AS retry_source_json,
       CASE WHEN json_type(${receiptInput}, '$.coordination') = 'object' THEN ${receiptInput} END AS coordination_input_json
-    FROM session_turn_queue_v6 WHERE ${where} AND incarnation_id = ? AND ${column} = ? LIMIT 2`)
-    .all(target.sessionId, target.incarnationId, value) as DisplayReceipt[];
+    FROM session_turn_queue_v6 WHERE ${where} AND incarnation_id = ? AND ${column} = ? LIMIT 2`,
+      )
+      .all(target.sessionId, target.incarnationId, value) as DisplayReceipt[];
   const turns = `SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${where}`;
-  const readTurn = (id: string | null | undefined) => id ? db.prepare(`${turns} AND id = ?`).get(target.sessionId, id) as DisplayTurn | undefined : undefined;
-  const readMessage = (seq: number) => db.prepare(`SELECT role, CASE WHEN role = 'user' THEN json_extract(body, '$.turnInput') END AS input_json
-    FROM ${table} WHERE ${owner} = ? AND seq = ?`).get(target.sessionId, seq) as { role: string; input_json: string | null } | undefined;
+  /** 対象に属する Turn の入出力位置とフェーズを ID で読む。 */
+  const readTurn = (id: string | null | undefined) =>
+    id
+      ? (db.prepare(`${turns} AND id = ?`).get(target.sessionId, id) as
+          DisplayTurn | undefined)
+      : undefined;
+  /** 対象の指定 seq にあるメッセージの役割と、ユーザー入力の場合のみ入力メタデータを読む。 */
+  const readMessage = (seq: number) =>
+    db
+      .prepare(
+        `SELECT role, CASE WHEN role = 'user' THEN json_extract(body, '$.turnInput') END AS input_json
+    FROM ${table} WHERE ${owner} = ? AND seq = ?`,
+      )
+      .get(target.sessionId, seq) as
+      { role: string; input_json: string | null } | undefined;
 
   let receipt: DisplayReceipt | undefined;
   let turn: DisplayTurn | undefined;
@@ -117,56 +378,162 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
   let findStart = reference.turnId !== undefined;
   if (reference.receiptId !== undefined) {
     [receipt] = readReceipts("id", reference.receiptId);
-    if (!receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
+    if (!receipt)
+      return failure(
+        "EXECUTION_NOT_FOUND",
+        "The receipt does not belong to this target.",
+      );
     turn = readTurn(receipt.turn_id);
   } else if (reference.messageSeq !== undefined) {
     const message = readMessage(reference.messageSeq);
-    if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
-    if (message.role !== "user" && message.role !== "assistant") throw new Error("Invalid saved execution message.");
-    const input = message.input_json === null ? undefined : normalizeMessage({ role: message.role, turnInput: JSON.parse(message.input_json) })?.turnInput;
+    if (!message)
+      return failure(
+        "EXECUTION_MESSAGE_NOT_SAVED",
+        "No message is saved at this exact sequence.",
+      );
+    if (message.role !== "user" && message.role !== "assistant")
+      throw new Error("Invalid saved execution message.");
+    const input =
+      message.input_json === null
+        ? undefined
+        : normalizeMessage({
+            role: message.role,
+            turnInput: JSON.parse(message.input_json),
+          })?.turnInput;
     if (!input?.queueId) directOrigin = input?.origin;
     const matching = readReceipts("user_message_seq", reference.messageSeq);
-    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    if (matching.length > 1)
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The saved message has ambiguous receipt linkage.",
+      );
     [receipt] = matching;
-    if (receipt || input) turn = readTurn(receipt ? receipt.turn_id : input?.turnId);
+    if (receipt || input)
+      turn = readTurn(receipt ? receipt.turn_id : input?.turnId);
     else {
-      const matchingTurns = db.prepare(`${turns} AND (user_message_seq = ? OR assistant_message_seq = ?) LIMIT 2`).all(target.sessionId, reference.messageSeq, reference.messageSeq) as DisplayTurn[];
-      if (matchingTurns.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous Turn linkage.");
+      const matchingTurns = db
+        .prepare(
+          `${turns} AND (user_message_seq = ? OR assistant_message_seq = ?) LIMIT 2`,
+        )
+        .all(
+          target.sessionId,
+          reference.messageSeq,
+          reference.messageSeq,
+        ) as DisplayTurn[];
+      if (matchingTurns.length > 1)
+        return failure(
+          "EXECUTION_LINK_UNAVAILABLE",
+          "The saved message has ambiguous Turn linkage.",
+        );
       [turn] = matchingTurns;
     }
-    if (!receipt && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has no recorded execution linkage.");
+    if (!receipt && !turn)
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The saved message has no recorded execution linkage.",
+      );
     findStart = message.role === "assistant";
   } else {
     turn = readTurn(reference.turnId);
-    if (!turn) return failure("EXECUTION_NOT_FOUND", "The Turn does not belong to this target.");
+    if (!turn)
+      return failure(
+        "EXECUTION_NOT_FOUND",
+        "The Turn does not belong to this target.",
+      );
   }
   // 再送操作は詳細表示と同じく、応答から開始記録をたどる。
   if (findStart && !receipt && turn?.user_message_seq != null) {
-    if (readMessage(turn.user_message_seq)?.role !== "user") return failure("EXECUTION_LINK_UNAVAILABLE", "The saved Turn has no exact start input.");
+    if (readMessage(turn.user_message_seq)?.role !== "user")
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The saved Turn has no exact start input.",
+      );
     const matching = readReceipts("user_message_seq", turn.user_message_seq);
-    if (matching.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+    if (matching.length > 1)
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The saved message has ambiguous receipt linkage.",
+      );
     [receipt] = matching;
-    if (receipt && receipt.turn_id !== String(turn.id)) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
+    if (receipt && receipt.turn_id !== String(turn.id))
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The receipt's exact saved Turn is unavailable.",
+      );
   }
-  if (receipt?.turn_id && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
-  if (receipt && turn && receipt.input_turn_id === null && receipt.user_message_seq !== null && receipt.user_message_seq !== turn.user_message_seq) {
-    return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's start input does not match its saved Turn.");
+  if (receipt?.turn_id && !turn)
+    return failure(
+      "EXECUTION_LINK_UNAVAILABLE",
+      "The receipt's exact saved Turn is unavailable.",
+    );
+  if (
+    receipt &&
+    turn &&
+    receipt.input_turn_id === null &&
+    receipt.user_message_seq !== null &&
+    receipt.user_message_seq !== turn.user_message_seq
+  ) {
+    return failure(
+      "EXECUTION_LINK_UNAVAILABLE",
+      "The receipt's start input does not match its saved Turn.",
+    );
   }
-  const origin = directOrigin ?? (receipt?.origin_json ? JSON.parse(receipt.origin_json) as SessionTurnQueueOrigin : null);
-  const themeOrigin = directOrigin ?? (receipt?.theme_origin_json ? JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin : null);
+  const origin =
+    directOrigin ??
+    (receipt?.origin_json
+      ? (JSON.parse(receipt.origin_json) as SessionTurnQueueOrigin)
+      : null);
+  const themeOrigin =
+    directOrigin ??
+    (receipt?.theme_origin_json
+      ? (JSON.parse(receipt.theme_origin_json) as SessionTurnQueueOrigin)
+      : null);
   const coordinationInput = captured(receipt?.coordination_input_json ?? null);
-  const retrySource = receipt?.retry_source_json ? JSON.parse(receipt.retry_source_json) as SessionTurnQueueCapturedInput["retrySource"] : null;
+  const retrySource = receipt?.retry_source_json
+    ? (JSON.parse(
+        receipt.retry_source_json,
+      ) as SessionTurnQueueCapturedInput["retrySource"])
+    : null;
   // 比較用の完全なスナップショットが必要なのは、この解決済みの再試行の受領記録だけ。
   // 受領記録とスナップショットは同じトランザクションで読む。
-  const retryInput = receipt && retrySource ? db.prepare(`
+  const retryInput =
+    receipt && retrySource
+      ? (db
+          .prepare(
+            `
     SELECT accepted_json, COALESCE(dispatched_json, captured_json) AS comparison_json
-    FROM session_turn_queue_v6 WHERE id = ?`).get(receipt.id) as
-    { accepted_json: string | null; comparison_json: string | null } | undefined : undefined;
-  const retryInputUnchanged = retryInput ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json) : null;
-  return { ok: true, origin, senderTheme: senderTheme(db, projectRetryInputAuthor(themeOrigin, retrySource, retryInputUnchanged)),
-    retrySource, retryInputUnchanged,
-    ...(coordinationInput?.coordination ? { coordination: { id: coordinationInput.coordination.id, text: coordinationDeliveryText(coordinationInput), consultation: readCoordinationNotification(coordinationInput)?.consultation } } : {}),
-    receiptId: receipt?.id ?? null, receiptState: receipt?.state ?? null, turnId: turn ? String(turn.id) : null, turnState: turn?.phase ?? null,
+    FROM session_turn_queue_v6 WHERE id = ?`,
+          )
+          .get(receipt.id) as
+          | { accepted_json: string | null; comparison_json: string | null }
+          | undefined)
+      : undefined;
+  const retryInputUnchanged = retryInput
+    ? isInputUnchanged(retryInput.accepted_json, retryInput.comparison_json)
+    : null;
+  return {
+    ok: true,
+    origin,
+    senderTheme: senderTheme(
+      db,
+      projectRetryInputAuthor(themeOrigin, retrySource, retryInputUnchanged),
+    ),
+    retrySource,
+    retryInputUnchanged,
+    ...(coordinationInput?.coordination
+      ? {
+          coordination: {
+            id: coordinationInput.coordination.id,
+            text: coordinationDeliveryText(coordinationInput),
+            consultation:
+              readCoordinationNotification(coordinationInput)?.consultation,
+          },
+        }
+      : {}),
+    receiptId: receipt?.id ?? null,
+    receiptState: receipt?.state ?? null,
+    turnId: turn ? String(turn.id) : null,
+    turnState: turn?.phase ?? null,
     isFixedStart: !!receipt?.fixed && receipt.input_turn_id === null,
   };
 }
@@ -174,92 +541,290 @@ function readTurnInputDisplay(db: DatabaseSync, target: SessionTarget, reference
 /** 既存 DB 上の同期スナップショット。実行状態や出力のコピーはここでは保持しない。 */
 export class SessionExecutionReadStorage {
   private readonly db: DatabaseSync;
+  /** 既存アプリ DB を開き、保存本文の長さを UTF-16 単位で取得する関数を登録する。 */
   constructor(dbPath: string) {
-    this.db = openAppDatabase(dbPath); ensureV6Schema(this.db);
-    this.db.function("withmate_execution_utf16_length", { deterministic: true }, (value) => typeof value === "string" ? value.length : 0);
+    this.db = openAppDatabase(dbPath);
+    ensureV6Schema(this.db);
+    this.db.function(
+      "withmate_execution_utf16_length",
+      { deterministic: true },
+      (value) => (typeof value === "string" ? value.length : 0),
+    );
   }
-  close(): void { this.db.close(); }
+  /** 実行情報の読み取りに使う DB 接続を閉じる。 */
+  close(): void {
+    this.db.close();
+  }
+  /** 要求と解決済み対象の一致を確認し、一つの読み取りトランザクションで実行情報を取得する。 */
   execute(input: ExecutionReadInput): Result {
     assertRuntimeTurnAdmission();
-    const parsed = executionWindowRequestSchemas[input.operation].safeParse(input.request);
-    if (!parsed.success) return failure("EXECUTION_INVALID_REQUEST", parsed.error.message);
-    const identity = (target: SessionTarget) => JSON.stringify([target.kind, target.sessionId, target.incarnationId, target.kind === "auxiliary" ? target.mainSessionId : null, target.kind === "auxiliary" ? target.mainIncarnationId : null]);
-    if (identity(parsed.data.target) !== identity(input.target)) return failure("EXECUTION_TARGET_MISMATCH", "The request and resolved target do not match.");
+    const parsed = executionWindowRequestSchemas[input.operation].safeParse(
+      input.request,
+    );
+    if (!parsed.success)
+      return failure("EXECUTION_INVALID_REQUEST", parsed.error.message);
+    /** Main と Auxiliary を取り違えないよう、対象自身と必要な親の incarnation を比較キーにする。 */
+    const identity = (target: SessionTarget) =>
+      JSON.stringify([
+        target.kind,
+        target.sessionId,
+        target.incarnationId,
+        target.kind === "auxiliary" ? target.mainSessionId : null,
+        target.kind === "auxiliary" ? target.mainIncarnationId : null,
+      ]);
+    if (identity(parsed.data.target) !== identity(input.target))
+      return failure(
+        "EXECUTION_TARGET_MISMATCH",
+        "The request and resolved target do not match.",
+      );
     this.db.exec("BEGIN DEFERRED");
     try {
       const result = this.read(input.target, input.operation, parsed.data);
       assertRuntimeTurnAdmission();
       this.db.exec("COMMIT");
       return result;
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
-  private read(target: SessionTarget, operation: ExecutionReadInput["operation"], request: ExecutionReadInput["request"]): Result {
-    if (operation === "read_turn_input_display") return readTurnInputDisplay(this.db, target, request);
-    const table = target.kind === "main" ? "session_messages_v6" : "auxiliary_session_messages";
-    const owner = target.kind === "main" ? "session_id" : "auxiliary_session_id";
-    const snapshot = readConversationQuerySnapshot(this.db, table, target.sessionId);
-    if (!snapshot) return failure("EXECUTION_TARGET_DELETED", "The saved Session no longer exists.");
-    if (snapshot.incarnationId !== target.incarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Session incarnation does not match.");
+  /** 解決対象が現存する同一 incarnation であることを確認し、操作に応じた保存履歴・入出力・送信記録を取得する。 */
+  private read(
+    target: SessionTarget,
+    operation: ExecutionReadInput["operation"],
+    request: ExecutionReadInput["request"],
+  ): Result {
+    if (operation === "read_turn_input_display")
+      return readTurnInputDisplay(this.db, target, request);
+    const table =
+      target.kind === "main"
+        ? "session_messages_v6"
+        : "auxiliary_session_messages";
+    const owner =
+      target.kind === "main" ? "session_id" : "auxiliary_session_id";
+    const snapshot = readConversationQuerySnapshot(
+      this.db,
+      table,
+      target.sessionId,
+    );
+    if (!snapshot)
+      return failure(
+        "EXECUTION_TARGET_DELETED",
+        "The saved Session no longer exists.",
+      );
+    if (snapshot.incarnationId !== target.incarnationId)
+      return failure(
+        "EXECUTION_TARGET_REPLACED",
+        "The Session incarnation does not match.",
+      );
     if (operation === "read_conversation_threads") {
-      return target.kind === "main" ? { ok: true, ...readConversationThreads(this.db, target) }
-        : failure("EXECUTION_TARGET_MISMATCH", "Conversation threads require a Main Session.");
+      return target.kind === "main"
+        ? { ok: true, ...readConversationThreads(this.db, target) }
+        : failure(
+            "EXECUTION_TARGET_MISMATCH",
+            "Conversation threads require a Main Session.",
+          );
     }
     if (target.kind === "auxiliary") {
-      const parent = this.db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ?").get(target.sessionId) as { parent_session_id: string };
-      const main = readConversationQuerySnapshot(this.db, "session_messages_v6", target.mainSessionId);
-      if (parent.parent_session_id !== target.mainSessionId || main?.incarnationId !== target.mainIncarnationId) return failure("EXECUTION_TARGET_REPLACED", "The Auxiliary parent identity does not match.");
+      const parent = this.db
+        .prepare(
+          "SELECT parent_session_id FROM auxiliary_sessions WHERE id = ?",
+        )
+        .get(target.sessionId) as { parent_session_id: string };
+      const main = readConversationQuerySnapshot(
+        this.db,
+        "session_messages_v6",
+        target.mainSessionId,
+      );
+      if (
+        parent.parent_session_id !== target.mainSessionId ||
+        main?.incarnationId !== target.mainIncarnationId
+      )
+        return failure(
+          "EXECUTION_TARGET_REPLACED",
+          "The Auxiliary parent identity does not match.",
+        );
     }
-    const source = target.kind === "main" ? { kind: "main" as const, sessionId: target.sessionId, incarnationId: target.incarnationId, ownerIdentity: snapshot.ownerIdentity }
-      : { kind: "auxiliary" as const, sessionId: target.sessionId, incarnationId: target.incarnationId, ownerIdentity: snapshot.ownerIdentity, parent: { sessionId: target.mainSessionId, incarnationId: target.mainIncarnationId } };
-    if (operation === "list_messages" || operation === "get_message" || operation === "list_operations" || operation === "get_operation_detail") {
-      const last = this.db.prepare(`SELECT MAX(seq) AS seq FROM ${table} WHERE ${owner} = ?`).get(target.sessionId) as { seq: number | null };
+    const source =
+      target.kind === "main"
+        ? {
+            kind: "main" as const,
+            sessionId: target.sessionId,
+            incarnationId: target.incarnationId,
+            ownerIdentity: snapshot.ownerIdentity,
+          }
+        : {
+            kind: "auxiliary" as const,
+            sessionId: target.sessionId,
+            incarnationId: target.incarnationId,
+            ownerIdentity: snapshot.ownerIdentity,
+            parent: {
+              sessionId: target.mainSessionId,
+              incarnationId: target.mainIncarnationId,
+            },
+          };
+    if (
+      operation === "list_messages" ||
+      operation === "get_message" ||
+      operation === "list_operations" ||
+      operation === "get_operation_detail"
+    ) {
+      const last = this.db
+        .prepare(`SELECT MAX(seq) AS seq FROM ${table} WHERE ${owner} = ?`)
+        .get(target.sessionId) as { seq: number | null };
       const { target: _target, ...historyRequest } = request;
-      const thread = operation === "list_messages"
-        ? (request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_messages>).thread : undefined;
+      const thread =
+        operation === "list_messages"
+          ? (
+              request as import("zod").z.infer<
+                typeof executionOperationRequestSchemas.list_messages
+              >
+            ).thread
+          : undefined;
       let messageIndexes: number[] | undefined;
       if (thread !== undefined) {
-        if (target.kind !== "main") return failure("EXECUTION_TARGET_MISMATCH", "A conversation thread requires a Main history target.");
+        if (target.kind !== "main")
+          return failure(
+            "EXECUTION_TARGET_MISMATCH",
+            "A conversation thread requires a Main history target.",
+          );
         const projection = readConversationThreads(this.db, target);
-        messageIndexes = thread === null ? projection.initialMessageIndexes
-          : projection.children.find((frame) => conversationPeerKey(frame.target) === conversationPeerKey(thread))?.messageIndexes;
-        if (!messageIndexes) return failure("EXECUTION_THREAD_UNAVAILABLE", "The peer does not identify an available thread of this Main Session.");
+        messageIndexes =
+          thread === null
+            ? projection.initialMessageIndexes
+            : projection.children.find(
+                (frame) =>
+                  conversationPeerKey(frame.target) ===
+                  conversationPeerKey(thread),
+              )?.messageIndexes;
+        if (!messageIndexes)
+          return failure(
+            "EXECUTION_THREAD_UNAVAILABLE",
+            "The peer does not identify an available thread of this Main Session.",
+          );
       }
       if (last.seq === null) {
-        if (operation !== "list_messages") return failure("HISTORY_NOT_SAVED", "The Session has no saved messages.");
-        if ((historyRequest as { offset?: number }).offset) return failure("HISTORY_INVALID_REQUEST", "Offset is beyond the empty conversation.");
-        return { ok: true, window: { fromSeq: 0, toSeq: -1 }, total: 0, offset: 0, nextOffset: null, items: [] };
+        if (operation !== "list_messages")
+          return failure(
+            "HISTORY_NOT_SAVED",
+            "The Session has no saved messages.",
+          );
+        if ((historyRequest as { offset?: number }).offset)
+          return failure(
+            "HISTORY_INVALID_REQUEST",
+            "Offset is beyond the empty conversation.",
+          );
+        return {
+          ok: true,
+          window: { fromSeq: 0, toSeq: -1 },
+          total: 0,
+          offset: 0,
+          nextOffset: null,
+          items: [],
+        };
       }
-      return readSessionHistory(this.db, { scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq }, operation, request: historyRequest as SessionHistoryRequest }, messageIndexes);
+      return readSessionHistory(
+        this.db,
+        {
+          scope: { source, fromMessageSeq: 0, throughMessageSeq: last.seq },
+          operation,
+          request: historyRequest as SessionHistoryRequest,
+        },
+        messageIndexes,
+      );
     }
-    const queueWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
+    const queueWhere =
+      target.kind === "main"
+        ? "session_id = ? AND auxiliary_session_id IS NULL"
+        : "auxiliary_session_id = ?";
     const queueParams = [target.sessionId, target.incarnationId];
-    const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
+    const receiptColumns =
+      "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
-    const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
-    if (operation === "list_sent_deliveries" || operation === "list_sent_steers" || operation === "list_issued_coordinations"
-      || operation === "list_sent_instruction_cards" || operation === "read_sent_instruction_bodies") {
-      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>
-        | SentInstructionCardRequest | SentInstructionBodyRequest;
+    const turnWhere =
+      target.kind === "main"
+        ? "session_id = ? AND auxiliary_session_id IS NULL"
+        : "auxiliary_session_id = ?";
+    if (
+      operation === "list_sent_deliveries" ||
+      operation === "list_sent_steers" ||
+      operation === "list_issued_coordinations" ||
+      operation === "list_sent_instruction_cards" ||
+      operation === "read_sent_instruction_bodies"
+    ) {
+      const options = request as
+        | import("zod").z.infer<
+            | typeof executionOperationRequestSchemas.list_sent_deliveries
+            | typeof executionOperationRequestSchemas.list_issued_coordinations
+          >
+        | SentInstructionCardRequest
+        | SentInstructionBodyRequest;
       const messageSeqs = [...new Set(options.messageSeqs)];
       const liveTurnIds = options.liveTurnIds ?? [];
+      /** 送信元 Turn の照合に使う可変長の引数を、SQL のプレースホルダーとして列挙する。 */
       const marks = (values: unknown[]) => values.map(() => "?").join(",");
-      const clauses = [...(messageSeqs.length ? [`user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`] : []), ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : [])];
-      const sourceTurns = !clauses.length ? [] : this.db.prepare(`SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
-        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "phase" | "user_message_seq" | "assistant_message_seq">[];
-      if (operation === "list_sent_instruction_cards") return listSentInstructionCards(this.db, target, options as SentInstructionCardRequest, sourceTurns);
-      if (operation === "read_sent_instruction_bodies") return readSentInstructionBodies(this.db, target, options as SentInstructionBodyRequest, sourceTurns);
+      const clauses = [
+        ...(messageSeqs.length
+          ? [
+              `user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`,
+            ]
+          : []),
+        ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : []),
+      ];
+      const sourceTurns = !clauses.length
+        ? []
+        : (this.db
+            .prepare(
+              `SELECT id, phase, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`,
+            )
+            .all(
+              target.sessionId,
+              ...messageSeqs,
+              ...messageSeqs,
+              ...liveTurnIds,
+            ) as Pick<
+            Turn,
+            "id" | "phase" | "user_message_seq" | "assistant_message_seq"
+          >[]);
+      if (operation === "list_sent_instruction_cards")
+        return listSentInstructionCards(
+          this.db,
+          target,
+          options as SentInstructionCardRequest,
+          sourceTurns,
+        );
+      if (operation === "read_sent_instruction_bodies")
+        return readSentInstructionBodies(
+          this.db,
+          target,
+          options as SentInstructionBodyRequest,
+          sourceTurns,
+        );
       if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
-      const pageOptions = options as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries | typeof executionOperationRequestSchemas.list_issued_coordinations>;
+      const pageOptions = options as import("zod").z.infer<
+        | typeof executionOperationRequestSchemas.list_sent_deliveries
+        | typeof executionOperationRequestSchemas.list_issued_coordinations
+      >;
       const turnIds = sourceTurns.map((turn) => String(turn.id));
       const limit = pageOptions.limit ?? 20;
-      const messageForTurn = (turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">) =>
-        turn.assistant_message_seq !== null && messageSeqs.includes(turn.assistant_message_seq) ? turn.assistant_message_seq
-          : turn.user_message_seq !== null && messageSeqs.includes(turn.user_message_seq) ? turn.user_message_seq : null;
+      /** 指定範囲にある保存済み応答を送信の表示先にし、なければ範囲内の開始入力を使う。 */
+      const messageForTurn = (
+        turn: Pick<Turn, "assistant_message_seq" | "user_message_seq">,
+      ) =>
+        turn.assistant_message_seq !== null &&
+        messageSeqs.includes(turn.assistant_message_seq)
+          ? turn.assistant_message_seq
+          : turn.user_message_seq !== null &&
+              messageSeqs.includes(turn.user_message_seq)
+            ? turn.user_message_seq
+            : null;
       if (operation === "list_sent_steers") {
         // 親からの直接の Steer は Main から Main への送信。
         // 受信メッセージは既存の永続入力レコードであり、別の受領記録や送信側のコピーではない。
-        const rows = this.db.prepare(`SELECT m.id, m.seq, m.body, m.session_id, recipient.incarnation_id
+        const rows = this.db
+          .prepare(
+            `SELECT m.id, m.seq, m.body, m.session_id, recipient.incarnation_id
           FROM session_messages_v6 m JOIN sessions_v6 recipient ON recipient.id=m.session_id
           WHERE json_extract(m.body, '$.turnInput.origin.actorKind')=?
             AND json_extract(m.body, '$.turnInput.origin.actorSessionId')=?
@@ -270,28 +835,93 @@ export class SessionExecutionReadStorage {
             AND json_extract(m.body, '$.turnInput.origin.targetSessionId')=m.session_id
             AND json_extract(m.body, '$.turnInput.origin.targetIncarnationId')=recipient.incarnation_id
             AND json_extract(m.body, '$.turnInput.queueId') IS NULL AND m.role='user' AND m.id>?
-          ORDER BY m.id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: number; seq: number; body: string; session_id: string; incarnation_id: string }>;
-        return { ok: true, items: rows.slice(0, limit).map((row) => {
-          const message = normalizeMessage({ ...JSON.parse(row.body), role: "user" });
-          if (!message?.turnInput?.origin) throw new Error("Invalid saved outgoing Steer input.");
-          const origin = message.turnInput.origin;
-          return { sequence: row.id, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!),
-            target: { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id }, messageSeq: row.seq,
-            state: message.turnInput.state, origin, text: message.text };
-        }), nextCursor: rows.length > limit ? rows[limit - 1].id : null };
+          ORDER BY m.id LIMIT ?`,
+          )
+          .all(
+            target.kind,
+            target.sessionId,
+            target.incarnationId,
+            ...turnIds,
+            pageOptions.cursor ?? 0,
+            limit + 1,
+          ) as Array<{
+          id: number;
+          seq: number;
+          body: string;
+          session_id: string;
+          incarnation_id: string;
+        }>;
+        return {
+          ok: true,
+          items: rows.slice(0, limit).map((row) => {
+            const message = normalizeMessage({
+              ...JSON.parse(row.body),
+              role: "user",
+            });
+            if (!message?.turnInput?.origin)
+              throw new Error("Invalid saved outgoing Steer input.");
+            const origin = message.turnInput.origin;
+            return {
+              sequence: row.id,
+              sourceTurnId: origin.actorTurnId,
+              sourceMessageSeq: messageForTurn(
+                sourceTurns.find(
+                  (turn) => String(turn.id) === origin.actorTurnId,
+                )!,
+              ),
+              target: {
+                kind: "main",
+                sessionId: row.session_id,
+                incarnationId: row.incarnation_id,
+              },
+              messageSeq: row.seq,
+              state: message.turnInput.state,
+              origin,
+              text: message.text,
+            };
+          }),
+          nextCursor: rows.length > limit ? rows[limit - 1].id : null,
+        };
       }
       if (operation === "list_issued_coordinations") {
-        const records = this.db.prepare(`SELECT id, json_extract(payload_json,'$.initiatorTurnId') AS source_turn_id,
+        const records = this.db
+          .prepare(
+            `SELECT id, json_extract(payload_json,'$.initiatorTurnId') AS source_turn_id,
           json_extract(payload_json,'$.body') AS consultation FROM coordination_records_v7
           WHERE initiator_kind=? AND initiator_session_id=? AND initiator_incarnation_id=?
             AND json_extract(payload_json,'$.initiatorTurnId') IN (${marks(turnIds)}) AND id>?
-          ORDER BY id LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? "", limit + 1) as Array<{ id: string; source_turn_id: string; consultation: string }>;
-        return { ok: true, items: records.slice(0, limit).map((record) => ({
-          id: record.id, sourceTurnId: record.source_turn_id, consultation: record.consultation,
-          sourceMessageSeq: messageForTurn(sourceTurns.find((turn) => String(turn.id) === record.source_turn_id)!),
-        })), nextCursor: records.length > limit ? records[limit - 1].id : null };
+          ORDER BY id LIMIT ?`,
+          )
+          .all(
+            target.kind,
+            target.sessionId,
+            target.incarnationId,
+            ...turnIds,
+            pageOptions.cursor ?? "",
+            limit + 1,
+          ) as Array<{
+          id: string;
+          source_turn_id: string;
+          consultation: string;
+        }>;
+        return {
+          ok: true,
+          items: records.slice(0, limit).map((record) => ({
+            id: record.id,
+            sourceTurnId: record.source_turn_id,
+            consultation: record.consultation,
+            sourceMessageSeq: messageForTurn(
+              sourceTurns.find(
+                (turn) => String(turn.id) === record.source_turn_id,
+              )!,
+            ),
+          })),
+          nextCursor: records.length > limit ? records[limit - 1].id : null,
+        };
       }
-      const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
+      const rows = this.db
+        .prepare(
+          `SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
         parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json, q.source_display_position, q.source_display_verified
         FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
         LEFT JOIN auxiliary_sessions auxiliary ON auxiliary.id=q.auxiliary_session_id AND auxiliary.parent_session_id=parent.id
@@ -301,177 +931,754 @@ export class SessionExecutionReadStorage {
           AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
           AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
           AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
-        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, pageOptions.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string; source_display_position: number | null; source_display_verified: number }>;
-      return { ok: true, items: rows.slice(0, limit).map((row) => {
-        const input = captured(row.input_json)!;
-        const origin = input.origin!;
-        const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
-        const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
-        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: messageForTurn(sourceTurn),
-          sourceDisplayPosition: row.source_display_verified === 1 || (sourceTurn.phase === "running" && liveTurnIds.includes(String(sourceTurn.id))) ? row.source_display_position : null,
-          target: recipient, state: row.state, origin, text: input.request.userMessage,
-          ...(input.request.replyTo ? { replyTo: input.request.replyTo } : {}),
-          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}) };
-      }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
+        ORDER BY q.sequence LIMIT ?`,
+        )
+        .all(
+          target.kind,
+          target.sessionId,
+          target.incarnationId,
+          ...turnIds,
+          pageOptions.cursor ?? 0,
+          limit + 1,
+        ) as Array<{
+        id: string;
+        sequence: number;
+        state: string;
+        session_id: string;
+        auxiliary_session_id: string | null;
+        incarnation_id: string;
+        main_incarnation_id: string;
+        input_json: string;
+        source_display_position: number | null;
+        source_display_verified: number;
+      }>;
+      return {
+        ok: true,
+        items: rows.slice(0, limit).map((row) => {
+          const input = captured(row.input_json)!;
+          const origin = input.origin!;
+          const sourceTurn = sourceTurns.find(
+            (turn) => String(turn.id) === origin.actorTurnId,
+          )!;
+          const recipient = row.auxiliary_session_id
+            ? {
+                kind: "auxiliary",
+                sessionId: row.auxiliary_session_id,
+                incarnationId: row.incarnation_id,
+                mainSessionId: row.session_id,
+                mainIncarnationId: row.main_incarnation_id,
+              }
+            : {
+                kind: "main",
+                sessionId: row.session_id,
+                incarnationId: row.incarnation_id,
+              };
+          return {
+            receiptId: row.id,
+            sequence: row.sequence,
+            sourceTurnId: origin.actorTurnId,
+            sourceMessageSeq: messageForTurn(sourceTurn),
+            sourceDisplayPosition:
+              row.source_display_verified === 1 ||
+              (sourceTurn.phase === "running" &&
+                liveTurnIds.includes(String(sourceTurn.id)))
+                ? row.source_display_position
+                : null,
+            target: recipient,
+            state: row.state,
+            origin,
+            text: input.request.userMessage,
+            ...(input.request.replyTo
+              ? { replyTo: input.request.replyTo }
+              : {}),
+            ...(input.coordination
+              ? {
+                  coordination: {
+                    id: input.coordination.id,
+                    text: coordinationDeliveryText(input),
+                    consultation:
+                      readCoordinationNotification(input)?.consultation,
+                  },
+                }
+              : {}),
+          };
+        }),
+        nextCursor: rows.length > limit ? rows[limit - 1].sequence : null,
+      };
     }
+    /** 対象の正確な保存 seq を本文込みで読み、欠落は null、不正な保存形式は例外にする。 */
     const getMessage = (seq: number | null): Message | null => {
       if (seq === null) return null;
-      const row = this.db.prepare(`SELECT role, body FROM ${table} WHERE ${owner} = ? AND seq = ?`).get(target.sessionId, seq) as SavedMessage | undefined;
+      const row = this.db
+        .prepare(
+          `SELECT role, body FROM ${table} WHERE ${owner} = ? AND seq = ?`,
+        )
+        .get(target.sessionId, seq) as SavedMessage | undefined;
       if (!row) return null;
-      const message = normalizeMessage({ ...JSON.parse(row.body), role: row.role });
+      const message = normalizeMessage({
+        ...JSON.parse(row.body),
+        role: row.role,
+      });
       if (!message) throw new Error("Invalid saved execution message.");
       return message;
     };
-    const getTurn = (id: string | null) => id ? this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`).get(target.sessionId, id) as Turn | undefined : undefined;
-    const hasAssistant = (turn: Turn) => turn.assistant_message_seq !== null && Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${owner} = ? AND seq = ? AND role = 'assistant'`).get(target.sessionId, turn.assistant_message_seq));
-    const inputSummary = (entry: Receipt | undefined, turn: Turn | undefined) => {
-      const entryUnchanged = entry ? isInputUnchanged(entry.accepted_json, entry.dispatched_json ?? entry.captured_json) : null;
-      const linked = turn ? this.db.prepare(`SELECT seq, role, json_remove(body, '$.text') AS body, withmate_execution_utf16_length(json_extract(body, '$.text')) AS text_chars FROM ${table} WHERE ${owner} = ? AND role = 'user' AND json_extract(body, '$.turnInput.turnId') = ? ORDER BY seq`).all(target.sessionId, String(turn.id)) as SavedMessage[] : [];
-      const records = linked.map((row) => ({ seq: row.seq, textChars: row.text_chars ?? 0, message: normalizeMessage({ ...JSON.parse(row.body), role: row.role })! }));
-      const confirmed = records.filter((row) => row.message.turnInput?.state === "confirmed");
-      const unresolved = records.filter((row) => row.message.turnInput?.state === "pending" || row.message.turnInput?.state === "unknown");
-      const unresolvedReceipts = turn ? this.db.prepare(`${receiptQuery} AND turn_id = ? AND input_turn_id IS NOT NULL AND user_message_seq IS NULL AND state IN ('starting', 'interrupted')`).all(...queueParams, String(turn.id)) as Receipt[] : [];
-      const start = turn ? this.db.prepare(`${receiptQuery} AND turn_id = ? AND input_turn_id IS NULL AND user_message_seq = ? ORDER BY sequence LIMIT 1`).get(...queueParams, String(turn.id), turn.user_message_seq) as Receipt | undefined : undefined;
-      const startOriginal = start ? comparisonInput(captured(start.accepted_json)) : null;
-      const startFixed = start ? comparisonInput(captured(start.dispatched_json)) : null;
-      const unresolvedReferences = [...unresolved.map(({ seq, message }) => ({ seq, state: message.turnInput!.state })), ...unresolvedReceipts.map((row) => ({ seq: null, receiptId: row.id, state: row.state === "starting" ? "pending" : "unknown" }))];
-      const notSent = records.filter((row) => row.message.turnInput?.state === "not-sent");
+    /** 対象 Session に属する Turn の設定と保存位置を ID で取得する。 */
+    const getTurn = (id: string | null) =>
+      id
+        ? (this.db
+            .prepare(
+              `SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`,
+            )
+            .get(target.sessionId, id) as Turn | undefined)
+        : undefined;
+    /** Turn の結果位置に実際にアシスタント発言が保存されているか確認する。 */
+    const hasAssistant = (turn: Turn) =>
+      turn.assistant_message_seq !== null &&
+      Boolean(
+        this.db
+          .prepare(
+            `SELECT 1 FROM ${table} WHERE ${owner} = ? AND seq = ? AND role = 'assistant'`,
+          )
+          .get(target.sessionId, turn.assistant_message_seq),
+      );
+    /** 開始入力の変更有無と、追加入力の確定・未解決・未送信を分けて読み、一覧の参照と集計を作る。 */
+    const inputSummary = (
+      entry: Receipt | undefined,
+      turn: Turn | undefined,
+    ) => {
+      const entryUnchanged = entry
+        ? isInputUnchanged(
+            entry.accepted_json,
+            entry.dispatched_json ?? entry.captured_json,
+          )
+        : null;
+      const linked = turn
+        ? (this.db
+            .prepare(
+              `SELECT seq, role, json_remove(body, '$.text') AS body, withmate_execution_utf16_length(json_extract(body, '$.text')) AS text_chars FROM ${table} WHERE ${owner} = ? AND role = 'user' AND json_extract(body, '$.turnInput.turnId') = ? ORDER BY seq`,
+            )
+            .all(target.sessionId, String(turn.id)) as SavedMessage[])
+        : [];
+      const records = linked.map((row) => ({
+        seq: row.seq,
+        textChars: row.text_chars ?? 0,
+        message: normalizeMessage({ ...JSON.parse(row.body), role: row.role })!,
+      }));
+      const confirmed = records.filter(
+        (row) => row.message.turnInput?.state === "confirmed",
+      );
+      const unresolved = records.filter(
+        (row) =>
+          row.message.turnInput?.state === "pending" ||
+          row.message.turnInput?.state === "unknown",
+      );
+      const unresolvedReceipts = turn
+        ? (this.db
+            .prepare(
+              `${receiptQuery} AND turn_id = ? AND input_turn_id IS NOT NULL AND user_message_seq IS NULL AND state IN ('starting', 'interrupted')`,
+            )
+            .all(...queueParams, String(turn.id)) as Receipt[])
+        : [];
+      const start = turn
+        ? (this.db
+            .prepare(
+              `${receiptQuery} AND turn_id = ? AND input_turn_id IS NULL AND user_message_seq = ? ORDER BY sequence LIMIT 1`,
+            )
+            .get(...queueParams, String(turn.id), turn.user_message_seq) as
+            Receipt | undefined)
+        : undefined;
+      const startOriginal = start
+        ? comparisonInput(captured(start.accepted_json))
+        : null;
+      const startFixed = start
+        ? comparisonInput(captured(start.dispatched_json))
+        : null;
+      const unresolvedReferences = [
+        ...unresolved.map(({ seq, message }) => ({
+          seq,
+          state: message.turnInput!.state,
+        })),
+        ...unresolvedReceipts.map((row) => ({
+          seq: null,
+          receiptId: row.id,
+          state: row.state === "starting" ? "pending" : "unknown",
+        })),
+      ];
+      const notSent = records.filter(
+        (row) => row.message.turnInput?.state === "not-sent",
+      );
       return {
-        records, confirmed, unresolvedReferences, notSent,
+        records,
+        confirmed,
+        unresolvedReferences,
+        notSent,
         summary: {
-          entry: entry ? { receiptId: entry.id, inputSeq: entry.user_message_seq, kind: entry.input_turn_id === null ? "start" : "additional", stage: entry.dispatched_json !== null ? "fixed" : entry.state === "queued" ? "planned" : "not-fixed",
-            comparison: entryUnchanged === null ? "unknown" : entryUnchanged ? "unchanged" : "changed", detail: { operation: "get_execution_input", receiptId: entry.id } } : null,
-          startChanged: startOriginal !== null && startFixed !== null ? startOriginal !== startFixed : null,
-          additional: { confirmedCount: confirmed.length, references: confirmed.slice(0, 100).map(({ seq }) => ({ seq })), referencesNextOffset: confirmed.length > 100 ? 101 : null, unresolved: unresolvedReferences.slice(0, 100), unresolvedCount: unresolvedReferences.length, unresolvedNextOffset: unresolvedReferences.length > 100 ? 100 : null, notSent: notSent.slice(0, 100).map(({ seq }) => ({ seq })), notSentCount: notSent.length, notSentNextOffset: notSent.length > 100 ? 100 : null, coverage: start?.accepted_json ? "recorded" : "unknown" },
+          entry: entry
+            ? {
+                receiptId: entry.id,
+                inputSeq: entry.user_message_seq,
+                kind: entry.input_turn_id === null ? "start" : "additional",
+                stage:
+                  entry.dispatched_json !== null
+                    ? "fixed"
+                    : entry.state === "queued"
+                      ? "planned"
+                      : "not-fixed",
+                comparison:
+                  entryUnchanged === null
+                    ? "unknown"
+                    : entryUnchanged
+                      ? "unchanged"
+                      : "changed",
+                detail: {
+                  operation: "get_execution_input",
+                  receiptId: entry.id,
+                },
+              }
+            : null,
+          startChanged:
+            startOriginal !== null && startFixed !== null
+              ? startOriginal !== startFixed
+              : null,
+          additional: {
+            confirmedCount: confirmed.length,
+            references: confirmed.slice(0, 100).map(({ seq }) => ({ seq })),
+            referencesNextOffset: confirmed.length > 100 ? 101 : null,
+            unresolved: unresolvedReferences.slice(0, 100),
+            unresolvedCount: unresolvedReferences.length,
+            unresolvedNextOffset:
+              unresolvedReferences.length > 100 ? 100 : null,
+            notSent: notSent.slice(0, 100).map(({ seq }) => ({ seq })),
+            notSentCount: notSent.length,
+            notSentNextOffset: notSent.length > 100 ? 100 : null,
+            coverage: start?.accepted_json ? "recorded" : "unknown",
+          },
         },
       };
     };
-    const describeExecution = (entry: Receipt | undefined, turn: Turn | undefined) => ({
-      origin: entry ? captured(entry.dispatched_json)?.origin ?? captured(entry.accepted_json)?.origin ?? null : null,
-      retrySource: entry ? captured(entry.dispatched_json)?.retrySource ?? captured(entry.accepted_json)?.retrySource ?? null : null,
-      receiptId: entry?.id ?? null, receiptState: entry?.state ?? null, turnId: turn ? String(turn.id) : entry?.turn_id ?? null,
-      turnState: turn?.phase ?? null, resultState: !turn ? entry?.dispatched_json ? "unknown" : "not-started" : !hasAssistant(turn) ? turn.phase === "running" ? "running" : "not-saved" : turn.phase === "completed" ? "saved" : "partial",
-      userMessageSeq: turn?.user_message_seq ?? null, assistantMessageSeq: turn?.assistant_message_seq ?? null,
+    /** 保存された受領記録と Turn を照合し、未開始・未保存・部分保存・確定保存などの結果状態と入力概要を組み立てる。 */
+    const describeExecution = (
+      entry: Receipt | undefined,
+      turn: Turn | undefined,
+    ) => ({
+      origin: entry
+        ? (captured(entry.dispatched_json)?.origin ??
+          captured(entry.accepted_json)?.origin ??
+          null)
+        : null,
+      retrySource: entry
+        ? (captured(entry.dispatched_json)?.retrySource ??
+          captured(entry.accepted_json)?.retrySource ??
+          null)
+        : null,
+      receiptId: entry?.id ?? null,
+      receiptState: entry?.state ?? null,
+      turnId: turn ? String(turn.id) : (entry?.turn_id ?? null),
+      turnState: turn?.phase ?? null,
+      resultState: !turn
+        ? entry?.dispatched_json
+          ? "unknown"
+          : "not-started"
+        : !hasAssistant(turn)
+          ? turn.phase === "running"
+            ? "running"
+            : "not-saved"
+          : turn.phase === "completed"
+            ? "saved"
+            : "partial",
+      userMessageSeq: turn?.user_message_seq ?? null,
+      assistantMessageSeq: turn?.assistant_message_seq ?? null,
       inputs: inputSummary(entry, turn).summary,
     });
     if (operation === "list_executions") {
-      const options = request as { kind?: "receipts" | "turns"; offset?: number; limit?: number };
+      const options = request as {
+        kind?: "receipts" | "turns";
+        offset?: number;
+        limit?: number;
+      };
       const offset = options.offset ?? 0;
       const limit = options.limit ?? 32;
-      const total = (options.kind === "turns" ? this.db.prepare(`SELECT COUNT(*) AS count FROM session_turns_v6 WHERE ${turnWhere}`).get(target.sessionId) : this.db.prepare(`SELECT COUNT(*) AS count FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`).get(...queueParams)) as { count: number };
-      if (offset > total.count) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond the list.");
-      const items = options.kind === "turns" ? (this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} ORDER BY id LIMIT ? OFFSET ?`).all(target.sessionId, limit, offset) as Turn[]).map((turn) => describeExecution(undefined, turn)) : (this.db.prepare(`${receiptQuery} ORDER BY sequence LIMIT ? OFFSET ?`).all(...queueParams, limit, offset) as Receipt[]).map((receipt) => describeExecution(receipt, getTurn(receipt.turn_id)));
-      return { ok: true, kind: options.kind ?? "receipts", items, offset, total: total.count, nextOffset: offset + items.length < total.count ? offset + items.length : null };
+      const total = (
+        options.kind === "turns"
+          ? this.db
+              .prepare(
+                `SELECT COUNT(*) AS count FROM session_turns_v6 WHERE ${turnWhere}`,
+              )
+              .get(target.sessionId)
+          : this.db
+              .prepare(
+                `SELECT COUNT(*) AS count FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`,
+              )
+              .get(...queueParams)
+      ) as { count: number };
+      if (offset > total.count)
+        return failure(
+          "EXECUTION_INVALID_REQUEST",
+          "Offset is beyond the list.",
+        );
+      const items =
+        options.kind === "turns"
+          ? (
+              this.db
+                .prepare(
+                  `SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} ORDER BY id LIMIT ? OFFSET ?`,
+                )
+                .all(target.sessionId, limit, offset) as Turn[]
+            ).map((turn) => describeExecution(undefined, turn))
+          : (
+              this.db
+                .prepare(`${receiptQuery} ORDER BY sequence LIMIT ? OFFSET ?`)
+                .all(...queueParams, limit, offset) as Receipt[]
+            ).map((receipt) =>
+              describeExecution(receipt, getTurn(receipt.turn_id)),
+            );
+      return {
+        ok: true,
+        kind: options.kind ?? "receipts",
+        items,
+        offset,
+        total: total.count,
+        nextOffset:
+          offset + items.length < total.count ? offset + items.length : null,
+      };
     }
-    const ref = request as { receiptId?: string; turnId?: string; messageSeq?: number; offset?: number; limit?: number; maxChars?: number; seq?: number; stage?: "original" | "comparison"; expectedInput?: string; index?: number; state?: "confirmed" | "unresolved" | "not-sent" };
-    let receipt = ref.receiptId ? this.db.prepare(`${receiptQuery} AND id = ?`).get(...queueParams, ref.receiptId) as Receipt | undefined : undefined;
-    if (ref.receiptId && !receipt) return failure("EXECUTION_NOT_FOUND", "The receipt does not belong to this target.");
+    const ref = request as {
+      receiptId?: string;
+      turnId?: string;
+      messageSeq?: number;
+      offset?: number;
+      limit?: number;
+      maxChars?: number;
+      seq?: number;
+      stage?: "original" | "comparison";
+      expectedInput?: string;
+      index?: number;
+      state?: "confirmed" | "unresolved" | "not-sent";
+    };
+    let receipt = ref.receiptId
+      ? (this.db
+          .prepare(`${receiptQuery} AND id = ?`)
+          .get(...queueParams, ref.receiptId) as Receipt | undefined)
+      : undefined;
+    if (ref.receiptId && !receipt)
+      return failure(
+        "EXECUTION_NOT_FOUND",
+        "The receipt does not belong to this target.",
+      );
     let turn = getTurn(receipt?.turn_id ?? ref.turnId ?? null);
     let messageOrigin: SessionSteerOrigin | undefined;
     if (ref.messageSeq !== undefined) {
       const message = getMessage(ref.messageSeq);
-      if (!message) return failure("EXECUTION_MESSAGE_NOT_SAVED", "No message is saved at this exact sequence.");
-      if (message.turnInput && !message.turnInput.queueId) messageOrigin = message.turnInput.origin;
-      const matchingReceipts = this.db.prepare(`${receiptQuery} AND user_message_seq = ?`).all(...queueParams, ref.messageSeq) as Receipt[];
-      if (matchingReceipts.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous receipt linkage.");
+      if (!message)
+        return failure(
+          "EXECUTION_MESSAGE_NOT_SAVED",
+          "No message is saved at this exact sequence.",
+        );
+      if (message.turnInput && !message.turnInput.queueId)
+        messageOrigin = message.turnInput.origin;
+      const matchingReceipts = this.db
+        .prepare(`${receiptQuery} AND user_message_seq = ?`)
+        .all(...queueParams, ref.messageSeq) as Receipt[];
+      if (matchingReceipts.length > 1)
+        return failure(
+          "EXECUTION_LINK_UNAVAILABLE",
+          "The saved message has ambiguous receipt linkage.",
+        );
       receipt = matchingReceipts[0];
       if (receipt) turn = getTurn(receipt.turn_id);
       else if (message.turnInput) turn = getTurn(message.turnInput.turnId);
       else {
-        const matchingTurns = this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND (user_message_seq = ? OR assistant_message_seq = ?)`).all(target.sessionId, ref.messageSeq, ref.messageSeq) as Turn[];
-        if (matchingTurns.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous Turn linkage.");
+        const matchingTurns = this.db
+          .prepare(
+            `SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND (user_message_seq = ? OR assistant_message_seq = ?)`,
+          )
+          .all(target.sessionId, ref.messageSeq, ref.messageSeq) as Turn[];
+        if (matchingTurns.length > 1)
+          return failure(
+            "EXECUTION_LINK_UNAVAILABLE",
+            "The saved message has ambiguous Turn linkage.",
+          );
         turn = matchingTurns[0];
       }
-      if (!turn && !receipt) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has no recorded execution linkage.");
-      if (message.role === "user" && ref.seq === undefined) ref.seq = ref.messageSeq;
+      if (!turn && !receipt)
+        return failure(
+          "EXECUTION_LINK_UNAVAILABLE",
+          "The saved message has no recorded execution linkage.",
+        );
+      if (message.role === "user" && ref.seq === undefined)
+        ref.seq = ref.messageSeq;
     }
-    if (ref.turnId && !turn) return failure("EXECUTION_NOT_FOUND", "The Turn does not belong to this target.");
-    if (receipt?.turn_id && !turn) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's exact saved Turn is unavailable.");
-    if (receipt && turn && receipt.input_turn_id === null && receipt.user_message_seq !== null && receipt.user_message_seq !== turn.user_message_seq) return failure("EXECUTION_LINK_UNAVAILABLE", "The receipt's start input does not match its saved Turn.");
-    const description = { ...describeExecution(receipt, turn), sourceMessageSeq: ref.messageSeq ?? null };
+    if (ref.turnId && !turn)
+      return failure(
+        "EXECUTION_NOT_FOUND",
+        "The Turn does not belong to this target.",
+      );
+    if (receipt?.turn_id && !turn)
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The receipt's exact saved Turn is unavailable.",
+      );
+    if (
+      receipt &&
+      turn &&
+      receipt.input_turn_id === null &&
+      receipt.user_message_seq !== null &&
+      receipt.user_message_seq !== turn.user_message_seq
+    )
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The receipt's start input does not match its saved Turn.",
+      );
+    const description = {
+      ...describeExecution(receipt, turn),
+      sourceMessageSeq: ref.messageSeq ?? null,
+    };
     const inputs = inputSummary(receipt, turn);
     const assistant = getMessage(turn?.assistant_message_seq ?? null);
-    if (assistant && assistant.role !== "assistant") return failure("EXECUTION_LINK_UNAVAILABLE", "The Turn's result sequence is not an assistant message.");
+    if (assistant && assistant.role !== "assistant")
+      return failure(
+        "EXECUTION_LINK_UNAVAILABLE",
+        "The Turn's result sequence is not an assistant message.",
+      );
     if (operation === "get_execution") {
-      const input = receipt ? captured(receipt.dispatched_json ?? receipt.captured_json) : null;
-      const executionSettings = input ? { source: "input", provider: input.provider, ...input.request.executionOptions }
-        : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
-          approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
-      const inputOrigin = messageOrigin ?? captured(receipt?.dispatched_json ?? receipt?.accepted_json ?? receipt?.captured_json ?? null)?.origin;
-      return { ok: true, ...description, executionSettings, senderTheme: senderTheme(this.db, inputOrigin),
-        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input), consultation: readCoordinationNotification(input)?.consultation } } : {}),
-        output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
+      const input = receipt
+        ? captured(receipt.dispatched_json ?? receipt.captured_json)
+        : null;
+      const executionSettings = input
+        ? {
+            source: "input",
+            provider: input.provider,
+            ...input.request.executionOptions,
+          }
+        : turn
+          ? {
+              source: "turn",
+              provider: turn.provider_id,
+              model: turn.model_id,
+              reasoningEffort: turn.reasoning_effort,
+              approvalMode: turn.approval_mode,
+              codexSandboxMode: turn.sandbox_mode,
+              codexReviewer: null,
+              codexSpeed: null,
+              customAgentName: null,
+            }
+          : null;
+      const inputOrigin =
+        messageOrigin ??
+        captured(
+          receipt?.dispatched_json ??
+            receipt?.accepted_json ??
+            receipt?.captured_json ??
+            null,
+        )?.origin;
+      return {
+        ok: true,
+        ...description,
+        executionSettings,
+        senderTheme: senderTheme(this.db, inputOrigin),
+        ...(input?.coordination
+          ? {
+              coordination: {
+                id: input.coordination.id,
+                text: coordinationDeliveryText(input),
+                consultation: readCoordinationNotification(input)?.consultation,
+              },
+            }
+          : {}),
+        output: assistant
+          ? {
+              finality: assistant.output?.finality ?? "unknown",
+              unitCount:
+                assistant.output?.units.length ?? (assistant.text ? 1 : 0),
+              textChars: assistant.text.length,
+              artifactSaved: Boolean(assistant.artifact),
+            }
+          : null,
+      };
     }
     if (operation === "list_execution_inputs") {
       const all: object[] = [];
-      if ((!ref.state || ref.state === "confirmed") && turn?.user_message_seq !== null && turn?.user_message_seq !== undefined) {
+      if (
+        (!ref.state || ref.state === "confirmed") &&
+        turn?.user_message_seq !== null &&
+        turn?.user_message_seq !== undefined
+      ) {
         const start = getMessage(turn.user_message_seq);
-        if (start) all.push({ seq: turn.user_message_seq, kind: "start", textChars: start.text.length, attachments: null });
+        if (start)
+          all.push({
+            seq: turn.user_message_seq,
+            kind: "start",
+            textChars: start.text.length,
+            attachments: null,
+          });
       }
-      if (ref.state === "unresolved") all.push(...inputs.unresolvedReferences.map((row) => ({ ...row, kind: "additional", textChars: row.seq === null ? null : inputs.records.find((record) => record.seq === row.seq)?.textChars ?? null, attachments: null, queueId: "receiptId" in row ? row.receiptId : null,
-        inputOrigin: inputs.records.find((record) => record.seq === row.seq)?.message.turnInput?.origin ?? null })));
-      else all.push(...(ref.state === "not-sent" ? inputs.notSent : inputs.confirmed).map(({ seq, message, textChars }) => ({ seq, kind: "additional", textChars, state: message.turnInput!.state, queueId: message.turnInput!.queueId ?? null, attachments: attachments(message.turnInput!.attachments), inputOrigin: message.turnInput!.origin ?? null })));
-      if ((ref.offset ?? 0) > all.length) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond the input list.");
+      if (ref.state === "unresolved")
+        all.push(
+          ...inputs.unresolvedReferences.map((row) => ({
+            ...row,
+            kind: "additional",
+            textChars:
+              row.seq === null
+                ? null
+                : (inputs.records.find((record) => record.seq === row.seq)
+                    ?.textChars ?? null),
+            attachments: null,
+            queueId: "receiptId" in row ? row.receiptId : null,
+            inputOrigin:
+              inputs.records.find((record) => record.seq === row.seq)?.message
+                .turnInput?.origin ?? null,
+          })),
+        );
+      else
+        all.push(
+          ...(ref.state === "not-sent" ? inputs.notSent : inputs.confirmed).map(
+            ({ seq, message, textChars }) => ({
+              seq,
+              kind: "additional",
+              textChars,
+              state: message.turnInput!.state,
+              queueId: message.turnInput!.queueId ?? null,
+              attachments: attachments(message.turnInput!.attachments),
+              inputOrigin: message.turnInput!.origin ?? null,
+            }),
+          ),
+        );
+      if ((ref.offset ?? 0) > all.length)
+        return failure(
+          "EXECUTION_INVALID_REQUEST",
+          "Offset is beyond the input list.",
+        );
       return { ok: true, ...description, ...page(all, ref.offset, ref.limit) };
     }
     if (operation === "get_execution_input") {
       let inputOrigin: SessionSteerOrigin | null = null;
-      let value: { text: string; attachments: ReturnType<typeof attachments> } | null;
-      const startReceipt = turn ? this.db.prepare(`${receiptQuery} AND turn_id = ? AND input_turn_id IS NULL AND user_message_seq = ? ORDER BY sequence LIMIT 1`).get(...queueParams, String(turn.id), turn.user_message_seq) as Receipt | undefined : undefined;
-      const inputReceipt = ref.seq !== undefined && ref.seq === turn?.user_message_seq ? startReceipt : receipt ?? startReceipt;
-      let original = inputReceipt ? publicInput(captured(inputReceipt.accepted_json)) : null;
-      let comparison = inputReceipt ? publicInput(captured(inputReceipt.dispatched_json ?? inputReceipt.captured_json)) : null;
+      let value: {
+        text: string;
+        attachments: ReturnType<typeof attachments>;
+      } | null;
+      const startReceipt = turn
+        ? (this.db
+            .prepare(
+              `${receiptQuery} AND turn_id = ? AND input_turn_id IS NULL AND user_message_seq = ? ORDER BY sequence LIMIT 1`,
+            )
+            .get(...queueParams, String(turn.id), turn.user_message_seq) as
+            Receipt | undefined)
+        : undefined;
+      const inputReceipt =
+        ref.seq !== undefined && ref.seq === turn?.user_message_seq
+          ? startReceipt
+          : (receipt ?? startReceipt);
+      let original = inputReceipt
+        ? publicInput(captured(inputReceipt.accepted_json))
+        : null;
+      let comparison = inputReceipt
+        ? publicInput(
+            captured(
+              inputReceipt.dispatched_json ?? inputReceipt.captured_json,
+            ),
+          )
+        : null;
       if (ref.seq !== undefined) {
         const linked = inputs.records.find((row) => row.seq === ref.seq);
         if (linked) {
           const message = getMessage(linked.seq)!;
           inputOrigin = message.turnInput!.origin ?? null;
-          comparison = { text: message.text, attachments: attachments(message.turnInput!.attachments) };
-          const linkedReceipt = linked.message.turnInput!.queueId ? this.db.prepare(`${receiptQuery} AND id = ?`).get(...queueParams, linked.message.turnInput!.queueId!) as Receipt | undefined : undefined;
-          original = linkedReceipt ? publicInput(captured(linkedReceipt.accepted_json)) : linked.message.turnInput!.queueId ? null : comparison;
+          comparison = {
+            text: message.text,
+            attachments: attachments(message.turnInput!.attachments),
+          };
+          const linkedReceipt = linked.message.turnInput!.queueId
+            ? (this.db
+                .prepare(`${receiptQuery} AND id = ?`)
+                .get(...queueParams, linked.message.turnInput!.queueId!) as
+                Receipt | undefined)
+            : undefined;
+          original = linkedReceipt
+            ? publicInput(captured(linkedReceipt.accepted_json))
+            : linked.message.turnInput!.queueId
+              ? null
+              : comparison;
           value = ref.stage === "original" ? original : comparison;
-        }
-        else if (turn?.user_message_seq === ref.seq) { const start = getMessage(ref.seq); comparison = comparison ?? (start ? { text: start.text, attachments: [] } : null); value = ref.stage === "original" ? original : comparison; }
-        else return failure("EXECUTION_INPUT_NOT_FOUND", "The input is not linked to this exact Turn.");
+        } else if (turn?.user_message_seq === ref.seq) {
+          const start = getMessage(ref.seq);
+          comparison =
+            comparison ??
+            (start ? { text: start.text, attachments: [] } : null);
+          value = ref.stage === "original" ? original : comparison;
+        } else
+          return failure(
+            "EXECUTION_INPUT_NOT_FOUND",
+            "The input is not linked to this exact Turn.",
+          );
       } else {
-        if (!comparison && turn) { const message = getMessage(turn.user_message_seq); comparison = message ? { text: message.text, attachments: [] } : null; }
+        if (!comparison && turn) {
+          const message = getMessage(turn.user_message_seq);
+          comparison = message ? { text: message.text, attachments: [] } : null;
+        }
         value = ref.stage === "original" ? original : comparison;
       }
-      if (!value) return failure("EXECUTION_INPUT_UNKNOWN", "The requested saved input is unavailable; its original is not reconstructed.");
-      const token = JSON.stringify([target, inputReceipt?.id ?? null, ref.seq ?? turn?.user_message_seq ?? null, inputReceipt?.updated_at ?? null]);
-      if ((ref.offset ?? 0) > 0 && !ref.expectedInput) return failure("EXECUTION_INPUT_RESTART_REQUIRED", "Continue with expectedInput from the first page.");
-      if (ref.expectedInput !== undefined && ref.expectedInput !== token) return failure("EXECUTION_INPUT_RESTART_REQUIRED", "The comparison input changed; restart reading from offset zero.");
+      if (!value)
+        return failure(
+          "EXECUTION_INPUT_UNKNOWN",
+          "The requested saved input is unavailable; its original is not reconstructed.",
+        );
+      const token = JSON.stringify([
+        target,
+        inputReceipt?.id ?? null,
+        ref.seq ?? turn?.user_message_seq ?? null,
+        inputReceipt?.updated_at ?? null,
+      ]);
+      if ((ref.offset ?? 0) > 0 && !ref.expectedInput)
+        return failure(
+          "EXECUTION_INPUT_RESTART_REQUIRED",
+          "Continue with expectedInput from the first page.",
+        );
+      if (ref.expectedInput !== undefined && ref.expectedInput !== token)
+        return failure(
+          "EXECUTION_INPUT_RESTART_REQUIRED",
+          "The comparison input changed; restart reading from offset zero.",
+        );
       const piece = textPage(value.text, ref.offset, ref.maxChars);
+      /** 比較対象の各本文で安全な開始位置を選び、添付情報とともに同じ要求の文字数上限でページ化する。 */
       const paired = (input: ReturnType<typeof publicInput>) => {
         if (!input) return null;
         let offset = Math.min(ref.offset ?? 0, input.text.length);
-        if (offset > 0 && /[\uDC00-\uDFFF]/.test(input.text[offset] ?? "") && /[\uD800-\uDBFF]/.test(input.text[offset - 1])) offset -= 1;
-        return { ...textPage(input.text, offset, ref.maxChars), attachments: input.attachments };
+        if (
+          offset > 0 &&
+          /[\uDC00-\uDFFF]/.test(input.text[offset] ?? "") &&
+          /[\uD800-\uDBFF]/.test(input.text[offset - 1])
+        )
+          offset -= 1;
+        return {
+          ...textPage(input.text, offset, ref.maxChars),
+          attachments: input.attachments,
+        };
       };
-      return piece.ok ? { ...piece, ...description, inputOrigin, attachments: value.attachments, expectedInput: token, originalKnown: original !== null, inputPair: { original: paired(original), comparison: paired(comparison) } } : piece;
+      return piece.ok
+        ? {
+            ...piece,
+            ...description,
+            inputOrigin,
+            attachments: value.attachments,
+            expectedInput: token,
+            originalKnown: original !== null,
+            inputPair: {
+              original: paired(original),
+              comparison: paired(comparison),
+            },
+          }
+        : piece;
     }
-    if (!assistant || !turn || turn.assistant_message_seq === null) return failure("EXECUTION_RESULT_NOT_SAVED", "This exact Turn has no saved assistant result yet.");
-    const units = assistant.output?.units ?? (assistant.text ? [{ id: "saved-unclassified", start: 0, end: assistant.text.length, role: "unclassified", phase: null, completion: "unknown", final: false, evidence: null }] : []);
+    if (!assistant || !turn || turn.assistant_message_seq === null)
+      return failure(
+        "EXECUTION_RESULT_NOT_SAVED",
+        "This exact Turn has no saved assistant result yet.",
+      );
+    const units =
+      assistant.output?.units ??
+      (assistant.text
+        ? [
+            {
+              id: "saved-unclassified",
+              start: 0,
+              end: assistant.text.length,
+              role: "unclassified",
+              phase: null,
+              completion: "unknown",
+              final: false,
+              evidence: null,
+            },
+          ]
+        : []);
     if (operation === "list_execution_outputs") {
-      if ((ref.offset ?? 0) > units.length) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond the output list.");
-      return { ok: true, ...description, finality: assistant.output?.finality ?? "unknown", ...page(units.map((unit, index) => ({ ...unit, index, textChars: unit.end - unit.start })), ref.offset, ref.limit) };
+      if ((ref.offset ?? 0) > units.length)
+        return failure(
+          "EXECUTION_INVALID_REQUEST",
+          "Offset is beyond the output list.",
+        );
+      return {
+        ok: true,
+        ...description,
+        finality: assistant.output?.finality ?? "unknown",
+        ...page(
+          units.map((unit, index) => ({
+            ...unit,
+            index,
+            textChars: unit.end - unit.start,
+          })),
+          ref.offset,
+          ref.limit,
+        ),
+      };
     }
     if (operation === "get_execution_output") {
       const unit = units[ref.index!];
-      if (!unit) return failure("EXECUTION_OUTPUT_NOT_FOUND", "No saved output exists at this index.");
-      const piece = textPage(assistant.text.slice(unit.start, unit.end), ref.offset, ref.maxChars);
-      return piece.ok ? { ...piece, ...description, unit, finality: assistant.output?.finality ?? "unknown" } : piece;
+      if (!unit)
+        return failure(
+          "EXECUTION_OUTPUT_NOT_FOUND",
+          "No saved output exists at this index.",
+        );
+      const piece = textPage(
+        assistant.text.slice(unit.start, unit.end),
+        ref.offset,
+        ref.maxChars,
+      );
+      return piece.ok
+        ? {
+            ...piece,
+            ...description,
+            unit,
+            finality: assistant.output?.finality ?? "unknown",
+          }
+        : piece;
     }
-    const historyOperation: SessionHistoryOperation = operation === "list_execution_operations" ? "list_operations" : "get_operation_detail";
-    const { target: _target, receiptId: _receipt, turnId: _turn, messageSeq: _messageSeq, ...detailRequest } = request as Record<string, unknown>;
-    const result: SessionHistoryResult = readSessionHistory(this.db, { scope: { source, fromMessageSeq: turn.assistant_message_seq, throughMessageSeq: turn.assistant_message_seq }, operation: historyOperation, request: { ...detailRequest, seq: turn.assistant_message_seq } as SessionHistoryRequest });
+    const historyOperation: SessionHistoryOperation =
+      operation === "list_execution_operations"
+        ? "list_operations"
+        : "get_operation_detail";
+    const {
+      target: _target,
+      receiptId: _receipt,
+      turnId: _turn,
+      messageSeq: _messageSeq,
+      ...detailRequest
+    } = request as Record<string, unknown>;
+    const result: SessionHistoryResult = readSessionHistory(this.db, {
+      scope: {
+        source,
+        fromMessageSeq: turn.assistant_message_seq,
+        throughMessageSeq: turn.assistant_message_seq,
+      },
+      operation: historyOperation,
+      request: {
+        ...detailRequest,
+        seq: turn.assistant_message_seq,
+      } as SessionHistoryRequest,
+    });
     return result.ok ? { ...result, ...description } : result;
   }
 }
 
+/** 保存本文を UTF-16 単位でページ化する。範囲外やサロゲートペア途中からの指定は拒否し、終端もペアを分断しない。 */
 function textPage(text: string, offset = 0, maxChars = 32000): Result {
-  if (offset > text.length || (offset > 0 && /[\uDC00-\uDFFF]/.test(text[offset] ?? "") && /[\uD800-\uDBFF]/.test(text[offset - 1]))) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond text or inside a surrogate pair.");
+  if (
+    offset > text.length ||
+    (offset > 0 &&
+      /[\uDC00-\uDFFF]/.test(text[offset] ?? "") &&
+      /[\uD800-\uDBFF]/.test(text[offset - 1]))
+  )
+    return failure(
+      "EXECUTION_INVALID_REQUEST",
+      "Offset is beyond text or inside a surrogate pair.",
+    );
   let end = Math.min(text.length, offset + maxChars);
-  if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end = end > offset + 1 ? end - 1 : end + 1;
-  return { ok: true, text: text.slice(offset, end), offset, nextOffset: end < text.length ? end : null, totalChars: text.length };
+  if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]))
+    end = end > offset + 1 ? end - 1 : end + 1;
+  return {
+    ok: true,
+    text: text.slice(offset, end),
+    offset,
+    nextOffset: end < text.length ? end : null,
+    totalChars: text.length,
+  };
 }

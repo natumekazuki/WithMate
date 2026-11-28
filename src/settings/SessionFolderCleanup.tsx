@@ -12,22 +12,40 @@ import { ButtonContent } from "../ui/button-content.js";
 import { useDialogA11y } from "../ui/a11y.js";
 import { SettingsActionButton } from "./SettingsActionButton.js";
 
+/** セッションファイルの削除候補を計算し、確認した計算結果を実行する API。 */
 export type SessionFolderCleanupApi = {
-  scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
-  runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
+  /** 指定された期間と最小サイズで、削除候補と確認用の計算 ID を得る。 */
+  scanSessionFolderCleanup(
+    request: SessionFolderCleanupRequest,
+  ): Promise<SessionFolderCleanupScan>;
+  /** 確認に使った計算 ID を渡し、実行結果を受け取る。 */
+  runSessionFolderCleanup(request: {
+    scanId: string;
+  }): Promise<SessionFolderCleanupResult>;
 };
 
 const numberFormat = new Intl.NumberFormat("en-US");
+/** 容量を 1024 基数で整形する。バイトは整数、上位単位は小数第2位まで表示する。 */
 export function formatCleanupBytes(bytes: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  const index = bytes > 0 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
+  const index =
+    bytes > 0
+      ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+      : 0;
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: index === 0 ? 0 : 2 }).format(bytes / 1024 ** index)} ${units[index]}`;
 }
 
+/** スキップの情報を除き、失敗した項目のパスまたはセッション ID と理由を行ごとにまとめる。 */
 function issueText(issues: readonly SessionFolderCleanupIssue[]): string {
-  return issues.filter((issue) => issue.kind === "failed").map((issue) => `${issue.relativePath || issue.sessionId}: ${issue.message}`).join("\n");
+  return issues
+    .filter((issue) => issue.kind === "failed")
+    .map(
+      (issue) => `${issue.relativePath || issue.sessionId}: ${issue.message}`,
+    )
+    .join("\n");
 }
 
+/** 両端指定・片側指定・期間指定なしを区別して確認画面の期間を表示する。 */
 function periodLabel(request: SessionFolderCleanupRequest): string {
   if (!request.fromDate && !request.toDate) return "All Dates";
   if (!request.fromDate) return `Through ${request.toDate}`;
@@ -35,46 +53,94 @@ function periodLabel(request: SessionFolderCleanupRequest): string {
   return `${request.fromDate} – ${request.toDate}`;
 }
 
-function CleanupConfirmation({ scan, themeSource, onCancel, onConfirm, onRestoreFocus }: {
+/** 計算時の条件・ファイル数・容量を提示して永久削除を確認する。ポータル先へ設定画面の配色を引き継ぐ。 */
+function CleanupConfirmation({
+  scan,
+  themeSource,
+  onCancel,
+  onConfirm,
+  onRestoreFocus,
+}: {
   scan: SessionFolderCleanupScan;
   themeSource: HTMLElement;
+  /** 削除せずに確認を取り消す。 */
   onCancel(): void;
+  /** 表示した候補の削除を確定する。 */
   onConfirm(): void;
+  /** モーダルを閉じた後に呼び出し元へフォーカスを戻す。 */
   onRestoreFocus(): void;
 }) {
-  const { dialogRef: dialog, handleDialogKeyDown } = useDialogA11y<HTMLDialogElement>({ open: true, onClose: onCancel });
+  const { dialogRef: dialog, handleDialogKeyDown } =
+    useDialogA11y<HTMLDialogElement>({ open: true, onClose: onCancel });
   const titleId = useId();
   useEffect(() => {
     const element = dialog.current!;
     const theme = window.getComputedStyle(themeSource);
-    for (const property of ["--ink", "--muted", "--line", "--surface-strong", "--shadow"]) {
+    for (const property of [
+      "--ink",
+      "--muted",
+      "--line",
+      "--surface-strong",
+      "--shadow",
+    ]) {
       element.style.setProperty(property, theme.getPropertyValue(property));
     }
     element.showModal();
-    return () => { element.close(); onRestoreFocus(); };
+    return () => {
+      element.close();
+      onRestoreFocus();
+    };
   }, []);
   return createPortal(
-    <dialog ref={dialog} className="session-folder-cleanup-confirm" aria-labelledby={titleId}
+    <dialog
+      ref={dialog}
+      className="session-folder-cleanup-confirm"
+      aria-labelledby={titleId}
       onKeyDown={handleDialogKeyDown}
-      onCancel={(event) => { event.preventDefault(); onCancel(); }}>
+      onCancel={(event) => {
+        event.preventDefault();
+        onCancel();
+      }}
+    >
       <h2 id={titleId}>Delete Session Files?</h2>
       <p className="session-folder-cleanup-confirm-count">
-        {numberFormat.format(scan.matchedFileCount)} Files · {formatCleanupBytes(scan.matchedBytes)}
+        {numberFormat.format(scan.matchedFileCount)} Files ·{" "}
+        {formatCleanupBytes(scan.matchedBytes)}
       </p>
       <p className="session-folder-cleanup-secondary">
         {periodLabel(scan.request)} · ≥ {scan.request.minimumFileSizeMiB} MiB
       </p>
       <footer>
-        <button className="launch-toggle secondary" type="button" autoFocus onClick={onCancel}>Cancel</button>
-        <button className="launch-toggle session-folder-cleanup-delete" type="button" onClick={onConfirm}>Permanently Delete</button>
+        <button
+          className="launch-toggle secondary"
+          type="button"
+          autoFocus
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          className="launch-toggle session-folder-cleanup-delete"
+          type="button"
+          onClick={onConfirm}
+        >
+          Permanently Delete
+        </button>
       </footer>
-    </dialog>, document.body
+    </dialog>,
+    document.body,
   );
 }
 
-export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false, onBusyChange }: {
+/** ファイルの計算結果をプレビューし、確認を経て削除する。計算・削除・確認中の状態を親へ通知できる。 */
+export function SessionFolderCleanup({
+  api = getWithMateApi(),
+  disabled = false,
+  onBusyChange,
+}: {
   api?: SessionFolderCleanupApi | null;
   disabled?: boolean;
+  /** 他の保守操作を制御できるよう、処理中または確認中かを通知する。 */
   onBusyChange?(busy: boolean): void;
 }) {
   const id = useId();
@@ -84,7 +150,9 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
   const [minimumSize, setMinimumSize] = useState("0");
   const [scan, setScan] = useState<SessionFolderCleanupScan | null>(null);
   const [result, setResult] = useState<SessionFolderCleanupResult | null>(null);
-  const [phase, setPhase] = useState<"idle" | "scanning" | "retrying" | "deleting">("idle");
+  const [phase, setPhase] = useState<
+    "idle" | "scanning" | "retrying" | "deleting"
+  >("idle");
   const [confirming, setConfirming] = useState(false);
   const [validation, setValidation] = useState("");
   const [scanError, setScanError] = useState("");
@@ -96,12 +164,18 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
   const deleteFailure = deleteError || (result ? issueText(result.issues) : "");
   const preparingDeletion = phase === "retrying";
 
-  useEffect(() => () => { operation.current += 1; }, []);
+  useEffect(
+    () => () => {
+      operation.current += 1;
+    },
+    [],
+  );
   useEffect(() => {
     onBusyChange?.(busy || confirming);
     return () => onBusyChange?.(false);
   }, [busy, confirming, onBusyChange]);
 
+  /** 条件の編集後は、古い候補や結果を新しい条件のものとして扱わないようクリアする。 */
   const edit = (update: () => void) => {
     update();
     setScan(null);
@@ -110,11 +184,13 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     setScanError("");
     setDeleteError("");
   };
+  /** 入力を検証して削除候補を計算する。削除失敗からの再試行では、候補がある場合にだけ新しい計算結果を確認する。 */
   const calculate = async (confirmDeletion = false) => {
     if (!api || inFlight.current || disabled) return;
     let request: SessionFolderCleanupRequest;
     try {
-      if (!allDates && !fromDate && !toDate) throw new Error("Choose a date range or All Dates.");
+      if (!allDates && !fromDate && !toDate)
+        throw new Error("Choose a date range or All Dates.");
       if (!minimumSize.trim()) throw new Error("Enter a minimum file size.");
       request = parseSessionFolderCleanupRequest({
         fromDate: allDates ? "" : fromDate,
@@ -145,9 +221,13 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
         else setScanError(message);
       }
     } finally {
-      if (token === operation.current) { inFlight.current = false; setPhase("idle"); }
+      if (token === operation.current) {
+        inFlight.current = false;
+        setPhase("idle");
+      }
     }
   };
+  /** 確認した計算 ID で削除を実行し、成否にかかわらずその計算結果を再利用しない。 */
   const run = async () => {
     if (!api || !scan || inFlight.current || disabled) return;
     const token = ++operation.current;
@@ -160,94 +240,238 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
       const next = await api.runSessionFolderCleanup({ scanId: scan.scanId });
       if (token === operation.current) setResult(next);
     } catch (error) {
-      if (token === operation.current) setDeleteError(error instanceof Error ? error.message : String(error));
+      if (token === operation.current)
+        setDeleteError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (token === operation.current) { inFlight.current = false; setScan(null); setPhase("idle"); }
+      if (token === operation.current) {
+        inFlight.current = false;
+        setScan(null);
+        setPhase("idle");
+      }
     }
   };
-  const skippedSessions = scan ? [
-    scan.skippedRunningSessionCount ? `${numberFormat.format(scan.skippedRunningSessionCount)} Running` : "",
-    scan.skippedWorkspaceSessionCount ? `${numberFormat.format(scan.skippedWorkspaceSessionCount)} Workspace` : "",
-    scan.skippedLinkCount ? `${numberFormat.format(scan.skippedLinkCount)} Links` : "",
-  ].filter(Boolean) : [];
+  const skippedSessions = scan
+    ? [
+        scan.skippedRunningSessionCount
+          ? `${numberFormat.format(scan.skippedRunningSessionCount)} Running`
+          : "",
+        scan.skippedWorkspaceSessionCount
+          ? `${numberFormat.format(scan.skippedWorkspaceSessionCount)} Workspace`
+          : "",
+        scan.skippedLinkCount
+          ? `${numberFormat.format(scan.skippedLinkCount)} Links`
+          : "",
+      ].filter(Boolean)
+    : [];
 
   return (
-    <div className="session-folder-cleanup" aria-labelledby={`${id}-title`} aria-busy={busy}>
+    <div
+      className="session-folder-cleanup"
+      aria-labelledby={`${id}-title`}
+      aria-busy={busy}
+    >
       <details className="settings-subsection" open>
         <summary id={`${id}-title`}>Clean Session Files</summary>
         <div className="settings-subsection-body">
-          <fieldset disabled={busy || disabled || !api} className="session-folder-cleanup-fields">
+          <fieldset
+            disabled={busy || disabled || !api}
+            className="session-folder-cleanup-fields"
+          >
             <legend>Last Active</legend>
             <div className="session-folder-cleanup-dates">
               <label className="settings-provider-input" htmlFor={`${id}-from`}>
                 <span>From</span>
-                <input id={`${id}-from`} type="date" value={fromDate} disabled={allDates}
-                  onChange={(event) => edit(() => setFromDate(event.target.value))} />
+                <input
+                  id={`${id}-from`}
+                  type="date"
+                  value={fromDate}
+                  disabled={allDates}
+                  onChange={(event) =>
+                    edit(() => setFromDate(event.target.value))
+                  }
+                />
               </label>
-              <label className="settings-provider-input" htmlFor={`${id}-through`}>
+              <label
+                className="settings-provider-input"
+                htmlFor={`${id}-through`}
+              >
                 <span>Through</span>
-                <input id={`${id}-through`} type="date" value={toDate} disabled={allDates}
-                  onChange={(event) => edit(() => setToDate(event.target.value))} />
+                <input
+                  id={`${id}-through`}
+                  type="date"
+                  value={toDate}
+                  disabled={allDates}
+                  onChange={(event) =>
+                    edit(() => setToDate(event.target.value))
+                  }
+                />
               </label>
               <label className="session-folder-cleanup-all-dates">
-                <input type="checkbox" checked={allDates} onChange={(event) => edit(() => setAllDates(event.target.checked))} />
+                <input
+                  type="checkbox"
+                  checked={allDates}
+                  onChange={(event) =>
+                    edit(() => setAllDates(event.target.checked))
+                  }
+                />
                 <span>All Dates</span>
               </label>
             </div>
             <div className="session-folder-cleanup-size-row">
-              <label className="settings-provider-input" htmlFor={`${id}-minimum`}>
+              <label
+                className="settings-provider-input"
+                htmlFor={`${id}-minimum`}
+              >
                 <span>Min File Size (MiB)</span>
-                <input id={`${id}-minimum`} type="number" min="0" step="any" value={minimumSize}
-                  onChange={(event) => edit(() => setMinimumSize(event.target.value))} />
+                <input
+                  id={`${id}-minimum`}
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={minimumSize}
+                  onChange={(event) =>
+                    edit(() => setMinimumSize(event.target.value))
+                  }
+                />
               </label>
-              <SettingsActionButton actionLabel="Calculate Session File Usage" failure={scanError || (scan ? issueText(scan.issues) : "")}
-                className="launch-toggle secondary" type="button" onClick={() => void calculate()}
-                disabled={busy || disabled || !api} aria-busy={phase === "scanning"}>
-                <ButtonContent busy={phase === "scanning"} busyLabel="Calculating session file usage.">Calculate</ButtonContent>
+              <SettingsActionButton
+                actionLabel="Calculate Session File Usage"
+                failure={scanError || (scan ? issueText(scan.issues) : "")}
+                className="launch-toggle secondary"
+                type="button"
+                onClick={() => void calculate()}
+                disabled={busy || disabled || !api}
+                aria-busy={phase === "scanning"}
+              >
+                <ButtonContent
+                  busy={phase === "scanning"}
+                  busyLabel="Calculating session file usage."
+                >
+                  Calculate
+                </ButtonContent>
               </SettingsActionButton>
             </div>
           </fieldset>
-          <div className="session-folder-cleanup-feedback" aria-live="polite" aria-atomic="true">
-            {validation ? <p className="session-folder-cleanup-error" role="alert">{validation}</p> : null}
-            {scan ? <>
-              <dl className="session-folder-cleanup-summary">
-                <div><dt>Session Folders</dt><dd>{numberFormat.format(scan.sessionCount)}</dd></div>
-                <div><dt>Total Size</dt><dd>{formatCleanupBytes(scan.totalBytes)}</dd></div>
-                <div className="session-folder-cleanup-target"><dt>To Delete</dt><dd>{formatCleanupBytes(scan.matchedBytes)} <small>· {numberFormat.format(scan.matchedFileCount)} Files</small></dd></div>
-              </dl>
-              {skippedSessions.length ? <p className="session-folder-cleanup-secondary">Skipped: {skippedSessions.join(" · ")}</p> : null}
-              {scan.issues.length ? <p className="session-folder-cleanup-error">Some Files Could Not Be Read</p> : null}
-            </> : null}
-            {result ? <>
-              <p>{numberFormat.format(result.deletedFileCount)} Files Deleted · {formatCleanupBytes(result.deletedBytes)}</p>
-              {result.skippedFileCount ? <p className="session-folder-cleanup-secondary">{numberFormat.format(result.skippedFileCount)} Files Skipped</p> : null}
-              {result.failedFileCount ? <p className="session-folder-cleanup-error">{numberFormat.format(result.failedFileCount)} Files Failed</p> : null}
-            </> : null}
+          <div
+            className="session-folder-cleanup-feedback"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {validation ? (
+              <p className="session-folder-cleanup-error" role="alert">
+                {validation}
+              </p>
+            ) : null}
+            {scan ? (
+              <>
+                <dl className="session-folder-cleanup-summary">
+                  <div>
+                    <dt>Session Folders</dt>
+                    <dd>{numberFormat.format(scan.sessionCount)}</dd>
+                  </div>
+                  <div>
+                    <dt>Total Size</dt>
+                    <dd>{formatCleanupBytes(scan.totalBytes)}</dd>
+                  </div>
+                  <div className="session-folder-cleanup-target">
+                    <dt>To Delete</dt>
+                    <dd>
+                      {formatCleanupBytes(scan.matchedBytes)}{" "}
+                      <small>
+                        · {numberFormat.format(scan.matchedFileCount)} Files
+                      </small>
+                    </dd>
+                  </div>
+                </dl>
+                {skippedSessions.length ? (
+                  <p className="session-folder-cleanup-secondary">
+                    Skipped: {skippedSessions.join(" · ")}
+                  </p>
+                ) : null}
+                {scan.issues.length ? (
+                  <p className="session-folder-cleanup-error">
+                    Some Files Could Not Be Read
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            {result ? (
+              <>
+                <p>
+                  {numberFormat.format(result.deletedFileCount)} Files Deleted ·{" "}
+                  {formatCleanupBytes(result.deletedBytes)}
+                </p>
+                {result.skippedFileCount ? (
+                  <p className="session-folder-cleanup-secondary">
+                    {numberFormat.format(result.skippedFileCount)} Files Skipped
+                  </p>
+                ) : null}
+                {result.failedFileCount ? (
+                  <p className="session-folder-cleanup-error">
+                    {numberFormat.format(result.failedFileCount)} Files Failed
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </div>
           <div ref={deleteButton} className="session-folder-cleanup-actions">
-            <SettingsActionButton actionLabel="Delete Session Files" failure={deleteFailure}
-              className="launch-toggle session-folder-cleanup-delete" type="button"
-              disabled={busy || disabled || !api || (!scan && !deleteFailure) || scan?.matchedFileCount === 0}
+            <SettingsActionButton
+              actionLabel="Delete Session Files"
+              failure={deleteFailure}
+              className="launch-toggle session-folder-cleanup-delete"
+              type="button"
+              disabled={
+                busy ||
+                disabled ||
+                !api ||
+                (!scan && !deleteFailure) ||
+                scan?.matchedFileCount === 0
+              }
               aria-busy={preparingDeletion || phase === "deleting"}
-              onClick={() => { if (scan) setConfirming(true); else void calculate(true); }}>
-              <ButtonContent busy={preparingDeletion || phase === "deleting"}
-                busyLabel={preparingDeletion ? "Recalculating session files for deletion." : "Deleting session files."}>Delete Files…</ButtonContent>
+              onClick={() => {
+                if (scan) setConfirming(true);
+                else void calculate(true);
+              }}
+            >
+              <ButtonContent
+                busy={preparingDeletion || phase === "deleting"}
+                busyLabel={
+                  preparingDeletion
+                    ? "Recalculating session files for deletion."
+                    : "Deleting session files."
+                }
+              >
+                Delete Files…
+              </ButtonContent>
             </SettingsActionButton>
           </div>
         </div>
       </details>
-      {confirming && scan ? <CleanupConfirmation scan={scan} themeSource={deleteButton.current!}
-        onCancel={() => setConfirming(false)}
-        onRestoreFocus={() => {
-          let target = deleteButton.current?.querySelector<HTMLElement>("button") ?? null;
-          let group = deleteButton.current?.closest<HTMLDetailsElement>("details:not([open])") ?? null;
-          while (group) {
-            target = group.querySelector<HTMLElement>("summary");
-            group = group.parentElement?.closest<HTMLDetailsElement>("details:not([open])") ?? null;
-          }
-          target?.focus();
-        }}
-        onConfirm={() => void run()} /> : null}
+      {confirming && scan ? (
+        <CleanupConfirmation
+          scan={scan}
+          themeSource={deleteButton.current!}
+          onCancel={() => setConfirming(false)}
+          onRestoreFocus={() => {
+            let target =
+              deleteButton.current?.querySelector<HTMLElement>("button") ??
+              null;
+            let group =
+              deleteButton.current?.closest<HTMLDetailsElement>(
+                "details:not([open])",
+              ) ?? null;
+            while (group) {
+              target = group.querySelector<HTMLElement>("summary");
+              group =
+                group.parentElement?.closest<HTMLDetailsElement>(
+                  "details:not([open])",
+                ) ?? null;
+            }
+            target?.focus();
+          }}
+          onConfirm={() => void run()}
+        />
+      ) : null}
     </div>
   );
 }

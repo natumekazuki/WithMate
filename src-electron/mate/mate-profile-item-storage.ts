@@ -1,12 +1,21 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import { assertV4SchemaInitializationAllowed, CREATE_V4_SCHEMA_SQL } from "../storage/database-schema-v4.js";
+import {
+  assertV4SchemaInitializationAllowed,
+  CREATE_V4_SCHEMA_SQL,
+} from "../storage/database-schema-v4.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 
 const MATE_ID = "current";
 
-const SECTION_KEYS = ["core", "bond", "work_style", "notes", "project_digest"] as const;
+const SECTION_KEYS = [
+  "core",
+  "bond",
+  "work_style",
+  "notes",
+  "project_digest",
+] as const;
 const CATEGORIES = [
   "persona",
   "voice",
@@ -17,23 +26,34 @@ const CATEGORIES = [
   "project_context",
   "note",
 ] as const;
-const SOURCE_LINK_TYPES = ["created_by", "reinforced_by", "corrected_by", "superseded_by"] as const;
+const SOURCE_LINK_TYPES = [
+  "created_by",
+  "reinforced_by",
+  "corrected_by",
+  "superseded_by",
+] as const;
 const TOMBSTONE_DIGEST_KIND_NORMALIZED_CLAIM = "normalized_claim";
 const TOMBSTONE_DIGEST_KIND_RENDERED_TEXT = "rendered_text";
 const TOMBSTONE_HMAC_VERSION = 1;
 const TOMBSTONE_HMAC_KEY_ID = "default";
 const TOMBSTONE_HMAC_KEY = "withmate-memory-forgotten-tombstone-key";
 
+/** プロフィール項目を収める区分。プロジェクト別の Digest も含む。 */
 export type MateProfileItemSectionKey = (typeof SECTION_KEYS)[number];
+/** プロフィール項目を表示・分類するためのカテゴリ。 */
 export type MateProfileItemCategory = (typeof CATEGORIES)[number];
+/** 項目の有効、無効、忘却済み、置換済みを区別する保存状態。 */
 type MateProfileItemState = "active" | "disabled" | "forgotten" | "superseded";
+/** Growth Event とプロフィール項目の間で、作成・補強などの根拠の役割を区別する。 */
 type SourceLinkType = (typeof SOURCE_LINK_TYPES)[number];
 
+/** プロフィール項目へ記録するタグの種別と表示値。 */
 export type MateProfileItemTagInput = {
   type: string;
   value: string;
 };
 
+/** 項目の追加・更新に使う本文と来歴。Digest にはプロジェクト ID が必要で、タグ省略時は既存タグを維持する。 */
 export type UpsertMateProfileItemInput = {
   id?: string;
   sectionKey: MateProfileItemSectionKey;
@@ -53,12 +73,14 @@ export type UpsertMateProfileItemInput = {
   tags?: MateProfileItemTagInput[];
 };
 
+/** 表示用の値と照合用の正規化値を併せ持つ保存済みタグ。 */
 export type MateProfileItemTag = {
   type: string;
   value: string;
   valueNormalized: string;
 };
 
+/** プロフィール項目の本文、出力可否、現在の状態とリビジョンの来歴を保持する。 */
 export type MateProfileItem = {
   id: string;
   sectionKey: MateProfileItemSectionKey;
@@ -87,6 +109,7 @@ export type MateProfileItem = {
   tags: MateProfileItemTag[];
 };
 
+/** 一覧の絞り込み条件。プロジェクト ID を明示的に null にすると、プロジェクト未設定の項目だけを返す。 */
 export type ListProfileItemsRequest = {
   sectionKey?: MateProfileItemSectionKey;
   category?: MateProfileItemCategory;
@@ -96,6 +119,7 @@ export type ListProfileItemsRequest = {
   limit?: number;
 };
 
+/** プロフィール項目を読み出す SQLite 行。投影可否は整数から変換する。 */
 type ProfileItemRow = {
   id: string;
   section_key: MateProfileItemSectionKey;
@@ -123,6 +147,7 @@ type ProfileItemRow = {
   updated_at: string;
 };
 
+/** プロフィール項目 ID にひも付くタグの SQLite 行。 */
 type TagRow = {
   profile_item_id: string;
   tag_type: string;
@@ -130,6 +155,7 @@ type TagRow = {
   tag_value_normalized: string;
 };
 
+/** Growth Event をキーにメモリから取り出すタグの SQLite 行。 */
 type MemoryTagRow = {
   memory_id: string;
   tag_type: string;
@@ -137,10 +163,12 @@ type MemoryTagRow = {
   tag_value_normalized: string;
 };
 
+/** 項目・タグ・状態遷移の保存に使う UTC の ISO 8601 時刻を返す。 */
 function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** 必須文字列の前後の空白を除き、文字列以外や空文字列は拒否する。 */
 function normalizeText(value: unknown, field: string): string {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) {
@@ -149,6 +177,7 @@ function normalizeText(value: unknown, field: string): string {
   return text;
 }
 
+/** 任意の文字列の前後の空白を除き、空または文字列以外なら null にする。 */
 function normalizeOptionalText(value: unknown): string | null {
   if (typeof value === "string") {
     const text = value.trim();
@@ -157,33 +186,59 @@ function normalizeOptionalText(value: unknown): string | null {
   return null;
 }
 
+/** 忘却記録に元の本文を載せず照合できるよう、UTF-8 の入力を HMAC-SHA256 の十六進表記に変換する。 */
 function hmacSha256Hex(content: string, key: string): string {
   return createHmac("sha256", key).update(content, "utf8").digest("hex");
 }
 
-function normalizeInteger(value: unknown, fallback: number, field: string): number {
-  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
+/** 信頼度などの有限値を整数に切り下げ、既定値を含めて 0〜100 の範囲を検証する。 */
+function normalizeInteger(
+  value: unknown,
+  fallback: number,
+  field: string,
+): number {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.floor(value)
+      : fallback;
   if (!Number.isFinite(normalized) || normalized < 0 || normalized > 100) {
     throw new Error(`${field} が 0-100 の整数でないよ。`);
   }
   return normalized;
 }
 
-function normalizePositiveInteger(value: unknown, fallback: number, field: string): number {
-  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
+/** 反復回数を整数に切り下げ、有限の正の整数にできない入力は既定値に戻す。 */
+function normalizePositiveInteger(
+  value: unknown,
+  fallback: number,
+  field: string,
+): number {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.floor(value)
+      : fallback;
   if (!Number.isFinite(normalized) || normalized < 1) {
     return fallback;
   }
   return normalized;
 }
 
-function assertOneOf<T extends string>(value: unknown, candidates: readonly T[], field: string): T {
-  if (typeof value === "string" && (candidates as readonly string[]).includes(value)) {
+/** 文字列が許可値一覧に含まれることを検証し、不正なら項目名を示して失敗する。 */
+function assertOneOf<T extends string>(
+  value: unknown,
+  candidates: readonly T[],
+  field: string,
+): T {
+  if (
+    typeof value === "string" &&
+    (candidates as readonly string[]).includes(value)
+  ) {
     return value as T;
   }
   throw new Error(`${field} が不正です`);
 }
 
+/** 有効なタグだけを保持し、種別と値の大文字小文字を無視して重複を除く。 */
 function normalizeTags(tags: unknown): MateProfileItemTagInput[] {
   if (!Array.isArray(tags)) {
     return [];
@@ -217,6 +272,7 @@ function normalizeTags(tags: unknown): MateProfileItemTagInput[] {
   return normalized;
 }
 
+/** タグの表示値と正規化値を保ったまま、SQLite 行を公開型に変換する。 */
 function mapTagRow(tagRow: TagRow): MateProfileItemTag {
   return {
     type: tagRow.tag_type,
@@ -225,7 +281,11 @@ function mapTagRow(tagRow: TagRow): MateProfileItemTag {
   };
 }
 
-function rowToItem(itemRow: ProfileItemRow, tags: MateProfileItemTag[]): MateProfileItem {
+/** 項目の SQLite 行にタグを添え、DB の整数フラグを真偽値にして返す。 */
+function rowToItem(
+  itemRow: ProfileItemRow,
+  tags: MateProfileItemTag[],
+): MateProfileItem {
   return {
     id: itemRow.id,
     sectionKey: itemRow.section_key,
@@ -305,21 +365,25 @@ const INSERT_FORGOTTEN_TOMBSTONE_SQL = `
   ON CONFLICT (mate_id, hmac_version, hmac_key_id, digest_kind, hmac_digest) DO NOTHING
 `;
 
+/** Mate プロフィール項目、タグ、根拠リンク、忘却記録の SQLite 保存を担う。 */
 export class MateProfileItemStorage {
   private readonly db: DatabaseSync;
 
+  /** 旧スキーマの初期化が許可された DB を開き、項目の読み書きに必要なスキーマを用意する。 */
   constructor(dbPath: string) {
     assertV4SchemaInitializationAllowed(dbPath, "MateProfileItemStorage");
     this.db = openAppDatabase(dbPath);
     this.initializeSchema();
   }
 
+  /** 項目と関連データの保存に必要な V4 スキーマの定義を、保持中の接続で実行する。 */
   private initializeSchema(): void {
     for (const statement of CREATE_V4_SCHEMA_SQL) {
       this.db.exec(statement);
     }
   }
 
+  /** 書き込み用トランザクションで処理を実行し、成功時にコミット、失敗時にロールバックして例外を返す。 */
   private withTransaction<T>(runner: (db: DatabaseSync) => T): T {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION;");
     try {
@@ -332,8 +396,13 @@ export class MateProfileItemStorage {
     }
   }
 
+  /** 明示 ID、同じ区分・プロジェクトの有効な主張の順に対象を探し、項目と指定されたタグ・出典をまとめて保存する。 */
   upsertProfileItem(input: UpsertMateProfileItemInput): MateProfileItem {
-    const sectionKey = assertOneOf(input.sectionKey, SECTION_KEYS, "sectionKey");
+    const sectionKey = assertOneOf(
+      input.sectionKey,
+      SECTION_KEYS,
+      "sectionKey",
+    );
     const category = assertOneOf(input.category, CATEGORIES, "category");
 
     const claimKey = normalizeText(input.claimKey, "claimKey");
@@ -341,45 +410,70 @@ export class MateProfileItemStorage {
     const claimValueNormalized = claimValue.trim().toLowerCase();
     const renderedText = normalizeText(input.renderedText, "renderedText");
     const normalizedClaim =
-      normalizeOptionalText(input.normalizedClaim) ?? (claimValueNormalized.length > 0 ? claimValueNormalized : claimKey);
-    const confidence = normalizeInteger(input.confidence, Number.NaN, "confidence");
-    const salienceScore = normalizeInteger(input.salienceScore, Number.NaN, "salienceScore");
-    const recurrenceCount = normalizePositiveInteger(input.recurrenceCount, 1, "recurrenceCount");
+      normalizeOptionalText(input.normalizedClaim) ??
+      (claimValueNormalized.length > 0 ? claimValueNormalized : claimKey);
+    const confidence = normalizeInteger(
+      input.confidence,
+      Number.NaN,
+      "confidence",
+    );
+    const salienceScore = normalizeInteger(
+      input.salienceScore,
+      Number.NaN,
+      "salienceScore",
+    );
+    const recurrenceCount = normalizePositiveInteger(
+      input.recurrenceCount,
+      1,
+      "recurrenceCount",
+    );
     const projectionAllowed = input.projectionAllowed === true;
-    const sourceGrowthEventId = normalizeOptionalText(input.sourceGrowthEventId);
+    const sourceGrowthEventId = normalizeOptionalText(
+      input.sourceGrowthEventId,
+    );
     const createdRevisionId = normalizeOptionalText(input.createdRevisionId);
     const updatedRevisionId = normalizeOptionalText(input.updatedRevisionId);
     const id = normalizeOptionalText(input.id);
 
-    const resolvedProjectDigestId = sectionKey === "project_digest"
-      ? normalizeOptionalText(input.projectDigestId)
-      : null;
+    const resolvedProjectDigestId =
+      sectionKey === "project_digest"
+        ? normalizeOptionalText(input.projectDigestId)
+        : null;
 
     if (sectionKey === "project_digest" && !resolvedProjectDigestId) {
-      throw new Error("project_digest セクションでは projectDigestId が必要です");
+      throw new Error(
+        "project_digest セクションでは projectDigestId が必要です",
+      );
     }
 
     const tags = input.tags === undefined ? null : normalizeTags(input.tags);
     const now = nowIso();
 
     const existingById = id
-      ? this.db.prepare("SELECT id FROM mate_profile_items WHERE id = ?").get(id) as { id: string } | undefined
+      ? (this.db
+          .prepare("SELECT id FROM mate_profile_items WHERE id = ?")
+          .get(id) as { id: string } | undefined)
       : undefined;
 
-    const targetByClaim = sectionKey === "project_digest"
-      ? this.db
-        .prepare(SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL)
-        .get(MATE_ID, sectionKey, claimKey, resolvedProjectDigestId) as { id: string } | undefined
-      : this.db
-        .prepare(SELECT_ACTIVE_BY_CLAIM_GLOBAL_SQL)
-        .get(MATE_ID, sectionKey, claimKey) as { id: string } | undefined;
+    const targetByClaim =
+      sectionKey === "project_digest"
+        ? (this.db
+            .prepare(SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL)
+            .get(MATE_ID, sectionKey, claimKey, resolvedProjectDigestId) as
+            { id: string } | undefined)
+        : (this.db
+            .prepare(SELECT_ACTIVE_BY_CLAIM_GLOBAL_SQL)
+            .get(MATE_ID, sectionKey, claimKey) as { id: string } | undefined);
 
-    const targetId = existingById?.id ?? targetByClaim?.id ?? id ?? randomUUID();
+    const targetId =
+      existingById?.id ?? targetByClaim?.id ?? id ?? randomUUID();
     const isInsert = existingById === undefined && targetByClaim === undefined;
 
     this.withTransaction(() => {
       if (isInsert) {
-        this.db.prepare(`
+        this.db
+          .prepare(
+            `
           INSERT INTO mate_profile_items (
             id,
             mate_id,
@@ -408,30 +502,34 @@ export class MateProfileItemStorage {
             created_at,
             updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, NULL, NULL, NULL, 0, ?, ?)
-        `).run(
-          targetId,
-          MATE_ID,
-          sectionKey,
-          resolvedProjectDigestId,
-          category,
-          claimKey,
-          claimValue,
-          claimValueNormalized,
-          renderedText,
-          normalizedClaim,
-          confidence,
-          salienceScore,
-          recurrenceCount,
-          projectionAllowed ? 1 : 0,
-          now,
-          now,
-          createdRevisionId,
-          updatedRevisionId,
-          now,
-          now,
-        );
+        `,
+          )
+          .run(
+            targetId,
+            MATE_ID,
+            sectionKey,
+            resolvedProjectDigestId,
+            category,
+            claimKey,
+            claimValue,
+            claimValueNormalized,
+            renderedText,
+            normalizedClaim,
+            confidence,
+            salienceScore,
+            recurrenceCount,
+            projectionAllowed ? 1 : 0,
+            now,
+            now,
+            createdRevisionId,
+            updatedRevisionId,
+            now,
+            now,
+          );
       } else {
-        this.db.prepare(`
+        this.db
+          .prepare(
+            `
           UPDATE mate_profile_items
           SET
             section_key = ?,
@@ -457,29 +555,35 @@ export class MateProfileItemStorage {
             forgotten_at = NULL,
             updated_at = ?
           WHERE id = ?
-        `).run(
-          sectionKey,
-          resolvedProjectDigestId,
-          category,
-          claimKey,
-          claimValue,
-          claimValueNormalized,
-          renderedText,
-          normalizedClaim,
-          confidence,
-          salienceScore,
-          recurrenceCount,
-          projectionAllowed ? 1 : 0,
-          now,
-          createdRevisionId,
-          updatedRevisionId,
-          now,
-          targetId,
-        );
+        `,
+          )
+          .run(
+            sectionKey,
+            resolvedProjectDigestId,
+            category,
+            claimKey,
+            claimValue,
+            claimValueNormalized,
+            renderedText,
+            normalizedClaim,
+            confidence,
+            salienceScore,
+            recurrenceCount,
+            projectionAllowed ? 1 : 0,
+            now,
+            createdRevisionId,
+            updatedRevisionId,
+            now,
+            targetId,
+          );
       }
 
       if (tags !== null) {
-        this.db.prepare("DELETE FROM mate_profile_item_tags WHERE profile_item_id = ?").run(targetId);
+        this.db
+          .prepare(
+            "DELETE FROM mate_profile_item_tags WHERE profile_item_id = ?",
+          )
+          .run(targetId);
 
         const insertTag = this.db.prepare(`
           INSERT INTO mate_profile_item_tags (
@@ -502,8 +606,12 @@ export class MateProfileItemStorage {
       }
 
       if (sourceGrowthEventId) {
-        const linkType: SourceLinkType = isInsert ? "created_by" : "reinforced_by";
-        this.db.prepare(`
+        const linkType: SourceLinkType = isInsert
+          ? "created_by"
+          : "reinforced_by";
+        this.db
+          .prepare(
+            `
           INSERT OR IGNORE INTO mate_profile_item_sources (
             profile_item_id,
             growth_event_id,
@@ -511,13 +619,15 @@ export class MateProfileItemStorage {
             created_revision_id,
             created_at
           ) VALUES (?, ?, ?, ?, ?)
-        `).run(
-          targetId,
-          sourceGrowthEventId,
-          linkType,
-          isInsert ? createdRevisionId : updatedRevisionId,
-          now,
-        );
+        `,
+          )
+          .run(
+            targetId,
+            sourceGrowthEventId,
+            linkType,
+            isInsert ? createdRevisionId : updatedRevisionId,
+            now,
+          );
       }
     });
 
@@ -529,8 +639,16 @@ export class MateProfileItemStorage {
     return item;
   }
 
-  upsertProfileItemInTransaction(db: DatabaseSync, input: UpsertMateProfileItemInput): MateProfileItem {
-    const sectionKey = assertOneOf(input.sectionKey, SECTION_KEYS, "sectionKey");
+  /** 項目・指定タグ・出典を呼び出し元のトランザクションに書き込み、同じ接続で保存結果を読み返す。 */
+  upsertProfileItemInTransaction(
+    db: DatabaseSync,
+    input: UpsertMateProfileItemInput,
+  ): MateProfileItem {
+    const sectionKey = assertOneOf(
+      input.sectionKey,
+      SECTION_KEYS,
+      "sectionKey",
+    );
     const category = assertOneOf(input.category, CATEGORIES, "category");
 
     const claimKey = normalizeText(input.claimKey, "claimKey");
@@ -538,44 +656,68 @@ export class MateProfileItemStorage {
     const claimValueNormalized = claimValue.trim().toLowerCase();
     const renderedText = normalizeText(input.renderedText, "renderedText");
     const normalizedClaim =
-      normalizeOptionalText(input.normalizedClaim) ?? (claimValueNormalized.length > 0 ? claimValueNormalized : claimKey);
-    const confidence = normalizeInteger(input.confidence, Number.NaN, "confidence");
-    const salienceScore = normalizeInteger(input.salienceScore, Number.NaN, "salienceScore");
-    const recurrenceCount = normalizePositiveInteger(input.recurrenceCount, 1, "recurrenceCount");
+      normalizeOptionalText(input.normalizedClaim) ??
+      (claimValueNormalized.length > 0 ? claimValueNormalized : claimKey);
+    const confidence = normalizeInteger(
+      input.confidence,
+      Number.NaN,
+      "confidence",
+    );
+    const salienceScore = normalizeInteger(
+      input.salienceScore,
+      Number.NaN,
+      "salienceScore",
+    );
+    const recurrenceCount = normalizePositiveInteger(
+      input.recurrenceCount,
+      1,
+      "recurrenceCount",
+    );
     const projectionAllowed = input.projectionAllowed === true;
-    const sourceGrowthEventId = normalizeOptionalText(input.sourceGrowthEventId);
+    const sourceGrowthEventId = normalizeOptionalText(
+      input.sourceGrowthEventId,
+    );
     const createdRevisionId = normalizeOptionalText(input.createdRevisionId);
     const updatedRevisionId = normalizeOptionalText(input.updatedRevisionId);
     const id = normalizeOptionalText(input.id);
 
-    const resolvedProjectDigestId = sectionKey === "project_digest"
-      ? normalizeOptionalText(input.projectDigestId)
-      : null;
+    const resolvedProjectDigestId =
+      sectionKey === "project_digest"
+        ? normalizeOptionalText(input.projectDigestId)
+        : null;
 
     if (sectionKey === "project_digest" && !resolvedProjectDigestId) {
-      throw new Error("project_digest セクションでは projectDigestId が必要です");
+      throw new Error(
+        "project_digest セクションでは projectDigestId が必要です",
+      );
     }
 
     const tags = input.tags === undefined ? null : normalizeTags(input.tags);
     const now = nowIso();
 
     const existingById = id
-      ? db.prepare("SELECT id FROM mate_profile_items WHERE id = ?").get(id) as { id: string } | undefined
+      ? (db
+          .prepare("SELECT id FROM mate_profile_items WHERE id = ?")
+          .get(id) as { id: string } | undefined)
       : undefined;
 
-    const targetByClaim = sectionKey === "project_digest"
-      ? db
-        .prepare(SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL)
-        .get(MATE_ID, sectionKey, claimKey, resolvedProjectDigestId) as { id: string } | undefined
-      : db
-        .prepare(SELECT_ACTIVE_BY_CLAIM_GLOBAL_SQL)
-        .get(MATE_ID, sectionKey, claimKey) as { id: string } | undefined;
+    const targetByClaim =
+      sectionKey === "project_digest"
+        ? (db
+            .prepare(SELECT_ACTIVE_BY_CLAIM_PROJECT_SQL)
+            .get(MATE_ID, sectionKey, claimKey, resolvedProjectDigestId) as
+            { id: string } | undefined)
+        : (db
+            .prepare(SELECT_ACTIVE_BY_CLAIM_GLOBAL_SQL)
+            .get(MATE_ID, sectionKey, claimKey) as { id: string } | undefined);
 
-    const targetId = existingById?.id ?? targetByClaim?.id ?? id ?? randomUUID();
+    const targetId =
+      existingById?.id ?? targetByClaim?.id ?? id ?? randomUUID();
     const isInsert = existingById === undefined && targetByClaim === undefined;
 
     if (isInsert) {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO mate_profile_items (
           id,
           mate_id,
@@ -604,7 +746,8 @@ export class MateProfileItemStorage {
           created_at,
           updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, NULL, NULL, NULL, 0, ?, ?)
-      `).run(
+      `,
+      ).run(
         targetId,
         MATE_ID,
         sectionKey,
@@ -627,7 +770,8 @@ export class MateProfileItemStorage {
         now,
       );
     } else {
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE mate_profile_items
         SET
           section_key = ?,
@@ -653,7 +797,8 @@ export class MateProfileItemStorage {
           forgotten_at = NULL,
           updated_at = ?
         WHERE id = ?
-      `).run(
+      `,
+      ).run(
         sectionKey,
         resolvedProjectDigestId,
         category,
@@ -675,7 +820,9 @@ export class MateProfileItemStorage {
     }
 
     if (tags !== null) {
-      db.prepare("DELETE FROM mate_profile_item_tags WHERE profile_item_id = ?").run(targetId);
+      db.prepare(
+        "DELETE FROM mate_profile_item_tags WHERE profile_item_id = ?",
+      ).run(targetId);
 
       const insertTag = db.prepare(`
         INSERT INTO mate_profile_item_tags (
@@ -698,8 +845,11 @@ export class MateProfileItemStorage {
     }
 
     if (sourceGrowthEventId) {
-      const linkType: SourceLinkType = isInsert ? "created_by" : "reinforced_by";
-      db.prepare(`
+      const linkType: SourceLinkType = isInsert
+        ? "created_by"
+        : "reinforced_by";
+      db.prepare(
+        `
         INSERT OR IGNORE INTO mate_profile_item_sources (
           profile_item_id,
           growth_event_id,
@@ -707,7 +857,8 @@ export class MateProfileItemStorage {
           created_revision_id,
           created_at
         ) VALUES (?, ?, ?, ?, ?)
-      `).run(
+      `,
+      ).run(
         targetId,
         sourceGrowthEventId,
         linkType,
@@ -724,12 +875,17 @@ export class MateProfileItemStorage {
     return item;
   }
 
+  /** 指定された条件に該当する項目を更新日時の降順で読み、タグを添えて返す。 */
   listProfileItems(request: ListProfileItemsRequest = {}): MateProfileItem[] {
     const clauses: string[] = ["mate_id = ?"];
     const params: Array<string | number | null> = [MATE_ID];
 
     if (request.sectionKey !== undefined) {
-      const sectionKey = assertOneOf(request.sectionKey, SECTION_KEYS, "sectionKey");
+      const sectionKey = assertOneOf(
+        request.sectionKey,
+        SECTION_KEYS,
+        "sectionKey",
+      );
       clauses.push("section_key = ?");
       params.push(sectionKey);
     }
@@ -741,7 +897,11 @@ export class MateProfileItemStorage {
     }
 
     if (request.state !== undefined) {
-      const state = assertOneOf(request.state, ["active", "disabled", "forgotten", "superseded"], "state");
+      const state = assertOneOf(
+        request.state,
+        ["active", "disabled", "forgotten", "superseded"],
+        "state",
+      );
       clauses.push("state = ?");
       params.push(state);
     }
@@ -750,7 +910,10 @@ export class MateProfileItemStorage {
       if (request.projectDigestId === null) {
         clauses.push("project_digest_id IS NULL");
       } else {
-        const projectDigestId = normalizeText(request.projectDigestId, "projectDigestId");
+        const projectDigestId = normalizeText(
+          request.projectDigestId,
+          "projectDigestId",
+        );
         clauses.push("project_digest_id = ?");
         params.push(projectDigestId);
       }
@@ -769,7 +932,9 @@ export class MateProfileItemStorage {
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const limitClause = normalizedLimit !== null ? "LIMIT ?" : "";
 
-    const rows = this.db.prepare(`
+    const rows = this.db
+      .prepare(
+        `
       SELECT
         id,
         section_key,
@@ -799,23 +964,35 @@ export class MateProfileItemStorage {
       ${where}
       ORDER BY updated_at DESC, id DESC
       ${limitClause}
-    `).all(...params, ...(normalizedLimit !== null ? [normalizedLimit] : [])) as ProfileItemRow[];
+    `,
+      )
+      .all(
+        ...params,
+        ...(normalizedLimit !== null ? [normalizedLimit] : []),
+      ) as ProfileItemRow[];
 
     return this.withTags(rows);
   }
 
-  listMemoryTagsByGrowthEventIds(growthEventIds: readonly string[]): Map<string, MateProfileItemTagInput[]> {
-    const normalizedIds = Array.from(new Set(
-      growthEventIds
-        .map((id) => typeof id === "string" ? id.trim() : "")
-        .filter((id) => id.length > 0),
-    ));
+  /** 入力 ID の空白と重複を除き、Growth Event ごとに保存済みのメモリタグをまとめて返す。 */
+  listMemoryTagsByGrowthEventIds(
+    growthEventIds: readonly string[],
+  ): Map<string, MateProfileItemTagInput[]> {
+    const normalizedIds = Array.from(
+      new Set(
+        growthEventIds
+          .map((id) => (typeof id === "string" ? id.trim() : ""))
+          .filter((id) => id.length > 0),
+      ),
+    );
 
     if (normalizedIds.length === 0) {
       return new Map();
     }
 
-    const tags = this.db.prepare(`
+    const tags = this.db
+      .prepare(
+        `
       SELECT
         memory_id,
         tag_type,
@@ -824,7 +1001,9 @@ export class MateProfileItemStorage {
       FROM mate_memory_tags
       WHERE memory_id IN (${normalizedIds.map(() => "?").join(", ")})
       ORDER BY memory_id, id
-    `).all(...normalizedIds) as MemoryTagRow[];
+    `,
+      )
+      .all(...normalizedIds) as MemoryTagRow[];
 
     const tagsByEventId = new Map<string, MateProfileItemTagInput[]>();
     for (const row of tags) {
@@ -839,13 +1018,16 @@ export class MateProfileItemStorage {
     return tagsByEventId;
   }
 
+  /** 一覧に含まれる全項目のタグを一括取得し、タグを添えて元の項目順で返す。 */
   private withTags(rows: ProfileItemRow[]): MateProfileItem[] {
     if (rows.length === 0) {
       return [];
     }
 
     const ids = rows.map((row) => row.id);
-    const tagRows = this.db.prepare(`
+    const tagRows = this.db
+      .prepare(
+        `
       SELECT
         profile_item_id,
         tag_type,
@@ -854,7 +1036,9 @@ export class MateProfileItemStorage {
       FROM mate_profile_item_tags
       WHERE profile_item_id IN (${ids.map(() => "?").join(", ")})
       ORDER BY id
-    `).all(...ids) as TagRow[];
+    `,
+      )
+      .all(...ids) as TagRow[];
 
     const tagsByItem = new Map<string, MateProfileItemTag[]>();
     for (const tagRow of tagRows) {
@@ -869,19 +1053,29 @@ export class MateProfileItemStorage {
     });
   }
 
+  /** 現在の Mate に進行中の Growth apply があれば、手動で状態を変えられないよう例外を投げる。 */
   private assertNoActiveGrowthApplyRun(): void {
-    const activeRun = this.db.prepare(SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL).get(MATE_ID) as { id: number } | undefined;
+    const activeRun = this.db
+      .prepare(SELECT_ACTIVE_GROWTH_APPLY_RUN_SQL)
+      .get(MATE_ID) as { id: number } | undefined;
     if (activeRun) {
       throw new Error("Growth apply はすでに実行中です。");
     }
   }
 
+  /** 手動変更の前に進行中の Growth apply がないことを確認する。 */
   assertProfileItemMutationAllowed(): void {
     this.assertNoActiveGrowthApplyRun();
   }
 
-  private getProfileItem(itemId: string, db: DatabaseSync = this.db): MateProfileItem | null {
-    const row = db.prepare(`
+  /** 指定した接続から項目とタグを読み出し、項目がなければ null を返す。 */
+  private getProfileItem(
+    itemId: string,
+    db: DatabaseSync = this.db,
+  ): MateProfileItem | null {
+    const row = db
+      .prepare(
+        `
       SELECT
         id,
         section_key,
@@ -909,13 +1103,17 @@ export class MateProfileItemStorage {
         updated_at
       FROM mate_profile_items
       WHERE id = ?
-    `).get(itemId) as ProfileItemRow | undefined;
+    `,
+      )
+      .get(itemId) as ProfileItemRow | undefined;
 
     if (!row) {
       return null;
     }
 
-    const tags = db.prepare(`
+    const tags = db
+      .prepare(
+        `
       SELECT
         profile_item_id,
         tag_type,
@@ -924,11 +1122,14 @@ export class MateProfileItemStorage {
       FROM mate_profile_item_tags
       WHERE profile_item_id = ?
       ORDER BY id
-    `).all(itemId) as TagRow[];
+    `,
+      )
+      .all(itemId) as TagRow[];
 
     return rowToItem(row, tags.map(mapTagRow));
   }
 
+  /** 空でない ID を忘却済みにし、進行中の Growth apply があれば変更しない。 */
   forgetProfileItem(itemId: string, revisionId?: string): void {
     const targetId = normalizeOptionalText(itemId);
     if (!targetId) {
@@ -939,7 +1140,13 @@ export class MateProfileItemStorage {
     this.forgetProfileItemInTransaction(this.db, targetId, revisionId);
   }
 
-  forgetProfileItemInTransaction(db: DatabaseSync, itemId: string, revisionId?: string, updatedAt?: string): void {
+  /** 呼び出し元の接続で項目を忘却済みにし、忘却の時刻・リビジョンを記録して無効化の来歴をクリアする。本文は変更しない。 */
+  forgetProfileItemInTransaction(
+    db: DatabaseSync,
+    itemId: string,
+    revisionId?: string,
+    updatedAt?: string,
+  ): void {
     const targetId = normalizeOptionalText(itemId);
     if (!targetId) {
       return;
@@ -948,7 +1155,8 @@ export class MateProfileItemStorage {
     const forgottenRevisionId = normalizeOptionalText(revisionId);
     const now = updatedAt ?? nowIso();
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE mate_profile_items
       SET
         state = 'forgotten',
@@ -958,9 +1166,11 @@ export class MateProfileItemStorage {
         disabled_at = NULL,
         updated_at = ?
       WHERE id = ?
-    `).run(forgottenRevisionId, now, now, targetId);
+    `,
+    ).run(forgottenRevisionId, now, now, targetId);
   }
 
+  /** 正規化済みの主張を優先し、なければ表示文の HMAC を再学習抑制用のトゥームストーンに記録する。 */
   createForgottenTombstoneForProfileItemInTransaction(
     db: DatabaseSync,
     item: MateProfileItem,
@@ -996,6 +1206,7 @@ export class MateProfileItemStorage {
     );
   }
 
+  /** Growth apply が進行中でないときに項目を無効化し、無効化の時刻・リビジョンと忘却の来歴を更新する。 */
   disableProfileItem(itemId: string, revisionId?: string): void {
     const targetId = normalizeOptionalText(itemId);
     if (!targetId) {
@@ -1006,7 +1217,9 @@ export class MateProfileItemStorage {
     const disabledRevisionId = normalizeOptionalText(revisionId);
     const now = nowIso();
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE mate_profile_items
       SET
         state = 'disabled',
@@ -1016,9 +1229,12 @@ export class MateProfileItemStorage {
         forgotten_at = NULL,
         updated_at = ?
       WHERE id = ?
-    `).run(disabledRevisionId, now, now, targetId);
+    `,
+      )
+      .run(disabledRevisionId, now, now, targetId);
   }
 
+  /** 項目の保存用に保持していた SQLite 接続を閉じる。 */
   close(): void {
     this.db.close();
   }

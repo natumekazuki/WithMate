@@ -15,12 +15,16 @@ import {
 } from "../../src-shared/session/session-state.js";
 import { resolveSessionFilesDirectory } from "./session-files.js";
 
+/** フォルダーの所有セッションを識別し、日付・ワークスペース・実行状態を照合するための保存情報。 */
 type CleanupSession = Pick<
   SessionSummary,
   "id" | "incarnationId" | "updatedAt" | "workspacePath" | "status" | "runState"
 >;
+/** 走査や削除の判断に使う全セッションの概要と、その取得元の保存世代。 */
 type State = { identity: object; sessions: readonly CleanupSession[] };
+/** 削除直前の再照合に使う、ルートからの相対パスと走査時の情報。 */
 type Entry = { relativePath: string; stat: Stats };
+/** 一つのセッションの保存先と、走査したディレクトリおよび条件を満たした通常ファイル。 */
 type Folder = {
   session: CleanupSession;
   root: string;
@@ -28,6 +32,7 @@ type Folder = {
   directories: Entry[];
   files: Entry[];
 };
+/** 最新の走査IDに対応する削除候補と、走査時の保存世代および管理ルートの情報。 */
 type Snapshot = {
   scan: SessionFolderCleanupScan;
   identity: object;
@@ -35,6 +40,7 @@ type Snapshot = {
   managedStat?: Stats;
 };
 
+/** 走査時と現在の項目を、デバイス・inode・作成時刻で照合する。 */
 function sameIdentity(left: Stats, right: Stats): boolean {
   return (
     left.dev === right.dev &&
@@ -42,13 +48,16 @@ function sameIdentity(left: Stats, right: Stats): boolean {
     left.birthtimeMs === right.birthtimeMs
   );
 }
+/** 一致するパスや、どちらかがもう一方の配下にあるパスを重複とみなす。 */
 function overlaps(left: string, right: string): boolean {
+  /** 比較用の絶対パスにそろえ、Windowsでは大文字小文字の差を無視する。 */
   const normalize = (value: string) =>
     process.platform === "win32"
       ? path.resolve(value).toLowerCase()
       : path.resolve(value);
   const a = normalize(left);
   const b = normalize(right);
+  /** 相対パスが親を抜けずに到達できる同一パスまたは配下かを判定する。 */
   const contains = (parent: string, child: string) => {
     const relative = path.relative(parent, child);
     return (
@@ -60,12 +69,15 @@ function overlaps(left: string, right: string): boolean {
   };
   return contains(a, b) || contains(b, a);
 }
+/** 個別の走査・削除結果の診断に使う例外メッセージを取り出す。 */
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/** ファイルシステムが付けたエラーコードを、判定前の値として取り出す。 */
 function errorCode(error: unknown): unknown {
   return (error as NodeJS.ErrnoException)?.code;
 }
+/** 診断ログでは例外の自由文字列を使わず、既知の失敗分類に集約する。 */
 function failureCategory(
   error: unknown,
 ): "permission" | "io" | "missing" | "other" {
@@ -83,20 +95,27 @@ function failureCategory(
   }
 }
 
+/** セッションの保存領域を走査し、確認された最新の走査結果に基づいて候補を削除する。 */
 export class SessionFolderCleanupService {
   private latest: Snapshot | null = null;
   private busy = false;
 
+  /** 保存領域と実行状態を確認するためにMainの依存先を受け取る。 */
   constructor(
     private readonly deps: {
       userDataPath: string;
+      /** 現行の保存世代と全セッションの概要を取得する。 */
       readState(): Promise<State>;
+      /** 同じ保存状態で操作を続けられないときに中断させる。 */
       assertCurrent(identity: object): void;
+      /** 現在の実行状況から、操作対象のセッションが稼働中かを確認する。 */
       isRunning(sessionId: string): boolean;
+      /** 個別のファイル情報を含まない走査診断を記録する。 */
       writeLog?(input: AppLogInput): void;
     },
   ) {}
 
+  /** 保存された状態と現在の稼働状況のいずれかで実行中なら、削除保護の対象とする。 */
   private running(session: CleanupSession): boolean {
     return (
       session.status === "running" ||
@@ -105,6 +124,7 @@ export class SessionFolderCleanupService {
     );
   }
 
+  /** 削除対象から除外するため、全セッションのワークスペースについて保存パスと取得できた正規パスを集める。 */
   private async workspacePaths(
     sessions: readonly CleanupSession[],
   ): Promise<string[]> {
@@ -122,6 +142,10 @@ export class SessionFolderCleanupService {
     return result;
   }
 
+  /**
+   * 前回の走査を無効にし、セッションのローカル更新日とファイルの最小サイズで候補を集計する。
+   * 実行中のセッションやワークスペースと重なるフォルダーは対象外とし、この時点では何も削除しない。
+   */
   async scan(
     request: SessionFolderCleanupRequest,
   ): Promise<SessionFolderCleanupScan> {
@@ -269,6 +293,7 @@ export class SessionFolderCleanupService {
         };
         diagnostics.attemptedFolderCount++;
         let regularFileCount = 0;
+        /** リンクをたどらずに配下を走査し、再照合用の情報と集計を集める。読めない項目は個別結果に残す。 */
         const walk = async (relativePath: string): Promise<void> => {
           const absolutePath = path.join(root, relativePath);
           try {
@@ -354,6 +379,10 @@ export class SessionFolderCleanupService {
     }
   }
 
+  /**
+   * 最新の走査IDを一度だけ受け付け、状態や実体が変わっていない候補ファイルを削除する。
+   * ディレクトリは空になったものだけを削除し、各セッションのフォルダールートは残す。
+   */
   async run(scanId: string): Promise<SessionFolderCleanupResult> {
     if (this.busy)
       throw new Error("Session Folder cleanup is already in progress.");
@@ -415,6 +444,7 @@ export class SessionFolderCleanupService {
           const directories = new Map(
             folder.directories.map((entry) => [entry.relativePath, entry.stat]),
           );
+          /** 管理ルートから対象までのディレクトリが、リンクではなく走査時と同じ実体かを確認する。 */
           const validateDirectories = async (
             relativePath: string,
             isDirectory = false,

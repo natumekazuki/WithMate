@@ -14,33 +14,49 @@ import { useDialogA11y } from "../../ui/a11y.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import { ComposerIcon } from "./composer-icon.js";
 
-export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: {
+/** 手入力のパスを検証してから追加し、失敗時は同じ入力のまま再試行できるダイアログ。 */
+export function AdditionalDirectoryPathControl({
+  disabled,
+  onAdd,
+  onValidate,
+}: {
   disabled: boolean;
   onAdd: (directoryPath: string) => void | Promise<void>;
-  onValidate: (directoryPath: string) => Promise<WorkspaceDirectoryValidationResult>;
+  onValidate: (
+    directoryPath: string,
+  ) => Promise<WorkspaceDirectoryValidationResult>;
 }) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState("");
   const [error, setError] = useState("");
-  const [validation, setValidation] = useState<DirectoryPathValidationState>("idle");
+  const [validation, setValidation] =
+    useState<DirectoryPathValidationState>("idle");
   const [validationMessage, setValidationMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const inFlightRef = useRef(false);
   const validateRef = useRef(onValidate);
   validateRef.current = onValidate;
-  const [validationController] = useState(() => createDirectoryPathValidationController({
-    validate: (targetPath) => validateRef.current(targetPath),
-    onScheduled: (targetPath) => {
-      setValidation(targetPath ? "debouncing" : "idle");
-      setValidationMessage("");
-    },
-    onValidationStart: () => setValidation("pending"),
-    onResult: (_targetPath, result) => {
-      setValidation(result.valid ? "valid" : "invalid");
-      setValidationMessage(resolveWorkspaceDirectoryValidationMessage(result));
-    },
-  }));
+  const [validationController] = useState(() =>
+    createDirectoryPathValidationController({
+      /** コントローラーを作り直さず、現在の検証処理へ入力パスを渡す。 */
+      validate: (targetPath) => validateRef.current(targetPath),
+      /** 新たな検証が予約されたら前回の結果を消し、空入力なら待機状態へ戻す。 */
+      onScheduled: (targetPath) => {
+        setValidation(targetPath ? "debouncing" : "idle");
+        setValidationMessage("");
+      },
+      /** 予約の待ち時間を終えて検証が実行中になったことを表示する。 */
+      onValidationStart: () => setValidation("pending"),
+      /** 検証結果を追加可否と利用者向けの理由表示へ反映する。 */
+      onResult: (_targetPath, result) => {
+        setValidation(result.valid ? "valid" : "invalid");
+        setValidationMessage(
+          resolveWorkspaceDirectoryValidationMessage(result),
+        );
+      },
+    }),
+  );
   useEffect(() => () => validationController.cancel(), [validationController]);
   useEffect(() => {
     if (disabled) {
@@ -48,6 +64,7 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: 
       setOpen(false);
     }
   }, [disabled, validationController]);
+  /** 追加要求の処理中でなければ、予約済みの検証を取り消して閉じる。 */
   const close = () => {
     if (!inFlightRef.current) {
       validationController.cancel();
@@ -59,8 +76,15 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: 
     onClose: close,
     initialFocusRef: inputRef,
   });
+  /** 検証済みのパスだけを一度に1件追加し、失敗時はダイアログを残して理由を表示する。 */
   const submit = async () => {
-    if (disabled || inFlightRef.current || !directoryPath.trim() || validation !== "valid") return;
+    if (
+      disabled ||
+      inFlightRef.current ||
+      !directoryPath.trim() ||
+      validation !== "valid"
+    )
+      return;
     inFlightRef.current = true;
     inputRef.current?.focus();
     setBusy(true);
@@ -69,7 +93,9 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: 
       await onAdd(directoryPath.trim());
       setOpen(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not add the directory.");
+      setError(
+        cause instanceof Error ? cause.message : "Could not add the directory.",
+      );
     } finally {
       inFlightRef.current = false;
       setBusy(false);
@@ -107,17 +133,34 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: 
           showDismissControl={false}
           footer={
             <>
-              <button className="drawer-toggle compact secondary" type="button" disabled={busy} onClick={close}>
+              <button
+                className="drawer-toggle compact secondary"
+                type="button"
+                disabled={busy}
+                onClick={close}
+              >
                 Cancel
               </button>
-              <button className="drawer-toggle compact additional-directory-path-add" type="submit" form="additional-directory-path-form" disabled={busy || validation !== "valid"} aria-busy={busy || undefined}>
+              <button
+                className="drawer-toggle compact additional-directory-path-add"
+                type="submit"
+                form="additional-directory-path-form"
+                disabled={busy || validation !== "valid"}
+                aria-busy={busy || undefined}
+              >
                 <ButtonContent busy={busy}>Add</ButtonContent>
               </button>
             </>
           }
         >
           <h2>Add Directory By Path</h2>
-          <form id="additional-directory-path-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <form
+            id="additional-directory-path-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
             <DirectoryPathField
               id="additional-directory-path"
               ariaLabel="Directory path"

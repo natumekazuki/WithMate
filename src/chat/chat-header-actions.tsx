@@ -3,16 +3,21 @@ import type { KeyboardEventHandler, ReactNode } from "react";
 import type { SessionHeaderProps } from "./shell/session-header.js";
 import { SessionHeaderIcon } from "./shell/session-header-icon.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
-import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../settings/shortcut-registry.js";
+import {
+  appendShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+} from "../settings/shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
 import type { SessionRole } from "../../src-shared/session/session-role.js";
 
+/** ワークスペースを Explorer で開くボタンの操作可否と起動処理。 */
 export type WorkspaceExplorerActionOptions = {
   disabled?: boolean;
   onOpenExplorer: () => void;
 };
 
+/** 稼働中のセッションから、ヘッダーに表示する状態と実行できる操作を供給する。 */
 export type LiveSessionHeaderPropsInput = {
   sessionRole?: SessionRole;
   isRoleChangePending?: boolean;
@@ -44,6 +49,7 @@ export type LiveSessionHeaderPropsInput = {
   actions?: ReactNode;
 };
 
+/** ワークスペースを Explorer で開く操作を、フォルダーのアイコンボタンにする。 */
 export function createWorkspaceExplorerAction({
   disabled = false,
   onOpenExplorer,
@@ -62,6 +68,7 @@ export function createWorkspaceExplorerAction({
   );
 }
 
+/** 完了メッセージの折りたたみ状態、切り替え操作とショートカットの設定。 */
 export type MessageCollapseHeaderActionOptions = {
   allMessagesCollapsed: boolean;
   disabled?: boolean;
@@ -69,6 +76,7 @@ export type MessageCollapseHeaderActionOptions = {
   keyboardShortcuts?: KeyboardShortcutSettings;
 };
 
+/** 完了メッセージの現在の状態に応じて、次に行う一括操作とショートカットを示す。 */
 export function createMessageCollapseHeaderAction({
   allMessagesCollapsed,
   disabled = false,
@@ -99,7 +107,10 @@ export function createMessageCollapseHeaderAction({
   );
 }
 
-export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput): SessionHeaderProps {
+/** セッション種別に応じた表示可否を解決し、Session Folder と Workspace の操作を分けて渡す。 */
+export function buildLiveSessionHeaderProps(
+  input: LiveSessionHeaderPropsInput,
+): SessionHeaderProps {
   return {
     sessionRole: input.sessionRole,
     isRoleChangePending: input.isRoleChangePending,

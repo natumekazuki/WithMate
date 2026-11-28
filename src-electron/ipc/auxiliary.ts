@@ -48,11 +48,13 @@ import type {
   SetAuxiliaryTitleRequest,
 } from "../../src-shared/session/session-mutation-contract.js";
 
+/** 送信元のウィンドウ解決を除いた、Auxiliary の読み取り・作成・実行に必要なサービス側の依存。 */
 export type MainIpcAuxiliaryServiceDeps = Omit<
   MainIpcAuxiliaryDeps,
   keyof MainIpcEventWindowDeps | keyof MainIpcSessionWindowDeps
 >;
 
+/** Auxiliary のサービスと親 Session ウィンドウを認可する共通依存を束ねる。 */
 export function createAuxiliaryIpcDeps(
   services: MainIpcAuxiliaryServiceDeps,
   context: MainIpcEventWindowDeps & MainIpcSessionWindowDeps,
@@ -60,10 +62,12 @@ export function createAuxiliaryIpcDeps(
   return { ...context, ...services };
 }
 
+/** Auxiliary の一覧・読み取り・作成・更新・実行を登録する。本文や変更操作は親 Session ウィンドウに紐付け、公開のサマリーとは区別する。 */
 export function registerAuxiliaryHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcAuxiliaryDeps,
 ): void {
+  /** Auxiliary の基本機能がすべて接続されていることを確認し、一つでも欠けていれば呼び出しを拒否する。 */
   const getAuxiliaryDeps = (
     deps: MainIpcAuxiliaryDeps,
   ): MainIpcAuxiliaryDepsRequired => {
@@ -90,8 +94,7 @@ export function registerAuxiliaryHandlers(
 
     return {
       listAuxiliarySessions: deps.listAuxiliarySessions,
-      listOpenAuxiliarySessionSummaries:
-        deps.listOpenAuxiliarySessionSummaries,
+      listOpenAuxiliarySessionSummaries: deps.listOpenAuxiliarySessionSummaries,
       getLatestAuxiliarySession: deps.getLatestAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
@@ -114,9 +117,8 @@ export function registerAuxiliaryHandlers(
       return auxiliaryDeps.listAuxiliarySessions(parentSessionId);
     },
   );
-  ipcMain.handle(
-    WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-    () => getAuxiliaryDeps(deps).listOpenAuxiliarySessionSummaries(),
+  ipcMain.handle(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
+    getAuxiliaryDeps(deps).listOpenAuxiliarySessionSummaries(),
   );
   ipcMain.handle(
     WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
@@ -126,7 +128,9 @@ export function registerAuxiliaryHandlers(
         return null;
       }
       assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
-      return Promise.resolve(auxiliaryDeps.getLatestAuxiliarySession(parentSessionId)).then((session) => session ? toConversationView(session) : null);
+      return Promise.resolve(
+        auxiliaryDeps.getLatestAuxiliarySession(parentSessionId),
+      ).then((session) => (session ? toConversationView(session) : null));
     },
   );
   ipcMain.handle(
@@ -136,7 +140,8 @@ export function registerAuxiliaryHandlers(
       if (!auxiliarySessionId) {
         return null;
       }
-      const status = await auxiliaryDeps.getAuxiliarySessionStatus(auxiliarySessionId);
+      const status =
+        await auxiliaryDeps.getAuxiliarySessionStatus(auxiliarySessionId);
       if (!status) return null;
       assertAuxiliaryOwnerWindowSender(event, status.parentSessionId, deps);
       return auxiliaryDeps.getAuxiliarySession(auxiliarySessionId);
@@ -255,12 +260,19 @@ export function registerAuxiliaryHandlers(
         existingSession.parentSessionId,
         deps,
       );
-      return toConversationView(await auxiliaryDeps.updateAuxiliarySession(session));
+      return toConversationView(
+        await auxiliaryDeps.updateAuxiliarySession(session),
+      );
     },
   );
+  /** 保存済みの親と作成時刻を要求に照合し、同じ世代の Auxiliary を所有する親ウィンドウからの変更だけを認める。 */
   const assertAuxiliaryMutationOwner = async (
     event: IpcMainInvokeEvent,
-    request: { auxiliarySessionId: string; parentSessionId: string; createdAt: string },
+    request: {
+      auxiliarySessionId: string;
+      parentSessionId: string;
+      createdAt: string;
+    },
   ): Promise<void> => {
     const auxiliaryDeps = getAuxiliaryDeps(deps);
     const status = await auxiliaryDeps.getAuxiliarySessionStatus(
@@ -279,7 +291,9 @@ export function registerAuxiliaryHandlers(
     WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
     async (event, request: SetAuxiliaryExecutionOptionsRequest) => {
       if (!deps.setAuxiliaryExecutionOptions) {
-        throw new Error("Auxiliary execution options mutation is not configured.");
+        throw new Error(
+          "Auxiliary execution options mutation is not configured.",
+        );
       }
       await assertAuxiliaryMutationOwner(event, request);
       return deps.setAuxiliaryExecutionOptions(request);
@@ -318,7 +332,12 @@ export function registerAuxiliaryHandlers(
         auxiliarySessionId,
       );
       assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return toConversationView(await auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request));
+      return toConversationView(
+        await auxiliaryDeps.runAuxiliarySessionTurn(
+          auxiliarySessionId,
+          request,
+        ),
+      );
     },
   );
   ipcMain.handle(
@@ -330,16 +349,29 @@ export function registerAuxiliaryHandlers(
         auxiliaryDeps,
         request.sessionId,
       );
-      const assertAuthorized = () => assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      /** キャンセルの受付時とサービスが再検証を求めたとき、同じ親 Session の所有権を確認する。 */
+      const assertAuthorized = () =>
+        assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
       assertAuthorized();
       if (session.createdAt !== request.incarnationId) return;
       return auxiliaryDeps.cancelAuxiliarySessionRun(request, assertAuthorized);
     },
   );
-  ipcMain.handle(WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL, async (event, auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {
-    const session = await getAuxiliarySessionForMutation(getAuxiliaryDeps(deps), auxiliarySessionId);
-    assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-    if (!deps.steerAuxiliarySessionTurn) throw new Error("Auxiliary input is unavailable.");
-    return deps.steerAuxiliarySessionTurn(auxiliarySessionId, request);
-  });
+  ipcMain.handle(
+    WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
+    async (
+      event,
+      auxiliarySessionId: string,
+      request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest,
+    ) => {
+      const session = await getAuxiliarySessionForMutation(
+        getAuxiliaryDeps(deps),
+        auxiliarySessionId,
+      );
+      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      if (!deps.steerAuxiliarySessionTurn)
+        throw new Error("Auxiliary input is unavailable.");
+      return deps.steerAuxiliarySessionTurn(auxiliarySessionId, request);
+    },
+  );
 }

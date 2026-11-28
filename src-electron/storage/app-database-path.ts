@@ -2,8 +2,14 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { APP_DATABASE_V1_FILENAME } from "./database-schema-v1.js";
-import { APP_DATABASE_V2_FILENAME, isValidV2Database } from "./database-schema-v2.js";
-import { APP_DATABASE_V3_FILENAME, isValidV3Database } from "./database-schema-v3.js";
+import {
+  APP_DATABASE_V2_FILENAME,
+  isValidV2Database,
+} from "./database-schema-v2.js";
+import {
+  APP_DATABASE_V3_FILENAME,
+  isValidV3Database,
+} from "./database-schema-v3.js";
 import {
   APP_DATABASE_V4_FILENAME,
   APP_DATABASE_V4_SCHEMA_VERSION,
@@ -19,7 +25,11 @@ import {
   readV6DatabaseUserVersion,
 } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import { assertRetiredMemoryAffectDatabasePath, removeRetiredMemoryAffectFiles, RETIRED_MEMORY_AFFECT_TABLES } from "./migrations/memory-affect-removal.js";
+import {
+  assertRetiredMemoryAffectDatabasePath,
+  removeRetiredMemoryAffectFiles,
+  RETIRED_MEMORY_AFFECT_TABLES,
+} from "./migrations/memory-affect-removal.js";
 import { removeCompanionData } from "./migrations/companion-removal.js";
 import { createMigrationWriteReport as migrateV1ToV2Report } from "./migrations/migrate-database-v1-to-v2.js";
 import { createMigrationWriteReport as migrateV2ToV3Report } from "./migrations/migrate-database-v2-to-v3.js";
@@ -29,10 +39,12 @@ import {
   hasV4ToV6ReleaseDataMigrationMarker,
 } from "./migrations/migrate-database-v4-to-v6.js";
 
+/** 旧世代の移行で参照する V3 Blob ディレクトリをユーザーデータの配下に解決する。 */
 function v3BlobRootPath(userDataPath: string): string {
   return path.join(userDataPath, "blobs", "v3");
 }
 
+/** 既存 V6 のスキーマを補修する。監査や廃止対象テーブルを持つ DB では失敗を伝え、旧世代からの置換に進ませない。 */
 function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   if (readV6DatabaseUserVersion(dbPath) !== 6) {
     return;
@@ -40,10 +52,16 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
 
   assertRetiredMemoryAffectDatabasePath(dbPath);
   const db = openAppDatabase(dbPath);
-  const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name));
-  const mustPreserveExisting = tables.has("audit_events_v6")
-    || RETIRED_MEMORY_AFFECT_TABLES.some((name) => tables.has(name))
-    || RETIRED_SESSION_GRAPH_TABLES.some((name) => tables.has(name));
+  const tables = new Set(
+    db
+      .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+      .all()
+      .map((row) => row.name),
+  );
+  const mustPreserveExisting =
+    tables.has("audit_events_v6") ||
+    RETIRED_MEMORY_AFFECT_TABLES.some((name) => tables.has(name)) ||
+    RETIRED_SESSION_GRAPH_TABLES.some((name) => tables.has(name));
   try {
     ensureV6Schema(db);
   } catch (error) {
@@ -55,25 +73,33 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   }
 }
 
+/** 既存の V6 DB に指定名のテーブルがあるか確認し、照会後は接続を閉じる。 */
 function v6TableExists(dbPath: string, tableName: string): boolean {
   const db = openAppDatabase(dbPath);
   try {
-    const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
-      | { name?: string }
-      | undefined;
+    const row = db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      )
+      .get(tableName) as { name?: string } | undefined;
     return row?.name === tableName;
   } finally {
     db.close();
   }
 }
 
+/** DB 準備中に表示する進捗の見出しと、必要に応じた詳細。 */
 export type AppDatabaseMigrationProgress = {
   title: string;
   detail?: string;
 };
 
-type AppDatabaseMigrationProgressListener = (progress: AppDatabaseMigrationProgress) => void;
+/** DB の検査や世代移行の進捗を受け取る通知先。 */
+type AppDatabaseMigrationProgressListener = (
+  progress: AppDatabaseMigrationProgress,
+) => void;
 
+/** 有効な既存 DB を新しい世代から選ぶ。既存 V6 の補修は行うが、世代間移行や新規作成はせず、候補がなければ V6 の予定パスを返す。 */
 export function resolveAppDatabasePath(userDataPath: string): string {
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   if (existsSync(v6Path)) {
@@ -106,14 +132,17 @@ export function resolveAppDatabasePath(userDataPath: string): string {
   return v6Path;
 }
 
+/** 廃止データを整理し、既存 DB の補修や旧世代からの移行を経て稼働用 V6 のパスを返す。移行元がなければ新規作成する。 */
 export async function resolveOrMigrateAppDatabasePath(
   userDataPath: string,
   onProgress?: AppDatabaseMigrationProgressListener,
 ): Promise<string> {
-  await removeCompanionData(userDataPath, (phase) => onProgress?.({
-    title: "Updating saved data",
-    detail: `Removing retired feature data (${phase}).`,
-  }));
+  await removeCompanionData(userDataPath, (phase) =>
+    onProgress?.({
+      title: "Updating saved data",
+      detail: `Removing retired feature data (${phase}).`,
+    }),
+  );
   await removeRetiredMemoryAffectFiles(userDataPath);
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   onProgress?.({
@@ -125,8 +154,14 @@ export async function resolveOrMigrateAppDatabasePath(
     tryEnsureExistingV6DatabaseSchema(v6Path);
   }
   if (v6Exists && isValidV6Database(v6Path)) {
-    const v4PathForExistingV6 = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
-    if (existsSync(v4PathForExistingV6) && isValidV4Database(v4PathForExistingV6)) {
+    const v4PathForExistingV6 = path.join(
+      userDataPath,
+      APP_DATABASE_V4_FILENAME,
+    );
+    if (
+      existsSync(v4PathForExistingV6) &&
+      isValidV4Database(v4PathForExistingV6)
+    ) {
       const alreadyMigrated = await hasV4ToV6MigrationMarker(v6Path);
       if (!alreadyMigrated) {
         onProgress?.({
@@ -156,9 +191,9 @@ export async function resolveOrMigrateAppDatabasePath(
   if (v4Exists && isUnsupportedNewerV4Database(v4Path)) {
     const userVersion = readV4DatabaseUserVersion(v4Path);
     throw new Error(
-      `${APP_DATABASE_V4_FILENAME} is a newer database version unsupported by this WithMate.`
-      + ` user_version=${userVersion} exceeds supported version ${APP_DATABASE_V4_SCHEMA_VERSION}; `
-      + "the legacy database will not be overwritten by automatic migration.",
+      `${APP_DATABASE_V4_FILENAME} is a newer database version unsupported by this WithMate.` +
+        ` user_version=${userVersion} exceeds supported version ${APP_DATABASE_V4_SCHEMA_VERSION}; ` +
+        "the legacy database will not be overwritten by automatic migration.",
     );
   }
 
@@ -224,12 +259,18 @@ export async function resolveOrMigrateAppDatabasePath(
     return v6Path;
   }
 
-  const { createOrVerifyV6FreshDatabase } = await import("./app-database-v6-bootstrap.js");
+  const { createOrVerifyV6FreshDatabase } =
+    await import("./app-database-v6-bootstrap.js");
   const fresh = await createOrVerifyV6FreshDatabase(userDataPath);
   return fresh.dbPath;
 }
 
-async function migrateV1ToV2(v1Path: string, v2Path: string, options: { overwrite?: boolean } = {}): Promise<void> {
+/** V1 を V2 に移し、呼び出し側が指定した場合に限り既存の移行先の上書きを許可する。 */
+async function migrateV1ToV2(
+  v1Path: string,
+  v2Path: string,
+  options: { overwrite?: boolean } = {},
+): Promise<void> {
   migrateV1ToV2Report({
     v1DbPath: v1Path,
     v2DbPath: v2Path,
@@ -237,6 +278,7 @@ async function migrateV1ToV2(v1Path: string, v2Path: string, options: { overwrit
   });
 }
 
+/** V2 を V3 に移し、外部化するデータの保存先にユーザーデータ配下の V3 Blob 領域を使う。 */
 async function migrateV2ToV3(
   userDataPath: string,
   v2Path: string,
@@ -251,6 +293,7 @@ async function migrateV2ToV3(
   });
 }
 
+/** V3 DB とその Blob 領域を移行元として、指定した V4 DB へ世代移行する。 */
 async function migrateV3ToV4(
   userDataPath: string,
   v3Path: string,
@@ -266,6 +309,7 @@ async function migrateV3ToV4(
   });
 }
 
+/** V4 から維持対象データを V6 へ移す。移行先の上書き可否は呼び出し側の指定に従う。 */
 async function migrateV4ToV6(
   v4Path: string,
   v6Path: string,
@@ -278,6 +322,7 @@ async function migrateV4ToV6(
   });
 }
 
+/** 既存 V6 へのリリースデータ移行が記録済みか確認し、V4 からの重複移行を避ける。 */
 async function hasV4ToV6MigrationMarker(v6Path: string): Promise<boolean> {
   return hasV4ToV6ReleaseDataMigrationMarker(v6Path);
 }

@@ -6,7 +6,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { useAuxiliaryWorkspace, type AuxiliaryWorkspaceApi as WorkspaceApi, type AuxiliaryWorkspace } from "../../src/chat/use-auxiliary-workspace.js";
+import {
+  useAuxiliaryWorkspace,
+  type AuxiliaryWorkspaceApi as WorkspaceApi,
+  type AuxiliaryWorkspace,
+} from "../../src/chat/use-auxiliary-workspace.js";
 import { ChatWindow } from "../../src/chat/chat-window.js";
 import {
   createHiddenControlsTextChatComposerProps,
@@ -14,12 +18,22 @@ import {
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
 } from "../../src/chat/chat-window-adapter.js";
-import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type {
+  AuxiliarySession,
+  AuxiliarySessionSummary,
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 
-type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> & Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
+/** 軽量ステータス照会が不要なシナリオでは、既存の詳細スタブを使えるようにするテスト用 API 型。 */
+type AuxiliaryWorkspaceApi = Omit<WorkspaceApi, "getAuxiliarySessionStatus"> &
+  Partial<Pick<WorkspaceApi, "getAuxiliarySessionStatus">>;
 
-function session(id: string, createdAt: string, overrides: Partial<AuxiliarySession> = {}): AuxiliarySession {
+/** 指定した会話と時刻でテスト用 Auxiliary を組み立て、実行状態・保存内容などの差し替えを許す。 */
+function session(
+  id: string,
+  createdAt: string,
+  overrides: Partial<AuxiliarySession> = {},
+): AuxiliarySession {
   return {
     id,
     parentSessionId: "parent-1",
@@ -44,22 +58,38 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
   };
 }
 
+/** 本番の workspace フックをテスト用 DOM に取り付け、任意の API と親 Session で更新を観測する。 */
 function setup(
   api: AuxiliaryWorkspaceApi,
   parentSessionId: string | null = "parent-1",
   initialSelectedId: string | null = null,
 ) {
-  const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test" });
+  const dom = new JSDOM("<div id='root'></div>", {
+    url: "https://withmate.test",
+  });
   const previousWindow = globalThis.window;
-  Object.assign(globalThis, { window: dom.window, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.assign(globalThis, {
+    window: dom.window,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
   let current: AuxiliaryWorkspace | null = null;
   const workspaceApi: WorkspaceApi = {
     ...api,
-    getAuxiliarySessionStatus: api.getAuxiliarySessionStatus ?? (async (id) => {
-      const detail = await api.getAuxiliarySession(id);
-      return detail ? { id: detail.id, parentSessionId: detail.parentSessionId, createdAt: detail.createdAt, runState: detail.runState } : null;
-    }),
+    getAuxiliarySessionStatus:
+      api.getAuxiliarySessionStatus ??
+      (async (id) => {
+        const detail = await api.getAuxiliarySession(id);
+        return detail
+          ? {
+              id: detail.id,
+              parentSessionId: detail.parentSessionId,
+              createdAt: detail.createdAt,
+              runState: detail.runState,
+            }
+          : null;
+      }),
   };
+  /** 指定した親 Session を本番フックへ渡し、描画のたびに公開状態を保持する。 */
   function Probe(props: { parentSessionId: string | null }) {
     current = useAuxiliaryWorkspace({
       parentSessionId: props.parentSessionId,
@@ -68,15 +98,31 @@ function setup(
     });
     return null;
   }
-  const root: Root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+  const root: Root = createRoot(
+    dom.window.document.getElementById("root") as HTMLElement,
+  );
   return {
-    get current() { return current as AuxiliaryWorkspace; },
+    /** 最新の描画に対応する workspace の公開状態を参照する。 */
+    get current() {
+      return current as AuxiliaryWorkspace;
+    },
     localStorage: dom.window.localStorage,
     storagePrototype: dom.window.Storage.prototype,
+    /** 初期親での描画と別の親への切替を同じ React root 上で行う。 */
     async render(nextParentSessionId = parentSessionId) {
-      await act(async () => { root.render(React.createElement(Probe, { parentSessionId: nextParentSessionId })); });
+      await act(async () => {
+        root.render(
+          React.createElement(Probe, { parentSessionId: nextParentSessionId }),
+        );
+      });
     },
-    async unmount() { await act(async () => { root.unmount(); }); Object.assign(globalThis, { window: previousWindow }); },
+    /** フックをアンマウントして購読を解除し、置き換えた window を復元する。 */
+    async unmount() {
+      await act(async () => {
+        root.unmount();
+      });
+      Object.assign(globalThis, { window: previousWindow });
+    },
   };
 }
 
@@ -91,38 +137,60 @@ function setup(
 // lifecycle = "permanent"
 // distinction = "通常の一覧選択testでは検証できない初期選択と送信対象の独立性をhookのcomponent behaviorとして検証する"
 // @end-test-value
+/** 通知で指定された会話を初期表示し、以後の会話選択でも現在の送信対象を Main と Auxiliary のどちらからも勝手に変えない。 */
 test("通知由来のAuxiliary選択は送信対象を変更しない", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
-  const view = setup({
-    listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: async (id) => id === a.id ? a : id === b.id ? b : null,
-  }, "parent-1", b.id);
+  const view = setup(
+    {
+      /** 初期選択と手動選択を区別できる二つの候補を返す。 */
+      listAuxiliarySessions: async () => [a, b],
+      /** 通知や選択で渡された ID に対応する詳細だけを返す。 */
+      getAuxiliarySession: async (id) =>
+        id === a.id ? a : id === b.id ? b : null,
+    },
+    "parent-1",
+    b.id,
+  );
 
   await view.render();
   assert.equal(view.current.selectedId, b.id);
   assert.equal(view.current.selectedSession?.id, b.id);
   assert.equal(view.current.target, "main");
 
-  await act(async () => { view.current.selectSession(a.id); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    view.current.selectSession(a.id);
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.equal(view.current.selectedId, a.id);
   assert.equal(view.current.selectedSession?.id, a.id);
   assert.equal(view.current.target, "main");
 
-  await act(async () => { view.current.setTarget("auxiliary"); });
-  await act(async () => { view.current.selectSession(b.id); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    view.current.setTarget("auxiliary");
+  });
+  await act(async () => {
+    view.current.selectSession(b.id);
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.equal(view.current.selectedId, b.id);
   assert.equal(view.current.selectedSession?.id, b.id);
   assert.equal(view.current.target, "auxiliary");
   await view.unmount();
 });
 
+/** 非同期応答をテストで保留し、成功・失敗の順序を任意に決められるようにする。 */
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (cause: unknown) => void;
-  const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; });
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
   return { promise, resolve, reject };
 }
 
@@ -138,40 +206,80 @@ function deferred<T>() {
 // impact = "開いていないAuxiliaryの確認要否がMonitorと食い違う、または閲覧位置や入力先を失う"
 // distinction = "既読サービス単体や共通切替のDOMテストは未選択Auxiliaryの通知、非同期逆順と一覧の独立性を検証しない"
 // @end-test-value
+/** 切替候補に未選択会話の未読更新も反映し、古い応答で既読状態を戻さず、候補順・選択・送信対象を維持する。 */
 test("Auxiliary switcher follows shared unread updates without changing order or target", async () => {
   const a = session("a", "2026-01-01", { preview: "First" });
   const b = session("b", "2026-01-02", { preview: "Second" });
   const unreadResult = { turnId: 4, assistantMessageSeq: 1 };
   const stale = deferred<typeof unreadResult>();
   const reads: string[] = [];
-  let nextA: Promise<typeof unreadResult | null> = Promise.resolve(unreadResult);
+  let nextA: Promise<typeof unreadResult | null> =
+    Promise.resolve(unreadResult);
   let onTurn: ((id: string) => void) | undefined;
   const view = setup({
+    /** 未読変化の前後で順序を比較する二つの会話を一覧にする。 */
     listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: async (id) => id === a.id ? a : id === b.id ? b : null,
-    getUnreadSessionResult: (id) => { reads.push(id); return id === a.id ? nextA : Promise.resolve(null); },
-    onSessionTurnUpdated: (listener) => { onTurn = listener; return () => { onTurn = undefined; }; },
+    /** 選択した会話の詳細を、その ID から解決する。 */
+    getAuxiliarySession: async (id) =>
+      id === a.id ? a : id === b.id ? b : null,
+    /** 未読照会の対象を記録し、A の応答だけを通知ごとに差し替える。 */
+    getUnreadSessionResult: (id) => {
+      reads.push(id);
+      return id === a.id ? nextA : Promise.resolve(null);
+    },
+    /** ターン通知をテストから配信できるようにし、購読解除後はリスナーを破棄する。 */
+    onSessionTurnUpdated: (listener) => {
+      onTurn = listener;
+      return () => {
+        onTurn = undefined;
+      };
+    },
   });
   const messageColumn = createStaticTextConversationMessageColumnProps({
-    sessionId: "parent-1", characterId: "fixture", characterName: "Fixture",
-    messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+    sessionId: "parent-1",
+    characterId: "fixture",
+    characterName: "Fixture",
+    messages: [],
+    messageListRef: React.createRef<HTMLDivElement>(),
+    isRunning: false,
   });
-  const surface = () => view.current.buildConcurrentChats({
-    mainSession: null, auxiliarySession: view.current.selectedSession, messageColumn,
-  });
-  const options = () => surface().auxiliaryItems.map(({ id, hasUnreadResult }) => [id, hasUnreadResult]);
+  /** 現在の未読と選択の状態を、実際の会話切替用の投影から取り出す。 */
+  const surface = () =>
+    view.current.buildConcurrentChats({
+      mainSession: null,
+      auxiliarySession: view.current.selectedSession,
+      messageColumn,
+    });
+  /** 一覧の ID と未読値だけを抽出し、並び順と表示属性を同時に比較する。 */
+  const options = () =>
+    surface().auxiliaryItems.map(({ id, hasUnreadResult }) => [
+      id,
+      hasUnreadResult,
+    ]);
   try {
     await view.render();
     await act(async () => view.current.setTarget("auxiliary"));
-    assert.deepEqual(options(), [["b", false], ["a", true]]);
+    assert.deepEqual(options(), [
+      ["b", false],
+      ["a", true],
+    ]);
     assert.ok(onTurn);
     nextA = stale.promise;
     await act(async () => onTurn?.(a.id));
     nextA = Promise.resolve(null);
-    await act(async () => { onTurn?.("elsewhere"); onTurn?.(a.id); });
-    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    await act(async () => {
+      onTurn?.("elsewhere");
+      onTurn?.(a.id);
+    });
+    assert.deepEqual(options(), [
+      ["b", false],
+      ["a", false],
+    ]);
     await act(async () => stale.resolve(unreadResult));
-    assert.deepEqual(options(), [["b", false], ["a", false]]);
+    assert.deepEqual(options(), [
+      ["b", false],
+      ["a", false],
+    ]);
     assert.equal(surface().selectedAuxiliaryId, b.id);
     assert.equal(surface().target, "auxiliary");
     assert.deepEqual(reads, ["a", "b", "a", "a"]);
@@ -192,18 +300,43 @@ test("Auxiliary switcher follows shared unread updates without changing order or
 // impact = "Providerに届いた追加入力が会話から欠落し、利用者が入力到達を判断できなくなることを防ぐ"
 // distinction = "storage/runtime testはRenderer購読を通らず、terminal testは同じrunの途中での反映を検出できない。小さい実hook fixtureで通知境界を検証する"
 // @end-test-value
+/** 追加入力の保存通知で同じ実行の本文を更新するが、ライブ本文差分や対象外通知では再取得せず、ローカル設定とブックマークを保持する。 */
 test("同じAuxiliary runの追加入力は保存通知で表示し、live deltaでは本文を再取得しない", async () => {
   const initial = session("a", "created", { runState: "running" });
   let stored = initial;
   let reads = 0;
-  let savedListener: ((payload: SessionSummaryInvalidation) => void) | undefined;
-  let liveListener: Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0] | undefined;
+  let savedListener:
+    ((payload: SessionSummaryInvalidation) => void) | undefined;
+  let liveListener:
+    | Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0]
+    | undefined;
   const view = setup({
+    /** 実行中の会話を初期一覧の対象にする。 */
     listAuxiliarySessions: async () => [initial],
-    getAuxiliarySession: async () => { reads += 1; return stored; },
-    getAuxiliarySessionStatus: async () => ({ ...initial, runState: "running" }),
-    subscribeSessionInvalidation: (listener) => { savedListener = listener; return () => { savedListener = undefined; }; },
-    subscribeLiveSessionRun: (listener) => { liveListener = listener; return () => { liveListener = undefined; }; },
+    /** 詳細の呼出回数を数え、保存前後を再現する現在の本文を返す。 */
+    getAuxiliarySession: async () => {
+      reads += 1;
+      return stored;
+    },
+    /** 軽量照会では実行中状態を返し、保存済み本文の再取得とは分離する。 */
+    getAuxiliarySessionStatus: async () => ({
+      ...initial,
+      runState: "running",
+    }),
+    /** 親 Session・全件の無効化を任意に流し、解除時には配信先を削除する。 */
+    subscribeSessionInvalidation: (listener) => {
+      savedListener = listener;
+      return () => {
+        savedListener = undefined;
+      };
+    },
+    /** ライブ本文差分を配信する入り口を捕捉し、アンマウントで解除できるようにする。 */
+    subscribeLiveSessionRun: (listener) => {
+      liveListener = listener;
+      return () => {
+        liveListener = undefined;
+      };
+    },
   });
   try {
     await view.render();
@@ -211,25 +344,58 @@ test("同じAuxiliary runの追加入力は保存通知で表示し、live delta
     await act(async () => {
       binding.setExecutionSelection({ ...initial, reasoningEffort: "high" });
       binding.setMessageBookmark(0, true);
-      liveListener?.(initial.id, { runState: "running", turnId: "turn-1", inputAvailable: true } as never);
+      liveListener?.(initial.id, {
+        runState: "running",
+        turnId: "turn-1",
+        inputAvailable: true,
+      } as never);
     });
-    stored = { ...initial, messages: [{ ...initial.messages[0], isBookmarked: true }, { role: "user", text: "割込み本文" }] };
+    stored = {
+      ...initial,
+      messages: [
+        { ...initial.messages[0], isBookmarked: true },
+        { role: "user", text: "割込み本文" },
+      ],
+    };
     await act(async () => {
       savedListener?.({ scope: "ids", sessionIds: ["unrelated"] });
-      savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId], detailChanged: false });
-      liveListener?.(initial.id, { runState: "running", turnId: "turn-1", inputAvailable: true, assistantText: "delta" } as never);
+      savedListener?.({
+        scope: "ids",
+        sessionIds: [initial.parentSessionId],
+        detailChanged: false,
+      });
+      liveListener?.(initial.id, {
+        runState: "running",
+        turnId: "turn-1",
+        inputAvailable: true,
+        assistantText: "delta",
+      } as never);
     });
     assert.equal(reads, 1);
-    await act(async () => { savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] }); });
-    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), ["a response", "割込み本文"]);
+    await act(async () => {
+      savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] });
+    });
+    assert.deepEqual(
+      view.current.selectedSession?.messages.map((message) => message.text),
+      ["a response", "割込み本文"],
+    );
     assert.equal(view.current.selectedSession?.runState, "running");
     assert.equal(view.current.selectedSession?.reasoningEffort, "high");
     assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
     assert.equal(reads, 2);
-    await act(async () => { savedListener?.({ scope: "all" }); });
-    assert.equal(view.current.selectedSession?.messages.filter((message) => message.text === "割込み本文").length, 1);
+    await act(async () => {
+      savedListener?.({ scope: "all" });
+    });
+    assert.equal(
+      view.current.selectedSession?.messages.filter(
+        (message) => message.text === "割込み本文",
+      ).length,
+      1,
+    );
     assert.equal(reads, 3);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
   assert.equal(savedListener, undefined);
 });
 
@@ -245,17 +411,30 @@ test("同じAuxiliary runの追加入力は保存通知で表示し、live delta
 // impact = "割込みと完了応答の喪失・誤表示、利用者のBookmark消失を防ぐ"
 // distinction = "同期したreadやterminal同士のtestでは保存通知との交差を検証できず、型では応答順とBookmark revisionの保持を検出できない"
 // @end-test-value
+/** 保存通知由来の古い取得が完了時の詳細より遅れても本文とブックマークを保持する。再取得エラー後も本文を消さず次の通知で回復する。 */
 test("保存通知とterminalの逆順readでも最新本文を保持し、読込失敗から回復する", async () => {
   const initial = session("a", "created", { runState: "running" });
   const oldRead = deferred<AuxiliarySession>();
   const terminalRead = deferred<AuxiliarySession>();
   let reads = 0;
-  let savedListener: ((payload: SessionSummaryInvalidation) => void) | undefined;
-  let liveListener: Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0] | undefined;
-  const completed = { ...initial, runState: "idle" as const,
-    messages: [...initial.messages, { role: "user" as const, text: "割込み" }, { role: "assistant" as const, text: "完了応答" }] };
+  let savedListener:
+    ((payload: SessionSummaryInvalidation) => void) | undefined;
+  let liveListener:
+    | Parameters<NonNullable<WorkspaceApi["subscribeLiveSessionRun"]>>[0]
+    | undefined;
+  const completed = {
+    ...initial,
+    runState: "idle" as const,
+    messages: [
+      ...initial.messages,
+      { role: "user" as const, text: "割込み" },
+      { role: "assistant" as const, text: "完了応答" },
+    ],
+  };
   const view = setup({
+    /** 取得を競合させる対象の実行中会話を一つだけ返す。 */
     listAuxiliarySessions: async () => [initial],
+    /** 詳細の呼出順で初期値・保留された旧応答と完了応答・失敗・回復結果を切り替える。 */
     getAuxiliarySession: async () => {
       reads += 1;
       if (reads === 1) return initial;
@@ -264,29 +443,69 @@ test("保存通知とterminalの逆順readでも最新本文を保持し、読�
       if (reads === 4) throw new Error("read failed");
       return completed;
     },
-    subscribeSessionInvalidation: (listener) => { savedListener = listener; return () => { savedListener = undefined; }; },
-    subscribeLiveSessionRun: (listener) => { liveListener = listener; return () => { liveListener = undefined; }; },
+    /** 保存済み詳細を読み直す無効化通知の送り先を保持する。 */
+    subscribeSessionInvalidation: (listener) => {
+      savedListener = listener;
+      return () => {
+        savedListener = undefined;
+      };
+    },
+    /** 完了通知を任意の順で流せるようにし、解除後はリスナーを残さない。 */
+    subscribeLiveSessionRun: (listener) => {
+      liveListener = listener;
+      return () => {
+        liveListener = undefined;
+      };
+    },
   });
   try {
     await view.render();
-    await act(async () => { savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] }); });
-    await act(async () => { liveListener?.(initial.id, null); });
-    await act(async () => { view.current.getBinding(initial.id).setMessageBookmark(0, true); });
-    await act(async () => { terminalRead.resolve(completed); });
-    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), ["a response", "割込み", "完了応答"]);
+    await act(async () => {
+      savedListener?.({ scope: "ids", sessionIds: [initial.parentSessionId] });
+    });
+    await act(async () => {
+      liveListener?.(initial.id, null);
+    });
+    await act(async () => {
+      view.current.getBinding(initial.id).setMessageBookmark(0, true);
+    });
+    await act(async () => {
+      terminalRead.resolve(completed);
+    });
+    assert.deepEqual(
+      view.current.selectedSession?.messages.map((message) => message.text),
+      ["a response", "割込み", "完了応答"],
+    );
     assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
-    await act(async () => { oldRead.resolve(initial); });
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
+    await act(async () => {
+      oldRead.resolve(initial);
+    });
+    assert.equal(
+      view.current.selectedSession?.messages.at(-1)?.text,
+      "完了応答",
+    );
     assert.equal(view.current.selectedSession?.runState, "idle");
     completed.messages[0] = { ...completed.messages[0], isBookmarked: true };
-    await act(async () => { savedListener?.({ scope: "all" }); });
+    await act(async () => {
+      savedListener?.({ scope: "all" });
+    });
     assert.match(view.current.detailError?.message ?? "", /read failed/);
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
-    await act(async () => { savedListener?.({ scope: "all" }); });
+    assert.equal(
+      view.current.selectedSession?.messages.at(-1)?.text,
+      "完了応答",
+    );
+    await act(async () => {
+      savedListener?.({ scope: "all" });
+    });
     assert.equal(view.current.detailError, null);
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "完了応答");
+    assert.equal(
+      view.current.selectedSession?.messages.at(-1)?.text,
+      "完了応答",
+    );
     assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
-  } finally { await view.unmount(); }
+  } finally {
+    await view.unmount();
+  }
 });
 
 // @test-value v2
@@ -301,32 +520,57 @@ test("保存通知とterminalの逆順readでも最新本文を保持し、読�
 // impact = "会話数に比例するrenderer本文の保持を抑えながら保存済み会話の継続利用を保つ"
 // distinction = "実hookで多数会話の切替と二重参照の解放・再取得を確認し、型検査では見えない保持と再表示を小さいfixtureで検証する"
 // @end-test-value
+/** 多数の会話を開いても非表示の本文を有限に保持し、退避した会話を選び直すと同じ binding で最新の保存本文を読み込む。 */
 test("非表示detailの保持は有限で、退避した会話は最新の保存本文を再取得する", async () => {
-  const sessions = Array.from({ length: 24 }, (_, index) => session(`cache-${index}`, "2026-01-01"));
+  const sessions = Array.from({ length: 24 }, (_, index) =>
+    session(`cache-${index}`, "2026-01-01"),
+  );
   const stored = new Map(sessions.map((item) => [item.id, item]));
   let reads = 0;
-  const view = setup({
-    listAuxiliarySessions: async () => sessions,
-    getAuxiliarySession: async (id) => { reads += 1; return stored.get(id) ?? null; },
-  }, "parent-1", sessions[0].id);
+  const view = setup(
+    {
+      /** 順番に選択して保持上限を超えられる数の会話を返す。 */
+      listAuxiliarySessions: async () => sessions,
+      /** 読み直しの回数を数え、退避後に更新した本文を ID から返す。 */
+      getAuxiliarySession: async (id) => {
+        reads += 1;
+        return stored.get(id) ?? null;
+      },
+    },
+    "parent-1",
+    sessions[0].id,
+  );
   try {
     await view.render();
     const bindings = [];
     for (const item of sessions) {
-      await act(async () => { view.current.selectSession(item.id); });
+      await act(async () => {
+        view.current.selectSession(item.id);
+      });
       bindings.push(view.current.getBinding(item.id));
     }
-    assert.equal(bindings.filter((binding) => binding.sessionRef.current !== null).length, 9);
+    assert.equal(
+      bindings.filter((binding) => binding.sessionRef.current !== null).length,
+      9,
+    );
     assert.equal(bindings[0].sessionRef.current, null);
     assert.equal(view.current.selectedSession?.id, sessions.at(-1)?.id);
-    const latest = { ...sessions[0], messages: [{ role: "assistant" as const, text: "saved final response" }] };
+    const latest = {
+      ...sessions[0],
+      messages: [{ role: "assistant" as const, text: "saved final response" }],
+    };
     stored.set(latest.id, latest);
     const previousReads = reads;
-    await act(async () => { view.current.selectSession(latest.id); });
+    await act(async () => {
+      view.current.selectSession(latest.id);
+    });
     assert.equal(reads, previousReads + 1);
     assert.strictEqual(view.current.getBinding(latest.id), bindings[0]);
     assert.equal(view.current.selectedSession?.threadId, latest.threadId);
-    assert.equal(view.current.selectedSession?.messages[0]?.text, "saved final response");
+    assert.equal(
+      view.current.selectedSession?.messages[0]?.text,
+      "saved final response",
+    );
   } finally {
     await view.unmount();
   }
@@ -344,41 +588,91 @@ test("非表示detailの保持は有限で、退避した会話は最新の保�
 // impact = "非表示会話の送信・保存・実行を中断せず、完了した応答の再表示を保つ"
 // distinction = "単独terminalと保存testでは確認できない多数会話によるキャッシュ圧力と処理保護を実hookで組み合わせる"
 // @end-test-value
+/** 未保存・処理中・実行中の詳細を保護し、多数の非表示会話が完了しても再取得可能な詳細だけを退避できることを確認する。 */
 test("保護中detailは退避せず、hidden terminalの確定本文は有限に保持する", async () => {
-  const sessions = Array.from({ length: 24 }, (_, index) => session(`protect-${index}`, "2026-01-01"));
+  const sessions = Array.from({ length: 24 }, (_, index) =>
+    session(`protect-${index}`, "2026-01-01"),
+  );
   const stored = new Map(sessions.map((item) => [item.id, item]));
   let listener: ((id: string, state: null) => void) | undefined;
-  const view = setup({
-    listAuxiliarySessions: async () => sessions,
-    getAuxiliarySession: async (id) => stored.get(id) ?? null,
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
-  }, "parent-1", sessions[0].id);
+  const view = setup(
+    {
+      /** 詳細の保持上限を超える候補をまとめて返す。 */
+      listAuxiliarySessions: async () => sessions,
+      /** 完了済みの内容も含めて、保存領域を模したマップから詳細を読み出す。 */
+      getAuxiliarySession: async (id) => stored.get(id) ?? null,
+      /** 各会話の完了通知を流し、購読解除後は配信先をクリアする。 */
+      subscribeLiveSessionRun: (next) => {
+        listener = next as typeof listener;
+        return () => {
+          listener = undefined;
+        };
+      },
+    },
+    "parent-1",
+    sessions[0].id,
+  );
   try {
     await view.render();
     const dirty = view.current.getBinding(sessions[0].id);
-    await act(async () => { dirty.setSession((current) => current ? { ...current, composerDraft: "unsaved input" } : current); });
-    await act(async () => { view.current.selectSession(sessions[1].id); });
+    await act(async () => {
+      dirty.setSession((current) =>
+        current ? { ...current, composerDraft: "unsaved input" } : current,
+      );
+    });
+    await act(async () => {
+      view.current.selectSession(sessions[1].id);
+    });
     const processing = view.current.getBinding(sessions[1].id);
     const release = processing.retainDetail();
-    await act(async () => { processing.setSession((current) => current ? { ...current, title: "pending save" } : current); });
-    await act(async () => { view.current.selectSession(sessions[2].id); });
+    await act(async () => {
+      processing.setSession((current) =>
+        current ? { ...current, title: "pending save" } : current,
+      );
+    });
+    await act(async () => {
+      view.current.selectSession(sessions[2].id);
+    });
     const running = view.current.getBinding(sessions[2].id);
-    await act(async () => { running.setExecutionSelection({ ...sessions[2], runState: "running" }); });
-    await act(async () => { view.current.selectSession(sessions[3].id); });
+    await act(async () => {
+      running.setExecutionSelection({ ...sessions[2], runState: "running" });
+    });
+    await act(async () => {
+      view.current.selectSession(sessions[3].id);
+    });
     for (const item of sessions.slice(4)) {
-      stored.set(item.id, { ...item, preview: `final ${item.id}`, messages: [{ role: "assistant", text: `final ${item.id}` }] });
-      await act(async () => { listener?.(item.id, null); });
+      stored.set(item.id, {
+        ...item,
+        preview: `final ${item.id}`,
+        messages: [{ role: "assistant", text: `final ${item.id}` }],
+      });
+      await act(async () => {
+        listener?.(item.id, null);
+      });
     }
     assert.equal(dirty.sessionRef.current?.composerDraft, "unsaved input");
     assert.equal(processing.sessionRef.current?.title, "pending save");
     assert.equal(running.sessionRef.current?.runState, "running");
-    const retained = sessions.filter((item) => view.current.getBinding(item.id).sessionRef.current !== null);
+    const retained = sessions.filter(
+      (item) => view.current.getBinding(item.id).sessionRef.current !== null,
+    );
     assert.equal(retained.length, 12);
-    assert.equal(view.current.summaries.find((item) => item.id === sessions[4].id)?.preview, `final ${sessions[4].id}`);
-    await act(async () => { release(); });
+    assert.equal(
+      view.current.summaries.find((item) => item.id === sessions[4].id)
+        ?.preview,
+      `final ${sessions[4].id}`,
+    );
+    await act(async () => {
+      release();
+    });
     assert.equal(processing.sessionRef.current, null);
-    await act(async () => { view.current.selectSession(sessions[4].id); });
-    assert.equal(view.current.selectedSession?.messages[0]?.text, `final ${sessions[4].id}`);
+    await act(async () => {
+      view.current.selectSession(sessions[4].id);
+    });
+    assert.equal(
+      view.current.selectedSession?.messages[0]?.text,
+      `final ${sessions[4].id}`,
+    );
     assert.equal(dirty.sessionRef.current?.composerDraft, "unsaved input");
   } finally {
     await view.unmount();
@@ -397,6 +691,7 @@ test("保護中detailは退避せず、hidden terminalの確定本文は有限�
 // impact = "長いAuxiliary会話でも利用者が選んだmessageのBookmarkを正しく保持する"
 // distinction = "workspace setterのpage部分配列への適用を検証し、型検査と全件配列のBookmark testでは検知できないindex混同を少数messageで検知する"
 // @end-test-value
+/** 部分履歴ではページ内の配列位置でなく会話全体の番号を使い、指定した発言だけのブックマークを切り替える。 */
 test("部分履歴のBookmarkは会話全体indexで正しいmessageへ適用する", async () => {
   const paged = session("paged", "2026-01-01", {
     messages: [
@@ -404,14 +699,29 @@ test("部分履歴のBookmarkは会話全体indexで正しいmessageへ適用す
       { role: "assistant", text: "target", historyIndex: 101 },
     ],
   });
-  const view = setup({ listAuxiliarySessions: async () => [paged], getAuxiliarySession: async () => paged });
+  const view = setup({
+    /** 部分履歴付きの会話を選択候補として返す。 */
+    listAuxiliarySessions: async () => [paged],
+    /** ページ先頭の番号がゼロでない詳細を選択時に返す。 */
+    getAuxiliarySession: async () => paged,
+  });
   try {
     await view.render();
-    await act(async () => { view.current.getBinding(paged.id).setMessageBookmark(101, true); });
-    assert.notEqual(view.current.selectedSession?.messages[0]?.isBookmarked, true);
+    await act(async () => {
+      view.current.getBinding(paged.id).setMessageBookmark(101, true);
+    });
+    assert.notEqual(
+      view.current.selectedSession?.messages[0]?.isBookmarked,
+      true,
+    );
     assert.equal(view.current.selectedSession?.messages[1]?.isBookmarked, true);
-    await act(async () => { view.current.getBinding(paged.id).setMessageBookmark(101, false); });
-    assert.notEqual(view.current.selectedSession?.messages[1]?.isBookmarked, true);
+    await act(async () => {
+      view.current.getBinding(paged.id).setMessageBookmark(101, false);
+    });
+    assert.notEqual(
+      view.current.selectedSession?.messages[1]?.isBookmarked,
+      true,
+    );
   } finally {
     await view.unmount();
   }
@@ -429,18 +739,32 @@ test("部分履歴のBookmarkは会話全体indexで正しいmessageへ適用す
 // impact = "backgroundの確定messageを実行中にBookmark操作できなくなる"
 // distinction = "handler単体では両列への共通操作配線を観測できない"
 // @end-test-value
+/** どちらを送信対象にしても、実行中の Main と Auxiliary の両列に同じブックマーク操作を接続する。 */
 test("実行中の両会話へ同じBookmark操作を渡す", async () => {
   const a = session("a", "2026-01-02", { runState: "running" });
-  const view = setup({ listAuxiliarySessions: async () => [a], getAuxiliarySession: async () => a });
+  const view = setup({
+    /** 実行中の Auxiliary を唯一の候補にする。 */
+    listAuxiliarySessions: async () => [a],
+    /** 実行中の会話本文を両列の投影に供給する。 */
+    getAuxiliarySession: async () => a,
+  });
   try {
     await view.render();
+    /** 両列へ渡った関数の同一性を検査するため、副作用のない操作を用いる。 */
     const callback = async () => {};
     const messageColumn = createStaticTextConversationMessageColumnProps({
-      sessionId: "parent-1", characterId: "character", characterName: "Mate", characterIconPath: "",
-      messages: [{ role: "assistant", text: "main" }], messageListRef: React.createRef<HTMLDivElement>(), isRunning: true,
+      sessionId: "parent-1",
+      characterId: "character",
+      characterName: "Mate",
+      characterIconPath: "",
+      messages: [{ role: "assistant", text: "main" }],
+      messageListRef: React.createRef<HTMLDivElement>(),
+      isRunning: true,
     });
     for (const target of ["main", "auxiliary"] as const) {
-      await act(async () => { view.current.setTarget(target); });
+      await act(async () => {
+        view.current.setTarget(target);
+      });
       const surface = view.current.buildConcurrentChats({
         mainSession: { id: "parent-1", messages: messageColumn.messages },
         auxiliarySession: view.current.selectedSession,
@@ -467,30 +791,64 @@ test("実行中の両会話へ同じBookmark操作を渡す", async () => {
 // impact = "実行完了本文または利用者が指定したBookmarkが失われる"
 // distinction = "通常のterminal testとBookmark局所反映testは同時更新を検証しない"
 // @end-test-value
+/** 完了詳細の応答を待つ間に行ったブックマーク付与・解除と、応答に含まれる確定本文を併存させる。 */
 test("terminal詳細取得中のBookmark変更は本文を落とさず保持する", async () => {
   const initial = session("a", "2026-01-01", { runState: "running" });
   let terminal = deferred<AuxiliarySession | null>();
   let reads = 0;
   let listener: ((id: string, state: null) => void) | undefined;
   const view = setup({
+    /** 完了詳細を待つ対象として、現在実行中の会話を一覧に返す。 */
     listAuxiliarySessions: async () => [initial],
-    getAuxiliarySession: async () => ++reads === 1 ? initial : terminal.promise,
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => {}; },
+    /** 初期本文はすぐ返し、続く完了詳細をローカル変更の後まで保留する。 */
+    getAuxiliarySession: async () =>
+      ++reads === 1 ? initial : terminal.promise,
+    /** 選択中の会話へ完了通知を送り、詳細の読み直しを開始できるようにする。 */
+    subscribeLiveSessionRun: (next) => {
+      listener = next as typeof listener;
+      return () => {};
+    },
   });
   try {
     await view.render();
     const binding = view.current.getBinding(initial.id);
-    await act(async () => { listener?.(initial.id, null); });
-    await act(async () => { binding.setMessageBookmark(0, true); });
-    await act(async () => { terminal.resolve({ ...initial, runState: "idle", messages: [...initial.messages, { role: "assistant", text: "final" }] }); });
+    await act(async () => {
+      listener?.(initial.id, null);
+    });
+    await act(async () => {
+      binding.setMessageBookmark(0, true);
+    });
+    await act(async () => {
+      terminal.resolve({
+        ...initial,
+        runState: "idle",
+        messages: [...initial.messages, { role: "assistant", text: "final" }],
+      });
+    });
     assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, true);
     assert.equal(view.current.selectedSession?.messages[1]?.text, "final");
     assert.equal(view.current.selectedSession?.runState, "idle");
     terminal = deferred<AuxiliarySession | null>();
-    await act(async () => { listener?.(initial.id, null); });
-    await act(async () => { binding.setMessageBookmark(0, false); });
-    await act(async () => { terminal.resolve({ ...initial, runState: "idle", messages: [{ ...initial.messages[0], isBookmarked: true }, { role: "assistant", text: "later" }] }); });
-    assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked, undefined);
+    await act(async () => {
+      listener?.(initial.id, null);
+    });
+    await act(async () => {
+      binding.setMessageBookmark(0, false);
+    });
+    await act(async () => {
+      terminal.resolve({
+        ...initial,
+        runState: "idle",
+        messages: [
+          { ...initial.messages[0], isBookmarked: true },
+          { role: "assistant", text: "later" },
+        ],
+      });
+    });
+    assert.equal(
+      view.current.selectedSession?.messages[0]?.isBookmarked,
+      undefined,
+    );
     assert.equal(view.current.selectedSession?.messages[1]?.text, "later");
   } finally {
     await view.unmount();
@@ -509,17 +867,28 @@ test("terminal詳細取得中のBookmark変更は本文を落とさず保持す�
 // impact = "保存済みBookmarkの表示が変わらず、連続操作や再選択でも誤った状態を使うことを防ぐ"
 // distinction = "Bookmark operation単体のmock setterでは検出できない実workspaceの状態通知・cacheとの接続を付与と解除で検証する"
 // @end-test-value
+/** ブックマークをローカルに変更すると選択詳細と共通チャットに反映し、別会話から戻っても再取得せず表示を保つ。 */
 test("Auxiliary状態ownerのBookmark付与・解除を再取得なしで会話surfaceへ反映する", async () => {
   const a = session("a", "2026-01-02");
   const b = session("b", "2026-01-01");
   let detailReads = 0;
   const view = setup({
+    /** 別会話への移動と戻りを繰り返せる二つの候補を供給する。 */
     listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: async (id) => { detailReads += 1; return id === a.id ? a : b; },
+    /** 選択時の詳細を ID から返し、ブックマーク変更に追加の読込が必要か数える。 */
+    getAuxiliarySession: async (id) => {
+      detailReads += 1;
+      return id === a.id ? a : b;
+    },
   });
   const messageColumn = createStaticTextConversationMessageColumnProps({
-    sessionId: "parent-1", characterId: "character", characterName: "Mate", characterIconPath: "",
-    messages: [], messageListRef: React.createRef<HTMLDivElement>(), isRunning: false,
+    sessionId: "parent-1",
+    characterId: "character",
+    characterName: "Mate",
+    characterIconPath: "",
+    messages: [],
+    messageListRef: React.createRef<HTMLDivElement>(),
+    isRunning: false,
   });
   try {
     await view.render();
@@ -529,16 +898,31 @@ test("Auxiliary状態ownerのBookmark付与・解除を再取得なしで会話s
       await act(async () => {
         binding.setMessageBookmark(0, isBookmarked);
       });
-      assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked === true, isBookmarked);
+      assert.equal(
+        view.current.selectedSession?.messages[0]?.isBookmarked === true,
+        isBookmarked,
+      );
       const surface = view.current.buildConcurrentChats({
-        mainSession: null, auxiliarySession: view.current.selectedSession, messageColumn,
+        mainSession: null,
+        auxiliarySession: view.current.selectedSession,
+        messageColumn,
       });
-      assert.equal(surface.auxiliary?.messages[0]?.isBookmarked === true, isBookmarked);
+      assert.equal(
+        surface.auxiliary?.messages[0]?.isBookmarked === true,
+        isBookmarked,
+      );
       assert.equal(detailReads, readsBeforeUpdate);
-      await act(async () => { view.current.selectSession(b.id); });
+      await act(async () => {
+        view.current.selectSession(b.id);
+      });
       const readsBeforeReturn = detailReads;
-      await act(async () => { view.current.selectSession(a.id); });
-      assert.equal(view.current.selectedSession?.messages[0]?.isBookmarked === true, isBookmarked);
+      await act(async () => {
+        view.current.selectSession(a.id);
+      });
+      assert.equal(
+        view.current.selectedSession?.messages[0]?.isBookmarked === true,
+        isBookmarked,
+      );
       assert.equal(detailReads, readsBeforeReturn);
     }
   } finally {
@@ -558,15 +942,19 @@ test("Auxiliary状態ownerのBookmark付与・解除を再取得なしで会話s
 // impact = "選択会話の取得状況や失敗理由を確認できず、会話が未選択に見える"
 // distinction = "詳細取得のrace testはowner stateだけを読み、表示surfaceへの状態の渡し忘れを検出しない"
 // @end-test-value
+/** 一覧を読み終えた後も詳細の未解決は待機、欠損は警告、読込成功は本文として共通 ChatWindow に反映する。 */
 test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", async () => {
   const a = session("a", "2026-01-02");
   const b = session("b", "2026-01-01");
   const loadA = deferred<AuxiliarySession | null>();
   const loadB = deferred<AuxiliarySession | null>();
   const view = setup({
+    /** 詳細の取得を別々に操作できる二つの会話を提供する。 */
     listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: (id) => id === a.id ? loadA.promise : loadB.promise,
+    /** 選択した会話ごとの取得結果を、テストが完了させるまで保留する。 */
+    getAuxiliarySession: (id) => (id === a.id ? loadA.promise : loadB.promise),
   });
+  /** 表示だけを調べる Composer の操作は、入力を変更しないものに置き換える。 */
   const noop = () => {};
   const messageColumn = createStaticTextConversationMessageColumnProps({
     sessionId: "parent-1",
@@ -577,33 +965,47 @@ test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", a
     messageListRef: React.createRef<HTMLDivElement>(),
     isRunning: false,
   });
+  /** 最新の workspace 投影を本番 ChatWindow へ渡し、状態値と描画された DOM を同時に返す。 */
   const renderSurface = () => {
     const surface = view.current.buildConcurrentChats({
       mainSession: null,
       auxiliarySession: view.current.selectedSession,
       messageColumn,
     });
-    const html = renderToStaticMarkup(React.createElement(ChatWindow, {
-      mode: "agent",
-      headerSplitter: null,
-      actionDockSplitter: null,
-      rightPane: null,
-      splitter: null,
-      isHeaderExpanded: true,
-      headerProps: createStaticChatHeaderProps({ taskTitle: "Main", isRunning: false }),
-      messageColumnProps: messageColumn,
-      isActionDockExpanded: false,
-      composerProps: createHiddenControlsTextChatComposerProps({
-        draft: "", isRunning: false, feedback: "",
-        composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
-        onDraftChange: noop, onDraftKeyDown: noop, onSendOrCancel: noop,
-        modelOptions: [], selectedModel: "", selectedModelFallbackLabel: "",
-        reasoningOptions: [], selectedReasoningEffort: "",
-        onChangeModel: noop, onChangeReasoningEffort: noop,
+    const html = renderToStaticMarkup(
+      React.createElement(ChatWindow, {
+        mode: "agent",
+        headerSplitter: null,
+        actionDockSplitter: null,
+        rightPane: null,
+        splitter: null,
+        isHeaderExpanded: true,
+        headerProps: createStaticChatHeaderProps({
+          taskTitle: "Main",
+          isRunning: false,
+        }),
+        messageColumnProps: messageColumn,
+        isActionDockExpanded: false,
+        composerProps: createHiddenControlsTextChatComposerProps({
+          draft: "",
+          isRunning: false,
+          feedback: "",
+          composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
+          onDraftChange: noop,
+          onDraftKeyDown: noop,
+          onSendOrCancel: noop,
+          modelOptions: [],
+          selectedModel: "",
+          selectedModelFallbackLabel: "",
+          reasoningOptions: [],
+          selectedReasoningEffort: "",
+          onChangeModel: noop,
+          onChangeReasoningEffort: noop,
+        }),
+        compactActionDockProps: createStaticTextChatCompactActionDockProps({}),
+        concurrentChats: surface,
       }),
-      compactActionDockProps: createStaticTextChatCompactActionDockProps({}),
-      concurrentChats: surface,
-    }));
+    );
     return { surface, document: new JSDOM(html).window.document };
   };
   try {
@@ -614,13 +1016,21 @@ test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", a
     const pending = renderSurface();
     assert.equal(pending.surface.loading, true);
     assert.equal(pending.surface.error, null);
-    assert.ok(pending.document.querySelector('.concurrent-chat-state[role="status"] .loading-indicator-spinner[aria-hidden="true"]'));
+    assert.ok(
+      pending.document.querySelector(
+        '.concurrent-chat-state[role="status"] .loading-indicator-spinner[aria-hidden="true"]',
+      ),
+    );
 
     await act(async () => loadA.resolve(null));
     const failed = renderSurface();
     assert.equal(failed.surface.loading, false);
     assert.equal(failed.surface.error, "Auxiliary session a was not found");
-    assert.equal(failed.document.querySelector('.concurrent-chat-state[role="alert"]')?.textContent, "Auxiliary session a was not found");
+    assert.equal(
+      failed.document.querySelector('.concurrent-chat-state[role="alert"]')
+        ?.textContent,
+      "Auxiliary session a was not found",
+    );
 
     await act(async () => view.current.selectSession(b.id));
     const retrying = renderSurface();
@@ -648,23 +1058,37 @@ test("Auxiliary詳細の待機・失敗・成功を共通chatへ投影する", a
 // scope = "auxiliary-workspace-summary-order"
 // lifecycle = "permanent"
 // @end-test-value
+/** 作成時刻と異なる最終使用時刻で降順に並べ、時刻が同じ場合は ID の降順で確定する。 */
 test("Auxiliary一覧は最終使用順で並び、同時刻ではIDで安定する", async () => {
-  const createdLater = session("created-later", "2026-01-03", { updatedAt: "2026-01-01" });
-  const lastUsed = session("last-used", "2026-01-01", { updatedAt: "2026-01-03" });
-  const sameTimeA = session("same-time-a", "2026-01-04", { updatedAt: "2026-01-02" });
-  const sameTimeB = session("same-time-b", "2026-01-02", { updatedAt: "2026-01-02" });
+  const createdLater = session("created-later", "2026-01-03", {
+    updatedAt: "2026-01-01",
+  });
+  const lastUsed = session("last-used", "2026-01-01", {
+    updatedAt: "2026-01-03",
+  });
+  const sameTimeA = session("same-time-a", "2026-01-04", {
+    updatedAt: "2026-01-02",
+  });
+  const sameTimeB = session("same-time-b", "2026-01-02", {
+    updatedAt: "2026-01-02",
+  });
   const api: AuxiliaryWorkspaceApi = {
-    listAuxiliarySessions: async () => [createdLater, lastUsed, sameTimeA, sameTimeB],
+    /** 入力順や作成時刻順とは異なる並びになる候補群を返す。 */
+    listAuxiliarySessions: async () => [
+      createdLater,
+      lastUsed,
+      sameTimeA,
+      sameTimeB,
+    ],
+    /** 一覧の並びだけを比較するため、詳細は取得できない状態とする。 */
     getAuxiliarySession: async () => null,
   };
   const view = setup(api);
   await view.render();
-  assert.deepEqual(view.current.summaries.map((summary) => summary.id), [
-    "last-used",
-    "same-time-b",
-    "same-time-a",
-    "created-later",
-  ]);
+  assert.deepEqual(
+    view.current.summaries.map((summary) => summary.id),
+    ["last-used", "same-time-b", "same-time-a", "created-later"],
+  );
   await view.unmount();
 });
 
@@ -678,6 +1102,7 @@ test("Auxiliary一覧は最終使用順で並び、同時刻ではIDで安定す
 // scope = "auxiliary-workspace-selection"
 // lifecycle = "permanent"
 // @end-test-value
+/** A、B、C の順で選択し詳細を逆順に受け取っても、C の選択と本文を維持する。 */
 test("逆順detail loadは現在選択のIDを巻き戻さない", async () => {
   const a = session("a", "2026-01-01", { updatedAt: "2026-01-03" });
   const b = session("b", "2026-01-02", { updatedAt: "2026-01-02" });
@@ -687,22 +1112,45 @@ test("逆順detail loadは現在選択のIDを巻き戻さない", async () => {
   const loadC = deferred<AuxiliarySession | null>();
   const started: string[] = [];
   const api: AuxiliaryWorkspaceApi = {
+    /** 詳細が異なる三つの選択候補を返す。 */
     listAuxiliarySessions: async () => [a, b, c],
+    /** 照会を開始した順序を記録し、ID ごとに別の保留応答を返す。 */
     getAuxiliarySession: (id) => {
       started.push(id);
-      return id === "a" ? loadA.promise : id === "b" ? loadB.promise : loadC.promise;
+      return id === "a"
+        ? loadA.promise
+        : id === "b"
+          ? loadB.promise
+          : loadC.promise;
     },
   };
   const view = setup(api);
   await view.render();
-  await act(async () => { view.current.selectSession("a"); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  await act(async () => { view.current.selectSession("b"); });
-  await act(async () => { view.current.selectSession("c"); });
+  await act(async () => {
+    view.current.selectSession("a");
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    view.current.selectSession("b");
+  });
+  await act(async () => {
+    view.current.selectSession("c");
+  });
   assert.deepEqual(started, ["a", "b", "c"]);
-  await act(async () => { loadC.resolve(c); await loadC.promise; });
-  await act(async () => { loadB.resolve(b); await loadB.promise; });
-  await act(async () => { loadA.resolve(a); await loadA.promise; });
+  await act(async () => {
+    loadC.resolve(c);
+    await loadC.promise;
+  });
+  await act(async () => {
+    loadB.resolve(b);
+    await loadB.promise;
+  });
+  await act(async () => {
+    loadA.resolve(a);
+    await loadA.promise;
+  });
   assert.equal(view.current.selectedId, "c");
   assert.equal(view.current.selectedSession?.id, "c");
   await view.unmount();
@@ -718,6 +1166,7 @@ test("逆順detail loadは現在選択のIDを巻き戻さない", async () => {
 // scope = "auxiliary-workspace-parent-generation"
 // lifecycle = "permanent"
 // @end-test-value
+/** 別の親へ切り替えた後は、旧購読から完了が届いても、新しい一覧とエラー状態を変更しない。 */
 test("parent切替後は旧parentの遅延terminalを捨てる", async () => {
   const a = session("a", "2026-01-01", { parentSessionId: "parent-1" });
   const b = session("b", "2026-01-02", { parentSessionId: "parent-2" });
@@ -725,8 +1174,13 @@ test("parent切替後は旧parentの遅延terminalを捨てる", async () => {
   const listeners = new Set<(id: string, state: null) => void>();
   const subscribedListeners: Array<(id: string, state: null) => void> = [];
   const api: AuxiliaryWorkspaceApi = {
-    listAuxiliarySessions: async (parentId) => parentId === "parent-1" ? [a] : parentId === "parent-2" ? [b] : [],
-    getAuxiliarySession: async (id) => id === "a" ? delayedOldTerminal.promise : b,
+    /** 各親に異なる一覧を返し、どちらでもない親には候補を提示しない。 */
+    listAuxiliarySessions: async (parentId) =>
+      parentId === "parent-1" ? [a] : parentId === "parent-2" ? [b] : [],
+    /** 旧親の詳細照会だけを保留し、新親の会話は直ちに返す。 */
+    getAuxiliarySession: async (id) =>
+      id === "a" ? delayedOldTerminal.promise : b,
+    /** 現在と過去の購読を区別して記録し、解除後の旧リスナーもテストから発火できるようにする。 */
     subscribeLiveSessionRun: (listener) => {
       const callback = listener as (id: string, state: null) => void;
       subscribedListeners.push(callback);
@@ -738,18 +1192,36 @@ test("parent切替後は旧parentの遅延terminalを捨てる", async () => {
   await view.render();
   assert.deepEqual(view.current.summaries, []);
   await view.render("parent-1");
-  await act(async () => { view.current.selectSession("a"); });
-    assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["a"]);
-  await view.render("parent-2");
-    assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["b"]);
   await act(async () => {
-    const parentOneListener = subscribedListeners[subscribedListeners.length - 2];
+    view.current.selectSession("a");
+  });
+  assert.deepEqual(
+    view.current.summaries.map(
+      (summary: AuxiliarySessionSummary) => summary.id,
+    ),
+    ["a"],
+  );
+  await view.render("parent-2");
+  assert.deepEqual(
+    view.current.summaries.map(
+      (summary: AuxiliarySessionSummary) => summary.id,
+    ),
+    ["b"],
+  );
+  await act(async () => {
+    const parentOneListener =
+      subscribedListeners[subscribedListeners.length - 2];
     if (!parentOneListener) throw new Error("parent listener missing");
     parentOneListener("a", null);
     delayedOldTerminal.resolve(null);
     await delayedOldTerminal.promise;
   });
-  assert.deepEqual(view.current.summaries.map((summary: AuxiliarySessionSummary) => summary.id), ["b"]);
+  assert.deepEqual(
+    view.current.summaries.map(
+      (summary: AuxiliarySessionSummary) => summary.id,
+    ),
+    ["b"],
+  );
   assert.equal(view.current.error, null);
   assert.equal([...listeners].includes(subscribedListeners.at(-2)!), false);
   await view.unmount();
@@ -765,18 +1237,36 @@ test("parent切替後は旧parentの遅延terminalを捨てる", async () => {
 // scope = "auxiliary-workspace-summary"
 // lifecycle = "permanent"
 // @end-test-value
+/** 会話追加後に取得開始時点の空一覧が戻っても、新しい会話とその選択を維持する。 */
 test("stale summary responseはaddSessionを巻き戻さない", async () => {
-  const list = deferred<ReturnType<AuxiliaryWorkspaceApi["listAuxiliarySessions"]> extends Promise<infer T> ? T : never>();
+  const list =
+    deferred<
+      ReturnType<
+        AuxiliaryWorkspaceApi["listAuxiliarySessions"]
+      > extends Promise<infer T>
+        ? T
+        : never
+    >();
   const api: AuxiliaryWorkspaceApi = {
+    /** 一覧を解決する前に新しい会話を追加できるように取得を保留する。 */
     listAuxiliarySessions: () => list.promise,
+    /** 新しく追加した会話の表示は追加側から渡すため、別の詳細は返さない。 */
     getAuxiliarySession: async () => null,
   };
   const view = setup(api);
   await view.render();
   const added = session("added", "2026-01-01");
-  await act(async () => { view.current.addSession(added); });
-  await act(async () => { list.resolve([]); await list.promise; });
-  assert.deepEqual(view.current.summaries.map((item) => item.id), ["added"]);
+  await act(async () => {
+    view.current.addSession(added);
+  });
+  await act(async () => {
+    list.resolve([]);
+    await list.promise;
+  });
+  assert.deepEqual(
+    view.current.summaries.map((item) => item.id),
+    ["added"],
+  );
   assert.equal(view.current.selectedId, "added");
   await view.unmount();
 });
@@ -793,26 +1283,45 @@ test("stale summary responseはaddSessionを巻き戻さない", async () => {
 // impact = "追加したAuxiliaryへ送るつもりの入力をMainへ誤送信することを防ぎ、会話領域の表示設定を保持する"
 // distinction = "型検査や作成serviceのtestでは作成後の送信対象と表示幅のrenderer状態を確認できない"
 // @end-test-value
+/** 新しい Auxiliary を追加すると送信先はその会話へ切り替わるが、幅を勝手に広げず、親を切り替えても確定した幅ゼロを復元する。 */
 test("Auxiliary追加は送信対象を切り替え、対象切替と追加は幅0を保持する", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
   const api: AuxiliaryWorkspaceApi = {
-    listAuxiliarySessions: async (parentSessionId) => parentSessionId === "parent-1" ? [a] : [],
+    /** 元の親だけに既存の候補を設け、親切替で表示幅を復元する条件を作る。 */
+    listAuxiliarySessions: async (parentSessionId) =>
+      parentSessionId === "parent-1" ? [a] : [],
+    /** 追加前から選択できる会話の詳細を返す。 */
     getAuxiliarySession: async () => a,
   };
   const view = setup(api);
   await view.render();
-  await act(async () => { view.current.selectSession("a"); view.current.setWidthRatio(0.65); view.current.commitWidthRatio(); view.current.setTarget("auxiliary"); });
-  await act(async () => { view.current.setTarget("main"); });
+  await act(async () => {
+    view.current.selectSession("a");
+    view.current.setWidthRatio(0.65);
+    view.current.commitWidthRatio();
+    view.current.setTarget("auxiliary");
+  });
+  await act(async () => {
+    view.current.setTarget("main");
+  });
   assert.equal(view.current.selectedId, "a");
   assert.equal(view.current.target, "main");
   assert.equal(view.current.widthRatio, 0.65);
-  await act(async () => { view.current.setWidthRatio(0); view.current.commitWidthRatio(); view.current.setTarget("auxiliary"); });
+  await act(async () => {
+    view.current.setWidthRatio(0);
+    view.current.commitWidthRatio();
+    view.current.setTarget("auxiliary");
+  });
   assert.equal(view.current.target, "auxiliary");
   assert.equal(view.current.widthRatio, 0);
-  await act(async () => { view.current.setTarget("main"); });
+  await act(async () => {
+    view.current.setTarget("main");
+  });
   assert.equal(view.current.widthRatio, 0);
-  await act(async () => { view.current.addSession(b); });
+  await act(async () => {
+    view.current.addSession(b);
+  });
   assert.equal(view.current.selectedId, "b");
   assert.equal(view.current.target, "auxiliary");
   assert.equal(view.current.widthRatio, 0);
@@ -833,26 +1342,52 @@ test("Auxiliary追加は送信対象を切り替え、対象切替と追加は�
 // lifecycle = "permanent"
 // distinction = "Type checking cannot verify when browser preference reads and writes occur or whether a completed resize survives a parent switch"
 // @end-test-value
+/** 保存した表示幅を初回と親変更時だけ読み、ドラッグ中は書かず、確定した変更を一度だけ保存する。 */
 test("Auxiliary workspace preferences load on parent changes and persist width only on commit", async () => {
   const view = setup({
+    /** 表示幅の保存を一覧の項目数から独立させるため、空一覧を返す。 */
     listAuxiliarySessions: async () => [],
+    /** 親別の設定確認だけに絞り、会話詳細は用意しない。 */
     getAuxiliarySession: async () => null,
   });
+  /** 親ごとに独立した workspace 設定の保存キーを組み立てる。 */
   const key = (id: string) => `withmate:auxiliary-workspace:${id}`;
-  view.localStorage.setItem(key("parent-1"), JSON.stringify({ selectedId: null, widthRatio: 0.4 }));
-  view.localStorage.setItem(key("parent-2"), JSON.stringify({ selectedId: null, widthRatio: 0.25 }));
-  const getItemDescriptor = Object.getOwnPropertyDescriptor(view.storagePrototype, "getItem");
-  const setItemDescriptor = Object.getOwnPropertyDescriptor(view.storagePrototype, "setItem");
-  const getItem = (name: string) => getItemDescriptor?.value.call(view.localStorage, name) as string | null;
+  view.localStorage.setItem(
+    key("parent-1"),
+    JSON.stringify({ selectedId: null, widthRatio: 0.4 }),
+  );
+  view.localStorage.setItem(
+    key("parent-2"),
+    JSON.stringify({ selectedId: null, widthRatio: 0.25 }),
+  );
+  const getItemDescriptor = Object.getOwnPropertyDescriptor(
+    view.storagePrototype,
+    "getItem",
+  );
+  const setItemDescriptor = Object.getOwnPropertyDescriptor(
+    view.storagePrototype,
+    "setItem",
+  );
+  /** 計測用の getter を経由せず、ストレージに確定した値を確認する。 */
+  const getItem = (name: string) =>
+    getItemDescriptor?.value.call(view.localStorage, name) as string | null;
   let reads = 0;
   let writes = 0;
   Object.defineProperty(view.storagePrototype, "getItem", {
     configurable: true,
-    value(this: Storage, name: string) { reads += 1; return getItemDescriptor?.value.call(this, name) as string | null; },
+    /** 既存のストレージ読み取りを呼び出し、回数だけを追加で記録する。 */
+    value(this: Storage, name: string) {
+      reads += 1;
+      return getItemDescriptor?.value.call(this, name) as string | null;
+    },
   });
   Object.defineProperty(view.storagePrototype, "setItem", {
     configurable: true,
-    value(this: Storage, name: string, value: string) { writes += 1; setItemDescriptor?.value.call(this, name, value); },
+    /** 保存動作を変えず、設定が実際に書き込まれた回数を数える。 */
+    value(this: Storage, name: string, value: string) {
+      writes += 1;
+      setItemDescriptor?.value.call(this, name, value);
+    },
   });
 
   try {
@@ -862,14 +1397,25 @@ test("Auxiliary workspace preferences load on parent changes and persist width o
     await view.render();
     assert.equal(reads, 1);
 
-    await act(async () => { view.current.setWidthRatio(0.55); });
-    await act(async () => { view.current.setWidthRatio(0.6); });
+    await act(async () => {
+      view.current.setWidthRatio(0.55);
+    });
+    await act(async () => {
+      view.current.setWidthRatio(0.6);
+    });
     assert.equal(view.current.widthRatio, 0.6);
     assert.equal(writes, 0);
-    await act(async () => { view.current.commitWidthRatio(); });
+    await act(async () => {
+      view.current.commitWidthRatio();
+    });
     assert.equal(writes, 1);
-    assert.equal(JSON.parse(getItem(key("parent-1")) ?? "null").widthRatio, 0.6);
-    await act(async () => { view.current.commitWidthRatio(); });
+    assert.equal(
+      JSON.parse(getItem(key("parent-1")) ?? "null").widthRatio,
+      0.6,
+    );
+    await act(async () => {
+      view.current.commitWidthRatio();
+    });
     assert.equal(writes, 1);
 
     await view.render("parent-2");
@@ -879,8 +1425,18 @@ test("Auxiliary workspace preferences load on parent changes and persist width o
     assert.equal(reads, 3);
     assert.equal(view.current.widthRatio, 0.6);
   } finally {
-    if (getItemDescriptor) Object.defineProperty(view.storagePrototype, "getItem", getItemDescriptor);
-    if (setItemDescriptor) Object.defineProperty(view.storagePrototype, "setItem", setItemDescriptor);
+    if (getItemDescriptor)
+      Object.defineProperty(
+        view.storagePrototype,
+        "getItem",
+        getItemDescriptor,
+      );
+    if (setItemDescriptor)
+      Object.defineProperty(
+        view.storagePrototype,
+        "setItem",
+        setItemDescriptor,
+      );
     await view.unmount();
   }
 });
@@ -895,43 +1451,78 @@ test("Auxiliary workspace preferences load on parent changes and persist width o
 // scope = "auxiliary-workspace-hidden-run"
 // lifecycle = "permanent"
 // @end-test-value
+/** 非表示会話の完了時に本文・プレビューをその会話だけへ反映し、自他の保存済み下書きと選択中の本文を保つ。 */
 test("hidden sessionのterminal詳細を保存済draftとともに正しい会話へ反映する", async () => {
   const a = session("a", "2026-01-01", { composerDraft: "hidden draft" });
   const b = session("b", "2026-01-02", { composerDraft: "selected draft" });
   let terminal!: (id: string, state: null) => void;
   let latest = a;
   const api: AuxiliaryWorkspaceApi = {
+    /** 非表示になる会話と表示を継続する会話を並べる。 */
     listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: async (id) => id === "a" ? latest : b,
-    subscribeLiveSessionRun: (listener) => { terminal = listener as (id: string, state: null) => void; return () => {}; },
+    /** 非表示会話の詳細には更新後の値を用い、表示中の会話は変えない。 */
+    getAuxiliarySession: async (id) => (id === "a" ? latest : b),
+    /** 非表示会話に対する完了通知をテストから送れるよう、購読リスナーを保持する。 */
+    subscribeLiveSessionRun: (listener) => {
+      terminal = listener as (id: string, state: null) => void;
+      return () => {};
+    },
   };
   const view = setup(api);
   await view.render();
-  await act(async () => { view.current.addSession(a); view.current.addSession(b); });
-  await act(async () => { view.current.selectSession("a"); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    view.current.addSession(a);
+    view.current.addSession(b);
+  });
+  await act(async () => {
+    view.current.selectSession("a");
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   const binding = view.current.getBinding("a");
   const bindingB = view.current.getBinding("b");
-  await act(async () => { view.current.selectSession("b"); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    view.current.selectSession("b");
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   await act(async () => {
     view.current.setTarget("main");
   });
   assert.equal(binding.sessionRef.current?.id, a.id);
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
-  latest = { ...latest, preview: "terminal answer", messages: [...latest.messages, { role: "assistant", text: "terminal answer" }] };
+  latest = {
+    ...latest,
+    preview: "terminal answer",
+    messages: [
+      ...latest.messages,
+      { role: "assistant", text: "terminal answer" },
+    ],
+  };
   if (!terminal) throw new Error("terminal listener missing");
   const terminalListener = terminal;
-  await act(async () => { terminal?.("a", null); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    terminal?.("a", null);
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.equal(binding.sessionRef.current?.id, a.id);
   assert.equal(binding.sessionRef.current?.composerDraft, "hidden draft");
   assert.equal(binding.sessionRef.current?.preview, "terminal answer");
-  assert.equal(binding.sessionRef.current?.messages.at(-1)?.text, "terminal answer");
+  assert.equal(
+    binding.sessionRef.current?.messages.at(-1)?.text,
+    "terminal answer",
+  );
   assert.equal(bindingB.sessionRef.current?.id, b.id);
   assert.equal(bindingB.sessionRef.current?.composerDraft, "selected draft");
   assert.deepEqual(bindingB.sessionRef.current?.messages, b.messages);
-  assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "terminal answer");
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === "a")?.preview,
+    "terminal answer",
+  );
   await view.unmount();
 });
 
@@ -946,19 +1537,25 @@ test("hidden sessionのterminal詳細を保存済draftとともに正しい会�
 // lifecycle = "permanent"
 // distinction = "通常の詳細取得済みterminal testでは検出できない、初期detail loadとterminal refreshの競合を検証する"
 // @end-test-value
+/** 初回詳細が保留中に完了した場合は確定本文を先に表示し、その後の古い成功応答で戻さない。 */
 test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detailで巻き戻さない", async () => {
   const initial = session("a", "2026-01-01");
   const terminalSession = {
     ...initial,
     preview: "terminal answer",
     updatedAt: "2026-01-03",
-    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+    messages: [
+      ...initial.messages,
+      { role: "assistant" as const, text: "terminal answer" },
+    ],
   };
   const initialDetail = deferred<AuxiliarySession | null>();
   let initialDetailPending = true;
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 本文読込が完了する前に選択できる初期サマリーを返す。 */
     listAuxiliarySessions: async () => [initial],
+    /** 初回詳細だけ保留し、完了通知からの後続照会には確定済み本文を返す。 */
     getAuxiliarySession: async () => {
       if (initialDetailPending) {
         initialDetailPending = false;
@@ -966,6 +1563,7 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
       }
       return terminalSession;
     },
+    /** 最初の詳細取得中に同じ会話の完了を通知できるようにする。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -974,7 +1572,9 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
   const view = setup(api, "parent-1", initial.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   if (!terminal) throw new Error("terminal listener missing");
   const terminalListener = terminal;
 
@@ -982,8 +1582,13 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
     terminalListener(initial.id, null);
     await Promise.resolve();
   });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(
+    view.current.selectedSession?.messages.at(-1)?.text,
+    "terminal answer",
+  );
   assert.equal(view.current.detailLoading, false);
   assert.equal(view.current.detailError, null);
 
@@ -991,7 +1596,10 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
     initialDetail.resolve(initial);
     await initialDetail.promise;
   });
-  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  assert.equal(
+    view.current.selectedSession?.messages.at(-1)?.text,
+    "terminal answer",
+  );
   await view.unmount();
 });
 
@@ -1006,20 +1614,30 @@ test("詳細取得前のterminalは確定Sessionを反映し、遅い初期detai
 // lifecycle = "permanent"
 // distinction = "初期detailの遅いresolve競合では検出できない、terminal確定後に到着する初期detailのreject経路を検証する"
 // @end-test-value
+/** 完了時の確定本文を先に表示した後は、遅れて失敗した初回取得でエラー表示へ切り替えない。 */
 test("terminal確定後の遅い初期detailエラーはMessagesを隠さない", async () => {
   const initial = session("a", "2026-01-01");
   const terminalSession = {
     ...initial,
     preview: "terminal answer",
     updatedAt: "2026-01-03",
-    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+    messages: [
+      ...initial.messages,
+      { role: "assistant" as const, text: "terminal answer" },
+    ],
   };
   let rejectInitialDetail!: (cause: Error) => void;
-  const initialDetail = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectInitialDetail = reject; });
+  const initialDetail = new Promise<AuxiliarySession | null>(
+    (_resolve, reject) => {
+      rejectInitialDetail = reject;
+    },
+  );
   let initialDetailPending = true;
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 先行する初回詳細の失敗を再現する対象会話を一覧にする。 */
     listAuxiliarySessions: async () => [initial],
+    /** 初回の詳細だけを失敗にできるよう保留し、完了時の取得は確定本文で成功させる。 */
     getAuxiliarySession: async () => {
       if (initialDetailPending) {
         initialDetailPending = false;
@@ -1027,6 +1645,7 @@ test("terminal確定後の遅い初期detailエラーはMessagesを隠さない"
       }
       return terminalSession;
     },
+    /** 先行取得を保留した状態で完了時の再取得を起こすため、通知を捕捉する。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -1035,21 +1654,33 @@ test("terminal確定後の遅い初期detailエラーはMessagesを隠さない"
   const view = setup(api, "parent-1", initial.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.ok(terminal);
 
   await act(async () => {
     terminal?.(initial.id, null);
     await Promise.resolve();
   });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(
+    view.current.selectedSession?.messages.at(-1)?.text,
+    "terminal answer",
+  );
   assert.equal(view.current.detailLoading, false);
   assert.equal(view.current.detailError, null);
 
   rejectInitialDetail(new Error("initial detail read failed"));
-  await act(async () => { await initialDetail.catch(() => undefined); });
-  assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "terminal answer");
+  await act(async () => {
+    await initialDetail.catch(() => undefined);
+  });
+  assert.equal(
+    view.current.selectedSession?.messages.at(-1)?.text,
+    "terminal answer",
+  );
   assert.equal(view.current.detailLoading, false);
   assert.equal(view.current.detailError, null);
   await view.unmount();
@@ -1066,13 +1697,16 @@ test("terminal確定後の遅い初期detailエラーはMessagesを隠さない"
 // lifecycle = "permanent"
 // distinction = "terminal再取得成功だけを確認するtestでは検出できない、terminal失敗と初期detail解決の競合を検証する"
 // @end-test-value
+/** 完了時の再取得が先に失敗しても、後から成功した初回詳細を表示してエラーを消す。 */
 test("terminal詳細取得失敗時は初期detailへフォールバックする", async () => {
   const initial = session("a", "2026-01-01");
   const initialDetail = deferred<AuxiliarySession | null>();
   let initialDetailPending = true;
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 初回詳細と完了時の再取得を同じ会話で競合させるため、一件返す。 */
     listAuxiliarySessions: async () => [initial],
+    /** 最初の詳細取得は保留し、完了時の追加取得だけを失敗させる。 */
     getAuxiliarySession: async () => {
       if (initialDetailPending) {
         initialDetailPending = false;
@@ -1080,6 +1714,7 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
       }
       throw new Error("terminal read failed");
     },
+    /** 保留中の初回詳細とは別に、完了に伴う詳細取得を起動できるようにする。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -1088,7 +1723,9 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
   const view = setup(api, "parent-1", initial.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.ok(terminal);
 
   await act(async () => {
@@ -1122,16 +1759,30 @@ test("terminal詳細取得失敗時は初期detailへフォールバックする
 // lifecycle = "permanent"
 // distinction = "選択中Auxiliary自身の詳細失敗ではなく、選択切替後に到着する非選択Auxiliaryのterminal失敗が共通errorへ流入しないことを検証する"
 // @end-test-value
+/** A の完了詳細を待つ間に B へ移動し、A の取得が失敗しても B の本文と共通エラー状態を変えない。 */
 test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及しない", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
   let rejectTerminal!: (cause: Error) => void;
-  const terminalFailure = new Promise<AuxiliarySession | null>((_resolve, reject) => { rejectTerminal = reject; });
-  const aDetails = [Promise.resolve<AuxiliarySession | null>(a), terminalFailure];
+  const terminalFailure = new Promise<AuxiliarySession | null>(
+    (_resolve, reject) => {
+      rejectTerminal = reject;
+    },
+  );
+  const aDetails = [
+    Promise.resolve<AuxiliarySession | null>(a),
+    terminalFailure,
+  ];
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 完了を待つ会話と、選択先になる別会話を一覧に含める。 */
     listAuxiliarySessions: async () => [a, b],
-    getAuxiliarySession: (id) => id === a.id ? (aDetails.shift() ?? Promise.resolve(a)) : Promise.resolve(b),
+    /** A の取得は初回と完了時で結果を替え、B は直ちに結果を返す。 */
+    getAuxiliarySession: (id) =>
+      id === a.id
+        ? (aDetails.shift() ?? Promise.resolve(a))
+        : Promise.resolve(b),
+    /** A が完了した時点をテストから通知し、B への選択切替と重ねる。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -1140,7 +1791,9 @@ test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及
   const view = setup(api, "parent-1", a.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.equal(view.current.selectedId, a.id);
   assert.ok(terminal);
 
@@ -1174,13 +1827,16 @@ test("非選択Auxiliaryの遅延terminalエラーは選択中Auxiliaryへ波及
 // lifecycle = "permanent"
 // distinction = "terminal詳細がnullかつ一覧からも削除された会話について、一覧・選択状態の再同期を検証する"
 // @end-test-value
+/** 完了時に詳細が見つからず一覧からも消えた会話は、再同期で一覧と選択から取り除き、読込エラーとして残さない。 */
 test("terminal詳細がnullなら一覧と選択状態を再同期する", async () => {
   const initial = session("a", "2026-01-01");
   let listed = [initial];
   let initialDetailPending = true;
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 削除前後を切り替えた、現在の候補集合を返す。 */
     listAuxiliarySessions: async () => listed,
+    /** 初回は詳細を表示し、完了時の再取得では削除済みとして null を返す。 */
     getAuxiliarySession: async () => {
       if (initialDetailPending) {
         initialDetailPending = false;
@@ -1188,6 +1844,7 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
       }
       return null;
     },
+    /** 対象の削除後に完了を通知して、詳細欠損からの再同期を起こす。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -1196,7 +1853,9 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
   const view = setup(api, "parent-1", initial.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.equal(view.current.selectedSession?.id, initial.id);
   assert.ok(terminal);
 
@@ -1205,7 +1864,9 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
     terminal?.(initial.id, null);
     await Promise.resolve();
   });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   assert.deepEqual(view.current.summaries, []);
   assert.equal(view.current.selectedId, null);
   assert.equal(view.current.selectedSession, null);
@@ -1224,30 +1885,44 @@ test("terminal詳細がnullなら一覧と選択状態を再同期する", async
 // lifecycle = "permanent"
 // distinction = "addSession後の一覧競合ではなく、terminal確定Sessionのsummary反映後に古い一覧応答が到着する競合を検証する"
 // @end-test-value
+/** 完了時に更新したプレビューと時刻を守り、先に始まった古い一覧更新で巻き戻さない。 */
 test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", async () => {
   const initial = session("a", "2026-01-01", { preview: "old answer" });
   const terminalSession = {
     ...initial,
     preview: "terminal answer",
     updatedAt: "2026-01-03",
-    messages: [...initial.messages, { role: "assistant" as const, text: "terminal answer" }],
+    messages: [
+      ...initial.messages,
+      { role: "assistant" as const, text: "terminal answer" },
+    ],
   };
-  const staleList = deferred<ReturnType<AuxiliaryWorkspaceApi["listAuxiliarySessions"]> extends Promise<infer T> ? T : never>();
+  const staleList =
+    deferred<
+      ReturnType<
+        AuxiliaryWorkspaceApi["listAuxiliarySessions"]
+      > extends Promise<infer T>
+        ? T
+        : never
+    >();
   const listStarted = deferred<void>();
   let listCall = 0;
   let detailCall = 0;
   let terminal!: (id: string, state: null) => void;
   const api: AuxiliaryWorkspaceApi = {
+    /** 初回一覧の後は再取得開始を通知して応答を保留し、完了処理より遅く返せるようにする。 */
     listAuxiliarySessions: async () => {
       listCall += 1;
       if (listCall === 1) return [initial];
       listStarted.resolve();
       return staleList.promise;
     },
+    /** 初回は旧詳細を、完了通知からの再取得は確定後の詳細を返す。 */
     getAuxiliarySession: async () => {
       detailCall += 1;
       return detailCall === 1 ? initial : terminalSession;
     },
+    /** 古い一覧を保留している間に、実行完了を通知できるようにする。 */
     subscribeLiveSessionRun: (listener) => {
       terminal = listener as (id: string, state: null) => void;
       return () => {};
@@ -1256,8 +1931,14 @@ test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", as
   const view = setup(api, "parent-1", initial.id);
 
   await view.render();
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "old answer");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === initial.id)
+      ?.preview,
+    "old answer",
+  );
   assert.ok(terminal);
 
   let refreshPromise: Promise<void> | null = null;
@@ -1271,15 +1952,27 @@ test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", as
     terminal?.(initial.id, null);
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "terminal answer");
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === initial.id)
+      ?.preview,
+    "terminal answer",
+  );
   assert.equal(view.current.loading, false);
 
   await act(async () => {
     staleList.resolve([initial]);
     await refreshPromise;
   });
-  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.preview, "terminal answer");
-  assert.equal(view.current.summaries.find((summary) => summary.id === initial.id)?.updatedAt, "2026-01-03");
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === initial.id)
+      ?.preview,
+    "terminal answer",
+  );
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === initial.id)
+      ?.updatedAt,
+    "2026-01-03",
+  );
   assert.equal(view.current.loading, false);
   await view.unmount();
 });
@@ -1294,14 +1987,21 @@ test("terminal完了後の古い一覧応答はsummaryを巻き戻さない", as
 // scope = "auxiliary-workspace-concurrent-terminal"
 // lifecycle = "permanent"
 // @end-test-value
+/** A と B の完了通知を同時に受けても、片方の応答を失効させず、各会話の詳細とプレビューを独立に更新する。 */
 test("hidden A/Bの同時terminalは会話ごとに独立して反映される", async () => {
   const a = session("a", "2026-01-01");
   const b = session("b", "2026-01-02");
-  const latest = new Map([["a", a], ["b", b]]);
+  const latest = new Map([
+    ["a", a],
+    ["b", b],
+  ]);
   const listeners = new Set<(id: string, state: null) => void>();
   const api: AuxiliaryWorkspaceApi = {
+    /** 二つの会話の現在の保存状態を一覧へ返す。 */
     listAuxiliarySessions: async () => [...latest.values()],
+    /** 完了対象の ID から、その会話専用の最新の詳細を取得する。 */
     getAuxiliarySession: async (id) => latest.get(id) ?? null,
+    /** 二会話の完了通知をまとめて配信できるよう購読を登録する。 */
     subscribeLiveSessionRun: (listener) => {
       const callback = listener as (id: string, state: null) => void;
       listeners.add(callback);
@@ -1310,15 +2010,34 @@ test("hidden A/Bの同時terminalは会話ごとに独立して反映される",
   };
   const view = setup(api);
   await view.render();
-  await act(async () => { view.current.addSession(a); view.current.addSession(b); });
-  await act(async () => { view.current.selectSession("a"); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  await act(async () => { view.current.selectSession("b"); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  await act(async () => {
+    view.current.addSession(a);
+    view.current.addSession(b);
+  });
+  await act(async () => {
+    view.current.selectSession("a");
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    view.current.selectSession("b");
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   const bindingA = view.current.getBinding("a");
   const bindingB = view.current.getBinding("b");
-  latest.set("a", { ...a, preview: "A terminal", messages: [...a.messages, { role: "assistant", text: "A terminal" }] });
-  latest.set("b", { ...b, preview: "B terminal", messages: [...b.messages, { role: "assistant", text: "B terminal" }] });
+  latest.set("a", {
+    ...a,
+    preview: "A terminal",
+    messages: [...a.messages, { role: "assistant", text: "A terminal" }],
+  });
+  latest.set("b", {
+    ...b,
+    preview: "B terminal",
+    messages: [...b.messages, { role: "assistant", text: "B terminal" }],
+  });
   assert.ok(listeners.size > 0);
   await act(async () => {
     for (const listener of listeners) {
@@ -1327,9 +2046,17 @@ test("hidden A/Bの同時terminalは会話ごとに独立して反映される",
     }
     await Promise.resolve();
   });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  assert.equal(view.current.summaries.find((summary) => summary.id === "a")?.preview, "A terminal");
-  assert.equal(view.current.summaries.find((summary) => summary.id === "b")?.preview, "B terminal");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === "a")?.preview,
+    "A terminal",
+  );
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === "b")?.preview,
+    "B terminal",
+  );
   assert.equal(bindingA.sessionRef.current?.id, "a");
   assert.equal(bindingB.sessionRef.current?.id, "b");
   await view.unmount();
@@ -1345,49 +2072,86 @@ test("hidden A/Bの同時terminalは会話ごとに独立して反映される",
 // scope = "auxiliary-workspace-run-state"
 // lifecycle = "permanent"
 // @end-test-value
+/** 完了後のライブ情報にバックグラウンド処理が残っても、保存された実行状態を正とし、未保存下書きを上書きしない。 */
 test("保持されたlive stateは永続化runStateを正本として扱う", async () => {
   const idle = session("idle", "2026-01-01");
   const running = session("running", "2026-01-02", { runState: "running" });
-  const latest = new Map([[idle.id, idle], [running.id, running]]);
+  const latest = new Map([
+    [idle.id, idle],
+    [running.id, running],
+  ]);
   let listener: ((id: string, state: object | null) => void) | null = null;
   const api: AuxiliaryWorkspaceApi = {
+    /** 保存状態がアイドルと実行中の二つの会話を比較対象にする。 */
     listAuxiliarySessions: async () => [idle, running],
+    /** 選択した会話の保存済み本文を返し、ローカル下書きとの差を残す。 */
     getAuxiliarySession: async (id) => latest.get(id) ?? null,
+    /** 保存済みの runState を軽量な照会結果に投影し、ライブ通知との差を検査する。 */
     getAuxiliarySessionStatus: async (id) => {
       const current = latest.get(id);
-      return current ? { id: current.id, parentSessionId: current.parentSessionId, createdAt: current.createdAt, runState: current.runState } : null;
+      return current
+        ? {
+            id: current.id,
+            parentSessionId: current.parentSessionId,
+            createdAt: current.createdAt,
+            runState: current.runState,
+          }
+        : null;
     },
+    /** 保持されたライブ情報を随時通知し、解除後はテストの配信先から外す。 */
     subscribeLiveSessionRun: (nextListener) => {
       listener = nextListener as (id: string, state: object | null) => void;
-      return () => { listener = null; };
+      return () => {
+        listener = null;
+      };
     },
   };
   const view = setup(api);
   await view.render();
   assert.ok(listener);
-  const retainedLiveState = { errorMessage: "", backgroundTasks: [{ id: "task-1" }] };
+  const retainedLiveState = {
+    errorMessage: "",
+    backgroundTasks: [{ id: "task-1" }],
+  };
   await act(async () => {
     listener?.(idle.id, retainedLiveState);
     await Promise.resolve();
   });
-  assert.equal(view.current.summaries.find((summary) => summary.id === idle.id)?.runState, "idle");
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === idle.id)?.runState,
+    "idle",
+  );
   await act(async () => {
     listener?.(running.id, { ...retainedLiveState, runState: "running" });
     await Promise.resolve();
   });
-  assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "running");
-  await act(async () => { view.current.selectSession(running.id); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === running.id)
+      ?.runState,
+    "running",
+  );
+  await act(async () => {
+    view.current.selectSession(running.id);
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   const runningBinding = view.current.getBinding(running.id);
   await act(async () => {
-    runningBinding.setSession((current) => current ? { ...current, composerDraft: "未保存draft" } : current);
+    runningBinding.setSession((current) =>
+      current ? { ...current, composerDraft: "未保存draft" } : current,
+    );
   });
   latest.set(running.id, { ...running, runState: "idle" });
   await act(async () => {
     listener?.(running.id, { ...retainedLiveState, runState: "idle" });
     await Promise.resolve();
   });
-  assert.equal(view.current.summaries.find((summary) => summary.id === running.id)?.runState, "idle");
+  assert.equal(
+    view.current.summaries.find((summary) => summary.id === running.id)
+      ?.runState,
+    "idle",
+  );
   assert.equal(runningBinding.sessionRef.current?.composerDraft, "未保存draft");
   await view.unmount();
 });
@@ -1404,46 +2168,96 @@ test("保持されたlive stateは永続化runStateを正本として扱う", as
 // impact = "多数会話の非表示実行が入力を重くすることと、完了した応答を閲覧できなくなることを防ぐ"
 // distinction = "型検査やcontroller単体では観測できない実hookの購読・取得・表示の接続を少数のdeferred操作で検証する"
 // @end-test-value
+/** 未選択会話の大量の本文差分を軽量照会へ集約し、完了時だけ本文を取得して再選択時に表示する。 */
 test("非選択live statusは有限に集約し、terminal本文は再選択時に表示する", async () => {
-  const sessions = Array.from({ length: 100 }, (_, index) => session(`aux-${index}`, "2026-01-01"));
+  const sessions = Array.from({ length: 100 }, (_, index) =>
+    session(`aux-${index}`, "2026-01-01"),
+  );
   const hidden = sessions[0];
-  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  const running = {
+    id: hidden.id,
+    parentSessionId: hidden.parentSessionId,
+    createdAt: hidden.createdAt,
+    runState: "running" as const,
+  };
   const firstStatus = deferred<typeof running>();
   let statusReads = 0;
   let detailReads = 0;
   let latest = hidden;
   let listener: ((id: string, state: object | null) => void) | undefined;
   const view = setup({
+    /** 多数の会話から、対象を非選択にできる初期一覧を供給する。 */
     listAuxiliarySessions: async () => sessions,
-    getAuxiliarySession: async (id) => { detailReads += 1; return id === hidden.id ? latest : sessions.find((item) => item.id === id) ?? null; },
-    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : running; },
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+    /** 詳細取得の回数を数え、対象会話には任意に更新した最新本文を返す。 */
+    getAuxiliarySession: async (id) => {
+      detailReads += 1;
+      return id === hidden.id
+        ? latest
+        : (sessions.find((item) => item.id === id) ?? null);
+    },
+    /** 初回ステータスを保留してライブ通知を重ね、余分な照会の有無を数える。 */
+    getAuxiliarySessionStatus: async () => {
+      statusReads += 1;
+      return statusReads === 1 ? firstStatus.promise : running;
+    },
+    /** 本文差分と完了通知を手動で発火し、購読終了時に解放する。 */
+    subscribeLiveSessionRun: (next) => {
+      listener = next as typeof listener;
+      return () => {
+        listener = undefined;
+      };
+    },
   });
   try {
     await view.render();
     assert.notEqual(view.current.selectedId, hidden.id);
     const loadedDetails = detailReads;
     await act(async () => {
-      for (let index = 0; index < 100; index += 1) listener?.(hidden.id, { assistantText: `chunk ${index}` });
+      for (let index = 0; index < 100; index += 1)
+        listener?.(hidden.id, { assistantText: `chunk ${index}` });
     });
     assert.equal(statusReads, 1);
     assert.equal(detailReads, loadedDetails);
-    await act(async () => { firstStatus.resolve(running); });
+    await act(async () => {
+      firstStatus.resolve(running);
+    });
     assert.equal(statusReads, 1);
-    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
+    assert.equal(
+      view.current.summaries.find((item) => item.id === hidden.id)?.runState,
+      "running",
+    );
     const summaries = view.current.summaries;
-    await act(async () => { listener?.(hidden.id, { assistantText: "same run" }); });
+    await act(async () => {
+      listener?.(hidden.id, { assistantText: "same run" });
+    });
     assert.strictEqual(view.current.summaries, summaries);
     assert.equal(detailReads, loadedDetails);
 
-    latest = { ...hidden, preview: "completed response", messages: [{ role: "assistant", text: "completed response" }] };
-    await act(async () => { listener?.(hidden.id, null); });
+    latest = {
+      ...hidden,
+      preview: "completed response",
+      messages: [{ role: "assistant", text: "completed response" }],
+    };
+    await act(async () => {
+      listener?.(hidden.id, null);
+    });
     assert.equal(detailReads, loadedDetails + 1);
-    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "idle");
-    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.preview, "completed response");
-    await act(async () => { view.current.selectSession(hidden.id); });
+    assert.equal(
+      view.current.summaries.find((item) => item.id === hidden.id)?.runState,
+      "idle",
+    );
+    assert.equal(
+      view.current.summaries.find((item) => item.id === hidden.id)?.preview,
+      "completed response",
+    );
+    await act(async () => {
+      view.current.selectSession(hidden.id);
+    });
     assert.equal(detailReads, loadedDetails + 1);
-    assert.equal(view.current.selectedSession?.messages[0]?.text, "completed response");
+    assert.equal(
+      view.current.selectedSession?.messages[0]?.text,
+      "completed response",
+    );
   } finally {
     await view.unmount();
   }
@@ -1461,31 +2275,75 @@ test("非選択live statusは有限に集約し、terminal本文は再選択時�
 // impact = "一時IPC障害後も非選択会話のprocessing表示を実行状態へ回復させる"
 // distinction = "通常の成功時集約testや型検査では確認できないreject後の回復を実hookで検証する"
 // @end-test-value
+/** 軽量ステータスの一時障害後は同じ実行の次の通知で再取得し、回復後の本文差分からは再取得しない。 */
 test("status取得失敗後は次liveで回復し、成功後の本文deltaは取得を増やさない", async (t) => {
   t.mock.method(console, "error", () => {});
   const hidden = session("hidden", "2026-01-01");
   const selected = session("selected", "2026-01-02");
-  const running = { id: hidden.id, parentSessionId: hidden.parentSessionId, createdAt: hidden.createdAt, runState: "running" as const };
+  const running = {
+    id: hidden.id,
+    parentSessionId: hidden.parentSessionId,
+    createdAt: hidden.createdAt,
+    runState: "running" as const,
+  };
   const firstStatus = deferred<typeof running>();
   let statusReads = 0;
   let listener: ((id: string, state: object | null) => void) | undefined;
   const view = setup({
+    /** 選択中と非選択の会話を別にし、失敗を表示側から分離する。 */
     listAuxiliarySessions: async () => [hidden, selected],
+    /** 選択中の会話だけに通常の詳細応答を返す。 */
     getAuxiliarySession: async () => selected,
-    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : running; },
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+    /** 初回の保留応答を失敗させ、次の照会で実行中に回復したことを確認する。 */
+    getAuxiliarySessionStatus: async () => {
+      statusReads += 1;
+      return statusReads === 1 ? firstStatus.promise : running;
+    },
+    /** 同じ実行に対して初回通知、再試行、追加差分を送れるようにする。 */
+    subscribeLiveSessionRun: (next) => {
+      listener = next as typeof listener;
+      return () => {
+        listener = undefined;
+      };
+    },
   });
   try {
     await view.render();
     assert.notEqual(view.current.selectedId, hidden.id);
-    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "first" }); });
-    await act(async () => { firstStatus.reject(new Error("transient status failure")); });
+    await act(async () => {
+      listener?.(hidden.id, {
+        runState: "running",
+        turnId: "turn-1",
+        assistantText: "first",
+      });
+    });
+    await act(async () => {
+      firstStatus.reject(new Error("transient status failure"));
+    });
     assert.equal(statusReads, 1);
-    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "idle");
-    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "next" }); });
+    assert.equal(
+      view.current.summaries.find((item) => item.id === hidden.id)?.runState,
+      "idle",
+    );
+    await act(async () => {
+      listener?.(hidden.id, {
+        runState: "running",
+        turnId: "turn-1",
+        assistantText: "next",
+      });
+    });
     assert.equal(statusReads, 2);
-    assert.equal(view.current.summaries.find((item) => item.id === hidden.id)?.runState, "running");
-    await act(async () => { listener?.(hidden.id, { runState: "running", turnId: "turn-1", assistantText: "more" }); });
+    assert.equal(
+      view.current.summaries.find((item) => item.id === hidden.id)?.runState,
+      "running",
+    );
+    await act(async () => {
+      listener?.(hidden.id, {
+        runState: "running",
+        turnId: "turn-1",
+        assistantText: "more",
+      });
+    });
     assert.equal(statusReads, 2);
   } finally {
     await view.unmount();
@@ -1504,19 +2362,37 @@ test("status取得失敗後は次liveで回復し、成功後の本文deltaは�
 // impact = "取消・入力受付状態の変化とIPC応答順逆転が重なっても軽量status取得を有限に集約する"
 // distinction = "単純な失敗再試行testでは検出できない同じkeyへ戻るABA競合をdeferred応答で検証する"
 // @end-test-value
+/** 入力可能状態が A、B、A と変わる間に最初の A の照会が失敗しても、最新の A に対する差分の抑制は維持する。 */
 test("古いstatus失敗はA/B/A後の最新状態のdelta抑制を解除しない", async (t) => {
   t.mock.method(console, "error", () => {});
   const initial = session("a", "2026-01-01");
-  const running = { id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: "running" as const };
+  const running = {
+    id: initial.id,
+    parentSessionId: initial.parentSessionId,
+    createdAt: initial.createdAt,
+    runState: "running" as const,
+  };
   const firstStatus = deferred<typeof running>();
   const latestStatus = deferred<typeof running>();
   let statusReads = 0;
   let listener: ((id: string, state: object | null) => void) | undefined;
   const view = setup({
+    /** 同一会話の状態キーが変化する競合を観測できる一覧を返す。 */
     listAuxiliarySessions: async () => [initial],
+    /** 初期の表示用詳細を提供し、軽量照会の競合とは分離する。 */
     getAuxiliarySession: async () => initial,
-    getAuxiliarySessionStatus: async () => { statusReads += 1; return statusReads === 1 ? firstStatus.promise : latestStatus.promise; },
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+    /** 古い照会と新しい照会を別々に保留し、旧失敗と最新成功の順序を制御する。 */
+    getAuxiliarySessionStatus: async () => {
+      statusReads += 1;
+      return statusReads === 1 ? firstStatus.promise : latestStatus.promise;
+    },
+    /** 入力可能状態の変化と、状態を変えない本文差分を任意に通知する。 */
+    subscribeLiveSessionRun: (next) => {
+      listener = next as typeof listener;
+      return () => {
+        listener = undefined;
+      };
+    },
   });
   const live = { runState: "running", turnId: "turn-1", inputAvailable: true };
   try {
@@ -1527,13 +2403,21 @@ test("古いstatus失敗はA/B/A後の最新状態のdelta抑制を解除しな�
       listener?.(initial.id, live);
     });
     assert.equal(statusReads, 1);
-    await act(async () => { firstStatus.reject(new Error("older status failure")); });
+    await act(async () => {
+      firstStatus.reject(new Error("older status failure"));
+    });
     assert.equal(statusReads, 2);
-    await act(async () => { listener?.(initial.id, { ...live, assistantText: "latest delta" }); });
-    await act(async () => { latestStatus.resolve(running); });
+    await act(async () => {
+      listener?.(initial.id, { ...live, assistantText: "latest delta" });
+    });
+    await act(async () => {
+      latestStatus.resolve(running);
+    });
     assert.equal(statusReads, 2);
     assert.equal(view.current.summaries[0]?.runState, "running");
-    await act(async () => { listener?.(initial.id, { ...live, assistantText: "another delta" }); });
+    await act(async () => {
+      listener?.(initial.id, { ...live, assistantText: "another delta" });
+    });
     assert.equal(statusReads, 2);
   } finally {
     await view.unmount();
@@ -1552,24 +2436,50 @@ test("古いstatus失敗はA/B/A後の最新状態のdelta抑制を解除しな�
 // impact = "最終使用順の継続利用と入力時の一覧負荷分離を同時に保つ"
 // distinction = "既存の初期並び順テストでは確認できない入力recencyの通知省略と真の本文更新を一つのhook操作で検証する"
 // @end-test-value
+/** 最終使用時刻で実際に順位が変わった場合と本文プレビュー変更だけを一覧へ反映し、順位不変・無変更操作では参照を維持する。 */
 test("同順位のrecencyとno-opは一覧を通知せず、本当の順位とpreview更新は反映する", async () => {
   const a = session("a", "2026-01-01", { preview: "A" });
   const b = session("b", "2026-01-02", { preview: "B" });
-  const view = setup({ listAuxiliarySessions: async () => [a, b], getAuxiliarySession: async (id) => id === a.id ? a : b });
+  const view = setup({
+    /** 最終使用順とプレビューの変化を比較する二つの候補を返す。 */
+    listAuxiliarySessions: async () => [a, b],
+    /** ローカルの更新前に選択会話の元の本文を返す。 */
+    getAuxiliarySession: async (id) => (id === a.id ? a : b),
+  });
   try {
     await view.render();
-    await act(async () => { view.current.touchRecency(a.id, "2026-01-03"); });
-    assert.deepEqual(view.current.summaries.map((item) => item.id), [a.id, b.id]);
+    await act(async () => {
+      view.current.touchRecency(a.id, "2026-01-03");
+    });
+    assert.deepEqual(
+      view.current.summaries.map((item) => item.id),
+      [a.id, b.id],
+    );
     const summaries = view.current.summaries;
     await act(async () => {
-      for (let index = 0; index < 100; index += 1) view.current.touchRecency(a.id, `2026-01-04T00:00:${String(index).padStart(3, "0")}`);
+      for (let index = 0; index < 100; index += 1)
+        view.current.touchRecency(
+          a.id,
+          `2026-01-04T00:00:${String(index).padStart(3, "0")}`,
+        );
       view.current.getBinding(b.id).setSession((current) => current);
     });
     assert.strictEqual(view.current.summaries, summaries);
     await act(async () => {
-      view.current.getBinding(b.id).setSession((current) => current ? { ...current, preview: "new B", messages: [{ role: "assistant", text: "new B" }] } : current);
+      view.current.getBinding(b.id).setSession((current) =>
+        current
+          ? {
+              ...current,
+              preview: "new B",
+              messages: [{ role: "assistant", text: "new B" }],
+            }
+          : current,
+      );
     });
-    assert.equal(view.current.summaries.find((item) => item.id === b.id)?.preview, "new B");
+    assert.equal(
+      view.current.summaries.find((item) => item.id === b.id)?.preview,
+      "new B",
+    );
     assert.equal(view.current.selectedSession?.messages[0]?.text, "new B");
   } finally {
     await view.unmount();
@@ -1588,57 +2498,135 @@ test("同順位のrecencyとno-opは一覧を通知せず、本当の順位とpr
 // impact = "background taskを保持する会話の完了本文と、再実行中の送信制限を保つ"
 // distinction = "同期したterminal/statusテストでは生じない応答順逆転をdeferredで検証する"
 // @end-test-value
+/** 完了詳細を待つ間にライブ情報が残ったり次の実行が始まっても、確定本文と最新の実行状態をどちらも保持する。 */
 test("terminal取得中の保持liveと次runは完了履歴と最新の実行状態を両立する", async () => {
   const initial = session("a", "2026-01-01", { runState: "running" });
   let status: "running" | "idle" = "idle";
-  let delayedStatus: Promise<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState">> | undefined;
+  let delayedStatus:
+    | Promise<
+        Pick<
+          AuxiliarySession,
+          "id" | "parentSessionId" | "createdAt" | "runState"
+        >
+      >
+    | undefined;
   let terminal = deferred<AuxiliarySession>();
   let reads = 0;
   let listener: ((id: string, state: object | null) => void) | undefined;
   const view = setup({
+    /** 完了と次の実行を同じ会話で重ねるため、実行中の一件を一覧に返す。 */
     listAuxiliarySessions: async () => [initial],
-    getAuxiliarySession: async () => { reads += 1; return reads === 1 ? initial : terminal.promise; },
-    getAuxiliarySessionStatus: async () => delayedStatus ?? ({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: status }),
-    subscribeLiveSessionRun: (next) => { listener = next as typeof listener; return () => { listener = undefined; }; },
+    /** 初期表示の後の本文取得を保留し、完了済み履歴を任意の時点で返す。 */
+    getAuxiliarySession: async () => {
+      reads += 1;
+      return reads === 1 ? initial : terminal.promise;
+    },
+    /** 次の実行状態を即時または保留で返し、本文と状態の応答順を両方試せるようにする。 */
+    getAuxiliarySessionStatus: async () =>
+      delayedStatus ?? {
+        id: initial.id,
+        parentSessionId: initial.parentSessionId,
+        createdAt: initial.createdAt,
+        runState: status,
+      },
+    /** 完了、残存するバックグラウンド情報、次の実行開始を手動で通知する。 */
+    subscribeLiveSessionRun: (next) => {
+      listener = next as typeof listener;
+      return () => {
+        listener = undefined;
+      };
+    },
   });
   try {
     await view.render();
-    await act(async () => { listener?.(initial.id, null); });
-    await act(async () => { listener?.(initial.id, { backgroundTasks: [{ id: "retained" }] }); });
-    const completed = { ...initial, runState: "idle" as const, messages: [{ role: "assistant" as const, text: "final response" }] };
-    await act(async () => { terminal.resolve(completed); });
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "final response");
+    await act(async () => {
+      listener?.(initial.id, null);
+    });
+    await act(async () => {
+      listener?.(initial.id, { backgroundTasks: [{ id: "retained" }] });
+    });
+    const completed = {
+      ...initial,
+      runState: "idle" as const,
+      messages: [{ role: "assistant" as const, text: "final response" }],
+    };
+    await act(async () => {
+      terminal.resolve(completed);
+    });
+    assert.equal(
+      view.current.selectedSession?.messages.at(-1)?.text,
+      "final response",
+    );
     assert.equal(view.current.selectedSession?.runState, "idle");
     assert.equal(reads, 2);
 
     terminal = deferred<AuxiliarySession>();
-    await act(async () => { listener?.(initial.id, null); });
+    await act(async () => {
+      listener?.(initial.id, null);
+    });
     status = "running";
-    await act(async () => { listener?.(initial.id, { assistantText: "new run" }); });
-    await act(async () => { terminal.resolve({ ...completed, messages: [
-      ...completed.messages,
-      { role: "user", text: "second request" },
-      { role: "assistant", text: "second completed response" },
-    ] }); });
+    await act(async () => {
+      listener?.(initial.id, { assistantText: "new run" });
+    });
+    await act(async () => {
+      terminal.resolve({
+        ...completed,
+        messages: [
+          ...completed.messages,
+          { role: "user", text: "second request" },
+          { role: "assistant", text: "second completed response" },
+        ],
+      });
+    });
     assert.equal(view.current.selectedSession?.runState, "running");
-    assert.deepEqual(view.current.selectedSession?.messages.map((message) => message.text), [
-      "final response", "second request", "second completed response",
-    ]);
+    assert.deepEqual(
+      view.current.selectedSession?.messages.map((message) => message.text),
+      ["final response", "second request", "second completed response"],
+    );
     assert.equal(reads, 3);
 
     terminal = deferred<AuxiliarySession>();
-    const nextStatus = deferred<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState">>();
+    const nextStatus =
+      deferred<
+        Pick<
+          AuxiliarySession,
+          "id" | "parentSessionId" | "createdAt" | "runState"
+        >
+      >();
     delayedStatus = nextStatus.promise;
-    await act(async () => { listener?.(initial.id, null); });
-    await act(async () => { listener?.(initial.id, { assistantText: "following run" }); });
-    await act(async () => { terminal.resolve({ ...completed, messages: [
-      ...view.current.selectedSession!.messages,
-      { role: "user", text: "third request" },
-      { role: "assistant", text: "third completed response" },
-    ] }); });
-    await act(async () => { nextStatus.resolve({ id: initial.id, parentSessionId: initial.parentSessionId, createdAt: initial.createdAt, runState: "running" }); });
-    assert.equal(view.current.selectedSession?.messages.at(-1)?.text, "third completed response");
-    assert.equal(view.current.selectedSession?.runState, "running", "a newer status also applies when the body resolves first");
+    await act(async () => {
+      listener?.(initial.id, null);
+    });
+    await act(async () => {
+      listener?.(initial.id, { assistantText: "following run" });
+    });
+    await act(async () => {
+      terminal.resolve({
+        ...completed,
+        messages: [
+          ...view.current.selectedSession!.messages,
+          { role: "user", text: "third request" },
+          { role: "assistant", text: "third completed response" },
+        ],
+      });
+    });
+    await act(async () => {
+      nextStatus.resolve({
+        id: initial.id,
+        parentSessionId: initial.parentSessionId,
+        createdAt: initial.createdAt,
+        runState: "running",
+      });
+    });
+    assert.equal(
+      view.current.selectedSession?.messages.at(-1)?.text,
+      "third completed response",
+    );
+    assert.equal(
+      view.current.selectedSession?.runState,
+      "running",
+      "a newer status also applies when the body resolves first",
+    );
     assert.equal(reads, 4);
   } finally {
     await view.unmount();

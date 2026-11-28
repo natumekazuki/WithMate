@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { ProjectScopeType } from "../../src-shared/memory/session-memory-state.js";
 
+/** ワークスペースをプロジェクトへ関連付けるキーと、表示・Git参照に用いる情報。 */
 export type ResolvedProjectScopeInput = {
   projectType: ProjectScopeType;
   projectKey: string;
@@ -12,13 +13,19 @@ export type ResolvedProjectScopeInput = {
   displayName: string;
 };
 
+/** 実行OSによらず、ドライブ付きの絶対パスまたはUNCパスの表記を判別する。 */
 function isWindowsAbsolutePath(targetPath: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(targetPath) || /^\\\\[^\\]+\\[^\\]+/.test(targetPath);
+  return (
+    /^[A-Za-z]:[\\/]/.test(targetPath) || /^\\\\[^\\]+\\[^\\]+/.test(targetPath)
+  );
 }
 
+/** パスを絶対表記とスラッシュ区切りに揃え、ルート以外の末尾区切りを除く。 */
 function normalizeProjectPath(targetPath: string): string {
   if (isWindowsAbsolutePath(targetPath)) {
-    const normalizedWindowsPath = path.win32.normalize(targetPath).replace(/\\/g, "/");
+    const normalizedWindowsPath = path.win32
+      .normalize(targetPath)
+      .replace(/\\/g, "/");
     if (/^[A-Za-z]:\/$/.test(normalizedWindowsPath)) {
       return normalizedWindowsPath;
     }
@@ -33,6 +40,7 @@ function normalizeProjectPath(targetPath: string): string {
   return resolved.replace(/\/+$/, "");
 }
 
+/** statが成功する項目だけを存在するとみなす。アクセス失敗も未検出として扱う。 */
 function pathExists(targetPath: string): boolean {
   try {
     fs.statSync(targetPath);
@@ -42,6 +50,7 @@ function pathExists(targetPath: string): boolean {
   }
 }
 
+/** Gitの管理ファイルをUTF-8で読み、開けない場合は後続が代替できるようにnullを返す。 */
 function readTextFile(targetPath: string): string | null {
   try {
     return fs.readFileSync(targetPath, "utf8");
@@ -50,6 +59,7 @@ function readTextFile(targetPath: string): string | null {
   }
 }
 
+/** 開始ディレクトリから親をたどり、最寄りの.gitを持つディレクトリを返す。見つからなければnullを返す。 */
 export function findGitRootSync(startDirectory: string): string | null {
   let currentDirectory = normalizeProjectPath(startDirectory);
 
@@ -67,6 +77,7 @@ export function findGitRootSync(startDirectory: string): string | null {
   }
 }
 
+/** .gitディレクトリまたは.gitファイルのgitdir参照から管理ディレクトリを解決する。 */
 function resolveGitDirSync(gitRoot: string): string | null {
   const gitEntryPath = path.join(gitRoot, ".git");
   let stats: fs.Stats | null = null;
@@ -93,9 +104,12 @@ function resolveGitDirSync(gitRoot: string): string | null {
   return normalizeProjectPath(path.resolve(gitRoot, match[1].trim()));
 }
 
+/** 標準の.git/worktrees配下なら共有.gitを返し、それ以外は指定の管理ディレクトリを使う。 */
 function resolveGitCommonDirSync(gitDir: string): string {
   const normalizedGitDir = normalizeProjectPath(gitDir);
-  const worktreeMatch = normalizedGitDir.match(/^(.*\/\.git)\/worktrees\/[^/]+$/);
+  const worktreeMatch = normalizedGitDir.match(
+    /^(.*\/\.git)\/worktrees\/[^/]+$/,
+  );
   if (worktreeMatch?.[1]) {
     return normalizeProjectPath(worktreeMatch[1]);
   }
@@ -103,6 +117,7 @@ function resolveGitCommonDirSync(gitDir: string): string {
   return normalizedGitDir;
 }
 
+/** 設定テキストのremote節からURLを取り出す。originを優先し、なければ最初に見つけたURLを返す。 */
 function extractRemoteUrlFromConfig(configText: string): string | null {
   let currentRemoteName: string | null = null;
   let firstRemoteUrl: string | null = null;
@@ -148,6 +163,7 @@ function extractRemoteUrlFromConfig(configText: string): string | null {
   return firstRemoteUrl;
 }
 
+/** 共有のGit設定から代表remoteのURLを取得し、設定やURLが得られない場合はnullを返す。 */
 function resolveGitRemoteUrlSync(gitCommonDir: string): string | null {
   const configText = readTextFile(path.join(gitCommonDir, "config"));
   if (!configText) {
@@ -157,10 +173,20 @@ function resolveGitRemoteUrlSync(gitCommonDir: string): string | null {
   return extractRemoteUrlFromConfig(configText);
 }
 
-function inferRepositoryName(remoteUrl: string | null, gitCommonDir: string | null, gitRoot: string): string {
+/** remoteの末尾名、共有管理ディレクトリ由来の名前、作業ツリーの表示名の順に候補を採用する。 */
+function inferRepositoryName(
+  remoteUrl: string | null,
+  gitCommonDir: string | null,
+  gitRoot: string,
+): string {
   if (remoteUrl) {
-    const normalizedRemoteUrl = remoteUrl.replace(/\\/g, "/").replace(/\/+$/, "");
-    const lastSegment = normalizedRemoteUrl.split(/[/:]/).filter(Boolean).at(-1);
+    const normalizedRemoteUrl = remoteUrl
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+    const lastSegment = normalizedRemoteUrl
+      .split(/[/:]/)
+      .filter(Boolean)
+      .at(-1);
     const repoName = lastSegment?.replace(/\.git$/i, "").trim();
     if (repoName) {
       return repoName;
@@ -184,7 +210,12 @@ function inferRepositoryName(remoteUrl: string | null, gitCommonDir: string | nu
   return toDisplayName(gitRoot);
 }
 
-function resolveRepositoryIdentity(gitRemoteUrl: string | null, gitCommonDir: string | null, gitRoot: string): string {
+/** remote URLを優先し、なければ共有管理ディレクトリ由来のパス、次に作業ツリーのルートを識別子に使う。 */
+function resolveRepositoryIdentity(
+  gitRemoteUrl: string | null,
+  gitCommonDir: string | null,
+  gitRoot: string,
+): string {
   if (gitRemoteUrl) {
     return gitRemoteUrl;
   }
@@ -201,6 +232,7 @@ function resolveRepositoryIdentity(gitRemoteUrl: string | null, gitCommonDir: st
   return gitRoot;
 }
 
+/** パスの末尾名を表示用に取り出し、名前が空なら正規化したパスそのものを使う。 */
 function toDisplayName(targetPath: string): string {
   const resolvedPath = isWindowsAbsolutePath(targetPath)
     ? path.win32.normalize(targetPath)
@@ -209,9 +241,15 @@ function toDisplayName(targetPath: string): string {
   return baseName || normalizeProjectPath(targetPath);
 }
 
-export function resolveProjectScope(workspacePath: string): ResolvedProjectScopeInput {
+/** Gitが検出できればリポジトリ単位、検出できなければディレクトリ単位でプロジェクトを識別する。 */
+export function resolveProjectScope(
+  workspacePath: string,
+): ResolvedProjectScopeInput {
   const normalizedWorkspacePath = normalizeProjectPath(workspacePath);
-  if (isWindowsAbsolutePath(normalizedWorkspacePath) && process.platform !== "win32") {
+  if (
+    isWindowsAbsolutePath(normalizedWorkspacePath) &&
+    process.platform !== "win32"
+  ) {
     return {
       projectType: "directory",
       projectKey: `directory:${normalizedWorkspacePath}`,
@@ -236,8 +274,14 @@ export function resolveProjectScope(workspacePath: string): ResolvedProjectScope
 
   const gitDir = resolveGitDirSync(gitRoot);
   const gitCommonDir = gitDir ? resolveGitCommonDirSync(gitDir) : null;
-  const gitRemoteUrl = gitCommonDir ? resolveGitRemoteUrlSync(gitCommonDir) : null;
-  const repositoryIdentity = resolveRepositoryIdentity(gitRemoteUrl, gitCommonDir, gitRoot);
+  const gitRemoteUrl = gitCommonDir
+    ? resolveGitRemoteUrlSync(gitCommonDir)
+    : null;
+  const repositoryIdentity = resolveRepositoryIdentity(
+    gitRemoteUrl,
+    gitCommonDir,
+    gitRoot,
+  );
 
   return {
     projectType,

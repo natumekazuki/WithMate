@@ -1,3 +1,4 @@
+/** 一致をDOM Rangeに戻すための始点と終点。終点は一致範囲に含まない。 */
 export type RenderedTextMatch = {
   startNode: Text;
   startOffset: number;
@@ -5,6 +6,7 @@ export type RenderedTextMatch = {
   endOffset: number;
 };
 
+/** 小文字化でUTF-16長が変わった文字について、正規化前後の範囲を保持する。 */
 type ExpandedOffset = {
   normalizedStart: number;
   normalizedEnd: number;
@@ -12,6 +14,7 @@ type ExpandedOffset = {
   sourceEnd: number;
 };
 
+/** 一つのテキストノードの索引範囲と、長さが変わった文字の補正情報。 */
 type TextRun = {
   node: Text;
   normalizedStart: number;
@@ -19,41 +22,54 @@ type TextRun = {
   expandedOffsets: ExpandedOffset[];
 };
 
+/** 検索用の連結テキストと、DOM順に並べたノードへの逆引き情報。 */
 export type RenderedTextSearchIndex = {
   normalizedText: string;
   runs: TextRun[];
 };
 
+/** DOM範囲を作る前の一致始点一覧と、正規化後の検索語の長さ。 */
 export type RenderedTextMatchOffsets = {
   offsets: Uint32Array;
   normalizedQueryLength: number;
 };
 
+/** ノードを検索対象の連結テキストに含めるかを決める。 */
 export type RenderedTextNodeFilter = (node: Text) => boolean;
 
+/** 全一致の強調表示に使うDOM範囲数の上限。現在の一致は別に扱う。 */
 export const MAX_RENDERED_TEXT_HIGHLIGHT_RANGES = 5_000;
 
 const FIND_MATCH_HIGHLIGHT_NAME = "withmate-find-match";
 const FIND_CURRENT_HIGHLIGHT_NAME = "withmate-find-current";
 
+/** 文書のCSS Highlight一覧を操作するために使うインターフェース。 */
 type HighlightRegistry = {
+  /** 同名の強調表示を登録または置換する。 */
   set(name: string, highlight: unknown): void;
+  /** 指定名の登録を削除し、登録が存在したかを返す。 */
   delete(name: string): boolean;
 };
 
+/** ブラウザーのHighlightに一致範囲を蓄積するためのインターフェース。 */
 type HighlightCollection = {
+  /** DOM範囲を加え、追加先のコレクションを返す。 */
   add(range: Range): HighlightCollection;
 };
 
-type HighlightWindow = Window & typeof globalThis & {
-  CSS?: { highlights?: HighlightRegistry };
-  Highlight?: new () => HighlightCollection;
-};
+/** CSS Custom Highlight APIを提供しない実行環境も扱えるウィンドウ型。 */
+type HighlightWindow = Window &
+  typeof globalThis & {
+    CSS?: { highlights?: HighlightRegistry };
+    Highlight?: new () => HighlightCollection;
+  };
 
+/** 索引と検索語に同じロケール依存の小文字化を適用する。 */
 function normalizeSearchText(value: string): string {
   return value.toLocaleLowerCase();
 }
 
+/** 対象ノードをDOM順で区切りなしに連結し、ノードをまたぐ検索と元の境界への逆変換を可能にする。 */
 export function createRenderedTextSearchIndex(
   container: HTMLElement,
   includeTextNode: RenderedTextNodeFilter = () => true,
@@ -61,7 +77,8 @@ export function createRenderedTextSearchIndex(
   const normalizedParts: string[] = [];
   const runs: TextRun[] = [];
   let normalizedStart = 0;
-  const showText = container.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const showText =
+    container.ownerDocument.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
   const walker = container.ownerDocument.createTreeWalker(container, showText);
   let current = walker.nextNode();
   while (current) {
@@ -101,6 +118,7 @@ export function createRenderedTextSearchIndex(
   return { normalizedText: normalizedParts.join(""), runs };
 }
 
+/** 正規化後の位置を含むノード区間を二分探索し、範囲外ならnullを返す。 */
 function findRun(runs: TextRun[], normalizedOffset: number): TextRun | null {
   let low = 0;
   let high = runs.length - 1;
@@ -118,6 +136,7 @@ function findRun(runs: TextRun[], normalizedOffset: number): TextRun | null {
   return null;
 }
 
+/** 正規化後のUTF-16単位を元ノードの境界に戻す。長さが変わった文字は始点・終点に応じて文字全体を含める。 */
 function mapNormalizedUnitOffset(
   run: TextRun,
   globalNormalizedOffset: number,
@@ -132,13 +151,16 @@ function mapNormalizedUnitOffset(
     if (normalizedOffset < expanded.normalizedEnd) {
       return boundary === "start" ? expanded.sourceStart : expanded.sourceEnd;
     }
-    accumulatedDelta += (expanded.normalizedEnd - expanded.normalizedStart)
-      - (expanded.sourceEnd - expanded.sourceStart);
+    accumulatedDelta +=
+      expanded.normalizedEnd -
+      expanded.normalizedStart -
+      (expanded.sourceEnd - expanded.sourceStart);
   }
   const sourceOffset = normalizedOffset - accumulatedDelta;
   return boundary === "start" ? sourceOffset : sourceOffset + 1;
 }
 
+/** 前後の空白を除いた検索語で、重なりのない一致の始点を出現順に返す。空の検索語は一致なしとする。 */
 export function findRenderedTextMatchOffsets(
   index: RenderedTextSearchIndex,
   query: string,
@@ -172,6 +194,7 @@ export function findRenderedTextMatchOffsets(
   return { offsets, normalizedQueryLength: normalizedQuery.length };
 }
 
+/** 指定順位の一致を元のDOM範囲へ戻す。存在しない順位や対応するノード区間がない場合はnullを返す。 */
 export function resolveRenderedTextMatch(
   index: RenderedTextSearchIndex,
   matches: RenderedTextMatchOffsets,
@@ -181,7 +204,8 @@ export function resolveRenderedTextMatch(
   if (normalizedOffset === undefined || matches.normalizedQueryLength === 0) {
     return null;
   }
-  const normalizedEndOffset = normalizedOffset + matches.normalizedQueryLength - 1;
+  const normalizedEndOffset =
+    normalizedOffset + matches.normalizedQueryLength - 1;
   const startRun = findRun(index.runs, normalizedOffset);
   const endRun = findRun(index.runs, normalizedEndOffset);
   if (!startRun || !endRun) {
@@ -195,6 +219,7 @@ export function resolveRenderedTextMatch(
   };
 }
 
+/** 先頭から上限件数までの一致をDOM範囲へ戻し、解決できなかったものは除く。 */
 export function resolveRenderedTextMatches(
   index: RenderedTextSearchIndex,
   matches: RenderedTextMatchOffsets,
@@ -211,6 +236,7 @@ export function resolveRenderedTextMatches(
   return resolvedMatches;
 }
 
+/** 既に追加した件数を差し引いた残りの枠に、今回の一致を出現順で追記する。 */
 export function appendRenderedTextMatches(
   target: RenderedTextMatch[],
   index: RenderedTextSearchIndex,
@@ -227,20 +253,27 @@ export function appendRenderedTextMatches(
   }
 }
 
-export function scrollRenderedTextMatchIntoView(match: RenderedTextMatch | null, scrollContainer?: HTMLElement): void {
+/** 接続中の一致を可視範囲へ移す。スクロール要素が指定された場合は、取得できた一致矩形をその要素内で扱う。 */
+export function scrollRenderedTextMatchIntoView(
+  match: RenderedTextMatch | null,
+  scrollContainer?: HTMLElement,
+): void {
   if (!match || !match.startNode.isConnected || !match.endNode.isConnected) {
     return;
   }
   if (scrollContainer) {
     const range = createRange(match.startNode.ownerDocument, match);
     if (range && typeof range.getClientRects === "function") {
-      const rect = Array.from(range.getClientRects()).find((rect) => rect.width > 0 && rect.height > 0);
+      const rect = Array.from(range.getClientRects()).find(
+        (rect) => rect.width > 0 && rect.height > 0,
+      );
       if (!rect) return;
       const containerRect = scrollContainer.getBoundingClientRect();
       const top = containerRect.top + scrollContainer.clientTop;
       const bottom = top + scrollContainer.clientHeight;
       if (rect.top < top || rect.bottom > bottom) {
-        scrollContainer.scrollTop += rect.top + rect.height / 2 - (top + scrollContainer.clientHeight / 2);
+        scrollContainer.scrollTop +=
+          rect.top + rect.height / 2 - (top + scrollContainer.clientHeight / 2);
       }
       return;
     }
@@ -251,7 +284,11 @@ export function scrollRenderedTextMatchIntoView(match: RenderedTextMatch | null,
   }
 }
 
-function createRange(document: Document, match: RenderedTextMatch): Range | null {
+/** DOMに接続された端点から範囲を作る。描画の更新で外れた端点を含む一致は使わない。 */
+function createRange(
+  document: Document,
+  match: RenderedTextMatch,
+): Range | null {
   if (!match.startNode.isConnected || !match.endNode.isConnected) {
     return null;
   }
@@ -261,12 +298,14 @@ function createRange(document: Document, match: RenderedTextMatch): Range | null
   return range;
 }
 
+/** 文書から全件用と現在位置用の検索ハイライトだけを取り除く。 */
 export function clearRenderedTextHighlights(document: Document): void {
   const highlightWindow = document.defaultView as HighlightWindow | null;
   highlightWindow?.CSS?.highlights?.delete(FIND_MATCH_HIGHLIGHT_NAME);
   highlightWindow?.CSS?.highlights?.delete(FIND_CURRENT_HIGHLIGHT_NAME);
 }
 
+/** 件数制限付きの全一致と現在位置を別名で登録する。CSS Highlight APIがなければfalseを返す。 */
 export function applyRenderedTextHighlights(
   document: Document,
   matches: RenderedTextMatch[],
@@ -282,7 +321,9 @@ export function applyRenderedTextHighlights(
     .slice(0, MAX_RENDERED_TEXT_HIGHLIGHT_RANGES)
     .map((match) => createRange(document, match))
     .filter((range): range is Range => range !== null);
-  const currentRange = currentMatch ? createRange(document, currentMatch) : null;
+  const currentRange = currentMatch
+    ? createRange(document, currentMatch)
+    : null;
   const matchHighlight = new HighlightConstructor();
   for (const range of ranges) {
     matchHighlight.add(range);
@@ -298,12 +339,18 @@ export function applyRenderedTextHighlights(
   return true;
 }
 
-export function getRenderedTextSearchIndexStats(index: RenderedTextSearchIndex): {
+/** 索引が持つノード区間数と、文字長の補正に必要な例外の件数を返す。 */
+export function getRenderedTextSearchIndexStats(
+  index: RenderedTextSearchIndex,
+): {
   runCount: number;
   expandedOffsetCount: number;
 } {
   return {
     runCount: index.runs.length,
-    expandedOffsetCount: index.runs.reduce((count, run) => count + run.expandedOffsets.length, 0),
+    expandedOffsetCount: index.runs.reduce(
+      (count, run) => count + run.expandedOffsets.length,
+      0,
+    ),
   };
 }

@@ -7,13 +7,19 @@ import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
 import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
+/** 圧縮blobを参照するV3 DBに割り当てる固有ファイル名。 */
 export const APP_DATABASE_V3_FILENAME = "withmate-v3.db";
+/** V3の作成時と判定時に用いるSQLiteのユーザー版番号。 */
 export const APP_DATABASE_V3_SCHEMA_VERSION = 3;
 
+/** V3のスキーマ定義に付随する設計ステータス。 */
 export const V3_SCHEMA_STATUS = "ready-for-implementation";
+/** 本文の代わりにSQLiteへ残すプレビューの文字数上限。 */
 export const V3_TEXT_PREVIEW_MAX_LENGTH = 500;
+/** SQLiteへ残すアーティファクト概要JSONの文字数上限。 */
 export const V3_SUMMARY_JSON_MAX_LENGTH = 8192;
 
+/** 版番号が未設定でもV3と判定できるよう、分離済み会話とblob台帳の存在を求める。 */
 export const REQUIRED_V3_TABLES = [
   "sessions",
   "session_messages",
@@ -21,6 +27,7 @@ export const REQUIRED_V3_TABLES = [
   "blob_objects",
 ] as const;
 
+/** V3のファイル名と版番号を読み取り専用で確認する。版番号が未設定なら必須テーブルで判定し、読み取り失敗は無効とする。 */
 export function isValidV3Database(dbPath: string): boolean {
   if (basename(dbPath) !== APP_DATABASE_V3_FILENAME) {
     return false;
@@ -29,7 +36,8 @@ export function isValidV3Database(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     if (row?.user_version === APP_DATABASE_V3_SCHEMA_VERSION) {
       return true;
     }
@@ -38,11 +46,17 @@ export function isValidV3Database(dbPath: string): boolean {
     }
 
     const existingTables = new Set(
-      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+      (
+        db
+          .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+          .all() as Array<{ name?: unknown }>
+      )
         .map((table) => table.name)
         .filter((name): name is string => typeof name === "string"),
     );
-    return REQUIRED_V3_TABLES.every((tableName) => existingTables.has(tableName));
+    return REQUIRED_V3_TABLES.every((tableName) =>
+      existingTables.has(tableName),
+    );
   } catch {
     return false;
   } finally {
@@ -50,16 +64,19 @@ export function isValidV3Database(dbPath: string): boolean {
   }
 }
 
+/** 単一引用符をエスケープし、DDLの既定値に使うSQL文字列リテラルを組み立てる。 */
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** 重い会話データを圧縮blobへ移し、SQLiteには検索・削除判定用の情報を残すV3の設計メモ。 */
 export const V3_SCHEMA_DESIGN_NOTES = [
   "V3 は withmate-v3.db を正本にし、V2 withmate-v2.db からの移行は別スクリプトで行う。",
   "V3 では prompt / provider response / raw items / diff rows / artifact detail を DB 外 compressed blob に保存する。",
   "V3 の SQLite schema は一覧・検索・削除判定に必要な metadata と blob ref だけを持つ。",
 ] as const;
 
+/** V2から継続する設定キー・値・更新時刻の保存先を定義する。 */
 export const CREATE_V3_APP_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT PRIMARY KEY,
@@ -68,6 +85,7 @@ export const CREATE_V3_APP_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 外部圧縮blobの形式・サイズ・検証用ハッシュと削除待ち状態をSQLiteで管理するV3のDDL。 */
 export const CREATE_V3_BLOB_OBJECTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS blob_objects (
     blob_id TEXT PRIMARY KEY,
@@ -86,6 +104,7 @@ export const CREATE_V3_BLOB_OBJECTS_TABLE_SQL = `
     ON blob_objects(state, created_at);
 `;
 
+/** 会話本文と独立したSessionヘッダーを、Characterの実行時スナップショットとともに保持するV3のDDL。 */
 export const CREATE_V3_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -126,6 +145,7 @@ export const CREATE_V3_SESSIONS_TABLE_SQL = `
     ON sessions(character_id, last_active_at DESC);
 `;
 
+/** Session内順序ごとに短い本文プレビューと任意の外部blob参照を保持するV3のDDL。 */
 export const CREATE_V3_SESSION_MESSAGES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +172,7 @@ export const CREATE_V3_SESSION_MESSAGES_TABLE_SQL = `
     ON session_messages(text_blob_id);
 `;
 
+/** 軽量なアーティファクト概要と詳細blob参照を別に保持し、親メッセージに紐付けるV3のDDL。 */
 export const CREATE_V3_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_message_artifacts (
     message_id INTEGER PRIMARY KEY,
@@ -167,6 +188,7 @@ export const CREATE_V3_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
     ON session_message_artifacts(artifact_blob_id);
 `;
 
+/** 旧カタログの版付きプロバイダー・モデルを移行後も保持するV3のDDL。 */
 export const CREATE_V3_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,6 +220,7 @@ export const CREATE_V3_MODEL_CATALOG_TABLES_SQL = `
   );
 `;
 
+/** V3の版番号設定と、blob参照先を本文・詳細より先に作るDDLの順序を定義する。 */
 export const CREATE_V3_SCHEMA_SQL = [
   `PRAGMA user_version = ${APP_DATABASE_V3_SCHEMA_VERSION};`,
   CREATE_V3_APP_SETTINGS_TABLE_SQL,

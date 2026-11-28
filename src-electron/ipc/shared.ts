@@ -32,18 +32,31 @@ import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/win
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { CancelSessionRunRequest } from "../../src-shared/session/runtime-state.js";
 
-export function readCancelSessionRunRequest(value: unknown): CancelSessionRunRequest {
+/** キャンセル対象を Session・incarnation・実行の種類と ID に絞って取り出す。空白だけの ID や未対応の実行種別は拒否する。 */
+export function readCancelSessionRunRequest(
+  value: unknown,
+): CancelSessionRunRequest {
   const request = value as Partial<CancelSessionRunRequest> | null | undefined;
   const execution = request?.execution;
-  if (typeof request?.sessionId !== "string" || !request.sessionId.trim()
-    || typeof request.incarnationId !== "string" || !request.incarnationId.trim()
-    || (execution?.kind !== "turn" && execution?.kind !== "receipt")
-    || typeof execution.id !== "string" || !execution.id.trim()) {
+  if (
+    typeof request?.sessionId !== "string" ||
+    !request.sessionId.trim() ||
+    typeof request.incarnationId !== "string" ||
+    !request.incarnationId.trim() ||
+    (execution?.kind !== "turn" && execution?.kind !== "receipt") ||
+    typeof execution.id !== "string" ||
+    !execution.id.trim()
+  ) {
     throw new Error("The cancellation target is invalid.");
   }
-  return { sessionId: request.sessionId, incarnationId: request.incarnationId, execution: { kind: execution.kind, id: execution.id } };
+  return {
+    sessionId: request.sessionId,
+    incarnationId: request.incarnationId,
+    execution: { kind: execution.kind, id: execution.id },
+  };
 }
 
+/** Workspace として利用できるパスか検証し、失敗時は結果に対応する利用者向けメッセージを例外にする。 */
 export async function assertUsableWorkspaceDirectory(
   targetPath: unknown,
   deps: MainIpcWorkspaceValidationDeps,
@@ -54,6 +67,7 @@ export async function assertUsableWorkspaceDirectory(
   }
 }
 
+/** ダイアログの親ウィンドウを送信元、Home の順に探し、どちらもなければ親を指定しない。 */
 export function resolveTargetWindow(
   event: IpcMainInvokeEvent,
   deps: MainIpcEventWindowDeps & MainIpcHomeWindowDeps,
@@ -63,6 +77,7 @@ export function resolveTargetWindow(
   );
 }
 
+/** 送信元を解決し、Settings ウィンドウ以外なら要求を拒否する。 */
 export function assertSettingsWindowSender(
   event: IpcMainInvokeEvent,
   deps: MainIpcEventWindowDeps & MainIpcSettingsWindowDeps,
@@ -74,6 +89,7 @@ export function assertSettingsWindowSender(
   throw new Error("Settings IPC is only available from the Settings window.");
 }
 
+/** 送信元が現在の Home ウィンドウと一致しない要求を拒否する。 */
 export function assertHomeWindowSender(
   event: IpcMainInvokeEvent,
   deps: MainIpcEventWindowDeps & MainIpcHomeWindowDeps,
@@ -87,6 +103,7 @@ export function assertHomeWindowSender(
   );
 }
 
+/** Monitor のコンテキストメニュー要求を Home または Session Monitor に限る。 */
 export function assertSessionMonitorContextMenuSender(
   event: IpcMainInvokeEvent,
   deps: MainIpcEventWindowDeps &
@@ -105,6 +122,7 @@ export function assertSessionMonitorContextMenuSender(
   );
 }
 
+/** 単件削除を Home、Settings、対象 Session のウィンドウからだけ許す。 */
 export function assertSessionDeleteSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
@@ -133,6 +151,7 @@ export function assertSessionDeleteSender(
   );
 }
 
+/** 送信元ウィンドウを対象 Session に登録されたウィンドウと照合し、一致しなければ拒否する。 */
 export function assertOwningSessionWindowSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
@@ -146,12 +165,14 @@ export function assertOwningSessionWindowSender(
   }
 }
 
+/** 所有 Session からの要求なら `null` を返し、別ウィンドウなら現在表示している Preview リソースを返す。どちらにも該当しない送信元は拒否する。 */
 export async function assertSessionFileExplorerSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
   deps: MainIpcEventWindowDeps &
     MainIpcSessionWindowDeps &
     MainIpcFilePreviewWindowDeps & {
+      /** ファイル操作の対象を所有する Main Session の ID を解決する。 */
       getSessionFileExplorerOwnerSessionId(
         sessionId: string,
       ): Awaitable<string | null>;
@@ -178,11 +199,13 @@ export async function assertSessionFileExplorerSender(
   );
 }
 
+/** 独立した Preview ウィンドウには許可せず、対象ファイルを所有する Session ウィンドウに限定する。 */
 export async function assertOwningSessionFileExplorerSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
   deps: MainIpcEventWindowDeps &
     MainIpcSessionWindowDeps & {
+      /** ファイル操作の対象を所有する Main Session の ID を解決する。 */
       getSessionFileExplorerOwnerSessionId(
         sessionId: string,
       ): Awaitable<string | null>;
@@ -203,17 +226,23 @@ export async function assertOwningSessionFileExplorerSender(
   );
 }
 
+/** 作業ツリーのリソースは所有 Session からも操作できる。ほかは、要求されたリソースと現在の Preview が一致する場合だけ許す。 */
 export async function assertSessionFileResourceSender(
   event: IpcMainInvokeEvent,
   resource: SessionFilePreviewResourceRequest,
   deps: MainIpcEventWindowDeps &
     MainIpcSessionWindowDeps &
     MainIpcFilePreviewWindowDeps & {
+      /** 要求リソースの Session ID から、ファイル操作の所有元を解決する。 */
       getSessionFileExplorerOwnerSessionId(
         sessionId: string,
       ): Awaitable<string | null>;
     },
-  representation: "source" | "absolute" = isSessionFileGitCommitResource(resource) ? "source" : "absolute",
+  representation: "source" | "absolute" = isSessionFileGitCommitResource(
+    resource,
+  )
+    ? "source"
+    : "absolute",
 ): Promise<void> {
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(
     resource.sessionId,
@@ -228,7 +257,11 @@ export async function assertSessionFileResourceSender(
     return;
   }
   const currentResource = window
-    ? deps.getFilePreviewWindowResource(window, resource.sessionId, representation)
+    ? deps.getFilePreviewWindowResource(
+        window,
+        resource.sessionId,
+        representation,
+      )
     : null;
   if (
     currentResource &&
@@ -241,6 +274,7 @@ export async function assertSessionFileResourceSender(
   );
 }
 
+/** 所有 Session からのリンクを許し、独立したプレビューからは、現在表示中のリソースと一致する解決起点を要求する。 */
 export async function assertSessionFileLinkSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
@@ -248,6 +282,7 @@ export async function assertSessionFileLinkSender(
   deps: MainIpcEventWindowDeps &
     MainIpcSessionWindowDeps &
     MainIpcFilePreviewWindowDeps & {
+      /** リンクの対象を所有する Main Session の ID を解決する。 */
       getSessionFileExplorerOwnerSessionId(
         sessionId: string,
       ): Awaitable<string | null>;
@@ -264,7 +299,13 @@ export async function assertSessionFileLinkSender(
     return;
   }
   const currentResource = window
-    ? deps.getFilePreviewWindowResource(window, sessionId, baseResource && isSessionFileGitCommitResource(baseResource) ? "source" : "absolute")
+    ? deps.getFilePreviewWindowResource(
+        window,
+        sessionId,
+        baseResource && isSessionFileGitCommitResource(baseResource)
+          ? "source"
+          : "absolute",
+      )
     : null;
   if (
     currentResource &&
@@ -278,6 +319,7 @@ export async function assertSessionFileLinkSender(
   );
 }
 
+/** 指定された Session に対する Preview リソースの入力形式を検証する。絶対パス、ルート相対、コミット内ファイルを区別する。 */
 export function assertValidSessionFilePreviewResourceRequest(
   input: unknown,
   expectedSessionId?: string,
@@ -332,6 +374,7 @@ export function assertValidSessionFilePreviewResourceRequest(
   }
 }
 
+/** Git 履歴の照会対象となる Session・ルート・リポジトリ ID の形式を検証する。 */
 export function assertValidGitHistoryRequest(input: unknown): asserts input is {
   sessionId: string;
   repositoryId: string;
@@ -353,6 +396,7 @@ export function assertValidGitHistoryRequest(input: unknown): asserts input is {
   }
 }
 
+/** Git 履歴の特定コミットを、小文字の 40 桁または 64 桁の十六進 ID に限る。 */
 export function assertValidGitHistoryCommitId(
   commitId: unknown,
 ): asserts commitId is string {
@@ -364,6 +408,7 @@ export function assertValidGitHistoryCommitId(
   }
 }
 
+/** 比較元・比較先を表す HEAD、参照名、コミット ID を種類ごとに検証する。 */
 export function assertValidGitHistoryComparisonSelector(
   input: unknown,
 ): asserts input is FileRootGitHistoryComparisonSelector {
@@ -403,6 +448,7 @@ export function assertValidGitHistoryComparisonSelector(
   throw new TypeError("Git history comparison selector is invalid.");
 }
 
+/** Git 比較の方式、元と先の参照、解決済みコミット ID、および任意ではなく `null` で表す比較基点の欠如を検証する。 */
 export function assertValidGitHistoryComparison(
   input: unknown,
 ): asserts input is FileRootGitHistoryComparison {
@@ -428,6 +474,7 @@ export function assertValidGitHistoryComparison(
   }
 }
 
+/** Git 履歴の差分要求を検証する。比較指定と単独コミット指定を分け、ファイル指定があれば相対パスとして検査する。 */
 export function assertValidGitHistoryDiffRequest(
   input: unknown,
 ): asserts input is FileRootGitHistoryDiffRequest {
@@ -441,6 +488,7 @@ export function assertValidGitHistoryDiffRequest(
   assertValidGitHistoryRelativePath(candidate.relativePath);
 }
 
+/** 省略・`null` または先頭ゼロのない 9 桁以下の十進カーソルを認める。 */
 export function assertValidGitHistoryCursor(
   cursor: unknown,
 ): asserts cursor is string | null | undefined {
@@ -453,6 +501,7 @@ export function assertValidGitHistoryCursor(
   }
 }
 
+/** ブランチ絞り込みを表す `null` または前後の空白や制御文字を含まない非空文字列を検証する。 */
 export function assertValidGitHistoryBranch(
   branch: unknown,
 ): asserts branch is string | null {
@@ -469,6 +518,7 @@ export function assertValidGitHistoryBranch(
   }
 }
 
+/** Git 履歴のコミット一覧要求を共通の照会対象とブランチ絞り込みの規則に照らして検証する。 */
 export function assertValidGitHistoryCommitsRequest(
   input: unknown,
 ): asserts input is FileRootGitHistoryCommitsRequest {
@@ -476,6 +526,7 @@ export function assertValidGitHistoryCommitsRequest(
   assertValidGitHistoryBranch((input as { branch?: unknown }).branch);
 }
 
+/** 省略可能な Git 履歴の相対パスを検査し、絶対パスや空・`.`・`..` の要素を拒否する。 */
 export function assertValidGitHistoryRelativePath(
   relativePath: unknown,
 ): asserts relativePath is string | null | undefined {
@@ -496,6 +547,7 @@ export function assertValidGitHistoryRelativePath(
   }
 }
 
+/** 画像アクションの Session と非負の整数座標を取り出し、リンク指定があれば同じ Session の基点リソースを検証する。 */
 export function parseSessionFilePreviewImageActionRequest(
   input: unknown,
 ): SessionFilePreviewImageActionRequest {
@@ -518,23 +570,36 @@ export function parseSessionFilePreviewImageActionRequest(
   }
   const image = candidate.image;
   if (image !== undefined) {
-    if (!image || typeof image !== "object" || typeof image.target !== "string" || !image.target.trim()) {
+    if (
+      !image ||
+      typeof image !== "object" ||
+      typeof image.target !== "string" ||
+      !image.target.trim()
+    ) {
       throw new TypeError("Image copy source is invalid.");
     }
     if (image.baseResource !== undefined) {
-      assertValidSessionFilePreviewResourceRequest(image.baseResource, candidate.sessionId);
+      assertValidSessionFilePreviewResourceRequest(
+        image.baseResource,
+        candidate.sessionId,
+      );
     }
   }
   return {
     sessionId: candidate.sessionId,
     point: { x: point.x, y: point.y },
-    ...(image ? { image: {
-      target: image.target,
-      ...(image.baseResource ? { baseResource: image.baseResource } : {}),
-    } } : {}),
+    ...(image
+      ? {
+          image: {
+            target: image.target,
+            ...(image.baseResource ? { baseResource: image.baseResource } : {}),
+          },
+        }
+      : {}),
   };
 }
 
+/** 対象の列挙可能な自身の文字列キーが、許可一覧に収まるかを判定する。 */
 export function hasOnlyObjectKeys(
   candidate: Record<string, unknown>,
   allowedKeys: readonly string[],
@@ -543,6 +608,7 @@ export function hasOnlyObjectKeys(
   return Object.keys(candidate).every((key) => allowed.has(key));
 }
 
+/** 作業ツリーのファイル用入力を検証し、コミット内のリソースは拒否する。 */
 export function assertValidSessionFileResourceRequest(
   input: unknown,
 ): asserts input is SessionFileResourceRequest {
@@ -552,6 +618,7 @@ export function assertValidSessionFileResourceRequest(
   }
 }
 
+/** 作業ツリーのファイル入力に対して、絶対パス形式とルート相対形式それぞれの許可キーだけを認める。 */
 export function assertStrictSessionFileResourceRequest(
   input: unknown,
 ): asserts input is SessionFileResourceRequest {
@@ -565,6 +632,7 @@ export function assertStrictSessionFileResourceRequest(
   }
 }
 
+/** ファイル実体をコピーする要求から、余分なキーを拒否して作業ツリーのリソースを取り出す。 */
 export function parseSessionFileObjectCopyRequest(
   input: unknown,
 ): SessionFileObjectCopyRequest {
@@ -579,6 +647,7 @@ export function parseSessionFileObjectCopyRequest(
   return { resource: candidate.resource };
 }
 
+/** ファイル実体コピー用のリソースとメニュー位置を検証する。余分なキーと負数・小数の座標は拒否する。 */
 export function parseSessionFileObjectCopyContextMenuRequest(
   input: unknown,
 ): SessionFileObjectCopyContextMenuRequest {
@@ -611,6 +680,7 @@ export function parseSessionFileObjectCopyContextMenuRequest(
   };
 }
 
+/** ファイルツリーのメニュー要求を検証し、対象ノードと座標、挿入可否を取り出す。 */
 export function parseSessionFileTreeContextMenuRequest(
   input: unknown,
 ): SessionFileTreePathActionRequest {
@@ -663,6 +733,7 @@ export function parseSessionFileTreeContextMenuRequest(
   };
 }
 
+/** Markdown リンクのターゲットと座標を保って取り出し、ファイル文脈があれば Session と基点の整合を検査する。 */
 export function parseMarkdownLinkContextMenuRequest(
   input: unknown,
 ): MarkdownLinkContextMenuRequest {
@@ -731,8 +802,10 @@ export function parseMarkdownLinkContextMenuRequest(
   };
 }
 
+/** Auxiliary の操作元として認める親 Session ウィンドウの区分。 */
 type AuxiliaryOwnerWindowKind = "session";
 
+/** 送信元と指定された親 Session のウィンドウが一致した場合に限り、所有元の区分を返す。 */
 export function resolveAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
@@ -752,6 +825,7 @@ export function resolveAuxiliaryOwnerWindowSender(
   );
 }
 
+/** Auxiliary を所有する親 Session のウィンドウ以外を拒否する。 */
 export function assertAuxiliaryOwnerWindowSender(
   event: IpcMainInvokeEvent,
   parentSessionId: string,
@@ -760,6 +834,7 @@ export function assertAuxiliaryOwnerWindowSender(
   resolveAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
 }
 
+/** Session ウィンドウからの Auxiliary 作成は最新 Session に基づく実行設定だけを許し、モデルなどの直接指定を拒否する。 */
 export function assertAuxiliaryCreateModeForOwner(
   ownerWindowKind: AuxiliaryOwnerWindowKind,
   input: CreateAuxiliarySessionInput,
@@ -785,6 +860,7 @@ export function assertAuxiliaryCreateModeForOwner(
   }
 }
 
+/** 変更対象の保存済み Auxiliary を取得し、見つからなければ例外にする。所有元の照合は呼び出し側で行う。 */
 export async function getAuxiliarySessionForMutation(
   auxiliaryDeps: Pick<MainIpcAuxiliaryDepsRequired, "getAuxiliarySession">,
   auxiliarySessionId: string,
@@ -796,6 +872,7 @@ export async function getAuxiliarySessionForMutation(
   return session;
 }
 
+/** ウィンドウ遷移に使う Auxiliary ID を解決し、指定がなければ省略する。指定があれば実在と親 Session の一致を確認する。 */
 export async function resolveWindowAuxiliarySessionId(
   deps: MainIpcAuxiliaryLookupDeps,
   parentSessionId: string,

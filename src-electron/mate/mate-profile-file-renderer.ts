@@ -1,4 +1,7 @@
-import type { MateProfile, MateProfileSectionState } from "../../src-shared/mate/mate-state.js";
+import type {
+  MateProfile,
+  MateProfileSectionState,
+} from "../../src-shared/mate/mate-state.js";
 import {
   getMateProfileSectionRule,
   isMateProfileRuntimeSectionKey,
@@ -11,6 +14,7 @@ import type {
   MateProfileItemSectionKey,
 } from "./mate-profile-item-storage.js";
 
+/** プロフィールの投影先を指定する区分、相対パス、生成済み Markdown 本文。 */
 export type MateProfileRenderedFile = {
   sectionKey: MateProfileRuntimeSectionKey;
   relativePath: string;
@@ -29,6 +33,7 @@ const CATEGORY_TITLES: Readonly<Record<MateProfileItemCategory, string>> = {
 };
 const PROJECT_DIGEST_MARKDOWN_HEADER = "### Project Digest";
 
+/** 全プロフィール区分の Markdown を、投影を許可された有効項目から再生成する。 */
 export function renderMateProfileFiles(
   profile: MateProfile,
   items: readonly MateProfileItem[],
@@ -47,15 +52,17 @@ export function renderMateProfileFiles(
   });
 }
 
+/** 指定プロジェクトの有効かつ投影可能な Digest 項目を、主張キー順、同じキーでは更新の新しい順で出力する。 */
 export function renderProjectDigestProjectionText(
   projectDigestId: string,
   options?: { items?: readonly MateProfileItem[] },
 ): string {
-  const items = (options?.items ?? []).filter((item) =>
-    item.sectionKey === "project_digest" &&
-    item.projectDigestId === projectDigestId &&
-    item.state === "active" &&
-    item.projectionAllowed
+  const items = (options?.items ?? []).filter(
+    (item) =>
+      item.sectionKey === "project_digest" &&
+      item.projectDigestId === projectDigestId &&
+      item.state === "active" &&
+      item.projectionAllowed,
   );
 
   const sortedItems = [...items].sort((left, right) => {
@@ -68,15 +75,27 @@ export function renderProjectDigestProjectionText(
 
   return [
     PROJECT_DIGEST_MARKDOWN_HEADER,
-    ...sortedItems.map((item) => `- **${item.claimKey}:** ${item.renderedText}`),
+    ...sortedItems.map(
+      (item) => `- **${item.claimKey}:** ${item.renderedText}`,
+    ),
   ].join("\n");
 }
 
-function groupRenderableItems(items: readonly MateProfileItem[]): Map<MateProfileRuntimeSectionKey, MateProfileItem[]> {
-  const itemsBySection = new Map<MateProfileRuntimeSectionKey, MateProfileItem[]>();
+/** ファイルに投影できる有効項目だけを区分別に集約し、出力順に整える。 */
+function groupRenderableItems(
+  items: readonly MateProfileItem[],
+): Map<MateProfileRuntimeSectionKey, MateProfileItem[]> {
+  const itemsBySection = new Map<
+    MateProfileRuntimeSectionKey,
+    MateProfileItem[]
+  >();
 
   for (const item of items) {
-    if (!isRenderableSection(item.sectionKey) || item.state !== "active" || !item.projectionAllowed) {
+    if (
+      !isRenderableSection(item.sectionKey) ||
+      item.state !== "active" ||
+      !item.projectionAllowed
+    ) {
       continue;
     }
 
@@ -86,12 +105,16 @@ function groupRenderableItems(items: readonly MateProfileItem[]): Map<MateProfil
   }
 
   for (const [sectionKey, sectionItems] of itemsBySection.entries()) {
-    itemsBySection.set(sectionKey, [...sectionItems].sort(compareProfileItemsForRender));
+    itemsBySection.set(
+      sectionKey,
+      [...sectionItems].sort(compareProfileItemsForRender),
+    );
   }
 
   return itemsBySection;
 }
 
+/** 区分名とカテゴリ別項目を Markdown に組み立て、core 区分だけに Mate の識別情報を添える。 */
 function renderSection(
   profile: MateProfile,
   sectionKey: MateProfileRuntimeSectionKey,
@@ -119,7 +142,10 @@ function renderSection(
   return lines.join("\n");
 }
 
-function groupByCategory(items: readonly MateProfileItem[]): Map<MateProfileItemCategory, MateProfileItem[]> {
+/** 出力順に並んだ項目をカテゴリでまとめ、各カテゴリ内の順序を保持する。 */
+function groupByCategory(
+  items: readonly MateProfileItem[],
+): Map<MateProfileItemCategory, MateProfileItem[]> {
   const categories = new Map<MateProfileItemCategory, MateProfileItem[]>();
   for (const item of items) {
     const existing = categories.get(item.category) ?? [];
@@ -130,8 +156,14 @@ function groupByCategory(items: readonly MateProfileItem[]): Map<MateProfileItem
   return categories;
 }
 
-function compareProfileItemsForRender(left: MateProfileItem, right: MateProfileItem): number {
-  const categoryOrder = CATEGORY_TITLES[left.category].localeCompare(CATEGORY_TITLES[right.category]);
+/** 表示カテゴリ名、重要度の降順、更新日時の降順、項目 ID の順で投影順を決める。 */
+function compareProfileItemsForRender(
+  left: MateProfileItem,
+  right: MateProfileItem,
+): number {
+  const categoryOrder = CATEGORY_TITLES[left.category].localeCompare(
+    CATEGORY_TITLES[right.category],
+  );
   if (categoryOrder !== 0) {
     return categoryOrder;
   }
@@ -149,21 +181,28 @@ function compareProfileItemsForRender(left: MateProfileItem, right: MateProfileI
   return left.id.localeCompare(right.id);
 }
 
+/** 投影先パスを持つ区分定義を引き、必須区分が欠けていれば失敗させる。 */
 function findProfileSection(
   sections: readonly MateProfileSectionState[],
   sectionKey: MateProfileRuntimeSectionKey,
 ): MateProfileSectionState {
-  const section = sections.find((candidate) => candidate.sectionKey === sectionKey);
+  const section = sections.find(
+    (candidate) => candidate.sectionKey === sectionKey,
+  );
   if (!section) {
     throw new Error(`Mate profile section が見つからないよ: ${sectionKey}`);
   }
   return section;
 }
 
-function isRenderableSection(sectionKey: MateProfileItemSectionKey): sectionKey is MateProfileRuntimeSectionKey {
+/** 項目の区分がプロフィールファイルへの投影対象かを判定する。 */
+function isRenderableSection(
+  sectionKey: MateProfileItemSectionKey,
+): sectionKey is MateProfileRuntimeSectionKey {
   return isMateProfileRuntimeSectionKey(sectionKey);
 }
 
+/** 区切りをスラッシュにそろえ、mate ディレクトリを含む場合はそこからの相対パスに変換する。 */
 function relativeProfilePath(filePath: string): string {
   const normalizedPath = filePath.replace(/\\/g, "/");
   const mateSegmentIndex = normalizedPath.indexOf("/mate/");
@@ -175,6 +214,7 @@ function relativeProfilePath(filePath: string): string {
   return withoutDrive.startsWith("/") ? withoutDrive.slice(1) : withoutDrive;
 }
 
+/** 空白や改行を一つの空白にまとめ、Markdown の箇条書きに収まる一行に整える。 */
 function singleLine(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }

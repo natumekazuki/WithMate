@@ -11,24 +11,44 @@ import type { SessionFileExplorerService } from "./session-file-explorer-service
 
 const READ_CHUNK_BYTES = 1024 * 1024;
 
+/** ローカルの HTML テキストをサイズ上限内で読み、全チャンクで同じリビジョンと整合することを確認してから復号する。 */
 export async function readSessionHtmlPreview(
-  explorer: Pick<SessionFileExplorerService, "resolvePreviewTarget" | "inspectFile" | "readFileChunk">,
+  explorer: Pick<
+    SessionFileExplorerService,
+    "resolvePreviewTarget" | "inspectFile" | "readFileChunk"
+  >,
   request: SessionHtmlPreviewRequest,
 ): Promise<SessionHtmlPreviewResult> {
-  if (!request || typeof request.sessionId !== "string" || !request.sessionId
-    || typeof request.target !== "string" || !request.target.trim()) {
+  if (
+    !request ||
+    typeof request.sessionId !== "string" ||
+    !request.sessionId ||
+    typeof request.target !== "string" ||
+    !request.target.trim()
+  ) {
     throw new TypeError("HTML preview request is invalid.");
   }
-  const resolved = await explorer.resolvePreviewTarget(request.sessionId, request.target, request.baseResource);
+  const resolved = await explorer.resolvePreviewTarget(
+    request.sessionId,
+    request.target,
+    request.baseResource,
+  );
   if (resolved.type !== "file") {
-    throw new Error("message" in resolved ? resolved.message : "HTML preview requires a local HTML file.");
+    throw new Error(
+      "message" in resolved
+        ? resolved.message
+        : "HTML preview requires a local HTML file.",
+    );
   }
   const descriptor = await explorer.inspectFile(resolved.resource);
   if (!/\.html?$/i.test(descriptor.name) || descriptor.kind !== "text") {
     throw new Error("HTML preview requires a text .html or .htm file.");
   }
-  if (!Number.isSafeInteger(descriptor.byteLength) || descriptor.byteLength < 0
-    || descriptor.byteLength > HTML_PREVIEW_MAX_BYTES) {
+  if (
+    !Number.isSafeInteger(descriptor.byteLength) ||
+    descriptor.byteLength < 0 ||
+    descriptor.byteLength > HTML_PREVIEW_MAX_BYTES
+  ) {
     throw new Error("HTML preview exceeds the 50 MiB size limit.");
   }
   const bytes = new Uint8Array(descriptor.byteLength);
@@ -41,10 +61,16 @@ export async function readSessionHtmlPreview(
       length,
       expectedRevision: descriptor.revision,
     });
-    if (chunk.offset !== offset || chunk.totalBytes !== bytes.byteLength
-      || chunk.revision !== descriptor.revision || chunk.nextOffset <= offset
-      || chunk.data.byteLength > length || chunk.nextOffset !== offset + chunk.data.byteLength
-      || chunk.nextOffset > bytes.byteLength || chunk.done !== (chunk.nextOffset === bytes.byteLength)) {
+    if (
+      chunk.offset !== offset ||
+      chunk.totalBytes !== bytes.byteLength ||
+      chunk.revision !== descriptor.revision ||
+      chunk.nextOffset <= offset ||
+      chunk.data.byteLength > length ||
+      chunk.nextOffset !== offset + chunk.data.byteLength ||
+      chunk.nextOffset > bytes.byteLength ||
+      chunk.done !== (chunk.nextOffset === bytes.byteLength)
+    ) {
       throw new Error("HTML contents changed while they were being read.");
     }
     bytes.set(new Uint8Array(chunk.data), offset);
@@ -53,5 +79,8 @@ export async function readSessionHtmlPreview(
   if (isLikelyBinarySessionFile(bytes)) {
     throw new Error("HTML preview requires a text .html or .htm file.");
   }
-  return { html: new TextDecoder(detectSessionFileEncoding(bytes)).decode(bytes), fileName: descriptor.name };
+  return {
+    html: new TextDecoder(detectSessionFileEncoding(bytes)).decode(bytes),
+    fileName: descriptor.name,
+  };
 }

@@ -10,14 +10,26 @@ import type { DirectoryPathValidationState } from "../../src/launch/directory-pa
 import type { ProviderLaunchLoadStatus } from "../../src/launch/provider-launch-picker.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
-import { formatHomeSessionUpdatedAt, HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
+import {
+  formatHomeSessionUpdatedAt,
+  HomeRecentSessionsPanel,
+} from "../../src/home/HomeRecentSessionsPanel.js";
 import { HomeRightPane } from "../../src/home/HomeRightPane.js";
 import { HomeHeader } from "../../src/home/HomeHeader.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
-import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
-import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSetupPanel.js";
-import { HomeSettingsContent, type HomeSettingsContentProps } from "../../src/settings/SettingsContent.js";
+import type {
+  HomeSessionSummary,
+  SessionSummary,
+} from "../../src-shared/session/session-state.js";
+import {
+  HomeMateSetupPanel,
+  type MateAvatarAction,
+} from "../../src/mate/MateSetupPanel.js";
+import {
+  HomeSettingsContent,
+  type HomeSettingsContentProps,
+} from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
@@ -27,8 +39,11 @@ import { useSettingsFeedback } from "../../src/settings/use-settings-feedback.js
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { formatTimestampLabel } from "../../src-shared/time-state.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** Home 設定の下書き、保存、取得状態と各操作の表示・アクセシビリティを検査する。 */
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
     providers: [
@@ -38,8 +53,16 @@ describe("HomeSettingsContent", () => {
         defaultModelId: "gpt-5.4",
         defaultReasoningEffort: "high",
         models: [
-          { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] },
-          { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", reasoningEfforts: ["low", "medium"] },
+          {
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+            reasoningEfforts: ["medium", "high"],
+          },
+          {
+            id: "gpt-5.4-mini",
+            label: "GPT-5.4 Mini",
+            reasoningEfforts: ["low", "medium"],
+          },
         ],
       },
       {
@@ -48,7 +71,11 @@ describe("HomeSettingsContent", () => {
         defaultModelId: "model-b",
         defaultReasoningEffort: "medium",
         models: [
-          { id: "model-b", label: "Model B", reasoningEfforts: ["medium", "high"] },
+          {
+            id: "model-b",
+            label: "Model B",
+            reasoningEfforts: ["medium", "high"],
+          },
           { id: "model-c", label: "Model C", reasoningEfforts: ["low"] },
         ],
       },
@@ -56,9 +83,14 @@ describe("HomeSettingsContent", () => {
   };
 
   const settingsDraft = createDefaultAppSettings();
-  const providerSettingRows = buildHomeProviderSettingRows(modelCatalog, settingsDraft);
+  const providerSettingRows = buildHomeProviderSettingRows(
+    modelCatalog,
+    settingsDraft,
+  );
+  /** 表示だけを確認する設定項目に、副作用を持たない既定のハンドラーを渡す。 */
   const noOp = (..._args: unknown[]) => undefined;
 
+  /** 設定画面を組み立てるときに差し替えられる下書き、候補一覧、各種通知をまとめる。 */
   type RenderSettingsParams = {
     settingsDraft?: typeof settingsDraft;
     providerSettingRows?: typeof providerSettingRows;
@@ -66,6 +98,7 @@ describe("HomeSettingsContent", () => {
     settingsErrors?: ReadonlyMap<string, string>;
   };
 
+  /** 既定の読込成功状態で設定画面を組み立て、シナリオごとに値や操作を差し替えられるようにする。 */
   const buildSettingsContent = (params?: RenderSettingsParams) => (
     <HomeSettingsContent
       settingsDraft={params?.settingsDraft ?? settingsDraft}
@@ -110,7 +143,9 @@ describe("HomeSettingsContent", () => {
     />
   );
 
-  const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
+  /** 設定画面を静的マークアップへ変換し、入力状態やラベルを DOM として比較できるようにする。 */
+  const renderSettings = (params?: RenderSettingsParams) =>
+    renderToStaticMarkup(buildSettingsContent(params));
 
   // @test-value v2
   // kind = "contract"
@@ -124,53 +159,110 @@ describe("HomeSettingsContent", () => {
   // impact = "無効化が保存されたと思っても実行設定へ反映されない"
   // distinction = "管理component単体ではSettingsの画面切替と既存Saveの結線を通らない"
   // @end-test-value
+  /** モデルの無効化を Back 後も下書きに保持し、元の入口へフォーカスを戻したうえで既存の保存操作へ値を渡す。 */
   it("Modelsの編集をBack後も保持して既存Saveへ渡す", async () => {
     await withSettingsDom(async (container, root) => {
       let saved: ReturnType<typeof createDefaultAppSettings> | undefined;
+      /** 編集したモデル設定を下書きとして保持し、モデル詳細と設定一覧から同じ状態を参照させる。 */
       function View() {
         const [draft, setDraft] = useState(createDefaultAppSettings());
         return React.cloneElement(buildSettingsContent(), {
           settingsDraft: draft,
-          providerSettingRows: buildHomeProviderSettingRows(modelCatalog, draft),
-          settingsDirty: JSON.stringify(draft) !== JSON.stringify(createDefaultAppSettings()),
-          onChangeModelAvailability: (modelAvailability: typeof draft.modelAvailability) => setDraft((current) => ({ ...current, modelAvailability })),
-          onSaveSettings: () => { saved = structuredClone(draft); },
+          providerSettingRows: buildHomeProviderSettingRows(
+            modelCatalog,
+            draft,
+          ),
+          settingsDirty:
+            JSON.stringify(draft) !==
+            JSON.stringify(createDefaultAppSettings()),
+          /** モデル候補の有効・無効を、他の設定値を保ったまま下書きへ反映する。 */
+          onChangeModelAvailability: (
+            modelAvailability: typeof draft.modelAvailability,
+          ) => setDraft((current) => ({ ...current, modelAvailability })),
+          /** 保存時点の下書きを複製し、後の編集とは独立に送信値を検査する。 */
+          onSaveSettings: () => {
+            saved = structuredClone(draft);
+          },
         });
       }
       await act(async () => root.render(<View />));
-      const entry = () => container.querySelector<HTMLButtonElement>('[aria-label="Manage Codex Models"]')!;
+      /** 画面を戻した後にフォーカスを受け取る Models の入口を取得する。 */
+      const entry = () =>
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Manage Codex Models"]',
+        )!;
       await act(async () => entry().click());
       assert.equal(container.querySelector("h2")?.textContent, "Codex Models");
-      const model = container.querySelector<HTMLInputElement>('.provider-model-row[title="gpt-5.4"] input')!;
+      const model = container.querySelector<HTMLInputElement>(
+        '.provider-model-row[title="gpt-5.4"] input',
+      )!;
       await act(async () => model.click());
       assert.equal(model.checked, false);
-      await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Back")!.click());
+      await act(async () =>
+        [...container.querySelectorAll<HTMLButtonElement>("button")]
+          .find((button) => button.textContent === "Back")!
+          .click(),
+      );
       assert.equal(document.activeElement, entry());
       assert.ok(container.textContent?.includes("Unsaved Changes"));
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!.click());
-      assert.deepEqual(saved?.modelAvailability.codex?.disabledModelIds, ["gpt-5.4"]);
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!
+          .click(),
+      );
+      assert.deepEqual(saved?.modelAvailability.codex?.disabledModelIds, [
+        "gpt-5.4",
+      ]);
       await act(async () => entry().click());
-      assert.equal(container.querySelector<HTMLInputElement>('.provider-model-row[title="gpt-5.4"] input')!.checked, false);
+      assert.equal(
+        container.querySelector<HTMLInputElement>(
+          '.provider-model-row[title="gpt-5.4"] input',
+        )!.checked,
+        false,
+      );
     });
   });
 
-  async function withSettingsDom(check: (container: HTMLElement, root: Root) => Promise<void>) {
-    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+  /** 設定コンポーネントを操作できる DOM と React root を用意し、終了後にテスト環境を復元する。 */
+  async function withSettingsDom(
+    check: (container: HTMLElement, root: Root) => Promise<void>,
+  ) {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+    );
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
     const previousHTMLElement = globalThis.HTMLElement;
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "window", {
+      value: dom.window,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: dom.window.document,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      value: dom.window.HTMLElement,
+      configurable: true,
+    });
     const container = dom.window.document.getElementById("root")!;
     const root = createRoot(container);
     try {
       await check(container, root);
     } finally {
       await act(async () => root.unmount());
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "window", {
+        value: previousWindow,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "document", {
+        value: previousDocument,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "HTMLElement", {
+        value: previousHTMLElement,
+        configurable: true,
+      });
       dom.window.close();
     }
   }
@@ -186,28 +278,76 @@ describe("HomeSettingsContent", () => {
   // lifecycle = "permanent"
   // distinction = "永続化testでは選択途中のSave抑止と明示した選択の受け渡しを扱えない"
   // @end-test-value
+  /** 自動審査を初期状態では無効にし、Provider・モデル・推論深度の選択をすべて揃えた後にだけ保存可能とする。 */
   it("keeps approval review off until a complete selection is saved", async () => {
     await withSettingsDom(async (container, root) => {
       const initial = createDefaultAppSettings();
-      initial.codingProviderSettings.codex = { enabled: true, apiKey: "", skillRootPath: "" };
-      initial.codingProviderSettings.claude = { enabled: true, apiKey: "", skillRootPath: "" };
-      const catalog: ModelCatalogSnapshot = { providers: [{ id: "codex", label: "Codex", defaultModelId: "other", defaultReasoningEffort: "low",
-        models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", reasoningEfforts: ["low", "high"] }] },
-        { id: "claude", label: "Claude", defaultModelId: "sonnet", defaultReasoningEffort: "",
-          models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: [] }] }] };
+      initial.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: "",
+      };
+      initial.codingProviderSettings.claude = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: "",
+      };
+      const catalog: ModelCatalogSnapshot = {
+        providers: [
+          {
+            id: "codex",
+            label: "Codex",
+            defaultModelId: "other",
+            defaultReasoningEffort: "low",
+            models: [
+              {
+                id: "gpt-6-luna",
+                label: "GPT-6 Luna",
+                reasoningEfforts: ["low", "high"],
+              },
+            ],
+          },
+          {
+            id: "claude",
+            label: "Claude",
+            defaultModelId: "sonnet",
+            defaultReasoningEffort: "",
+            models: [{ id: "sonnet", label: "Sonnet", reasoningEfforts: [] }],
+          },
+        ],
+      };
       let saved: typeof initial.withMateAutoReview | undefined;
+      /** 承認審査の選択を制御された下書きで保持し、保存操作で初めて確定値を記録する。 */
       function View() {
         const [draft, setDraft] = useState(initial);
-        return React.cloneElement(buildSettingsContent(), { settingsDraft: draft,
-          providerSettingRows: buildHomeProviderSettingRows(catalog, draft), settingsDirty: draft !== initial,
-          onChangeWithMateAutoReview: (withMateAutoReview: typeof initial.withMateAutoReview) => setDraft((current) => ({ ...current, withMateAutoReview })),
-          onSaveSettings: () => { saved = draft.withMateAutoReview; },
+        return React.cloneElement(buildSettingsContent(), {
+          settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(catalog, draft),
+          settingsDirty: draft !== initial,
+          /** 審査設定の更新を、他の設定を変えず draft へ反映する。 */
+          onChangeWithMateAutoReview: (
+            withMateAutoReview: typeof initial.withMateAutoReview,
+          ) => setDraft((current) => ({ ...current, withMateAutoReview })),
+          /** Save を押した時点の審査設定を検査用に保存する。 */
+          onSaveSettings: () => {
+            saved = draft.withMateAutoReview;
+          },
         });
       }
       await act(async () => root.render(<View />));
-      const area = [...container.querySelectorAll("details")].find((element) => element.querySelector("summary")?.textContent === "WithMate Auto Review")!;
+      const area = [...container.querySelectorAll("details")].find(
+        (element) =>
+          element.querySelector("summary")?.textContent ===
+          "WithMate Auto Review",
+      )!;
+      /** 審査設定の Provider、モデル、推論深度の各選択欄を現在の DOM から取り出す。 */
       const controls = () => area.querySelectorAll("select");
-      const save = () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!;
+      /** 選択に応じて操作可否が変わる Save Settings を取得する。 */
+      const save = () =>
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Save Settings"]',
+        )!;
+      /** 指定の選択欄へ値を入れて変更イベントを送り、設定画面を更新する。 */
       const choose = async (index: number, value: string) => {
         const control = controls()[index];
         await act(async () => {
@@ -216,7 +356,9 @@ describe("HomeSettingsContent", () => {
         });
       };
       assert.equal(controls()[0].value, "");
-      assert.ok(controls()[0].querySelector('option[value="claude"]:not(:disabled)'));
+      assert.ok(
+        controls()[0].querySelector('option[value="claude"]:not(:disabled)'),
+      );
       await choose(0, "codex");
       assert.equal(save().disabled, true);
       await choose(1, "gpt-6-luna");
@@ -225,7 +367,11 @@ describe("HomeSettingsContent", () => {
       assert.equal(save().disabled, false);
       assert.equal(saved, undefined);
       await act(async () => save().click());
-      assert.deepEqual(saved, { providerId: "codex", model: "gpt-6-luna", reasoningEffort: "high" });
+      assert.deepEqual(saved, {
+        providerId: "codex",
+        model: "gpt-6-luna",
+        reasoningEffort: "high",
+      });
     });
   });
 
@@ -240,29 +386,47 @@ describe("HomeSettingsContent", () => {
   // lifecycle = "permanent"
   // distinction = "IPC testは設定読込失敗との独立性と利用者に見える再試行を検証しない"
   // @end-test-value
+  /** 設定の読込に失敗して保存が無効でも、別に取得するアプリ版はエラー後に再試行し、設定本文の末尾に表示できる。 */
   it("設定読込失敗時もApp versionを再試行して表示する", async () => {
     await withSettingsDom(async (container, root) => {
       let calls = 0;
-      window.withmate = { getAppVersion: async () => {
-        calls++;
-        if (calls === 1) throw new Error("unavailable");
-        return "7.0.1-preview.2";
-      } } as WithMateWindowApi;
-      await act(async () => root.render(React.cloneElement(buildSettingsContent(), {
-        settingsDraftLoaded: false,
-        appSettingsLoadStatus: "error",
-        appSettingsLoadError: "Settings unavailable",
-      })));
-      const version = container.querySelector<HTMLElement>(".settings-app-version")!;
+      window.withmate = {
+        /** 版の取得を一度失敗させ、再試行時には表示用の版を返す。 */
+        getAppVersion: async () => {
+          calls++;
+          if (calls === 1) throw new Error("unavailable");
+          return "7.0.1-preview.2";
+        },
+      } as WithMateWindowApi;
+      await act(async () =>
+        root.render(
+          React.cloneElement(buildSettingsContent(), {
+            settingsDraftLoaded: false,
+            appSettingsLoadStatus: "error",
+            appSettingsLoadError: "Settings unavailable",
+          }),
+        ),
+      );
+      const version = container.querySelector<HTMLElement>(
+        ".settings-app-version",
+      )!;
       assert.equal(version.parentElement?.lastElementChild, version);
       assert.match(version.textContent!, /Could not load app version/);
       const retry = version.querySelector<HTMLButtonElement>("button")!;
       await act(async () => retry.click());
       assert.match(version.textContent!, /7\.0\.1-preview\.2/);
-      assert.equal(container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')?.disabled, true);
+      assert.equal(
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Save Settings"]',
+        )?.disabled,
+        true,
+      );
       assert.equal(calls, 2);
       await act(async () => root.render(buildSettingsContent()));
-      assert.equal(container.querySelector(".settings-section")?.lastElementChild, version);
+      assert.equal(
+        container.querySelector(".settings-section")?.lastElementChild,
+        version,
+      );
       assert.match(version.textContent!, /7\.0\.1-preview\.2/);
     });
   });
@@ -278,44 +442,80 @@ describe("HomeSettingsContent", () => {
   // lifecycle = "permanent"
   // distinction = "provider入力値を持つdraftから開始し、enable編集と別section更新を挟んだ保持を確認する。テキスト入力event自体の再現ではない"
   // @end-test-value
+  /** 親セクションの開閉や別項目の変更を挟んでも、Provider 入力欄の値と選択範囲、入れ子の開閉状態を維持し、明示保存時にまとめて渡す。 */
   it("section開閉と別section編集を挟んでもprovider入力と子disclosureを保持してSaveへ渡す", async () => {
     await withSettingsDom(async (container, root) => {
       let saved: ReturnType<typeof createDefaultAppSettings> | undefined;
       let saves = 0;
+      /** 複数セクションでひとつの draft を編集し、開閉と保存回数を観測できるようにする。 */
       function View() {
-        const [draft, setDraft] = useState<ReturnType<typeof createDefaultAppSettings>>(() => {
+        const [draft, setDraft] = useState<
+          ReturnType<typeof createDefaultAppSettings>
+        >(() => {
           const defaults = createDefaultAppSettings();
           return {
             ...defaults,
             codingProviderSettings: {
               ...defaults.codingProviderSettings,
-              codex: { ...defaults.codingProviderSettings.codex, skillRootPath: "C:/provider-config" },
+              codex: {
+                ...defaults.codingProviderSettings.codex,
+                skillRootPath: "C:/provider-config",
+              },
             },
           };
         });
-        const handlers = buildSettingsDraftHandlers({ setSettingsDraft: setDraft });
+        const handlers = buildSettingsDraftHandlers({
+          setSettingsDraft: setDraft,
+        });
         return React.cloneElement(buildSettingsContent(), {
           ...handlers,
           settingsDraft: draft,
-          providerSettingRows: buildHomeProviderSettingRows(modelCatalog, draft),
-          settingsDirty: JSON.stringify(draft) !== JSON.stringify(createDefaultAppSettings()),
-          onSaveSettings: () => { saves++; saved = structuredClone(draft); },
+          providerSettingRows: buildHomeProviderSettingRows(
+            modelCatalog,
+            draft,
+          ),
+          settingsDirty:
+            JSON.stringify(draft) !==
+            JSON.stringify(createDefaultAppSettings()),
+          /** 明示保存の回数を数え、最後のイベント時に送られた設定を保持する。 */
+          onSaveSettings: () => {
+            saves++;
+            saved = structuredClone(draft);
+          },
         });
       }
       await act(async () => root.render(<View />));
-      const sections = [...container.querySelectorAll<HTMLDetailsElement>("details.settings-section-card")];
+      const sections = [
+        ...container.querySelectorAll<HTMLDetailsElement>(
+          "details.settings-section-card",
+        ),
+      ];
+      /** 見出しタイトルから実際の折りたたみ要素を特定し、存在しない場合は検査を失敗させる。 */
       const section = (title: string) => {
-        const found = sections.find((entry) => entry.querySelector("summary")?.textContent === title);
+        const found = sections.find(
+          (entry) => entry.querySelector("summary")?.textContent === title,
+        );
         assert.ok(found);
         return found;
       };
       const providers = section("Coding Agent Providers");
-      const codex = providers.querySelector<HTMLDetailsElement>("details.settings-provider-card")!;
-      const fileSettings = codex.querySelector<HTMLDetailsElement>("details.settings-provider-file-settings")!;
-      const notifications = section("App").querySelector<HTMLDetailsElement>("details.settings-subsection")!;
-      const input = fileSettings.querySelector<HTMLInputElement>('input[type="text"]')!;
+      const codex = providers.querySelector<HTMLDetailsElement>(
+        "details.settings-provider-card",
+      )!;
+      const fileSettings = codex.querySelector<HTMLDetailsElement>(
+        "details.settings-provider-file-settings",
+      )!;
+      const notifications = section("App").querySelector<HTMLDetailsElement>(
+        "details.settings-subsection",
+      )!;
+      const input =
+        fileSettings.querySelector<HTMLInputElement>('input[type="text"]')!;
       assert.ok(input);
-      await act(async () => codex.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+      await act(async () =>
+        codex
+          .querySelector<HTMLInputElement>('input[type="checkbox"]')!
+          .click(),
+      );
       input.setSelectionRange(3, 9);
       await act(async () => {
         fileSettings.querySelector("summary")!.click();
@@ -324,7 +524,13 @@ describe("HomeSettingsContent", () => {
         notifications.querySelector("summary")!.click();
         section("App").querySelector("summary")!.click();
       });
-      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-current-date")!.click());
+      await act(async () =>
+        container
+          .querySelector<HTMLInputElement>(
+            "#settings-prompt-context-current-date",
+          )!
+          .click(),
+      );
       assert.equal(providers.open, false);
       assert.equal(section("App").open, false);
       assert.equal(section("Prompt Context").open, true);
@@ -344,9 +550,16 @@ describe("HomeSettingsContent", () => {
       assert.equal(input.selectionStart, 3);
       assert.equal(input.selectionEnd, 9);
       assert.equal(saves, 0);
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!.click());
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!
+          .click(),
+      );
       assert.equal(saves, 1);
-      assert.equal(saved?.codingProviderSettings.codex.skillRootPath, "C:/provider-config");
+      assert.equal(
+        saved?.codingProviderSettings.codex.skillRootPath,
+        "C:/provider-config",
+      );
       assert.equal(saved?.codingProviderSettings.codex.enabled, false);
       assert.equal(saved?.currentDateEnabled, false);
     });
@@ -362,6 +575,7 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-app-display-options"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 通知と送信後の表示を制御する四つの設定名が、App 設定で規定の大文字表記になることを確認する。 */
   it("App settings にTitle Case labelの表示設定toggleを表示する", () => {
     const html = renderSettings();
 
@@ -383,37 +597,62 @@ describe("HomeSettingsContent", () => {
   // impact = "ユーザーが2つの prompt context の設定面を見つけられないか、既定状態を判断できない"
   // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
   // @end-test-value
+  /** Prompt Context の二つの機能を別々のチェックボックスにし、各ラベルが対応する入力と結び付き、既定では両方とも有効とする。 */
   it("Prompt Context に2項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
-    const promptContextSection = Array.from(document.querySelectorAll("details.settings-section-card"))
-      .find((section) => section.querySelector("summary")?.textContent === "Prompt Context");
+    const promptContextSection = Array.from(
+      document.querySelectorAll("details.settings-section-card"),
+    ).find(
+      (section) =>
+        section.querySelector("summary")?.textContent === "Prompt Context",
+    );
 
     assert.ok(promptContextSection);
-    assert.equal(promptContextSection.querySelector("summary")?.textContent, "Prompt Context");
+    assert.equal(
+      promptContextSection.querySelector("summary")?.textContent,
+      "Prompt Context",
+    );
 
     const promptContextLabels = [
       "Character Definition Snapshot",
       "Current Date",
     ];
-    const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
+    const promptContextRows = Array.from(
+      promptContextSection.querySelectorAll(".settings-provider-toggle-row"),
+    );
     assert.equal(promptContextRows.length, promptContextLabels.length);
     assert.deepEqual(
-      promptContextRows.map((row) => row.querySelector<HTMLLabelElement>("label.settings-provider-name")?.textContent),
+      promptContextRows.map(
+        (row) =>
+          row.querySelector<HTMLLabelElement>("label.settings-provider-name")
+            ?.textContent,
+      ),
       promptContextLabels,
     );
 
     for (const row of promptContextRows) {
-      const label = row.querySelector<HTMLLabelElement>("label.settings-provider-name");
-      const input = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      const label = row.querySelector<HTMLLabelElement>(
+        "label.settings-provider-name",
+      );
+      const input = row.querySelector<HTMLInputElement>(
+        'input[type="checkbox"]',
+      );
 
       assert.ok(label);
       assert.ok(input);
       assert.equal(input.checked, true);
       assert.equal(label.htmlFor, input.id);
     }
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]').length, promptContextLabels.length);
-    assert.equal(promptContextSection.querySelectorAll('input[type="checkbox"]:checked').length, promptContextLabels.length);
+    assert.equal(
+      promptContextSection.querySelectorAll('input[type="checkbox"]').length,
+      promptContextLabels.length,
+    );
+    assert.equal(
+      promptContextSection.querySelectorAll('input[type="checkbox"]:checked')
+        .length,
+      promptContextLabels.length,
+    );
   });
 
   // @test-value v2
@@ -426,10 +665,13 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-glossary-limit"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Glossary の自動作成上限を現在値と 0〜100 の範囲を持つ数値欄で公開し、明示的な作成要求には適用しないと案内する。 */
   it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
     const document = new JSDOM(renderSettings()).window.document;
-    const label = Array.from(document.querySelectorAll("label"))
-      .find((candidate) => candidate.textContent?.includes("Glossary Proactive Create Limit"));
+    const label = Array.from(document.querySelectorAll("label")).find(
+      (candidate) =>
+        candidate.textContent?.includes("Glossary Proactive Create Limit"),
+    );
     const input = label?.querySelector("input");
 
     assert.equal(input?.type, "number");
@@ -449,6 +691,7 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-notification-preview-dependency"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 実行通知を無効にした間も返答プレビューの値を保持して操作だけを止める。承認通知は親設定から独立して操作できる。 */
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
     const disabledHtml = renderSettings({
       settingsDraft: {
@@ -466,10 +709,13 @@ describe("HomeSettingsContent", () => {
         sessionApprovalNotificationEnabled: false,
       },
     });
+    /** 描画結果のラベルから返答プレビュー用のチェックボックスを特定する。 */
     const findPreviewToggle = (html: string) => {
       const document = new JSDOM(html).window.document;
-      const label = Array.from(document.querySelectorAll("label"))
-        .find((candidate) => candidate.textContent?.includes("Notification Response Preview"));
+      const label = Array.from(document.querySelectorAll("label")).find(
+        (candidate) =>
+          candidate.textContent?.includes("Notification Response Preview"),
+      );
       return label?.querySelector("input");
     };
 
@@ -477,10 +723,13 @@ describe("HomeSettingsContent", () => {
     assert.equal(findPreviewToggle(disabledHtml)?.checked, true);
     assert.equal(findPreviewToggle(enabledHtml)?.disabled, false);
     assert.equal(findPreviewToggle(enabledHtml)?.checked, true);
+    /** 承認通知のチェックボックスを、実行通知やプレビューと混同せず取得する。 */
     const findApprovalToggle = (html: string) => {
       const document = new JSDOM(html).window.document;
-      const label = Array.from(document.querySelectorAll("label"))
-        .find((candidate) => candidate.textContent?.includes("Session Approval Notification"));
+      const label = Array.from(document.querySelectorAll("label")).find(
+        (candidate) =>
+          candidate.textContent?.includes("Session Approval Notification"),
+      );
       return label?.querySelector("input");
     };
     assert.equal(findApprovalToggle(disabledHtml)?.disabled, false);
@@ -489,6 +738,7 @@ describe("HomeSettingsContent", () => {
     assert.equal(findApprovalToggle(enabledHtml)?.checked, false);
   });
 
+  /** 保存済み Mate の破壊的な初期化を、この設定画面から操作できないことを検査する。 */
   it("Mate Reset の危険操作は Settings に表示されない", () => {
     const html = renderSettings();
     assert.ok(!html.includes("Mate を初期化"));
@@ -505,6 +755,7 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-provider-file-settings"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Provider ごとのファイル設定に、ルートと Skill・Instruction の二つの相対パス欄を表示する。 */
   it("provider ごとの file settings を表示する", () => {
     const html = renderSettings();
 
@@ -526,18 +777,48 @@ describe("HomeSettingsContent", () => {
   // impact = "利用者が必要な認証設定とfile設定の場所を判断できない"
   // distinction = "設定型とdraft単体testではprovider rowに表示される案内を確認できない"
   // @end-test-value
+  /** OpenCode の行に、認証は OpenCode 側で設定することと、ネイティブの構成・Skill の配置場所を案内する。 */
   it("OpenCodeの認証設定先とnative読込先をprovider rowに表示する", () => {
     const draft = createDefaultAppSettings();
-    draft.codingProviderSettings.opencode = { enabled: true, apiKey: "", skillRootPath: "" };
-    const catalog: ModelCatalogSnapshot = {
-      providers: [{ id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high", models: [{ id: "opencode-go/glm-5.3", label: "GLM-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
+    draft.codingProviderSettings.opencode = {
+      enabled: true,
+      apiKey: "",
+      skillRootPath: "",
     };
-    const html = renderSettings({ settingsDraft: draft, providerSettingRows: buildHomeProviderSettingRows(catalog, draft) });
+    const catalog: ModelCatalogSnapshot = {
+      providers: [
+        {
+          id: "opencode",
+          label: "OpenCode",
+          defaultModelId: "opencode-go/glm-5.3",
+          defaultReasoningEffort: "high",
+          models: [
+            {
+              id: "opencode-go/glm-5.3",
+              label: "GLM-5.3",
+              reasoningEfforts: ["low", "high", "max"],
+            },
+          ],
+        },
+      ],
+    };
+    const html = renderSettings({
+      settingsDraft: draft,
+      providerSettingRows: buildHomeProviderSettingRows(catalog, draft),
+    });
     const dom = new JSDOM(html);
     try {
-      const card = dom.window.document.querySelector(".settings-provider-card")!;
-      assert.match(card.textContent ?? "", /Configure authentication in OpenCode\./);
-      assert.match(card.textContent ?? "", /OpenCode config root with AGENTS\.md and skills\/<name>\/SKILL\.md/);
+      const card = dom.window.document.querySelector(
+        ".settings-provider-card",
+      )!;
+      assert.match(
+        card.textContent ?? "",
+        /Configure authentication in OpenCode\./,
+      );
+      assert.match(
+        card.textContent ?? "",
+        /OpenCode config root with AGENTS\.md and skills\/<name>\/SKILL\.md/,
+      );
     } finally {
       dom.window.close();
     }
@@ -555,32 +836,67 @@ describe("HomeSettingsContent", () => {
   // impact = "利用者と支援技術が実際に実行中のProvider操作を識別でき、pickerの二重起動を防ぐ"
   // distinction = "型やstatic markupでは検出できない複数Providerを同時表示した非同期操作中と完了後の投影を、既存componentで検証する"
   // @end-test-value
+  /** Browse 待機中は競合するボタンを無効にするが、実際に押した Provider と操作だけを busy にして完了後に戻す。 */
   it("Browseのbusyは実行したProviderと操作に限定し、完了後に解除する", async () => {
-    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+    );
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
     const previousHTMLElement = globalThis.HTMLElement;
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "window", {
+      value: dom.window,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: dom.window.document,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      value: dom.window.HTMLElement,
+      configurable: true,
+    });
     const container = dom.window.document.getElementById("root")!;
     const root = createRoot(container);
     const calls: Array<{ kind: string; providerId: string }> = [];
     let release!: () => void;
+    /** Browse の種別と Provider を記録し、ボタン状態を確認するまで選択結果を保留する。 */
     const browse = (kind: string, providerId: string) => {
       calls.push({ kind, providerId });
-      return new Promise<void>((resolve) => { release = resolve; });
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
     };
     try {
-      await act(async () => root.render(React.cloneElement(buildSettingsContent(), {
-        onBrowseProviderSkillRootPath: (id: string) => browse("root", id),
-        onBrowseProviderSkillRelativePath: (id: string) => browse("skill", id),
-        onBrowseProviderInstructionRelativePath: (id: string) => browse("instruction", id),
-      })));
-      const buttons = [...container.querySelectorAll<HTMLButtonElement>(".settings-provider-card .settings-provider-input button")];
+      await act(async () =>
+        root.render(
+          React.cloneElement(buildSettingsContent(), {
+            /** ルート選択を、その操作の種別と対象 Provider で記録する。 */
+            onBrowseProviderSkillRootPath: (id: string) => browse("root", id),
+            /** Skill 相対パスの選択を、同じ Provider の他の Browse 操作と区別する。 */
+            onBrowseProviderSkillRelativePath: (id: string) =>
+              browse("skill", id),
+            /** Instruction 相対パスの選択が、正しい Provider に渡るか観測する。 */
+            onBrowseProviderInstructionRelativePath: (id: string) =>
+              browse("instruction", id),
+          }),
+        ),
+      );
+      const buttons = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          ".settings-provider-card .settings-provider-input button",
+        ),
+      ];
       assert.equal(buttons.length, 6);
-      for (const [providerIndex, providerId] of ["codex", "copilot"].entries()) {
-        for (const [actionIndex, kind] of ["root", "skill", "instruction"].entries()) {
+      for (const [providerIndex, providerId] of [
+        "codex",
+        "copilot",
+      ].entries()) {
+        for (const [actionIndex, kind] of [
+          "root",
+          "skill",
+          "instruction",
+        ].entries()) {
           const selected = buttons[providerIndex * 3 + actionIndex]!;
           const previousCalls = calls.length;
           await act(async () => selected.click());
@@ -588,10 +904,20 @@ describe("HomeSettingsContent", () => {
           assert.equal(calls.length, previousCalls + 1);
           for (const button of buttons) {
             assert.equal(button.disabled, true);
-            assert.equal(button.getAttribute("aria-busy"), String(button === selected));
-            assert.equal(button.querySelectorAll(".loading-indicator-spinner").length, button === selected ? 1 : 0);
+            assert.equal(
+              button.getAttribute("aria-busy"),
+              String(button === selected),
+            );
+            assert.equal(
+              button.querySelectorAll(".loading-indicator-spinner").length,
+              button === selected ? 1 : 0,
+            );
           }
-          assert.ok(selected.getAttribute("aria-label")?.includes(providerSettingRows[providerIndex]!.provider.label));
+          assert.ok(
+            selected
+              .getAttribute("aria-label")
+              ?.includes(providerSettingRows[providerIndex]!.provider.label),
+          );
           await act(async () => {
             for (const button of buttons) button.click();
           });
@@ -600,15 +926,27 @@ describe("HomeSettingsContent", () => {
           for (const button of buttons) {
             assert.equal(button.disabled, false);
             assert.equal(button.getAttribute("aria-busy"), "false");
-            assert.equal(button.querySelectorAll(".loading-indicator-spinner").length, 0);
+            assert.equal(
+              button.querySelectorAll(".loading-indicator-spinner").length,
+              0,
+            );
           }
         }
       }
     } finally {
       await act(async () => root.unmount());
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "window", {
+        value: previousWindow,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "document", {
+        value: previousDocument,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "HTMLElement", {
+        value: previousHTMLElement,
+        configurable: true,
+      });
       dom.window.close();
     }
   });
@@ -625,6 +963,7 @@ describe("HomeSettingsContent", () => {
   // impact = "Settings・Session更新とpickerの競合を防ぎ、診断や回復の入口を利用できる状態に保つ"
   // distinction = "型・static markup・Main単体testでは分からない非同期callbackとbutton制御の接続を、少数の競合群で確認する"
   // @end-test-value
+  /** 保存と削除、または picker の競合だけを排他し、実行した操作に限って進行中を公開する。削除時だけ対象日も編集不可とする。 */
   it("操作の競合範囲だけをdisabledにし、実行したbuttonだけをbusyにする", async () => {
     const updates = ["Save Settings", "Delete"];
     const dialogs = ["Browse"];
@@ -637,32 +976,67 @@ describe("HomeSettingsContent", () => {
       await withSettingsDom(async (container, root) => {
         let calls = 0;
         let release!: () => void;
+        /** 同一タイミングの多重実行を数えられるように、操作を手動で解除するまで待機させる。 */
         const pending = () => {
           calls += 1;
-          return new Promise<void>((resolve) => { release = resolve; });
+          return new Promise<void>((resolve) => {
+            release = resolve;
+          });
         };
-        await act(async () => root.render(React.cloneElement(buildSettingsContent({ }), {
-          settingsDirty: true,
-          sessionCleanupCutoffDate: "2026-01-01",
-          onSaveSettings: pending,
-          onDeleteSessionsLastActiveBefore: pending,
-          onBrowseProviderSkillRootPath: pending,
-          onBrowseProviderSkillRelativePath: pending,
-          onBrowseProviderInstructionRelativePath: pending,
-        })));
-        const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[aria-busy][aria-label]")];
-        const labels = new Map(buttons.map((button) => [button, button.getAttribute("aria-label")!]));
-        const selected = buttons.find((button) => labels.get(button) === scenario.label)!;
-        await act(async () => { selected.click(); selected.click(); });
+        await act(async () =>
+          root.render(
+            React.cloneElement(buildSettingsContent({}), {
+              settingsDirty: true,
+              sessionCleanupCutoffDate: "2026-01-01",
+              onSaveSettings: pending,
+              onDeleteSessionsLastActiveBefore: pending,
+              onBrowseProviderSkillRootPath: pending,
+              onBrowseProviderSkillRelativePath: pending,
+              onBrowseProviderInstructionRelativePath: pending,
+            }),
+          ),
+        );
+        const buttons = [
+          ...container.querySelectorAll<HTMLButtonElement>(
+            "button[aria-busy][aria-label]",
+          ),
+        ];
+        const labels = new Map(
+          buttons.map((button) => [button, button.getAttribute("aria-label")!]),
+        );
+        const selected = buttons.find(
+          (button) => labels.get(button) === scenario.label,
+        )!;
+        await act(async () => {
+          selected.click();
+          selected.click();
+        });
         assert.equal(calls, 1, `${scenario.label}: duplicate request`);
         for (const button of buttons) {
           const label = labels.get(button)!;
-          assert.equal(button.disabled, scenario.blocked.includes(label), `${scenario.label}: ${label}`);
-          assert.equal(button.getAttribute("aria-busy"), String(button === selected));
-          assert.equal(button.querySelectorAll(".loading-indicator-spinner").length, button === selected ? 1 : 0);
+          assert.equal(
+            button.disabled,
+            scenario.blocked.includes(label),
+            `${scenario.label}: ${label}`,
+          );
+          assert.equal(
+            button.getAttribute("aria-busy"),
+            String(button === selected),
+          );
+          assert.equal(
+            button.querySelectorAll(".loading-indicator-spinner").length,
+            button === selected ? 1 : 0,
+          );
         }
-        assert.notEqual(container.querySelector(".settings-panel")!.getAttribute("aria-busy"), "true");
-        assert.equal(container.querySelector<HTMLInputElement>('input[type="date"]')!.disabled, scenario.label === "Delete");
+        assert.notEqual(
+          container.querySelector(".settings-panel")!.getAttribute("aria-busy"),
+          "true",
+        );
+        assert.equal(
+          container.querySelector<HTMLInputElement>('input[type="date"]')!
+            .disabled,
+          scenario.label === "Delete",
+        );
         await act(async () => release());
         for (const button of buttons) {
           assert.equal(button.disabled, false);
@@ -684,39 +1058,89 @@ describe("HomeSettingsContent", () => {
   // impact = "folder選択に必要な入力を利用者がその場で判断でき、古い失敗を新しい編集へ持ち越さない"
   // distinction = "handler単体の文字列確認や型では分からない、診断と修正案内のUI投影および並行通知の保持を確認する"
   // @end-test-value
+  /** 入力修正の案内は診断詳細と分けて直接表示し、別の操作に成功しても保持して、実際の設定変更で解除する。 */
   it("入力修正の案内は直接表示し、無関係な成功で消さない", async () => {
     await withSettingsDom(async (container, root) => {
       const api = {
-        openAppLogFolder: async (): Promise<void> => { throw new Error("Log folder diagnostic"); },
+        /** ログを開く操作で診断詳細に表示すべきエラーを返す。 */
+        openAppLogFolder: async (): Promise<void> => {
+          throw new Error("Log folder diagnostic");
+        },
+        /** 別操作の成功が入力修正の案内を消さないか調べるため、ダンプを開く操作だけ成功させる。 */
         openCrashDumpFolder: async (): Promise<void> => undefined,
       } as WithMateWindowApi;
+      /** 実際の設定通知状態と、設定操作・入力変更の本番ハンドラーを描画へ接続する。 */
       function Harness() {
         const [draft, setDraft] = useState(settingsDraft);
-        const { settingsFeedback, settingsErrors, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
-        return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback, settingsErrors }), {
-          ...buildSettingsCommandHandlers({
-            getApi: () => api, persistedSettingsDraft: draft, setAppSettings: noOp,
-            setSettingsDraft: setDraft, setSettingsFeedback,
+        const {
+          settingsFeedback,
+          settingsErrors,
+          setSettingsFeedback,
+          clearSettingsFeedback,
+        } = useSettingsFeedback();
+        return React.cloneElement(
+          buildSettingsContent({
+            settingsDraft: draft,
+            settingsFeedback,
+            settingsErrors,
           }),
-          ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }),
-        });
+          {
+            ...buildSettingsCommandHandlers({
+              /** ログとダンプを開くテスト用 API を、実際の設定操作へ供給する。 */
+              getApi: () => api,
+              persistedSettingsDraft: draft,
+              setAppSettings: noOp,
+              setSettingsDraft: setDraft,
+              setSettingsFeedback,
+            }),
+            ...buildSettingsDraftHandlers({
+              setSettingsDraft: setDraft,
+              clearSettingsFeedback,
+            }),
+          },
+        );
       }
       await act(async () => root.render(<Harness />));
-      const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+      /** 操作名に一致する Settings のボタンをその場の DOM から選ぶ。 */
+      const button = (name: string) =>
+        container.querySelector<HTMLButtonElement>(
+          `button[aria-label="${name}"]`,
+        )!;
       await act(async () => button("Open Logs").click());
-      const skillField = [...container.querySelectorAll('.settings-provider-input')]
-        .find((element) => element.textContent?.startsWith("Skill Relative Path"))!;
-      await act(async () => skillField.querySelector<HTMLButtonElement>('button[aria-label="Browse"]')!.click());
-      const guidance = () => container.querySelector('.settings-feedback')?.textContent;
-      assert.equal(guidance(), "Set a root directory before choosing a skill folder.");
-      assert.equal(container.querySelector('[aria-label="Open Logs error details"] p')?.textContent, "Log folder diagnostic");
+      const skillField = [
+        ...container.querySelectorAll(".settings-provider-input"),
+      ].find((element) =>
+        element.textContent?.startsWith("Skill Relative Path"),
+      )!;
+      await act(async () =>
+        skillField
+          .querySelector<HTMLButtonElement>('button[aria-label="Browse"]')!
+          .click(),
+      );
+      /** 診断ポップアップとは別に、直接表示された修正案内の本文を読む。 */
+      const guidance = () =>
+        container.querySelector(".settings-feedback")?.textContent;
+      assert.equal(
+        guidance(),
+        "Set a root directory before choosing a skill folder.",
+      );
+      assert.equal(
+        container.querySelector('[aria-label="Open Logs error details"] p')
+          ?.textContent,
+        "Log folder diagnostic",
+      );
       await act(async () => button("Open Crash Dumps").click());
-      assert.equal(guidance(), "Set a root directory before choosing a skill folder.");
-      const launch = container.querySelector<HTMLInputElement>('.settings-section-toggle input[type="checkbox"]')!;
+      assert.equal(
+        guidance(),
+        "Set a root directory before choosing a skill folder.",
+      );
+      const launch = container.querySelector<HTMLInputElement>(
+        '.settings-section-toggle input[type="checkbox"]',
+      )!;
       await act(async () => launch.click());
       assert.equal(launch.checked, !settingsDraft.launchAtLoginEnabled);
       assert.equal(guidance(), undefined);
-      assert.equal(container.querySelector('[popover]'), null);
+      assert.equal(container.querySelector("[popover]"), null);
     });
   });
 
@@ -730,6 +1154,7 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-session-cleanup"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 指定日より前に最終利用した Session を対象にする削除操作と、実行中 Session は保持する旨を表示する。 */
   it("古い Session の削除操作を Settings に表示する", () => {
     const html = renderSettings();
 
@@ -748,11 +1173,14 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-provider-empty-state"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Provider が正常にゼロ件でも設定セクションの見出しを残し、空一覧をエラーのようには案内しない。 */
   it("provider row が 0 件でも Coding Agent Providers section を残し本文を空にする", () => {
     const html = renderSettings({ providerSettingRows: [] });
 
     assert.ok(html.includes("Coding Agent Providers"));
-    assert.ok(!html.includes("No coding agent providers found in the model catalog."));
+    assert.ok(
+      !html.includes("No coding agent providers found in the model catalog."),
+    );
   });
 
   // @test-value v2
@@ -765,6 +1193,7 @@ describe("HomeSettingsContent", () => {
   // scope = "home-settings-provider-catalog-error-feedback"
   // lifecycle = "permanent"
   // @end-test-value
+  /** カタログ取得エラーは Provider 一覧に重複表示せず、Settings フッターの通知だけに出す。 */
   it("provider catalog error は Settings footer に一度だけ表示する", () => {
     const html = renderSettings({
       providerSettingRows: [],
@@ -773,15 +1202,30 @@ describe("HomeSettingsContent", () => {
     const document = new JSDOM(html).window.document;
 
     assert.ok(html.includes("Coding Agent Providers"));
-    assert.equal(document.querySelectorAll(".settings-provider-card").length, 0);
+    assert.equal(
+      document.querySelectorAll(".settings-provider-card").length,
+      0,
+    );
     assert.equal(document.querySelectorAll(".settings-feedback").length, 1);
-    assert.equal(document.querySelector(".settings-dialog-foot .settings-feedback")?.textContent, "Could not load the model catalog.");
+    assert.equal(
+      document.querySelector(".settings-dialog-foot .settings-feedback")
+        ?.textContent,
+      "Could not load the model catalog.",
+    );
   });
 });
 
+/** Mate の作成・編集・利用不可モードについて、操作と表示の違いを検証する。 */
 describe("HomeMateSetupPanel", () => {
-  const collectElements = (node: ReactNode, predicate: (element: React.ReactElement<Record<string, unknown>>) => boolean): React.ReactElement<Record<string, unknown>>[] => {
+  /** React 要素ツリーを走査して、条件に合う入力や操作要素を収集する。 */
+  const collectElements = (
+    node: ReactNode,
+    predicate: (
+      element: React.ReactElement<Record<string, unknown>>,
+    ) => boolean,
+  ): React.ReactElement<Record<string, unknown>>[] => {
     const result: React.ReactElement<Record<string, unknown>>[] = [];
+    /** 有効な要素だけを対象に条件を照合し、単一または複数の子要素へたどる。 */
     const visitNode = (currentNode: ReactNode) => {
       if (!isValidElement<Record<string, unknown>>(currentNode)) {
         return;
@@ -797,7 +1241,11 @@ describe("HomeMateSetupPanel", () => {
         return;
       }
 
-      if (children === null || children === undefined || typeof children === "boolean") {
+      if (
+        children === null ||
+        children === undefined ||
+        typeof children === "boolean"
+      ) {
         return;
       }
 
@@ -808,6 +1256,7 @@ describe("HomeMateSetupPanel", () => {
     return result;
   };
 
+  /** 作成・編集状態、表示情報と操作を差し替え、Mate セットアップの要素を取得する。 */
   const renderPanel = (params?: {
     mode?: "create" | "edit" | "unavailable";
     creating?: boolean;
@@ -830,6 +1279,7 @@ describe("HomeMateSetupPanel", () => {
       feedback: params?.feedback ?? "",
       mateDisplayName: params?.mateDisplayName ?? null,
       mateAvatarFilePath: params?.mateAvatarFilePath,
+      /** 入力の描画を検査する場合、名前変更を永続状態へは適用しない。 */
       onChangeDisplayName: () => undefined,
       onSubmit: params?.onSubmit ?? (() => undefined),
       onCancel: params?.onCancel,
@@ -849,21 +1299,36 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel create mode controls"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 新規作成画面に表示名の初期入力、Mate 作成ボタン、設定への入口とフィードバックがあることを検査する。 */
   it("display name input / create button / settings button / feedback が render される", () => {
     const panel = renderPanel({ feedback: "作成完了まで少し待ってね。" });
     const html = renderToStaticMarkup(panel);
-    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
-    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const input = collectElements(
+      panel,
+      (element) =>
+        element.type === "input" && element.props.id === "mate-display-name",
+    )[0];
+    const submitButton = collectElements(
+      panel,
+      (element) => element.type === "button" && element.props.type === "submit",
+    )[0];
     const settingsButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Settings",
+      (element) =>
+        element.type === "button" &&
+        typeof element.props.children === "string" &&
+        element.props.children === "Settings",
     )[0];
 
     assert.ok(input);
     assert.ok(submitButton);
     assert.ok(settingsButton);
     assert.ok(input.props.value === "Your Mate");
-    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Create Mate");
+    assert.equal(
+      new JSDOM(html).window.document.querySelector("button[type='submit']")
+        ?.textContent,
+      "Create Mate",
+    );
     assert.ok(html.includes("作成完了まで少し待ってね。"));
   });
 
@@ -877,10 +1342,12 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel form submission"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 作成フォームはブラウザーの既定 submit を止めてから、指定した作成処理を一度呼ぶ。 */
   it("form submit で onSubmit が呼ばれる", () => {
     let submitted = 0;
     const events: string[] = [];
     const panel = renderPanel({
+      /** フォームから作成処理が呼ばれた順序と回数を記録する。 */
       onSubmit: () => {
         events.push("submit");
         submitted += 1;
@@ -892,7 +1359,13 @@ describe("HomeMateSetupPanel", () => {
       throw new Error("HomeMateSetupPanel の form が見つかりません。");
     }
 
-    (form.props.onSubmit as (event: { preventDefault(): void }) => void)({
+    (
+      form.props.onSubmit as (event: {
+        /** フォームの既定動作が抑止される順序を観測する。 */
+        preventDefault(): void;
+      }) => void
+    )({
+      /** ハンドラーが既定の送信を抑止したことを、作成処理の順序と比較できるよう記録する。 */
       preventDefault: () => events.push("preventDefault"),
     });
 
@@ -910,18 +1383,25 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel settings button"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 設定ボタンを操作すると、設定画面への遷移を要求するコールバックが一度呼ばれる。 */
   it("設定ボタンで onOpenSettings が呼ばれる", () => {
     let settingsOpened = 0;
     const panel = renderPanel({
+      /** 設定画面への遷移要求を回数だけで観測する。 */
       onOpenSettings: () => {
         settingsOpened += 1;
       },
     });
     const buttons = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Settings",
+      (element) =>
+        element.type === "button" &&
+        typeof element.props.children === "string" &&
+        element.props.children === "Settings",
     );
-    const settingsButton = buttons.find((button) => button.props.type === "button" && button.props.onClick);
+    const settingsButton = buttons.find(
+      (button) => button.props.type === "button" && button.props.onClick,
+    );
     if (!settingsButton) {
       throw new Error("HomeMateSetupPanel の設定ボタンが見つかりません。");
     }
@@ -940,19 +1420,37 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel creating state"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 作成中は表示名と送信を無効化し、作成ラベルを維持して装飾用スピナーを添える。 */
   it("creating=true で input / submit button が disabled になり、spinner 表示になる", () => {
     const panel = renderPanel({ creating: true, feedback: "CreatingMate" });
-    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
-    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const input = collectElements(
+      panel,
+      (element) =>
+        element.type === "input" && element.props.id === "mate-display-name",
+    )[0];
+    const submitButton = collectElements(
+      panel,
+      (element) => element.type === "button" && element.props.type === "submit",
+    )[0];
     if (!input || !submitButton) {
-      throw new Error("HomeMateSetupPanel の入力 or submit button が見つかりません。");
+      throw new Error(
+        "HomeMateSetupPanel の入力 or submit button が見つかりません。",
+      );
     }
 
     assert.ok(input.props.disabled);
     assert.ok(submitButton.props.disabled);
     const document = new JSDOM(renderToStaticMarkup(panel)).window.document;
-    assert.ok(document.querySelector("button[type='submit'] .button-content-spinner[aria-hidden='true']"));
-    assert.equal(document.querySelector("button[type='submit'] .button-content-label")?.textContent, "Create Mate");
+    assert.ok(
+      document.querySelector(
+        "button[type='submit'] .button-content-spinner[aria-hidden='true']",
+      ),
+    );
+    assert.equal(
+      document.querySelector("button[type='submit'] .button-content-label")
+        ?.textContent,
+      "Create Mate",
+    );
   });
 
   // @test-value v2
@@ -965,26 +1463,38 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel edit mode controls"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 編集画面に Mate Profile と Save を表示し、戻る操作で指定した取消処理を起動する。 */
   it("edit mode では MateProfile の保存とキャンセル導線を表示する", () => {
     let canceled = 0;
     const panel = renderPanel({
       mode: "edit",
       displayName: "Mika",
       mateDisplayName: "Mika",
+      /** 編集画面から戻ったことを、呼出回数で検査できるようにする。 */
       onCancel: () => {
         canceled += 1;
       },
     });
     const html = renderToStaticMarkup(panel);
-    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const submitButton = collectElements(
+      panel,
+      (element) => element.type === "button" && element.props.type === "submit",
+    )[0];
     const cancelButton = collectElements(
       panel,
-      (element) => element.type === "button" && typeof element.props.children === "string" && element.props.children === "Cancel",
+      (element) =>
+        element.type === "button" &&
+        typeof element.props.children === "string" &&
+        element.props.children === "Cancel",
     )[0];
 
     assert.ok(html.includes("Mate Profile"));
     assert.ok(submitButton);
-    assert.equal(new JSDOM(html).window.document.querySelector("button[type='submit']")?.textContent, "Save");
+    assert.equal(
+      new JSDOM(html).window.document.querySelector("button[type='submit']")
+        ?.textContent,
+      "Save",
+    );
     assert.ok(cancelButton);
     (cancelButton.props.onClick as () => void)();
     assert.equal(canceled, 1);
@@ -1000,6 +1510,7 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel unavailable mode"
   // lifecycle = "permanent"
   // @end-test-value
+  /** プロフィールが利用できない場合はその理由を表示し、入力を無効化して作成・保存の両方を隠す。 */
   it("unavailable mode では Mate 作成/保存ボタンを表示しない", () => {
     const panel = renderPanel({
       mode: "unavailable",
@@ -1007,8 +1518,15 @@ describe("HomeMateSetupPanel", () => {
       feedback: "ignored",
     });
     const html = renderToStaticMarkup(panel);
-    const input = collectElements(panel, (element) => element.type === "input" && element.props.id === "mate-display-name")[0];
-    const submitButton = collectElements(panel, (element) => element.type === "button" && element.props.type === "submit")[0];
+    const input = collectElements(
+      panel,
+      (element) =>
+        element.type === "input" && element.props.id === "mate-display-name",
+    )[0];
+    const submitButton = collectElements(
+      panel,
+      (element) => element.type === "button" && element.props.type === "submit",
+    )[0];
 
     assert.ok(html.includes("Mate profile is unavailable."));
     assert.equal(input?.props.disabled, true);
@@ -1027,6 +1545,7 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel avatar controls"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Mate の編集時にアバター選択と解除を別操作として公開し、それぞれ対応する処理を呼ぶ。 */
   it("edit mode では Mate アイコンの選択と解除を実行できる", () => {
     let selected = 0;
     let cleared = 0;
@@ -1035,9 +1554,11 @@ describe("HomeMateSetupPanel", () => {
       displayName: "Mika",
       mateDisplayName: "Mika",
       mateAvatarFilePath: "C:/mate/avatar.png",
+      /** ファイル選択を実際に開かず、アバター選択要求を記録する。 */
       onSelectAvatar: () => {
         selected += 1;
       },
+      /** アバターの解除要求を選択要求と別に数える。 */
       onClearAvatar: () => {
         cleared += 1;
       },
@@ -1045,11 +1566,15 @@ describe("HomeMateSetupPanel", () => {
     const html = renderToStaticMarkup(panel);
     const selectButton = collectElements(
       panel,
-      (element) => element.type === "button" && element.props["aria-label"] === "Select Image",
+      (element) =>
+        element.type === "button" &&
+        element.props["aria-label"] === "Select Image",
     )[0];
     const clearButton = collectElements(
       panel,
-      (element) => element.type === "button" && element.props["aria-label"] === "Clear Avatar",
+      (element) =>
+        element.type === "button" &&
+        element.props["aria-label"] === "Clear Avatar",
     )[0];
 
     assert.ok(html.includes("Avatar"));
@@ -1071,12 +1596,15 @@ describe("HomeMateSetupPanel", () => {
   // scope = "HomeMateSetupPanel create mode avatar controls"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Mate の新規作成時はアバター欄を描画しても、編集用の選択・解除ボタンを出さない。 */
   it("create mode では Mate アイコンの補足説明と編集操作を表示しない", () => {
     const panel = renderPanel({ mode: "create" });
     const html = renderToStaticMarkup(panel);
     const avatarButtons = collectElements(
       panel,
-      (element) => element.type === "button" && ["Select Image", "Clear"].includes(String(element.props.children)),
+      (element) =>
+        element.type === "button" &&
+        ["Select Image", "Clear"].includes(String(element.props.children)),
     );
 
     assert.ok(html.includes("Avatar"));
@@ -1084,21 +1612,26 @@ describe("HomeMateSetupPanel", () => {
   });
 });
 
+/** New Session の選択・読込状態、パス検証の案内と明示的な取消操作を検査する。 */
 describe("HomeLaunchDialog", () => {
+  /** 静的描画に必要な操作を揃え、入力や Session 作成には副作用を持たせない。 */
   const noOp = (..._args: unknown[]) => undefined;
 
-  const characterOptions = [{
-    id: "mia",
-    name: "Mia",
-    description: "Character description",
-    iconFilePath: "",
-    theme: { main: "#111111", sub: "#eeeeee" },
-    state: "active" as const,
-    createdAt: "",
-    updatedAt: "",
-    archivedAt: null,
-  }];
+  const characterOptions = [
+    {
+      id: "mia",
+      name: "Mia",
+      description: "Character description",
+      iconFilePath: "",
+      theme: { main: "#111111", sub: "#eeeeee" },
+      state: "active" as const,
+      createdAt: "",
+      updatedAt: "",
+      archivedAt: null,
+    },
+  ];
 
+  /** Character や Provider の取得状態、Workspace の検証状態を切り替えて同じ起動ダイアログを描画する。 */
   const renderHomeLaunchDialog = (
     options = characterOptions,
     charactersLoaded = true,
@@ -1107,39 +1640,44 @@ describe("HomeLaunchDialog", () => {
     characterLoadStatus?: "loading" | "loaded" | "error",
     providerLoadStatus?: ProviderLaunchLoadStatus,
     providerLoadError = "",
-  ) => renderToStaticMarkup(
-    <HomeLaunchDialog
-      open={true}
-      title="demo"
-      sessionRole="standalone"
-      sessionFolderSelected={false}
-      workspacePathInput="C:\\work space\\"
-      workspaceValidation={workspaceValidation}
-      workspaceValidationMessage={workspaceValidation === "invalid" ? "Path not found." : ""}
-      enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
-      providerLoadStatus={providerLoadStatus}
-      providerLoadError={providerLoadError}
-      selectedLaunchProviderId="codex"
-      characterOptions={options}
-      selectedCharacterId={randomCharacterSelected ? null : options[0]?.id ?? null}
-      randomCharacterSelected={randomCharacterSelected}
-      charactersLoaded={charactersLoaded}
-      characterLoadStatus={characterLoadStatus}
-      canStartSession={true}
-      launchFeedback=""
-      launchStarting={false}
-      onClose={noOp}
-      onChangeTitle={noOp}
-      onSelectRole={noOp}
-      onChangeWorkspacePath={noOp}
-      onBrowseWorkspace={noOp}
-      onSelectSessionFolder={noOp}
-      onSelectProvider={noOp}
-      onSelectCharacter={noOp}
-      onSelectRandomCharacter={noOp}
-      onStartSession={noOp}
-    />,
-  );
+  ) =>
+    renderToStaticMarkup(
+      <HomeLaunchDialog
+        open={true}
+        title="demo"
+        sessionRole="standalone"
+        sessionFolderSelected={false}
+        workspacePathInput="C:\\work space\\"
+        workspaceValidation={workspaceValidation}
+        workspaceValidationMessage={
+          workspaceValidation === "invalid" ? "Path not found." : ""
+        }
+        enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
+        providerLoadStatus={providerLoadStatus}
+        providerLoadError={providerLoadError}
+        selectedLaunchProviderId="codex"
+        characterOptions={options}
+        selectedCharacterId={
+          randomCharacterSelected ? null : (options[0]?.id ?? null)
+        }
+        randomCharacterSelected={randomCharacterSelected}
+        charactersLoaded={charactersLoaded}
+        characterLoadStatus={characterLoadStatus}
+        canStartSession={true}
+        launchFeedback=""
+        launchStarting={false}
+        onClose={noOp}
+        onChangeTitle={noOp}
+        onSelectRole={noOp}
+        onChangeWorkspacePath={noOp}
+        onBrowseWorkspace={noOp}
+        onSelectSessionFolder={noOp}
+        onSelectProvider={noOp}
+        onSelectCharacter={noOp}
+        onSelectRandomCharacter={noOp}
+        onStartSession={noOp}
+      />,
+    );
 
   // @test-value v2
   // kind = "contract"
@@ -1153,18 +1691,39 @@ describe("HomeLaunchDialog", () => {
   // impact = "他Windowからworkspace pathを持ち帰る途中の入力消失を防ぎ、作成不可時も安全にHomeへ戻れる"
   // distinction = "静的markup検査と異なり、window event・暗黙dismiss・Cancel後のcallbackとfocusをmounted componentで確認する"
   // @end-test-value
+  /** ウィンドウ切替・貼り付け・背景クリック・Escape で入力を失わず、開始不可でも Cancel から作成せず閉じて起点へ戻る。 */
   it("New Session は暗黙に閉じず、Cancel は作成せずに focus を戻す", async () => {
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-      pretendToBeVisual: true,
-    });
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      {
+        pretendToBeVisual: true,
+      },
+    );
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
     const previousHTMLElement = globalThis.HTMLElement;
-    Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
-    Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+      configurable: true,
+      /** JSDOM で React の入力イベント互換経路を通しても、実イベント登録は行わない。 */
+      value() {},
+    });
+    Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+      configurable: true,
+      /** 入力フォーカスを戻す際、互換 API の解除も実際の DOM 操作を行わない。 */
+      value() {},
+    });
+    Object.defineProperty(globalThis, "window", {
+      value: dom.window,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: dom.window.document,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      value: dom.window.HTMLElement,
+      configurable: true,
+    });
 
     const rootElement = dom.window.document.getElementById("root");
     assert.ok(rootElement);
@@ -1172,12 +1731,20 @@ describe("HomeLaunchDialog", () => {
     let closeCount = 0;
     let startCount = 0;
 
+    /** 背景のボタンから実ダイアログを開き、入力値、取消、開始要求を独立に観測する。 */
     function LaunchHarness() {
       const [open, setOpen] = useState(false);
-      const [workspacePathInput, setWorkspacePathInput] = useState("C:\\draft\\");
+      const [workspacePathInput, setWorkspacePathInput] =
+        useState("C:\\draft\\");
       return (
         <>
-          <button id="open-new-session" type="button" onClick={() => setOpen(true)}>New Session</button>
+          <button
+            id="open-new-session"
+            type="button"
+            onClick={() => setOpen(true)}
+          >
+            New Session
+          </button>
           <HomeLaunchDialog
             open={open}
             title="Draft title"
@@ -1195,7 +1762,10 @@ describe("HomeLaunchDialog", () => {
             canStartSession={false}
             launchFeedback=""
             launchStarting={false}
-            onClose={() => { closeCount += 1; setOpen(false); }}
+            onClose={() => {
+              closeCount += 1;
+              setOpen(false);
+            }}
             onChangeTitle={noOp}
             onSelectRole={noOp}
             onChangeWorkspacePath={setWorkspacePathInput}
@@ -1204,7 +1774,9 @@ describe("HomeLaunchDialog", () => {
             onSelectProvider={noOp}
             onSelectCharacter={noOp}
             onSelectRandomCharacter={noOp}
-            onStartSession={() => { startCount += 1; }}
+            onStartSession={() => {
+              startCount += 1;
+            }}
           />
         </>
       );
@@ -1212,19 +1784,31 @@ describe("HomeLaunchDialog", () => {
 
     try {
       await act(async () => root.render(<LaunchHarness />));
-      const opener = rootElement.querySelector<HTMLButtonElement>("#open-new-session");
+      const opener =
+        rootElement.querySelector<HTMLButtonElement>("#open-new-session");
       assert.ok(opener);
       opener.focus();
       await act(async () => opener.click());
-      await act(async () => new Promise<void>((resolve) => dom.window.setTimeout(resolve, 0)));
+      await act(
+        async () =>
+          new Promise<void>((resolve) => dom.window.setTimeout(resolve, 0)),
+      );
 
-      const dialog = rootElement.querySelector<HTMLElement>('[aria-label="New Session"]');
-      const workspace = rootElement.querySelector<HTMLInputElement>("#launch-workspace-path");
-      const title = rootElement.querySelector<HTMLInputElement>("#launch-session-title");
-      const cancel = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-        .find((button) => button.textContent === "Cancel");
-      const start = Array.from(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])
-        .find((button) => button.textContent === "Start");
+      const dialog = rootElement.querySelector<HTMLElement>(
+        '[aria-label="New Session"]',
+      );
+      const workspace = rootElement.querySelector<HTMLInputElement>(
+        "#launch-workspace-path",
+      );
+      const title = rootElement.querySelector<HTMLInputElement>(
+        "#launch-session-title",
+      );
+      const cancel = Array.from(
+        dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      ).find((button) => button.textContent === "Cancel");
+      const start = Array.from(
+        dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      ).find((button) => button.textContent === "Start");
       assert.ok(dialog && workspace && title && cancel && start);
       assert.equal(dom.window.document.activeElement, title);
       assert.equal(start.disabled, true);
@@ -1234,9 +1818,16 @@ describe("HomeLaunchDialog", () => {
       await act(async () => {
         dom.window.dispatchEvent(new dom.window.Event("blur"));
         dom.window.dispatchEvent(new dom.window.Event("focus"));
-        workspace.dispatchEvent(new dom.window.Event("paste", { bubbles: true }));
+        workspace.dispatchEvent(
+          new dom.window.Event("paste", { bubbles: true }),
+        );
         dialog.click();
-        workspace.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        workspace.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
       });
       assert.equal(closeCount, 0);
       assert.equal(workspace.value, "C:\\draft\\");
@@ -1246,13 +1837,25 @@ describe("HomeLaunchDialog", () => {
       await act(async () => cancel.click());
       assert.equal(closeCount, 1);
       assert.equal(startCount, 0);
-      assert.equal(rootElement.querySelector('[aria-label="New Session"]'), null);
+      assert.equal(
+        rootElement.querySelector('[aria-label="New Session"]'),
+        null,
+      );
       assert.equal(dom.window.document.activeElement, opener);
     } finally {
       await act(async () => root.unmount());
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "window", {
+        value: previousWindow,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "document", {
+        value: previousDocument,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "HTMLElement", {
+        value: previousHTMLElement,
+        configurable: true,
+      });
     }
   });
 
@@ -1266,10 +1869,16 @@ describe("HomeLaunchDialog", () => {
   // scope = "Home launch dialog entry"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 新規作成画面にアクセシブル名、開始、Provider と Session Folder の選択を持たせ、別の Agent Mode 操作を入れない。 */
   it("新規作成導線は Session 専用である", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.equal(new JSDOM(html).window.document.querySelector("button.start-session-button")?.textContent, "Start");
+    assert.equal(
+      new JSDOM(html).window.document.querySelector(
+        "button.start-session-button",
+      )?.textContent,
+      "Start",
+    );
     assert.ok(html.includes('aria-label="New Session"'));
     assert.ok(html.includes("Coding Provider"));
     assert.ok(!html.includes("Agent Mode"));
@@ -1288,10 +1897,13 @@ describe("HomeLaunchDialog", () => {
   // impact = "新規Session作成時のCharacter選択とworkspace選択を同じ画面で完了できる"
   // distinction = "開始CTAだけでなく、候補の内容・順序とworkspace切り替え導線を静的描画から確認する"
   // @end-test-value
+  /** 個別 Character と説明、先頭の Random を表示し、Workspace の Browse を Session Folder より先に置く。 */
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.ok(html.includes("launch-section minimal home-launch-character-section"));
+    assert.ok(
+      html.includes("launch-section minimal home-launch-character-section"),
+    );
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));
@@ -1312,20 +1924,31 @@ describe("HomeLaunchDialog", () => {
   // lifecycle = "permanent"
   // distinction = "単なる文字列包含やCSS宣言と異なりinputとerrorの実DOM関係を検査する。検証controllerや型検査では失われたaccessible descriptionを検出できず、安価な静的renderで保持する価値がある。pixel配置は実描画確認の対象とする"
   // @end-test-value
+  /** Workspace が無効でも入力値とラベルの対応を維持し、入力の説明参照が現在のパスエラーとそのステータスを指すようにする。 */
   it("Workspace input は値とlabelを保ち、invalid理由のstatusを参照する", () => {
     const idle = new JSDOM(renderHomeLaunchDialog());
-    const invalid = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, "invalid"));
+    const invalid = new JSDOM(
+      renderHomeLaunchDialog(characterOptions, true, false, "invalid"),
+    );
     try {
-      const idleInput = idle.window.document.getElementById("launch-workspace-path")!;
+      const idleInput = idle.window.document.getElementById(
+        "launch-workspace-path",
+      )!;
       assert.equal(idleInput.getAttribute("aria-invalid"), "false");
       assert.equal(idleInput.hasAttribute("aria-describedby"), false);
       const document = invalid.window.document;
-      const input = document.getElementById("launch-workspace-path") as HTMLInputElement;
-      const label = Array.from(document.querySelectorAll("label")).find((candidate) => candidate.control === input);
+      const input = document.getElementById(
+        "launch-workspace-path",
+      ) as HTMLInputElement;
+      const label = Array.from(document.querySelectorAll("label")).find(
+        (candidate) => candidate.control === input,
+      );
       assert.equal(label?.textContent, "Workspace");
       assert.equal(input.value, "C:\\\\work space\\\\");
       assert.equal(input.getAttribute("aria-invalid"), "true");
-      const error = document.getElementById(input.getAttribute("aria-describedby")!);
+      const error = document.getElementById(
+        input.getAttribute("aria-describedby")!,
+      );
       assert.ok(error);
       assert.equal(error.textContent, "Path not found.");
       assert.equal(error.getAttribute("role"), "status");
@@ -1348,9 +1971,12 @@ describe("HomeLaunchDialog", () => {
   // impact = "検証待ちの入力を利用者が未検証または完了済みと誤認しにくくなる"
   // distinction = "CSS宣言やcontroller単体では観測しない入力とbusy/statusのDOM接続を確認する。animation名・時間は固定せず、可視性やpixel配置は実描画確認と区別する"
   // @end-test-value
+  /** パス検証の待ち時間と実照会の双方で busy とステータスを公開し、成功後はどちらの待機表示も消す。 */
   it("Workspace validation は検証中のbusyとstatusを公開し、完了後に解除する", () => {
     for (const state of ["debouncing", "pending", "valid"] as const) {
-      const dom = new JSDOM(renderHomeLaunchDialog(characterOptions, true, false, state));
+      const dom = new JSDOM(
+        renderHomeLaunchDialog(characterOptions, true, false, state),
+      );
       try {
         const document = dom.window.document;
         const input = document.getElementById("launch-workspace-path")!;
@@ -1359,10 +1985,15 @@ describe("HomeLaunchDialog", () => {
         const checking = state !== "valid";
         assert.equal(region.getAttribute("aria-busy"), String(checking));
         assert.equal(!!region.querySelector('[aria-hidden="true"]'), checking);
-        const statuses = Array.from(document.querySelectorAll('[role="status"]'));
-        const checkingStatus = statuses.find((status) => status.textContent === "Checking workspace path…");
+        const statuses = Array.from(
+          document.querySelectorAll('[role="status"]'),
+        );
+        const checkingStatus = statuses.find(
+          (status) => status.textContent === "Checking workspace path…",
+        );
         assert.equal(!!checkingStatus, checking);
-        if (checkingStatus) assert.equal(checkingStatus.getAttribute("aria-live"), "polite");
+        if (checkingStatus)
+          assert.equal(checkingStatus.getAttribute("aria-live"), "polite");
       } finally {
         dom.window.close();
       }
@@ -1381,6 +2012,7 @@ describe("HomeLaunchDialog", () => {
   // impact = "開始時に選択されるCharacterの意味を視覚表示と支援技術へ一貫して伝える"
   // distinction = "選択IDの内部値ではなく、利用者が操作するcardの公開選択状態を確認する"
   // @end-test-value
+  /** Random を選んだときは、個別カードへ選択表示を残さず Random だけを選択済みとして公開する。 */
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
     const html = renderHomeLaunchDialog(characterOptions, true, true);
 
@@ -1394,6 +2026,7 @@ describe("HomeLaunchDialog", () => {
     );
   });
 
+  /** 取得済みの Character がゼロ件なら、WithMate の Neutral を起動候補として表示する。 */
   it("Character 0 件なら neutral fallback を表示する", () => {
     const html = renderHomeLaunchDialog([]);
 
@@ -1413,6 +2046,7 @@ describe("HomeLaunchDialog", () => {
   // impact = "Character取得待ちと正常な空一覧を識別でき、開始可否を誤認しない"
   // distinction = "候補配列が空である事実だけでなく、明示的loading stateの表示分岐を確認する"
   // @end-test-value
+  /** Character の初期読込中はスピナーと状態名だけを出し、確定した空一覧向けの Neutral を表示しない。 */
   it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
     const html = renderHomeLaunchDialog([], false);
 
@@ -1433,6 +2067,7 @@ describe("HomeLaunchDialog", () => {
   // impact = "取得失敗時に利用者が空一覧と誤認せず、Session開始を継続できない理由を識別できる"
   // distinction = "単なるCharacter候補数ではなく、明示したload stateの最終表示を検証する"
   // @end-test-value
+  /** Character の取得失敗を Unavailable と理由で示し、読込中や取得済みゼロ件の表示で覆わない。 */
   it("Character catalog の読み込み失敗は loading と空一覧を区別する", () => {
     const html = renderHomeLaunchDialog([], false, false, "idle", "error");
 
@@ -1454,6 +2089,7 @@ describe("HomeLaunchDialog", () => {
   // impact = "Session開始可否とcatalog取得失敗の理由を利用者が識別できる"
   // distinction = "候補配列の長さではなく、catalog request stateをpickerの表示へ投影する境界を確認する"
   // @end-test-value
+  /** Provider の読込中は busy、取得失敗は理由で通知し、通常の空一覧の文言とは分けて開始を止める。 */
   it("Provider catalog の loading と error は正常な空状態と区別する", () => {
     const loading = renderHomeLaunchDialog(
       characterOptions,
@@ -1477,17 +2113,31 @@ describe("HomeLaunchDialog", () => {
     assert.ok(loading.includes('aria-label="Loading coding providers"'));
     assert.ok(loading.includes('aria-busy="true"'));
     assert.ok(!loading.includes("No enabled coding providers."));
-    assert.equal(new JSDOM(loading).window.document.querySelector(".start-session-button")?.hasAttribute("disabled"), true);
+    assert.equal(
+      new JSDOM(loading).window.document
+        .querySelector(".start-session-button")
+        ?.hasAttribute("disabled"),
+      true,
+    );
     assert.ok(error.includes("Could not load model catalog."));
     assert.ok(!error.includes("No enabled coding providers."));
-    assert.equal(new JSDOM(error).window.document.querySelector(".start-session-button")?.hasAttribute("disabled"), true);
+    assert.equal(
+      new JSDOM(error).window.document
+        .querySelector(".start-session-button")
+        ?.hasAttribute("disabled"),
+      true,
+    );
   });
-
 });
 
+/** Recent Sessions の履歴カード、ページ追加、準備状態と開く操作の表示を確認する。 */
 describe("HomeRecentSessionsPanel", () => {
+  /** 履歴やページングを表示するだけのケースでは、開く操作やピン更新は行わない。 */
   const noOp = (..._args: unknown[]) => undefined;
-  const createSessionSummary = (partial: Partial<SessionSummary> & Pick<SessionSummary, "id" | "taskTitle">): SessionSummary => ({
+  /** ID・タイトルを必須にした履歴用 Summary を組み立て、時刻、ピン、形式など検査対象を上書き可能にする。 */
+  const createSessionSummary = (
+    partial: Partial<SessionSummary> & Pick<SessionSummary, "id" | "taskTitle">,
+  ): SessionSummary => ({
     status: "idle",
     updatedAt: "2026-06-17T00:00:00.000Z",
     isPinned: false,
@@ -1515,26 +2165,30 @@ describe("HomeRecentSessionsPanel", () => {
     codexSpeed: partial.codexSpeed ?? "standard",
     codexReviewer: partial.codexReviewer ?? "auto-review",
   });
+  /** 履歴一覧の候補とページング状態を差し替えて、パネルの静的マークアップを返す。 */
   const renderHomeRecentSessions = ({
     filteredSessionEntries = [],
     hasMore = false,
     loadingMore = false,
     onLoadMore = noOp,
   }: {
-    filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
+    filteredSessionEntries?: React.ComponentProps<
+      typeof HomeRecentSessionsPanel
+    >["filteredSessionEntries"];
     hasMore?: boolean;
     loadingMore?: boolean;
     onLoadMore?: () => void;
-  } = {}) => renderToStaticMarkup(
-    <HomeRecentSessionsPanel
-      filteredSessionEntries={filteredSessionEntries}
-      onOpenSession={noOp}
-      onSetSessionPinned={noOp}
-      hasMore={hasMore}
-      loadingMore={loadingMore}
-      onLoadMore={onLoadMore}
-    />,
-  );
+  } = {}) =>
+    renderToStaticMarkup(
+      <HomeRecentSessionsPanel
+        filteredSessionEntries={filteredSessionEntries}
+        onOpenSession={noOp}
+        onSetSessionPinned={noOp}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={onLoadMore}
+      />,
+    );
 
   // @test-value v2
   // kind = "contract"
@@ -1548,11 +2202,15 @@ describe("HomeRecentSessionsPanel", () => {
   // impact = "ユーザーがSessionを開かずにローカルの更新日と時刻を比較できる"
   // distinction = "保存・sort値やcomponent配置ではなく、UI表示専用formatterのtimezoneと曜日を検証する"
   // @end-test-value
+  /** UTC の保存時刻を指定タイムゾーンの時刻へ変換し、英語の曜日略称を含む所定の形式にする。 */
   it("updatedAt は固定timezoneでローカル日時と英語曜日を表示する", () => {
     const previousTimezone = process.env.TZ;
     process.env.TZ = "Asia/Tokyo";
     try {
-      assert.equal(formatHomeSessionUpdatedAt("2026-09-10T05:31:00.000Z"), "2026-09-10(Thu) 14:31");
+      assert.equal(
+        formatHomeSessionUpdatedAt("2026-09-10T05:31:00.000Z"),
+        "2026-09-10(Thu) 14:31",
+      );
     } finally {
       if (previousTimezone === undefined) {
         delete process.env.TZ;
@@ -1574,6 +2232,7 @@ describe("HomeRecentSessionsPanel", () => {
   // impact = "一覧でSessionの更新時刻を比較できず、legacy値を誤った日時と誤認する"
   // distinction = "formatter単体testでは検出できないcardへの表示接続とfallbackを確認する"
   // @end-test-value
+  /** 履歴カードに整形した日時を出し、解釈できない既存時刻は失わず元の値を表示する。 */
   it("Agent cardに整形済み更新日時とparse不能値のfallbackを表示する", () => {
     const previousTimezone = process.env.TZ;
     process.env.TZ = "Asia/Tokyo";
@@ -1599,10 +2258,14 @@ describe("HomeRecentSessionsPanel", () => {
         ],
       });
       const document = new JSDOM(html).window.document;
-      const timestampLabels = Array.from(document.querySelectorAll(".home-session-card-meta span:nth-child(2)"))
-        .map((element) => element.textContent);
+      const timestampLabels = Array.from(
+        document.querySelectorAll(".home-session-card-meta span:nth-child(2)"),
+      ).map((element) => element.textContent);
 
-      assert.deepEqual(timestampLabels, ["Updated 2026-09-10(Thu) 14:31", "Updated legacy-value"]);
+      assert.deepEqual(timestampLabels, [
+        "Updated 2026-09-10(Thu) 14:31",
+        "Updated legacy-value",
+      ]);
     } finally {
       if (previousTimezone === undefined) {
         delete process.env.TZ;
@@ -1622,28 +2285,37 @@ describe("HomeRecentSessionsPanel", () => {
   // scope = "HomeHeader creation readiness"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 起動準備が未完了なら、表示された New Session ボタンを無効にする。 */
   it("Session作成の準備が未完了の時は New Session が無効化される", () => {
-    const html = renderToStaticMarkup(<HomeHeader
-      searchInputText=""
-      onChangeSearchText={noOp}
-      onOpenLaunchDialog={noOp}
-      canCreateSession={false}
-      rightPaneView="monitor"
-      onChangeRightPaneView={noOp}
-      monitorWindowIcon={null}
-      onOpenSessionMonitorWindow={noOp}
-      onOpenSettingsWindow={noOp}
-      onRestoreSessionWindows={noOp}
-    />);
-    const disabledButtons = html.match(/<button class="start-session-button"[^>]*disabled=""/g);
+    const html = renderToStaticMarkup(
+      <HomeHeader
+        searchInputText=""
+        onChangeSearchText={noOp}
+        onOpenLaunchDialog={noOp}
+        canCreateSession={false}
+        rightPaneView="monitor"
+        onChangeRightPaneView={noOp}
+        monitorWindowIcon={null}
+        onOpenSessionMonitorWindow={noOp}
+        onOpenSettingsWindow={noOp}
+        onRestoreSessionWindows={noOp}
+      />,
+    );
+    const disabledButtons = html.match(
+      /<button class="start-session-button"[^>]*disabled=""/g,
+    );
     assert.equal(disabledButtons?.length, 1);
   });
 
+  /** 追加ページがある一覧は末尾の監視要素を出し、手動の追加読込ボタンは設けない。 */
   it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
     const html = renderHomeRecentSessions({ hasMore: true });
 
     assert.match(html, /class="home-session-list-load-sentinel"/);
-    assert.doesNotMatch(html, /Sessionをさらに読み込む|ピン留めをさらに読み込む/);
+    assert.doesNotMatch(
+      html,
+      /Sessionをさらに読み込む|ピン留めをさらに読み込む/,
+    );
     assert.doesNotMatch(html, /class="secondary-button"/);
   });
 
@@ -1657,10 +2329,14 @@ describe("HomeRecentSessionsPanel", () => {
   // scope = "Home recent Session pagination"
   // lifecycle = "permanent"
   // @end-test-value
+  /** ページの読込処理が登録時や非交差時には動かず、一覧末尾が表示範囲に入ったときだけ呼ばれる。 */
   it("一覧末尾のsentinelが交差した時だけ追加読み込みcallbackを呼ぶ", async () => {
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-      pretendToBeVisual: true,
-    });
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      {
+        pretendToBeVisual: true,
+      },
+    );
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
     const previousHTMLElement = globalThis.HTMLElement;
@@ -1669,21 +2345,34 @@ describe("HomeRecentSessionsPanel", () => {
     let observedTarget: Element | null = null;
     let loadMoreCount = 0;
 
+    /** 交差通知のコールバックと実際の監視対象を保持する、レイアウトに依存しない監視スタブ。 */
     class TestIntersectionObserver {
+      /** 交差の有無をテストから送信できるよう、登録されたコールバックを保存する。 */
       constructor(callback: IntersectionObserverCallback) {
         observerCallback = callback;
       }
 
+      /** 一覧がどの要素を追加読込の境界として登録するか記録する。 */
       observe(target: Element) {
         observedTarget = target;
       }
 
+      /** 実際の交差観測は開始しないため、切断時に解放する対象はない。 */
       disconnect() {}
     }
 
-    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "window", {
+      value: dom.window,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: dom.window.document,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      value: dom.window.HTMLElement,
+      configurable: true,
+    });
     Object.defineProperty(globalThis, "IntersectionObserver", {
       value: TestIntersectionObserver,
       configurable: true,
@@ -1709,7 +2398,9 @@ describe("HomeRecentSessionsPanel", () => {
         );
       });
 
-      const sentinel = rootElement.querySelector(".home-session-list-load-sentinel");
+      const sentinel = rootElement.querySelector(
+        ".home-session-list-load-sentinel",
+      );
       assert.ok(sentinel);
       assert.equal(observedTarget, sentinel);
       assert.equal(loadMoreCount, 0);
@@ -1733,9 +2424,18 @@ describe("HomeRecentSessionsPanel", () => {
       await act(async () => {
         root?.unmount();
       });
-      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
-      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
-      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "window", {
+        value: previousWindow,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "document", {
+        value: previousDocument,
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "HTMLElement", {
+        value: previousHTMLElement,
+        configurable: true,
+      });
       Object.defineProperty(globalThis, "IntersectionObserver", {
         value: previousIntersectionObserver,
         configurable: true,
@@ -1753,6 +2453,7 @@ describe("HomeRecentSessionsPanel", () => {
   // scope = "HomeRecentSessionsPanel character authoring card"
   // lifecycle = "permanent"
   // @end-test-value
+  /** Character 作成用 Session の履歴を、タイトルと Character バッジの組で識別できるようにする。 */
   it("character authoring session は Character badge で表示する", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [
@@ -1782,6 +2483,7 @@ describe("HomeRecentSessionsPanel", () => {
   // scope = "HomeRecentSessionsPanel pinned Agent card"
   // lifecycle = "permanent"
   // @end-test-value
+  /** ピン留めした Agent を履歴の先頭にし、開く操作へボタンを入れ子にせず、独立した解除操作を表示する。 */
   it("pin済みAgentを先頭にし、開く操作とpin操作を兄弟buttonで表示する", () => {
     const html = renderHomeRecentSessions({
       filteredSessionEntries: [
@@ -1806,7 +2508,10 @@ describe("HomeRecentSessionsPanel", () => {
     });
 
     assert.ok(html.indexOf("Pinned task") < html.indexOf("Recent task"));
-    assert.match(html, /class="session-card home-session-card is-pinnable is-pinned"/);
+    assert.match(
+      html,
+      /class="session-card home-session-card is-pinnable is-pinned"/,
+    );
     assert.match(html, /class="home-session-card-open"/);
     assert.match(html, /aria-pressed="true"/);
     assert.match(html, /aria-label="Unpin Pinned task"/);
@@ -1828,37 +2533,50 @@ describe("HomeRecentSessionsPanel", () => {
   // scope = "HomeRecentSessionsPanel legacy Session card"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 旧形式の Agent 履歴に Mate アイコンと読み取り専用表示を付け、内容を開く操作まで無効にはしない。 */
   it("履歴カードに Mate アイコンを表示し、V4 以前の Agent session は閲覧専用として開ける", () => {
     const html = renderHomeRecentSessions({
-      filteredSessionEntries: [{
-        session: createSessionSummary({
-          id: "session-v4",
-          taskTitle: "Legacy task",
-          sourceSchemaVersion: 4,
-          character: "Solo Mate",
-          characterIconPath: "mate.png",
-        }),
-        state: { kind: "neutral", label: "idle" },
-      }],
+      filteredSessionEntries: [
+        {
+          session: createSessionSummary({
+            id: "session-v4",
+            taskTitle: "Legacy task",
+            sourceSchemaVersion: 4,
+            character: "Solo Mate",
+            characterIconPath: "mate.png",
+          }),
+          state: { kind: "neutral", label: "idle" },
+        },
+      ],
     });
 
-    assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 1);
+    assert.equal(
+      (html.match(/character-avatar tiny home-session-card-avatar/g) ?? [])
+        .length,
+      1,
+    );
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("Read Only"));
-    const openButton = new JSDOM(html).window.document.querySelector(".home-session-card-open");
+    const openButton = new JSDOM(html).window.document.querySelector(
+      ".home-session-card-open",
+    );
     assert.ok(openButton);
     assert.equal(openButton.hasAttribute("disabled"), false);
     assert.notEqual(openButton.getAttribute("aria-disabled"), "true");
     assert.match(html, /class="session-card home-session-card/);
   });
-
 });
 
-
+/** Monitor の親・Auxiliary の状態表示、展開、ナビゲーションとエラー通知を検証する。 */
 describe("HomeMonitorContent", () => {
+  /** 表示専用の Monitor では別画面を開いたりコンテキスト操作を実行したりしない。 */
   const noOp = (..._args: unknown[]) => undefined;
 
-  const createMonitorSession = (id: string, taskTitle: string): HomeSessionSummary => ({
+  /** 指定 ID と題名で Monitor の親行を作り、アイコンなどの表示比較に固定値を使う。 */
+  const createMonitorSession = (
+    id: string,
+    taskTitle: string,
+  ): HomeSessionSummary => ({
     id,
     taskTitle,
     status: "idle",
@@ -1876,30 +2594,33 @@ describe("HomeMonitorContent", () => {
     runState: "idle",
   });
 
-  const createMonitorAuxiliary = (id: string, overrides: Record<string, unknown> = {}) => ({
-    id,
-    parentSessionId: "session-1",
-    runState: "idle",
-    title: "Auxiliary",
-    provider: "codex",
-    catalogRevision: 1,
-    model: "gpt-5.4",
-    reasoningEffort: "high",
-    approvalMode: "untrusted",
-    codexSandboxMode: "danger-full-access",
-    customAgentName: "",
-    threadId: "",
-    displayAfterMessageIndex: null,
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-30T00:00:00.000Z",
-    characterIconPath: "mate.png",
-    preview: "Auxiliary preview",
-    codexSpeed: "standard",
-    codexReviewer: "auto-review",
-    ...overrides,
-  } as AuxiliarySessionSummary);
-
-
+  /** Monitor 用の Auxiliary Summary を作り、親、状態、プレビューを検証条件に合わせて差し替える。 */
+  const createMonitorAuxiliary = (
+    id: string,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    ({
+      id,
+      parentSessionId: "session-1",
+      runState: "idle",
+      title: "Auxiliary",
+      provider: "codex",
+      catalogRevision: 1,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      approvalMode: "untrusted",
+      codexSandboxMode: "danger-full-access",
+      customAgentName: "",
+      threadId: "",
+      displayAfterMessageIndex: null,
+      createdAt: "2026-03-28T00:00:00.000Z",
+      updatedAt: "2026-03-30T00:00:00.000Z",
+      characterIconPath: "mate.png",
+      preview: "Auxiliary preview",
+      codexSpeed: "standard",
+      codexReviewer: "auto-review",
+      ...overrides,
+    }) as AuxiliarySessionSummary;
 
   // @test-value v2
   // kind = "invariant"
@@ -1913,6 +2634,7 @@ describe("HomeMonitorContent", () => {
   // impact = "列名を読まずに親の状態と配下の状態・展開先を区別し、誤った対象を開くことを防ぐ"
   // distinction = "projectionや型検査では確認できない最終DOMの意味的なまとまりと操作対象を既存の表示testで検証し、新しいtest環境は増やさない"
   // @end-test-value
+  /** 親行のアイコンとタイトル、ラベル付き状態を同じまとまりにし、Auxiliary の件数は一覧を開く操作にまとめる。 */
   it("Monitor カードはキャラアイコン付きでセッション情報を表示する", () => {
     const entries: HomeMonitorEntry[] = [
       {
@@ -1921,7 +2643,10 @@ describe("HomeMonitorContent", () => {
         state: { kind: "running", label: "Running" },
         mainState: { kind: "neutral", label: "Idle" },
         auxiliarySessions: [
-          createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
+          createMonitorAuxiliary("aux-1", {
+            runState: "error",
+            preview: "Auxiliary error",
+          }),
           createMonitorAuxiliary("aux-idle", {
             preview: "Idle auxiliary",
           }),
@@ -1934,8 +2659,6 @@ describe("HomeMonitorContent", () => {
         mainState: { kind: "running", label: "Running" },
         auxiliarySessions: [],
       },
-
-
     ];
     const html = renderToStaticMarkup(
       <HomeMonitorContent
@@ -1955,43 +2678,112 @@ describe("HomeMonitorContent", () => {
     assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
-      const mainGroup = parentRow?.querySelector(`[role="group"][aria-label="Main session: ${entries[index]?.session.taskTitle}"]`);
+      const mainGroup = parentRow?.querySelector(
+        `[role="group"][aria-label="Main session: ${entries[index]?.session.taskTitle}"]`,
+      );
       assert.ok(mainGroup);
-      assert.ok(mainGroup.querySelector(`button[aria-label="Open session: ${entries[index]?.session.taskTitle}"]`));
-      assert.ok(mainGroup.querySelector(`.home-monitor-status-icon.${expectedMainStates[index]}`));
-      assert.ok(mainGroup.querySelector(`[aria-label="Main ${entries[index]?.mainState.label}"]`));
+      assert.ok(
+        mainGroup.querySelector(
+          `button[aria-label="Open session: ${entries[index]?.session.taskTitle}"]`,
+        ),
+      );
+      assert.ok(
+        mainGroup.querySelector(
+          `.home-monitor-status-icon.${expectedMainStates[index]}`,
+        ),
+      );
+      assert.ok(
+        mainGroup.querySelector(
+          `[aria-label="Main ${entries[index]?.mainState.label}"]`,
+        ),
+      );
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
-      assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
-      assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);
-      assert.equal(card.querySelectorAll(".home-monitor-avatar").length, 1);
-      assert.equal(parentRow?.querySelector(".home-monitor-avatar")?.classList.contains("home-monitor-avatar"), true);
-      assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
-      assert.equal(parentRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
       assert.equal(
-        mainGroup.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        card.querySelectorAll(".home-monitor-auxiliary-list").length,
+        0,
+      );
+      assert.equal(
+        card.querySelectorAll(".home-monitor-parent-title").length,
+        1,
+      );
+      assert.equal(card.querySelectorAll(".home-monitor-avatar").length, 1);
+      assert.equal(
+        parentRow
+          ?.querySelector(".home-monitor-avatar")
+          ?.classList.contains("home-monitor-avatar"),
+        true,
+      );
+      assert.equal(
+        parentRow?.querySelector(".home-monitor-parent-title")?.textContent,
+        entries[index]?.session.taskTitle,
+      );
+      assert.equal(
+        parentRow?.querySelectorAll(".home-monitor-status-cluster").length,
+        index === 0 ? 2 : 1,
+      );
+      assert.equal(
+        mainGroup.querySelectorAll(
+          `.home-monitor-status-icon.${expectedMainStates[index]}`,
+        ).length,
         1,
       );
     }
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-cluster").length, 2);
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-auxiliary-status").length, 1);
-    const auxiliaryDisclosure = cards[0]?.querySelector('button[aria-label="Show Auxiliary sessions for Agent task"]');
+    assert.equal(
+      cards[0]?.querySelectorAll(".home-monitor-status-cluster").length,
+      2,
+    );
+    assert.equal(
+      cards[0]?.querySelectorAll(".home-monitor-auxiliary-status").length,
+      1,
+    );
+    const auxiliaryDisclosure = cards[0]?.querySelector(
+      'button[aria-label="Show Auxiliary sessions for Agent task"]',
+    );
     assert.ok(auxiliaryDisclosure);
     assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
     assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Failed: 1"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'));
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 2);
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
-    assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
-    assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
-    assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 2);
-    assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
+    assert.ok(
+      auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Failed: 1"]'),
+    );
+    assert.ok(
+      auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'),
+    );
+    assert.equal(
+      cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length,
+      2,
+    );
+    assert.equal(
+      cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length,
+      1,
+    );
+    assert.equal(
+      cards[1]?.querySelectorAll(".home-monitor-status-cluster").length,
+      1,
+    );
+    assert.equal(
+      cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length,
+      0,
+    );
+    assert.equal(
+      html.match(/class="home-monitor-status-icon running"/g)?.length,
+      1,
+    );
+    assert.equal(
+      html.match(/class="home-monitor-status-icon neutral"/g)?.length,
+      2,
+    );
+    assert.equal(
+      html.match(/class="home-monitor-status-icon error"/g)?.length,
+      1,
+    );
     assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
     assert.ok(html.includes('aria-label="Auxiliary Failed: 1"'));
     assert.ok(html.includes('aria-label="Auxiliary Idle: 1"'));
-    assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
+    assert.equal(
+      html.match(/character-avatar tiny home-monitor-avatar/g)?.length,
+      2,
+    );
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
 
@@ -2007,6 +2799,7 @@ describe("HomeMonitorContent", () => {
   // impact = "新規・旧形式Auxiliaryのpreviewを日本語fallbackなしでHome Monitorへ表示する"
   // distinction = "Auxiliary previewの保存値ではなく、Home Monitorでの最終表示値を確認する"
   // @end-test-value
+  /** Auxiliary のプレビューが明示的に空か欠損ならそのまま空で表示し、開く操作のラベルに別途既定名を残す。 */
   it("Home Monitorは空または欠損のAuxiliary previewを日本語fallbackへ戻さない", async () => {
     const previousGlobals = {
       window: globalThis.window,
@@ -2018,14 +2811,20 @@ describe("HomeMonitorContent", () => {
       KeyboardEvent: globalThis.KeyboardEvent,
       PointerEvent: globalThis.PointerEvent,
     };
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-      pretendToBeVisual: true,
-    });
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      {
+        pretendToBeVisual: true,
+      },
+    );
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const root = createRoot(container);
     const entry: HomeMonitorEntry = {
       kind: "agent",
-      session: createMonitorSession("session-empty-preview", "Empty preview task"),
+      session: createMonitorSession(
+        "session-empty-preview",
+        "Empty preview task",
+      ),
       state: { kind: "neutral", label: "待機" },
       mainState: { kind: "neutral", label: "待機" },
       auxiliarySessions: [
@@ -2042,30 +2841,51 @@ describe("HomeMonitorContent", () => {
       Event: { configurable: true, value: dom.window.Event },
       MouseEvent: { configurable: true, value: dom.window.MouseEvent },
       KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
-      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+      PointerEvent: {
+        configurable: true,
+        value: dom.window.PointerEvent ?? dom.window.MouseEvent,
+      },
     });
 
     try {
-      await act(async () => root.render(
-        <HomeMonitorContent
-          approvalEntries={[]}
-          runningEntries={[]}
-          nonRunningEntries={[entry]}
-          onOpenSession={noOp}
-          onShowContextMenu={noOp}
-        />,
-      ));
+      await act(async () =>
+        root.render(
+          <HomeMonitorContent
+            approvalEntries={[]}
+            runningEntries={[]}
+            nonRunningEntries={[entry]}
+            onOpenSession={noOp}
+            onShowContextMenu={noOp}
+          />,
+        ),
+      );
 
-      const disclosure = container.querySelector<HTMLButtonElement>("button.home-monitor-disclosure");
+      const disclosure = container.querySelector<HTMLButtonElement>(
+        "button.home-monitor-disclosure",
+      );
       assert.ok(disclosure);
-      await act(async () => disclosure.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await act(async () =>
+        disclosure.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
 
-      const rows = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row"));
+      const rows = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          "button.home-monitor-auxiliary-row",
+        ),
+      );
       assert.equal(rows.length, 2);
-      assert.equal(rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(
+        rows[0]?.querySelector(".home-monitor-auxiliary-preview")?.textContent,
+        "",
+      );
       assert.equal(rows[0]?.getAttribute("aria-label"), "Open Auxiliary 1");
       assert.equal(rows[0]?.textContent?.includes("新しい会話"), false);
-      assert.equal(rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent, "");
+      assert.equal(
+        rows[1]?.querySelector(".home-monitor-auxiliary-preview")?.textContent,
+        "",
+      );
       assert.equal(rows[1]?.getAttribute("aria-label"), "Open Auxiliary 2");
       assert.equal(container.textContent?.includes("新しい会話"), false);
     } finally {
@@ -2078,8 +2898,14 @@ describe("HomeMonitorContent", () => {
         HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
         Event: { configurable: true, value: previousGlobals.Event },
         MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
-        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
-        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+        KeyboardEvent: {
+          configurable: true,
+          value: previousGlobals.KeyboardEvent,
+        },
+        PointerEvent: {
+          configurable: true,
+          value: previousGlobals.PointerEvent,
+        },
       });
     }
   });
@@ -2096,6 +2922,7 @@ describe("HomeMonitorContent", () => {
   // impact = "親カードを展開しなくても、Auxiliaryの実行中3件と待機1件を正しく把握できる"
   // distinction = "projectionのAuxiliary全件保持ではなく、折りたたみ時のstatus iconの可視テキストとaccessible nameを直接確認する"
   // @end-test-value
+  /** 一覧を閉じた親カードでも複数の状態の件数を同時に公開し、待機一件を省略しない。 */
   it("閉じたMonitorカードでもAuxiliaryの状態別件数を1件から表示する", () => {
     const auxiliarySessions = [
       createMonitorAuxiliary("aux-running-1", { runState: "running" }),
@@ -2105,7 +2932,10 @@ describe("HomeMonitorContent", () => {
     ];
     const entry: HomeMonitorEntry = {
       kind: "agent",
-      session: createMonitorSession("session-count-summary", "Count summary task"),
+      session: createMonitorSession(
+        "session-count-summary",
+        "Count summary task",
+      ),
       state: { kind: "running", label: "Running" },
       mainState: { kind: "neutral", label: "Idle" },
       auxiliarySessions,
@@ -2121,14 +2951,33 @@ describe("HomeMonitorContent", () => {
     );
     const document = new JSDOM(html).window.document;
     const card = document.querySelector(".home-monitor-card");
-    const auxiliaryStatus = card?.querySelector(".home-monitor-auxiliary-status");
-    const runningIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.running");
-    const idleIcon = auxiliaryStatus?.querySelector(".home-monitor-status-icon.neutral");
+    const auxiliaryStatus = card?.querySelector(
+      ".home-monitor-auxiliary-status",
+    );
+    const runningIcon = auxiliaryStatus?.querySelector(
+      ".home-monitor-status-icon.running",
+    );
+    const idleIcon = auxiliaryStatus?.querySelector(
+      ".home-monitor-status-icon.neutral",
+    );
 
-    assert.equal(card?.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
-    assert.equal(runningIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 3");
-    assert.equal(idleIcon?.querySelector(".home-monitor-status-icon-count")?.textContent, ": 1");
-    assert.equal(runningIcon?.getAttribute("aria-label"), "Auxiliary Running: 3");
+    assert.equal(
+      card?.querySelectorAll(".home-monitor-auxiliary-list").length,
+      0,
+    );
+    assert.equal(
+      runningIcon?.querySelector(".home-monitor-status-icon-count")
+        ?.textContent,
+      ": 3",
+    );
+    assert.equal(
+      idleIcon?.querySelector(".home-monitor-status-icon-count")?.textContent,
+      ": 1",
+    );
+    assert.equal(
+      runningIcon?.getAttribute("aria-label"),
+      "Auxiliary Running: 3",
+    );
     assert.equal(idleIcon?.getAttribute("aria-label"), "Auxiliary Idle: 1");
   });
 
@@ -2143,14 +2992,17 @@ describe("HomeMonitorContent", () => {
   // lifecycle = "permanent"
   // impact = "Auxiliaryの有無とsummary取得状態を混同させず、復旧可能な状態を利用者へ伝える"
   // @end-test-value
+  /** Auxiliary 一覧が取得中やエラーのときは親行に未確定の集計を出さず、Monitor に対応する待機またはエラーを示す。 */
   it("Auxiliary summary未確定時は親カードへAuxiliaryを作らずMonitor feedbackを表示する", () => {
-    const entries = [{
-      kind: "agent" as const,
-      session: createMonitorSession("loading-session", "Loading task"),
-      state: { kind: "neutral" as const, label: "Idle" },
-      mainState: { kind: "neutral" as const, label: "Idle" },
-      auxiliarySessions: [],
-    }];
+    const entries = [
+      {
+        kind: "agent" as const,
+        session: createMonitorSession("loading-session", "Loading task"),
+        state: { kind: "neutral" as const, label: "Idle" },
+        mainState: { kind: "neutral" as const, label: "Idle" },
+        auxiliarySessions: [],
+      },
+    ];
     for (const [auxiliaryDataState, expectedFeedback] of [
       ["loading", "Loading Auxiliary sessions"],
       ["error", "Could not load Auxiliary sessions."],
@@ -2167,13 +3019,29 @@ describe("HomeMonitorContent", () => {
       );
       const document = new JSDOM(html).window.document;
 
-      assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
+      assert.equal(
+        document.querySelectorAll(".home-monitor-auxiliary-status").length,
+        0,
+      );
       if (auxiliaryDataState === "loading") {
-        assert.equal(document.querySelector('.home-session-list-load-status [role="status"], .home-session-list-load-status[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
+        assert.equal(
+          document
+            .querySelector(
+              '.home-session-list-load-status [role="status"], .home-session-list-load-status[role="status"]',
+            )
+            ?.getAttribute("aria-label"),
+          expectedFeedback,
+        );
         assert.equal(document.querySelector('[role="alert"]'), null);
       } else {
-        assert.equal(document.querySelector('[role="alert"]')?.textContent, expectedFeedback);
-        assert.equal(document.querySelector('.home-session-list-load-status'), null);
+        assert.equal(
+          document.querySelector('[role="alert"]')?.textContent,
+          expectedFeedback,
+        );
+        assert.equal(
+          document.querySelector(".home-session-list-load-status"),
+          null,
+        );
       }
     }
   });
@@ -2190,6 +3058,7 @@ describe("HomeMonitorContent", () => {
   // impact = "複数Auxiliaryを一覧から正確に再開し、既存親のopen操作を壊さない"
   // distinction = "Main IPCの親子validationではなく、rendererのdisclosureとstable ID mappingを検証する"
   // @end-test-value
+  /** 親ごとの一覧を個別に展開し、親と Auxiliary を独立したボタンと正しい識別子で開く。 */
   it("Auxiliary一覧を独立に展開し、親とAuxiliaryを別導線で開く", async () => {
     const previousGlobals = {
       window: globalThis.window,
@@ -2201,13 +3070,23 @@ describe("HomeMonitorContent", () => {
       KeyboardEvent: globalThis.KeyboardEvent,
       PointerEvent: globalThis.PointerEvent,
     };
-    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-      pretendToBeVisual: true,
-    });
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      {
+        pretendToBeVisual: true,
+      },
+    );
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const root = createRoot(container);
-    const openedSessions: Array<{ sessionId: string; auxiliarySessionId?: string }> = [];
-    const recordOpenedSession = (sessionId: string, auxiliarySessionId?: string) => {
+    const openedSessions: Array<{
+      sessionId: string;
+      auxiliarySessionId?: string;
+    }> = [];
+    /** 開く操作が渡した親 Session と、Auxiliary の場合だけ付く対象 ID を記録する。 */
+    const recordOpenedSession = (
+      sessionId: string,
+      auxiliarySessionId?: string,
+    ) => {
       openedSessions.push({ sessionId, auxiliarySessionId });
     };
     const auxiliarySessions = [
@@ -2235,7 +3114,10 @@ describe("HomeMonitorContent", () => {
     };
     const secondEntry: HomeMonitorEntry = {
       kind: "agent",
-      session: createMonitorSession("session-expand-2", "Second expandable task"),
+      session: createMonitorSession(
+        "session-expand-2",
+        "Second expandable task",
+      ),
       state: { kind: "neutral", label: "待機" },
       mainState: { kind: "neutral", label: "待機" },
       auxiliarySessions: [
@@ -2246,7 +3128,6 @@ describe("HomeMonitorContent", () => {
       ],
     };
 
-
     Object.defineProperties(globalThis, {
       window: { configurable: true, value: dom.window },
       document: { configurable: true, value: dom.window.document },
@@ -2255,65 +3136,135 @@ describe("HomeMonitorContent", () => {
       Event: { configurable: true, value: dom.window.Event },
       MouseEvent: { configurable: true, value: dom.window.MouseEvent },
       KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
-      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+      PointerEvent: {
+        configurable: true,
+        value: dom.window.PointerEvent ?? dom.window.MouseEvent,
+      },
     });
 
     try {
-      await act(async () => root.render(
-        <HomeMonitorContent
-          approvalEntries={[]}
-          runningEntries={[]}
-          nonRunningEntries={[entry, secondEntry]}
-          onOpenSession={recordOpenedSession}
-          onShowContextMenu={noOp}
-        />,
-      ));
+      await act(async () =>
+        root.render(
+          <HomeMonitorContent
+            approvalEntries={[]}
+            runningEntries={[]}
+            nonRunningEntries={[entry, secondEntry]}
+            onOpenSession={recordOpenedSession}
+            onShowContextMenu={noOp}
+          />,
+        ),
+      );
 
-      const disclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
-      const parentButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-parent-button"));
+      const disclosures = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          "button.home-monitor-disclosure",
+        ),
+      );
+      const parentButtons = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          "button.home-monitor-parent-button",
+        ),
+      );
       assert.equal(disclosures.length, 2);
       assert.equal(parentButtons.length, 2);
-      assert.equal(container.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+      assert.equal(
+        container.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        0,
+      );
 
-      await act(async () => disclosures[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      let cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
+      await act(async () =>
+        disclosures[0]?.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
+      let cards = Array.from(
+        container.querySelectorAll<HTMLElement>(".home-monitor-card"),
+      );
       assert.equal(cards.length, 2);
-      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
-      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
-      const auxiliaryRows = Array.from(cards[0]?.querySelectorAll<HTMLButtonElement>("button.home-monitor-auxiliary-row") ?? []);
+      assert.equal(
+        cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        2,
+      );
+      assert.equal(
+        cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        0,
+      );
+      const auxiliaryRows = Array.from(
+        cards[0]?.querySelectorAll<HTMLButtonElement>(
+          "button.home-monitor-auxiliary-row",
+        ) ?? [],
+      );
       assert.ok(auxiliaryRows[0]?.textContent?.includes("First auxiliary"));
       assert.equal(
-        Array.from(container.querySelectorAll("button")).some((button) => button.querySelector("button")),
+        Array.from(container.querySelectorAll("button")).some((button) =>
+          button.querySelector("button"),
+        ),
         false,
       );
 
-      await act(async () => auxiliaryRows[1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      assert.deepEqual(openedSessions, [{ sessionId: "session-expand", auxiliarySessionId: "aux-b" }]);
+      await act(async () =>
+        auxiliaryRows[1]?.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
+      assert.deepEqual(openedSessions, [
+        { sessionId: "session-expand", auxiliarySessionId: "aux-b" },
+      ]);
 
-      await act(async () => parentButtons[0]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await act(async () =>
+        parentButtons[0]?.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
       assert.deepEqual(openedSessions, [
         { sessionId: "session-expand", auxiliarySessionId: "aux-b" },
         { sessionId: "session-expand", auxiliarySessionId: undefined },
       ]);
 
-      await act(async () => root.render(
-        <HomeMonitorContent
-          approvalEntries={[]}
-          runningEntries={[entry]}
-          nonRunningEntries={[secondEntry]}
-          onOpenSession={recordOpenedSession}
-          onShowContextMenu={noOp}
-        />,
-      ));
-      cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
-      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
-      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 0);
+      await act(async () =>
+        root.render(
+          <HomeMonitorContent
+            approvalEntries={[]}
+            runningEntries={[entry]}
+            nonRunningEntries={[secondEntry]}
+            onOpenSession={recordOpenedSession}
+            onShowContextMenu={noOp}
+          />,
+        ),
+      );
+      cards = Array.from(
+        container.querySelectorAll<HTMLElement>(".home-monitor-card"),
+      );
+      assert.equal(
+        cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        2,
+      );
+      assert.equal(
+        cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        0,
+      );
 
-      const movedDisclosures = Array.from(container.querySelectorAll<HTMLButtonElement>("button.home-monitor-disclosure"));
-      await act(async () => movedDisclosures[1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-      cards = Array.from(container.querySelectorAll<HTMLElement>(".home-monitor-card"));
-      assert.equal(cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 2);
-      assert.equal(cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length, 1);
+      const movedDisclosures = Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          "button.home-monitor-disclosure",
+        ),
+      );
+      await act(async () =>
+        movedDisclosures[1]?.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
+      cards = Array.from(
+        container.querySelectorAll<HTMLElement>(".home-monitor-card"),
+      );
+      assert.equal(
+        cards[0]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        2,
+      );
+      assert.equal(
+        cards[1]?.querySelectorAll("button.home-monitor-auxiliary-row").length,
+        1,
+      );
     } finally {
       await act(async () => root.unmount());
       dom.window.close();
@@ -2324,8 +3275,14 @@ describe("HomeMonitorContent", () => {
         HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
         Event: { configurable: true, value: previousGlobals.Event },
         MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
-        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
-        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+        KeyboardEvent: {
+          configurable: true,
+          value: previousGlobals.KeyboardEvent,
+        },
+        PointerEvent: {
+          configurable: true,
+          value: previousGlobals.PointerEvent,
+        },
       });
     }
   });
@@ -2340,6 +3297,7 @@ describe("HomeMonitorContent", () => {
   // scope = "HomeMonitorContent agent context menu interaction"
   // lifecycle = "permanent"
   // @end-test-value
+  /** 対象 Agent の右クリックとキーボードのメニュー操作を抑止し、正しい Session と入力手段に対応した座標でメニューを要求する。 */
   it("Monitor row は右クリックとkeyboard context menuを対象entryへ渡す", async () => {
     const previousGlobals = {
       window: globalThis.window,
@@ -2351,9 +3309,12 @@ describe("HomeMonitorContent", () => {
       KeyboardEvent: globalThis.KeyboardEvent,
       PointerEvent: globalThis.PointerEvent,
     };
-    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
-      pretendToBeVisual: true,
-    });
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      {
+        pretendToBeVisual: true,
+      },
+    );
     const container = dom.window.document.getElementById("root") as HTMLElement;
     const root = createRoot(container);
     const requests: unknown[] = [];
@@ -2388,38 +3349,61 @@ describe("HomeMonitorContent", () => {
       Event: { configurable: true, value: dom.window.Event },
       MouseEvent: { configurable: true, value: dom.window.MouseEvent },
       KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
-      PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+      PointerEvent: {
+        configurable: true,
+        value: dom.window.PointerEvent ?? dom.window.MouseEvent,
+      },
     });
     try {
-      await act(async () => root.render(
-        <HomeMonitorContent
-          approvalEntries={[]}
-          runningEntries={[entry]}
-          nonRunningEntries={[]}
-          onOpenSession={noOp}
-          onShowContextMenu={(kind, sessionId, point) => requests.push({ kind, sessionId, point })}
-        />,
-      ));
-      const row = container.querySelector<HTMLButtonElement>("button.home-monitor-parent-button");
+      await act(async () =>
+        root.render(
+          <HomeMonitorContent
+            approvalEntries={[]}
+            runningEntries={[entry]}
+            nonRunningEntries={[]}
+            onOpenSession={noOp}
+            onShowContextMenu={(kind, sessionId, point) =>
+              requests.push({ kind, sessionId, point })
+            }
+          />,
+        ),
+      );
+      const row = container.querySelector<HTMLButtonElement>(
+        "button.home-monitor-parent-button",
+      );
       assert.ok(row);
       assert.equal(row.getAttribute("aria-haspopup"), "menu");
       Object.defineProperty(row, "getBoundingClientRect", {
         configurable: true,
+        /** キー操作時のメニュー基準となる行位置を固定し、座標の丸めも観測できるようにする。 */
         value: () => ({ left: 120.4, bottom: 240.6 }),
       });
       const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
-        bubbles: true, cancelable: true, clientX: 24, clientY: 48,
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 48,
       });
       await act(async () => row.dispatchEvent(contextMenuEvent));
       assert.equal(contextMenuEvent.defaultPrevented, true);
-      assert.deepEqual(requests, [{ kind: "agent", sessionId: "session-context-menu", point: { x: 24, y: 48 } }]);
+      assert.deepEqual(requests, [
+        {
+          kind: "agent",
+          sessionId: "session-context-menu",
+          point: { x: 24, y: 48 },
+        },
+      ]);
       const keyboardEvent = new dom.window.KeyboardEvent("keydown", {
-        bubbles: true, cancelable: true, key: "ContextMenu",
+        bubbles: true,
+        cancelable: true,
+        key: "ContextMenu",
       });
       await act(async () => row.dispatchEvent(keyboardEvent));
       assert.equal(keyboardEvent.defaultPrevented, true);
       assert.deepEqual(requests.at(-1), {
-        kind: "agent", sessionId: "session-context-menu", point: { x: 120, y: 241 },
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 120, y: 241 },
       });
       const shiftF10Event = new dom.window.KeyboardEvent("keydown", {
         bubbles: true,
@@ -2430,7 +3414,9 @@ describe("HomeMonitorContent", () => {
       await act(async () => row.dispatchEvent(shiftF10Event));
       assert.equal(shiftF10Event.defaultPrevented, true);
       assert.deepEqual(requests.at(-1), {
-        kind: "agent", sessionId: "session-context-menu", point: { x: 120, y: 241 },
+        kind: "agent",
+        sessionId: "session-context-menu",
+        point: { x: 120, y: 241 },
       });
     } finally {
       await act(async () => root.unmount());
@@ -2442,8 +3428,14 @@ describe("HomeMonitorContent", () => {
         HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
         Event: { configurable: true, value: previousGlobals.Event },
         MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
-        KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
-        PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+        KeyboardEvent: {
+          configurable: true,
+          value: previousGlobals.KeyboardEvent,
+        },
+        PointerEvent: {
+          configurable: true,
+          value: previousGlobals.PointerEvent,
+        },
       });
     }
   });
@@ -2460,6 +3452,7 @@ describe("HomeMonitorContent", () => {
   // impact = "Session Monitor操作の失敗を利用者と支援技術へ伝える"
   // distinction = "context menuのentry mappingやnative menu resultではなく、失敗結果のvisible projectionを検証する"
   // @end-test-value
+  /** Monitor の操作失敗を polite なステータスで伝え、フィードバックが空ならライブ通知自体を出さない。 */
   it("Monitor feedbackは失敗時だけpoliteなlive statusを表示する", () => {
     const emptyHtml = renderToStaticMarkup(
       <HomeMonitorContent
@@ -2481,7 +3474,12 @@ describe("HomeMonitorContent", () => {
       />,
     );
 
-    assert.equal(new JSDOM(emptyHtml).window.document.querySelector('.home-session-list-feedback [role="status"]'), null);
+    assert.equal(
+      new JSDOM(emptyHtml).window.document.querySelector(
+        '.home-session-list-feedback [role="status"]',
+      ),
+      null,
+    );
     assert.match(
       failureHtml,
       /role="status" aria-live="polite">Could not copy session ID\.<\/p>/,
@@ -2489,60 +3487,71 @@ describe("HomeMonitorContent", () => {
   });
 });
 
+/** Home の共通ヘッダーと右ペインで、タブ・Character 一覧・監視と復元操作を検証する。 */
 describe("HomeRightPane", () => {
+  /** 右ペインの描画確認用に、選択通知や外部ウィンドウを開かない既定の操作を渡す。 */
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeRightPane = (rightPaneView: "monitor" | "characters", characters = [{
-    id: "char-1",
-    name: "Mia",
-    description: "説明文",
-    iconFilePath: "",
-    theme: { main: "#3b82f6", sub: "#1d4ed8" },
-    state: "active" as const,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    archivedAt: null,
-  }],
+  /** 選択中のタブと読込・復元・監視の各通知を切り替え、ヘッダーと右ペインを一緒に描画する。 */
+  const renderHomeRightPane = (
+    rightPaneView: "monitor" | "characters",
+    characters = [
+      {
+        id: "char-1",
+        name: "Mia",
+        description: "説明文",
+        iconFilePath: "",
+        theme: { main: "#3b82f6", sub: "#1d4ed8" },
+        state: "active" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: null,
+      },
+    ],
     characterListFeedback = "",
     sessionWindowRestoreIds: readonly string[] = [],
     sessionWindowRestorePending = false,
     sessionWindowRestoreFeedback = "",
     sessionMonitorFeedback = "",
     characterLoadStatus: "loading" | "loaded" | "error" = "loaded",
-  ) => renderToStaticMarkup(<>
-    <HomeHeader
-      searchInputText=""
-      onChangeSearchText={noOp}
-      onOpenLaunchDialog={noOp}
-      canCreateSession
-      rightPaneView={rightPaneView}
-      monitorWindowIcon={<span>Monitor</span>}
-      onChangeRightPaneView={noOp}
-      onOpenSessionMonitorWindow={noOp}
-      onOpenSettingsWindow={noOp}
-      onRestoreSessionWindows={noOp}
-      sessionWindowRestoreIds={sessionWindowRestoreIds}
-      sessionWindowRestorePending={sessionWindowRestorePending}
-      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
-    />
-    <HomeRightPane
-      searchText=""
-      rightPaneView={rightPaneView}
-      approvalMonitorEntries={[]}
-      runningMonitorEntries={[]}
-      nonRunningMonitorEntries={[]}
-      auxiliaryDataState="ready"
-      characterEntries={characters}
-      characterLoadStatus={characterLoadStatus}
-      characterListFeedback={characterListFeedback}
-      onCreateCharacter={noOp}
-      onEditCharacter={noOp}
-      onOpenSession={noOp}
-      onShowSessionMonitorContextMenu={noOp}
-      sessionMonitorFeedback={sessionMonitorFeedback}
-    />
-  </>);
+  ) =>
+    renderToStaticMarkup(
+      <>
+        <HomeHeader
+          searchInputText=""
+          onChangeSearchText={noOp}
+          onOpenLaunchDialog={noOp}
+          canCreateSession
+          rightPaneView={rightPaneView}
+          monitorWindowIcon={<span>Monitor</span>}
+          onChangeRightPaneView={noOp}
+          onOpenSessionMonitorWindow={noOp}
+          onOpenSettingsWindow={noOp}
+          onRestoreSessionWindows={noOp}
+          sessionWindowRestoreIds={sessionWindowRestoreIds}
+          sessionWindowRestorePending={sessionWindowRestorePending}
+          sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
+        />
+        <HomeRightPane
+          searchText=""
+          rightPaneView={rightPaneView}
+          approvalMonitorEntries={[]}
+          runningMonitorEntries={[]}
+          nonRunningMonitorEntries={[]}
+          auxiliaryDataState="ready"
+          characterEntries={characters}
+          characterLoadStatus={characterLoadStatus}
+          characterListFeedback={characterListFeedback}
+          onCreateCharacter={noOp}
+          onEditCharacter={noOp}
+          onOpenSession={noOp}
+          onShowSessionMonitorContextMenu={noOp}
+          sessionMonitorFeedback={sessionMonitorFeedback}
+        />
+      </>,
+    );
 
+  /** Home の右ペインへ旧メイトークの入力・メッセージ・補助表示が戻っていないことを確認する。 */
   const assertNoMateTalkChatSurface = (html: string) => {
     assert.ok(!html.includes('data-session-mode="mate-talk"'));
     assert.ok(!html.includes("session-content-grid"));
@@ -2570,6 +3579,7 @@ describe("HomeRightPane", () => {
   // impact = "対象Characterの識別と作成導線を維持し、廃止したMate talk画面を復活させない"
   // distinction = "表示文字列だけでなく、旧surfaceを含む情報構造と検索/Create icon affordanceを同時に確認する"
   // @end-test-value
+  /** Characters タブに候補、説明、検索と作成入口を表示し、旧メイトークや既定カード、独立編集ボタンは出さない。 */
   it("Characters タブは character list と Create を表示する", () => {
     const html = renderHomeRightPane("characters");
 
@@ -2587,6 +3597,7 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("メイトーク"));
   });
 
+  /** Character 名を検索するときは前後の空白と大小文字を無視し、空白だけなら一覧を絞らない。 */
   it("Character name 検索は前後の空白と大文字小文字を無視する", () => {
     const characters = [
       {
@@ -2613,7 +3624,12 @@ describe("HomeRightPane", () => {
       },
     ];
 
-    assert.deepEqual(filterCharactersByName(characters, " NOA ").map((character) => character.id), ["char-noah"]);
+    assert.deepEqual(
+      filterCharactersByName(characters, " NOA ").map(
+        (character) => character.id,
+      ),
+      ["char-noah"],
+    );
     assert.deepEqual(filterCharactersByName(characters, "   "), characters);
   });
 
@@ -2629,6 +3645,7 @@ describe("HomeRightPane", () => {
   // impact = "初回利用者がCharacterを作成するための入口を失わない"
   // distinction = "loading/errorの状態ではなく、取得済み空一覧でCTAを維持する境界を確認する"
   // @end-test-value
+  /** Character がゼロ件の画面にも、アクセシブル名付きの作成操作を残す。 */
   it("Character が空でも Create Character を表示できる", () => {
     const html = renderHomeRightPane("characters", []);
     assert.ok(html.includes("home-create-icon"));
@@ -2647,9 +3664,28 @@ describe("HomeRightPane", () => {
   // impact = "Character作成導線で取得待ち・取得失敗・正常空一覧を正しく識別できる"
   // distinction = "候補配列の長さだけでなく、明示load stateによる表示分岐を検証する"
   // @end-test-value
+  /** 初期取得はスピナー、失敗は説明として表示し、どちらも取得完了の空一覧とは混同しない。 */
   it("Character list は初期取得中と取得失敗を空状態と区別する", () => {
-    const loadingHtml = renderHomeRightPane("characters", [], "", [], false, "", "", "loading");
-    const errorHtml = renderHomeRightPane("characters", [], "", [], false, "", "", "error");
+    const loadingHtml = renderHomeRightPane(
+      "characters",
+      [],
+      "",
+      [],
+      false,
+      "",
+      "",
+      "loading",
+    );
+    const errorHtml = renderHomeRightPane(
+      "characters",
+      [],
+      "",
+      [],
+      false,
+      "",
+      "",
+      "error",
+    );
 
     assert.ok(loadingHtml.includes("loading-indicator-spinner"));
     assert.ok(loadingHtml.includes('aria-label="Loading characters"'));
@@ -2670,25 +3706,39 @@ describe("HomeRightPane", () => {
   // impact = "取得失敗を空一覧と区別しつつ、Character作成へ進む操作を維持する"
   // distinction = "汎用feedback stateではなく、Characters panel内のエラー表示とCTA共存を確認する"
   // @end-test-value
+  /** Character 一覧を再取得できなかった通知をタブ内に表示し、作成の入口は保持する。 */
   it("Characters panel は一覧読み込み error を panel 内に表示する", () => {
-    const html = renderHomeRightPane("characters", [], "Could not refresh characters.");
+    const html = renderHomeRightPane(
+      "characters",
+      [],
+      "Could not refresh characters.",
+    );
 
     assert.ok(html.includes("Could not refresh characters."));
     assert.ok(html.includes("home-create-icon"));
   });
 
+  /** Monitor と Characters の双方で、メイトークをタブにも起動ボタンにも表示しない。 */
   it("メイトークは Home right pane のタブにも起動ボタンにも表示しない", () => {
     const monitorHtml = renderHomeRightPane("monitor");
     const characterHtml = renderHomeRightPane("characters");
-    const tablistMatch = monitorHtml.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
+    const tablistMatch = monitorHtml.match(
+      /<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/,
+    );
 
     assert.ok(tablistMatch);
     assert.ok(tablistMatch[0].includes("Monitor"));
     assert.ok(tablistMatch[0].includes("Characters"));
     assert.ok(!tablistMatch[0].includes("Your Mate"));
     assert.ok(!tablistMatch[0].includes("メイトーク"));
-    assert.doesNotMatch(monitorHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
-    assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
+    assert.doesNotMatch(
+      monitorHtml,
+      /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/,
+    );
+    assert.doesNotMatch(
+      characterHtml,
+      /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/,
+    );
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(characterHtml);
   });
@@ -2705,9 +3755,13 @@ describe("HomeRightPane", () => {
   // impact = "復元操作の対象有無と処理中状態を識別し、重複要求を防ぐ"
   // distinction = "restore helperの入力選択ではなく、利用者が押すbuttonのdisabled/busy公開状態を確認する"
   // @end-test-value
+  /** 一括復元の入口を常に置き、復元対象がないときと復元中は無効にし、処理中だけ busy を付ける。 */
   it("一括復元操作を上部へ常設し、対象なし・処理中をdisabledにする", () => {
     const emptyHtml = renderHomeRightPane("monitor");
-    const enabledHtml = renderHomeRightPane("monitor", undefined, "", ["session-a", "session-b"]);
+    const enabledHtml = renderHomeRightPane("monitor", undefined, "", [
+      "session-a",
+      "session-b",
+    ]);
     const pendingHtml = renderHomeRightPane(
       "monitor",
       undefined,
@@ -2717,10 +3771,19 @@ describe("HomeRightPane", () => {
     );
 
     assert.match(emptyHtml, /Restore Sessions/);
-    assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(
+      emptyHtml,
+      /class="restore-session-windows-button"[^>]*disabled=""/,
+    );
     assert.match(enabledHtml, /Restore Sessions/);
-    assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
-    assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
+    assert.doesNotMatch(
+      enabledHtml,
+      /class="restore-session-windows-button"[^>]*disabled=""/,
+    );
+    assert.match(
+      pendingHtml,
+      /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/,
+    );
   });
 
   // @test-value v2
@@ -2735,8 +3798,11 @@ describe("HomeRightPane", () => {
   // impact = "復元結果を重複通知せず、失敗時だけ利用者へ識別可能に伝える"
   // distinction = "builderの文字列だけでなく、空文字によるDOM非表示と失敗文字列のlive status描画を確認する"
   // @end-test-value
+  /** 復元成功では追加の状態通知を出さず、失敗した対象と理由だけを polite なライブステータスで伝える。 */
   it("復元feedbackは正常系でstatusを描画せず、失敗時だけlive statusを描画する", () => {
-    const successHtml = renderHomeRightPane("monitor", undefined, "", ["session-a"]);
+    const successHtml = renderHomeRightPane("monitor", undefined, "", [
+      "session-a",
+    ]);
     const failureHtml = renderHomeRightPane(
       "monitor",
       undefined,
@@ -2747,7 +3813,12 @@ describe("HomeRightPane", () => {
     );
 
     assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
-    assert.equal(new JSDOM(successHtml).window.document.querySelector('.session-window-restore-feedback [role="status"], .session-window-restore-feedback[role="status"]'), null);
+    assert.equal(
+      new JSDOM(successHtml).window.document.querySelector(
+        '.session-window-restore-feedback [role="status"], .session-window-restore-feedback[role="status"]',
+      ),
+      null,
+    );
     assert.match(failureHtml, /session-b \(Deleted\)/);
     assert.match(failureHtml, /role="status" aria-live="polite"/);
     assert.doesNotMatch(failureHtml, /件のSessionを開きました/);
@@ -2765,6 +3836,7 @@ describe("HomeRightPane", () => {
   // impact = "HomeからのSession Monitor操作失敗を利用者へ伝える"
   // distinction = "session restore feedbackやCharacters feedbackではなく、Session Monitor context menu専用の表示経路を検証する"
   // @end-test-value
+  /** Monitor のメニュー操作失敗を、選択された Monitor タブ内のライブステータスとして表示する。 */
   it("Session Monitor feedbackをMonitor tab内へ表示する", () => {
     const html = renderHomeRightPane(
       "monitor",
@@ -2776,27 +3848,33 @@ describe("HomeRightPane", () => {
       "Could not copy session ID.",
     );
 
-    const monitorPanel = JSDOM.fragment(html).querySelector('[role="tabpanel"][aria-label="Session monitor"]');
+    const monitorPanel = JSDOM.fragment(html).querySelector(
+      '[role="tabpanel"][aria-label="Session monitor"]',
+    );
     assert.ok(monitorPanel);
-    const status = monitorPanel.querySelector('[role="status"][aria-live="polite"]');
+    const status = monitorPanel.querySelector(
+      '[role="status"][aria-live="polite"]',
+    );
     assert.match(status?.textContent ?? "", /Could not copy session ID\./);
   });
 
+  /** アイコン未設定の Character は名前から作った代替表示を使い、画像タグは出力しない。 */
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
-    const html = renderHomeRightPane("characters", [{
-      id: "char-2",
-      name: "テストマテ",
-      description: "説明文",
-      iconFilePath: "",
-      theme: { main: "#10b981", sub: "#047857" },
-      state: "active",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      archivedAt: null,
-    }]);
+    const html = renderHomeRightPane("characters", [
+      {
+        id: "char-2",
+        name: "テストマテ",
+        description: "説明文",
+        iconFilePath: "",
+        theme: { main: "#10b981", sub: "#047857" },
+        state: "active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: null,
+      },
+    ]);
 
     assert.ok(html.includes('<span class="avatar-fallback">テ</span>'));
     assert.ok(!html.includes("<img"));
   });
-
 });

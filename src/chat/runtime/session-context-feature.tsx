@@ -4,30 +4,63 @@ import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { useSessionGlossary } from "../../glossary/use-session-glossary.js";
 import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotation-projection.js";
-import { SessionContextPane, type SessionContextPaneProps } from "../shell/session-context-pane.js";
-import { useSessionContextPaneFeature, type SessionContextPaneFeatureInput } from "./use-session-context-pane-feature.js";
+import {
+  SessionContextPane,
+  type SessionContextPaneProps,
+} from "../shell/session-context-pane.js";
+import {
+  useSessionContextPaneFeature,
+  type SessionContextPaneFeatureInput,
+} from "./use-session-context-pane-feature.js";
 import { useActiveSessionLiveRun } from "./session-window-live-run-hooks.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { useLatestCommandHistory } from "./use-latest-command-history.js";
 import { useSessionTelemetry } from "./session-window-telemetry-hooks.js";
 
-export type SessionContextFeatureHandle = { activateGlossaryEntry: (term: string) => void };
+/** 会話本文から指定語の用語集項目を開くための参照ハンドル。 */
+export type SessionContextFeatureHandle = {
+  activateGlossaryEntry: (term: string) => void;
+};
 
-export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput,
-  "activeRunSessionId" | "character" | "availableReasoningEfforts"
-  | "renderedIsRunning" | "onShowContextRail"
-> & {
-  api: WithMateWindowApi | null;
-  selectedSession: Session;
-  displayedSession: Session;
-  ref?: Ref<SessionContextFeatureHandle>;
-  navigator: Pick<SessionContextPaneProps, "messageNavigatorEntries" | "messageNavigatorPage" | "messageNavigatorSessionId" | "onJumpToMessage" | "onMessageNavigatorActiveChange">;
-  onAnnotationMatcherChange: (matcher: GlossaryAnnotationMatcher | undefined) => void;
-  visible: boolean;
-}) {
-  const { selectedSessionLiveRun } = useActiveSessionLiveRun(props.api, props.selectedSession, props.activeRunSessionId, props.visible);
-  const hasActiveRun = props.renderedIsRunning || selectedSessionLiveRun?.runState === "running"
-    || selectedSessionLiveRun?.cancellationState === "requested" || selectedSessionLiveRun?.cancellationState === "terminating";
+/** 表示中の実行情報と選択セッションの用語集をコンテキスト欄に結び、本文側へ注釈照合器を渡す。 */
+export function SessionContextFeature(
+  props: Pick<
+    SessionContextPaneFeatureInput,
+    | "activeRunSessionId"
+    | "character"
+    | "availableReasoningEfforts"
+    | "renderedIsRunning"
+    | "onShowContextRail"
+  > & {
+    api: WithMateWindowApi | null;
+    selectedSession: Session;
+    displayedSession: Session;
+    ref?: Ref<SessionContextFeatureHandle>;
+    navigator: Pick<
+      SessionContextPaneProps,
+      | "messageNavigatorEntries"
+      | "messageNavigatorPage"
+      | "messageNavigatorSessionId"
+      | "onJumpToMessage"
+      | "onMessageNavigatorActiveChange"
+    >;
+    onAnnotationMatcherChange: (
+      matcher: GlossaryAnnotationMatcher | undefined,
+    ) => void;
+    visible: boolean;
+  },
+) {
+  const { selectedSessionLiveRun } = useActiveSessionLiveRun(
+    props.api,
+    props.selectedSession,
+    props.activeRunSessionId,
+    props.visible,
+  );
+  const hasActiveRun =
+    props.renderedIsRunning ||
+    selectedSessionLiveRun?.runState === "running" ||
+    selectedSessionLiveRun?.cancellationState === "requested" ||
+    selectedSessionLiveRun?.cancellationState === "terminating";
   const scope = `${getSessionIncarnationId(props.selectedSession)}:${getSessionIncarnationId(props.displayedSession)}`;
   const history = useLatestCommandHistory({
     api: props.api,
@@ -37,7 +70,11 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
     enabled: props.visible,
     hasLiveRun: hasActiveRun,
   });
-  const telemetry = useSessionTelemetry(props.visible ? props.api : null, props.displayedSession.provider, props.activeRunSessionId);
+  const telemetry = useSessionTelemetry(
+    props.visible ? props.api : null,
+    props.displayedSession.provider,
+    props.activeRunSessionId,
+  );
   const glossary = useSessionGlossary({
     api: props.api,
     selectedSession: {
@@ -46,6 +83,7 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
       workspaceLabel: props.selectedSession.workspaceLabel,
       branch: props.selectedSession.branch,
     },
+    /** 用語集の項目が選ばれたとき、コンテキスト欄の用語集タブを開く。 */
     onActivatePane: () => context.showGlossary(),
   });
   const context = useSessionContextPaneFeature({
@@ -55,9 +93,19 @@ export function SessionContextFeature(props: Pick<SessionContextPaneFeatureInput
     ...history,
     glossaryPaneProps: glossary.paneProps,
   });
-  useImperativeHandle(props.ref, () => ({ activateGlossaryEntry: glossary.actions.onActivateGlossaryEntry }), [glossary.actions.onActivateGlossaryEntry]);
+  useImperativeHandle(
+    props.ref,
+    () => ({ activateGlossaryEntry: glossary.actions.onActivateGlossaryEntry }),
+    [glossary.actions.onActivateGlossaryEntry],
+  );
   useLayoutEffect(() => {
     props.onAnnotationMatcherChange(glossary.annotationMatcher);
   }, [glossary.annotationMatcher, props.onAnnotationMatcherChange]);
-  return <SessionContextPane {...context.rightPaneProps} {...props.navigator} visible={props.visible} />;
+  return (
+    <SessionContextPane
+      {...context.rightPaneProps}
+      {...props.navigator}
+      visible={props.visible}
+    />
+  );
 }

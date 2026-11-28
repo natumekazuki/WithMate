@@ -1,4 +1,8 @@
-import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
+import {
+  DEFAULT_APPROVAL_MODE,
+  normalizeApprovalMode,
+  type ApprovalMode,
+} from "../settings/approval-mode.js";
 import { sessionReplySchema, type SessionReply } from "./session-reply.js";
 import { getDefaultApprovalModeForProvider } from "../settings/provider-runtime-options.js";
 import {
@@ -6,18 +10,27 @@ import {
   normalizeCodexSandboxMode,
   type CodexSandboxMode,
 } from "../settings/codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED, normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER, normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
-import { normalizeCharacterThemeColors, type CharacterThemeColors } from "../character/character-state.js";
+import {
+  DEFAULT_CODEX_SPEED,
+  normalizeCodexSpeed,
+  type CodexSpeed,
+} from "../settings/codex-speed.js";
+import {
+  DEFAULT_CODEX_REVIEWER,
+  normalizeCodexReviewer,
+  type CodexReviewer,
+} from "../settings/codex-reviewer.js";
+import {
+  normalizeCharacterThemeColors,
+  type CharacterThemeColors,
+} from "../character/character-state.js";
 import type { CharacterRuntimeSnapshot } from "../character/character-catalog.js";
 import {
   isUnknownCharacterOwnerId,
   recoverStoredCharacterOwnerId,
   requireCharacterOwnerId,
 } from "../character/character-owner.js";
-import {
-  normalizeCharacterRuntimeSnapshot,
-} from "../character/character-runtime-snapshot.js";
+import { normalizeCharacterRuntimeSnapshot } from "../character/character-runtime-snapshot.js";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
@@ -36,9 +49,17 @@ import {
   type ComposerAttachment,
 } from "./runtime-state.js";
 import { currentTimestampLabel } from "../time-state.js";
-import { normalizeProviderOutput, type ProviderOutput } from "./provider-output.js";
-import { normalizeSessionRelationship, type SessionRelationship, type SessionRole } from "./session-role.js";
+import {
+  normalizeProviderOutput,
+  type ProviderOutput,
+} from "./provider-output.js";
+import {
+  normalizeSessionRelationship,
+  type SessionRelationship,
+  type SessionRole,
+} from "./session-role.js";
 
+/** メッセージに添付する実行結果。活動の概要、操作の時系列、変更ファイル、確認結果をまとめる。 */
 export type MessageArtifact = {
   title: string;
   activitySummary: string[];
@@ -48,7 +69,10 @@ export type MessageArtifact = {
   detailAvailable?: boolean;
 };
 
-export type TurnInputDeliveryState = "pending" | "confirmed" | "unknown" | "not-sent";
+/** 既存ターンへの追加入力の配送状態。結果未確定、送達確認済み、確認不能、未送信を区別する。 */
+export type TurnInputDeliveryState =
+  "pending" | "confirmed" | "unknown" | "not-sent";
+/** 保存したユーザー入力の配送記録。WithMate と Provider のターン識別子を区別し、添付や配送来歴を保持する。 */
 export type TurnInputMetadata = {
   turnId: string;
   nativeTurnId: string;
@@ -59,6 +83,7 @@ export type TurnInputMetadata = {
   attachments: ComposerAttachment[];
 };
 
+/** 会話履歴の発言。本文のほか、返信先、実行結果、質問と回答の記録など、発言に付随する情報を持てる。 */
 export type Message = {
   replyTo?: SessionReply;
   output?: ProviderOutput;
@@ -73,18 +98,27 @@ export type Message = {
   elicitationRecords?: ElicitationRecord[];
 };
 
+/** Session の活動表示に使う短いテキストと、表示時刻・トーン。 */
 export type StreamEntry = {
   mood: "spark" | "calm" | "warm";
   time: string;
   text: string;
 };
 
+/** 新規 Session に付与し、旧形式を読み取り専用として扱う判定に使う論理スキーマ版。 */
 export const CURRENT_SESSION_SCHEMA_VERSION = 5;
 
+/** 通常の作業と Character 作成を目的とする Session を区別する。 */
 export type SessionKind = "default" | "character-authoring";
-export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
-export type SessionAccessMode = typeof SESSION_ACCESS_MODE_VALUES[number];
+/** 保存値と入力の正規化で認める、通常利用と旧形式の読み取り専用モード。 */
+export const SESSION_ACCESS_MODE_VALUES = [
+  "active",
+  "legacy_readonly",
+] as const;
+/** Session に記録する明示的な利用モード。スキーマ版による読み取り専用判定は別途行う。 */
+export type SessionAccessMode = (typeof SESSION_ACCESS_MODE_VALUES)[number];
 
+/** Session の設定と詳細。Crew 内の関係、実行環境、Character のスナップショット、会話と活動履歴を保持する。 */
 export type Session = Partial<SessionRelationship> & {
   id: string;
   incarnationId?: string;
@@ -123,12 +157,18 @@ export type Session = Partial<SessionRelationship> & {
   stream: StreamEntry[];
 };
 
-export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot" | "isPinned"> & {
+/** Session 一覧や詳細の再取得判定に使う概要。会話・活動履歴・Character の実行時スナップショットは含めない。 */
+export type SessionSummary = Omit<
+  Session,
+  "messages" | "stream" | "characterRuntimeSnapshot" | "isPinned"
+> & {
   characterDescription?: string;
   isPinned: boolean;
 };
+/** 概要と区別して取得する Session の詳細。会話と活動履歴を含む。 */
 export type SessionDetail = Session;
 
+/** Home の一覧に必要な表示用の概要。承認待ちや取り消し処理中、未読結果などの表示状態を持てる。 */
 export type HomeSessionSummary = {
   id: string;
   taskTitle: string;
@@ -150,9 +190,17 @@ export type HomeSessionSummary = {
   hasUnreadResult?: boolean;
 };
 
-export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
-export type SessionSummaryPageScope = (typeof SESSION_SUMMARY_PAGE_SCOPES)[number];
+/** Home の一覧取得で選べる範囲。最近の Session、ピン留め済み、開いている Session を区別する。 */
+export const SESSION_SUMMARY_PAGE_SCOPES = [
+  "recent",
+  "pinned",
+  "open",
+] as const;
+/** Home の概要ページを取得するときに選択する一覧の範囲。 */
+export type SessionSummaryPageScope =
+  (typeof SESSION_SUMMARY_PAGE_SCOPES)[number];
 
+/** Home の概要一覧を絞り込む要求。開いている Session は ID で指定し、ほかの一覧ではカーソルや検索語を使う。 */
 export type SessionSummaryPageRequest = {
   scope?: SessionSummaryPageScope;
   cursor?: string | null;
@@ -161,29 +209,34 @@ export type SessionSummaryPageRequest = {
   sessionIds?: readonly string[] | null;
 };
 
+/** Home の概要一覧の1ページ。項目とともに、続きの有無と次回取得用のカーソルを返す。 */
 export type HomeSessionSummaryPageResult = {
   entries: HomeSessionSummary[];
   nextCursor: string | null;
   hasMore: boolean;
 };
+/** Session 一覧 API が返すページ。各項目は詳細ではなく Home 用の概要。 */
 export type SessionSummaryPageResult = HomeSessionSummaryPageResult;
 
+/** 通常の Session で使用されている Character を集計・表示するための識別情報。 */
 export type SessionCharacterUsage = {
   characterId: string;
   sessionKind: "default";
 };
 
+/** 概要一覧の再取得が必要な範囲を通知する。個別 ID または全件を指定し、詳細が変わっていないことも示せる。 */
 export type SessionSummaryInvalidation = (
-  | { scope: "ids"; sessionIds: string[] }
-  | { scope: "all" }
+  { scope: "ids"; sessionIds: string[] } | { scope: "all" }
 ) & { detailChanged?: false };
 
+/** ファイル差分のプレビューを開くために渡す、対象ファイル、画面の見出し、テーマ色。 */
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;
   themeColors: CharacterThemeColors;
 };
 
+/** Session の初期状態を組み立てるための入力。解決済みの作業先、Character、実行設定と必要な関係情報を渡す。 */
 export type CreateSessionInput = {
   id?: string;
   sessionRole?: SessionRole;
@@ -214,6 +267,7 @@ export type CreateSessionInput = {
   allowedAdditionalDirectories?: string[];
 };
 
+/** 新規 Session の作業先。既存ディレクトリとその情報を指定するか、Session 用フォルダーを使う。 */
 export type CreateSessionWorkspaceRequest =
   | {
       kind: "directory";
@@ -225,6 +279,7 @@ export type CreateSessionWorkspaceRequest =
       kind: "session-folder";
     };
 
+/** 作業先の解決や実行設定の決定を作成側に任せる Session 作成要求。クライアント要求 ID を付けられる。 */
 export type CreateSessionRequest = Omit<
   CreateSessionInput,
   | "id"
@@ -244,63 +299,102 @@ export type CreateSessionRequest = Omit<
   clientRequestId?: string;
 };
 
+/** 指定した Session のピン留め状態を、トグルではなく真偽値で設定する要求。 */
 export type SetSessionPinnedRequest = {
   sessionId: string;
   isPinned: boolean;
 };
 
-export function parseSetSessionPinnedRequest(value: unknown): SetSessionPinnedRequest {
+/** ピン留め要求の Session ID をトリムし、空の ID や真偽値でないピン指定を例外で拒否する。 */
+export function parseSetSessionPinnedRequest(
+  value: unknown,
+): SetSessionPinnedRequest {
   if (!value || typeof value !== "object") {
     throw new Error("Invalid session pin request.");
   }
   const candidate = value as Partial<SetSessionPinnedRequest>;
-  const sessionId = typeof candidate.sessionId === "string" ? candidate.sessionId.trim() : "";
+  const sessionId =
+    typeof candidate.sessionId === "string" ? candidate.sessionId.trim() : "";
   if (!sessionId || typeof candidate.isPinned !== "boolean") {
     throw new Error("Invalid session pin request.");
   }
   return { sessionId, isPinned: candidate.isPinned };
 }
 
-export function normalizeSessionAccessMode(value: unknown, fallback: SessionAccessMode = "active"): SessionAccessMode {
-  return SESSION_ACCESS_MODE_VALUES.includes(value as SessionAccessMode) ? value as SessionAccessMode : fallback;
+/** 既知のアクセスモードを採用し、未知または未指定の場合は指定の既定値へ戻す。 */
+export function normalizeSessionAccessMode(
+  value: unknown,
+  fallback: SessionAccessMode = "active",
+): SessionAccessMode {
+  return SESSION_ACCESS_MODE_VALUES.includes(value as SessionAccessMode)
+    ? (value as SessionAccessMode)
+    : fallback;
 }
 
-export function isLegacyReadOnlySession(session: Pick<Session, "accessMode"> | Pick<SessionSummary, "accessMode">): boolean {
+/** 旧形式の読み取り専用モードが明示されているかを判定する。スキーマ版は調べない。 */
+export function isLegacyReadOnlySession(
+  session: Pick<Session, "accessMode"> | Pick<SessionSummary, "accessMode">,
+): boolean {
   return session.accessMode === "legacy_readonly";
 }
 
+/** 明示的な読み取り専用モードに加え、現行より古いスキーマ版の Session も読み取り専用と判定する。 */
 export function isReadOnlySession(
-  session: Pick<Session, "accessMode" | "sourceSchemaVersion"> | Pick<SessionSummary, "accessMode" | "sourceSchemaVersion">,
+  session:
+    | Pick<Session, "accessMode" | "sourceSchemaVersion">
+    | Pick<SessionSummary, "accessMode" | "sourceSchemaVersion">,
 ): boolean {
-  return isLegacyReadOnlySession(session) || session.sourceSchemaVersion < CURRENT_SESSION_SCHEMA_VERSION;
+  return (
+    isLegacyReadOnlySession(session) ||
+    session.sourceSchemaVersion < CURRENT_SESSION_SCHEMA_VERSION
+  );
 }
 
+/** 既知の行種別を持つ差分だけを復元し、数値でない行番号や文字列でない本文を落とす。 */
 function normalizeDiffRow(value: unknown): DiffRow | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const candidate = value as Partial<DiffRow>;
-  if (candidate.kind !== "context" && candidate.kind !== "add" && candidate.kind !== "delete" && candidate.kind !== "modify") {
+  if (
+    candidate.kind !== "context" &&
+    candidate.kind !== "add" &&
+    candidate.kind !== "delete" &&
+    candidate.kind !== "modify"
+  ) {
     return null;
   }
 
   return {
     kind: candidate.kind,
-    leftNumber: typeof candidate.leftNumber === "number" ? candidate.leftNumber : undefined,
-    rightNumber: typeof candidate.rightNumber === "number" ? candidate.rightNumber : undefined,
-    leftText: typeof candidate.leftText === "string" ? candidate.leftText : undefined,
-    rightText: typeof candidate.rightText === "string" ? candidate.rightText : undefined,
+    leftNumber:
+      typeof candidate.leftNumber === "number"
+        ? candidate.leftNumber
+        : undefined,
+    rightNumber:
+      typeof candidate.rightNumber === "number"
+        ? candidate.rightNumber
+        : undefined,
+    leftText:
+      typeof candidate.leftText === "string" ? candidate.leftText : undefined,
+    rightText:
+      typeof candidate.rightText === "string" ? candidate.rightText : undefined,
   };
 }
 
+/** 既知の変更種別のファイルだけを復元し、その差分行に不正な項目があれば除く。 */
 function normalizeChangedFile(value: unknown): ChangedFile | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const candidate = value as Partial<ChangedFile>;
-  if (candidate.kind !== "add" && candidate.kind !== "edit" && candidate.kind !== "delete") {
+  if (
+    candidate.kind !== "add" &&
+    candidate.kind !== "edit" &&
+    candidate.kind !== "delete"
+  ) {
     return null;
   }
 
@@ -316,6 +410,7 @@ function normalizeChangedFile(value: unknown): ChangedFile | null {
   };
 }
 
+/** 種別がある操作だけを復元する。有限の終了コードや本文を持つエラーなど、妥当な補足情報だけを残す。 */
 function normalizeMessageOperation(value: unknown): MessageOperation | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -329,18 +424,36 @@ function normalizeMessageOperation(value: unknown): MessageOperation | null {
   return {
     type: candidate.type,
     summary: typeof candidate.summary === "string" ? candidate.summary : "",
-    details: typeof candidate.details === "string" ? candidate.details : undefined,
+    details:
+      typeof candidate.details === "string" ? candidate.details : undefined,
     id: typeof candidate.id === "string" ? candidate.id : undefined,
     status: typeof candidate.status === "string" ? candidate.status : undefined,
-    exitCode: typeof candidate.exitCode === "number" && Number.isFinite(candidate.exitCode) ? candidate.exitCode : undefined,
-    error: candidate.error && typeof candidate.error.message === "string"
-      ? { message: candidate.error.message, ...(typeof candidate.error.code === "string" ? { code: candidate.error.code } : {}) }
-      : undefined,
-    truncated: typeof candidate.truncated === "boolean" ? candidate.truncated : undefined,
-    detailAvailable: typeof candidate.detailAvailable === "boolean" ? candidate.detailAvailable : undefined,
+    exitCode:
+      typeof candidate.exitCode === "number" &&
+      Number.isFinite(candidate.exitCode)
+        ? candidate.exitCode
+        : undefined,
+    error:
+      candidate.error && typeof candidate.error.message === "string"
+        ? {
+            message: candidate.error.message,
+            ...(typeof candidate.error.code === "string"
+              ? { code: candidate.error.code }
+              : {}),
+          }
+        : undefined,
+    truncated:
+      typeof candidate.truncated === "boolean"
+        ? candidate.truncated
+        : undefined,
+    detailAvailable:
+      typeof candidate.detailAvailable === "boolean"
+        ? candidate.detailAvailable
+        : undefined,
   };
 }
 
+/** 承認欄の値だけを承認モードとして正規化し、その他の確認欄は文字列のまま扱う。 */
 function normalizeRunCheckValue(label: string, value: unknown): string {
   const normalizedValue = typeof value === "string" ? value : "";
   return label.trim().toLowerCase() === "approval"
@@ -348,6 +461,7 @@ function normalizeRunCheckValue(label: string, value: unknown): string {
     : normalizedValue;
 }
 
+/** 空でないラベルを持つ確認項目を復元し、ラベルに応じて表示値を整える。 */
 function normalizeRunCheck(value: unknown): RunCheck | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -364,6 +478,7 @@ function normalizeRunCheck(value: unknown): RunCheck | null {
   };
 }
 
+/** 実行結果の記録から表示できる活動、差分、確認項目を復元する。記録の形でなければ省略する。 */
 function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -373,13 +488,17 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
   const operationTimeline = Array.isArray(candidate.operationTimeline)
     ? candidate.operationTimeline
         .map((operation) => normalizeMessageOperation(operation))
-        .filter((operation): operation is MessageOperation => operation !== null)
+        .filter(
+          (operation): operation is MessageOperation => operation !== null,
+        )
     : undefined;
 
   return {
     title: typeof candidate.title === "string" ? candidate.title : "",
     activitySummary: Array.isArray(candidate.activitySummary)
-      ? candidate.activitySummary.filter((item): item is string => typeof item === "string")
+      ? candidate.activitySummary.filter(
+          (item): item is string => typeof item === "string",
+        )
       : [],
     operationTimeline,
     changedFiles: Array.isArray(candidate.changedFiles)
@@ -392,41 +511,89 @@ function normalizeMessageArtifact(value: unknown): MessageArtifact | undefined {
           .map((check) => normalizeRunCheck(check))
           .filter((check): check is RunCheck => check !== null)
       : [],
-    detailAvailable: typeof candidate.detailAvailable === "boolean" ? candidate.detailAvailable : undefined,
+    detailAvailable:
+      typeof candidate.detailAvailable === "boolean"
+        ? candidate.detailAvailable
+        : undefined,
   };
 }
 
-function normalizeElicitationRecords(value: unknown): ElicitationRecord[] | undefined {
+/** 保存した質問履歴を読み出す。待機中だった質問は期限切れにし、選択位置が選択肢と整合しない回答は除く。 */
+function normalizeElicitationRecords(
+  value: unknown,
+): ElicitationRecord[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const records: ElicitationRecord[] = [];
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
     const record = raw as Partial<ElicitationRecord>;
-    if (typeof record.requestId !== "string" || typeof record.message !== "string" || !Array.isArray(record.fields)
-      || !["pending", "answered", "declined", "canceled", "expired"].includes(record.status ?? "")) continue;
+    if (
+      typeof record.requestId !== "string" ||
+      typeof record.message !== "string" ||
+      !Array.isArray(record.fields) ||
+      !["pending", "answered", "declined", "canceled", "expired"].includes(
+        record.status ?? "",
+      )
+    )
+      continue;
     records.push({
       requestId: record.requestId,
       message: record.message,
       ...(record.kind === "question" ? { kind: record.kind } : {}),
-      ...(record.textRange && Number.isSafeInteger(record.textRange.start) && Number.isSafeInteger(record.textRange.end)
-        && record.textRange.start >= 0 && record.textRange.end >= record.textRange.start
-        ? { textRange: { start: record.textRange.start, end: record.textRange.end } } : {}),
+      ...(record.textRange &&
+      Number.isSafeInteger(record.textRange.start) &&
+      Number.isSafeInteger(record.textRange.end) &&
+      record.textRange.start >= 0 &&
+      record.textRange.end >= record.textRange.start
+        ? {
+            textRange: {
+              start: record.textRange.start,
+              end: record.textRange.end,
+            },
+          }
+        : {}),
       status: record.status === "pending" ? "expired" : record.status!,
-      fields: record.fields.filter((field) => field && typeof field.title === "string").map((field) => ({
-        title: field.title,
-        ...(typeof field.description === "string" ? { description: field.description } : {}),
-        ...(Array.isArray(field.options) ? { options: field.options.filter((option): option is string => typeof option === "string") } : {}),
-        ...(field.answer && Array.isArray(field.answer.selected) && Array.isArray(field.answer.text)
-          && (field.options === undefined || (Array.isArray(field.options) && field.options.every((option) => typeof option === "string")))
-          && field.answer.selected.every((index) => Number.isSafeInteger(index) && index >= 0 && index < (Array.isArray(field.options) ? field.options.length : 0))
-          && field.answer.text.every((text) => typeof text === "string")
-          ? { answer: { selected: [...field.answer.selected], text: [...field.answer.text] } } : {}),
-      })),
+      fields: record.fields
+        .filter((field) => field && typeof field.title === "string")
+        .map((field) => ({
+          title: field.title,
+          ...(typeof field.description === "string"
+            ? { description: field.description }
+            : {}),
+          ...(Array.isArray(field.options)
+            ? {
+                options: field.options.filter(
+                  (option): option is string => typeof option === "string",
+                ),
+              }
+            : {}),
+          ...(field.answer &&
+          Array.isArray(field.answer.selected) &&
+          Array.isArray(field.answer.text) &&
+          (field.options === undefined ||
+            (Array.isArray(field.options) &&
+              field.options.every((option) => typeof option === "string"))) &&
+          field.answer.selected.every(
+            (index) =>
+              Number.isSafeInteger(index) &&
+              index >= 0 &&
+              index < (Array.isArray(field.options) ? field.options.length : 0),
+          ) &&
+          field.answer.text.every((text) => typeof text === "string")
+            ? {
+                answer: {
+                  selected: [...field.answer.selected],
+                  text: [...field.answer.text],
+                },
+              }
+            : {}),
+        })),
     });
   }
   return records.length ? records : undefined;
 }
 
+/** 保存値からユーザーまたはアシスタントの発言を復元する。不正な返信先や追加入力の配送情報は例外で拒否する。 */
 export function normalizeMessage(value: unknown): Message | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -436,35 +603,84 @@ export function normalizeMessage(value: unknown): Message | null {
   if (candidate.role !== "user" && candidate.role !== "assistant") {
     return null;
   }
-  if (candidate.turnInput !== undefined && (candidate.role !== "user" || !candidate.turnInput
-    || typeof candidate.turnInput.turnId !== "string" || !candidate.turnInput.turnId.trim()
-    || typeof candidate.turnInput.nativeTurnId !== "string" || !candidate.turnInput.nativeTurnId.trim()
-    || !["pending", "confirmed", "unknown", "not-sent"].includes(candidate.turnInput.state)
-    || !Array.isArray(candidate.turnInput.attachments))) throw new Error("The saved Turn input metadata is invalid.");
+  if (
+    candidate.turnInput !== undefined &&
+    (candidate.role !== "user" ||
+      !candidate.turnInput ||
+      typeof candidate.turnInput.turnId !== "string" ||
+      !candidate.turnInput.turnId.trim() ||
+      typeof candidate.turnInput.nativeTurnId !== "string" ||
+      !candidate.turnInput.nativeTurnId.trim() ||
+      !["pending", "confirmed", "unknown", "not-sent"].includes(
+        candidate.turnInput.state,
+      ) ||
+      !Array.isArray(candidate.turnInput.attachments))
+  )
+    throw new Error("The saved Turn input metadata is invalid.");
   const inputOrigin = candidate.turnInput?.origin;
-  if (inputOrigin !== undefined && (!inputOrigin || inputOrigin.kind !== "session" || inputOrigin.actorKind !== "main" || inputOrigin.operation !== "steer"
-    || [inputOrigin.actorSessionId, inputOrigin.actorIncarnationId, inputOrigin.actorTurnId, inputOrigin.targetSessionId, inputOrigin.targetIncarnationId]
-      .some((value) => typeof value !== "string" || !value.trim()))) throw new Error("The saved Steer origin is invalid.");
+  if (
+    inputOrigin !== undefined &&
+    (!inputOrigin ||
+      inputOrigin.kind !== "session" ||
+      inputOrigin.actorKind !== "main" ||
+      inputOrigin.operation !== "steer" ||
+      [
+        inputOrigin.actorSessionId,
+        inputOrigin.actorIncarnationId,
+        inputOrigin.actorTurnId,
+        inputOrigin.targetSessionId,
+        inputOrigin.targetIncarnationId,
+      ].some((value) => typeof value !== "string" || !value.trim()))
+  )
+    throw new Error("The saved Steer origin is invalid.");
 
   return {
     role: candidate.role,
     text: typeof candidate.text === "string" ? candidate.text : "",
-    ...(candidate.replyTo === undefined ? {} : { replyTo: sessionReplySchema.parse(candidate.replyTo) }),
-    ...(candidate.output ? { output: normalizeProviderOutput(candidate.output, typeof candidate.text === "string" ? candidate.text : "") } : {}),
-    ...(candidate.turnInput ? { turnInput: structuredClone(candidate.turnInput) } : {}),
-    ...(candidate.role === "assistant" && typeof candidate.runFailure === "string" ? { runFailure: candidate.runFailure } : {}),
-    accent: typeof candidate.accent === "boolean" ? candidate.accent : undefined,
+    ...(candidate.replyTo === undefined
+      ? {}
+      : { replyTo: sessionReplySchema.parse(candidate.replyTo) }),
+    ...(candidate.output
+      ? {
+          output: normalizeProviderOutput(
+            candidate.output,
+            typeof candidate.text === "string" ? candidate.text : "",
+          ),
+        }
+      : {}),
+    ...(candidate.turnInput
+      ? { turnInput: structuredClone(candidate.turnInput) }
+      : {}),
+    ...(candidate.role === "assistant" &&
+    typeof candidate.runFailure === "string"
+      ? { runFailure: candidate.runFailure }
+      : {}),
+    accent:
+      typeof candidate.accent === "boolean" ? candidate.accent : undefined,
     artifact: normalizeMessageArtifact(candidate.artifact),
-    ...(candidate.elicitationRecords ? { elicitationRecords: normalizeElicitationRecords(candidate.elicitationRecords) } : {}),
+    ...(candidate.elicitationRecords
+      ? {
+          elicitationRecords: normalizeElicitationRecords(
+            candidate.elicitationRecords,
+          ),
+        }
+      : {}),
     ...(candidate.isBookmarked === true ? { isBookmarked: true } : {}),
   };
 }
 
-export function isMessageBookmarked(message: Pick<Message, "isBookmarked">): boolean {
+/** true の保存値だけをブックマーク済みとして扱う。 */
+export function isMessageBookmarked(
+  message: Pick<Message, "isBookmarked">,
+): boolean {
   return message.isBookmarked === true;
 }
 
-export function setMessageBookmarked(message: Message, isBookmarked: boolean): Message {
+/** 元の発言を変更せず、ブックマークを設定したコピーを返す。解除時は保存用のキー自体を取り除く。 */
+export function setMessageBookmarked(
+  message: Message,
+  isBookmarked: boolean,
+): Message {
   if (isBookmarked) {
     return { ...message, isBookmarked: true };
   }
@@ -474,22 +690,33 @@ export function setMessageBookmarked(message: Message, isBookmarked: boolean): M
   return nextMessage;
 }
 
+/** 保存値から一覧用の共通情報を復元し、不足する項目を既定値で補う。Character の所有者が不明なら Provider スレッドを引き継がない。 */
 function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
-  const candidate = value as Partial<Session & { characterDescription: string }>;
-  const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "Character";
+  const candidate = value as Partial<
+    Session & { characterDescription: string }
+  >;
+  const characterName =
+    typeof candidate.character === "string" && candidate.character.trim()
+      ? candidate.character
+      : "Character";
   const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
-  const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`;
+  const id =
+    typeof candidate.id === "string" && candidate.id.trim()
+      ? candidate.id
+      : `legacy-${Date.now()}`;
 
   return {
     id,
     ...normalizeSessionRelationship({ ...candidate, id }),
-    description: typeof candidate.description === "string" ? candidate.description : "",
+    description:
+      typeof candidate.description === "string" ? candidate.description : "",
     incarnationId:
-      typeof candidate.incarnationId === "string" && candidate.incarnationId.trim()
+      typeof candidate.incarnationId === "string" &&
+      candidate.incarnationId.trim()
         ? candidate.incarnationId.trim()
         : undefined,
     taskTitle:
@@ -497,7 +724,9 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         ? candidate.taskTitle
         : "Untitled session",
     status:
-      candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
+      candidate.status === "running" ||
+      candidate.status === "idle" ||
+      candidate.status === "saved"
         ? candidate.status
         : "idle",
     updatedAt:
@@ -509,17 +738,31 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     isPinned: candidate.isPinned === true,
     provider: normalizeProviderId(candidate.provider),
     catalogRevision:
-      typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
+      typeof candidate.catalogRevision === "number" &&
+      Number.isInteger(candidate.catalogRevision) &&
+      candidate.catalogRevision > 0
         ? candidate.catalogRevision
         : 1,
     workspaceLabel:
-      typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
+      typeof candidate.workspaceLabel === "string" &&
+      candidate.workspaceLabel.trim()
         ? candidate.workspaceLabel
         : "workspace",
-    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
-    branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
-    sessionKind: candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default",
-    accessMode: normalizeSessionAccessMode((candidate as { accessMode?: unknown }).accessMode),
+    workspacePath:
+      typeof candidate.workspacePath === "string"
+        ? candidate.workspacePath
+        : "",
+    branch:
+      typeof candidate.branch === "string" && candidate.branch.trim()
+        ? candidate.branch
+        : "main",
+    sessionKind:
+      candidate.sessionKind === "character-authoring"
+        ? candidate.sessionKind
+        : "default",
+    accessMode: normalizeSessionAccessMode(
+      (candidate as { accessMode?: unknown }).accessMode,
+    ),
     sourceSchemaVersion:
       typeof candidate.sourceSchemaVersion === "number" &&
       Number.isInteger(candidate.sourceSchemaVersion) &&
@@ -528,53 +771,93 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : CURRENT_SESSION_SCHEMA_VERSION - 1,
     characterId,
     character: characterName,
-    ...(typeof candidate.characterRuntimeSnapshot?.description === "string" && candidate.characterRuntimeSnapshot.description
+    ...(typeof candidate.characterRuntimeSnapshot?.description === "string" &&
+    candidate.characterRuntimeSnapshot.description
       ? { characterDescription: candidate.characterRuntimeSnapshot.description }
-      : typeof candidate.characterDescription === "string" && candidate.characterDescription ? { characterDescription: candidate.characterDescription } : {}),
+      : typeof candidate.characterDescription === "string" &&
+          candidate.characterDescription
+        ? { characterDescription: candidate.characterDescription }
+        : {}),
     characterIconPath:
-      typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
+      typeof candidate.characterIconPath === "string" &&
+      candidate.characterIconPath.trim()
         ? candidate.characterIconPath
         : "",
-    characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
-    runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
-    approvalMode: normalizeApprovalMode(candidate.approvalMode, DEFAULT_APPROVAL_MODE),
+    characterThemeColors: normalizeCharacterThemeColors(
+      candidate.characterThemeColors,
+    ),
+    runState:
+      typeof candidate.runState === "string" && candidate.runState.trim()
+        ? candidate.runState
+        : "idle",
+    approvalMode: normalizeApprovalMode(
+      candidate.approvalMode,
+      DEFAULT_APPROVAL_MODE,
+    ),
     codexSandboxMode: normalizeCodexSandboxMode(
       (candidate as { codexSandboxMode?: unknown }).codexSandboxMode,
       DEFAULT_CODEX_SANDBOX_MODE,
     ),
-    codexSpeed: normalizeCodexSpeed((candidate as { codexSpeed?: unknown }).codexSpeed),
-    codexReviewer: normalizeCodexReviewer((candidate as { codexReviewer?: unknown }).codexReviewer),
-    ...(candidate.withMateReviewerExplicit === true ? { withMateReviewerExplicit: true } : {}),
-    model: typeof candidate.model === "string" && candidate.model.trim() ? candidate.model.trim() : DEFAULT_MODEL_ID,
+    codexSpeed: normalizeCodexSpeed(
+      (candidate as { codexSpeed?: unknown }).codexSpeed,
+    ),
+    codexReviewer: normalizeCodexReviewer(
+      (candidate as { codexReviewer?: unknown }).codexReviewer,
+    ),
+    ...(candidate.withMateReviewerExplicit === true
+      ? { withMateReviewerExplicit: true }
+      : {}),
+    model:
+      typeof candidate.model === "string" && candidate.model.trim()
+        ? candidate.model.trim()
+        : DEFAULT_MODEL_ID,
     reasoningEffort: isModelReasoningEffort(candidate.reasoningEffort)
       ? candidate.reasoningEffort
       : DEFAULT_REASONING_EFFORT,
-    customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName.trim() : "",
-    allowedAdditionalDirectories: Array.isArray((candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories)
-      ? (candidate as { allowedAdditionalDirectories?: unknown[] }).allowedAdditionalDirectories
-          ?.filter((directory): directory is string => typeof directory === "string")
+    customAgentName:
+      typeof candidate.customAgentName === "string"
+        ? candidate.customAgentName.trim()
+        : "",
+    allowedAdditionalDirectories: Array.isArray(
+      (candidate as { allowedAdditionalDirectories?: unknown[] })
+        .allowedAdditionalDirectories,
+    )
+      ? ((
+          candidate as { allowedAdditionalDirectories?: unknown[] }
+        ).allowedAdditionalDirectories
+          ?.filter(
+            (directory): directory is string => typeof directory === "string",
+          )
           .map((directory) => directory.trim())
-          .filter((directory) => directory.length > 0) ?? []
+          .filter((directory) => directory.length > 0) ?? [])
       : [],
     threadId: isUnknownCharacterOwnerId(characterId)
       ? ""
       : typeof candidate.threadId === "string"
         ? candidate.threadId
-        : typeof (candidate as { threadLabel?: string }).threadLabel === "string"
-          ? (candidate as { threadLabel?: string }).threadLabel ?? ""
+        : typeof (candidate as { threadLabel?: string }).threadLabel ===
+            "string"
+          ? ((candidate as { threadLabel?: string }).threadLabel ?? "")
           : "",
   };
 }
 
-export function getSessionIncarnationId(session: Pick<Session, "id" | "incarnationId">): string {
+/** 前後の空白を除いた世代 ID を返す。未記録の旧形式では Session ID から代替値を作る。 */
+export function getSessionIncarnationId(
+  session: Pick<Session, "id" | "incarnationId">,
+): string {
   return session.incarnationId?.trim() || `legacy:${session.id}`;
 }
 
+/** 未検証の値から Session の概要を読み出す。オブジェクトとして読み取れなければ null を返す。 */
 export function normalizeSessionSummary(value: unknown): SessionSummary | null {
   return normalizeSessionSummaryShape(value);
 }
 
-function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | null {
+/** ID を持つ値から Home の一覧で使う項目だけを整える。空の ID は補完せず null とする。 */
+function normalizeHomeSessionSummaryShape(
+  value: unknown,
+): HomeSessionSummary | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -585,9 +868,10 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
     return null;
   }
 
-  const characterName = typeof candidate.character === "string" && candidate.character.trim()
-    ? candidate.character
-    : "Character";
+  const characterName =
+    typeof candidate.character === "string" && candidate.character.trim()
+      ? candidate.character
+      : "Character";
   return {
     id,
     taskTitle:
@@ -595,7 +879,9 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
         ? candidate.taskTitle
         : "Untitled session",
     status:
-      candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
+      candidate.status === "running" ||
+      candidate.status === "idle" ||
+      candidate.status === "saved"
         ? candidate.status
         : "idle",
     updatedAt:
@@ -606,11 +892,18 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
         : currentTimestampLabel(),
     isPinned: candidate.isPinned === true,
     workspaceLabel:
-      typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
+      typeof candidate.workspaceLabel === "string" &&
+      candidate.workspaceLabel.trim()
         ? candidate.workspaceLabel
         : "workspace",
-    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
-    sessionKind: candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default",
+    workspacePath:
+      typeof candidate.workspacePath === "string"
+        ? candidate.workspacePath
+        : "",
+    sessionKind:
+      candidate.sessionKind === "character-authoring"
+        ? candidate.sessionKind
+        : "default",
     accessMode: normalizeSessionAccessMode(candidate.accessMode),
     sourceSchemaVersion:
       typeof candidate.sourceSchemaVersion === "number" &&
@@ -621,23 +914,36 @@ function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | 
     characterId: recoverStoredCharacterOwnerId(candidate.characterId),
     character: characterName,
     characterIconPath:
-      typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
+      typeof candidate.characterIconPath === "string" &&
+      candidate.characterIconPath.trim()
         ? candidate.characterIconPath
         : "",
-    characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
-    runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
-    ...(candidate.cancellationState === "requested" || candidate.cancellationState === "terminating"
+    characterThemeColors: normalizeCharacterThemeColors(
+      candidate.characterThemeColors,
+    ),
+    runState:
+      typeof candidate.runState === "string" && candidate.runState.trim()
+        ? candidate.runState
+        : "idle",
+    ...(candidate.cancellationState === "requested" ||
+    candidate.cancellationState === "terminating"
       ? { cancellationState: candidate.cancellationState }
       : {}),
     ...(candidate.approvalPending === true ? { approvalPending: true } : {}),
   };
 }
 
-export function normalizeHomeSessionSummary(value: unknown): HomeSessionSummary | null {
+/** 未検証の値を Home 用の概要として読み出し、有効な Session ID がなければ null を返す。 */
+export function normalizeHomeSessionSummary(
+  value: unknown,
+): HomeSessionSummary | null {
   return normalizeHomeSessionSummaryShape(value);
 }
 
-export function projectHomeSessionSummary(session: Session | SessionSummary | HomeSessionSummary): HomeSessionSummary {
+/** Session の詳細・概要から Home の表示項目を切り出す。Home 項目に変換できなければ例外を送出する。 */
+export function projectHomeSessionSummary(
+  session: Session | SessionSummary | HomeSessionSummary,
+): HomeSessionSummary {
   const summary = normalizeHomeSessionSummaryShape(session);
   if (!summary) {
     throw new Error("Could not convert the session to a Home summary.");
@@ -646,7 +952,10 @@ export function projectHomeSessionSummary(session: Session | SessionSummary | Ho
   return summary;
 }
 
-export function projectSessionSummary(session: Session | SessionSummary): SessionSummary {
+/** Session から会話や活動履歴を含まない概要を作り、概要化できなければ例外を送出する。 */
+export function projectSessionSummary(
+  session: Session | SessionSummary,
+): SessionSummary {
   const summary = normalizeSessionSummaryShape(session);
   if (!summary) {
     throw new Error("Could not convert the session to a summary.");
@@ -655,6 +964,7 @@ export function projectSessionSummary(session: Session | SessionSummary): Sessio
   return summary;
 }
 
+/** 保存値から Session の詳細を復元する。Character スナップショットが不正または所有者不一致なら、スナップショットと Provider スレッドの参照を外す。 */
 export function normalizeSession(value: unknown): Session | null {
   const summary = normalizeSessionSummaryShape(value);
   if (!summary || !value || typeof value !== "object") {
@@ -662,12 +972,17 @@ export function normalizeSession(value: unknown): Session | null {
   }
 
   const candidate = value as Partial<Session>;
-  const storedSnapshot = (candidate as { characterRuntimeSnapshot?: unknown }).characterRuntimeSnapshot;
+  const storedSnapshot = (candidate as { characterRuntimeSnapshot?: unknown })
+    .characterRuntimeSnapshot;
   const normalizedSnapshot = normalizeCharacterRuntimeSnapshot(storedSnapshot);
-  const rejectedStoredSnapshot = storedSnapshot !== undefined
-    && storedSnapshot !== null
-    && (!normalizedSnapshot || normalizedSnapshot.characterId !== summary.characterId);
-  const characterRuntimeSnapshot = rejectedStoredSnapshot ? null : normalizedSnapshot;
+  const rejectedStoredSnapshot =
+    storedSnapshot !== undefined &&
+    storedSnapshot !== null &&
+    (!normalizedSnapshot ||
+      normalizedSnapshot.characterId !== summary.characterId);
+  const characterRuntimeSnapshot = rejectedStoredSnapshot
+    ? null
+    : normalizedSnapshot;
 
   return {
     ...summary,
@@ -682,23 +997,38 @@ export function normalizeSession(value: unknown): Session | null {
   };
 }
 
+/** JSON で往復できる Session 詳細を複製し、会話や設定のオブジェクトを共有しない配列を返す。 */
 export function cloneSessions(sessions: Session[]): Session[] {
   return JSON.parse(JSON.stringify(sessions)) as Session[];
 }
 
-export function cloneSessionSummaries(sessions: SessionSummary[]): SessionSummary[] {
+/** Session 概要を JSON で複製し、呼び出し元の一覧と参照を共有しない値を返す。 */
+export function cloneSessionSummaries(
+  sessions: SessionSummary[],
+): SessionSummary[] {
   return JSON.parse(JSON.stringify(sessions)) as SessionSummary[];
 }
 
-export function cloneHomeSessionSummaries(sessions: HomeSessionSummary[]): HomeSessionSummary[] {
-  return JSON.parse(JSON.stringify(sessions.map((session) => projectHomeSessionSummary(session)))) as HomeSessionSummary[];
+/** Home に渡す概要へ投影し直した上で、JSON で複製する。 */
+export function cloneHomeSessionSummaries(
+  sessions: HomeSessionSummary[],
+): HomeSessionSummary[] {
+  return JSON.parse(
+    JSON.stringify(
+      sessions.map((session) => projectHomeSessionSummary(session)),
+    ),
+  ) as HomeSessionSummary[];
 }
 
+/** 実行結果の概要に載せるテキストを、先頭の最大500 UTF-16 コード単位に制限する。 */
 function artifactSummaryText(value: string): string {
   return value.length > 500 ? value.slice(0, 500) : value;
 }
 
-export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArtifact {
+/** 操作の詳細と差分行を省いた実行結果の概要を作り、別途詳細を取得できることを示す。 */
+export function summarizeMessageArtifact(
+  artifact: MessageArtifact,
+): MessageArtifact {
   return {
     title: artifactSummaryText(artifact.title),
     activitySummary: artifact.activitySummary.map(artifactSummaryText),
@@ -717,17 +1047,25 @@ export function summarizeMessageArtifact(artifact: MessageArtifact): MessageArti
   };
 }
 
+/** 新規 Session の初期状態を組み立てる。Character のスナップショットを渡す場合は、選択した所有者と一致するものに限る。 */
 export function buildNewSession(input: CreateSessionInput): Session {
-  const normalizedTaskTitle = input.taskTitle.trim() || `Start new work in ${input.workspaceLabel}`;
+  const normalizedTaskTitle =
+    input.taskTitle.trim() || `Start new work in ${input.workspaceLabel}`;
   const characterId = requireCharacterOwnerId(input.characterId);
-  const characterRuntimeSnapshot = input.characterRuntimeSnapshot == null
-    ? null
-    : normalizeCharacterRuntimeSnapshot(input.characterRuntimeSnapshot);
+  const characterRuntimeSnapshot =
+    input.characterRuntimeSnapshot == null
+      ? null
+      : normalizeCharacterRuntimeSnapshot(input.characterRuntimeSnapshot);
   if (input.characterRuntimeSnapshot != null && !characterRuntimeSnapshot) {
     throw new Error("Invalid Character runtime snapshot.");
   }
-  if (characterRuntimeSnapshot && characterRuntimeSnapshot.characterId !== characterId) {
-    throw new Error("The Character runtime snapshot does not match the selected Character.");
+  if (
+    characterRuntimeSnapshot &&
+    characterRuntimeSnapshot.characterId !== characterId
+  ) {
+    throw new Error(
+      "The Character runtime snapshot does not match the selected Character.",
+    );
   }
   const id = input.id?.trim() || `launch-${Date.now()}`;
   return {
@@ -740,7 +1078,9 @@ export function buildNewSession(input: CreateSessionInput): Session {
     isPinned: false,
     provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
     catalogRevision:
-      typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
+      typeof input.catalogRevision === "number" &&
+      Number.isInteger(input.catalogRevision) &&
+      input.catalogRevision > 0
         ? input.catalogRevision
         : 1,
     workspaceLabel: input.workspaceLabel,
@@ -752,19 +1092,35 @@ export function buildNewSession(input: CreateSessionInput): Session {
     characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,
-    characterThemeColors: normalizeCharacterThemeColors(input.characterThemeColors),
+    characterThemeColors: normalizeCharacterThemeColors(
+      input.characterThemeColors,
+    ),
     characterRuntimeSnapshot,
     runState: "idle",
-    approvalMode: normalizeApprovalMode(input.approvalMode, getDefaultApprovalModeForProvider(input.provider)),
-    codexSandboxMode: normalizeCodexSandboxMode(input.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE),
+    approvalMode: normalizeApprovalMode(
+      input.approvalMode,
+      getDefaultApprovalModeForProvider(input.provider),
+    ),
+    codexSandboxMode: normalizeCodexSandboxMode(
+      input.codexSandboxMode,
+      DEFAULT_CODEX_SANDBOX_MODE,
+    ),
     codexSpeed: normalizeCodexSpeed(input.codexSpeed ?? DEFAULT_CODEX_SPEED),
-    codexReviewer: normalizeCodexReviewer(input.codexReviewer ?? DEFAULT_CODEX_REVIEWER),
-    ...(input.withMateReviewerExplicit ? { withMateReviewerExplicit: true } : {}),
+    codexReviewer: normalizeCodexReviewer(
+      input.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
+    ),
+    ...(input.withMateReviewerExplicit
+      ? { withMateReviewerExplicit: true }
+      : {}),
     model: input.model?.trim() || DEFAULT_MODEL_ID,
     reasoningEffort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
     customAgentName: input.customAgentName?.trim() || "",
-    allowedAdditionalDirectories: Array.isArray(input.allowedAdditionalDirectories)
-      ? input.allowedAdditionalDirectories.map((directory) => directory.trim()).filter((directory) => directory.length > 0)
+    allowedAdditionalDirectories: Array.isArray(
+      input.allowedAdditionalDirectories,
+    )
+      ? input.allowedAdditionalDirectories
+          .map((directory) => directory.trim())
+          .filter((directory) => directory.length > 0)
       : [],
     threadId: "",
     messages: [],
@@ -772,6 +1128,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
   };
 }
 
+/** 解決済みモデル、推論レベル、カタログ版と更新時刻だけを反映し、既存の Provider スレッドを保持する。 */
 export function applySessionModelMetadataUpdate(
   session: Session,
   selection: ResolvedModelSelection,
@@ -788,15 +1145,22 @@ export function applySessionModelMetadataUpdate(
   };
 }
 
+/** モデル選択の結果を Session に適用する。ここでは Provider スレッドを切り替えない。 */
 export function applySessionModelSelection(
   session: Session,
   selection: ResolvedModelSelection,
   catalogRevision: number,
   updatedAt: string,
 ): Session {
-  return applySessionModelMetadataUpdate(session, selection, catalogRevision, updatedAt);
+  return applySessionModelMetadataUpdate(
+    session,
+    selection,
+    catalogRevision,
+    updatedAt,
+  );
 }
 
+/** Copilot のカスタムエージェント名をトリムして更新する。既存の Provider スレッドはそのまま保持する。 */
 export function applyCopilotCustomAgentSelection(
   session: Session,
   customAgentName: string,
@@ -855,20 +1219,16 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
   ].join("\u001e");
 }
 
-/**
- * 次の summary 一覧・対象 ID・直前の signature を受け取り、
- * detail hydrate が必要かどうかを判定する純粋ヘルパー。
- *
- * - `targetSessionId` が null または一覧に存在しない → null（hydrate 不要）
- * - `lastSummarySignature` が null（初回）→ hydrate 対象を返す
- * - summary が変わっていない → null（hydrate 不要）
- * - summary が変わった → hydrate 対象を返す
- */
+/** 詳細を取得する対象の Session ID と、次回の比較に使う概要の署名。 */
 export type HydrationTarget = {
   sessionId: string;
   summarySignature: string;
 };
 
+/**
+ * 選択中の Session が一覧に存在し、初回または概要の署名が変わったときだけ、詳細取得の対象を返す。
+ * 対象が未選択・一覧にない・前回と同じ署名の場合は null とする。
+ */
 export function selectHydrationTarget(
   nextSummaries: SessionSummary[],
   targetSessionId: string | null,

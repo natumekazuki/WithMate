@@ -1,45 +1,81 @@
 import { memo, useMemo, useRef } from "react";
 
-import { SessionMessageColumn, type SessionMessageColumnProps } from "./conversation/session-message-column.js";
+import {
+  SessionMessageColumn,
+  type SessionMessageColumnProps,
+} from "./conversation/session-message-column.js";
 
+/** 引数と戻り値が異なる列操作を元の型のまま扱うための関数型制約。 */
 type Callback = (...args: any[]) => any;
 
-function useStableOptionalCallback<T extends Callback>(callback: T | undefined): T | undefined {
+/** 操作の有無が同じ間は参照を保ち、呼び出し時には最新の操作を実行する。 */
+function useStableOptionalCallback<T extends Callback>(
+  callback: T | undefined,
+): T | undefined {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
   const hasCallback = callback !== undefined;
 
   return useMemo(
-    () => hasCallback
-      ? ((...args: Parameters<T>) => callbackRef.current?.(...args)) as T
-      : undefined,
+    () =>
+      hasCallback
+        ? (((...args: Parameters<T>) => callbackRef.current?.(...args)) as T)
+        : undefined,
     [hasCallback],
   );
 }
 
+/** 表示入力や操作の参照に変更がなければ再描画を省くメッセージ列。 */
 const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
 
+/** 操作の参照を安定させ、親の再描画だけでメッセージ列を更新し直さないようにする。 */
 export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
-  const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
-  const onMessageListLayout = useStableOptionalCallback(props.onMessageListLayout);
+  const onMessageListScroll = useStableOptionalCallback(
+    props.onMessageListScroll,
+  );
+  const onMessageListLayout = useStableOptionalCallback(
+    props.onMessageListLayout,
+  );
   const onJumpToBottom = useStableOptionalCallback(props.onJumpToBottom);
   const onBrowseMessages = useStableOptionalCallback(props.onBrowseMessages);
-  const onToggleMessageCollapse = useStableOptionalCallback(props.onToggleMessageCollapse);
-  const onToggleAllMessageCollapse = useStableOptionalCallback(props.onToggleAllMessageCollapse);
-  const onToggleMessageBookmark = useStableOptionalCallback(props.onToggleMessageBookmark);
+  const onToggleMessageCollapse = useStableOptionalCallback(
+    props.onToggleMessageCollapse,
+  );
+  const onToggleAllMessageCollapse = useStableOptionalCallback(
+    props.onToggleAllMessageCollapse,
+  );
+  const onToggleMessageBookmark = useStableOptionalCallback(
+    props.onToggleMessageBookmark,
+  );
   const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
-  const onLoadArtifactDetail = useStableOptionalCallback(props.onLoadArtifactDetail);
+  const onLoadArtifactDetail = useStableOptionalCallback(
+    props.onLoadArtifactDetail,
+  );
   const onOpenDiff = useStableOptionalCallback(props.onOpenDiff);
-  const onResolveLiveApproval = useStableOptionalCallback(props.onResolveLiveApproval);
-  const onResolveLiveElicitation = useStableOptionalCallback(props.onResolveLiveElicitation);
+  const onResolveLiveApproval = useStableOptionalCallback(
+    props.onResolveLiveApproval,
+  );
+  const onResolveLiveElicitation = useStableOptionalCallback(
+    props.onResolveLiveElicitation,
+  );
   const onOpenPath = useStableOptionalCallback(props.onOpenPath);
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
-  const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
-  const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
-  const searchConversation = useStableOptionalCallback(props.searchConversation);
-  const cancelConversationQuery = useStableOptionalCallback(props.cancelConversationQuery);
+  const onQuoteMessageText = useStableOptionalCallback(
+    props.onQuoteMessageText,
+  );
+  const onActivateGlossaryEntry = useStableOptionalCallback(
+    props.onActivateGlossaryEntry,
+  );
+  const searchConversation = useStableOptionalCallback(
+    props.searchConversation,
+  );
+  const cancelConversationQuery = useStableOptionalCallback(
+    props.cancelConversationQuery,
+  );
   const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
-  const onCancelQueuedTurn = useStableOptionalCallback(props.onCancelQueuedTurn);
+  const onCancelQueuedTurn = useStableOptionalCallback(
+    props.onCancelQueuedTurn,
+  );
 
   return (
     <MemoizedSessionMessageColumn

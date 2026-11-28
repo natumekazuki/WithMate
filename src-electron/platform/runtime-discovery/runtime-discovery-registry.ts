@@ -39,23 +39,28 @@ const REGISTRY_MUTATION_LOCK_STALE_MS = 20_000;
 const STAGING_NAME_PATTERN = /^stage-[0-9a-f-]{36}$/;
 const RETIRED_NAME_PATTERN = /^retired-[0-9a-f-]{36}$/;
 
+/** アクセス保護を適用する際に期待するパスの種別。 */
 export type RuntimePathTargetKind = "directory" | "file";
+/** 指定パスを期待する種別として保護するプラットフォーム依存処理。保護できなければ失敗させる。 */
 export type RuntimePathSecurity = (
   targetPath: string,
   targetKind: RuntimePathTargetKind,
 ) => Promise<void>;
 
+/** レジストリ公開時に別ファイルへ保存する、アダプター別の認証ドキュメント。 */
 export type RuntimeDiscoveryCredentialDocument = {
   adapterKind: string;
   document: unknown;
 };
 
+/** 検証済みの登録内容と、それを読み込んだ公開スロットの位置。 */
 export type RuntimeDiscoveryRegistryRecord = {
   slotName: string;
   entry: RuntimeDiscoveryRegistryEntry;
   slotDirectoryPath: string;
 };
 
+/** 走査時に検出したスロット・登録内容・認証ファイルの異常。認証情報自体は含まない。 */
 export type RuntimeDiscoveryRegistryListIssue = {
   slotName: string;
   code:
@@ -65,22 +70,27 @@ export type RuntimeDiscoveryRegistryListIssue = {
     | "unsafe_credential";
 };
 
+/** 範囲内の公開スロットを走査した結果。認証ファイルの異常がある登録は、登録一覧と問題一覧の両方に現れ得る。 */
 export type RuntimeDiscoveryRegistrySnapshot = {
   records: RuntimeDiscoveryRegistryRecord[];
   issues: RuntimeDiscoveryRegistryListIssue[];
 };
 
+/** 回収を検討している登録に対し、対応するランタイムが応答するかを確認する処理。 */
 export type RuntimeDiscoveryRegistryChallenge = (
   entry: RuntimeDiscoveryRegistryEntry,
   slotDirectoryPath: string,
 ) => Promise<boolean>;
 
+/** プロセス間ロックで順序付けるレジストリおよび関連状態の更新の種別。 */
 type RegistryMutationKind =
   "heartbeat" | "retire" | "unpublish" | "publish" | "rollback" | "projection";
+/** 変更ロックを取得した後、今回の更新種別を受け取るテスト用の観測処理。 */
 type RegistryMutationObserver = (
   kind: RegistryMutationKind,
 ) => void | Promise<void>;
 
+/** レジストリの配置先・アクセス保護と回収条件、および運用時刻の設定。 */
 export type RuntimeDiscoveryRegistryLayoutOptions = {
   rootDirectoryPath?: string;
   security: RuntimePathSecurity;
@@ -90,6 +100,7 @@ export type RuntimeDiscoveryRegistryLayoutOptions = {
   mutationObserver?: RegistryMutationObserver;
 };
 
+/** 新しい登録の識別情報と認証ドキュメント、回収時の接続確認、および公開前後のフックをまとめた設定。 */
 export type PublishRuntimeDiscoveryEntryOptions =
   RuntimeDiscoveryRegistryLayoutOptions & {
     identity: RuntimeDiscoveryIdentity;
@@ -110,6 +121,7 @@ export type PublishRuntimeDiscoveryEntryOptions =
     afterPublicationRollback?: () => Promise<void>;
   };
 
+/** 公開中、準備中、退役済みの成果物を分離するためのレジストリ内ディレクトリの絶対パス。 */
 type RegistryLayout = {
   rootDirectoryPath: string;
   activeDirectoryPath: string;
@@ -117,34 +129,44 @@ type RegistryLayout = {
   retiredDirectoryPath: string;
 };
 
+/** アダプター別の認証ドキュメントを、保存先ファイル名と読み戻し比較用の本文に確定したもの。 */
 type SerializedRuntimeDiscoveryCredentialDocument = {
   adapterKind: string;
   credentialFileName: string;
   contents: string;
 };
 
+/** 保守処理が退役させた登録数と、準備領域・退役領域から回収した成果物の数。 */
 export type RuntimeDiscoveryRegistryMaintenanceResult = {
   retiredEntries: number;
   removedStagingArtifacts: number;
   removedRetiredArtifacts: number;
 };
 
+/** 一回の公開に対する所有者ハンドル。リース更新、公開解除、退役後の回収を区別する。 */
 export type RuntimeDiscoveryRegistryPublication = {
   readonly entry: RuntimeDiscoveryRegistryEntry;
   readonly slotName: string;
+  /** まだ公開中で周期更新がない場合に、リースの定期更新を開始する。 */
   startHeartbeat(): void;
+  /** 同じ公開がスロットを所有している場合にリースを更新し、読み戻しで確定できたか返す。 */
   refreshHeartbeat(): Promise<boolean>;
+  /** リースの周期更新を止め、キューに入っていた所有者操作の完了を待つ。 */
   stopHeartbeat(): Promise<void>;
+  /** 定期更新を止め、自分が所有するスロットを退役領域へ移す。移さなかった場合は false を返す。 */
   unpublish(): Promise<boolean>;
+  /** このハンドルが退役させた成果物の所有者を確認し、その成果物を削除できたか返す。 */
   cleanupGeneration(): Promise<boolean>;
 };
 
+/** 指定されたルート、または実行環境の既定ルートを絶対パスに解決する。 */
 function normalizeRootDirectoryPath(rootDirectoryPath?: string): string {
   return path.resolve(
     rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot(),
   );
 }
 
+/** 各プロセスが同じレジストリの変更を直列化するためのロックパスを解決する。 */
 export function resolveRuntimeDiscoveryMutationLockFilePath(
   rootDirectoryPath?: string,
 ): string {
@@ -154,6 +176,7 @@ export function resolveRuntimeDiscoveryMutationLockFilePath(
   );
 }
 
+/** レジストリの変更をプロセス間ロックの下で実行する。変更と解放の失敗を区別し、必要な場合は解放失敗後の復旧も試みる。 */
 async function withRegistryMutationLock<T>(
   layout: RegistryLayout,
   kind: RegistryMutationKind,
@@ -215,6 +238,7 @@ async function withRegistryMutationLock<T>(
   return result as T;
 }
 
+/** 関連する表示用状態の更新を、公開・回収処理と同じプロセス間ロックで直列化する。 */
 export async function withRuntimeDiscoveryRegistryMutationLock<T>(
   rootDirectoryPath: string | undefined,
   operation: () => Promise<T>,
@@ -233,15 +257,18 @@ export async function withRuntimeDiscoveryRegistryMutationLock<T>(
   );
 }
 
+/** ファイルシステム操作の失敗が、対象の消失を示す ENOENT か判定する。 */
 function isMissingError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
 }
 
+/** スロットの移動が既存ディレクトリとの競合で失敗した場合に扱うエラーコードか調べる。 */
 function isAlreadyExistsError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException)?.code;
   return code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM";
 }
 
+/** リンクを辿らずに対象の属性を読み、対象なしの場合だけ null を返す。 */
 async function lstatSafe(targetPath: string) {
   try {
     return await lstat(targetPath);
@@ -253,6 +280,7 @@ async function lstatSafe(targetPath: string) {
   }
 }
 
+/** プラットフォームの保護処理を呼び、失敗をレジストリの保護エラーとして伝える。 */
 async function applyPathSecurity(
   targetPath: string,
   targetKind: RuntimePathTargetKind,
@@ -269,6 +297,7 @@ async function applyPathSecurity(
   }
 }
 
+/** ディレクトリを用意し、アクセス保護の適用前後でリンクではないディレクトリであることを確かめる。 */
 async function secureDirectory(
   directoryPath: string,
   security: RuntimePathSecurity,
@@ -291,6 +320,7 @@ async function secureDirectory(
   }
 }
 
+/** レジストリルートと公開・準備・退役用のディレクトリを用意し、それぞれにアクセス保護を適用する。 */
 async function ensureRegistryLayout(
   options: RuntimeDiscoveryRegistryLayoutOptions,
 ): Promise<RegistryLayout> {
@@ -321,10 +351,12 @@ async function ensureRegistryLayout(
   };
 }
 
+/** 公開メタデータを、ファイルへ保存する末尾改行付きの JSON に変換する。 */
 function serializeEntry(entry: RuntimeDiscoveryRegistryEntry): string {
   return `${JSON.stringify(entry)}\n`;
 }
 
+/** リンクではない通常ファイルから登録を読み、JSON とスキーマを検査する。 */
 async function readEntryFile(
   entryFilePath: string,
 ): Promise<RuntimeDiscoveryRegistryEntry> {
@@ -349,6 +381,7 @@ async function readEntryFile(
   return parseRuntimeDiscoveryRegistryEntry(parsed);
 }
 
+/** 番号付きの公開スロットを調べ、登録を読み取る。認証ファイルだけの異常では登録を捨てず、問題を併記する。 */
 async function readRecordFromSlot(
   activeDirectoryPath: string,
   slotName: string,
@@ -405,6 +438,7 @@ async function readRecordFromSlot(
   };
 }
 
+/** 上限内の公開スロットを順に読み、登録と問題を集める。公開領域がまだ存在しなければ空とする。 */
 export async function listRuntimeDiscoveryRegistryEntries(
   rootDirectoryPath?: string,
   limitsOverride: Partial<RuntimeDiscoveryRegistryLimits> = {},
@@ -441,6 +475,7 @@ export async function listRuntimeDiscoveryRegistryEntries(
   return { records, issues };
 }
 
+/** 登録が参照するアダプターの認証ファイルを読む。参照がないか安全に読み取れない場合は null を返す。 */
 export async function readRuntimeDiscoveryCredential(
   record: RuntimeDiscoveryRegistryRecord,
   adapterKind: string,
@@ -466,6 +501,7 @@ export async function readRuntimeDiscoveryCredential(
   }
 }
 
+/** ファイルを排他的に作成し、内容の読み戻し後にアクセス保護を適用して種別を再確認する。 */
 async function writeExclusiveSecureFile(
   targetPath: string,
   contents: string | Uint8Array,
@@ -482,6 +518,7 @@ async function writeExclusiveSecureFile(
   }
 }
 
+/** 既存パスを上書きせずにファイルを作り、同期・クローズ後に種別と保存バイト列を検証する。 */
 async function writeExclusiveFileWithReadBack(
   targetPath: string,
   contents: string | Uint8Array,
@@ -513,6 +550,7 @@ async function writeExclusiveFileWithReadBack(
   }
 }
 
+/** ハートビート更新用の置換ファイルをスロット内に準備し、作成に失敗した一時ファイルは除去する。 */
 async function prepareEntryReplacement(
   slotDirectoryPath: string,
   entry: RuntimeDiscoveryRegistryEntry,
@@ -536,10 +574,12 @@ async function prepareEntryReplacement(
   }
 }
 
+/** 時刻の差をミリ秒で返し、基準時刻より新しい値の経過時間はゼロとする。 */
 function elapsedSince(timestamp: string, now: Date): number {
   return Math.max(0, now.getTime() - Date.parse(timestamp));
 }
 
+/** スロットを再読し、所有者・公開 ID・ハートビートが観測時とすべて等しい場合だけ登録を返す。 */
 async function readUnchangedRecord(
   record: RuntimeDiscoveryRegistryRecord,
 ): Promise<RuntimeDiscoveryRegistryRecord | null> {
@@ -558,6 +598,7 @@ async function readUnchangedRecord(
   return result.record;
 }
 
+/** 観測後に所有やリースが変わっていない登録だけを、変更ロック内で公開領域から退役領域に移す。 */
 async function retireUnchangedRecord(
   record: RuntimeDiscoveryRegistryRecord,
   layout: RegistryLayout,
@@ -589,6 +630,7 @@ async function retireUnchangedRecord(
   );
 }
 
+/** 指定形式に合う古い通常ディレクトリを、今回の回収上限まで削除する。既に消えたものは件数に含めない。 */
 async function removeAgedArtifacts(
   directoryPath: string,
   namePattern: RegExp,
@@ -625,6 +667,7 @@ async function removeAgedArtifacts(
   return removed;
 }
 
+/** 年齢条件を満たし接続確認に応答しない登録を退役させ、準備・退役領域の古い成果物を上限付きで回収する。 */
 export async function maintainRuntimeDiscoveryRegistry(
   options: RuntimeDiscoveryRegistryLayoutOptions & {
     challenge: RuntimeDiscoveryRegistryChallenge;
@@ -686,6 +729,7 @@ export async function maintainRuntimeDiscoveryRegistry(
   return { retiredEntries, removedStagingArtifacts, removedRetiredArtifacts };
 }
 
+/** 一つ以上のアダプターについて重複と JSON 化の可否を検査し、認証ファイル名と保存内容を確定する。 */
 function serializeCredentialDocuments(
   identity: RuntimeDiscoveryIdentity,
   credentialDocuments: RuntimeDiscoveryCredentialDocument[],
@@ -732,6 +776,7 @@ function serializeCredentialDocuments(
   });
 }
 
+/** 公開時刻を初回ハートビートにも使い、認証ファイル参照を持つ登録メタデータを構築して検証する。 */
 function buildEntry(
   options: PublishRuntimeDiscoveryEntryOptions,
   clock: RuntimeDiscoveryClock,
@@ -756,6 +801,7 @@ function buildEntry(
   });
 }
 
+/** 登録が参照する認証ファイルの集合と本文が、今回の公開用に用意した内容と一致するか確かめる。 */
 async function credentialsMatch(
   record: RuntimeDiscoveryRegistryRecord,
   credentialDocuments: SerializedRuntimeDiscoveryCredentialDocument[],
@@ -775,6 +821,7 @@ async function credentialsMatch(
   return true;
 }
 
+/** 上限内の公開スロットから、指定したインスタンス・種別・世代の組に一致する登録を探す。 */
 async function findExactRecord(
   rootDirectoryPath: string,
   identity: RuntimeDiscoveryIdentity,
@@ -791,6 +838,7 @@ async function findExactRecord(
   );
 }
 
+/** 公開済みの一件に対し、同じ公開 ID のリース更新と退役・回収だけを扱う所有者ハンドルを作る。 */
 function createPublicationHandle(args: {
   layout: RegistryLayout;
   record: RuntimeDiscoveryRegistryRecord;
@@ -806,10 +854,12 @@ function createPublicationHandle(args: {
   let retiredDirectoryPath: string | null = null;
   let unpublished = false;
 
+  /** スロットが再利用されても他者を操作しないよう、識別子の組と公開 ID の両方を比較する。 */
   const isOwnedEntry = (entry: RuntimeDiscoveryRegistryEntry): boolean =>
     isSameRuntimeDiscoveryIdentity(entry, currentEntry) &&
     entry.publicationId === currentEntry.publicationId;
 
+  /** 同じハンドルの操作を呼び出し順に実行し、失敗した操作の後も次の操作を進める。 */
   const runSerialized = async <T>(operation: () => Promise<T>): Promise<T> => {
     const previous = serializedOperation;
     let release: (() => void) | undefined;
@@ -824,6 +874,7 @@ function createPublicationHandle(args: {
     }
   };
 
+  /** 置換ファイルを準備し、プロセス間ロック内で所有を再確認してからリースを更新する。 */
   const refreshHeartbeat = async (): Promise<boolean> =>
     runSerialized(async () => {
       if (unpublished) {
@@ -864,9 +915,12 @@ function createPublicationHandle(args: {
               args.layout.activeDirectoryPath,
               args.record.slotName,
             );
-            if (!committed.record
-              || !isOwnedEntry(committed.record.entry)
-              || committed.record.entry.lease.heartbeatAt !== nextEntry.lease.heartbeatAt) {
+            if (
+              !committed.record ||
+              !isOwnedEntry(committed.record.entry) ||
+              committed.record.entry.lease.heartbeatAt !==
+                nextEntry.lease.heartbeatAt
+            ) {
               throw new RuntimeDiscoveryRegistryError(
                 "registry_io",
                 "Runtime registry heartbeat read-back failed.",
@@ -881,6 +935,7 @@ function createPublicationHandle(args: {
       }
     });
 
+  /** 定期更新の予約を解除し、その時点までにキューに入った操作の終了を待つ。 */
   const stopHeartbeat = async (): Promise<void> => {
     if (heartbeatHandle) {
       args.timers.clearInterval(heartbeatHandle);
@@ -889,6 +944,7 @@ function createPublicationHandle(args: {
     await serializedOperation;
   };
 
+  /** リースの定期更新を止め、なお所有する公開スロットだけを退役領域へ移し、回収先を保持する。 */
   const unpublish = async (): Promise<boolean> => {
     await stopHeartbeat();
     return runSerialized(() =>
@@ -932,6 +988,7 @@ function createPublicationHandle(args: {
     );
   };
 
+  /** 退役先に残る自分の登録を確かめ、その公開に由来するディレクトリを回収する。 */
   const cleanupGeneration = async (): Promise<boolean> =>
     runSerialized(async () => {
       if (!retiredDirectoryPath) {
@@ -957,10 +1014,12 @@ function createPublicationHandle(args: {
     });
 
   return {
+    /** 最後に公開または読み戻しで確認した登録メタデータを返す。 */
     get entry() {
       return currentEntry;
     },
     slotName: args.record.slotName,
+    /** 定期更新の二重登録と公開解除後の再開を防ぎ、更新の失敗は観測用コールバックへ伝える。 */
     startHeartbeat() {
       if (heartbeatHandle || unpublished) {
         return;
@@ -978,6 +1037,7 @@ function createPublicationHandle(args: {
   };
 }
 
+/** 今回確保したスロットに同じ公開 ID が残っていれば撤回し、同じ識別子の登録が公開領域に残るかを確認する。 */
 async function rollbackRuntimeDiscoveryPublication(input: {
   layout: RegistryLayout;
   entry: RuntimeDiscoveryRegistryEntry;
@@ -1027,6 +1087,7 @@ async function rollbackRuntimeDiscoveryPublication(input: {
   ));
 }
 
+/** 準備領域に保護済みの登録と認証ファイルをそろえ、空きスロットへまとめて移動して公開する。読み戻しに成功した場合のみ所有者ハンドルを返す。 */
 export async function publishRuntimeDiscoveryEntry(
   options: PublishRuntimeDiscoveryEntryOptions,
 ): Promise<RuntimeDiscoveryRegistryPublication> {
@@ -1097,6 +1158,7 @@ export async function publishRuntimeDiscoveryEntry(
   let committedRecord: RuntimeDiscoveryRegistryRecord | null = null;
   let claimedSlotPath: string | null = null;
   let publicationProjectionPrepared = false;
+  /** 今回の登録を撤回し、表示用状態の準備後かつ撤回が確認できた場合に限り、表示側の復旧フックを呼ぶ。 */
   const rollbackPreparedPublication = async (): Promise<void> => {
     const rollbackComplete = await rollbackRuntimeDiscoveryPublication({
       layout,

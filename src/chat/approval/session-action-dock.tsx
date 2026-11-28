@@ -3,13 +3,22 @@ import { ButtonContent } from "../../ui/button-content.js";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 import { useShortcutSettings } from "../../settings/shortcut-settings-context.js";
-import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
+import {
+  appendShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+} from "../../settings/shortcut-registry.js";
 import { ComposerIcon } from "../composer/composer-icon.js";
 
+/** アクションドックで使う入力先。プロンプト入力かターミナルかを区別する。 */
 export type SessionActionDockMode = "prompt" | "terminal";
 
-export function SessionActionDockModeSwitch({ mode, onChange }: {
+/** 現在の入力先を押下状態で示し、切り替えショートカットを案内する。 */
+export function SessionActionDockModeSwitch({
+  mode,
+  onChange,
+}: {
   mode: SessionActionDockMode;
+  /** ボタンで選択された入力先を親へ通知する。 */
   onChange(mode: SessionActionDockMode): void;
 }) {
   const settings = useShortcutSettings();
@@ -18,7 +27,12 @@ export function SessionActionDockModeSwitch({ mode, onChange }: {
       className="composer-message-view-mode"
       role="group"
       aria-label="Action dock mode"
-      title={appendShortcutLabel("Switch Prompt / Terminal", SHORTCUT_COMMAND_IDS.actionDockToggleMode, undefined, settings)}
+      title={appendShortcutLabel(
+        "Switch Prompt / Terminal",
+        SHORTCUT_COMMAND_IDS.actionDockToggleMode,
+        undefined,
+        settings,
+      )}
     >
       <button
         className="composer-message-view-mode-button"
@@ -44,6 +58,7 @@ export function SessionActionDockModeSwitch({ mode, onChange }: {
   );
 }
 
+/** 折りたたみ時にも表示する実行状態、操作スロット、表示モードを親から受け取る。 */
 export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   isCanceling?: boolean;
@@ -64,6 +79,7 @@ export type SessionActionDockCompactRowProps = {
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
+/** ドックを折りたたんだまま使える操作を並べ、実行中にだけ停止ボタンを表示する。 */
 export function SessionActionDockCompactRow({
   isRunning,
   isCanceling = false,
@@ -84,15 +100,28 @@ export function SessionActionDockCompactRow({
   onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
   return (
-    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${providerQuota ? " has-provider-quota" : ""}`}>
-      {providerQuota ? <div className="session-provider-quota-slot" onClick={(event) => event.stopPropagation()}>{providerQuota}</div> : null}
-      {showExpandControl ? <button
-        className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
-        type="button"
-        onClick={onExpand}
-        aria-label="Expand action dock"
-        title="Expand action dock"
-      /> : <span className="session-action-dock-compact-meta" aria-hidden="true" />}
+    <div
+      className={`session-action-dock-compact-row${isRunning ? " running" : ""}${providerQuota ? " has-provider-quota" : ""}`}
+    >
+      {providerQuota ? (
+        <div
+          className="session-provider-quota-slot"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {providerQuota}
+        </div>
+      ) : null}
+      {showExpandControl ? (
+        <button
+          className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
+          type="button"
+          onClick={onExpand}
+          aria-label="Expand action dock"
+          title="Expand action dock"
+        />
+      ) : (
+        <span className="session-action-dock-compact-meta" aria-hidden="true" />
+      )}
       <div className="session-action-dock-compact-actions">
         {attentionControl}
         {recoveryActions}
@@ -109,11 +138,16 @@ export function SessionActionDockCompactRow({
               disabled={isCanceling}
               aria-busy={isCanceling || undefined}
             >
-              <ButtonContent busy={isCanceling && !isAwaitingRunStop}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
+              <ButtonContent busy={isCanceling && !isAwaitingRunStop}>
+                <ComposerIcon name="stop" />
+                <span className="visually-hidden">Cancel</span>
+              </ButtonContent>
             </button>
-        ) : null}
+          ) : null}
         </div>
-        {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
+        {targetDock ? (
+          <div className="session-action-dock-target-slot">{targetDock}</div>
+        ) : null}
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button composer-icon-button"
@@ -126,7 +160,11 @@ export function SessionActionDockCompactRow({
           </button>
         ) : null}
         {showMessageViewModeControls ? (
-          <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+          <div
+            className="composer-message-view-mode"
+            role="group"
+            aria-label="Message display mode"
+          >
             <button
               className="composer-message-view-mode-button"
               type="button"
@@ -148,7 +186,7 @@ export function SessionActionDockCompactRow({
               <span className="visually-hidden">Source</span>
             </button>
           </div>
-          ) : null}
+        ) : null}
         {dockModeSwitch}
       </div>
     </div>

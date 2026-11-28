@@ -35,9 +35,15 @@ import {
   type GlossaryProactiveTurnHandle,
 } from "./glossary-proactive-turn.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
-import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
+import {
+  runWithRuntimeTurnAdmission,
+  RuntimeTurnInactiveError,
+  type RuntimeTurnAdmission,
+} from "../platform/agent-runtime/runtime-turn-admission.js";
 
+/** 用語集の実行権限を、プロバイダーセッションのバインディングから解決する窓口。 */
 type BindingRegistry = {
+  /** 指定された操作を許可するバインディングを解決し、未指定・無効・権限不足を区別する。 */
   resolve(
     bindingReference: string | null | undefined,
     operation: string,
@@ -45,31 +51,42 @@ type BindingRegistry = {
     | { ok: true; binding: ResolvedAgentRuntimeBinding }
     | {
         ok: false;
-        code: "SESSION_BINDING_REQUIRED" | "SESSION_BINDING_INVALID" | "SESSION_BINDING_FORBIDDEN";
+        code:
+          | "SESSION_BINDING_REQUIRED"
+          | "SESSION_BINDING_INVALID"
+          | "SESSION_BINDING_FORBIDDEN";
       };
 };
 
+/** 操作の実行、呼び出し元セッションの照合、ターンごとの能動登録制限に必要な依存処理。 */
 export type GlossaryRuntimeServiceDeps = {
   applicationService: GlossaryApplicationService;
   bindingRegistry: BindingRegistry;
   resolveActorSession: (
     sessionId: string,
     sourceKind?: "main" | "auxiliary",
-  ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
-  getProactiveCreateLimit: () => Promise<number | null | undefined> | number | null | undefined;
+  ) =>
+    Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  getProactiveCreateLimit: () =>
+    Promise<number | null | undefined> | number | null | undefined;
   providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
 };
 
+/** 許可されたチェックアウトと、バインディング経由の場合に選択・再検証に使う識別情報。 */
 type AuthorizedCheckout = {
   binding?: ResolvedAgentRuntimeBinding;
   target: ResolvedGlossaryCheckout;
   checkoutId?: string;
 };
 
-function runtimeEnvelope<T extends object>(value: T): GlossaryRuntimeEnvelope<T> {
+/** 用語集の応答にランタイム契約のスキーマバージョンを付ける。 */
+function runtimeEnvelope<T extends object>(
+  value: T,
+): GlossaryRuntimeEnvelope<T> {
   return { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, ...value };
 }
 
+/** 処理の効果と再試行可否を明示したランタイムエラーを作る。 */
 function runtimeError(
   code: GlossaryOperationError["code"],
   message: string,
@@ -79,6 +96,7 @@ function runtimeError(
   return runtimeEnvelope({ ok: false, code, message, effect, retryable });
 }
 
+/** 用語集の操作結果に対応する HTTP ステータスを返す。 */
 function statusForResult(result: GlossaryRuntimeEnvelope<object>): number {
   if (!("ok" in result) || result.ok !== false || !("code" in result)) {
     return 200;
@@ -107,7 +125,10 @@ function statusForResult(result: GlossaryRuntimeEnvelope<object>): number {
   }
 }
 
-function isCheckoutAuthoritySnapshot(value: unknown): value is GlossaryCheckoutAuthoritySnapshot {
+/** 権限スナップショットに、チェックアウトを復元するための必須文字列がそろっているか確認する。 */
+function isCheckoutAuthoritySnapshot(
+  value: unknown,
+): value is GlossaryCheckoutAuthoritySnapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -122,7 +143,11 @@ function isCheckoutAuthoritySnapshot(value: unknown): value is GlossaryCheckoutA
   ].every((key) => typeof candidate[key] === "string" && candidate[key] !== "");
 }
 
-function createCheckoutId(binding: ResolvedAgentRuntimeBinding, target: ResolvedGlossaryCheckout): string {
+/** バインディングの実行世代とチェックアウトの実体情報から、そのバインディング内で使う選択IDを作る。 */
+function createCheckoutId(
+  binding: ResolvedAgentRuntimeBinding,
+  target: ResolvedGlossaryCheckout,
+): string {
   return createHash("sha256")
     .update(binding.bindingIdHash, "utf8")
     .update("\0", "utf8")
@@ -136,8 +161,12 @@ function createCheckoutId(binding: ResolvedAgentRuntimeBinding, target: Resolved
     .digest("base64url");
 }
 
+/** 共通のバインディングエラーを用語集固有のエラーコードへ変換する。 */
 function bindingErrorCode(
-  code: "SESSION_BINDING_REQUIRED" | "SESSION_BINDING_INVALID" | "SESSION_BINDING_FORBIDDEN",
+  code:
+    | "SESSION_BINDING_REQUIRED"
+    | "SESSION_BINDING_INVALID"
+    | "SESSION_BINDING_FORBIDDEN",
 ): GlossaryOperationError["code"] {
   switch (code) {
     case "SESSION_BINDING_REQUIRED":
@@ -149,10 +178,12 @@ function bindingErrorCode(
   }
 }
 
+/** ランタイム操作名の区切りをエラーメッセージ用にハイフンに置き換える。 */
 function operationLabel(operation: GlossaryRuntimeOperation): string {
   return operation.replaceAll("_", "-");
 }
 
+/** ランタイム要求を検証し、呼び出し元に許可されたチェックアウト上で用語集の操作を実行する。 */
 export class GlossaryRuntimeService {
   readonly #applicationService: GlossaryApplicationService;
   readonly #bindingRegistry: BindingRegistry;
@@ -161,15 +192,19 @@ export class GlossaryRuntimeService {
   readonly #proactiveTurns: GlossaryProactiveTurnCoordinator;
   readonly #providerTurns: ProviderAgentRuntimeTurnCoordinator;
 
+  /** 用語集固有の能動登録制限を、共通のプロバイダーターン管理に接続する。 */
   constructor(deps: GlossaryRuntimeServiceDeps) {
     this.#applicationService = deps.applicationService;
     this.#bindingRegistry = deps.bindingRegistry;
     this.#resolveActorSession = deps.resolveActorSession;
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
-    this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(deps.providerAgentRuntimeTurns);
+    this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(
+      deps.providerAgentRuntimeTurns,
+    );
     this.#providerTurns = deps.providerAgentRuntimeTurns;
   }
 
+  /** ターン開始時の能動登録上限を取得し、ターン capability 付きのバインディングを返す。 */
   async beginProviderTurn(
     actorSessionId: string,
     binding: ProviderAgentRuntimeBindingProjection,
@@ -190,43 +225,75 @@ export class GlossaryRuntimeService {
     };
   }
 
+  /** プロバイダーターンを終了し、そのターンの能動登録状態を破棄する。 */
   endProviderTurn(handle: GlossaryProactiveTurnHandle): void {
     this.#proactiveTurns.end(handle);
   }
 
-  async route(request: AgentRuntimeExtensionRequest): Promise<AgentRuntimeExtensionResponse | null> {
+  /** 用語集の既知のパスに対する POST 要求だけを処理し、入力・権限・ターンを照合して該当操作へ渡す。未知のパスは null を返す。 */
+  async route(
+    request: AgentRuntimeExtensionRequest,
+  ): Promise<AgentRuntimeExtensionResponse | null> {
     const operationUrl = new URL(request.path, "http://127.0.0.1");
     const operation = glossaryRuntimeOperationByPath.get(operationUrl.pathname);
     if (!operation) {
       return null;
     }
     if (request.method !== "POST") {
-      return this.#respond(runtimeError(
-        "GLOSSARY_INVALID_REQUEST",
-        `Glossary ${operationLabel(operation)} requires POST.`,
-      ), 405);
+      return this.#respond(
+        runtimeError(
+          "GLOSSARY_INVALID_REQUEST",
+          `Glossary ${operationLabel(operation)} requires POST.`,
+        ),
+        405,
+      );
     }
 
     const schema = glossaryOperationRequestSchemas[operation];
     const parsed = schema.safeParse(request.body);
     if (!parsed.success) {
-      return this.#respond(runtimeError(
-        "GLOSSARY_INVALID_REQUEST",
-        parsed.error.issues.map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; "),
-      ));
+      return this.#respond(
+        runtimeError(
+          "GLOSSARY_INVALID_REQUEST",
+          parsed.error.issues
+            .map(
+              (issue) =>
+                `${issue.path.join(".") || "request"}: ${issue.message}`,
+            )
+            .join("; "),
+        ),
+      );
     }
 
-    const selector = glossaryCheckoutSelectorSchema.parse((parsed.data as { selector?: unknown }).selector ?? { kind: "primary" });
+    const selector = glossaryCheckoutSelectorSchema.parse(
+      (parsed.data as { selector?: unknown }).selector ?? { kind: "primary" },
+    );
     const captured = request.bindingReference
-      ? this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation)) : null;
+      ? this.#bindingRegistry.resolve(
+          request.bindingReference,
+          glossaryAgentRuntimeOperation(operation),
+        )
+      : null;
     if (captured && !captured.ok) {
-      return this.#respond(runtimeError(bindingErrorCode(captured.code), "Glossary operation requires the active provider Session runtime binding."));
+      return this.#respond(
+        runtimeError(
+          bindingErrorCode(captured.code),
+          "Glossary operation requires the active provider Session runtime binding.",
+        ),
+      );
     }
     const capturedBinding = captured?.binding;
     if (!capturedBinding && request.turnCapability) {
-      return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "A turn capability requires its provider Session runtime binding."));
+      return this.#respond(
+        runtimeError(
+          "GLOSSARY_SESSION_BINDING_REQUIRED",
+          "A turn capability requires its provider Session runtime binding.",
+        ),
+      );
     }
-    const mutation = ["create", "create_batch", "update", "delete"].includes(operation);
+    const mutation = ["create", "create_batch", "update", "delete"].includes(
+      operation,
+    );
     let turnAdmission: RuntimeTurnAdmission | undefined;
     if (capturedBinding && (request.turnCapability || mutation)) {
       const admitted = this.#providerTurns.admit({
@@ -235,133 +302,258 @@ export class GlossaryRuntimeService {
         turnCapability: request.turnCapability,
       });
       if (!admitted.ok) {
-        return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Glossary operation requires the captured provider Session turn."));
+        return this.#respond(
+          runtimeError(
+            "GLOSSARY_SESSION_BINDING_INVALID",
+            "Glossary operation requires the captured provider Session turn.",
+          ),
+        );
       }
       const handle = admitted.handle;
       turnAdmission = {
         state: handle.revocationState,
+        /** バインディングの実行世代と元のターンのハンドルが変わっていないか再検証する。 */
         isCurrent: () => {
-          const current = this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation));
+          const current = this.#bindingRegistry.resolve(
+            request.bindingReference,
+            glossaryAgentRuntimeOperation(operation),
+          );
           const turn = this.#providerTurns.admit({
             actorSessionId: capturedBinding.actorSessionId,
             providerId: capturedBinding.providerId,
             turnCapability: request.turnCapability,
           });
-          return current.ok
-            && current.binding.bindingId === capturedBinding.bindingId
-            && current.binding.executionGeneration === capturedBinding.executionGeneration
-            && current.binding.actorSessionId === capturedBinding.actorSessionId
-            && current.binding.providerId === capturedBinding.providerId
-            && turn.ok && turn.handle === handle;
+          return (
+            current.ok &&
+            current.binding.bindingId === capturedBinding.bindingId &&
+            current.binding.executionGeneration ===
+              capturedBinding.executionGeneration &&
+            current.binding.actorSessionId === capturedBinding.actorSessionId &&
+            current.binding.providerId === capturedBinding.providerId &&
+            turn.ok &&
+            turn.handle === handle
+          );
         },
       };
     }
+    /** ターンの実行許可が有効か確認し、ターンの失効だけを false に変換する。 */
     const admissionCurrent = (): boolean => {
       try {
-        if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
+        if (turnAdmission)
+          runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
         return true;
       } catch (error) {
         if (error instanceof RuntimeTurnInactiveError) return false;
         throw error;
       }
     };
-    const authorization = await this.#authorize(request.bindingReference, operation, selector);
+    const authorization = await this.#authorize(
+      request.bindingReference,
+      operation,
+      selector,
+    );
     if ("error" in authorization) {
       return this.#respond(authorization.error);
     }
     const { binding, target, checkoutId } = authorization;
-    if (binding?.bindingId !== capturedBinding?.bindingId
-      || binding?.executionGeneration !== capturedBinding?.executionGeneration
-      || !admissionCurrent()) {
-      return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Captured provider Session authority is no longer active."));
+    if (
+      binding?.bindingId !== capturedBinding?.bindingId ||
+      binding?.executionGeneration !== capturedBinding?.executionGeneration ||
+      !admissionCurrent()
+    ) {
+      return this.#respond(
+        runtimeError(
+          "GLOSSARY_SESSION_BINDING_INVALID",
+          "Captured provider Session authority is no longer active.",
+        ),
+      );
     }
+    /** 書き込み前に権限を取り直し、捕捉したバインディングやターンが失効していれば対象を返さない。 */
     const guard = async (): Promise<ResolvedGlossaryCheckout | null> => {
       if (!admissionCurrent()) return null;
-      const current = await this.#authorize(request.bindingReference, operation, selector);
+      const current = await this.#authorize(
+        request.bindingReference,
+        operation,
+        selector,
+      );
       if (
-        "error" in current
-        || current.binding?.bindingId !== binding?.bindingId
-        || current.binding?.executionGeneration !== binding?.executionGeneration
-        || !admissionCurrent()
+        "error" in current ||
+        current.binding?.bindingId !== binding?.bindingId ||
+        current.binding?.executionGeneration !== binding?.executionGeneration ||
+        !admissionCurrent()
       ) {
         return null;
       }
       return current.target;
     };
-    const respondRead = async (value: GlossaryRuntimeEnvelope<object>): Promise<AgentRuntimeExtensionResponse> => {
+    /** 読み取り操作の結果をランタイム応答へ変換する。 */
+    const respondRead = async (
+      value: GlossaryRuntimeEnvelope<object>,
+    ): Promise<AgentRuntimeExtensionResponse> => {
       return this.#respond(value);
     };
 
     switch (operation) {
       case "list_targets": {
         const display = await this.#applicationService.describeCheckout(target);
-        const checkoutTarget: GlossaryCheckoutTarget = binding && checkoutId
-          ? { checkoutId, selector: { kind: "checkout", checkoutId }, isPrimary: true, ...display }
-          : { selector: { kind: "repository", path: target.rootPath }, isPrimary: false, ...display };
-        return respondRead(runtimeEnvelope({ ok: true, targets: [checkoutTarget] }));
+        const checkoutTarget: GlossaryCheckoutTarget =
+          binding && checkoutId
+            ? {
+                checkoutId,
+                selector: { kind: "checkout", checkoutId },
+                isPrimary: true,
+                ...display,
+              }
+            : {
+                selector: { kind: "repository", path: target.rootPath },
+                isPrimary: false,
+                ...display,
+              };
+        return respondRead(
+          runtimeEnvelope({ ok: true, targets: [checkoutTarget] }),
+        );
       }
       case "list": {
         const input = glossaryOperationRequestSchemas.list.parse(request.body);
-        return respondRead(runtimeEnvelope(await this.#applicationService.list(target, input)));
+        return respondRead(
+          runtimeEnvelope(await this.#applicationService.list(target, input)),
+        );
       }
       case "search": {
-        const input = glossaryOperationRequestSchemas.search.parse(request.body);
-        return respondRead(runtimeEnvelope(await this.#applicationService.search(target, input)));
+        const input = glossaryOperationRequestSchemas.search.parse(
+          request.body,
+        );
+        return respondRead(
+          runtimeEnvelope(await this.#applicationService.search(target, input)),
+        );
       }
       case "get": {
         const input = glossaryOperationRequestSchemas.get.parse(request.body);
-        return respondRead(runtimeEnvelope(await this.#applicationService.get(target, input.termOrAlias)));
+        return respondRead(
+          runtimeEnvelope(
+            await this.#applicationService.get(target, input.termOrAlias),
+          ),
+        );
       }
       case "create": {
-        const input = glossaryOperationRequestSchemas.create.parse(request.body);
-        if (input.mode === "proactive" && !binding) return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Proactive create requires an active provider Session turn."));
-        const proactiveAdmission = input.mode === "proactive" && binding
-          ? this.#admitProactiveCreate(binding, request.turnCapability, "create", input.entry, 1)
-          : null;
+        const input = glossaryOperationRequestSchemas.create.parse(
+          request.body,
+        );
+        if (input.mode === "proactive" && !binding)
+          return this.#respond(
+            runtimeError(
+              "GLOSSARY_SESSION_BINDING_REQUIRED",
+              "Proactive create requires an active provider Session turn.",
+            ),
+          );
+        const proactiveAdmission =
+          input.mode === "proactive" && binding
+            ? this.#admitProactiveCreate(
+                binding,
+                request.turnCapability,
+                "create",
+                input.entry,
+                1,
+              )
+            : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
           return this.#respond(proactiveAdmission.error);
         }
-        return this.#respond(runtimeEnvelope(await this.#applicationService.create(target, {
-          mode: input.mode,
-          entry: input.entry,
-          proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
-        }, guard)));
+        return this.#respond(
+          runtimeEnvelope(
+            await this.#applicationService.create(
+              target,
+              {
+                mode: input.mode,
+                entry: input.entry,
+                proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
+              },
+              guard,
+            ),
+          ),
+        );
       }
       case "create_batch": {
-        const input = glossaryOperationRequestSchemas.create_batch.parse(request.body);
-        if (input.mode === "proactive" && !binding) return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Proactive create requires an active provider Session turn."));
-        const proactiveAdmission = input.mode === "proactive" && binding
-          ? this.#admitProactiveCreate(binding, request.turnCapability, "create_batch", input.entries, input.entries.length)
-          : null;
+        const input = glossaryOperationRequestSchemas.create_batch.parse(
+          request.body,
+        );
+        if (input.mode === "proactive" && !binding)
+          return this.#respond(
+            runtimeError(
+              "GLOSSARY_SESSION_BINDING_REQUIRED",
+              "Proactive create requires an active provider Session turn.",
+            ),
+          );
+        const proactiveAdmission =
+          input.mode === "proactive" && binding
+            ? this.#admitProactiveCreate(
+                binding,
+                request.turnCapability,
+                "create_batch",
+                input.entries,
+                input.entries.length,
+              )
+            : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
           return this.#respond(proactiveAdmission.error);
         }
-        return this.#respond(runtimeEnvelope(await this.#applicationService.createBatch(target, {
-          mode: input.mode,
-          entries: input.entries,
-          proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
-        }, guard)));
+        return this.#respond(
+          runtimeEnvelope(
+            await this.#applicationService.createBatch(
+              target,
+              {
+                mode: input.mode,
+                entries: input.entries,
+                proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
+              },
+              guard,
+            ),
+          ),
+        );
       }
       case "update": {
-        const input = glossaryOperationRequestSchemas.update.parse(request.body);
-        return this.#respond(runtimeEnvelope(await this.#applicationService.update(target, {
-          expectedRevision: input.expectedRevision,
-          targetTerm: input.targetTerm,
-          entry: input.entry,
-        }, guard)));
+        const input = glossaryOperationRequestSchemas.update.parse(
+          request.body,
+        );
+        return this.#respond(
+          runtimeEnvelope(
+            await this.#applicationService.update(
+              target,
+              {
+                expectedRevision: input.expectedRevision,
+                targetTerm: input.targetTerm,
+                entry: input.entry,
+              },
+              guard,
+            ),
+          ),
+        );
       }
       case "delete": {
-        const input = glossaryOperationRequestSchemas.delete.parse(request.body);
-        return this.#respond(runtimeEnvelope(await this.#applicationService.delete(target, {
-          expectedRevision: input.expectedRevision,
-          targetTerm: input.targetTerm,
-        }, guard)));
+        const input = glossaryOperationRequestSchemas.delete.parse(
+          request.body,
+        );
+        return this.#respond(
+          runtimeEnvelope(
+            await this.#applicationService.delete(
+              target,
+              {
+                expectedRevision: input.expectedRevision,
+                targetTerm: input.targetTerm,
+              },
+              guard,
+            ),
+          ),
+        );
       }
       case "validate":
-        return respondRead(runtimeEnvelope(await this.#applicationService.validate(target)));
+        return respondRead(
+          runtimeEnvelope(await this.#applicationService.validate(target)),
+        );
     }
   }
 
+  /** 操作種別と登録内容から要求を識別し、能動登録の許可または理由別の用語集エラーを返す。 */
   #admitProactiveCreate(
     binding: ResolvedAgentRuntimeBinding,
     turnCapability: string | null | undefined,
@@ -385,33 +577,64 @@ export class GlossaryRuntimeService {
       return { ok: true, proactiveCreateLimit: admission.proactiveCreateLimit };
     }
     if (admission.reason === "invalid-limit") {
-      return { ok: false, error: runtimeError("GLOSSARY_INVALID_REQUEST", "A valid proactive create limit is required.") };
+      return {
+        ok: false,
+        error: runtimeError(
+          "GLOSSARY_INVALID_REQUEST",
+          "A valid proactive create limit is required.",
+        ),
+      };
     }
     if (admission.reason === "inactive") {
-      return { ok: false, error: runtimeError(
-        "GLOSSARY_SESSION_BINDING_INVALID",
-        "Proactive create requires the active provider Session turn.",
-      ) };
+      return {
+        ok: false,
+        error: runtimeError(
+          "GLOSSARY_SESSION_BINDING_INVALID",
+          "Proactive create requires the active provider Session turn.",
+        ),
+      };
     }
-    return { ok: false, error: runtimeError(
-      "GLOSSARY_LIMIT_EXCEEDED",
-      admission.reason === "second-request"
-        ? "Only one proactive create request is allowed per provider Session turn."
-        : "Proactive create exceeds the current provider Session turn limit.",
-    ) };
+    return {
+      ok: false,
+      error: runtimeError(
+        "GLOSSARY_LIMIT_EXCEEDED",
+        admission.reason === "second-request"
+          ? "Only one proactive create request is allowed per provider Session turn."
+          : "Proactive create exceeds the current provider Session turn limit.",
+      ),
+    };
   }
 
+  /** バインディングがない場合は明示されたリポジトリだけを解決する。バインディング経由では現在のチェックアウトを権限スナップショットと照合し、許可範囲外の指定を拒否する。 */
   async #authorize(
     bindingReference: string | undefined,
     operation: GlossaryRuntimeOperation,
     selector: GlossaryCheckoutSelector,
-  ): Promise<AuthorizedCheckout | { error: GlossaryRuntimeEnvelope<GlossaryOperationError> }> {
+  ): Promise<
+    | AuthorizedCheckout
+    | { error: GlossaryRuntimeEnvelope<GlossaryOperationError> }
+  > {
     if (!bindingReference) {
-      if (selector.kind !== "repository") return { error: runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Without a Session binding, specify a repository path.") };
+      if (selector.kind !== "repository")
+        return {
+          error: runtimeError(
+            "GLOSSARY_SESSION_BINDING_REQUIRED",
+            "Without a Session binding, specify a repository path.",
+          ),
+        };
       try {
-        return { target: await this.#applicationService.resolvePrimaryCheckout(selector.path) };
+        return {
+          target: await this.#applicationService.resolvePrimaryCheckout(
+            selector.path,
+          ),
+        };
       } catch {
-        return { error: runtimeError("GLOSSARY_TARGET_INVALID", "Repository path must identify an absolute supported Git checkout.") };
+        return {
+          error: runtimeError(
+            "GLOSSARY_TARGET_INVALID",
+            "Repository path must identify an absolute supported Git checkout.",
+          ),
+        };
       }
     }
     const resolved = this.#bindingRegistry.resolve(
@@ -426,46 +649,92 @@ export class GlossaryRuntimeService {
         ),
       };
     }
-    const actorSession = await this.#resolveActorSession(resolved.binding.actorSessionId, resolved.binding.actorSource?.kind);
+    const actorSession = await this.#resolveActorSession(
+      resolved.binding.actorSessionId,
+      resolved.binding.actorSource?.kind,
+    );
     if (
-      !actorSession
-      || actorSession.id !== resolved.binding.actorSessionId
-      || actorSession.providerId !== resolved.binding.providerId
-      || !actorSession.workspacePath
+      !actorSession ||
+      actorSession.id !== resolved.binding.actorSessionId ||
+      actorSession.providerId !== resolved.binding.providerId ||
+      !actorSession.workspacePath
     ) {
-      return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Actor Session binding is no longer valid.") };
+      return {
+        error: runtimeError(
+          "GLOSSARY_SESSION_BINDING_INVALID",
+          "Actor Session binding is no longer valid.",
+        ),
+      };
     }
     const snapshot = resolved.binding.authoritySnapshot.glossaryPrimaryCheckout;
     if (!isCheckoutAuthoritySnapshot(snapshot)) {
-      return { error: runtimeError("GLOSSARY_SESSION_BINDING_FORBIDDEN", "Binding does not authorize a glossary checkout.") };
+      return {
+        error: runtimeError(
+          "GLOSSARY_SESSION_BINDING_FORBIDDEN",
+          "Binding does not authorize a glossary checkout.",
+        ),
+      };
     }
 
     let authorizedTarget: ResolvedGlossaryCheckout;
     let currentTarget: ResolvedGlossaryCheckout;
     try {
       authorizedTarget = restoreGlossaryCheckoutAuthority(snapshot);
-      currentTarget = await this.#applicationService.resolvePrimaryCheckout(actorSession.workspacePath);
+      currentTarget = await this.#applicationService.resolvePrimaryCheckout(
+        actorSession.workspacePath,
+      );
     } catch {
-      return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Primary checkout identity can no longer be verified.") };
+      return {
+        error: runtimeError(
+          "GLOSSARY_SESSION_BINDING_INVALID",
+          "Primary checkout identity can no longer be verified.",
+        ),
+      };
     }
     if (!areResolvedGlossaryCheckoutsEqual(authorizedTarget, currentTarget)) {
-      return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Primary checkout no longer matches the runtime binding.") };
+      return {
+        error: runtimeError(
+          "GLOSSARY_SESSION_BINDING_INVALID",
+          "Primary checkout no longer matches the runtime binding.",
+        ),
+      };
     }
     const checkoutId = createCheckoutId(resolved.binding, currentTarget);
     if (selector.kind === "repository") {
       let requestedTarget: ResolvedGlossaryCheckout;
-      try { requestedTarget = await this.#applicationService.resolvePrimaryCheckout(selector.path); }
-      catch { return { error: runtimeError("GLOSSARY_TARGET_INVALID", "Repository path must identify an absolute supported Git checkout.") }; }
+      try {
+        requestedTarget = await this.#applicationService.resolvePrimaryCheckout(
+          selector.path,
+        );
+      } catch {
+        return {
+          error: runtimeError(
+            "GLOSSARY_TARGET_INVALID",
+            "Repository path must identify an absolute supported Git checkout.",
+          ),
+        };
+      }
       if (!areResolvedGlossaryCheckoutsEqual(currentTarget, requestedTarget)) {
-        return { error: runtimeError("GLOSSARY_SESSION_BINDING_FORBIDDEN", "Repository is outside the Session's authorized checkout.") };
+        return {
+          error: runtimeError(
+            "GLOSSARY_SESSION_BINDING_FORBIDDEN",
+            "Repository is outside the Session's authorized checkout.",
+          ),
+        };
       }
     }
     if (selector.kind === "checkout" && selector.checkoutId !== checkoutId) {
-      return { error: runtimeError("GLOSSARY_CHECKOUT_NOT_FOUND", "checkoutId is not authorized by this runtime binding.") };
+      return {
+        error: runtimeError(
+          "GLOSSARY_CHECKOUT_NOT_FOUND",
+          "checkoutId is not authorized by this runtime binding.",
+        ),
+      };
     }
     return { binding: resolved.binding, target: currentTarget, checkoutId };
   }
 
+  /** 明示的なステータスまたは操作結果に応じたステータスを、バージョン付きの応答本体に添える。 */
   #respond(
     value: GlossaryRuntimeEnvelope<object>,
     forcedStatus?: number,

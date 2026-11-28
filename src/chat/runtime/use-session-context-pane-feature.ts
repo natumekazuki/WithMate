@@ -29,11 +29,13 @@ import {
   createContextPaneTabCycleHandler,
 } from "../session-shell-handlers.js";
 
+/** コンテキスト欄が選択対象と表示対象を判別するために受け取るセッション情報。 */
 type ContextPaneSession = Pick<
   Session,
   "id" | "updatedAt" | "provider" | "reasoningEffort"
 > | null;
 
+/** コンテキスト欄の切替と内容に必要な実行情報、履歴、テレメトリー、操作。 */
 export type SessionContextPaneFeatureInput = {
   selectedSession: ContextPaneSession;
   displayedSession: ContextPaneSession;
@@ -53,12 +55,14 @@ export type SessionContextPaneFeatureInput = {
   onShowContextRail: () => void;
 };
 
+/** コンテキスト欄の描画設定、用語集への直接操作、実行中ステップの有無。 */
 export type SessionContextPaneFeature = {
   rightPaneProps: ReturnType<typeof buildLiveSessionCommonContextPaneProps>;
   showGlossary: () => void;
   hasInProgressLiveRunStep: boolean;
 };
 
+/** 失敗・中止・進行中を先頭、完了済みを次、未着手やその他を末尾にする優先度を返す。 */
 function liveRunStepBucketPriority(status: string): number {
   switch (status) {
     case "failed":
@@ -74,6 +78,7 @@ function liveRunStepBucketPriority(status: string): number {
   }
 }
 
+/** 利用可能なコンテキストタブと実行内容を投影し、利用できなくなったタブを切り替える。 */
 export function useSessionContextPaneFeature({
   selectedSession,
   displayedSession,
@@ -92,37 +97,56 @@ export function useSessionContextPaneFeature({
   glossaryPaneProps,
   onShowContextRail,
 }: SessionContextPaneFeatureInput): SessionContextPaneFeature {
-  const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
-  const [coordinationNavigation, setCoordinationNavigation] = useState<OpenCoordinationRequest | null>(null);
-  useEffect(() => getWithMateApi()?.subscribeOpenCoordination((request) => {
-    setCoordinationNavigation(request);
-    setActiveContextPaneTab("coordination");
-    onShowContextRail();
-  }), [onShowContextRail]);
+  const [activeContextPaneTab, setActiveContextPaneTab] =
+    useState<ContextPaneTabKey>("latest-command");
+  const [coordinationNavigation, setCoordinationNavigation] =
+    useState<OpenCoordinationRequest | null>(null);
+  useEffect(
+    () =>
+      getWithMateApi()?.subscribeOpenCoordination((request) => {
+        setCoordinationNavigation(request);
+        setActiveContextPaneTab("coordination");
+        onShowContextRail();
+      }),
+    [onShowContextRail],
+  );
   const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = useMemo(
-    () => (isCopilotSession ? buildCopilotQuotaProjection(selectedProviderQuotaTelemetry) : null),
+    () =>
+      isCopilotSession
+        ? buildCopilotQuotaProjection(selectedProviderQuotaTelemetry)
+        : null,
     [isCopilotSession, selectedProviderQuotaTelemetry],
   );
-  const selectedCopilotRemainingPercentLabel = selectedCopilotQuotaProjection?.remainingPercentLabel ?? "unavailable";
-  const selectedCopilotRemainingRequestsLabel = selectedCopilotQuotaProjection?.remainingRequestsLabel ?? "usage unavailable";
-  const selectedCopilotQuotaResetLabel = selectedCopilotQuotaProjection?.resetLabel ?? "Unknown";
+  const selectedCopilotRemainingPercentLabel =
+    selectedCopilotQuotaProjection?.remainingPercentLabel ?? "unavailable";
+  const selectedCopilotRemainingRequestsLabel =
+    selectedCopilotQuotaProjection?.remainingRequestsLabel ??
+    "usage unavailable";
+  const selectedCopilotQuotaResetLabel =
+    selectedCopilotQuotaProjection?.resetLabel ?? "Unknown";
   const selectedSessionContextTelemetryProjection = useMemo(
-    () => buildSessionContextTelemetryProjection(selectedSessionContextTelemetry),
+    () =>
+      buildSessionContextTelemetryProjection(selectedSessionContextTelemetry),
     [selectedSessionContextTelemetry],
   );
   const liveRunReasoningText = liveRun?.reasoningText ?? "";
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
-  const hasReasoningCapability = availableReasoningEfforts.length > 0 || Boolean(selectedSession?.reasoningEffort);
-  const includeGlossaryContextPane = shouldIncludeGlossaryContextPane(glossaryPaneProps?.projection ?? null);
+  const hasReasoningCapability =
+    availableReasoningEfforts.length > 0 ||
+    Boolean(selectedSession?.reasoningEffort);
+  const includeGlossaryContextPane = shouldIncludeGlossaryContextPane(
+    glossaryPaneProps?.projection ?? null,
+  );
   const availableContextPaneTabs = useMemo(
-    () => resolveAvailableContextPaneTabs({
-      isCopilotSession,
-      includeMessages: true,
-      includeGlossary: includeGlossaryContextPane,
-      hasReasoningCapability,
-      hasReasoningText: hasLiveRunReasoningText,
-    }),
+    () =>
+      resolveAvailableContextPaneTabs({
+        isCopilotSession,
+        includeMessages: true,
+        includeGlossary: includeGlossaryContextPane,
+        hasReasoningCapability,
+        hasReasoningText: hasLiveRunReasoningText,
+      }),
     [
       hasLiveRunReasoningText,
       hasReasoningCapability,
@@ -132,7 +156,11 @@ export function useSessionContextPaneFeature({
   );
 
   const latestCommandProjection = useMemo(
-    () => buildLatestCommandProjection({ liveSteps: liveRun?.steps ?? [], operations }),
+    () =>
+      buildLatestCommandProjection({
+        liveSteps: liveRun?.steps ?? [],
+        operations,
+      }),
     [operations, liveRun?.steps],
   );
   const latestLiveCommandStep = latestCommandProjection.latestLiveCommandStep;
@@ -143,17 +171,19 @@ export function useSessionContextPaneFeature({
         .map((step, index) => ({ step, index }))
         .sort((left, right) => {
           const bucketDiff =
-            liveRunStepBucketPriority(left.step.status) - liveRunStepBucketPriority(right.step.status);
+            liveRunStepBucketPriority(left.step.status) -
+            liveRunStepBucketPriority(right.step.status);
           return bucketDiff !== 0 ? bucketDiff : left.index - right.index;
         })
         .map(({ step }) => step),
     [liveRun?.steps],
   );
   const runningDetailsEntries = useMemo(
-    () => buildRunningDetailsEntries({
-      liveSteps: orderedLiveRunSteps,
-      latestLiveCommandStepId: latestLiveCommandStep?.id ?? null,
-    }),
+    () =>
+      buildRunningDetailsEntries({
+        liveSteps: orderedLiveRunSteps,
+        latestLiveCommandStepId: latestLiveCommandStep?.id ?? null,
+      }),
     [latestLiveCommandStep?.id, orderedLiveRunSteps],
   );
   const backgroundTasks = useMemo(
@@ -165,13 +195,14 @@ export function useSessionContextPaneFeature({
     [orderedLiveRunSteps],
   );
   const contextPaneProjection = useMemo(
-    () => buildContextPaneProjection({
-      activeContextPaneTab,
-      latestCommandView,
-      backgroundTasks,
-      hasReasoningText: hasLiveRunReasoningText,
-      isSelectedSessionRunning: renderedIsRunning,
-    }),
+    () =>
+      buildContextPaneProjection({
+        activeContextPaneTab,
+        latestCommandView,
+        backgroundTasks,
+        hasReasoningText: hasLiveRunReasoningText,
+        isSelectedSessionRunning: renderedIsRunning,
+      }),
     [
       activeContextPaneTab,
       backgroundTasks,
@@ -190,10 +221,11 @@ export function useSessionContextPaneFeature({
   }, [activeContextPaneTab, availableContextPaneTabs]);
 
   const handleCycleContextPaneTab = useMemo(
-    () => createContextPaneTabCycleHandler({
-      availableTabs: availableContextPaneTabs,
-      setActiveTab: setActiveContextPaneTab,
-    }),
+    () =>
+      createContextPaneTabCycleHandler({
+        availableTabs: availableContextPaneTabs,
+        setActiveTab: setActiveContextPaneTab,
+      }),
     [availableContextPaneTabs],
   );
   const showGlossary = useCallback(() => {
@@ -222,7 +254,9 @@ export function useSessionContextPaneFeature({
     selectedSessionContextTelemetryProjection,
     messageNavigatorSessionId: displayedSession?.id ?? undefined,
     messageNavigatorCharacter: character ?? undefined,
-    glossaryPaneProps: includeGlossaryContextPane ? glossaryPaneProps : undefined,
+    glossaryPaneProps: includeGlossaryContextPane
+      ? glossaryPaneProps
+      : undefined,
     coordinationSessionId: selectedSession?.id,
     coordinationNavigation,
     onCycleContextPaneTab: handleCycleContextPaneTab,

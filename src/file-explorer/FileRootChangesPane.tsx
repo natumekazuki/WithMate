@@ -14,11 +14,13 @@ import type {
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 
+/** セッションのファイルルートについて、リポジトリ検出と変更取得に使うIPCの部分契約。 */
 type FileRootChangesApi = Pick<
   WithMateWindowApi,
   "listFileRootChanges" | "listFileRootChangesRepositories"
 >;
 
+/** 変更一覧の所属、表示条件、再取得の世代と、ファイル・差分を開く親側の処理。 */
 export type FileRootChangesPaneProps = {
   api: FileRootChangesApi | null;
   sessionId: string | null;
@@ -37,14 +39,21 @@ export type FileRootChangesPaneProps = {
   ) => Promise<string | null>;
 };
 
-function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
+/** ディレクトリの開閉状態をルート・範囲・相対パスの組で識別する。 */
+function directoryStateKey(
+  rootId: string,
+  scope: FileRootGitChangeScope,
+  relativePath: string,
+): string {
   return `${rootId}\u0000${scope}\u0000${relativePath}`;
 }
 
 const MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS = 2;
 
+/** 変更一覧の取得に先立つ、ルートのリポジトリ検出の進行状態。 */
 type RepositoryDiscoveryState = "pending" | "ready" | "unavailable" | "error";
 
+/** リポジトリ検出済みのルートを順次取得するための、所属と未着手位置を持つキュー。 */
 type ChangesRefreshQueue = {
   revision: number;
   sessionId: string;
@@ -52,6 +61,7 @@ type ChangesRefreshQueue = {
   nextIndex: number;
 };
 
+/** 表示中のセッションについてルートごとの変更一覧を更新し、未追跡ファイルと差分を開き分ける。 */
 export function FileRootChangesPane({
   api,
   sessionId,
@@ -63,7 +73,9 @@ export function FileRootChangesPane({
   onOpenFile,
   onOpenDiff,
 }: FileRootChangesPaneProps) {
-  const rootsKey = JSON.stringify(roots.map((root) => [root.id, root.displayPath]));
+  const rootsKey = JSON.stringify(
+    roots.map((root) => [root.id, root.displayPath]),
+  );
   const requestRevisionRef = useRef(0);
   const refreshQueueRef = useRef<ChangesRefreshQueue | null>(null);
   const activeRefreshRequestsRef = useRef(0);
@@ -77,11 +89,14 @@ export function FileRootChangesPane({
   const diffRevisionRef = useRef(0);
   const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
   const [repositoriesLoading, setRepositoriesLoading] = useState(false);
-  const [repositoryDiscoveryState, setRepositoryDiscoveryState] = useState<RepositoryDiscoveryState>("unavailable");
+  const [repositoryDiscoveryState, setRepositoryDiscoveryState] =
+    useState<RepositoryDiscoveryState>("unavailable");
   const [repositoryMessage, setRepositoryMessage] = useState("");
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
-  const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
+  const [collapsedDirectories, setCollapsedDirectories] = useState<
+    Record<string, boolean>
+  >({});
 
   const finishRefresh = useCallback(() => {
     refreshingRef.current = false;
@@ -92,62 +107,114 @@ export function FileRootChangesPane({
   }, []);
 
   const drainRefreshQueue = useCallback(() => {
-    const { api: currentApi, sessionId: currentSessionId, enabled: available, visible: active } = currentRef.current;
+    const {
+      api: currentApi,
+      sessionId: currentSessionId,
+      enabled: available,
+      visible: active,
+    } = currentRef.current;
     const queue = refreshQueueRef.current;
-    if (!currentApi || !currentSessionId || !available || !active || !queue || queue.sessionId !== currentSessionId) {
+    if (
+      !currentApi ||
+      !currentSessionId ||
+      !available ||
+      !active ||
+      !queue ||
+      queue.sessionId !== currentSessionId
+    ) {
       return;
     }
     while (
-      activeRefreshRequestsRef.current < MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS
-      && queue.nextIndex < queue.roots.length
+      activeRefreshRequestsRef.current <
+        MAX_CONCURRENT_FILE_ROOT_CHANGES_REQUESTS &&
+      queue.nextIndex < queue.roots.length
     ) {
       const root = queue.roots[queue.nextIndex];
       queue.nextIndex += 1;
       activeRefreshRequestsRef.current += 1;
-      void currentApi.listFileRootChanges({ sessionId: currentSessionId, rootId: root.id }).then((result) => {
-        if (requestRevisionRef.current !== queue.revision) {
-          return;
-        }
-        setRootChanges((current) => {
-          if (result.status === "not-git" || result.status === "root-not-found") {
-            return current.filter((rootChange) => rootChange.root.id !== root.id);
+      void currentApi
+        .listFileRootChanges({ sessionId: currentSessionId, rootId: root.id })
+        .then((result) => {
+          if (requestRevisionRef.current !== queue.revision) {
+            return;
           }
-          return current.map((rootChange) => {
-            if (rootChange.root.id !== root.id) {
-              return rootChange;
+          setRootChanges((current) => {
+            if (
+              result.status === "not-git" ||
+              result.status === "root-not-found"
+            ) {
+              return current.filter(
+                (rootChange) => rootChange.root.id !== root.id,
+              );
             }
-            if (result.status === "ok") {
+            return current.map((rootChange) => {
+              if (rootChange.root.id !== root.id) {
+                return rootChange;
+              }
+              if (result.status === "ok") {
+                return {
+                  ...rootChange,
+                  status: result.entries.length > 0 ? "success" : "empty",
+                  entries: result.entries,
+                  message: "",
+                };
+              }
               return {
                 ...rootChange,
-                status: result.entries.length > 0 ? "success" : "empty",
-                entries: result.entries,
-                message: "",
+                status: "failed",
+                message: result.message,
               };
-            }
-            return { ...rootChange, status: "failed", message: result.message };
+            });
           });
+        })
+        .catch((error) => {
+          if (requestRevisionRef.current === queue.revision) {
+            setRootChanges((current) =>
+              current.map((rootChange) =>
+                rootChange.root.id === root.id
+                  ? {
+                      ...rootChange,
+                      status: "failed",
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : "Git status failed.",
+                    }
+                  : rootChange,
+              ),
+            );
+          }
+        })
+        .finally(() => {
+          activeRefreshRequestsRef.current -= 1;
+          drainRefreshQueueRef.current();
         });
-      }).catch((error) => {
-        if (requestRevisionRef.current === queue.revision) {
-          setRootChanges((current) => current.map((rootChange) => rootChange.root.id === root.id
-            ? { ...rootChange, status: "failed", message: error instanceof Error ? error.message : "Git status failed." }
-            : rootChange));
-        }
-      }).finally(() => {
-        activeRefreshRequestsRef.current -= 1;
-        drainRefreshQueueRef.current();
-      });
     }
-    if (queue.nextIndex === queue.roots.length && activeRefreshRequestsRef.current === 0) {
+    if (
+      queue.nextIndex === queue.roots.length &&
+      activeRefreshRequestsRef.current === 0
+    ) {
       finishRefresh();
     }
   }, [finishRefresh]);
   drainRefreshQueueRef.current = drainRefreshQueue;
 
   const refresh = useCallback(() => {
-    const { api: currentApi, sessionId: currentSessionId, enabled: available, visible: active, roots: currentRoots } = currentRef.current;
+    const {
+      api: currentApi,
+      sessionId: currentSessionId,
+      enabled: available,
+      visible: active,
+      roots: currentRoots,
+    } = currentRef.current;
     refreshPendingRef.current = true;
-    if (!currentApi || !currentSessionId || !available || !active || refreshingRef.current) {
+    if (
+      !currentApi ||
+      !currentSessionId ||
+      !available ||
+      !active ||
+      refreshingRef.current
+    ) {
       return;
     }
     refreshPendingRef.current = false;
@@ -162,73 +229,126 @@ export function FileRootChangesPane({
     }
     setRepositoriesLoading(true);
     setRepositoryDiscoveryState("pending");
-    void currentApi.listFileRootChangesRepositories({
-      sessionId: currentSessionId,
-      rootIds: currentRoots.map((root) => root.id),
-    }).then((result) => {
-      if (requestRevisionRef.current !== revision) {
-        return;
-      }
-      if (result.status === "failed") {
-        setRepositoryDiscoveryState("error");
-        setRepositoryMessage(result.message);
-        finishRefresh();
-        return;
-      }
-      const repositoryIds = new Set(result.repositories.map((repository) => repository.rootId));
-      const failures = new Map(result.failures.map((failure) => [failure.rootId, failure.message]));
-      setRootChanges((current) => currentRoots.flatMap<GitRootChanges>((root) => {
-        const existing = current.find((item) => item.root.id === root.id);
-        const hasSnapshot = existing?.status === "success" || existing?.status === "empty" || existing?.hasSnapshot;
-        if (repositoryIds.has(root.id)) {
-          return [{ root, status: "pending", entries: existing?.entries ?? [], message: "", hasSnapshot }];
-        }
-        const failure = failures.get(root.id);
-        return failure ? [{ root, status: "failed", entries: existing?.entries ?? [], message: failure, hasSnapshot }] : [];
-      }));
-      refreshQueueRef.current = {
-        revision,
+    void currentApi
+      .listFileRootChangesRepositories({
         sessionId: currentSessionId,
-        roots: currentRoots.filter((root) => repositoryIds.has(root.id)),
-        nextIndex: 0,
-      };
-      setRepositoryDiscoveryState("ready");
-      drainRefreshQueueRef.current();
-    }).catch((error) => {
-      if (requestRevisionRef.current === revision) {
-        setRepositoryDiscoveryState("error");
-        setRepositoryMessage(error instanceof Error ? error.message : "Git repositories could not be resolved.");
-        finishRefresh();
-      }
-    }).finally(() => {
-      if (requestRevisionRef.current === revision) {
-        setRepositoriesLoading(false);
-      }
-    });
+        rootIds: currentRoots.map((root) => root.id),
+      })
+      .then((result) => {
+        if (requestRevisionRef.current !== revision) {
+          return;
+        }
+        if (result.status === "failed") {
+          setRepositoryDiscoveryState("error");
+          setRepositoryMessage(result.message);
+          finishRefresh();
+          return;
+        }
+        const repositoryIds = new Set(
+          result.repositories.map((repository) => repository.rootId),
+        );
+        const failures = new Map(
+          result.failures.map((failure) => [failure.rootId, failure.message]),
+        );
+        setRootChanges((current) =>
+          currentRoots.flatMap<GitRootChanges>((root) => {
+            const existing = current.find((item) => item.root.id === root.id);
+            const hasSnapshot =
+              existing?.status === "success" ||
+              existing?.status === "empty" ||
+              existing?.hasSnapshot;
+            if (repositoryIds.has(root.id)) {
+              return [
+                {
+                  root,
+                  status: "pending",
+                  entries: existing?.entries ?? [],
+                  message: "",
+                  hasSnapshot,
+                },
+              ];
+            }
+            const failure = failures.get(root.id);
+            return failure
+              ? [
+                  {
+                    root,
+                    status: "failed",
+                    entries: existing?.entries ?? [],
+                    message: failure,
+                    hasSnapshot,
+                  },
+                ]
+              : [];
+          }),
+        );
+        refreshQueueRef.current = {
+          revision,
+          sessionId: currentSessionId,
+          roots: currentRoots.filter((root) => repositoryIds.has(root.id)),
+          nextIndex: 0,
+        };
+        setRepositoryDiscoveryState("ready");
+        drainRefreshQueueRef.current();
+      })
+      .catch((error) => {
+        if (requestRevisionRef.current === revision) {
+          setRepositoryDiscoveryState("error");
+          setRepositoryMessage(
+            error instanceof Error
+              ? error.message
+              : "Git repositories could not be resolved.",
+          );
+          finishRefresh();
+        }
+      })
+      .finally(() => {
+        if (requestRevisionRef.current === revision) {
+          setRepositoriesLoading(false);
+        }
+      });
   }, [finishRefresh]);
   refreshRef.current = refresh;
 
   useEffect(() => {
     const previous = ownerRef.current;
-    const sameOwner = previous.api === api && previous.sessionId === sessionId && previous.enabled === enabled;
-    const retainedRootIds = new Set(roots.filter((root) => sameOwner && previous.roots.some(
-      (prior) => prior.id === root.id && prior.displayPath === root.displayPath,
-    )).map((root) => root.id));
+    const sameOwner =
+      previous.api === api &&
+      previous.sessionId === sessionId &&
+      previous.enabled === enabled;
+    const retainedRootIds = new Set(
+      roots
+        .filter(
+          (root) =>
+            sameOwner &&
+            previous.roots.some(
+              (prior) =>
+                prior.id === root.id && prior.displayPath === root.displayPath,
+            ),
+        )
+        .map((root) => root.id),
+    );
     ownerRef.current = { api, sessionId, enabled, roots };
     requestRevisionRef.current += 1;
     diffRevisionRef.current += 1;
     refreshQueueRef.current = null;
     refreshingRef.current = false;
     refreshPendingRef.current = false;
-    setRootChanges((current) => current.filter((item) => retainedRootIds.has(item.root.id)));
+    setRootChanges((current) =>
+      current.filter((item) => retainedRootIds.has(item.root.id)),
+    );
     setRepositoryMessage("");
     setRepositoriesLoading(false);
     setRepositoryDiscoveryState("unavailable");
     setMessage("");
     setLoadingKey("");
-    setCollapsedDirectories((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => retainedRootIds.has(key.split("\u0000")[0])),
-    ));
+    setCollapsedDirectories((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([key]) =>
+          retainedRootIds.has(key.split("\u0000")[0]),
+        ),
+      ),
+    );
     return () => {
       requestRevisionRef.current += 1;
       diffRevisionRef.current += 1;
@@ -244,13 +364,31 @@ export function FileRootChangesPane({
       refresh();
       drainRefreshQueueRef.current();
     }
-  }, [api, sessionId, enabled, rootsRevision, rootsKey, visible, refreshRevision, refresh]);
+  }, [
+    api,
+    sessionId,
+    enabled,
+    rootsRevision,
+    rootsKey,
+    visible,
+    refreshRevision,
+    refresh,
+  ]);
 
-  const toggleDirectory = (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => {
+  /** 指定したルートと変更範囲のディレクトリだけ、折りたたみ状態を反転する。 */
+  const toggleDirectory = (
+    rootId: string,
+    scope: FileRootGitChangeScope,
+    relativePath: string,
+  ) => {
     const key = directoryStateKey(rootId, scope, relativePath);
-    setCollapsedDirectories((current) => ({ ...current, [key]: !current[key] }));
+    setCollapsedDirectories((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
   };
 
+  /** 未追跡ファイルは内容、その他は作業ツリーまたはステージの差分を開き、最新操作の結果だけを通知する。 */
   const openEntry = async (
     rootId: string,
     entry: FileRootGitChangeEntry,
@@ -263,19 +401,25 @@ export function FileRootChangesPane({
     if (scope === "commit") {
       return;
     }
-    const request = { sessionId, rootId, relativePath: entry.relativePath, scope };
+    const request = {
+      sessionId,
+      rootId,
+      relativePath: entry.relativePath,
+      scope,
+    };
     const key = `${rootId}:${scope}:${entry.relativePath}`;
     const revision = diffRevisionRef.current + 1;
     diffRevisionRef.current = revision;
     setLoadingKey(key);
     setMessage("");
     try {
-      const resultMessage = entry.kinds[scope] === "untracked"
-        ? await onOpenFile(
-            { sessionId, rootId, relativePath: entry.relativePath },
-            openInWindow,
-          )
-        : await onOpenDiff(request, openInWindow);
+      const resultMessage =
+        entry.kinds[scope] === "untracked"
+          ? await onOpenFile(
+              { sessionId, rootId, relativePath: entry.relativePath },
+              openInWindow,
+            )
+          : await onOpenDiff(request, openInWindow);
       if (diffRevisionRef.current !== revision) {
         return;
       }
@@ -284,11 +428,13 @@ export function FileRootChangesPane({
       }
     } catch (error) {
       if (diffRevisionRef.current === revision) {
-        setMessage(error instanceof Error
-          ? error.message
-          : entry.kinds[scope] === "untracked"
-            ? "The file preview could not be opened."
-            : "Git diff failed.");
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : entry.kinds[scope] === "untracked"
+              ? "The file preview could not be opened."
+              : "Git diff failed.",
+        );
       }
     } finally {
       if (diffRevisionRef.current === revision) {
@@ -299,10 +445,22 @@ export function FileRootChangesPane({
 
   return (
     <div className="workspace-changes-pane">
-      {repositoryMessage ? <p className="workspace-changes-message" role="alert">{repositoryMessage}</p> : null}
-      {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
+      {repositoryMessage ? (
+        <p className="workspace-changes-message" role="alert">
+          {repositoryMessage}
+        </p>
+      ) : null}
+      {message ? (
+        <p className="workspace-changes-message" role="alert">
+          {message}
+        </p>
+      ) : null}
       {rootChanges.length > 0 ? (
-        <div className="workspace-changes-groups" role="list" aria-label="File root changes">
+        <div
+          className="workspace-changes-groups"
+          role="list"
+          aria-label="File root changes"
+        >
           {rootChanges.map((rootChange) => (
             <FileRootChangesGroup
               key={`${sessionId ?? ""}:${rootChange.root.id}`}
@@ -317,13 +475,15 @@ export function FileRootChangesPane({
           ))}
         </div>
       ) : repositoriesLoading || repositoryDiscoveryState === "pending" ? (
-        <div
-          className="workspace-changes-discovery-loading"
-        >
+        <div className="workspace-changes-discovery-loading">
           <LoadingIndicator label="Discovering Git repositories" />
         </div>
-      ) : repositoryDiscoveryState === "error" && !message && !repositoryMessage ? (
-        <p className="workspace-changes-message" role="alert">Changes could not be loaded.</p>
+      ) : repositoryDiscoveryState === "error" &&
+        !message &&
+        !repositoryMessage ? (
+        <p className="workspace-changes-message" role="alert">
+          Changes could not be loaded.
+        </p>
       ) : null}
     </div>
   );

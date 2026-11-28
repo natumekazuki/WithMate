@@ -11,9 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup as renderRawStaticMarkup } from "react-dom/server";
 import type { MarkdownLinkContextMenuResult } from "../../src-shared/window/markdown-link-context-menu.js";
 
-import {
-  MessageRichText,
-} from "../../src/ui/markdown/MessageRichText.js";
+import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import {
   handleMarkdownLinkClick,
   handleMarkdownLinkContextMenu,
@@ -26,8 +24,12 @@ import {
 } from "../../src/ui/image-viewport.js";
 
 // 以下の構造のアサーションは、検索の利用側が使うソースメタデータに依存しない。
+/** DOM構造だけを比較するケース向けに、静的描画結果から検索用の原文範囲属性を除く。 */
 function renderToStaticMarkup(element: React.ReactNode): string {
-  return renderRawStaticMarkup(element).replace(/ data-md-(?:source|definition)-(?:start|end)="\d+"/g, "");
+  return renderRawStaticMarkup(element).replace(
+    / data-md-(?:source|definition)-(?:start|end)="\d+"/g,
+    "",
+  );
 }
 
 // @test-value v2
@@ -42,16 +44,37 @@ function renderToStaticMarkup(element: React.ReactNode): string {
 // impact = "送信と前後の発言の関係を誤って読む"
 // distinction = "既存の単一inline要素テストは複数要素の同一ブロックでの順序を確認しない"
 // @end-test-value
+/** 複数の挿入カードは指定順でブロック間に現れ、挿入位置の近くにあるコードフェンスを分断しない。 */
 test("multiple inline contents preserve block boundaries and ordering", () => {
   const text = "before\n\n```txt\ncode\n```\n\nafter";
-  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text, inlineContent: [
-    { key: "first", position: 2, content: React.createElement("span", null, "CARD-A") },
-    { key: "second", position: 4, content: React.createElement("span", null, "CARD-B") },
-    { key: "third", position: text.indexOf("code") + 2, content: React.createElement("span", null, "CARD-C") },
-  ] }));
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text,
+      inlineContent: [
+        {
+          key: "first",
+          position: 2,
+          content: React.createElement("span", null, "CARD-A"),
+        },
+        {
+          key: "second",
+          position: 4,
+          content: React.createElement("span", null, "CARD-B"),
+        },
+        {
+          key: "third",
+          position: text.indexOf("code") + 2,
+          content: React.createElement("span", null, "CARD-C"),
+        },
+      ],
+    }),
+  );
   const dom = new JSDOM(html);
   const body = dom.window.document.body;
-  assert.match(body.textContent ?? "", /before[\s\S]*CARD-A[\s\S]*CARD-B[\s\S]*code[\s\S]*CARD-C[\s\S]*after/);
+  assert.match(
+    body.textContent ?? "",
+    /before[\s\S]*CARD-A[\s\S]*CARD-B[\s\S]*code[\s\S]*CARD-C[\s\S]*after/,
+  );
   assert.equal(body.querySelectorAll("pre code").length, 1);
   assert.equal(body.querySelector("pre code")?.textContent?.trim(), "code");
   assert.equal(body.querySelectorAll(".message-inline-content").length, 3);
@@ -70,18 +93,58 @@ test("multiple inline contents preserve block boundaries and ordering", () => {
 // impact = "URLや構文だけの検索で無関係な表示要素へ移動・強調してしまう"
 // distinction = "型検査と既存の表示testはMarkdown変換を越えた原文offsetの対応を確認しない"
 // @end-test-value
+/** 見出しや参照、生成プレビューに原文を切り出せる範囲が付き、リンクなどの参照定義の位置も保持することを確認する。 */
 test("MessageRichText は検索用原文範囲を意味要素・生成表示のshellへ渡す", () => {
   const text = [
-    "---", "title: Metadata", "---", "# Heading", "", "**bold** *em* ~~gone~~", "",
-    "> quote", "", "- [x] task", "", "| A | B |", "| :- | -: |", "| a | b |", "",
-    "[first][ref] [second][ref] ![alt][ref] note[^n]", "",
-    "[ref]: https://example.com/hidden \"title\"", "[^n]: Footnote body", "",
-    "$$a^2$$", "", "```math", "b^2", "```", "", "```mermaid", "graph TD; A-->B", "```", "",
-    "```ts", "const x = 1;", "```", "", ":codex-file-citation{path=\"/tmp/file.ts\"}", "",
-    "visualize{\"path\":\"/tmp/report.html\",\"title\":\"Report\"}",
+    "---",
+    "title: Metadata",
+    "---",
+    "# Heading",
+    "",
+    "**bold** *em* ~~gone~~",
+    "",
+    "> quote",
+    "",
+    "- [x] task",
+    "",
+    "| A | B |",
+    "| :- | -: |",
+    "| a | b |",
+    "",
+    "[first][ref] [second][ref] ![alt][ref] note[^n]",
+    "",
+    '[ref]: https://example.com/hidden "title"',
+    "[^n]: Footnote body",
+    "",
+    "$$a^2$$",
+    "",
+    "```math",
+    "b^2",
+    "```",
+    "",
+    "```mermaid",
+    "graph TD; A-->B",
+    "```",
+    "",
+    "```ts",
+    "const x = 1;",
+    "```",
+    "",
+    ':codex-file-citation{path="/tmp/file.ts"}',
+    "",
+    'visualize{"path":"/tmp/report.html","title":"Report"}',
   ].join("\n");
-  const dom = new JSDOM(renderRawStaticMarkup(React.createElement(MessageRichText, { text, sourceStart: 400, responseProvider: "codex" })));
+  const dom = new JSDOM(
+    renderRawStaticMarkup(
+      React.createElement(MessageRichText, {
+        text,
+        sourceStart: 400,
+        responseProvider: "codex",
+      }),
+    ),
+  );
   const doc = dom.window.document;
+  /** 表示要素が公開する開始・終了位置から、対応する元Markdownを切り出す。 */
   function source(selector: string): string {
     const element = doc.querySelector(selector);
     assert.ok(element, selector);
@@ -91,36 +154,70 @@ test("MessageRichText は検索用原文範囲を意味要素・生成表示のs
     assert.notEqual(end, null, selector);
     return text.slice(Number(start), Number(end));
   }
-  assert.equal(source(".message-frontmatter-table"), "---\ntitle: Metadata\n---");
+  assert.equal(
+    source(".message-frontmatter-table"),
+    "---\ntitle: Metadata\n---",
+  );
   assert.equal(source("h1"), "# Heading");
   assert.equal(source("strong"), "**bold**");
   assert.equal(source("em"), "*em*");
   assert.equal(source("del"), "~~gone~~");
   assert.equal(source("blockquote"), "> quote");
   assert.equal(source(".message-list li"), "- [x] task");
-  assert.match(source(".message-table:not(.message-frontmatter-table)"), /\| :- \| -: \|/);
+  assert.match(
+    source(".message-table:not(.message-frontmatter-table)"),
+    /\| :- \| -: \|/,
+  );
   const references = doc.querySelectorAll("[data-md-definition-start]");
   assert.equal(references.length, 4);
   for (const element of Array.from(references).slice(0, 3)) {
-    assert.equal(text.slice(Number(element.getAttribute("data-md-definition-start")), Number(element.getAttribute("data-md-definition-end"))), '[ref]: https://example.com/hidden "title"');
+    assert.equal(
+      text.slice(
+        Number(element.getAttribute("data-md-definition-start")),
+        Number(element.getAttribute("data-md-definition-end")),
+      ),
+      '[ref]: https://example.com/hidden "title"',
+    );
   }
   assert.equal(source("a[href='https://example.com/hidden']"), "[first][ref]");
   assert.equal(source(".message-image-shell"), "![alt][ref]");
   assert.equal(source("sup"), "[^n]");
   assert.equal(source("li[id*='fn-n']"), "[^n]: Footnote body");
-  const math = Array.from(doc.querySelectorAll("[data-md-source-start]")).filter((element) => element.querySelector(":scope > .katex, :scope > .katex-display"));
-  assert.deepEqual(math.map((element) => text.slice(Number(element.getAttribute("data-md-source-start")), Number(element.getAttribute("data-md-source-end")))), ["$$a^2$$", "```math\nb^2\n```"]);
+  const math = Array.from(
+    doc.querySelectorAll("[data-md-source-start]"),
+  ).filter((element) =>
+    element.querySelector(":scope > .katex, :scope > .katex-display"),
+  );
+  assert.deepEqual(
+    math.map((element) =>
+      text.slice(
+        Number(element.getAttribute("data-md-source-start")),
+        Number(element.getAttribute("data-md-source-end")),
+      ),
+    ),
+    ["$$a^2$$", "```math\nb^2\n```"],
+  );
   assert.equal(source(".mermaid"), "```mermaid\ngraph TD; A-->B\n```");
-  assert.equal(source(".message-code-block-shell.copyable pre"), "```ts\nconst x = 1;\n```");
-  assert.equal(source("a[href='/tmp/file.ts']"), ':codex-file-citation{path="/tmp/file.ts"}');
+  assert.equal(
+    source(".message-code-block-shell.copyable pre"),
+    "```ts\nconst x = 1;\n```",
+  );
+  assert.equal(
+    source("a[href='/tmp/file.ts']"),
+    ':codex-file-citation{path="/tmp/file.ts"}',
+  );
   assert.match(source(".message-file-preview-header"), /^visualize/);
-  assert.equal(doc.querySelector(".message-file-preview-content [data-md-source-start]"), null);
+  assert.equal(
+    doc.querySelector(".message-file-preview-content [data-md-source-start]"),
+    null,
+  );
 });
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** 左クリックをハンドラーへ直接渡し、既定動作の抑止とopenPathの対象を取り出す。 */
 function clickMarkdownLink(target: string) {
   const opened: string[] = [];
   let defaultPrevented = false;
@@ -129,6 +226,7 @@ function clickMarkdownLink(target: string) {
     {
       button: 0,
       defaultPrevented: false,
+      /** リンクの既定ナビゲーションが抑止されたことを記録する。 */
       preventDefault: () => {
         defaultPrevented = true;
       },
@@ -142,6 +240,7 @@ function clickMarkdownLink(target: string) {
   return { defaultPrevented, opened };
 }
 
+/** 座標付きの右クリックを再現し、システムメニューへの要求と返されたコピー結果を記録する。 */
 async function openMarkdownLinkContextMenu(target: string) {
   const requests: unknown[] = [];
   let defaultPrevented = false;
@@ -151,8 +250,10 @@ async function openMarkdownLinkContextMenu(target: string) {
       clientX: 120,
       clientY: 240,
       currentTarget: {
+        /** ポインター座標と区別できるリンク要素の矩形を返す。 */
         getBoundingClientRect: () => ({ left: 10, bottom: 20 }),
       },
+      /** ブラウザー既定のメニューが抑止されたか記録する。 */
       preventDefault: () => {
         defaultPrevented = true;
       },
@@ -167,6 +268,7 @@ async function openMarkdownLinkContextMenu(target: string) {
   return { defaultPrevented, requests, result };
 }
 
+/** 実コンポーネントで使うブラウザーのグローバルをJSDOMへ差し替え、テスト終了時の復元処理を返す。 */
 function installDomGlobals(dom: JSDOM): () => void {
   const intersection = installIntersectionObserver();
   const previousWindow = globalThis.window;
@@ -230,6 +332,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   };
 }
 
+/** 指定ウィンドウの次の描画フレームまで待つ。 */
 function waitForAnimationFrame(window: {
   requestAnimationFrame: (callback: FrameRequestCallback) => number;
 }): Promise<void> {
@@ -238,11 +341,13 @@ function waitForAnimationFrame(window: {
   });
 }
 
+/** 実行前のタイマーを、登録された処理と待ち時間の組で表す。 */
 type ControlledTimer = {
   callback: () => void;
   delay: number;
 };
 
+/** ウィンドウのタイマーを実行せずキューへ保持し、発火とキャンセルをテスト側で観測可能にする。 */
 function installControlledTimers(window: {
   setTimeout: (handler: TimerHandler, timeout?: number) => number;
   clearTimeout: (id: number) => void;
@@ -257,6 +362,7 @@ function installControlledTimers(window: {
 
   Object.defineProperty(window, "setTimeout", {
     configurable: true,
+    /** タイマーを予約として記録し、テストから個別に起動できるIDを返す。 */
     value: (callback: TimerHandler, delay?: number) => {
       const timerId = nextTimerId++;
       pending.set(timerId, {
@@ -271,6 +377,7 @@ function installControlledTimers(window: {
   });
   Object.defineProperty(window, "clearTimeout", {
     configurable: true,
+    /** キャンセルされたタイマーを保留一覧から取り除く。 */
     value: (timerId: number) => {
       pending.delete(timerId);
     },
@@ -278,6 +385,7 @@ function installControlledTimers(window: {
 
   return {
     pending,
+    /** ウィンドウ固有のsetTimeoutとclearTimeoutを元に戻す。 */
     restore: () => {
       Object.defineProperty(window, "setTimeout", {
         configurable: true,
@@ -291,6 +399,7 @@ function installControlledTimers(window: {
   };
 }
 
+/** 画像取得などの非同期応答を任意のタイミングで解決または失敗させる。 */
 function createDeferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -316,6 +425,7 @@ function createDeferred<T>(): {
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 二重アスタリスクの強調を通常の文字ではなく専用クラス付きstrongへ変換する。 */
 test("MessageRichText は **bold** を strong として render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -337,6 +447,7 @@ test("MessageRichText は **bold** を strong として render する", () => {
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 属性なしのbrは大文字や自己終了形式でも改行要素になり、段落の文字内容は保たれる。 */
 test("MessageRichText は属性なしの正しい HTML br 記法を改行として render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -363,6 +474,7 @@ test("MessageRichText は属性なしの正しい HTML br 記法を改行とし�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 許可していないHTMLは文字として残し、scriptやイベント属性付きの要素を生成しない。 */
 test("MessageRichText は対象外の raw HTML を element として render しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -398,6 +510,7 @@ test("MessageRichText は対象外の raw HTML を element として render し�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** brに似た不正な記法やcode literal内の文字は、PreviewとSourceのどちらでも実際の改行要素へ変換しない。 */
 test("MessageRichText は plain text と code literal 内の HTML br 文字列を改変しない", () => {
   const markdown = [
     "invalid </br> closing",
@@ -457,6 +570,7 @@ test("MessageRichText は plain text と code literal 内の HTML br 文字列�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** Source表示のpreへMarkdown原文をそのまま出力し、リンクやリストのDOMを生成しない。 */
 test("MessageRichText の Source は元 Markdown を変換せず plain text で描画する", () => {
   const source = [
     "[link label](https://example.test/path)",
@@ -490,6 +604,7 @@ test("MessageRichText の Source は元 Markdown を変換せず plain text で�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 先頭の単純なYAMLマッピングをキー見出し付きの表で表示し、本文とは別に扱う。 */
 test("MessageRichText は先頭 YAML frontmatter の scalar mapping を key/value table として render する", () => {
   const frontmatter = [
     "---",
@@ -544,6 +659,7 @@ test("MessageRichText は先頭 YAML frontmatter の scalar mapping を key/valu
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** YAML frontmatterがあるMarkdownもSource表示では区切りと改行を失わず、要素に変換しない。 */
 test("MessageRichText の Source は YAML frontmatter を含む元 Markdown をそのまま描画する", () => {
   const source = [
     "---",
@@ -579,6 +695,7 @@ test("MessageRichText の Source は YAML frontmatter を含む元 Markdown を�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 空・複雑なfrontmatterは表にせずコード表示に戻し、閉じていない記法や本文中の区切り線を通常どおり扱う。 */
 test("MessageRichText は空・複雑な frontmatter を code blockへ戻し、未閉鎖や本文中の thematic break は変えない", () => {
   const emptyFrontmatterHtml = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -698,6 +815,7 @@ test("MessageRichText は空・複雑な frontmatter を code blockへ戻し、�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 長いfrontmatter値に対し、表のセルとfallbackのコード表示の両方に折返しのCSSがあることを確認する。 */
 test("MessageRichText の YAML frontmatter Preview は表とfallbackの値を折り返す CSS 契約を持つ", async () => {
   const styles = await readStylesheet();
 
@@ -730,6 +848,7 @@ test("MessageRichText の YAML frontmatter Preview は表とfallbackの値を折
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** インラインコード、リンク、強調を組み合わせても、それぞれの要素とリンク先を保持する。 */
 test("MessageRichText は inline code と link を優先しつつ bold を併用できる", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -756,6 +875,7 @@ test("MessageRichText は inline code と link を優先しつつ bold を併用
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** フェンス付きコードブロックにだけ名前付きCopy操作を出し、コード本体とは別に配置する。 */
 test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を表示する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -815,6 +935,7 @@ test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** コードのCRLFをLFへ揃え、parserが加えた末尾改行だけを除いて本文に含まれる改行を残す。 */
 test("resolveCodeBlockText は改行をLFへ揃えparser由来の末尾改行だけを除く", () => {
   assert.equal(
     resolveCodeBlockText("first\r\nsecond\rthird\n\n"),
@@ -837,6 +958,7 @@ test("resolveCodeBlockText は改行をLFへ揃えparser由来の末尾改行だ
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** コードのCopyボタンに、hover、キーボードfocus、disabledを区別するCSS宣言があることを確認する。 */
 test("code block copy操作はhover・focus・disabledの視認状態を持つ", async () => {
   const styles = await readStylesheet();
   const buttonRule =
@@ -873,6 +995,7 @@ test("code block copy操作はhover・focus・disabledの視認状態を持つ",
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** コードフェンスを除いた本文だけをClipboardに渡し、書込み待ちの二重操作を抑えて、成功後に通知を出す。 */
 test("MessageRichText のcode block copyは本文だけをclipboardへ渡してfeedbackを表示する", async () => {
   const dom = new JSDOM('<div id="root"></div>', {
     pretendToBeVisual: true,
@@ -886,6 +1009,7 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
   Object.defineProperty(dom.window.navigator, "clipboard", {
     configurable: true,
     value: {
+      /** Clipboardへの書込み本文を記録し、完了を任意のタイミングまで保留する。 */
       writeText: async (text: string) => {
         copied.push(text);
         await new Promise<void>((resolve) => {
@@ -929,10 +1053,16 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
       "Code copied.",
     );
     assert.equal(
-      dom.window.document.querySelector(".message-copy-toast")?.getAttribute("role"),
+      dom.window.document
+        .querySelector(".message-copy-toast")
+        ?.getAttribute("role"),
       "status",
     );
-    assert.ok(dom.window.document.querySelector(".message-copy-toast")?.classList.contains("success"));
+    assert.ok(
+      dom.window.document
+        .querySelector(".message-copy-toast")
+        ?.classList.contains("success"),
+    );
   } finally {
     await act(async () => {
       root?.unmount();
@@ -953,6 +1083,7 @@ test("MessageRichText のcode block copyは本文だけをclipboardへ渡してf
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** Clipboardへの書込みが失敗したとき、成功にはせずエラー用のstatusを表示する。 */
 test("MessageRichText のcode block copy失敗はerror feedbackを表示する", async () => {
   const dom = new JSDOM('<div id="root"></div>', {
     pretendToBeVisual: true,
@@ -964,6 +1095,7 @@ test("MessageRichText のcode block copy失敗はerror feedbackを表示する",
   Object.defineProperty(dom.window.navigator, "clipboard", {
     configurable: true,
     value: {
+      /** Clipboard書込みを失敗させてエラー通知を実際に描画させる。 */
       writeText: async () => {
         throw new Error("clipboard denied");
       },
@@ -1013,6 +1145,7 @@ test("MessageRichText のcode block copy失敗はerror feedbackを表示する",
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** HTTPリンクの左クリックではブラウザーに遷移を任せず、フラグメント込みの対象をopenPathへ渡す。 */
 test("handleMarkdownLinkClick は Markdown link を既定ナビゲーションではなく openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "https://example.test/docs#intro",
@@ -1033,6 +1166,7 @@ test("handleMarkdownLinkClick は Markdown link を既定ナビゲーション�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** HTTP URLに含まれる空白のpercent encodingを復号せず、そのままopenPathへ送る。 */
 test("handleMarkdownLinkClick は encoded HTTP URL を decode せず openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "https://example.test/docs/my%20file.md",
@@ -1053,6 +1187,7 @@ test("handleMarkdownLinkClick は encoded HTTP URL を decode せず openPath �
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 空白と日本語を含む相対リンクのpercent encodingを維持して、ファイルを開く経路へ渡す。 */
 test("handleMarkdownLinkClick は encoded local link を decode せず openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "docs/my%20file-%E4%BB%95%E6%A7%98.md",
@@ -1072,6 +1207,7 @@ test("handleMarkdownLinkClick は encoded local link を decode せず openPath 
 // scope = "handleMarkdownLinkContextMenu target forwarding"
 // lifecycle = "permanent"
 // @end-test-value
+/** HTTP、mailto、ローカルを右クリックすると、元の対象とポインター座標でメニューを出してコピー結果を返す。 */
 test("handleMarkdownLinkContextMenu は openPath と同じ各種targetを変換せずmenuへ渡す", async () => {
   const targets = [
     "https://example.test/docs/my%20file.md?raw=%2F#intro",
@@ -1101,6 +1237,7 @@ test("handleMarkdownLinkContextMenu は openPath と同じ各種targetを変換�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 危険なスキームと同一ページのアンカーではアプリのコピーメニューを呼ばず、ブラウザー既定動作も抑止しない。 */
 test("handleMarkdownLinkContextMenu は unsafe link と同一ページanchorをcopy対象にしない", async () => {
   for (const target of [
     "javascript:alert(1)",
@@ -1126,6 +1263,7 @@ test("handleMarkdownLinkContextMenu は unsafe link と同一ページanchorをc
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** キーボード起点のメニューはポインターの座標ではなく、リンク矩形の左下を丸めた位置に開く。 */
 test("handleMarkdownLinkContextMenu はkeyboard起点のmenu位置をanchorから解決する", async () => {
   let request: { target: string; point: { x: number; y: number } } | null =
     null;
@@ -1134,8 +1272,10 @@ test("handleMarkdownLinkContextMenu はkeyboard起点のmenu位置をanchorか�
       clientX: 0,
       clientY: 0,
       currentTarget: {
+        /** 丸め方向を比較できる小数の左下座標を返す。 */
         getBoundingClientRect: () => ({ left: 32.4, bottom: 48.6 }),
       },
+      /** このケースではメニュー位置だけを調べ、既定動作の抑止状態は記録しない。 */
       preventDefault: () => undefined,
     },
     "docs/review-brief.md",
@@ -1163,17 +1303,22 @@ test("handleMarkdownLinkContextMenu はkeyboard起点のmenu位置をanchorか�
 // impact = "copy結果が隠れると利用者は成功と失敗を判断できない。link・fileで共通の通知経路を確認する"
 // distinction = "型検査やbuildでは確認できない通知の描画先・結果文言・読み上げ属性とunmount時の除去を既存の操作testで観測する。実際の重なり順は描画確認で補う"
 // @end-test-value
+/** リンクの右クリックが対象をメニューへ渡し、リンクやファイルのコピー結果を会話列外のlive statusへ表示する。アンマウント時には通知を除去する。 */
 test("MessageRichText はlink・fileのcopy結果を会話列外のstatus通知で表示する", async () => {
-  const dom = new JSDOM('<!doctype html><div class="session-concurrent-chat-column" style="isolation:isolate"><div id="root"></div></div>', {
-    pretendToBeVisual: true,
-    url: "http://localhost/",
-  });
+  const dom = new JSDOM(
+    '<!doctype html><div class="session-concurrent-chat-column" style="isolation:isolate"><div id="root"></div></div>',
+    {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    },
+  );
   const requests: Array<{ target: string; point: { x: number; y: number } }> =
     [];
   let menuResult: MarkdownLinkContextMenuResult = { status: "link-copied" };
   Object.defineProperty(dom.window, "withmate", {
     configurable: true,
     value: {
+      /** レンダラーからのメニュー要求を記録し、リンク・ファイルのコピーまたは失敗を切り替える。 */
       async showMarkdownLinkContextMenu(request: {
         target: string;
         point: { x: number; y: number };
@@ -1221,8 +1366,11 @@ test("MessageRichText はlink・fileのcopy結果を会話列外のstatus通知�
       },
     ]);
     assert.equal(contextMenuEvent.defaultPrevented, true);
+    /** コピー通知の文言と色調、読み上げ属性、会話列外への配置をまとめて検査する。 */
     const assertFeedback = (message: string, tone: "success" | "error") => {
-      const feedback = dom.window.document.querySelector(".message-link-copy-toast");
+      const feedback = dom.window.document.querySelector(
+        ".message-link-copy-toast",
+      );
       assert.ok(feedback);
       assert.equal(feedback.textContent, message);
       assert.ok(feedback.classList.contains(tone));
@@ -1234,19 +1382,38 @@ test("MessageRichText はlink・fileのcopy結果を会話列外のstatus通知�
     assertFeedback("Link copied.", "success");
 
     for (const scenario of [
-      { result: { status: "file-copy", result: { status: "copied", message: "File copied." } }, message: "File copied.", tone: "success" },
-      { result: { status: "failed", message: "Link could not be copied." }, message: "Link could not be copied.", tone: "error" },
+      {
+        result: {
+          status: "file-copy",
+          result: { status: "copied", message: "File copied." },
+        },
+        message: "File copied.",
+        tone: "success",
+      },
+      {
+        result: { status: "failed", message: "Link could not be copied." },
+        message: "Link could not be copied.",
+        tone: "error",
+      },
     ] as const) {
       menuResult = scenario.result;
       await act(async () => {
-        anchor.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        anchor.dispatchEvent(
+          new dom.window.MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
       });
       assertFeedback(scenario.message, scenario.tone);
     }
 
     await act(async () => root?.unmount());
     root = null;
-    assert.equal(dom.window.document.querySelector(".message-link-copy-toast"), null);
+    assert.equal(
+      dom.window.document.querySelector(".message-link-copy-toast"),
+      null,
+    );
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -1267,6 +1434,7 @@ test("MessageRichText はlink・fileのcopy結果を会話列外のstatus通知�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 相対リンク、file URL、Windowsパスの表示済みhrefに、空白と日本語のpercent encodingを保つ。 */
 test("MessageRichText は local/file href の encode を保持して render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1296,6 +1464,7 @@ test("MessageRichText は local/file href の encode を保持して render す�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** バックスラッシュのWindows絶対パスをクリックすると、既定遷移を止めてhrefでエンコードされた対象をopenPathに渡す。 */
 test("MessageRichText は backslash 形式の Windows absolute path を既定ナビゲーションせず開く", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -1314,6 +1483,7 @@ test("MessageRichText は backslash 形式の Windows absolute path を既定ナ
         React.createElement(MessageRichText, {
           text: String.raw`[file](C:\workspace\session-files\report.txt)`,
           forceFullRender: true,
+          /** 実クリックで開くよう求められたエンコード済みの対象を記録する。 */
           onOpenPath: (target) => opened.push(target),
         }),
       );
@@ -1356,6 +1526,7 @@ test("MessageRichText は backslash 形式の Windows absolute path を既定ナ
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 許可されないスキームを含むリンクでは、レンダリング結果に対象のhrefを出力しない。 */
 test("MessageRichText は unsafe href を render しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1368,10 +1539,7 @@ test("MessageRichText は unsafe href を render しない", () => {
     }),
   );
 
-  assert.doesNotMatch(
-    html,
-    /href="(?:javascript|vbscript|data:text|custom):/i,
-  );
+  assert.doesNotMatch(html, /href="(?:javascript|vbscript|data:text|custom):/i);
 });
 
 // @test-value v2
@@ -1385,6 +1553,7 @@ test("MessageRichText は unsafe href を render しない", () => {
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 脚注へのページ内リンクはアプリで開かず、既定のアンカー移動に任せる。 */
 test("handleMarkdownLinkClick は footnote などの同一ページアンカーを既定動作に任せる", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "#message-footnote-example-fn-1",
@@ -1405,6 +1574,7 @@ test("handleMarkdownLinkClick は footnote などの同一ページアンカー�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** mailtoのクリックをブラウザー既定の遷移に任せず、元の宛先をopenPathへ渡す。 */
 test("handleMarkdownLinkClick は mailto を openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "mailto:alice@example.test",
@@ -1425,6 +1595,7 @@ test("handleMarkdownLinkClick は mailto を openPath 経路へ流す", () => {
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** mailtoの件名などに含まれるpercent encodingを変えず、元のリンクをopenPathへ渡す。 */
 test("handleMarkdownLinkClick は encoded mailto を decode せず openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "mailto:alice@example.test?subject=hello%20world%0D%0A",
@@ -1447,6 +1618,7 @@ test("handleMarkdownLinkClick は encoded mailto を decode せず openPath 経�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** スキームを省略したWeb URLのクリックは既定動作を止め、元の二重スラッシュ形式をopenPathへ渡す。 */
 test("handleMarkdownLinkClick は protocol-relative URL を openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink("//example.test/docs");
 
@@ -1465,6 +1637,7 @@ test("handleMarkdownLinkClick は protocol-relative URL を openPath 経路へ�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** スラッシュ形式のUNC共有パスは入力のエンコードを保ち、既定遷移ではなくopenPathへ送る。 */
 test("handleMarkdownLinkClick は forward-slash UNC path を local path として openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "//server/share/my%20file.txt",
@@ -1485,6 +1658,7 @@ test("handleMarkdownLinkClick は forward-slash UNC path を local path とし�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** Windowsのドライブ文字をURLスキームとして拒否せず、元の絶対パスをopenPathへ渡す。 */
 test("handleMarkdownLinkClick は Windows absolute path を scheme と誤判定せず openPath 経路へ流す", () => {
   const { defaultPrevented, opened } = clickMarkdownLink(
     "C:/workspace/project/src/App.tsx",
@@ -1505,6 +1679,7 @@ test("handleMarkdownLinkClick は Windows absolute path を scheme と誤判定�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** GFM表を専用tableと見出し・データセルへ投影し、Markdownの罫線を本文に残さない。 */
 test("MessageRichText は GFM table を table 要素として render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1536,6 +1711,7 @@ test("MessageRichText は GFM table を table 要素として render する", ()
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 12項目の番号付きリストが分断されず、末尾項目の入れ子が10番開始の別のolになることを確認する。 */
 test("MessageRichText は2桁番号とnested listをsemanticなordered listとしてrenderする", () => {
   const markdown = [
     ...Array.from(
@@ -1589,6 +1765,7 @@ test("MessageRichText は2桁番号とnested listをsemanticなordered listと�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 2空白ずつインデントした箇条書きを親liの配下へ入れ子にし、各階層の本文を保持する。 */
 test("MessageRichText は2文字ずつのindentをnested unordered listとしてrenderする", () => {
   const markdown = [
     "- aaa",
@@ -1642,6 +1819,7 @@ test("MessageRichText は2文字ずつのindentをnested unordered listとして
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 一項目だけの箇条書きに不要な本文wrapperを作らず、後続の段落をリストの外へ置く。 */
 test("MessageRichText は単独のMarkdown list itemを本文wrapperなしのliとしてrenderする", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1670,6 +1848,7 @@ test("MessageRichText は単独のMarkdown list itemを本文wrapperなしのli�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 二桁の番号用の余白を論理方向で確保し、会話中の番号付きリストに独立スクロール用の共通指定を適用しない。 */
 test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独立scroll領域にしない", async () => {
   const styles = await readStylesheet();
   const orderedListRule =
@@ -1681,7 +1860,10 @@ test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独
     )?.[0] ?? "";
 
   assert.match(orderedListRule, /padding-inline-start:\s*2\.25em;/);
-  assert.match(styles, /\.session-list,[\s\S]*?\.summary-list\s*{(?<body>[^}]*)}/);
+  assert.match(
+    styles,
+    /\.session-list,[\s\S]*?\.summary-list\s*{(?<body>[^}]*)}/,
+  );
   assert.doesNotMatch(orderedListRule, /padding-left:/);
   assert.doesNotMatch(sharedScrollableLists, /\.message-list,/);
 });
@@ -1697,19 +1879,51 @@ test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独
 // lifecycle = "permanent"
 // distinction = "通常の最終描画確認と異なり受信中の未反映snapshotから検索用表示への即時反映を確認する"
 // @end-test-value
+/** 配信中の表に未反映のセルが残っていても、検索開始を表す指定で待機せず最新セルまで表示する。 */
 test("MessageRichTextは検索開始時に受信中の最新本文を即時反映する", async () => {
-  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
   const restoreGlobals = installDomGlobals(dom);
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   const markdown = ["| A | B |", "| --- | --- |", "| 1 | 2 |"].join("\n");
   try {
-    await act(async () => root.render(React.createElement(MessageRichText, { text: markdown, isStreaming: true })));
+    await act(async () =>
+      root.render(
+        React.createElement(MessageRichText, {
+          text: markdown,
+          isStreaming: true,
+        }),
+      ),
+    );
     const latest = markdown + "\n| 3 | 4 |";
-    await act(async () => root.render(React.createElement(MessageRichText, { text: latest, isStreaming: true })));
-    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["1", "2"]);
-    await act(async () => root.render(React.createElement(MessageRichText, { text: latest, isStreaming: true, forceFullRender: true })));
-    assert.deepEqual([...container.querySelectorAll("td")].map((cell) => cell.textContent), ["1", "2", "3", "4"]);
+    await act(async () =>
+      root.render(
+        React.createElement(MessageRichText, {
+          text: latest,
+          isStreaming: true,
+        }),
+      ),
+    );
+    assert.deepEqual(
+      [...container.querySelectorAll("td")].map((cell) => cell.textContent),
+      ["1", "2"],
+    );
+    await act(async () =>
+      root.render(
+        React.createElement(MessageRichText, {
+          text: latest,
+          isStreaming: true,
+          forceFullRender: true,
+        }),
+      ),
+    );
+    assert.deepEqual(
+      [...container.querySelectorAll("td")].map((cell) => cell.textContent),
+      ["1", "2", "3", "4"],
+    );
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
@@ -1728,6 +1942,7 @@ test("MessageRichTextは検索開始時に受信中の最新本文を即時反�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 打消し線、チェック済みtask、自動リンク、脚注が拡張記法のまま残らず、対応するHTMLへ投影される。 */
 test("MessageRichText は GFM 拡張記法を render する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1769,6 +1984,7 @@ test("MessageRichText は GFM 拡張記法を render する", () => {
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 複数メッセージに同じ脚注番号があっても、脚注と読み上げラベルのDOM IDは個別になり、ARIA参照は各メッセージのラベルを指す。 */
 test("MessageRichText は footnote の DOM ID と aria 参照を message ごとに分離する", () => {
   const html = renderToStaticMarkup(
     React.createElement(
@@ -1813,6 +2029,7 @@ test("MessageRichText は footnote の DOM ID と aria 参照を message ごと�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 列ごとの整列方向をGFM表の見出しとデータセルの両方へ適用する。 */
 test("MessageRichText は GFM table alignment を th と td に引き継ぐ", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1861,6 +2078,7 @@ test("MessageRichText は GFM table alignment を th と td に引き継ぐ", ()
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 二重ドル記号だけを数式表示へ投影し、通常の金額を示す単一ドル記号は文字として保つ。 */
 test("MessageRichText は double-dollar math を render し、金額表現の single dollar は維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1892,6 +2110,7 @@ test("MessageRichText は double-dollar math を render し、金額表現の si
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 静的描画におけるMermaidは図用のfallbackにソースを出し、通常コードのCopy操作を置かない。 */
 test("MessageRichText は Mermaid code block をdiagram用containerとしてrenderし、copy操作を表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1922,6 +2141,7 @@ test("MessageRichText は Mermaid code block をdiagram用containerとしてrend
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** インライン、フェンス、インデント付きコードのローカルリンク風文字列はリンクに変えず、そのまま表示する。 */
 test("MessageRichText は code literal 内の local path link 風テキストを改変しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1961,6 +2181,7 @@ test("MessageRichText は code literal 内の local path link 風テキストを
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** dataとWeb画像はsrcを指定して直接表示し、resolverの無いローカル画像は読込失敗として示す。 */
 test("MessageRichText はexternal画像を直接表示しresolverのないlocal画像はerrorを示す", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -1992,6 +2213,7 @@ test("MessageRichText はexternal画像を直接表示しresolverのないlocal�
 // impact = "Windowsからコピーした画像pathが会話とMarkdown previewで消えることを防ぐ"
 // distinction = "URL transform単体では通らない実Markdown parserのencodingからcomponentの非同期解決までを小さい入力で確認する"
 // @end-test-value
+/** Windows画像パスの区切りがバックスラッシュ、スラッシュ、percent encodingのどれでも同じfile URLをresolverへ渡し、返された画像を描画する。 */
 test("MessageRichText はバックスラッシュのWindows画像pathをresolverへ渡す", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2006,18 +2228,31 @@ test("MessageRichText はバックスラッシュのWindows画像pathをresolver
     assert.ok(container);
     root = createRoot(container);
     await act(async () => {
-      root?.render(React.createElement(MessageRichText, {
-        forceFullRender: true,
-        text: String.raw`![backslash](C:\workspace\sample.png)
+      root?.render(
+        React.createElement(MessageRichText, {
+          forceFullRender: true,
+          text: String.raw`![backslash](C:\workspace\sample.png)
 ![slash](C:/workspace/sample.png)
 ![encoded](C:%5cworkspace%5Csample.png)`,
-        async resolveImageSource(target) { resolved.push(target); return source; },
-      }));
+          /** resolverが受け取ったURLを記録し、実ファイルを読まず固定画像を返す。 */
+          async resolveImageSource(target) {
+            resolved.push(target);
+            return source;
+          },
+        }),
+      );
     });
-    assert.deepEqual(resolved, Array(3).fill("file:///C:/workspace/sample.png"));
-    assert.deepEqual(Array.from(container.querySelectorAll("img"), (image) => ({
-      alt: image.alt, src: image.getAttribute("src"),
-    })), ["backslash", "slash", "encoded"].map((alt) => ({ alt, src: source })));
+    assert.deepEqual(
+      resolved,
+      Array(3).fill("file:///C:/workspace/sample.png"),
+    );
+    assert.deepEqual(
+      Array.from(container.querySelectorAll("img"), (image) => ({
+        alt: image.alt,
+        src: image.getAttribute("src"),
+      })),
+      ["backslash", "slash", "encoded"].map((alt) => ({ alt, src: source })),
+    );
   } finally {
     if (root) await act(async () => root?.unmount());
     restoreGlobals();
@@ -2036,6 +2271,7 @@ test("MessageRichText はバックスラッシュのWindows画像pathをresolver
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 埋込み画像にはeagerと高優先度、外部画像にはlazyと自動優先度を指定する。 */
 test("MessageRichText はembedded imageを優先読込しremote imageは遅延読込する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -2066,6 +2302,7 @@ test("MessageRichText はembedded imageを優先読込しremote imageは遅延�
 // impact = "短時間の画像表示で会話本文へ不要な文字・高さ変化を持ち込む"
 // distinction = "画像のsrcやload eventだけでなく、閾値前のloading UI不在と完了時のtimer破棄を観測する"
 // @end-test-value
+/** 直接画像は待機表示より先に描画され、閾値前のload完了でspinnerを出さず待機タイマーも取り除く。 */
 test("MessageRichText は直接 image を表示しながら load 完了後に loading 表示を消す", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2124,6 +2361,7 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
 // impact = "入力中の会話表示へ不要なloading文字やレイアウト変化を持ち込まず、遅いresourceだけを識別可能にする"
 // distinction = "高速load単体のtimer破棄とは別に、同じ本文内の待機表示をresource別に観測し、待機後のloadとerrorを比較する"
 // @end-test-value
+/** 1秒経過時に未完了の画像だけへ名前付きspinnerを出し、個別のloadまたはerrorで消す。 */
 test("MessageRichText は遅い直接 image だけに領域内 spinner を表示する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2148,12 +2386,16 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
 
     const fast = container.querySelector<HTMLImageElement>('img[alt="fast"]')!;
     const slow = container.querySelector<HTMLImageElement>('img[alt="slow"]')!;
-    const broken = container.querySelector<HTMLImageElement>('img[alt="broken"]')!;
+    const broken =
+      container.querySelector<HTMLImageElement>('img[alt="broken"]')!;
     const fastShell = fast.closest(".message-image-shell")!;
     const slowShell = slow.closest(".message-image-shell")!;
     const brokenShell = broken.closest(".message-image-shell")!;
     assert.equal(container.querySelector(".message-image-loading"), null);
-    assert.deepEqual(Array.from(timers.pending.values(), ({ delay }) => delay), [1_000, 1_000, 1_000]);
+    assert.deepEqual(
+      Array.from(timers.pending.values(), ({ delay }) => delay),
+      [1_000, 1_000, 1_000],
+    );
 
     await act(async () => fast.dispatchEvent(new dom.window.Event("load")));
     assert.equal(timers.pending.size, 2);
@@ -2167,11 +2409,21 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
     assert.equal(container.querySelector('img[alt="slow"]'), slow);
     assert.equal(fastShell.querySelector(".message-image-loading"), null);
     assert.equal(container.querySelectorAll('[role="status"]').length, 2);
-    for (const [shell, name] of [[slowShell, "slow"], [brokenShell, "broken"]] as const) {
-      const status = shell.querySelector(':scope > .message-image-loading [role="status"]');
-      assert.equal(status?.getAttribute("aria-label"), `Loading image: ${name}`);
+    for (const [shell, name] of [
+      [slowShell, "slow"],
+      [brokenShell, "broken"],
+    ] as const) {
+      const status = shell.querySelector(
+        ':scope > .message-image-loading [role="status"]',
+      );
+      assert.equal(
+        status?.getAttribute("aria-label"),
+        `Loading image: ${name}`,
+      );
       assert.equal(status?.getAttribute("aria-busy"), "true");
-      assert.ok(status?.querySelector('.loading-indicator-spinner[aria-hidden="true"]'));
+      assert.ok(
+        status?.querySelector('.loading-indicator-spinner[aria-hidden="true"]'),
+      );
       assert.equal(status?.textContent, "");
     }
 
@@ -2179,7 +2431,10 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
     assert.equal(slowShell.querySelector(".message-image-loading"), null);
     assert.equal(slowShell.getAttribute("aria-busy"), null);
     assert.equal(slowShell.querySelector('[role="alert"]'), null);
-    assert.equal(brokenShell.querySelector('[role="status"]')?.getAttribute("aria-label"), "Loading image: broken");
+    assert.equal(
+      brokenShell.querySelector('[role="status"]')?.getAttribute("aria-label"),
+      "Loading image: broken",
+    );
     await act(async () => broken.dispatchEvent(new dom.window.Event("error")));
     const error = brokenShell.querySelector('[role="alert"]');
     assert.equal(error?.textContent?.trim(), "Image could not be loaded.");
@@ -2209,6 +2464,7 @@ test("MessageRichText は遅い直接 image だけに領域内 spinner を表示
 // impact = "local image previewが遅延しているときも待機状態を正しく示し、resource完了後に操作可能な画像へ戻す"
 // distinction = "直接画像のload eventとは別に、制御可能なresolver Promiseと同一timerを跨ぐ状態遷移を観測する"
 // @end-test-value
+/** resolverが画像URLを返しても同一画像の待機タイマーを再予約せず、load前までは元のタイマーでspinnerを制御する。 */
 test("MessageRichText は resolver の resolving から loading へ spinner 待機を継続する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2219,6 +2475,7 @@ test("MessageRichText は resolver の resolving から loading へ spinner 待�
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
   let resolveImage: ((source: string | null) => void) | undefined;
+  /** 解決処理を保留し、待機タイマー開始後に画像URLを返せるようにする。 */
   const resolver = () =>
     new Promise<string | null>((resolve) => {
       resolveImage = resolve;
@@ -2288,6 +2545,7 @@ test("MessageRichText は resolver の resolving から loading へ spinner 待�
 // impact = "resolver処理と画像network loadの待機を分離し、画像が実際に操作可能になるまでloading状態を示す"
 // distinction = "resolver完了前にtimerを跨ぐ継続確認とは別に、spinner表示後のresolver完了からimg loadまでの状態遷移を観測する"
 // @end-test-value
+/** resolver待機中に表示したspinnerは、URLが到着しただけでは消さず、画像のloadで除去する。 */
 test("MessageRichText はresolver完了後も表示済みspinnerを画像loadまで維持する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2298,6 +2556,7 @@ test("MessageRichText はresolver完了後も表示済みspinnerを画像loadま
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
   let resolveImage: ((source: string | null) => void) | undefined;
+  /** URLの解決を保留し、先にspinnerを発火できるようにする。 */
   const resolver = () =>
     new Promise<string | null>((resolve) => {
       resolveImage = resolve;
@@ -2360,6 +2619,7 @@ test("MessageRichText はresolver完了後も表示済みspinnerを画像loadま
 // impact = "file previewの再読込や世代更新後に古い画像が表示へ戻らず、読み込み待機状態とowned blob URLがリークしない"
 // distinction = "resolver正常系の一回限りの表示確認とは別に、source変更・stale completion・pending中のresolver世代変更・同一sourceの再解決・unmountを一連の状態遷移として観測する"
 // @end-test-value
+/** 画像のパスとresolver世代を別々に変更し、旧応答はDOMへ反映せずblobと旧タイマーを解放する。現行世代では同じパスも改めて取得する。 */
 test("MessageRichText はsource変更とresolver世代変更でstale resourceを表示せず解放する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2379,15 +2639,18 @@ test("MessageRichText はsource変更とresolver世代変更でstale resourceを
   const staleGenerationSource = createDeferred<string | null>();
   const reloadedSource = createDeferred<string | null>();
   const resolverCalls: string[] = [];
+  /** 同じresolverで旧パスと現行パスを別々に解決できるよう要求を記録して振り分ける。 */
   const firstResolver = (source: string) => {
     resolverCalls.push(`first:${source}`);
     if (source.includes("old")) return oldSource.promise;
     return currentSource.promise;
   };
+  /** 中間世代の解決を記録し、その応答を次の世代より遅らせる。 */
   const intermediateResolver = (source: string) => {
     resolverCalls.push(`intermediate:${source}`);
     return staleGenerationSource.promise;
   };
+  /** 最新のresolverが同じ画像を再取得したか記録し、表示される応答を保留する。 */
   const reloadResolver = (source: string) => {
     resolverCalls.push(`reload:${source}`);
     return reloadedSource.promise;
@@ -2415,6 +2678,7 @@ test("MessageRichText はsource変更とresolver世代変更でstale resourceを
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: "![old](images/old.png)",
+          /** 画像と無関係なリンクcallbackだけを差し替える再描画を起こす。 */
           onOpenPath: () => undefined,
           resolveImageSource: firstResolver,
         }),
@@ -2558,6 +2822,7 @@ test("MessageRichText はsource変更とresolver世代変更でstale resourceを
 // impact = "認証失敗や読み込み失敗時に会話が無限loadingへ見え続けず、失敗後に待機timerが残らない"
 // distinction = "resolver成功時の画像src確認とは別に、遅延indicator timerが保留中のnull戻りとrejectをerrorへ収束させる"
 // @end-test-value
+/** resolverがnullを返した画像と例外で失敗した画像はどちらもerrorとなり、spinnerもタイマーも残らない。 */
 test("MessageRichText はresolverのnullとrejectをspinnerなしのerrorへ収束する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2569,6 +2834,7 @@ test("MessageRichText はresolverのnullとrejectをspinnerなしのerrorへ収�
   let root: Root | null = null;
   const nullFailure = createDeferred<string | null>();
   const rejectedFailure = createDeferred<string | null>();
+  /** 画像のパスごとに未解決と例外の応答を独立して制御する。 */
   const resolver = (source: string) =>
     source.includes("reject.png")
       ? rejectedFailure.promise
@@ -2623,6 +2889,7 @@ test("MessageRichText はresolverのnullとrejectをspinnerなしのerrorへ収�
 // impact = "会話更新中に後着した旧resourceの失敗が現行画像の操作可能状態を壊さない"
 // distinction = "stale成功blobの解放確認とは別に、現行画像表示後の旧resolver rejectがstateを汚染しないことを観測する"
 // @end-test-value
+/** 取得対象を切り替えた後に旧resolverが失敗しても、現行画像の同じDOMとsrcを保ちエラーを出さない。 */
 test("MessageRichText は現行画像表示後のstale resolver rejectを無視する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2643,6 +2910,7 @@ test("MessageRichText は現行画像表示後のstale resolver rejectを無視�
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: "![stale](images/stale.png)",
+          /** 旧画像の取得を保留し、現行画像を表示してから失敗させる。 */
           resolveImageSource: () => staleSource.promise,
         }),
       );
@@ -2654,6 +2922,7 @@ test("MessageRichText は現行画像表示後のstale resolver rejectを無視�
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: "![current](images/current.png)",
+          /** 切替後の画像だけを先に解決できるよう、別のPromiseを返す。 */
           resolveImageSource: () => currentSource.promise,
         }),
       );
@@ -2709,6 +2978,7 @@ test("MessageRichText は現行画像表示後のstale resolver rejectを無視�
 // impact = "壊れた画像resourceが会話本文のloading状態を永続化しない"
 // distinction = "resolver失敗のreject/nullとは別に、遅延indicator timerが保留中のブラウザimg element error eventを直接観測する"
 // @end-test-value
+/** 直接画像がloadに失敗すると、待機表示とタイマーを除いて読み上げ可能なalertを出す。 */
 test("MessageRichText は直接画像のload errorをspinnerなしのerrorへ収束する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2764,6 +3034,7 @@ test("MessageRichText は直接画像のload errorをspinnerなしのerrorへ収
 // impact = "会話切替や画面破棄後に旧画像の非同期処理が表示とresourceを保持し続けない"
 // distinction = "source／resolver世代切替中のstale completionとは別に、resolver未完了のままcomponentを破棄する経路を観測する"
 // @end-test-value
+/** 未解決の画像をアンマウントしたらタイマーを破棄し、その後届いた所有blobも表示せず解放する。 */
 test("MessageRichText はresolver未完了のunmountでtimerと遅延blobを解放する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2788,6 +3059,7 @@ test("MessageRichText はresolver未完了のunmountでtimerと遅延blobを解�
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: "![pending](images/pending.png)",
+          /** アンマウント後まで画像取得を保留する。 */
           resolveImageSource: () => pendingSource.promise,
         }),
       );
@@ -2829,6 +3101,7 @@ test("MessageRichText はresolver未完了のunmountでtimerと遅延blobを解�
 // impact = "入力に伴う親更新で既存会話画像が点滅・再取得されず、操作対象だけは最新session contextを維持する"
 // distinction = "親callbackだけを安定化するcolumn testとは別に、Markdown renderer自身のcomponent identityと本文追記を直接観測する"
 // @end-test-value
+/** リンクcallbackの変更や末尾の追記でも同じ画像DOMと読込済み状態を保ち、クリックは古いclosureではなく最新callbackへ届く。 */
 test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使う", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -2850,6 +3123,7 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: initialText,
+          /** 最初のリンクcallbackに届いた対象を旧世代として記録する。 */
           onOpenPath: (target: string) => opened.push(`old:${target}`),
         }),
       );
@@ -2872,6 +3146,7 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
         React.createElement(MessageRichText, {
           forceFullRender: true,
           text: initialText,
+          /** 画像を維持した再描画後に、二つ目のリンクcallbackが使われたことを識別する。 */
           onOpenPath: (target: string) => opened.push(`new:${target}`),
         }),
       );
@@ -2895,6 +3170,7 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
       root?.render(
         React.createElement(MessageRichText, {
           text: appendedText,
+          /** さらに更新したcallbackへの通知を識別し、過去のclosureの呼び出しを検出する。 */
           onOpenPath: (target: string) => opened.push(`latest:${target}`),
         }),
       );
@@ -2964,6 +3240,7 @@ test("MessageRichText は画像DOMを保持し、更新後のlink callbackを使
 // impact = "遅延表示の出入りで会話スクロールを揺らさず、動きを抑えたい利用者の設定を尊重する"
 // distinction = "DOMでは算出できないoverlay配置、pointer event、spinner animation、通常ruleより後ろにあるreduced-motion overrideの適用順をstylesheet declarationから観測する"
 // @end-test-value
+/** 画像の待機表示はshell内の操作を妨げないoverlayとし、共通spinnerの回転を後続の動き抑制CSSで無効にする。 */
 test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion を持つ", async () => {
   const dom = new JSDOM("<!doctype html>", { url: "http://localhost/" });
   try {
@@ -2972,24 +3249,44 @@ test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion 
     dom.window.document.head.append(style);
     assert.ok(style.sheet);
     const rules = Array.from(style.sheet.cssRules);
+    /** 指定セレクターと完全一致するスタイル規則だけを判定する。 */
     const styleRule = (rule: CSSRule, selector: string): rule is CSSStyleRule =>
       rule instanceof dom.window.CSSStyleRule && rule.selectorText === selector;
+    /** 対象のセレクターを持つstyle ruleから宣言を読み取る。 */
     const declarationsFor = (selector: string) =>
-      rules.find((rule): rule is CSSStyleRule => styleRule(rule, selector))?.style;
+      rules.find((rule): rule is CSSStyleRule => styleRule(rule, selector))
+        ?.style;
 
     const loading = declarationsFor(".message-image-loading");
     assert.equal(loading?.getPropertyValue("position"), "absolute");
     assert.ok(loading?.getPropertyValue("inset"));
     assert.equal(loading?.getPropertyValue("pointer-events"), "none");
-    assert.equal(declarationsFor(".message-image-shell")?.getPropertyValue("position"), "relative");
+    assert.equal(
+      declarationsFor(".message-image-shell")?.getPropertyValue("position"),
+      "relative",
+    );
 
     const spinner = ".loading-indicator-spinner";
-    const normal = rules.findIndex((rule) => styleRule(rule, spinner) && /\binfinite\b/.test(rule.style.getPropertyValue("animation")));
-    const reduced = rules.findIndex((rule) =>
-      rule instanceof dom.window.CSSMediaRule && rule.conditionText === "(prefers-reduced-motion: reduce)"
-      && Array.from(rule.cssRules).some((entry) => styleRule(entry, spinner) && entry.style.getPropertyValue("animation") === "none"));
+    const normal = rules.findIndex(
+      (rule) =>
+        styleRule(rule, spinner) &&
+        /\binfinite\b/.test(rule.style.getPropertyValue("animation")),
+    );
+    const reduced = rules.findIndex(
+      (rule) =>
+        rule instanceof dom.window.CSSMediaRule &&
+        rule.conditionText === "(prefers-reduced-motion: reduce)" &&
+        Array.from(rule.cssRules).some(
+          (entry) =>
+            styleRule(entry, spinner) &&
+            entry.style.getPropertyValue("animation") === "none",
+        ),
+    );
     assert.ok(normal >= 0, "the shared spinner animates normally");
-    assert.ok(reduced > normal, "reduced motion overrides the same spinner's animation");
+    assert.ok(
+      reduced > normal,
+      "reduced motion overrides the same spinner's animation",
+    );
   } finally {
     dom.window.close();
   }
@@ -3006,6 +3303,7 @@ test("MessageRichText の画像 spinner は領域内 overlay と reduced-motion 
 // lifecycle = "permanent"
 // distinction = "Fit倍率の計算unit testとは異なり、計算結果が画像styleと後続Zoom Inへ投影されることを観測する"
 // @end-test-value
+/** Fitで実効倍率50%を画像描画と操作表示へ適用し、次のZoom Inをその倍率から60%へ進める。 */
 test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -3015,6 +3313,7 @@ test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する",
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
 
+  /** 同じ画像viewportの制御状態を拡大操作と画像表示へ共有する。 */
   function ImageViewportHarness() {
     const controller = useImageViewport("image-source");
     return React.createElement(
@@ -3093,6 +3392,7 @@ test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する",
 // lifecycle = "permanent"
 // distinction = "既存の画像load確認とは異なり、portal dialogのfocus、倍率遷移、Escapeと背景click、focus復帰を観測する"
 // @end-test-value
+/** 読込後の画像から開くdialogへフォーカスを移して拡大でき、Escapeと背景クリックのどちらで閉じても元の画像ボタンへ戻る。 */
 test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背景clickで元の画像へ戻る", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>', {
     pretendToBeVisual: true,
@@ -3217,6 +3517,7 @@ test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背�
 // impact = "画像確認の一操作で別Windowや外部ページが開かれず、終了時に元の画像へ戻れる"
 // distinction = "単体画像testには親anchorがなくReact portal経由の伝播を検出できない。localとexternalの二入力を既存DOM環境で確認する小さな契約testとして保持する"
 // @end-test-value
+/** リンク付き画像の拡大や終了で親リンクを開かず、終了後は画像にフォーカスを戻す。明示した親リンクのクリックは引き続き動く。 */
 test("MessageRichText のリンク付き画像は拡大と終了を親リンクから分離する", async () => {
   for (const target of ["images/image.png", "https://example.com/image.png"]) {
     const dom = new JSDOM('<!doctype html><div id="root"></div>', {
@@ -3230,44 +3531,63 @@ test("MessageRichText のリンク付き画像は拡大と終了を親リンク�
 
     try {
       await act(async () => {
-        root.render(React.createElement(MessageRichText, {
-          text: `[![linked](data:image/png;base64,AAAA) destination](${target})`,
-          onOpenPath: (path) => opened.push(path),
-        }));
+        root.render(
+          React.createElement(MessageRichText, {
+            text: `[![linked](data:image/png;base64,AAAA) destination](${target})`,
+            /** 画像操作が誤って親リンクへ伝播した場合も判定できるよう、開いた対象をすべて記録する。 */
+            onOpenPath: (path) => opened.push(path),
+          }),
+        );
       });
-      const image = container.querySelector<HTMLImageElement>(".message-image")!;
+      const image =
+        container.querySelector<HTMLImageElement>(".message-image")!;
       const trigger = image.closest<HTMLButtonElement>("button")!;
       const link = trigger.closest<HTMLAnchorElement>("a")!;
       assert.ok(link);
       await act(async () => image.dispatchEvent(new dom.window.Event("load")));
       trigger.focus();
 
-      const click = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+      const click = new dom.window.MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      });
       await act(async () => image.dispatchEvent(click));
       assert.ok(dom.window.document.querySelector('[role="dialog"]'));
       assert.equal(click.defaultPrevented, true);
       assert.deepEqual(opened, []);
 
       await act(async () => {
-        dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Zoom image in"]')!.click();
+        dom.window.document
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="Zoom image in"]',
+          )!
+          .click();
       });
       assert.ok(dom.window.document.querySelector('[role="dialog"]'));
       assert.deepEqual(opened, []);
 
       await act(async () => {
-        dom.window.document.querySelector<HTMLElement>(".message-image-lightbox")!.click();
+        dom.window.document
+          .querySelector<HTMLElement>(".message-image-lightbox")!
+          .click();
       });
       assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
       assert.equal(dom.window.document.activeElement, trigger);
       assert.deepEqual(opened, []);
 
       await act(async () => trigger.click());
-      const dialog = dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
+      const dialog =
+        dom.window.document.querySelector<HTMLElement>('[role="dialog"]')!;
       assert.ok(dialog);
-      await act(async () => dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
-        bubbles: true,
-        key: "Escape",
-      })));
+      await act(async () =>
+        dialog.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            bubbles: true,
+            key: "Escape",
+          }),
+        ),
+      );
       assert.equal(dom.window.document.querySelector('[role="dialog"]'), null);
       assert.equal(dom.window.document.activeElement, trigger);
       assert.deepEqual(opened, []);
@@ -3294,6 +3614,7 @@ test("MessageRichText のリンク付き画像は拡大と終了を親リンク�
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** チャット内の相対画像パスを環境依存URLのimgにせず、読み込めないことを表示する。 */
 test("MessageRichText は chat context の相対 Markdown image を環境依存URLとして読み込まない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -3316,6 +3637,7 @@ test("MessageRichText は chat context の相対 Markdown image を環境依存U
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** スキームを省いた外部リンクを、描画後のhrefではHTTPSへ揃える。 */
 test("MessageRichText は protocol-relative link を HTTPS に正規化する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -3336,10 +3658,26 @@ test("MessageRichText は protocol-relative link を HTTPS に正規化する", 
 // lifecycle = "permanent"
 // distinction = "Mainのpath解決testとは異なりMarkdown画像からresolver入力へのURL正規化を確認する"
 // @end-test-value
+/** スラッシュとバックスラッシュのWindows画像パスを、エンコード済みの空白を壊さずfile URLに揃える。 */
 test("markdownUrlTransformはslashとbackslashのWindows画像pathをfile URLへ変換する", () => {
-  const node = { type: "element" as const, tagName: "img", properties: {}, children: [] };
-  assert.equal(markdownUrlTransform("C:/workspace/image%20folder/sample.png", "src", node), "file:///C:/workspace/image%20folder/sample.png");
-  assert.equal(markdownUrlTransform(String.raw`C:\workspace\image-folder\sample.png`, "src", node), "file:///C:/workspace/image-folder/sample.png");
+  const node = {
+    type: "element" as const,
+    tagName: "img",
+    properties: {},
+    children: [],
+  };
+  assert.equal(
+    markdownUrlTransform("C:/workspace/image%20folder/sample.png", "src", node),
+    "file:///C:/workspace/image%20folder/sample.png",
+  );
+  assert.equal(
+    markdownUrlTransform(
+      String.raw`C:\workspace\image-folder\sample.png`,
+      "src",
+      node,
+    ),
+    "file:///C:/workspace/image-folder/sample.png",
+  );
 });
 
 // @test-value v2
@@ -3353,6 +3691,7 @@ test("markdownUrlTransformはslashとbackslashのWindows画像pathをfile URLへ
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** ATXとSetextの見出しを対応する階層のHTMLに変換し、区切り線も段落にせずhrで表す。 */
 test("MessageRichText は heading 階層と thematic break の semantic HTML を保持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -3397,6 +3736,7 @@ test("MessageRichText は heading 階層と thematic break の semantic HTML を
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できないMarkdown parserの実行時block分類とHTML出力を直接観測する"
 // @end-test-value
+/** 先頭に2空白がある見出し・両種のリスト・コードフェンスでも描画が停止せず、期待する要素を出力する。 */
 test(
   "MessageRichText は先頭空白付き Markdown 行でも停止せずに render できる",
   { timeout: 2_000 },
@@ -3441,6 +3781,7 @@ test(
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 短いインデントのある見出しとリストでも強調・リンク・インラインコードを維持し、後続段落を別の要素にする。 */
 test("MessageRichText は先頭空白付き Markdown を既存 block と inline のまま扱う", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -3483,6 +3824,7 @@ test("MessageRichText は先頭空白付き Markdown を既存 block と inline 
 // lifecycle = "permanent"
 // distinction = "型検査やbuildでは確認できない実行時のMarkdown表示または操作結果を直接観測する"
 // @end-test-value
+/** 4空白以上で始まる見出しやリストの記号をブロック構文にせず、コードの文字として残す。 */
 test("MessageRichText は 4 文字以上インデントされた block marker を CommonMark の code block として扱う", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {

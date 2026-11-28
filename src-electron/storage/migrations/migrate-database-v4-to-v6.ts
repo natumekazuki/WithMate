@@ -1,24 +1,33 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { openAppDatabaseReadOnly, openMigrationDatabase } from "../sqlite-connection.js";
+import {
+  openAppDatabaseReadOnly,
+  openMigrationDatabase,
+} from "../sqlite-connection.js";
 
-import { APP_DATABASE_V4_FILENAME, isValidV4Database } from "../database-schema-v4.js";
+import {
+  APP_DATABASE_V4_FILENAME,
+  isValidV4Database,
+} from "../database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
   CREATE_V6_SCHEMA_SQL,
   isValidV6Database,
 } from "../database-schema-v6.js";
 
+/** 既存の移行先DBまたはサイドカーを退避した元パスと退避先。 */
 type SqliteBackupFile = {
   originalPath: string;
   backupPath: string;
 };
 
+/** 旧データの表ごとの件数を読み取る集計結果。 */
 type CountRow = {
   count: number;
 };
 
+/** V4から継続する設定・Characterと、V6に移さない旧データの内訳。 */
 export type V4ToV6MigrationCounts = {
   appSettings: number;
   modelCatalogRevisions: number;
@@ -32,6 +41,7 @@ export type V4ToV6MigrationCounts = {
   skippedProviderInstructionRows: number;
 };
 
+/** V4を読み取って算出した移行元とV6の予定件数を示すレポート。 */
 export type V4ToV6MigrationDryRunReport = {
   mode: "dry-run";
   input: {
@@ -41,6 +51,7 @@ export type V4ToV6MigrationDryRunReport = {
   plannedV6Counts: V4ToV6MigrationCounts;
 };
 
+/** V4からV6へ移した件数を、移行先の選択と上書き指定とともに返すレポート。 */
 export type V4ToV6MigrationWriteReport = {
   mode: "write";
   input: {
@@ -58,9 +69,14 @@ const MIGRATED_APP_SETTING_KEYS = new Set([
   "launch_at_login_enabled",
   "session_right_pane_visible",
 ]);
-const V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY = "v4_to_v6_release_data_migrated_at";
+const V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY =
+  "v4_to_v6_release_data_migrated_at";
 
-const APP_SETTING_COLUMNS = ["setting_key", "setting_value", "updated_at"] as const;
+const APP_SETTING_COLUMNS = [
+  "setting_key",
+  "setting_value",
+  "updated_at",
+] as const;
 const CHARACTER_COLUMNS = [
   "id",
   "name",
@@ -114,14 +130,19 @@ const PROVIDER_INSTRUCTION_TABLES = [
   "provider_instruction_sync_runs",
 ] as const;
 
+/** SQLite本体とWAL・共有メモリーのパスをまとめて返す。 */
 function sqliteDatabaseFilePaths(dbPath: string): string[] {
   return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
 }
 
-function createMigrationTempDatabaseFilePath(targetDatabaseFile: string): string {
+/** 正式なV6パスへ反映する前に出力を作るための一時DB名を生成する。 */
+function createMigrationTempDatabaseFilePath(
+  targetDatabaseFile: string,
+): string {
   return `${targetDatabaseFile}.migration-${process.pid}-${Date.now()}.tmp`;
 }
 
+/** 既存V6本体とサイドカーを退避し、途上で失敗した場合は動かした分を元に戻す。 */
 function backupExistingSqliteDatabaseFiles(dbPath: string): SqliteBackupFile[] {
   const suffix = `.migration-backup-${process.pid}-${Date.now()}`;
   const backups: SqliteBackupFile[] = [];
@@ -144,12 +165,14 @@ function backupExistingSqliteDatabaseFiles(dbPath: string): SqliteBackupFile[] {
   return backups;
 }
 
+/** 指定されたSQLite DB本体とサイドカーを除去する。既に不在でも失敗にしない。 */
 function removeSqliteDatabaseFiles(dbPath: string): void {
   for (const filePath of sqliteDatabaseFilePaths(dbPath)) {
     rmSync(filePath, { force: true });
   }
 }
 
+/** 移動済みのファイルを元のDB本体・サイドカー名へ戻す。 */
 function restoreMovedSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   for (const backup of backups) {
     if (!existsSync(backup.backupPath)) {
@@ -161,18 +184,27 @@ function restoreMovedSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   }
 }
 
-function restoreSqliteDatabaseBackups(dbPath: string, backups: SqliteBackupFile[]): void {
+/** 新規に生成した移行先一式を除去し、既存出力の退避があれば復元する。 */
+function restoreSqliteDatabaseBackups(
+  dbPath: string,
+  backups: SqliteBackupFile[],
+): void {
   removeSqliteDatabaseFiles(dbPath);
   restoreMovedSqliteDatabaseBackups(backups);
 }
 
+/** V6の有効性が確認できた後、上書き前の退避を削除する。 */
 function discardSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   for (const backup of backups) {
     rmSync(backup.backupPath, { force: true });
   }
 }
 
-function publishMigratedDatabase(tempDatabaseFile: string, targetDatabaseFile: string): void {
+/** 一時DBとサイドカーを、同じ接尾辞で正式なV6名に反映する。 */
+function publishMigratedDatabase(
+  tempDatabaseFile: string,
+  targetDatabaseFile: string,
+): void {
   removeSqliteDatabaseFiles(targetDatabaseFile);
   for (const tempFilePath of sqliteDatabaseFilePaths(tempDatabaseFile)) {
     if (!existsSync(tempFilePath)) {
@@ -184,41 +216,64 @@ function publishMigratedDatabase(tempDatabaseFile: string, targetDatabaseFile: s
   }
 }
 
+/** 旧版のスキーマ情報から、名前が一致するテーブルの存在を確認する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  return db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) !== undefined;
+  return (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      )
+      .get(tableName) !== undefined
+  );
 }
 
+/** 指定テーブルの件数を取得し、テーブルがない旧データではゼロとする。 */
 function readCount(db: DatabaseSync, tableName: string): number {
   if (!tableExists(db, tableName)) {
     return 0;
   }
 
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as CountRow;
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+    .get() as CountRow;
   return row.count;
 }
 
+/** 指定された複数の旧テーブルの件数を合算し、保存領域ごとの内訳に使う。 */
 function sumCounts(db: DatabaseSync, tableNames: readonly string[]): number {
-  return tableNames.reduce((total, tableName) => total + readCount(db, tableName), 0);
+  return tableNames.reduce(
+    (total, tableName) => total + readCount(db, tableName),
+    0,
+  );
 }
 
+/** V6へ引き継ぐ許可リスト上のアプリ設定だけを移行元で数える。 */
 function readMigratedAppSettingsCount(db: DatabaseSync): number {
   if (!tableExists(db, "app_settings")) {
     return 0;
   }
 
-  const rows = db.prepare("SELECT setting_key FROM app_settings").all() as Array<{ setting_key: string }>;
-  return rows.filter((row) => MIGRATED_APP_SETTING_KEYS.has(row.setting_key)).length;
+  const rows = db
+    .prepare("SELECT setting_key FROM app_settings")
+    .all() as Array<{ setting_key: string }>;
+  return rows.filter((row) => MIGRATED_APP_SETTING_KEYS.has(row.setting_key))
+    .length;
 }
 
+/** V6へ引き継がないアプリ設定の件数を移行元で数える。 */
 function readSkippedAppSettingsCount(db: DatabaseSync): number {
   if (!tableExists(db, "app_settings")) {
     return 0;
   }
 
-  const rows = db.prepare("SELECT setting_key FROM app_settings").all() as Array<{ setting_key: string }>;
-  return rows.filter((row) => !MIGRATED_APP_SETTING_KEYS.has(row.setting_key)).length;
+  const rows = db
+    .prepare("SELECT setting_key FROM app_settings")
+    .all() as Array<{ setting_key: string }>;
+  return rows.filter((row) => !MIGRATED_APP_SETTING_KEYS.has(row.setting_key))
+    .length;
 }
 
+/** 設定・Character・旧カタログと、Sessionや専用テーブルなど非継続データの件数を記録する。 */
 function readCounts(db: DatabaseSync): V4ToV6MigrationCounts {
   return {
     appSettings: readMigratedAppSettingsCount(db),
@@ -234,7 +289,10 @@ function readCounts(db: DatabaseSync): V4ToV6MigrationCounts {
   };
 }
 
-function zeroSkippedCounts(counts: V4ToV6MigrationCounts): V4ToV6MigrationCounts {
+/** V6側の件数として表すとき、旧カタログと継続対象外の行はゼロに揃える。 */
+function zeroSkippedCounts(
+  counts: V4ToV6MigrationCounts,
+): V4ToV6MigrationCounts {
   return {
     ...counts,
     modelCatalogRevisions: 0,
@@ -248,27 +306,37 @@ function zeroSkippedCounts(counts: V4ToV6MigrationCounts): V4ToV6MigrationCounts
   };
 }
 
+/** 所定のファイル名とスキーマを持つV4だけを移行元として認める。 */
 function assertValidSource(sourceDatabaseFile: string): void {
   if (!sourceDatabaseFile.endsWith(APP_DATABASE_V4_FILENAME)) {
-    throw new Error(`source database must be ${APP_DATABASE_V4_FILENAME}: ${sourceDatabaseFile}`);
+    throw new Error(
+      `source database must be ${APP_DATABASE_V4_FILENAME}: ${sourceDatabaseFile}`,
+    );
   }
 
   if (!isValidV4Database(sourceDatabaseFile)) {
-    throw new Error(`source database is not a valid V4 database: ${sourceDatabaseFile}`);
+    throw new Error(
+      `source database is not a valid V4 database: ${sourceDatabaseFile}`,
+    );
   }
 }
 
+/** 出力パスが所定のV6ファイル名で終わらない場合に拒否する。 */
 function assertValidTarget(targetDatabaseFile: string): void {
   if (!targetDatabaseFile.endsWith(APP_DATABASE_V6_FILENAME)) {
-    throw new Error(`target database must be ${APP_DATABASE_V6_FILENAME}: ${targetDatabaseFile}`);
+    throw new Error(
+      `target database must be ${APP_DATABASE_V6_FILENAME}: ${targetDatabaseFile}`,
+    );
   }
 }
 
+/** 移行元が有効なV4であることを確認してから、読み取り専用の接続を開く。 */
 function openReadOnlySource(sourceDatabaseFile: string): DatabaseSync {
   assertValidSource(sourceDatabaseFile);
   return openAppDatabaseReadOnly(sourceDatabaseFile);
 }
 
+/** 出力DBの親を用意し、外部キーを有効にしてV6基盤と版番号を設定する。 */
 function createV6BaseSchema(targetDatabaseFile: string): void {
   mkdirSync(dirname(targetDatabaseFile), { recursive: true });
   const db = openMigrationDatabase(targetDatabaseFile);
@@ -282,6 +350,7 @@ function createV6BaseSchema(targetDatabaseFile: string): void {
   }
 }
 
+/** 指定列と条件に絞って行をコピーする。移行先の競合行は置き換えず、挿入できた行だけを数える。 */
 function copyTableRows(
   sourceDb: DatabaseSync,
   targetDb: DatabaseSync,
@@ -299,60 +368,99 @@ function copyTableRows(
   const rows = sourceDb
     .prepare(`SELECT ${columnSql} FROM ${tableName}${whereSql}`)
     .all(...whereParams) as Array<Record<string, SQLInputValue>>;
-  const insert = targetDb.prepare(`INSERT OR IGNORE INTO ${tableName} (${columnSql}) VALUES (${placeholders})`);
+  const insert = targetDb.prepare(
+    `INSERT OR IGNORE INTO ${tableName} (${columnSql}) VALUES (${placeholders})`,
+  );
   let inserted = 0;
   for (const row of rows) {
-    inserted += Number(insert.run(...columns.map((column) => row[column])).changes);
+    inserted += Number(
+      insert.run(...columns.map((column) => row[column])).changes,
+    );
   }
   return inserted;
 }
 
+/** V4の継続データ取込済みマーカーを作り、既存マーカーの日時は変更しない。 */
 function writeV4ToV6MigrationMarker(targetDb: DatabaseSync): void {
-  targetDb.prepare(`
+  targetDb
+    .prepare(
+      `
     INSERT INTO app_settings (setting_key, setting_value, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(setting_key) DO NOTHING
-  `).run(
-    V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY,
-    new Date().toISOString(),
-    new Date().toISOString(),
-  );
+  `,
+    )
+    .run(
+      V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
 }
 
-export function hasV4ToV6ReleaseDataMigrationMarker(databaseFile: string): boolean {
+/** 有効なV6にV4の継続データ取込済みマーカーが存在するか確認する。 */
+export function hasV4ToV6ReleaseDataMigrationMarker(
+  databaseFile: string,
+): boolean {
   if (!existsSync(databaseFile) || !isValidV6Database(databaseFile)) {
     return false;
   }
   const db = openAppDatabaseReadOnly(databaseFile);
   try {
-    return db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(
-      V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY,
-    ) !== undefined;
+    return (
+      db
+        .prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+        .get(V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY) !== undefined
+    );
   } finally {
     db.close();
   }
 }
 
-function copyReleaseData(sourceDb: DatabaseSync, targetDb: DatabaseSync): Pick<
+/** リリース間で継続する設定キーとCharacterの行だけを移し、旧モデル一覧は引き継がない。 */
+function copyReleaseData(
+  sourceDb: DatabaseSync,
+  targetDb: DatabaseSync,
+): Pick<
   V4ToV6MigrationCounts,
-  "appSettings" | "modelCatalogRevisions" | "modelCatalogProviders" | "modelCatalogModels" | "characters"
+  | "appSettings"
+  | "modelCatalogRevisions"
+  | "modelCatalogProviders"
+  | "modelCatalogModels"
+  | "characters"
 > {
   const appSettings = copyTableRows(
     sourceDb,
     targetDb,
     "app_settings",
     APP_SETTING_COLUMNS,
-    ` WHERE setting_key IN (${Array.from(MIGRATED_APP_SETTING_KEYS).map(() => "?").join(", ")})`,
+    ` WHERE setting_key IN (${Array.from(MIGRATED_APP_SETTING_KEYS)
+      .map(() => "?")
+      .join(", ")})`,
     Array.from(MIGRATED_APP_SETTING_KEYS),
   );
   const modelCatalogRevisions = 0;
   const modelCatalogProviders = 0;
   const modelCatalogModels = 0;
-  const characters = copyTableRows(sourceDb, targetDb, "characters", CHARACTER_COLUMNS);
-  return { appSettings, modelCatalogRevisions, modelCatalogProviders, modelCatalogModels, characters };
+  const characters = copyTableRows(
+    sourceDb,
+    targetDb,
+    "characters",
+    CHARACTER_COLUMNS,
+  );
+  return {
+    appSettings,
+    modelCatalogRevisions,
+    modelCatalogProviders,
+    modelCatalogModels,
+    characters,
+  };
 }
 
-function copyReleaseDataInTransaction(sourceDb: DatabaseSync, targetDb: DatabaseSync): V4ToV6MigrationCounts {
+/** 継続データのコピーと完了マーカーの書き込みを同じトランザクションに含め、失敗時は両方を巻き戻す。 */
+function copyReleaseDataInTransaction(
+  sourceDb: DatabaseSync,
+  targetDb: DatabaseSync,
+): V4ToV6MigrationCounts {
   targetDb.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     const copied = copyReleaseData(sourceDb, targetDb);
@@ -372,7 +480,10 @@ function copyReleaseDataInTransaction(sourceDb: DatabaseSync, targetDb: Database
   }
 }
 
-export function createMigrationDryRunReport(sourceDatabaseFile: string): V4ToV6MigrationDryRunReport {
+/** V4を変更せず、V6に引き継ぐ予定件数と移行元で除外する件数を返す。 */
+export function createMigrationDryRunReport(
+  sourceDatabaseFile: string,
+): V4ToV6MigrationDryRunReport {
   const sourceDb = openReadOnlySource(resolve(sourceDatabaseFile));
   try {
     const v4Counts = readCounts(sourceDb);
@@ -389,6 +500,7 @@ export function createMigrationDryRunReport(sourceDatabaseFile: string): V4ToV6M
   }
 }
 
+/** V4の継続データを既存の有効なV6または新規出力へ取り込む。新規出力では失敗時に退避を復元する。 */
 export async function createMigrationWriteReport(input: {
   sourceDatabaseFile: string;
   targetDatabaseFile: string;
@@ -413,10 +525,14 @@ export async function createMigrationWriteReport(input: {
   try {
     if (useExistingTarget) {
       if (!isValidV6Database(targetDatabaseFile)) {
-        throw new Error(`target database is not a valid V6 database: ${targetDatabaseFile}`);
+        throw new Error(
+          `target database is not a valid V6 database: ${targetDatabaseFile}`,
+        );
       }
     } else {
-      backups = targetExists ? backupExistingSqliteDatabaseFiles(targetDatabaseFile) : [];
+      backups = targetExists
+        ? backupExistingSqliteDatabaseFiles(targetDatabaseFile)
+        : [];
       createV6BaseSchema(tempDatabaseFile);
     }
 
@@ -432,7 +548,9 @@ export async function createMigrationWriteReport(input: {
       publishMigratedDatabase(tempDatabaseFile, targetDatabaseFile);
     }
     if (!isValidV6Database(targetDatabaseFile)) {
-      throw new Error(`migrated database is not a valid V6 database: ${targetDatabaseFile}`);
+      throw new Error(
+        `migrated database is not a valid V6 database: ${targetDatabaseFile}`,
+      );
     }
     discardSqliteDatabaseBackups(backups);
     published = true;

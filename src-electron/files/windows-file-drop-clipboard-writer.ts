@@ -57,6 +57,7 @@ if ($null -ne $data) {
 [Console]::Out.Write((@{ match = $matches } | ConvertTo-Json -Compress))
 `;
 
+/** PowerShell ヘルパーの起動、終了、タイムアウトと、判定に用いる標準出力。 */
 export type ClipboardHelperProcessResult = {
   started: boolean;
   exitCode: number | null;
@@ -64,6 +65,7 @@ export type ClipboardHelperProcessResult = {
   stdout: string;
 };
 
+/** 書き込みまたは読み戻しの指示と、両者で照合する対象パスおよび操作マーカー。 */
 export type ClipboardHelperProcessRequest = {
   mode: "write" | "verify";
   payload: {
@@ -72,24 +74,31 @@ export type ClipboardHelperProcessRequest = {
   };
 };
 
+/** 書き込み確認済み、書き込み前の失敗、副作用の有無を確定できない状態を区別する。 */
 export type NativeFileDropWriteResult =
   | { status: "copied" }
   | { status: "failed-before-write" }
   | { status: "effect-unknown" };
 
+/** 実行環境と、書き込み・読み戻しに使うヘルパーを差し替えるための設定。 */
 export type WindowsFileDropClipboardWriterDeps = {
   platform?: NodeJS.Platform;
+  /** ヘルパーを実行する。読み戻しの入力は、渡された書き込み待ちが成功した後に送る。 */
   runHelper?(
     request: ClipboardHelperProcessRequest,
     waitForWrite?: Promise<boolean>,
   ): Promise<ClipboardHelperProcessResult>;
+  /** 読み戻した内容が今回の操作で書かれたと確認するためのマーカーを作る。 */
   createOperationMarker?(): string;
   systemRoot?: string;
 };
 
+/** Windows のクリップボードに一件のファイルをコピー用として書き、別プロセスでその結果を確認する。 */
 export class WindowsFileDropClipboardWriter {
+  /** ヘルパーの差し替えがなければ、実行環境を基準に専用 Worker を使う。 */
   constructor(private readonly deps: WindowsFileDropClipboardWriterDeps = {}) {}
 
+  /** 呼び出し元が解決したファイルのパスを書き込み、ファイル・コピー効果・マーカーが読み戻せた場合だけ成功を返す。 */
   async copyFile(targetPath: string): Promise<NativeFileDropWriteResult> {
     if ((this.deps.platform ?? process.platform) !== "win32") {
       return { status: "failed-before-write" };
@@ -112,7 +121,11 @@ export class WindowsFileDropClipboardWriter {
       }
       return copyFileInWorker(payload, systemRoot);
     }
-    const runHelper = async (request: ClipboardHelperProcessRequest, waitForWrite?: Promise<boolean>) => {
+    /** ヘルパー呼び出しの例外を起動未確認の結果にそろえ、書き込み側と読み戻し側をまとめて判定できるようにする。 */
+    const runHelper = async (
+      request: ClipboardHelperProcessRequest,
+      waitForWrite?: Promise<boolean>,
+    ) => {
       try {
         return await executeHelper(request, waitForWrite);
       } catch {
@@ -122,19 +135,25 @@ export class WindowsFileDropClipboardWriter {
     const writePending = runHelper({ mode: "write", payload });
     // 書き込み側の起動中に別プロセスの読み取り側を準備するが、入力は書き込み側の終了まで渡さない。
     // これにより、読み戻しとクリップボードへの書き込みが競合しない。
-    const waitForWrite = writePending.then((result) => (
-      result.started && result.stdout.includes(WRITE_READY_MARKER)
-    ));
-    const verificationPending = runHelper({ mode: "verify", payload }, waitForWrite);
-    const [writeStarted, verificationResult] = await Promise.all([waitForWrite, verificationPending]);
+    const waitForWrite = writePending.then(
+      (result) => result.started && result.stdout.includes(WRITE_READY_MARKER),
+    );
+    const verificationPending = runHelper(
+      { mode: "verify", payload },
+      waitForWrite,
+    );
+    const [writeStarted, verificationResult] = await Promise.all([
+      waitForWrite,
+      verificationPending,
+    ]);
     if (!writeStarted) {
       return { status: "failed-before-write" };
     }
     if (
-      verificationResult.started
-      && !verificationResult.timedOut
-      && verificationResult.exitCode === 0
-      && parseVerificationMatch(verificationResult.stdout)
+      verificationResult.started &&
+      !verificationResult.timedOut &&
+      verificationResult.exitCode === 0 &&
+      parseVerificationMatch(verificationResult.stdout)
     ) {
       return { status: "copied" };
     }
@@ -142,6 +161,7 @@ export class WindowsFileDropClipboardWriter {
   }
 }
 
+/** 読み戻しヘルパーが JSON の真偽値で一致を返したときだけ、照合成功とみなす。 */
 function parseVerificationMatch(stdout: string): boolean {
   try {
     const parsed = JSON.parse(stdout.trim()) as { match?: unknown };
@@ -151,18 +171,25 @@ function parseVerificationMatch(stdout: string): boolean {
   }
 }
 
+/** PowerShell の EncodedCommand が受け取る UTF-16LE の Base64 表現に変換する。 */
 function encodePowerShellScript(source: string): string {
   return Buffer.from(source, "utf16le").toString("base64");
 }
 
-export function encodeClipboardHelperPayload(payload: ClipboardHelperProcessRequest["payload"]): string {
+/** 非 ASCII のパスやマーカーを保持できるよう、両方を UTF-8 の Base64 にして標準入力用 JSON にまとめる。 */
+export function encodeClipboardHelperPayload(
+  payload: ClipboardHelperProcessRequest["payload"],
+): string {
   return JSON.stringify({
     pathBase64: Buffer.from(payload.path, "utf8").toString("base64"),
     markerBase64: Buffer.from(payload.marker, "utf8").toString("base64"),
   });
 }
 
-export function resolveWindowsPowerShellExecutablePath(systemRoot: string | undefined): string | null {
+/** ドライブ付きの SystemRoot から PowerShell の絶対パスを組み立て、PATH 検索には頼らない。 */
+export function resolveWindowsPowerShellExecutablePath(
+  systemRoot: string | undefined,
+): string | null {
   const trimmedRoot = systemRoot?.trim() ?? "";
   if (!/^[a-zA-Z]:[\\/]/u.test(trimmedRoot)) {
     return null;
@@ -176,16 +203,24 @@ export function resolveWindowsPowerShellExecutablePath(systemRoot: string | unde
   );
 }
 
+/** PowerShell を非表示の STA プロセスで起動し、書き込み側の終了を待つ指定があれば入力の送信を保留する。 */
 export function runPowerShellClipboardHelper(
   request: ClipboardHelperProcessRequest,
   systemRoot: string | undefined,
   waitForWrite?: Promise<boolean>,
   spawnProcess: typeof spawn = spawn,
 ): Promise<ClipboardHelperProcessResult> {
-  const script = request.mode === "write" ? WRITE_FILE_DROP_SCRIPT : VERIFY_FILE_DROP_SCRIPT;
-  const powerShellExecutablePath = resolveWindowsPowerShellExecutablePath(systemRoot);
+  const script =
+    request.mode === "write" ? WRITE_FILE_DROP_SCRIPT : VERIFY_FILE_DROP_SCRIPT;
+  const powerShellExecutablePath =
+    resolveWindowsPowerShellExecutablePath(systemRoot);
   if (!powerShellExecutablePath) {
-    return Promise.resolve({ started: false, exitCode: null, timedOut: false, stdout: "" });
+    return Promise.resolve({
+      started: false,
+      exitCode: null,
+      timedOut: false,
+      stdout: "",
+    });
   }
   return new Promise((resolve) => {
     let started = false;
@@ -194,13 +229,21 @@ export function runPowerShellClipboardHelper(
     let stdout = "";
     const child = spawnProcess(
       powerShellExecutablePath,
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-EncodedCommand", encodePowerShellScript(script)],
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Sta",
+        "-EncodedCommand",
+        encodePowerShellScript(script),
+      ],
       {
         cwd: path.win32.dirname(powerShellExecutablePath),
         stdio: ["pipe", "pipe", "ignore"],
         windowsHide: true,
       },
     );
+    /** プロセスの異常と閉鎖のどちらで終わっても、タイマーを解放して結果を一度だけ返す。 */
     const finish = (exitCode: number | null) => {
       if (settled) {
         return;
@@ -244,6 +287,7 @@ export function runPowerShellClipboardHelper(
   });
 }
 
+/** 専用 Worker に一件のコピーを任せ、正常終了を待って結果を確定する。開始後の異常は結果不明とする。 */
 function copyFileInWorker(
   payload: ClipboardHelperProcessRequest["payload"],
   systemRoot: string | undefined,
@@ -252,13 +296,18 @@ function copyFileInWorker(
     let worker: Worker;
     try {
       const sourceTypeScript = import.meta.url.endsWith(".ts");
-      worker = new Worker(new URL(
-        sourceTypeScript ? "./windows-file-drop-clipboard-worker.ts" : "./windows-file-drop-clipboard-worker.js",
-        import.meta.url,
-      ), {
-        ...(sourceTypeScript ? { execArgv: ["--import", "tsx"] } : {}),
-        workerData: { payload, systemRoot },
-      });
+      worker = new Worker(
+        new URL(
+          sourceTypeScript
+            ? "./windows-file-drop-clipboard-worker.ts"
+            : "./windows-file-drop-clipboard-worker.js",
+          import.meta.url,
+        ),
+        {
+          ...(sourceTypeScript ? { execArgv: ["--import", "tsx"] } : {}),
+          workerData: { payload, systemRoot },
+        },
+      );
     } catch {
       resolve({ status: "failed-before-write" });
       return;
@@ -266,7 +315,11 @@ function copyFileInWorker(
     let result: NativeFileDropWriteResult = { status: "effect-unknown" };
     let failed = false;
     worker.on("message", (message: NativeFileDropWriteResult) => {
-      if (message?.status === "copied" || message?.status === "failed-before-write" || message?.status === "effect-unknown") {
+      if (
+        message?.status === "copied" ||
+        message?.status === "failed-before-write" ||
+        message?.status === "effect-unknown"
+      ) {
         result = { status: message.status };
       }
     });

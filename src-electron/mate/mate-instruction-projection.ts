@@ -2,25 +2,32 @@ import type { MateProfile } from "../../src-shared/mate/mate-state.js";
 import { isProviderInstructionProfileSectionKey } from "../../src-shared/mate/mate-profile-sections.js";
 import { upsertManagedBlock } from "../skills/managed-instruction-block.js";
 
+/** 既存の指示文から Mate プロフィールの管理ブロックを特定する固定 ID。 */
 export const MATE_PROFILE_BLOCK_ID = "mate-profile";
 
+/** Provider 向けの指示文に投影できるプロフィール区分。 */
 export type MateInstructionProfileSectionKey = "core" | "bond" | "work_style";
 
+/** プロフィール区分に対応して呼び出し元から渡される投影済み本文。 */
 export type MateInstructionSectionContent = {
   sectionKey: MateInstructionProfileSectionKey;
   content: string;
 };
 
+/** Provider 向けの指示文に添える区分別本文を指定する。 */
 export type MateInstructionContentOptions = {
   sectionContents?: readonly MateInstructionSectionContent[];
 };
 
-const SECTION_HEADING_BY_KEY: Readonly<Record<MateInstructionProfileSectionKey, string>> = {
+const SECTION_HEADING_BY_KEY: Readonly<
+  Record<MateInstructionProfileSectionKey, string>
+> = {
   core: "Character / Persona",
   bond: "Interaction Style",
   work_style: "Work Style",
 };
 
+/** Mate の識別情報と投影を許可された区分の本文を、Provider 向けの Markdown に組み立てる。 */
 export function buildMateInstructionContent(
   profile: MateProfile,
   options: MateInstructionContentOptions = {},
@@ -31,13 +38,20 @@ export function buildMateInstructionContent(
     ...buildOptionalDescription(profile.description),
     `- **state:** ${profile.state}`,
     "",
-    ...buildProviderInstructionSectionLines(profile, options.sectionContents ?? []),
+    ...buildProviderInstructionSectionLines(
+      profile,
+      options.sectionContents ?? [],
+    ),
   ];
 
   return lines.join("\n");
 }
 
-export function upsertMateInstructionBlock(existingText: string, profile: MateProfile): string {
+/** 既存の指示文を残し、Mate の識別情報を含む管理ブロックだけを追加または置換する。 */
+export function upsertMateInstructionBlock(
+  existingText: string,
+  profile: MateProfile,
+): string {
   return upsertManagedBlock(existingText, {
     blockId: MATE_PROFILE_BLOCK_ID,
     title: "",
@@ -45,6 +59,7 @@ export function upsertMateInstructionBlock(existingText: string, profile: MatePr
   });
 }
 
+/** 前後の空白を除き、説明が空でない場合だけ識別情報に説明行を添える。 */
 function buildOptionalDescription(description: string): string[] {
   const normalized = description.trim();
   if (!normalized) {
@@ -54,6 +69,7 @@ function buildOptionalDescription(description: string): string[] {
   return [`- **description:** ${normalized}`];
 }
 
+/** 本文がある Provider 向け区分をプロフィールの区分順に並べ、該当区分がなければその旨を出力する。 */
 function buildProviderInstructionSectionLines(
   profile: MateProfile,
   sectionContents: readonly MateInstructionSectionContent[],
@@ -95,7 +111,10 @@ function buildProviderInstructionSectionLines(
   return lines;
 }
 
-export function isProviderInstructionProfileSection(section: MateProfile["sections"][number]): boolean {
+/** 区分の用途と公開設定の両方から、Provider 向けの指示文に出せるか判定する。 */
+export function isProviderInstructionProfileSection(
+  section: MateProfile["sections"][number],
+): boolean {
   if (section.projectionAllowed === false) {
     return false;
   }
@@ -103,6 +122,7 @@ export function isProviderInstructionProfileSection(section: MateProfile["sectio
   return isProviderInstructionProfileSectionKey(section.sectionKey);
 }
 
+/** 区分本文の改行を LF にそろえ、前後の空白を除く。 */
 function normalizeSectionContent(content: string): string {
   return content.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }

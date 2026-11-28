@@ -12,15 +12,18 @@ import {
 import { openAppDatabase } from "./sqlite-connection.js";
 import { assertRetiredMemoryAffectDatabasePath } from "./migrations/memory-affect-removal.js";
 
+/** 確定した V6 DB のパスと、この呼び出しで新規作成したかどうかを示す。 */
 export type V6FreshDatabaseBootstrapResult = {
   dbPath: string;
   created: boolean;
 };
 
+/** 一時 DB の作成時に、標準のスキーマに代えて適用する SQL を指定できる。 */
 type V6FreshDatabaseBootstrapOptions = {
   schemaSql?: readonly string[];
 };
 
+/** 既存 V6 を必要に応じて補修・検証する。新規作成時は一時 DB の検証後にだけ公開し、並行作成で確定した有効な DB は再利用する。 */
 export async function createOrVerifyV6FreshDatabase(
   userDataPath: string,
   options: V6FreshDatabaseBootstrapOptions = {},
@@ -37,13 +40,17 @@ export async function createOrVerifyV6FreshDatabase(
       }
     }
     if (!isValidV6Database(dbPath)) {
-      throw new Error("withmate-v6.db exists but does not match the V6 foundation schema.");
+      throw new Error(
+        "withmate-v6.db exists but does not match the V6 foundation schema.",
+      );
     }
     return { dbPath, created: false };
   }
 
   mkdirSync(dirname(dbPath), { recursive: true });
-  const tempDirectoryPath = await mkdtemp(join(dirname(dbPath), ".withmate-v6-bootstrap-"));
+  const tempDirectoryPath = await mkdtemp(
+    join(dirname(dbPath), ".withmate-v6-bootstrap-"),
+  );
   const tempDbPath = join(tempDirectoryPath, APP_DATABASE_V6_FILENAME);
 
   try {
@@ -75,7 +82,9 @@ export async function createOrVerifyV6FreshDatabase(
     }
 
     if (!isValidV6Database(tempDbPath)) {
-      throw new Error("Failed to create a valid withmate-v6.db foundation database.");
+      throw new Error(
+        "Failed to create a valid withmate-v6.db foundation database.",
+      );
     }
 
     try {

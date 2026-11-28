@@ -22,6 +22,7 @@ import {
   type ContextPaneTabKey,
 } from "./runtime/session-ui-projection.js";
 
+/** 指定した成果物の展開状態だけを反転し、未登録の成果物は展開する。 */
 export function toggleExpandedArtifactState(
   current: Record<string, boolean>,
   artifactKey: string,
@@ -32,22 +33,32 @@ export function toggleExpandedArtifactState(
   };
 }
 
+/** 最新の展開状態を受け取る updater で一件分の切り替えを反映する。 */
 export function applyExpandedArtifactToggleCommand(input: {
   artifactKey: string;
-  setExpandedArtifacts: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
+  setExpandedArtifacts: (
+    updater: (current: Record<string, boolean>) => Record<string, boolean>,
+  ) => void;
 }): void {
-  input.setExpandedArtifacts((current) => toggleExpandedArtifactState(current, input.artifactKey));
+  input.setExpandedArtifacts((current) =>
+    toggleExpandedArtifactState(current, input.artifactKey),
+  );
 }
 
+/** 成果物キーを受け取って一覧の展開状態を更新する操作を作る。 */
 export function createExpandedArtifactToggleHandler(input: {
-  setExpandedArtifacts: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
+  setExpandedArtifacts: (
+    updater: (current: Record<string, boolean>) => Record<string, boolean>,
+  ) => void;
 }): (artifactKey: string) => void {
-  return (artifactKey) => applyExpandedArtifactToggleCommand({
-    artifactKey,
-    setExpandedArtifacts: input.setExpandedArtifacts,
-  });
+  return (artifactKey) =>
+    applyExpandedArtifactToggleCommand({
+      artifactKey,
+      setExpandedArtifacts: input.setExpandedArtifacts,
+    });
 }
 
+/** タイトルの編集を途中で隠さないよう、編集中は開閉状態を維持する。 */
 export function resolveHeaderExpandedToggle(
   current: boolean,
   isEditingTitle: boolean,
@@ -55,13 +66,17 @@ export function resolveHeaderExpandedToggle(
   return isEditingTitle ? current : !current;
 }
 
+/** タイトル編集の状態を条件に、現在のヘッダー開閉状態を更新する。 */
 export function applyHeaderExpandedToggleCommand(input: {
   isEditingTitle: boolean;
   setHeaderExpanded: (updater: (current: boolean) => boolean) => void;
 }): void {
-  input.setHeaderExpanded((current) => resolveHeaderExpandedToggle(current, input.isEditingTitle));
+  input.setHeaderExpanded((current) =>
+    resolveHeaderExpandedToggle(current, input.isEditingTitle),
+  );
 }
 
+/** ヘッダーの区切り操作に、タイトル編集中の開閉制限を組み込む。 */
 export function createHeaderExpandedToggleHandler(input: {
   isEditingTitle: boolean;
   setHeaderExpanded: (updater: (current: boolean) => boolean) => void;
@@ -69,6 +84,7 @@ export function createHeaderExpandedToggleHandler(input: {
   return () => applyHeaderExpandedToggleCommand(input);
 }
 
+/** Enter で保存し、Escape で編集を中止する。他のキーの通常動作は妨げない。 */
 export function applyTitleInputKeyCommand(input: {
   key: string;
   preventDefault: () => void;
@@ -87,24 +103,30 @@ export function applyTitleInputKeyCommand(input: {
   }
 }
 
+/** タイトル欄のキーイベントを、保存と編集中止のコマンドに接続する。 */
 export function createTitleInputKeyHandler(input: {
   saveTitle: () => void;
   cancelTitleEdit: () => void;
 }): (event: { key: string; preventDefault: () => void }) => void {
-  return (event) => applyTitleInputKeyCommand({
-    key: event.key,
-    preventDefault: () => event.preventDefault(),
-    saveTitle: input.saveTitle,
-    cancelTitleEdit: input.cancelTitleEdit,
-  });
+  return (event) =>
+    applyTitleInputKeyCommand({
+      key: event.key,
+      /** コマンドが消費したキーの既定動作だけを抑止する。 */
+      preventDefault: () => event.preventDefault(),
+      saveTitle: input.saveTitle,
+      cancelTitleEdit: input.cancelTitleEdit,
+    });
 }
 
+/** 送信条件を、固定値または実行直前に調べる関数で指定する。 */
 type MaybeLazyBoolean = boolean | (() => boolean);
 
+/** 指定された判定関数を呼び、条件が省略されていれば偽として扱う。 */
 function resolveMaybeLazyBoolean(value: MaybeLazyBoolean | undefined): boolean {
   return typeof value === "function" ? value() : value === true;
 }
 
+/** 無効なら未処理、ブロック中なら通知のみ、それ以外は送信して処理済みを返す。 */
 export function applyComposerSubmitCommand(input: {
   isSubmitDisabled?: MaybeLazyBoolean;
   isSubmitBlocked?: MaybeLazyBoolean;
@@ -124,6 +146,7 @@ export function applyComposerSubmitCommand(input: {
   return true;
 }
 
+/** 現在のタイトルを下書きに写してヘッダーを展開し、編集状態に入る。 */
 export function applyStartTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;
@@ -135,6 +158,7 @@ export function applyStartTitleEditCommand(input: {
   input.setEditingTitle(true);
 }
 
+/** 操作時に編集可否とタイトルを調べ、対象が存在するときだけ編集を始める。 */
 export function createStartTitleEditHandler(input: {
   getTitle: () => string | null | undefined;
   canStart?: () => boolean;
@@ -162,6 +186,7 @@ export function createStartTitleEditHandler(input: {
   };
 }
 
+/** 変更中の文面を元のタイトルに戻し、編集を終了する。 */
 export function applyCancelTitleEditCommand(input: {
   title: string;
   setTitleDraft: (title: string) => void;
@@ -171,18 +196,21 @@ export function applyCancelTitleEditCommand(input: {
   input.setEditingTitle(false);
 }
 
+/** 中止時点のタイトルで下書きを戻し、取得できなければ空にする。 */
 export function createCancelTitleEditHandler(input: {
   getTitle: () => string | null | undefined;
   setTitleDraft: (title: string) => void;
   setEditingTitle: (editing: boolean) => void;
 }): () => void {
-  return () => applyCancelTitleEditCommand({
-    title: input.getTitle() ?? "",
-    setTitleDraft: input.setTitleDraft,
-    setEditingTitle: input.setEditingTitle,
-  });
+  return () =>
+    applyCancelTitleEditCommand({
+      title: input.getTitle() ?? "",
+      setTitleDraft: input.setTitleDraft,
+      setEditingTitle: input.setEditingTitle,
+    });
 }
 
+/** 展開状態を固定し、展開オプションが求める場合は入力欄へフォーカスする。 */
 export function applyActionDockExpandCommand(input: {
   options?: { focusComposer?: boolean };
   setPinnedExpanded: (expanded: boolean) => void;
@@ -196,18 +224,21 @@ export function applyActionDockExpandCommand(input: {
   }
 }
 
+/** ドック展開時のフォーカス方針を呼び出しごとに指定できる操作を作る。 */
 export function createActionDockExpandHandler(input: {
   defaultOptions?: { focusComposer?: boolean };
   setPinnedExpanded: (expanded: boolean) => void;
   focusComposer: () => void;
 }): (options?: { focusComposer?: boolean }) => void {
-  return (options) => applyActionDockExpandCommand({
-    options: options ?? input.defaultOptions,
-    setPinnedExpanded: input.setPinnedExpanded,
-    focusComposer: input.focusComposer,
-  });
+  return (options) =>
+    applyActionDockExpandCommand({
+      options: options ?? input.defaultOptions,
+      setPinnedExpanded: input.setPinnedExpanded,
+      focusComposer: input.focusComposer,
+    });
 }
 
+/** 強制展開などで閉じられない場合は固定状態を更新しない。 */
 export function applyActionDockCollapseCommand(input: {
   canCollapse: boolean;
   setPinnedExpanded: (expanded: boolean) => void;
@@ -220,6 +251,7 @@ export function applyActionDockCollapseCommand(input: {
   input.setPinnedExpanded(nextState.isActionDockPinnedExpanded);
 }
 
+/** ドックの開閉操作に、現在折りたためるかどうかの制約を付ける。 */
 export function createActionDockCollapseHandler(input: {
   canCollapse: boolean;
   setPinnedExpanded: (expanded: boolean) => void;
@@ -227,6 +259,7 @@ export function createActionDockCollapseHandler(input: {
   return () => applyActionDockCollapseCommand(input);
 }
 
+/** テンプレート画面を閉じられないときは画面の切り替えを許可しない。 */
 export function applyCentralSurfaceOpenCommand(input: {
   isPromptTemplateWorkspaceOpen: boolean;
   canClosePromptTemplate: () => boolean;
@@ -240,25 +273,38 @@ export function applyCentralSurfaceOpenCommand(input: {
   return true;
 }
 
+/** Agent と Skill のうち、片方を閉じてから選ばれた方の開閉を反転する。 */
 export function applyExclusiveComposerPickerToggle(input: {
   target: "agent" | "skill";
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
 }): void {
   if (input.target === "agent") {
-    input.setSkillPickerOpen(() => buildExclusiveComposerPickerToggleState("agent", false).isSkillPickerOpen);
-    input.setAgentPickerOpen((current) => (
-      buildExclusiveComposerPickerToggleState("agent", current).isAgentPickerOpen
-    ));
+    input.setSkillPickerOpen(
+      () =>
+        buildExclusiveComposerPickerToggleState("agent", false)
+          .isSkillPickerOpen,
+    );
+    input.setAgentPickerOpen(
+      (current) =>
+        buildExclusiveComposerPickerToggleState("agent", current)
+          .isAgentPickerOpen,
+    );
     return;
   }
 
-  input.setAgentPickerOpen(() => buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen);
-  input.setSkillPickerOpen((current) => (
-    buildExclusiveComposerPickerToggleState("skill", current).isSkillPickerOpen
-  ));
+  input.setAgentPickerOpen(
+    () =>
+      buildExclusiveComposerPickerToggleState("skill", false).isAgentPickerOpen,
+  );
+  input.setSkillPickerOpen(
+    (current) =>
+      buildExclusiveComposerPickerToggleState("skill", current)
+        .isSkillPickerOpen,
+  );
 }
 
+/** Skill 一覧を閉じて Agent 一覧の開閉を反転する。 */
 export function applyAgentPickerToggleCommand(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
@@ -270,6 +316,7 @@ export function applyAgentPickerToggleCommand(input: {
   });
 }
 
+/** 入力欄の Agent ボタンから、排他的な一覧開閉を呼び出せるようにする。 */
 export function createAgentPickerToggleHandler(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
@@ -277,18 +324,21 @@ export function createAgentPickerToggleHandler(input: {
   return () => applyAgentPickerToggleCommand(input);
 }
 
+/** 既存状態にかかわらず Agent 一覧を閉じる。 */
 export function applyAgentPickerCloseCommand(input: {
   setAgentPickerOpen: (open: boolean) => void;
 }): void {
   input.setAgentPickerOpen(false);
 }
 
+/** 一覧の外側などから Agent 一覧を閉じる操作を作る。 */
 export function createAgentPickerCloseHandler(input: {
   setAgentPickerOpen: (open: boolean) => void;
 }): () => void {
   return () => applyAgentPickerCloseCommand(input);
 }
 
+/** Agent 一覧を閉じて Skill 一覧の開閉を反転する。 */
 export function applySkillPickerToggleCommand(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
@@ -300,6 +350,7 @@ export function applySkillPickerToggleCommand(input: {
   });
 }
 
+/** 入力欄の Skill ボタンから、排他的な一覧開閉を呼び出せるようにする。 */
 export function createSkillPickerToggleHandler(input: {
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;
   setSkillPickerOpen: (updater: (current: boolean) => boolean) => void;
@@ -307,8 +358,12 @@ export function createSkillPickerToggleHandler(input: {
   return () => applySkillPickerToggleCommand(input);
 }
 
+/** Skill 挿入結果のうち、ドック・キャレット・一覧の表示状態を反映する。 */
 export function applySkillPromptInsertionUiState(input: {
-  state: Pick<SkillPromptInsertionState, "caret" | "isActionDockPinnedExpanded" | "isSkillPickerOpen">;
+  state: Pick<
+    SkillPromptInsertionState,
+    "caret" | "isActionDockPinnedExpanded" | "isSkillPickerOpen"
+  >;
   setActionDockPinnedExpanded: (expanded: boolean) => void;
   setCaret: (caret: number) => void;
   setSkillPickerOpen: (open: boolean) => void;
@@ -318,6 +373,7 @@ export function applySkillPromptInsertionUiState(input: {
   input.setSkillPickerOpen(input.state.isSkillPickerOpen);
 }
 
+/** Skill 挿入の表示状態と下書きを反映してから、入力欄のフォーカスとキャレットを戻す。 */
 export function applySkillPromptInsertionCommand(input: {
   state: SkillPromptInsertionState;
   textarea: HTMLTextAreaElement | null;
@@ -340,7 +396,10 @@ export function applySkillPromptInsertionCommand(input: {
   input.restoreComposerTextareaFocusAndCaret(input.textarea, input.state.caret);
 }
 
-export function createSkillPromptInsertionHandler<TSkill extends { name: string; sourcePath?: string }>(input: {
+/** 選択時点の provider と下書きで Skill を挿入し、provider がなければ何もしない。 */
+export function createSkillPromptInsertionHandler<
+  TSkill extends { name: string; sourcePath?: string },
+>(input: {
   getProvider: () => string | null | undefined;
   getDraft: () => string;
   getTextarea: () => HTMLTextAreaElement | null;
@@ -359,7 +418,12 @@ export function createSkillPromptInsertionHandler<TSkill extends { name: string;
       return;
     }
 
-    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft(), skill.sourcePath);
+    const nextState = buildSkillPromptInsertionState(
+      provider,
+      skill.name,
+      input.getDraft(),
+      skill.sourcePath,
+    );
     applySkillPromptInsertionCommand({
       state: nextState,
       textarea: input.getTextarea(),
@@ -367,23 +431,31 @@ export function createSkillPromptInsertionHandler<TSkill extends { name: string;
       setCaret: input.setCaret,
       setSkillPickerOpen: input.setSkillPickerOpen,
       applyDraft: input.applyDraft,
-      restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
+      restoreComposerTextareaFocusAndCaret:
+        input.restoreComposerTextareaFocusAndCaret,
     });
   };
 }
 
+/** 追加ディレクトリ一覧の現在の開閉状態を反転する。 */
 export function applyAdditionalDirectoryListToggle(input: {
-  setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
+  setAdditionalDirectoryListOpen: (
+    updater: (current: boolean) => boolean,
+  ) => void;
 }): void {
   input.setAdditionalDirectoryListOpen((current) => !current);
 }
 
+/** 追加ディレクトリ一覧の表示切り替えに使うコールバックを作る。 */
 export function createAdditionalDirectoryListToggleHandler(input: {
-  setAdditionalDirectoryListOpen: (updater: (current: boolean) => boolean) => void;
+  setAdditionalDirectoryListOpen: (
+    updater: (current: boolean) => boolean,
+  ) => void;
 }): () => void {
   return () => applyAdditionalDirectoryListToggle(input);
 }
 
+/** 選択があれば次回の開始ディレクトリを更新し、登録や一覧表示も対応する場合は行う。 */
 export function applyPickedAdditionalDirectoryUiStateCommand(input: {
   selectedPath: string | null | undefined;
   setPickerBaseDirectory: (baseDirectory: string) => void;
@@ -400,25 +472,37 @@ export function applyPickedAdditionalDirectoryUiStateCommand(input: {
   return true;
 }
 
+/** 現在使用できる右ペインのタブだけを前後に循環する。 */
 export function applyContextPaneTabCycleCommand(input: {
   direction: -1 | 1;
   availableTabs: ContextPaneTabKey[];
-  setActiveTab: (value: ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey)) => void;
+  setActiveTab: (
+    value:
+      ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey),
+  ) => void;
 }): void {
-  input.setActiveTab((current) => cycleContextPaneTab(current, input.direction, input.availableTabs));
+  input.setActiveTab((current) =>
+    cycleContextPaneTab(current, input.direction, input.availableTabs),
+  );
 }
 
+/** 右ペインの前後ボタンに、利用可能なタブ間の移動を結び付ける。 */
 export function createContextPaneTabCycleHandler(input: {
   availableTabs: ContextPaneTabKey[];
-  setActiveTab: (value: ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey)) => void;
+  setActiveTab: (
+    value:
+      ContextPaneTabKey | ((current: ContextPaneTabKey) => ContextPaneTabKey),
+  ) => void;
 }): (direction: -1 | 1) => void {
-  return (direction) => applyContextPaneTabCycleCommand({
-    direction,
-    availableTabs: input.availableTabs,
-    setActiveTab: input.setActiveTab,
-  });
+  return (direction) =>
+    applyContextPaneTabCycleCommand({
+      direction,
+      availableTabs: input.availableTabs,
+      setActiveTab: input.setActiveTab,
+    });
 }
 
+/** 現在のタブが使えなくなった場合だけ、先頭の候補か最新コマンドに戻す。 */
 export function applyUnavailableContextPaneTabFallbackCommand(input: {
   activeTab: ContextPaneTabKey;
   availableTabs: ContextPaneTabKey[];
@@ -431,21 +515,28 @@ export function applyUnavailableContextPaneTabFallbackCommand(input: {
   input.setActiveTab(input.availableTabs[0] ?? "latest-command");
 }
 
+/** パスを確定したときは、選択種別に応じた開始ディレクトリを保存して参照を挿入する。 */
 export function applyPickedComposerReferencePathCommand(input: {
   kind: ComposerPathPickerKind;
   selectedPath: string | null | undefined;
   setPickerBaseDirectory: (baseDirectory: string) => void;
-  insertReferencePath: (selectedPath: string, kind: ComposerPathPickerKind) => void;
+  insertReferencePath: (
+    selectedPath: string,
+    kind: ComposerPathPickerKind,
+  ) => void;
 }): boolean {
   if (!input.selectedPath) {
     return false;
   }
 
-  input.setPickerBaseDirectory(resolvePickedPathBaseDirectory(input.kind, input.selectedPath));
+  input.setPickerBaseDirectory(
+    resolvePickedPathBaseDirectory(input.kind, input.selectedPath),
+  );
   input.insertReferencePath(input.selectedPath, input.kind);
   return true;
 }
 
+/** 引用を挿入できる場合は下書きに反映し、入力欄のフォーカスとキャレットを戻す。 */
 export function applyQuoteMessageTextCommand(input: {
   messageText: string;
   draft: string;
@@ -472,6 +563,7 @@ export function applyQuoteMessageTextCommand(input: {
   return true;
 }
 
+/** 入力がブロックされていれば通知し、可能な場合は操作時点の下書きに引用する。 */
 export function createQuoteMessageTextHandler(input: {
   isBlocked: () => boolean;
   notifyBlocked: () => void;
@@ -497,11 +589,13 @@ export function createQuoteMessageTextHandler(input: {
       messageText,
       ...composerState,
       applyInsertion: input.applyInsertion,
-      restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
+      restoreComposerTextareaFocusAndCaret:
+        input.restoreComposerTextareaFocusAndCaret,
     });
   };
 }
 
+/** 選択したパスから参照を作り、入力欄の選択開始位置へ挿入する。 */
 export function applySelectedPathReferenceInsertionCommand(input: {
   draft: string;
   fallbackCaret: number;
@@ -525,10 +619,14 @@ export function applySelectedPathReferenceInsertionCommand(input: {
   }
 
   input.applyInsertion(insertionState);
-  input.restoreComposerTextareaFocusAndCaret(input.textarea, insertionState.caret);
+  input.restoreComposerTextareaFocusAndCaret(
+    input.textarea,
+    insertionState.caret,
+  );
   return true;
 }
 
+/** 構築済みの参照を下書きに追加し、成功時は挿入後の位置にフォーカスを戻す。 */
 export function applyComposerReferenceInsertionCommand(input: {
   draft: string;
   fallbackCaret: number;
@@ -550,10 +648,14 @@ export function applyComposerReferenceInsertionCommand(input: {
   }
 
   input.applyInsertion(insertionState);
-  input.restoreComposerTextareaFocusAndCaret(input.textarea, insertionState.caret);
+  input.restoreComposerTextareaFocusAndCaret(
+    input.textarea,
+    insertionState.caret,
+  );
   return true;
 }
 
+/** 参照が得られたときだけ、最初に選んだファイルのディレクトリを次回の初期位置にする。 */
 export function applySessionFilesReferencePathsCommand(input: {
   selectedPaths: string[];
   referencePaths: string[];
@@ -570,6 +672,7 @@ export function applySessionFilesReferencePathsCommand(input: {
   return true;
 }
 
+/** 貼り付けで保存できた添付ファイルがあるときだけ、その参照を挿入する。 */
 export function applyPastedSessionAttachmentPathsCommand(input: {
   savedPaths: string[];
   insertReferencePaths: (referencePaths: string[]) => void;
@@ -582,6 +685,7 @@ export function applyPastedSessionAttachmentPathsCommand(input: {
   return true;
 }
 
+/** 対象セッションのフォルダーを開き、失敗時は具体的なエラーまたは既定の説明を示す。 */
 export async function runSessionFilesOpenCommand(input: {
   sessionId: string | null | undefined;
   openSessionFiles: (sessionId: string) => Promise<void>;
@@ -596,14 +700,18 @@ export async function runSessionFilesOpenCommand(input: {
     await input.openSessionFiles(input.sessionId);
     return true;
   } catch (error) {
-    input.alertError(error instanceof Error ? error.message : input.fallbackErrorMessage);
+    input.alertError(
+      error instanceof Error ? error.message : input.fallbackErrorMessage,
+    );
     return false;
   }
 }
 
+/** クリック時点の起動機能とセッションを取得し、利用できる場合だけフォルダーを開く。 */
 export function createSessionFilesOpenHandler(input: {
   getSessionId: () => string | null | undefined;
-  getOpenSessionFiles: () => ((sessionId: string) => Promise<void>) | null | undefined;
+  getOpenSessionFiles: () =>
+    ((sessionId: string) => Promise<void>) | null | undefined;
   alertError: (message: string) => void;
   fallbackErrorMessage: string;
 }): () => Promise<boolean> {

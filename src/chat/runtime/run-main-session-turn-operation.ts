@@ -1,8 +1,14 @@
-import type { RunSessionTurnRequest, ComposerPreview } from "../../../src-shared/session/runtime-state.js";
+import type {
+  RunSessionTurnRequest,
+  ComposerPreview,
+} from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
-import type { ComposerControllerRegistry, ComposerOwner } from "../composer-controller.js";
+import type {
+  ComposerControllerRegistry,
+  ComposerOwner,
+} from "../composer-controller.js";
 import { createComposerPreviewRequest } from "../use-composer-preview-resolution.js";
 import type { SessionSubmitCoordinator } from "./session-submit-coordinator.js";
 import { resolveComposerSendPreflight } from "../composer/session-composer-feedback.js";
@@ -11,8 +17,13 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 import { getMessageHistoryIndex } from "../../../src-shared/session/conversation-page.js";
 
-type SessionRunApi = Pick<WithMateWindowApi, "previewComposerInput" | "enqueueSessionTurn" | "getSessionTurnQueueReceipt">;
+/** ターン送信で使う入力プレビュー、受付、受付再確認の窓口。 */
+type SessionRunApi = Pick<
+  WithMateWindowApi,
+  "previewComposerInput" | "enqueueSessionTurn" | "getSessionTurnQueueReceipt"
+>;
 
+/** 送信枠を確保し、取得した下書きの版と送信先が変わっていないことを検証してからターンをキューに登録する。 */
 export async function runMainSessionTurnOperation(input: {
   api: SessionRunApi | null;
   sessionId: string;
@@ -44,84 +55,164 @@ export async function runMainSessionTurnOperation(input: {
   const { api, sessionId, composerRegistry, composerOwner, state } = input;
   if (!api) return null;
   const captured = composerRegistry.capture(composerOwner);
-  const messageText = input.request.submitSource === "composer" ? captured.draft : input.request.userMessage;
-  const request = { ...input.request, userMessage: messageText, incarnationId: getSessionIncarnationId(input.selectedSession) };
+  const messageText =
+    input.request.submitSource === "composer"
+      ? captured.draft
+      : input.request.userMessage;
+  const request = {
+    ...input.request,
+    userMessage: messageText,
+    incarnationId: getSessionIncarnationId(input.selectedSession),
+  };
   const lease = input.submitCoordinator.tryAcquire(sessionId);
   if (!lease) return null;
   let acceptanceStarted = false;
   state.onSubmitStateChanged();
   try {
-    if (composerRegistry.isFrozen || input.blockedReason || input.isReadOnly || !messageText.trim()) {
+    if (
+      composerRegistry.isFrozen ||
+      input.blockedReason ||
+      input.isReadOnly ||
+      !messageText.trim()
+    ) {
       state.setForceComposerBlockedFeedback(true);
       return null;
     }
-    if (input.acceptance.hasUncertain(sessionId, request.incarnationId)) throw new Error("A previous turn's acceptance is unknown. Check Receipt before sending another turn.");
-    const publish = () => input.acceptance.submissions.start({
-      sessionId, incarnationId: request.incarnationId, requestId: request.clientRequestId!,
-      historyMessageCount: input.selectedSession.messageCount ?? input.selectedSession.messages.reduce((count, message, index) => Math.max(count, getMessageHistoryIndex(message, index) + 1), 0),
-      userMessage: messageText, queuedBehindRun: input.selectedSessionRunState === "running", error: "",
-      mainConversationFrame: request.mainConversationFrame,
-    });
+    if (input.acceptance.hasUncertain(sessionId, request.incarnationId))
+      throw new Error(
+        "A previous turn's acceptance is unknown. Check Receipt before sending another turn.",
+      );
+    /** 事前確認を待っている間も表示できるよう、送信開始時点の情報を会話表示へ公開する。 */
+    const publish = () =>
+      input.acceptance.submissions.start({
+        sessionId,
+        incarnationId: request.incarnationId,
+        requestId: request.clientRequestId!,
+        historyMessageCount:
+          input.selectedSession.messageCount ??
+          input.selectedSession.messages.reduce(
+            (count, message, index) =>
+              Math.max(count, getMessageHistoryIndex(message, index) + 1),
+            0,
+          ),
+        userMessage: messageText,
+        queuedBehindRun: input.selectedSessionRunState === "running",
+        error: "",
+        mainConversationFrame: request.mainConversationFrame,
+      });
     if (state.commitSubmission) state.commitSubmission(publish);
     else publish();
     state.setForceComposerBlockedFeedback(false);
     if (input.collapseActionDock) state.collapseActionDock();
     input.onSubmitted?.();
     const workspaceAvailable = await input.validateWorkspace();
-    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) {
+    if (
+      composerRegistry.isFrozen ||
+      composerRegistry.capture(composerOwner).revision !== captured.revision ||
+      input.isCurrentSubmission?.() === false
+    ) {
       input.acceptance.submissions.forget([request.clientRequestId!]);
       return null;
     }
-    if (!workspaceAvailable) throw new Error("Workspace is not available. Your draft is preserved.");
+    if (!workspaceAvailable)
+      throw new Error("Workspace is not available. Your draft is preserved.");
     if (input.auxiliaryDraftOwner) {
       try {
         await input.auxiliaryDraftOwner.flush();
         await input.auxiliaryDraftOwner.reload();
       } catch (error) {
-        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+        composerRegistry.setSaveState(
+          composerOwner,
+          "error",
+          "Draft could not be saved.",
+        );
         throw error;
       }
       const durable = input.auxiliaryDraftOwner.durableRecord;
-      if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) {
+      if (
+        composerRegistry.isFrozen ||
+        composerRegistry.capture(composerOwner).revision !==
+          captured.revision ||
+        input.isCurrentSubmission?.() === false
+      ) {
         input.acceptance.submissions.forget([request.clientRequestId!]);
         return null;
       }
-      if (!durable || durable.auxiliarySessionId !== sessionId || durable.text !== captured.draft) {
-        composerRegistry.setSaveState(composerOwner, "error", "Draft could not be saved.");
+      if (
+        !durable ||
+        durable.auxiliarySessionId !== sessionId ||
+        durable.text !== captured.draft
+      ) {
+        composerRegistry.setSaveState(
+          composerOwner,
+          "error",
+          "Draft could not be saved.",
+        );
         throw new Error("Draft could not be saved. Your draft is preserved.");
       }
       request.auxiliaryDraftIncarnation = durable.incarnation;
       request.auxiliaryDraftDurableRevision = durable.durableRevision;
     }
     const previewRequest = createComposerPreviewRequest({ api, sessionId });
-    if (!previewRequest) throw new Error("Composer input could not be checked. Your draft is preserved.");
+    if (!previewRequest)
+      throw new Error(
+        "Composer input could not be checked. Your draft is preserved.",
+      );
     const preview = await previewRequest(messageText);
-    if (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false) {
+    if (
+      composerRegistry.isFrozen ||
+      composerRegistry.capture(composerOwner).revision !== captured.revision ||
+      input.isCurrentSubmission?.() === false
+    ) {
       input.acceptance.submissions.forget([request.clientRequestId!]);
       return null;
     }
     state.setComposerPreview(preview);
     const preflight = resolveComposerSendPreflight({
       runState: input.queueTurn ? "idle" : input.selectedSessionRunState,
-      blockedReason: input.blockedReason ?? "", inputErrors: preview.errors, draftText: messageText,
+      blockedReason: input.blockedReason ?? "",
+      inputErrors: preview.errors,
+      draftText: messageText,
     });
     if (preflight.blockedMessage) {
       state.setForceComposerBlockedFeedback(true);
       throw new Error(preflight.blockedMessage);
     }
     acceptanceStarted = true;
-    const receipt = await input.acceptance.submit(api, sessionId, {
-      request, owner: composerOwner, revision: captured.revision, clearDraft: input.clearDraft,
-      auxiliaryDraftOwner: input.auxiliaryDraftOwner,
-    }, composerRegistry);
-    input.log("renderer.queue.accepted", { sessionId, clientRequestId: receipt.requestId, state: receipt.state });
+    const receipt = await input.acceptance.submit(
+      api,
+      sessionId,
+      {
+        request,
+        owner: composerOwner,
+        revision: captured.revision,
+        clearDraft: input.clearDraft,
+        auxiliaryDraftOwner: input.auxiliaryDraftOwner,
+      },
+      composerRegistry,
+    );
+    input.log("renderer.queue.accepted", {
+      sessionId,
+      clientRequestId: receipt.requestId,
+      state: receipt.state,
+    });
     return receipt;
   } catch (error) {
-    if (!acceptanceStarted && (composerRegistry.isFrozen || composerRegistry.capture(composerOwner).revision !== captured.revision || input.isCurrentSubmission?.() === false)) {
+    if (
+      !acceptanceStarted &&
+      (composerRegistry.isFrozen ||
+        composerRegistry.capture(composerOwner).revision !==
+          captured.revision ||
+        input.isCurrentSubmission?.() === false)
+    ) {
       input.acceptance.submissions.forget([request.clientRequestId!]);
       return null;
     }
-    input.acceptance.submissions.fail(request.clientRequestId!, error instanceof Error ? error.message : String(error), input.acceptance.hasUncertain(sessionId, request.incarnationId));
+    input.acceptance.submissions.fail(
+      request.clientRequestId!,
+      error instanceof Error ? error.message : String(error),
+      input.acceptance.hasUncertain(sessionId, request.incarnationId),
+    );
     throw error;
   } finally {
     lease.release();

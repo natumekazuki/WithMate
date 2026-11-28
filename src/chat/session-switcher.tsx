@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+/** 切り替え候補の識別子と、表示・検索・処理中や未読の状態に使う情報。 */
 export type SessionSwitcherOption = {
   id: string;
   label: string;
@@ -18,6 +19,7 @@ export type SessionSwitcherOption = {
   hasUnreadResult?: boolean;
 };
 
+/** 現在の候補と、一覧からの選択または前後への移動を呼び出し側と接続する。 */
 export type SessionSwitcherProps = {
   ariaLabel: string;
   options: readonly SessionSwitcherOption[];
@@ -30,22 +32,33 @@ export type SessionSwitcherProps = {
   emptyLabel?: string;
 };
 
+/** 描画済みの候補のうち、一覧内の指定位置にあるボタンへフォーカスを移す。 */
 function focusOption(list: HTMLElement | null, index: number) {
   list?.querySelectorAll<HTMLButtonElement>('[role="option"]')[index]?.focus();
 }
 
-function SwitcherVisuals({ icon, isProcessing }: Pick<SessionSwitcherOption, "icon" | "isProcessing">) {
+/** アイコンがある候補に限り、処理中なら装飾用のリングを重ねる。 */
+function SwitcherVisuals({
+  icon,
+  isProcessing,
+}: Pick<SessionSwitcherOption, "icon" | "isProcessing">) {
   if (!icon) return null;
   return (
     <span className="session-switcher-icon" aria-hidden="true">
       {icon}
-      {isProcessing ? <span className="session-switcher-processing-ring" /> : null}
+      {isProcessing ? (
+        <span className="session-switcher-processing-ring" />
+      ) : null}
     </span>
   );
 }
 
-function switcherStatus(option: SessionSwitcherOption | undefined): string | undefined {
-  if (option?.isProcessing) return option.hasUnreadResult ? "Processing; Unread Result" : "Processing";
+/** 処理中と未読の状態を読み上げ用にまとめ、どちらもなければ説明を省く。 */
+function switcherStatus(
+  option: SessionSwitcherOption | undefined,
+): string | undefined {
+  if (option?.isProcessing)
+    return option.hasUnreadResult ? "Processing; Unread Result" : "Processing";
   return option?.hasUnreadResult ? "Unread Result" : undefined;
 }
 
@@ -66,11 +79,15 @@ export function SessionSwitcher({
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const listId = useId();
-  const selectedOption = options.find((option) => option.id === selectedId) ?? options[0];
+  const selectedOption =
+    options.find((option) => option.id === selectedId) ?? options[0];
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredOptions = normalizedQuery
-    ? options.filter((option) => (option.searchText ?? `${option.label}\n${option.preview ?? ""}`)
-      .toLocaleLowerCase().includes(normalizedQuery))
+    ? options.filter((option) =>
+        (option.searchText ?? `${option.label}\n${option.preview ?? ""}`)
+          .toLocaleLowerCase()
+          .includes(normalizedQuery),
+      )
     : options;
   const canMove = options.length > 1;
   const canOpen = options.length > 0;
@@ -97,11 +114,16 @@ export function SessionSwitcher({
     if (!searchable) {
       requestAnimationFrame(() => focusOption(listRef.current, 0));
     }
+    /** 一覧とトリガーの外を操作したときは、移動先のフォーカスを奪わず閉じる。 */
     const handlePointerDown = (event: PointerEvent) => {
-      if (!listRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) {
+      if (
+        !listRef.current?.contains(event.target as Node) &&
+        !triggerRef.current?.contains(event.target as Node)
+      ) {
         close(false);
       }
     };
+    /** IME 変換中の Escape は奪わず、通常の Escape で一覧を閉じる。 */
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.isComposing) {
         return;
@@ -119,17 +141,28 @@ export function SessionSwitcher({
     };
   }, [close, isOpen, searchable]);
 
+  /** 表示中の候補間を上下に循環し、Enter でフォーカス中の候補を選ぶ。 */
   const handleListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.nativeEvent.isComposing) {
       return;
     }
-    const optionElements = [...(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [])];
-    const currentIndex = optionElements.indexOf(document.activeElement as HTMLButtonElement);
+    const optionElements = [
+      ...(listRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="option"]',
+      ) ?? []),
+    ];
+    const currentIndex = optionElements.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (optionElements.length === 0) return;
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
-      focusOption(listRef.current, (currentIndex + direction + optionElements.length) % optionElements.length);
+      focusOption(
+        listRef.current,
+        (currentIndex + direction + optionElements.length) %
+          optionElements.length,
+      );
       return;
     }
     if (event.key === "Enter" && currentIndex >= 0) {
@@ -141,7 +174,8 @@ export function SessionSwitcher({
   const currentLabel = selectedOption?.label ?? emptyLabel ?? "";
   const currentLabelText = currentLabel.trim();
   const currentPreviewText = selectedOption?.preview?.trim() ?? "";
-  const currentAccessibleLabel = currentLabelText || currentPreviewText || ariaLabel;
+  const currentAccessibleLabel =
+    currentLabelText || currentPreviewText || ariaLabel;
   const currentButton = (
     <button
       ref={triggerRef}
@@ -151,7 +185,11 @@ export function SessionSwitcher({
       aria-haspopup="listbox"
       aria-expanded={canOpen && isOpen}
       aria-controls={canOpen ? listId : undefined}
-      aria-label={currentLabelText || currentPreviewText ? undefined : currentAccessibleLabel}
+      aria-label={
+        currentLabelText || currentPreviewText
+          ? undefined
+          : currentAccessibleLabel
+      }
       aria-description={switcherStatus(selectedOption)}
       onClick={() => {
         if (canOpen) {
@@ -168,35 +206,64 @@ export function SessionSwitcher({
         }
       }}
     >
-      <SwitcherVisuals icon={selectedOption?.icon} isProcessing={selectedOption?.isProcessing} />
-      <span className={`session-switcher-label${selectedOption?.hasUnreadResult && currentLabelText ? " has-unread-result" : ""}`}>{currentLabel}</span>
-      {selectedOption?.preview ? <span className={`session-switcher-preview${selectedOption.hasUnreadResult && !currentLabelText ? " has-unread-result" : ""}`}>{selectedOption.preview}</span> : null}
+      <SwitcherVisuals
+        icon={selectedOption?.icon}
+        isProcessing={selectedOption?.isProcessing}
+      />
+      <span
+        className={`session-switcher-label${selectedOption?.hasUnreadResult && currentLabelText ? " has-unread-result" : ""}`}
+      >
+        {currentLabel}
+      </span>
+      {selectedOption?.preview ? (
+        <span
+          className={`session-switcher-preview${selectedOption.hasUnreadResult && !currentLabelText ? " has-unread-result" : ""}`}
+        >
+          {selectedOption.preview}
+        </span>
+      ) : null}
     </button>
   );
   return (
-    <div className={`session-switcher${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
+    <div
+      className={`session-switcher${className ? ` ${className}` : ""}`}
+      aria-label={ariaLabel}
+    >
       <button
         type="button"
         className="session-switcher-button"
         onClick={() => onMove(-1)}
         disabled={!canMove}
         aria-label="Previous"
-      >‹</button>
+      >
+        ‹
+      </button>
       {currentAction ? (
         <div className="session-switcher-current-group">
           {currentButton}
           <div className="session-switcher-current-action">{currentAction}</div>
         </div>
-      ) : currentButton}
+      ) : (
+        currentButton
+      )}
       <button
         type="button"
         className="session-switcher-button"
         onClick={() => onMove(1)}
         disabled={!canMove}
         aria-label="Next"
-      >›</button>
+      >
+        ›
+      </button>
       {canOpen && isOpen ? (
-        <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel} list`} onKeyDown={handleListKeyDown}>
+        <div
+          ref={listRef}
+          id={listId}
+          className="session-switcher-popover"
+          role="listbox"
+          aria-label={`${ariaLabel} list`}
+          onKeyDown={handleListKeyDown}
+        >
           {searchable ? (
             <input
               autoFocus
@@ -218,28 +285,47 @@ export function SessionSwitcher({
             />
           ) : null}
           <div className="session-switcher-options">
-            {filteredOptions.length > 0 ? filteredOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                role="option"
-                aria-selected={option.id === selectedId}
-                className="session-switcher-option"
-                aria-label={option.label.trim() || option.preview?.trim() ? undefined : ariaLabel}
-                aria-description={switcherStatus(option)}
-                title={option.isProcessing ? "Processing" : undefined}
-                onClick={() => {
-                  onSelect(option.id);
-                  close();
-                }}
-              >
-                <SwitcherVisuals icon={option.icon} isProcessing={option.isProcessing} />
-                <span className="session-switcher-option-copy">
-                  <span className={`session-switcher-option-label${option.hasUnreadResult && option.label.trim() ? " has-unread-result" : ""}`}>{option.label}</span>
-                  {option.preview ? <span className={`session-switcher-option-preview${option.hasUnreadResult && !option.label.trim() ? " has-unread-result" : ""}`}>{option.preview}</span> : null}
-                </span>
-              </button>
-            )) : null}
+            {filteredOptions.length > 0
+              ? filteredOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="option"
+                    aria-selected={option.id === selectedId}
+                    className="session-switcher-option"
+                    aria-label={
+                      option.label.trim() || option.preview?.trim()
+                        ? undefined
+                        : ariaLabel
+                    }
+                    aria-description={switcherStatus(option)}
+                    title={option.isProcessing ? "Processing" : undefined}
+                    onClick={() => {
+                      onSelect(option.id);
+                      close();
+                    }}
+                  >
+                    <SwitcherVisuals
+                      icon={option.icon}
+                      isProcessing={option.isProcessing}
+                    />
+                    <span className="session-switcher-option-copy">
+                      <span
+                        className={`session-switcher-option-label${option.hasUnreadResult && option.label.trim() ? " has-unread-result" : ""}`}
+                      >
+                        {option.label}
+                      </span>
+                      {option.preview ? (
+                        <span
+                          className={`session-switcher-option-preview${option.hasUnreadResult && !option.label.trim() ? " has-unread-result" : ""}`}
+                        >
+                          {option.preview}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                ))
+              : null}
           </div>
         </div>
       ) : null}

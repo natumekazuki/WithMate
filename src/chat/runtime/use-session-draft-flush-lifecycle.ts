@@ -4,11 +4,13 @@ import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-
 import { ComposerControllerRegistry } from "../../chat/composer-controller.js";
 import type { AuxiliaryDraftPersistence } from "../../chat/auxiliary/use-auxiliary-draft-persistence.js";
 
+/** アプリ終了時などの保存完了要求を処理するために必要な補助下書きの永続化操作。 */
 type SessionDraftFlushPersistence = Pick<
   AuxiliaryDraftPersistence,
   "waitForPendingSends" | "flushAll" | "pendingSessionIds"
 >;
 
+/** 保存完了要求で編集を凍結し、終了時は送信の完了も待つ。保存完了に失敗したときだけ凍結を解く。 */
 export function useSessionDraftFlushLifecycle(input: {
   api: WithMateWindowApi | null;
   composerRegistry: ComposerControllerRegistry;

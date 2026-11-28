@@ -1,13 +1,22 @@
-import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessionStorageType } from "../auxiliary/auxiliary-session-storage.js";
+import {
+  AuxiliarySessionStorage,
+  type AuxiliarySessionStorage as AuxiliarySessionStorageType,
+} from "../auxiliary/auxiliary-session-storage.js";
 import type { WorkerOptions } from "node:worker_threads";
 import { existsSync } from "node:fs";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { SessionExecutionReadStorage } from "./session-execution-read.js";
 import { CoordinationStorageV7 } from "../coordination/coordination-storage-v7.js";
-import { LocalPrStorage, type LocalPrStore } from "../local-pr/local-pr-store.js";
 import {
-  assertRuntimeTurnAdmission, currentWorkerRuntimeTurnAdmission, runWithRuntimeTurnAdmission, type WorkerRuntimeTurnAdmission,
+  LocalPrStorage,
+  type LocalPrStore,
+} from "../local-pr/local-pr-store.js";
+import {
+  assertRuntimeTurnAdmission,
+  currentWorkerRuntimeTurnAdmission,
+  runWithRuntimeTurnAdmission,
+  type WorkerRuntimeTurnAdmission,
 } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -18,25 +27,50 @@ import { SessionStorageV6 } from "../session/session-storage-v6.js";
 import { SessionInstructionsStorage } from "../session/session-instructions-storage.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
-import { openAppDatabase, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
+import {
+  openAppDatabase,
+  truncateAppDatabaseWalIfLargerThan,
+} from "./sqlite-connection.js";
 import { assertRetiredMemoryAffectDatabasePath } from "./migrations/memory-affect-removal.js";
 import { StorageWorkerClient } from "./storage-worker-client.js";
 import type { StorageWorkerEntryData } from "./storage-worker-protocol.js";
 import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
 import { ConversationQueryCoordinator } from "./conversation-query-coordinator.js";
 import type { StorageWorkerHandlerContext } from "./storage-worker-dispatcher.js";
-import type { ConversationSearchRequest, ConversationNavigatorRequest, ConversationSearchMatch, ConversationNavigatorEntry,
-  ConversationQueryOutcome, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
+import type {
+  ConversationSearchRequest,
+  ConversationNavigatorRequest,
+  ConversationSearchMatch,
+  ConversationNavigatorEntry,
+  ConversationQueryOutcome,
+  ConversationQueryCancelRequest,
+} from "../../src-shared/session/conversation-page.js";
 
+/** 通常のストア呼び出しから分離された、会話の検索・一覧取得・取消インターフェース。 */
 export type ConversationQueryStore = {
-  searchConversation(id: string, request: ConversationSearchRequest): Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
-  listConversationNavigator(id: string, request: ConversationNavigatorRequest): Promise<ConversationQueryOutcome<ConversationNavigatorEntry>>;
-  cancelConversationQuery(request: ConversationQueryCancelRequest): Promise<void>;
+  /** 指定したセッションの会話から、検索条件に合うメッセージを取得する。 */
+  searchConversation(
+    id: string,
+    request: ConversationSearchRequest,
+  ): Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
+  /** 指定したセッションの会話内を移動するための項目を取得する。 */
+  listConversationNavigator(
+    id: string,
+    request: ConversationNavigatorRequest,
+  ): Promise<ConversationQueryOutcome<ConversationNavigatorEntry>>;
+  /** 指定した会話検索またはナビゲーター要求を取り消す。 */
+  cancelConversationQuery(
+    request: ConversationQueryCancelRequest,
+  ): Promise<void>;
 };
 
+/** プロキシに転送できるメソッドを識別するための任意の関数型。 */
 type AnyMethod = (...args: any[]) => any;
+/** 元の引数型を保ったまま、ストアのメソッドを非同期プロキシの契約に変換する。 */
 type AsyncStore<T extends object> = {
-  [K in keyof T as T[K] extends AnyMethod ? K : never]: T[K] extends (...args: infer A) => infer R
+  [K in keyof T as T[K] extends AnyMethod ? K : never]: T[K] extends (
+    ...args: infer A
+  ) => infer R
     ? (...args: A) => Promise<Awaited<R>>
     : never;
 };
@@ -47,76 +81,272 @@ const STORE_METHODS = {
   execution: ["execute"],
   instructions: ["get", "set"],
   session: [
-    "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
-    "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
-    "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage", "readSessionManagementScope",
+    "getSessionView",
+    "getConversationPage",
+    "readSessionHistory",
+    "searchConversation",
+    "listConversationNavigator",
+    "cancelConversationQuery",
+    "listSessionFilePins",
+    "pinSessionFile",
+    "unpinSessionFile",
+    "listSessions",
+    "listSessionSummaries",
+    "listSessionSummaryPage",
+    "listSessionCharacterUsage",
+    "readSessionManagementScope",
     "listHomeCrewMembersPage",
-    "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getReadySessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
-    "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
-    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
-    "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
-    "getSessionLifecycleOperation", "listPendingSessionLifecycleOperations", "getCrewDeletionStatus", "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
-    "updateSessionRuntimeMetadataIfMatches", "updateSession", "upsertTerminalSession", "updateTerminalSession",
-    "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession", "replaceSessions",
-    "deleteSession", "deleteSessions", "clearSessions",
+    "getLatestSessionSummaryForProvider",
+    "getSession",
+    "getSessionSummary",
+    "getReadySessionSummary",
+    "getSessionMetadata",
+    "getSessionMessageIdentity",
+    "setSessionPinned",
+    "getSessionMessageArtifact",
+    "listSessionIdsLastActiveBefore",
+    "upsertSession",
+    "updateSessionThreadIfMatches",
+    "listSessionCredentialThreads",
+    "setSessionTitle",
+    "setSessionMessageBookmark",
+    "setSessionExecutionOptions",
+    "setSessionAdditionalDirectories",
+    "patchSessionMetadata",
+    "promoteSessionToOverallCoordinator",
+    "beginSessionSteer",
+    "settleSessionSteer",
+    "getSessionLifecycleOperation",
+    "listPendingSessionLifecycleOperations",
+    "getCrewDeletionStatus",
+    "beginSessionLifecycleOperation",
+    "prepareSessionLifecycleCreation",
+    "advanceSessionLifecycleOperation",
+    "deleteSessionCrewForLifecycle",
+    "updateSessionRuntimeMetadataIfMatches",
+    "updateSession",
+    "upsertTerminalSession",
+    "updateTerminalSession",
+    "clearCharacterAuthoringRuntimeState",
+    "appendRunningTurnStart",
+    "appendSessionSteer",
+    "appendSessionTerminal",
+    "checkpointSessionRunMetadata",
+    "insertSession",
+    "replaceSessions",
+    "deleteSession",
+    "deleteSessions",
+    "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn"],
-  queue: ["enqueue", "admit", "verifySourceDisplayPosition", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted"],
+  queue: [
+    "enqueue",
+    "admit",
+    "verifySourceDisplayPosition",
+    "getReceipt",
+    "getReceiptById",
+    "listActive",
+    "listReceipts",
+    "listPendingOwners",
+    "claimNext",
+    "claimForInput",
+    "restoreQueuedInput",
+    "markStarted",
+    "settle",
+    "cancelQueued",
+    "updateQueued",
+    "reorderQueued",
+    "recoverInterrupted",
+  ],
   auxiliary: [
-    "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
-    "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
-    "listRunningAuxiliarySessions", "getLatestAuxiliarySession", "getLatestAuxiliarySessionView",
-    "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
-    "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
-    "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
-    "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches",
-    "updateAuxiliarySessionIfMatches", "updateTerminalAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent", "deleteAuxiliarySessionsExceptParents",
-    "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches",
+    "getAuxiliarySessionView",
+    "getConversationPage",
+    "readSessionHistory",
+    "searchConversation",
+    "listConversationNavigator",
+    "cancelConversationQuery",
+    "listAllAuxiliarySessions",
+    "listAuxiliarySessions",
+    "listAuxiliarySessionSummaries",
+    "listRunningAuxiliarySessions",
+    "getLatestAuxiliarySession",
+    "getLatestAuxiliarySessionView",
+    "getAuxiliarySession",
+    "getAuxiliarySessionSummary",
+    "getAuxiliarySessionMetadata",
+    "listAuxiliaryCredentialThreads",
+    "getAuxiliaryMessageArtifactDetail",
+    "appendAuxiliaryRunningTurnStart",
+    "appendAuxiliarySteer",
+    "appendAuxiliaryTerminal",
+    "checkpointAuxiliaryRuntimeMetadata",
+    "beginAuxiliarySteer",
+    "settleAuxiliarySteer",
+    "patchAuxiliarySessionMetadata",
+    "updateAuxiliarySessionThreadIfMatches",
+    "updateAuxiliarySessionRuntimeMetadataIfMatches",
+    "updateAuxiliarySessionIfMatches",
+    "updateTerminalAuxiliarySessionIfMatches",
+    "upsertAuxiliarySession",
+    "deleteAuxiliarySessionsForParent",
+    "deleteAuxiliarySessionsExceptParents",
+    "updateAuxiliaryTitleIfMatches",
+    "updateAuxiliaryMessageBookmarkIfMatches",
+    "updateAuxiliaryExecutionOptionsIfMatches",
     "updateAuxiliaryDisplayAnchorIfMatches",
-    "getAuxiliaryDraft", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
+    "getAuxiliaryDraft",
+    "saveAuxiliaryDraft",
+    "consumeAuxiliaryDraft",
     "getAuxiliarySessionStatus",
   ],
   character: [
-    "getCharacterDirectory", "listCharacters", "getCharacterCatalogEntry", "getCharacter", "createCharacter",
-    "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter", "resolveLaunchCharacter",
-    "createRuntimeSnapshot", "refreshRuntimeSnapshot", "deleteCharacterRootDirectory",
+    "getCharacterDirectory",
+    "listCharacters",
+    "getCharacterCatalogEntry",
+    "getCharacter",
+    "createCharacter",
+    "updateCharacterMetadata",
+    "updateCharacterDefinition",
+    "archiveCharacter",
+    "resolveLaunchCharacter",
+    "createRuntimeSnapshot",
+    "refreshRuntimeSnapshot",
+    "deleteCharacterRootDirectory",
   ],
-  settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings", "getSelectionPolicy", "setSelectionPolicy", "getWorktreePolicy", "setWorktreeRoot", "setWorktreeRepository"],
+  settings: [
+    "getSettings",
+    "updateSettings",
+    "updateChatLayoutPreference",
+    "resetSettings",
+    "getSelectionPolicy",
+    "setSelectionPolicy",
+    "getWorktreePolicy",
+    "setWorktreeRoot",
+    "setWorktreeRepository",
+  ],
   catalog: ["getCachedProviders", "getCatalog", "upsertProvider", "clear"],
   mate: [
-    "initializeSchema", "getMateState", "getUserDataPath", "getMateProfile", "verifyMateProfileFiles",
-    "getMateGrowthSettings", "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate",
-    "updateMate", "setMateAvatar", "recoverMateProfileFilesFromActiveRevision", "resetMate", "deleteMateProjectionDirectory",
+    "initializeSchema",
+    "getMateState",
+    "getUserDataPath",
+    "getMateProfile",
+    "verifyMateProfileFiles",
+    "getMateGrowthSettings",
+    "updateMateGrowthApplyIntervalMinutes",
+    "updateMateGrowthSettings",
+    "createMate",
+    "updateMate",
+    "setMateAvatar",
+    "recoverMateProfileFilesFromActiveRevision",
+    "resetMate",
+    "deleteMateProjectionDirectory",
     "applyProfileFiles",
   ],
-  prompt: ["listPromptTemplates", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate"],
+  prompt: [
+    "listPromptTemplates",
+    "createPromptTemplate",
+    "updatePromptTemplate",
+    "deletePromptTemplate",
+  ],
 } as const;
 
 const MUTATIONS = new Set([
-  "createLocalPr", "saveLocalPr",
-  "reorderQueued", "updateQueued",
-  "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted",
-  "pinSessionFile", "unpinSessionFile",
-  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
-  "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
-  "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
-  "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
-  "setSessionPinned", "upsertSession", "updateSessionThreadIfMatches", "updateSessionRuntimeMetadataIfMatches", "updateSession",
-  "upsertTerminalSession", "updateTerminalSession", "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession",
-  "appendAuxiliaryRunningTurnStart", "appendAuxiliarySteer", "appendAuxiliaryTerminal", "checkpointAuxiliaryRuntimeMetadata",
-  "replaceSessions", "deleteSession", "deleteSessions", "clearSessions", "createSessionTurn", "updateSessionTurn",
-  "updateAuxiliarySessionThreadIfMatches", "updateAuxiliarySessionRuntimeMetadataIfMatches", "updateAuxiliarySessionIfMatches", "updateTerminalAuxiliarySessionIfMatches", "upsertAuxiliarySession", "deleteAuxiliarySessionsForParent",
-  "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
-  "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
-  "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
-  "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "upsertProvider", "clear",
-  "setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository",
-  "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
-  "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
-  "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
-  "enqueue", "admit", "verifySourceDisplayPosition",
+  "createLocalPr",
+  "saveLocalPr",
+  "reorderQueued",
+  "updateQueued",
+  "claimNext",
+  "claimForInput",
+  "restoreQueuedInput",
+  "markStarted",
+  "settle",
+  "cancelQueued",
+  "recoverInterrupted",
+  "pinSessionFile",
+  "unpinSessionFile",
+  "setSessionTitle",
+  "setSessionMessageBookmark",
+  "setSessionExecutionOptions",
+  "setSessionAdditionalDirectories",
+  "patchSessionMetadata",
+  "promoteSessionToOverallCoordinator",
+  "beginSessionSteer",
+  "settleSessionSteer",
+  "beginSessionLifecycleOperation",
+  "prepareSessionLifecycleCreation",
+  "advanceSessionLifecycleOperation",
+  "deleteSessionCrewForLifecycle",
+  "beginAuxiliarySteer",
+  "settleAuxiliarySteer",
+  "patchAuxiliarySessionMetadata",
+  "setSessionPinned",
+  "upsertSession",
+  "updateSessionThreadIfMatches",
+  "updateSessionRuntimeMetadataIfMatches",
+  "updateSession",
+  "upsertTerminalSession",
+  "updateTerminalSession",
+  "clearCharacterAuthoringRuntimeState",
+  "appendRunningTurnStart",
+  "appendSessionSteer",
+  "appendSessionTerminal",
+  "checkpointSessionRunMetadata",
+  "insertSession",
+  "appendAuxiliaryRunningTurnStart",
+  "appendAuxiliarySteer",
+  "appendAuxiliaryTerminal",
+  "checkpointAuxiliaryRuntimeMetadata",
+  "replaceSessions",
+  "deleteSession",
+  "deleteSessions",
+  "clearSessions",
+  "createSessionTurn",
+  "updateSessionTurn",
+  "updateAuxiliarySessionThreadIfMatches",
+  "updateAuxiliarySessionRuntimeMetadataIfMatches",
+  "updateAuxiliarySessionIfMatches",
+  "updateTerminalAuxiliarySessionIfMatches",
+  "upsertAuxiliarySession",
+  "deleteAuxiliarySessionsForParent",
+  "deleteAuxiliarySessionsExceptParents",
+  "saveAuxiliaryDraft",
+  "consumeAuxiliaryDraft",
+  "updateAuxiliaryTitleIfMatches",
+  "updateAuxiliaryMessageBookmarkIfMatches",
+  "updateAuxiliaryExecutionOptionsIfMatches",
+  "updateAuxiliaryDisplayAnchorIfMatches",
+  "createCharacter",
+  "updateCharacterMetadata",
+  "updateCharacterDefinition",
+  "archiveCharacter",
+  "deleteCharacterRootDirectory",
+  "updateSettings",
+  "updateChatLayoutPreference",
+  "resetSettings",
+  "upsertProvider",
+  "clear",
+  "setSelectionPolicy",
+  "setWorktreeRoot",
+  "setWorktreeRepository",
+  "initializeSchema",
+  "recoverMateProfileFilesFromActiveRevision",
+  "updateMateGrowthApplyIntervalMinutes",
+  "updateMateGrowthSettings",
+  "createMate",
+  "updateMate",
+  "setMateAvatar",
+  "resetMate",
+  "deleteMateProjectionDirectory",
+  "applyProfileFiles",
+  "createPromptTemplate",
+  "updatePromptTemplate",
+  "deletePromptTemplate",
+  "enqueue",
+  "admit",
+  "verifySourceDisplayPosition",
 ]);
 
+/** Worker に公開するストア名に対応する、Worker 側の実体の集合。 */
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
 
 let instances: StorageInstances | null = null;
@@ -124,9 +354,13 @@ let conversationQueries: ConversationQueryCoordinator | null = null;
 
 /** Worker の受付フラグは一つの共有整数で、権限の所有者が値を格納する。 */
 function isRevocationState(value: unknown): value is SharedArrayBuffer {
-  return value instanceof SharedArrayBuffer && value.byteLength === Int32Array.BYTES_PER_ELEMENT;
+  return (
+    value instanceof SharedArrayBuffer &&
+    value.byteLength === Int32Array.BYTES_PER_ELEMENT
+  );
 }
 
+/** V6 スキーマを準備・検証し、Worker が所有するストアと許可するコマンドを構成する。 */
 function createStoreHandlers(data: StorageWorkerEntryData) {
   if (!data.dbPath || !data.userDataPath) {
     throw new Error("V6 storage worker requires dbPath and userDataPath.");
@@ -142,7 +376,11 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   if (!isValidV6Database(dbPath)) {
     throw new Error("V6 storage worker database schema validation failed.");
   }
-  const changed: import("./conversation-query.js").ConversationMutationSink = (table, id) => conversationQueries?.invalidate(table, id);
+  /** 会話の保存内容が変わった際に、該当する検索状態を無効化する。 */
+  const changed: import("./conversation-query.js").ConversationMutationSink = (
+    table,
+    id,
+  ) => conversationQueries?.invalidate(table, id);
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
   const queue = new SessionTurnQueueStorageV6(data.dbPath, changed);
@@ -151,65 +389,162 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const coordination = new CoordinationStorageV7(data.dbPath);
   const localPr = new LocalPrStorage(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
-  conversationQueries = new ConversationQueryCoordinator(data.generationId, { session_messages_v6: session, auxiliary_session_messages: auxiliary });
+  conversationQueries = new ConversationQueryCoordinator(data.generationId, {
+    session_messages_v6: session,
+    auxiliary_session_messages: auxiliary,
+  });
   const queries = conversationQueries;
   const character = new CharacterStorage(data.dbPath, data.userDataPath);
   const settings = new AppSettingsStorage(data.dbPath);
   const catalog = new ModelCatalogStorage(data.dbPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
-  instances = { session, turn, queue, execution, instructions, coordination, localPr, auxiliary, character, settings, catalog, mate, prompt };
+  instances = {
+    session,
+    turn,
+    queue,
+    execution,
+    instructions,
+    coordination,
+    localPr,
+    auxiliary,
+    character,
+    settings,
+    catalog,
+    mate,
+    prompt,
+  };
   const currentInstances = instances;
 
   return {
-    "conversation.query": (payload: unknown, context: StorageWorkerHandlerContext) => {
-      const input = payload as { store?: string; method?: string; args?: unknown[] };
-      if (!input || (input.store !== "session" && input.store !== "auxiliary") || !Array.isArray(input.args)
-        || typeof input.args[0] !== "string" || (input.method !== "searchConversation" && input.method !== "listConversationNavigator")) throw new TypeError("Conversation query command is invalid.");
-      return queries.request(input.store === "session" ? "session_messages_v6" : "auxiliary_session_messages", input.args[0],
-        input.args[1] as ConversationSearchRequest | ConversationNavigatorRequest, input.method === "searchConversation" ? "search" : "navigator", context.scheduleDb);
+    /** 会話検索・ナビゲーター要求を専用の処理へ渡し、DB 読み取りだけを共有の順序制御に載せる。 */
+    "conversation.query": (
+      payload: unknown,
+      context: StorageWorkerHandlerContext,
+    ) => {
+      const input = payload as {
+        store?: string;
+        method?: string;
+        args?: unknown[];
+      };
+      if (
+        !input ||
+        (input.store !== "session" && input.store !== "auxiliary") ||
+        !Array.isArray(input.args) ||
+        typeof input.args[0] !== "string" ||
+        (input.method !== "searchConversation" &&
+          input.method !== "listConversationNavigator")
+      )
+        throw new TypeError("Conversation query command is invalid.");
+      return queries.request(
+        input.store === "session"
+          ? "session_messages_v6"
+          : "auxiliary_session_messages",
+        input.args[0],
+        input.args[1] as
+          ConversationSearchRequest | ConversationNavigatorRequest,
+        input.method === "searchConversation" ? "search" : "navigator",
+        context.scheduleDb,
+      );
     },
-    "conversation.cancel": (payload: unknown) => queries.cancel(payload as ConversationQueryCancelRequest),
+    /** 会話検索の調停処理に取消要求を渡す。 */
+    "conversation.cancel": (payload: unknown) =>
+      queries.cancel(payload as ConversationQueryCancelRequest),
+    /** 親の初期化に必要なモデルカタログとセッション要約からの初期一覧を返す。 */
     "bundle.initialize": async () => ({
       activeModelCatalog: catalog.getCatalog(),
-      sessions: sessionSummariesToSessions(await session.listSessionSummaries()),
+      sessions: sessionSummariesToSessions(
+        await session.listSessionSummaries(),
+      ),
     }),
+    /** WAL が既定または指定のサイズを超えた場合に保守処理を試みる。 */
     "maintenance.truncateWal": (payload: unknown) => {
-      const maxWalBytes = payload && typeof payload === "object" && typeof (payload as { maxWalBytes?: unknown }).maxWalBytes === "number"
-        ? (payload as { maxWalBytes: number }).maxWalBytes
-        : undefined;
+      const maxWalBytes =
+        payload &&
+        typeof payload === "object" &&
+        typeof (payload as { maxWalBytes?: unknown }).maxWalBytes === "number"
+          ? (payload as { maxWalBytes: number }).maxWalBytes
+          : undefined;
       return truncateAppDatabaseWalIfLargerThan(dbPath, maxWalBytes);
     },
+    /** 許可済みのストアメソッドだけを呼び出し、該当する操作には渡されたターン受付情報を適用する。 */
     "store.call": (payload: unknown) => {
-      if (!payload || typeof payload !== "object") throw new Error("Storage worker payload is invalid.");
-      const input = payload as { store?: string; method?: string; args?: unknown[]; runtimeTurnAdmission?: WorkerRuntimeTurnAdmission };
-      if (!(input.store && input.method && Array.isArray(input.args)) || !Object.prototype.hasOwnProperty.call(STORE_METHODS, input.store)) {
+      if (!payload || typeof payload !== "object")
+        throw new Error("Storage worker payload is invalid.");
+      const input = payload as {
+        store?: string;
+        method?: string;
+        args?: unknown[];
+        runtimeTurnAdmission?: WorkerRuntimeTurnAdmission;
+      };
+      if (
+        !(input.store && input.method && Array.isArray(input.args)) ||
+        !Object.prototype.hasOwnProperty.call(STORE_METHODS, input.store)
+      ) {
         throw new Error("Storage worker store command is invalid.");
       }
-      const methods = STORE_METHODS[input.store as keyof typeof STORE_METHODS] as readonly string[];
-      if (!methods.includes(input.method)) throw new Error(`Storage worker method is not allowed: ${input.store}.${input.method}`);
-      if (["searchConversation", "listConversationNavigator", "cancelConversationQuery"].includes(input.method)) throw new Error("Conversation queries require their isolated command.");
-      const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
+      const methods = STORE_METHODS[
+        input.store as keyof typeof STORE_METHODS
+      ] as readonly string[];
+      if (!methods.includes(input.method))
+        throw new Error(
+          `Storage worker method is not allowed: ${input.store}.${input.method}`,
+        );
+      if (
+        [
+          "searchConversation",
+          "listConversationNavigator",
+          "cancelConversationQuery",
+        ].includes(input.method)
+      )
+        throw new Error("Conversation queries require their isolated command.");
+      const store = currentInstances[
+        input.store as keyof StorageInstances
+      ] as Record<string, AnyMethod>;
       const method = store[input.method];
-      if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "settings" || input.store === "coordination" || input.store === "execution" || input.store === "instructions" || input.store === "localPr" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmission !== undefined) {
+      if (typeof method !== "function")
+        throw new Error(
+          `Storage worker method is unavailable: ${input.store}.${input.method}`,
+        );
+      if (
+        (input.store === "settings" ||
+          input.store === "coordination" ||
+          input.store === "execution" ||
+          input.store === "instructions" ||
+          input.store === "localPr" ||
+          input.method === "setSessionAdditionalDirectories" ||
+          input.method === "readSessionHistory") &&
+        input.runtimeTurnAdmission !== undefined
+      ) {
         const authority = input.runtimeTurnAdmission;
         // Worker の境界で受け取ったフラグそのものを、評価する前に検証する。
-        if (!authority || !isRevocationState(authority.state) || (authority.binding !== undefined && (
-          !authority.binding || !isRevocationState(authority.binding.state)
-          || (authority.binding.expiresAtMs !== null && !Number.isFinite(authority.binding.expiresAtMs))
-        ))) throw new Error("Runtime turn admission state is invalid.");
-        return runWithRuntimeTurnAdmission(authority, () => method.apply(store, input.args!));
+        if (
+          !authority ||
+          !isRevocationState(authority.state) ||
+          (authority.binding !== undefined &&
+            (!authority.binding ||
+              !isRevocationState(authority.binding.state) ||
+              (authority.binding.expiresAtMs !== null &&
+                !Number.isFinite(authority.binding.expiresAtMs))))
+        )
+          throw new Error("Runtime turn admission state is invalid.");
+        return runWithRuntimeTurnAdmission(authority, () =>
+          method.apply(store, input.args!),
+        );
       }
       return method.apply(store, input.args);
     },
   };
 }
 
-export async function createStorageWorkerCommandHandlers(data: StorageWorkerEntryData) {
+/** Worker エントリーからの呼び出しで V6 ストアとコマンドハンドラーを準備する。 */
+export async function createStorageWorkerCommandHandlers(
+  data: StorageWorkerEntryData,
+) {
   return createStoreHandlers(data);
 }
 
+/** 会話検索の停止を待ってから、Worker が保持する各ストアを閉じる。 */
 export async function closeStorageWorker(): Promise<void> {
   await stopStorageConversationQueries();
   for (const store of Object.values(instances ?? {})) {
@@ -218,11 +553,13 @@ export async function closeStorageWorker(): Promise<void> {
   instances = null;
 }
 
+/** 実行中の会話検索を閉じ、調停処理への参照を解放する。 */
 export async function stopStorageConversationQueries(): Promise<void> {
   await conversationQueries?.close();
   conversationQueries = null;
 }
 
+/** V6 データベース用の Worker を起動し、親から各ストアを呼び出すプロキシを作る。 */
 export function createV6StorageWorkerBundle(options: {
   dbPath: string;
   userDataPath: string;
@@ -232,64 +569,154 @@ export function createV6StorageWorkerBundle(options: {
   diagnosticSink?: StorageOperationDiagnosticSink;
 }): V6StorageWorkerBundle {
   const sourceTypeScript = import.meta.url.endsWith(".ts");
-  const workerUrl = options.workerUrl ?? new URL(sourceTypeScript ? "./storage-worker-entry.ts" : "./storage-worker-entry.js", import.meta.url);
+  const workerUrl =
+    options.workerUrl ??
+    new URL(
+      sourceTypeScript
+        ? "./storage-worker-entry.ts"
+        : "./storage-worker-entry.js",
+      import.meta.url,
+    );
   const handlerModule = options.handlerModule
     ? String(options.handlerModule)
-    : new URL(sourceTypeScript ? "./storage-worker-bundle.ts" : "./storage-worker-bundle.js", import.meta.url).href;
-  const workerOptions = options.workerOptions ?? (sourceTypeScript ? { execArgv: ["--import", "tsx"] } : undefined);
+    : new URL(
+        sourceTypeScript
+          ? "./storage-worker-bundle.ts"
+          : "./storage-worker-bundle.js",
+        import.meta.url,
+      ).href;
+  const workerOptions =
+    options.workerOptions ??
+    (sourceTypeScript ? { execArgv: ["--import", "tsx"] } : undefined);
   const client = new StorageWorkerClient(workerUrl, {
     ...workerOptions,
-    ...(options.diagnosticSink ? { diagnosticSink: options.diagnosticSink } : {}),
+    ...(options.diagnosticSink
+      ? { diagnosticSink: options.diagnosticSink }
+      : {}),
     workerData: {
       handlerModule,
       dbPath: options.dbPath,
       userDataPath: options.userDataPath,
     },
   });
-  const stores = Object.fromEntries(Object.entries(STORE_METHODS).map(([store, methods]) => [
-    store,
-    new Proxy({}, {
-      get: (_target, property: string) => {
-        if (!methods.includes(property as never)) return undefined;
-        return (...args: unknown[]) => {
-          const coordinationInput = store === "coordination" && property === "execute"
-            ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
-          const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
-            && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
-          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || store === "coordination" || store === "execution" || store === "instructions" || store === "localPr" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
-          if (needsTurnAdmission) assertRuntimeTurnAdmission();
-          const runtimeTurnAdmission = needsTurnAdmission ? currentWorkerRuntimeTurnAdmission() : undefined;
-          return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
-            : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
-            property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmission ? { runtimeTurnAdmission } : {}) }, {
-            mutation: store === "coordination" ? coordinationMutation : store === "instructions" ? property === "set" : MUTATIONS.has(property),
-            operation: `${store}.${property}`,
-          });
-        };
-      },
-    }),
-  ])) as V6StorageWorkerBundle["stores"];
+  const stores = Object.fromEntries(
+    Object.entries(STORE_METHODS).map(([store, methods]) => [
+      store,
+      new Proxy(
+        {},
+        {
+          /** 公開したメソッドに限り、要求の種別・更新区分・必要なターン受付情報を付けて転送する。 */
+          get: (_target, property: string) => {
+            if (!methods.includes(property as never)) return undefined;
+            return (...args: unknown[]) => {
+              const coordinationInput =
+                store === "coordination" && property === "execute"
+                  ? (args[0] as {
+                      request: { operation: string };
+                      actor: { kind: string };
+                    })
+                  : null;
+              const coordinationMutation =
+                coordinationInput !== null &&
+                coordinationInput.request.operation !== "list" &&
+                (coordinationInput.request.operation !== "get" ||
+                  coordinationInput.actor.kind !== "user");
+              const needsTurnAdmission =
+                (store === "settings" &&
+                  [
+                    "setSelectionPolicy",
+                    "setWorktreeRoot",
+                    "setWorktreeRepository",
+                  ].includes(property)) ||
+                store === "coordination" ||
+                store === "execution" ||
+                store === "instructions" ||
+                store === "localPr" ||
+                property === "setSessionAdditionalDirectories" ||
+                property === "readSessionHistory" ||
+                property === "readBackgroundSource" ||
+                property === "captureBackgroundSource";
+              if (needsTurnAdmission) assertRuntimeTurnAdmission();
+              const runtimeTurnAdmission = needsTurnAdmission
+                ? currentWorkerRuntimeTurnAdmission()
+                : undefined;
+              return client.call(
+                property === "cancelConversationQuery"
+                  ? "conversation.cancel"
+                  : property === "searchConversation" ||
+                      property === "listConversationNavigator"
+                    ? "conversation.query"
+                    : "store.call",
+                property === "cancelConversationQuery"
+                  ? args[0]
+                  : {
+                      store,
+                      method: property,
+                      args,
+                      ...(runtimeTurnAdmission ? { runtimeTurnAdmission } : {}),
+                    },
+                {
+                  mutation:
+                    store === "coordination"
+                      ? coordinationMutation
+                      : store === "instructions"
+                        ? property === "set"
+                        : MUTATIONS.has(property),
+                  operation: `${store}.${property}`,
+                },
+              );
+            };
+          },
+        },
+      ),
+    ]),
+  ) as V6StorageWorkerBundle["stores"];
   return {
     client,
     stores,
-    initialize: () => client.call("bundle.initialize", null, { mutation: true, operation: "bundle.initialize" }),
-    truncateWal: () => client.call<boolean>("maintenance.truncateWal", null, { mutation: true, operation: "maintenance.truncateWal" }),
+    /** Worker に、親側の初期化で使う保存済み情報を要求する。 */
+    initialize: () =>
+      client.call("bundle.initialize", null, {
+        mutation: true,
+        operation: "bundle.initialize",
+      }),
+    /** Worker の所有する DB に対し、既定しきい値で WAL の切り詰めを要求する。 */
+    truncateWal: () =>
+      client.call<boolean>("maintenance.truncateWal", null, {
+        mutation: true,
+        operation: "maintenance.truncateWal",
+      }),
   };
 }
 
+/** 親側が使う V6 Worker の接続、保守操作、ストアプロキシをまとめた境界。 */
 export type V6StorageWorkerBundle = {
   client: StorageWorkerClient;
+  /** 起動後の Worker から、カタログとセッションの初期情報を取得する。 */
   initialize(): Promise<unknown>;
+  /** WAL のサイズを確認し、切り詰め処理を試みたか返す。 */
   truncateWal(): Promise<boolean>;
   stores: {
     localPr: LocalPrStore;
     coordination: AsyncStore<CoordinationStorageV7>;
     execution: AsyncStore<SessionExecutionReadStorage>;
     instructions: Pick<AsyncStore<SessionInstructionsStorage>, "get" | "set">;
-    session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
+    session: AsyncStore<
+      Omit<
+        SessionStorageV6,
+        "getConversationQuerySnapshot" | "readConversationQueryBatch"
+      >
+    > &
+      ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
     queue: AsyncStore<SessionTurnQueueStorageV6>;
-    auxiliary: AsyncStore<Omit<AuxiliarySessionStorageType, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
+    auxiliary: AsyncStore<
+      Omit<
+        AuxiliarySessionStorageType,
+        "getConversationQuerySnapshot" | "readConversationQueryBatch"
+      >
+    > &
+      ConversationQueryStore;
     character: AsyncStore<CharacterStorage>;
     settings: AsyncStore<AppSettingsStorage>;
     catalog: AsyncStore<ModelCatalogStorage>;

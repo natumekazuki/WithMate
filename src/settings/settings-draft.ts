@@ -7,6 +7,7 @@ import {
 } from "../../src-shared/settings/provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
+/** メッセージ送信時にアクションドックを閉じるかを下書きに設定する。 */
 export function updateAutoCollapseActionDockOnSend(
   draft: AppSettings,
   enabled: boolean,
@@ -17,6 +18,7 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+/** キャラクター定義をプロンプトに含めるかを下書きに設定する。 */
 export function updateCharacterDefinitionEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -27,6 +29,7 @@ export function updateCharacterDefinitionEnabled(
   };
 }
 
+/** 現在日付をプロンプトに含めるかを下書きに設定する。 */
 export function updateCurrentDateEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -37,6 +40,7 @@ export function updateCurrentDateEnabled(
   };
 }
 
+/** メッセージ送信時に最新位置へスクロールするかを下書きに設定する。 */
 export function updateScrollToLatestOnSend(
   draft: AppSettings,
   enabled: boolean,
@@ -47,6 +51,7 @@ export function updateScrollToLatestOnSend(
   };
 }
 
+/** プラットフォーム別の上書きを含むショートカット設定を下書きで置き換える。 */
 export function updateKeyboardShortcuts(
   draft: AppSettings,
   keyboardShortcuts: KeyboardShortcutSettings,
@@ -57,10 +62,15 @@ export function updateKeyboardShortcuts(
   };
 }
 
-export function updatePreviewWheelZoomStep(draft: AppSettings, value: number): AppSettings {
+/** プレビューのホイール操作一段分のズーム量を、数値のまま下書きに反映する。 */
+export function updatePreviewWheelZoomStep(
+  draft: AppSettings,
+  value: number,
+): AppSettings {
   return { ...draft, previewWheelZoomStep: value };
 }
 
+/** セッション応答完了の通知設定を下書きで更新する。承認通知と本文表示は変更しない。 */
 export function updateSessionTurnNotificationEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -71,6 +81,7 @@ export function updateSessionTurnNotificationEnabled(
   };
 }
 
+/** セッションの承認待ち通知だけを下書きで切り替える。 */
 export function updateSessionApprovalNotificationEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -78,6 +89,7 @@ export function updateSessionApprovalNotificationEnabled(
   return { ...draft, sessionApprovalNotificationEnabled: enabled };
 }
 
+/** 応答完了通知に応答のプレビューを載せるかを下書きで更新する。 */
 export function updateSessionTurnNotificationResponsePreviewEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -88,6 +100,7 @@ export function updateSessionTurnNotificationResponsePreviewEnabled(
   };
 }
 
+/** OS ログイン時に起動する設定の下書きだけを変更し、実際の登録は行わない。 */
 export function updateLaunchAtLoginEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -98,6 +111,7 @@ export function updateLaunchAtLoginEnabled(
   };
 }
 
+/** 用語集の能動登録上限を上下限内に収める。空欄や整数以外は null として保持する。 */
 export function updateGlossaryProactiveCreateLimitDraft(
   draft: AppSettings,
   rawValue: string,
@@ -115,6 +129,7 @@ export function updateGlossaryProactiveCreateLimitDraft(
   return { ...draft, glossaryProactiveCreateLimit: limit };
 }
 
+/** 対象プロバイダーの有効・無効をアプリ設定の下書き全体に反映する。 */
 export function updateCodingProviderEnabledDraft(
   draft: AppSettings,
   providerId: string,
@@ -122,10 +137,15 @@ export function updateCodingProviderEnabledDraft(
 ): AppSettings {
   return {
     ...draft,
-    codingProviderSettings: updateCodingProviderEnabled(draft, providerId, enabled),
+    codingProviderSettings: updateCodingProviderEnabled(
+      draft,
+      providerId,
+      enabled,
+    ),
   };
 }
 
+/** 対象プロバイダーのルートパス変更をアプリ設定の下書き全体に反映する。 */
 export function updateCodingProviderSkillRootPathDraft(
   draft: AppSettings,
   providerId: string,
@@ -133,10 +153,15 @@ export function updateCodingProviderSkillRootPathDraft(
 ): AppSettings {
   return {
     ...draft,
-    codingProviderSettings: updateCodingProviderSkillRootPath(draft, providerId, skillRootPath),
+    codingProviderSettings: updateCodingProviderSkillRootPath(
+      draft,
+      providerId,
+      skillRootPath,
+    ),
   };
 }
 
+/** 対象プロバイダーのスキル相対パスをアプリ設定の下書きに反映する。 */
 export function updateCodingProviderSkillRelativePathDraft(
   draft: AppSettings,
   providerId: string,
@@ -144,10 +169,15 @@ export function updateCodingProviderSkillRelativePathDraft(
 ): AppSettings {
   return {
     ...draft,
-    codingProviderSettings: updateCodingProviderSkillRelativePath(draft, providerId, skillRelativePath),
+    codingProviderSettings: updateCodingProviderSkillRelativePath(
+      draft,
+      providerId,
+      skillRelativePath,
+    ),
   };
 }
 
+/** 対象プロバイダーの指示ファイル相対パスをアプリ設定の下書きに反映する。 */
 export function updateCodingProviderInstructionRelativePathDraft(
   draft: AppSettings,
   providerId: string,
@@ -155,10 +185,15 @@ export function updateCodingProviderInstructionRelativePathDraft(
 ): AppSettings {
   return {
     ...draft,
-    codingProviderSettings: updateCodingProviderInstructionRelativePath(draft, providerId, instructionRelativePath),
+    codingProviderSettings: updateCodingProviderInstructionRelativePath(
+      draft,
+      providerId,
+      instructionRelativePath,
+    ),
   };
 }
 
+/** プロバイダー設定の一覧をコピーし、指定プロバイダーの有効フラグだけを変更する。 */
 export function updateCodingProviderEnabled(
   draft: AppSettings,
   providerId: string,
@@ -173,6 +208,7 @@ export function updateCodingProviderEnabled(
   };
 }
 
+/** 指定プロバイダーのルートパスだけを差し替えた一覧を返し、相対パスは保つ。 */
 export function updateCodingProviderSkillRootPath(
   draft: AppSettings,
   providerId: string,
@@ -187,6 +223,7 @@ export function updateCodingProviderSkillRootPath(
   };
 }
 
+/** スキルの相対パスだけを差し替えたプロバイダー設定一覧を返す。ルートとの結合は行わない。 */
 export function updateCodingProviderSkillRelativePath(
   draft: AppSettings,
   providerId: string,
@@ -201,6 +238,7 @@ export function updateCodingProviderSkillRelativePath(
   };
 }
 
+/** 指定プロバイダーの指示ファイル相対パスだけを差し替えた一覧を返す。 */
 export function updateCodingProviderInstructionRelativePath(
   draft: AppSettings,
   providerId: string,

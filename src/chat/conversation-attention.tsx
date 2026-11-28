@@ -1,12 +1,21 @@
 import { useRef } from "react";
 
-import { ComposerIcon, type ComposerIconName } from "./composer/composer-icon.js";
+import {
+  ComposerIcon,
+  type ComposerIconName,
+} from "./composer/composer-icon.js";
 
-export type ConversationAttentionKind = "approval" | "input-required" | "input-requested" | "new-messages";
+/** 承認待ち・必須／任意の入力依頼・未読を区別する通知種別。 */
+export type ConversationAttentionKind =
+  "approval" | "input-required" | "input-requested" | "new-messages";
 
 /** 現在の対象会話の保留中リクエスト一件、または未読状態。 */
-export type ConversationAttentionEntry = { kind: ConversationAttentionKind; key: string };
+export type ConversationAttentionEntry = {
+  kind: ConversationAttentionKind;
+  key: string;
+};
 
+/** 会話が隠れているときに通知と会話への導線が共有する表示状態。 */
 export type ConversationAttention = {
   /** 項目の持ち主である Main または選択中の Auxiliary の表示名。例：`Main`、`Aux · Review`。 */
   targetLabel: string;
@@ -17,7 +26,12 @@ export type ConversationAttention = {
   onShowConversation(kinds: readonly ConversationAttentionKind[]): void;
 };
 
-const ATTENTION_ORDER: readonly ConversationAttentionKind[] = ["approval", "input-required", "input-requested", "new-messages"];
+const ATTENTION_ORDER: readonly ConversationAttentionKind[] = [
+  "approval",
+  "input-required",
+  "input-requested",
+  "new-messages",
+];
 const ATTENTION_LABELS: Record<ConversationAttentionKind, string> = {
   approval: "Approval required",
   "input-required": "Input required",
@@ -31,6 +45,7 @@ const ATTENTION_ICONS: Record<ConversationAttentionKind, ComposerIconName> = {
   "new-messages": "new-messages",
 };
 
+/** 改行区切りの依頼 ID を個別に取り出す。依頼がなければ空配列を返す。 */
 function splitRequestIds(value: string): string[] {
   return value ? value.split("\n") : [];
 }
@@ -46,17 +61,38 @@ export function resolveConversationAttentionEntries(input: {
   if (!input.sessionId) return [];
   const owner = input.sessionId;
   return [
-    ...(input.approvalRequestId ? [{ kind: "approval" as const, key: `${owner}:approval:${input.approvalRequestId}` }] : []),
-    ...splitRequestIds(input.blockingElicitationRequestIds).map((id) => ({ kind: "input-required" as const, key: `${owner}:input:${id}` })),
-    ...splitRequestIds(input.optionalElicitationRequestIds).map((id) => ({ kind: "input-requested" as const, key: `${owner}:input:${id}` })),
-    ...(input.hasUnreadMessages ? [{ kind: "new-messages" as const, key: `${owner}:new-messages` }] : []),
+    ...(input.approvalRequestId
+      ? [
+          {
+            kind: "approval" as const,
+            key: `${owner}:approval:${input.approvalRequestId}`,
+          },
+        ]
+      : []),
+    ...splitRequestIds(input.blockingElicitationRequestIds).map((id) => ({
+      kind: "input-required" as const,
+      key: `${owner}:input:${id}`,
+    })),
+    ...splitRequestIds(input.optionalElicitationRequestIds).map((id) => ({
+      kind: "input-requested" as const,
+      key: `${owner}:input:${id}`,
+    })),
+    ...(input.hasUnreadMessages
+      ? [{ kind: "new-messages" as const, key: `${owner}:new-messages` }]
+      : []),
   ];
 }
 
-export function orderedAttentionKinds(entries: readonly ConversationAttentionEntry[]): ConversationAttentionKind[] {
-  return ATTENTION_ORDER.filter((kind) => entries.some((entry) => entry.kind === kind));
+/** 存在する通知種別を重複なく、承認待ちから未読までの表示優先順で返す。 */
+export function orderedAttentionKinds(
+  entries: readonly ConversationAttentionEntry[],
+): ConversationAttentionKind[] {
+  return ATTENTION_ORDER.filter((kind) =>
+    entries.some((entry) => entry.kind === kind),
+  );
 }
 
+/** 既知の項目と読み上げ中の項目を分けて保持し、同じ通知の繰り返しを防ぐ状態。 */
 export type AttentionAnnouncementState = {
   /** ユーザーに通知済み、または会話で表示済みの項目。 */
   known: ReadonlySet<string>;
@@ -67,7 +103,13 @@ export type AttentionAnnouncementState = {
   serial: number;
 };
 
-export const initialAttentionAnnouncementState: AttentionAnnouncementState = { known: new Set(), announced: new Set(), message: "", serial: 0 };
+/** 既知項目も読み上げもない通知の初期状態。 */
+export const initialAttentionAnnouncementState: AttentionAnnouncementState = {
+  known: new Set(),
+  announced: new Set(),
+  message: "",
+  serial: 0,
+};
 
 /**
  * 会話が非表示の間に出現した項目を通知する。再描画しても同じ項目は認識済みのままとし、
@@ -80,7 +122,9 @@ export function advanceAttentionAnnouncement(
   isConversationHidden: boolean,
   targetLabel: string,
 ): AttentionAnnouncementState {
-  const fresh = isConversationHidden ? entries.filter((entry) => !state.known.has(entry.key)) : [];
+  const fresh = isConversationHidden
+    ? entries.filter((entry) => !state.known.has(entry.key))
+    : [];
   const known = new Set(entries.map((entry) => entry.key));
   if (fresh.length > 0) {
     const kinds = orderedAttentionKinds(fresh);
@@ -88,31 +132,63 @@ export function advanceAttentionAnnouncement(
     const next = kinds.some((kind) => kind !== "new-messages")
       ? "Show the chat from the Action Dock to respond."
       : "Show the chat from the Action Dock to read them.";
-    return { known, announced: new Set(fresh.map((entry) => entry.key)), message: `${targetLabel}: ${labels}. ${next}`, serial: state.serial + 1 };
+    return {
+      known,
+      announced: new Set(fresh.map((entry) => entry.key)),
+      message: `${targetLabel}: ${labels}. ${next}`,
+      serial: state.serial + 1,
+    };
   }
-  const isMessageCurrent = isConversationHidden && [...state.announced].every((key) => known.has(key));
+  const isMessageCurrent =
+    isConversationHidden && [...state.announced].every((key) => known.has(key));
   const message = isMessageCurrent ? state.message : "";
-  return message === state.message && known.size === state.known.size && entries.every((entry) => state.known.has(entry.key))
+  return message === state.message &&
+    known.size === state.known.size &&
+    entries.every((entry) => state.known.has(entry.key))
     ? state
-    : { known, announced: isMessageCurrent ? state.announced : new Set(), message, serial: state.serial };
+    : {
+        known,
+        announced: isMessageCurrent ? state.announced : new Set(),
+        message,
+        serial: state.serial,
+      };
 }
 
 /** 会話の要確認事項について支援技術に読み上げさせる単一の通知。 */
-export function ConversationAttentionAnnouncement({ attention }: { attention?: ConversationAttention }) {
+export function ConversationAttentionAnnouncement({
+  attention,
+}: {
+  attention?: ConversationAttention;
+}) {
   const stateRef = useRef(initialAttentionAnnouncementState);
   const entries = attention?.entries ?? [];
-  stateRef.current = advanceAttentionAnnouncement(stateRef.current, entries, attention?.isConversationHidden ?? false, attention?.targetLabel ?? "");
+  stateRef.current = advanceAttentionAnnouncement(
+    stateRef.current,
+    entries,
+    attention?.isConversationHidden ?? false,
+    attention?.targetLabel ?? "",
+  );
   const { message, serial } = stateRef.current;
   return (
-    <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+    <span
+      className="visually-hidden"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       {message ? <span key={serial}>{message}</span> : null}
     </span>
   );
 }
 
 /** すべての Action Dock 行で共有する、アイコンを主とした非表示の会話への入口。 */
-export function ConversationAttentionButton({ attention }: { attention?: ConversationAttention }) {
-  if (!attention?.isConversationHidden || attention.entries.length === 0) return null;
+export function ConversationAttentionButton({
+  attention,
+}: {
+  attention?: ConversationAttention;
+}) {
+  if (!attention?.isConversationHidden || attention.entries.length === 0)
+    return null;
   const kinds = orderedAttentionKinds(attention.entries);
   const label = `${attention.targetLabel}: ${kinds.map((kind) => ATTENTION_LABELS[kind]).join(", ")}. Show Chat`;
   return (

@@ -1,7 +1,15 @@
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject, type SetStateAction } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 
 // アニメーションを待つのは表示形式の変更だけ。実行中の状態やリクエストの操作要素は待たない。
+/** 選択済みの表示形式と描画中の表示形式を分け、表示されているメッセージ本文だけを切り替える。 */
 export function useMessageViewTransition(
   mainRef: RefObject<HTMLElement | null>,
   auxiliaryRef: RefObject<HTMLElement | null>,
@@ -27,6 +35,7 @@ export function useMessageViewTransition(
   useLayoutEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedMotionRef.current = media;
+    /** 動きを減らす設定への変更やタブの非表示化に合わせ、演出を中止して最新の選択を反映する。 */
     const settle = () => {
       if (!media.matches && document.visibilityState !== "hidden") return;
       stopRef.current?.();
@@ -45,7 +54,12 @@ export function useMessageViewTransition(
   useLayoutEffect(() => {
     const ownerChanged = previousOwner.current !== owner;
     previousOwner.current = owner;
-    if (ownerChanged || !visible || document.visibilityState === "hidden" || reducedMotionRef.current?.matches) {
+    if (
+      ownerChanged ||
+      !visible ||
+      document.visibilityState === "hidden" ||
+      reducedMotionRef.current?.matches
+    ) {
       revealRef.current = false;
       opacityRef.current = new WeakMap();
       setRenderedMode(selectedMode);
@@ -53,38 +67,60 @@ export function useMessageViewTransition(
     }
     const fadingOut = selectedMode !== renderedMode;
     if (!fadingOut && !revealRef.current) return;
-    const bodies = [mainRef.current, auxiliaryRef.current].flatMap((root) => root
-      ? Array.from(root.querySelectorAll<HTMLElement>("[data-message-body] .rich-text"))
-        .filter((body) => body.getClientRects().length > 0)
-      : []);
+    const bodies = [mainRef.current, auxiliaryRef.current].flatMap((root) =>
+      root
+        ? Array.from(
+            root.querySelectorAll<HTMLElement>(
+              "[data-message-body] .rich-text",
+            ),
+          ).filter((body) => body.getClientRects().length > 0)
+        : [],
+    );
     if (!bodies.length) {
       revealRef.current = false;
       setRenderedMode(selectedMode);
       return;
     }
     let active = true;
-    const animations = bodies.map((body) => body.animate([
-      { opacity: opacityRef.current.get(body) ?? (fadingOut ? "1" : "0") },
-      { opacity: fadingOut ? "0" : "1" },
-    ], { duration: fadingOut ? 70 : 110, easing: "ease-out", fill: "forwards" }));
+    const animations = bodies.map((body) =>
+      body.animate(
+        [
+          { opacity: opacityRef.current.get(body) ?? (fadingOut ? "1" : "0") },
+          { opacity: fadingOut ? "0" : "1" },
+        ],
+        {
+          duration: fadingOut ? 70 : 110,
+          easing: "ease-out",
+          fill: "forwards",
+        },
+      ),
+    );
     opacityRef.current = new WeakMap();
+    /** 現在の透過度を引き継ぎ用に記録し、進行中の演出を一度だけ止める。 */
     const stop = () => {
       if (!active) return;
       active = false;
-      bodies.forEach((body) => opacityRef.current.set(body, window.getComputedStyle(body).opacity));
+      bodies.forEach((body) =>
+        opacityRef.current.set(body, window.getComputedStyle(body).opacity),
+      );
       animations.forEach((animation) => animation.cancel());
     };
     stopRef.current = stop;
     revealRef.current = fadingOut;
-    void Promise.all(animations.map((animation) => animation.finished)).then(() => {
-      if (!active) return;
-      if (fadingOut) {
-        setRenderedMode(selectedMode);
-      } else {
-        stop();
-        opacityRef.current = new WeakMap();
-      }
-    }, () => { /* キャンセルは最新の選択またはライフサイクルの後処理が担う。 */ });
+    void Promise.all(animations.map((animation) => animation.finished)).then(
+      () => {
+        if (!active) return;
+        if (fadingOut) {
+          setRenderedMode(selectedMode);
+        } else {
+          stop();
+          opacityRef.current = new WeakMap();
+        }
+      },
+      () => {
+        /* キャンセルは最新の選択またはライフサイクルの後処理が担う。 */
+      },
+    );
     return () => {
       stop();
       if (stopRef.current === stop) stopRef.current = null;

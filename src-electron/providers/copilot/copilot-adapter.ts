@@ -4,9 +4,30 @@ import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { CopilotClient, createAttributedPermissionResult, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type PermissionPromptRequest, type MessageOptions, type PermissionRequest, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
+import {
+  CopilotClient,
+  createAttributedPermissionResult,
+  RuntimeConnection,
+  type CopilotSession,
+  type JsonValue,
+  type PermissionHandler,
+  type PermissionPromptRequest,
+  type MessageOptions,
+  type PermissionRequest,
+  type SessionConfig,
+  type SessionEvent,
+} from "@github/copilot-sdk";
 
-import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type {
+  MessageOperation,
+  ProviderDiagnosticMetadata,
+  ProviderUsage,
+  LiveApprovalRequest,
+  LiveBackgroundTask,
+  LiveElicitationResponse,
+  LiveRunStep,
+  ProviderQuotaTelemetry,
+} from "../../../src-shared/session/runtime-state.js";
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
@@ -21,8 +42,20 @@ import {
   createDisabledWorkspaceSnapshotCapture,
   WORKSPACE_DIFF_CAPTURE_ENABLED,
 } from "../../files/workspace-diff-policy.js";
-import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
-import { ProviderTurnError, resolveRunWorkspacePath, type ApprovalDecisionSource, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import {
+  composeProviderPrompt,
+  isCanceledProviderMessage,
+} from "../provider-prompt.js";
+import {
+  ProviderTurnError,
+  resolveRunWorkspacePath,
+  type ApprovalDecisionSource,
+  type ProviderPromptComposition,
+  type ProviderTurnAdapter,
+  type RunSessionTurnInput,
+  type RunSessionTurnProgressHandler,
+  type RunSessionTurnResult,
+} from "../provider-runtime.js";
 import {
   captureWorkspaceSnapshot,
   type SnapshotCaptureStats,
@@ -51,20 +84,44 @@ import {
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
-import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
-import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection, buildLiveElicitationRequestFromCopilotUserInput } from "./copilot-elicitation.js";
+import {
+  buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection,
+  buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection,
+  readCopilotQuotaSnapshots,
+} from "./copilot-quota-telemetry.js";
+import {
+  buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection,
+  buildLiveElicitationRequestFromCopilotUserInput,
+} from "./copilot-elicitation.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
-import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
+import {
+  ProviderProgressDelivery,
+  ProviderProgressMap,
+} from "../provider-progress.js";
 
+/** 省略を含まない、Copilot SDK のセッション設定に渡せる推論深度。 */
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
-export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort | undefined {
+/** 未指定は設定から省き、SDK 非対応の推論深度は別の値に置き換えず拒否する。 */
+export function toCopilotReasoningEffort(
+  reasoningEffort: ModelReasoningEffort,
+): CopilotReasoningEffort | undefined {
   if (!reasoningEffort) return undefined;
-  if (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh" || reasoningEffort === "max") return reasoningEffort;
-  throw new Error(`GitHub Copilot SDK does not support reasoning effort ${reasoningEffort}.`);
+  if (
+    reasoningEffort === "low" ||
+    reasoningEffort === "medium" ||
+    reasoningEffort === "high" ||
+    reasoningEffort === "xhigh" ||
+    reasoningEffort === "max"
+  )
+    return reasoningEffort;
+  throw new Error(
+    `GitHub Copilot SDK does not support reasoning effort ${reasoningEffort}.`,
+  );
 }
 
+/** 設定キーで再利用する SDK セッション。承認の委譲先は毎ターン差し替え、バックグラウンド監視は接続とともに保持する。 */
 type CachedCopilotSession = {
   session: CopilotSession;
   settingsKey: string;
@@ -73,6 +130,7 @@ type CachedCopilotSession = {
   unsubscribeBackgroundObserver?: () => void;
 };
 
+/** ツール呼び出しや承認イベントを操作履歴に反映するための更新内容。表示しない操作も履歴には残す。 */
 type CopilotCommandStepState = {
   stepId: string;
   summary: string;
@@ -84,8 +142,10 @@ type CopilotCommandStepState = {
   visible?: boolean;
 };
 
+/** サイズを制限した、未対応イベントの診断に渡せる項目。 */
 type CopilotStableRawItem = BoundedProviderRawItem;
 
+/** Copilot の診断をアプリのログ記録先へ渡す形式。 */
 type CopilotAdapterLogInput = {
   level: "debug" | "info" | "warn" | "error";
   kind: string;
@@ -94,6 +154,7 @@ type CopilotAdapterLogInput = {
   error?: { name?: string; message: string; stack?: string };
 };
 
+/** SDK イベントからターン中の表示と保存用の結果を別々に組み立てるための状態。 */
 type CopilotTurnStreamState = {
   outputProjection: CopilotOutputProjection;
   liveSteps: ProviderProgressMap<LiveRunStep>;
@@ -111,16 +172,36 @@ type CopilotTurnStreamState = {
   streamErrorMessage: string;
 };
 
+/** SDK へ渡す接続設定、解決済みモデル指定、接続の再利用判定に使うキー。 */
 export type CopilotSessionSettings = {
   config: SessionConfig & { onPermissionRequest: PermissionHandler };
   selection: ResolvedModelSelection;
   settingsKey: string;
 };
 
-type CopilotSessionConnector = Pick<CopilotClient, "createSession" | "resumeSession">;
+/** セッションの新規作成と保存済みスレッドの再開に必要な SDK の窓口。 */
+type CopilotSessionConnector = Pick<
+  CopilotClient,
+  "createSession" | "resumeSession"
+>;
 
-const COPILOT_SHELL_TOOL_NAMES = new Set(["shell", "powershell", "bash", "terminal"]);
-const COPILOT_MUTATING_TOOL_NAMES = new Set(["create", "write", "edit", "replace", "insert", "move", "rename", "delete", "remove"]);
+const COPILOT_SHELL_TOOL_NAMES = new Set([
+  "shell",
+  "powershell",
+  "bash",
+  "terminal",
+]);
+const COPILOT_MUTATING_TOOL_NAMES = new Set([
+  "create",
+  "write",
+  "edit",
+  "replace",
+  "insert",
+  "move",
+  "rename",
+  "delete",
+  "remove",
+]);
 const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
   "pending_messages.modified",
   "function",
@@ -137,6 +218,7 @@ const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
 
 const require = createRequire(import.meta.url);
 
+/** SDK が起動する CLI の環境へ実行主体の設定を重ね、警告の標準エラー出力による起動失敗を防ぐ。 */
 export function buildCopilotClientEnv(
   baseEnv: NodeJS.ProcessEnv,
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
@@ -152,13 +234,18 @@ export function buildCopilotClientEnv(
   };
 }
 
+/** OS とアーキテクチャに対応するネイティブ CLI パッケージ名を返す。対応がなければ null を返す。 */
 export function resolveNativeCopilotPackageName(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string | null {
-  return resolveProviderBinarySpec("copilot", platform, arch)?.packageSpecifier ?? null;
+  return (
+    resolveProviderBinarySpec("copilot", platform, arch)?.packageSpecifier ??
+    null
+  );
 }
 
+/** 同梱バイナリ、開発用ネイティブパッケージ、ローカルコマンドの順に探し、見つからなければコマンド名を返す。 */
 export function resolveCopilotCliPath(
   resolvePackagePath: (specifier: string) => string = require.resolve,
   fileExists: (candidate: string) => boolean = existsSync,
@@ -166,18 +253,35 @@ export function resolveCopilotCliPath(
   arch: string = process.arch,
   resourcesPath: string | undefined = process.resourcesPath,
 ): string {
-  const packagedBinary = resolvePackagedProviderBinaryPath("copilot", resourcesPath, fileExists, platform, arch);
+  const packagedBinary = resolvePackagedProviderBinaryPath(
+    "copilot",
+    resourcesPath,
+    fileExists,
+    platform,
+    arch,
+  );
   if (packagedBinary) {
     return packagedBinary;
   }
 
-  const nativeBinary = resolveDevelopmentProviderBinaryPath("copilot", resolvePackagePath, fileExists, platform, arch);
+  const nativeBinary = resolveDevelopmentProviderBinaryPath(
+    "copilot",
+    resolvePackagePath,
+    fileExists,
+    platform,
+    arch,
+  );
   if (nativeBinary) {
     return nativeBinary;
   }
 
   const commandFileName = platform === "win32" ? "copilot.cmd" : "copilot";
-  const localNodeModulesCommand = path.resolve(process.cwd(), "node_modules", ".bin", commandFileName);
+  const localNodeModulesCommand = path.resolve(
+    process.cwd(),
+    "node_modules",
+    ".bin",
+    commandFileName,
+  );
   if (fileExists(localNodeModulesCommand)) {
     return localNodeModulesCommand;
   }
@@ -185,12 +289,16 @@ export function resolveCopilotCliPath(
   return commandFileName;
 }
 
+/** プロバイダー、認証設定、実行主体の組が変わると SDK クライアントを共有しないようにする。 */
 function buildCopilotClientKeyFromAppSettings(
   providerId: string,
   appSettings: RunSessionTurnInput["appSettings"],
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
 ): string {
-  const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+  const codingApiKey = getProviderAppSettings(
+    appSettings,
+    providerId,
+  ).apiKey.trim();
   return JSON.stringify([
     providerId,
     codingApiKey || null,
@@ -198,7 +306,11 @@ function buildCopilotClientKeyFromAppSettings(
   ]);
 }
 
-function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
+/** ターンの実行主体を含め、設定だけで接続するクライアントと区別する。 */
+function buildCopilotClientKey(
+  providerId: string,
+  input: RunSessionTurnInput,
+): string {
   return buildCopilotClientKeyFromAppSettings(
     providerId,
     input.appSettings,
@@ -206,22 +318,33 @@ function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): 
   );
 }
 
-export function isRecoverableCopilotConnectionErrorMessage(message: string): boolean {
+/** 接続切断と終了コード 0 の CLI 停止だけを、接続準備のやり直し候補にする。 */
+export function isRecoverableCopilotConnectionErrorMessage(
+  message: string,
+): boolean {
   const normalized = message.toLowerCase();
-  return normalized.includes("connection is closed.")
-    || normalized.includes("cli server exited unexpectedly with code 0")
-    || normalized.includes("cli server exited with code 0");
+  return (
+    normalized.includes("connection is closed.") ||
+    normalized.includes("cli server exited unexpectedly with code 0") ||
+    normalized.includes("cli server exited with code 0")
+  );
 }
 
-function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolean {
+/** SDK がセッションまたはスレッドの不在を報告した場合を、他の再開失敗と区別する。 */
+function isRecoverableCopilotMissingSessionErrorMessage(
+  message: string,
+): boolean {
   const normalized = message.toLowerCase();
-  return normalized.includes("sessionnotfound")
-    || normalized.includes("session_not_found")
-    || normalized.includes("thread_not_found")
-    || normalized.includes("session not found")
-    || normalized.includes("thread not found");
+  return (
+    normalized.includes("sessionnotfound") ||
+    normalized.includes("session_not_found") ||
+    normalized.includes("thread_not_found") ||
+    normalized.includes("session not found") ||
+    normalized.includes("thread not found")
+  );
 }
 
+/** 未指定は省き、文字列はそのまま、他の値は整形した JSON または文字列表現にする。 */
 function stringifyUnknown(value: unknown): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -238,7 +361,10 @@ function stringifyUnknown(value: unknown): string | undefined {
   }
 }
 
-function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindingRedactor(null)): CopilotTurnStreamState {
+/** 出力の組み立て、進捗差分、操作履歴の蓄積を空の状態から始める。 */
+function createCopilotTurnStreamState(
+  redactor = createProviderAgentRuntimeBindingRedactor(null),
+): CopilotTurnStreamState {
   return {
     liveSteps: new ProviderProgressMap<LiveRunStep>(),
     operationSteps: new Map<string, LiveRunStep>(),
@@ -257,22 +383,35 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
   };
 }
 
-function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: CopilotCommandStepState): void {
+/** 操作の詳細をプレビューに収めて履歴を更新し、表示対象だけを進捗にも反映する。 */
+function updateCopilotCommandStep(
+  state: CopilotTurnStreamState,
+  nextState: CopilotCommandStepState,
+): void {
   const details = toProviderTextPreview(nextState.details);
   const step: LiveRunStep = {
     id: nextState.stepId,
     type: nextState.type ?? "command_execution",
     summary: nextState.summary,
     details,
-    ...(nextState.exitCode !== undefined ? { exitCode: nextState.exitCode } : {}),
+    ...(nextState.exitCode !== undefined
+      ? { exitCode: nextState.exitCode }
+      : {}),
     ...(nextState.error ? { error: nextState.error } : {}),
-    ...(nextState.details !== undefined ? { truncated: state.operationSteps.get(nextState.stepId)?.truncated === true || details !== nextState.details } : {}),
+    ...(nextState.details !== undefined
+      ? {
+          truncated:
+            state.operationSteps.get(nextState.stepId)?.truncated === true ||
+            details !== nextState.details,
+        }
+      : {}),
     status: nextState.status,
   };
   state.operationSteps.set(nextState.stepId, step);
   if (nextState.visible !== false) state.liveSteps.set(nextState.stepId, step);
 }
 
+/** 推論 ID ごとの断片から空白だけの項目を除き、段落として表示する。 */
 function refreshCopilotReasoningText(state: CopilotTurnStreamState): void {
   state.reasoningText = Array.from(state.reasoningDraftsById.values())
     .map((content) => content.trim())
@@ -289,12 +428,16 @@ const COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS = new Set([
   "approved-for-location",
 ]);
 
-export function getCopilotPermissionCompletedLiveStatus(resultKind: string): LiveRunStep["status"] {
+/** 承認済みの操作は実行中に進め、未承認の操作は失敗として表示する。 */
+export function getCopilotPermissionCompletedLiveStatus(
+  resultKind: string,
+): LiveRunStep["status"] {
   return COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS.has(resultKind)
     ? "in_progress"
     : "failed";
 }
 
+/** SDK イベントをターンの出力、進捗、利用状況へ反映し、未対応の安定イベントは種別と時刻だけを診断に残す。 */
 function applyCopilotTurnEvent(args: {
   event: SessionEvent;
   state: CopilotTurnStreamState;
@@ -312,7 +455,8 @@ function applyCopilotTurnEvent(args: {
     case "assistant.message": {
       state.outputProjection.apply(event);
       state.assistantText = state.outputProjection.project().assistantText;
-      state.lastNonEmptyAssistantMessageText = state.outputProjection.lastNonEmptyText;
+      state.lastNonEmptyAssistantMessageText =
+        state.outputProjection.lastNonEmptyText;
       break;
     }
     case "assistant.usage":
@@ -330,7 +474,8 @@ function applyCopilotTurnEvent(args: {
       }
       break;
     case "assistant.reasoning_delta": {
-      const currentDraft = state.reasoningDraftsById.get(event.data.reasoningId) ?? "";
+      const currentDraft =
+        state.reasoningDraftsById.get(event.data.reasoningId) ?? "";
       const nextDraft = currentDraft + event.data.deltaContent;
       state.reasoningDraftsById.set(event.data.reasoningId, nextDraft);
       refreshCopilotReasoningText(state);
@@ -387,7 +532,10 @@ function applyCopilotTurnEvent(args: {
       updateCopilotCommandStep(state, {
         stepId,
         summary: current.summary,
-        details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
+        details: appendDetail(
+          current.details,
+          `permission: ${event.data.result.kind}`,
+        ),
         status: getCopilotPermissionCompletedLiveStatus(event.data.result.kind),
       });
       break;
@@ -400,7 +548,14 @@ function applyCopilotTurnEvent(args: {
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
           summary:
-            current?.summary ?? (visible ? buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath) : event.data.toolName),
+            current?.summary ??
+            (visible
+              ? buildCopilotToolSummary(
+                  event.data.toolName,
+                  event.data.arguments,
+                  workspacePath,
+                )
+              : event.data.toolName),
           details: current?.details,
           status: "in_progress",
           type: visible ? "command_execution" : "tool_call",
@@ -416,8 +571,14 @@ function applyCopilotTurnEvent(args: {
 
       updateCopilotCommandStep(state, {
         stepId: event.data.toolCallId,
-        summary: current?.summary ?? state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool",
-        details: appendDetail(current?.details, state.redactor.sanitizeText(event.data.partialOutput)),
+        summary:
+          current?.summary ??
+          state.toolNamesByCallId.get(event.data.toolCallId) ??
+          "tool",
+        details: appendDetail(
+          current?.details,
+          state.redactor.sanitizeText(event.data.partialOutput),
+        ),
         status: "in_progress",
         type: current?.type ?? "tool_call",
         visible: state.liveSteps.has(event.data.toolCallId),
@@ -427,18 +588,43 @@ function applyCopilotTurnEvent(args: {
     case "tool.execution_complete":
       {
         const current = state.operationSteps.get(event.data.toolCallId);
-        const toolName = state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool";
-        const visible = state.liveSteps.has(event.data.toolCallId) || isCopilotVisibleToolName(toolName);
+        const toolName =
+          state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool";
+        const visible =
+          state.liveSteps.has(event.data.toolCallId) ||
+          isCopilotVisibleToolName(toolName);
         updateCopilotCommandStep(state, {
           stepId: event.data.toolCallId,
-          summary: current?.summary ?? (visible ? buildCopilotToolSummary(toolName, undefined, workspacePath) : toolName),
-          details: appendDetail(current?.details, state.redactor.sanitize(extractToolExecutionDetails(event))),
+          summary:
+            current?.summary ??
+            (visible
+              ? buildCopilotToolSummary(toolName, undefined, workspacePath)
+              : toolName),
+          details: appendDetail(
+            current?.details,
+            state.redactor.sanitize(extractToolExecutionDetails(event)),
+          ),
           status: event.data.success ? "completed" : "failed",
           type: visible ? "command_execution" : "tool_call",
           visible,
-          exitCode: event.data.result?.contents?.find((content) => content.type === "terminal")?.exitCode,
-          error: event.data.error ? { message: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.message)) ?? "",
-            ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.code)) } : {}) } : undefined,
+          exitCode: event.data.result?.contents?.find(
+            (content) => content.type === "terminal",
+          )?.exitCode,
+          error: event.data.error
+            ? {
+                message:
+                  toProviderTextPreview(
+                    state.redactor.sanitizeText(event.data.error.message),
+                  ) ?? "",
+                ...(typeof event.data.error.code === "string"
+                  ? {
+                      code: toProviderTextPreview(
+                        state.redactor.sanitizeText(event.data.error.code),
+                      ),
+                    }
+                  : {}),
+              }
+            : undefined,
         });
       }
       break;
@@ -450,12 +636,18 @@ function applyCopilotTurnEvent(args: {
       break;
   }
 
-  if (!shouldDropCopilotRawEvent(event) && !SUPPORTED_COPILOT_EVENT_TYPES.has(event.type)) {
-    const sanitized = boundProviderRawItem(state.redactor.sanitize({ type: event.type, timestamp: event.timestamp }));
+  if (
+    !shouldDropCopilotRawEvent(event) &&
+    !SUPPORTED_COPILOT_EVENT_TYPES.has(event.type)
+  ) {
+    const sanitized = boundProviderRawItem(
+      state.redactor.sanitize({ type: event.type, timestamp: event.timestamp }),
+    );
     state.providerMetadata.push(...buildCopilotProviderMetadata([sanitized]));
   }
 }
 
+/** テストのイベント列を実際の投影処理へ通し、進捗に表示された操作を返す。 */
 export function collectCopilotLiveStepsFromEventsForTesting(
   events: SessionEvent[],
   workspacePath = "C:/workspace",
@@ -474,17 +666,25 @@ export function collectCopilotLiveStepsFromEventsForTesting(
   return Array.from(state.liveSteps.values());
 }
 
+/** テストのイベント列から、進捗に出ないツール呼び出しも含めた保存用操作を得る。 */
 export function collectCopilotMessageOperationsFromEventsForTesting(
   events: SessionEvent[],
   workspacePath = "C:/workspace",
 ): MessageOperation[] {
   const state = createCopilotTurnStreamState();
   for (const event of events) {
-    applyCopilotTurnEvent({ event, state, providerId: "copilot", sessionId: "session-1", workspacePath });
+    applyCopilotTurnEvent({
+      event,
+      state,
+      providerId: "copilot",
+      sessionId: "session-1",
+      workspacePath,
+    });
   }
   return toMessageOperations(state.operationSteps);
 }
 
+/** テストのイベント列を適用し、差分と確定イベントを統合した推論の表示文を返す。 */
 export function collectCopilotReasoningTextFromEventsForTesting(
   events: SessionEvent[],
   workspacePath = "C:/workspace",
@@ -503,7 +703,11 @@ export function collectCopilotReasoningTextFromEventsForTesting(
   return state.reasoningText;
 }
 
-function appendDetail(current: string | undefined, next: string | undefined): string | undefined {
+/** 空白だけの詳細や既存の文面に含まれる追記を除いて、操作の詳細を改行で連結する。 */
+function appendDetail(
+  current: string | undefined,
+  next: string | undefined,
+): string | undefined {
   if (!next?.trim()) {
     return current;
   }
@@ -519,13 +723,16 @@ function appendDetail(current: string | undefined, next: string | undefined): st
   return `${current}\n${next}`;
 }
 
-
-
+/** SDK のツール名を前後の空白と大文字小文字に依存せず比較できる形にする。 */
 function normalizeCopilotToolName(toolName: string): string {
   return toolName.trim().toLowerCase();
 }
 
-function getStringArgument(argumentsValue: Record<string, unknown> | undefined, keys: string[]): string | null {
+/** 候補キーを優先順に調べ、最初の空白でない文字列引数を返す。 */
+function getStringArgument(
+  argumentsValue: Record<string, unknown> | undefined,
+  keys: string[],
+): string | null {
   if (!argumentsValue) {
     return null;
   }
@@ -540,18 +747,32 @@ function getStringArgument(argumentsValue: Record<string, unknown> | undefined, 
   return null;
 }
 
-function compactCopilotTargetPath(targetPath: string, workspacePath: string): string {
+/** 区切りをスラッシュにそろえ、ワークスペース配下のパスだけを表示用に相対化する。 */
+function compactCopilotTargetPath(
+  targetPath: string,
+  workspacePath: string,
+): string {
   const normalizedTarget = targetPath.replace(/\\/g, "/");
-  const normalizedWorkspace = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
-  const relativePath = path.posix.relative(normalizedWorkspace, normalizedTarget);
+  const normalizedWorkspace = workspacePath
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "");
+  const relativePath = path.posix.relative(
+    normalizedWorkspace,
+    normalizedTarget,
+  );
 
-  if (relativePath && !relativePath.startsWith("../") && !path.posix.isAbsolute(relativePath)) {
+  if (
+    relativePath &&
+    !relativePath.startsWith("../") &&
+    !path.posix.isAbsolute(relativePath)
+  ) {
     return relativePath;
   }
 
   return normalizedTarget;
 }
 
+/** 書き込みの意図から表示用の操作名を推定し、該当しなければ write とする。 */
 function inferCopilotWriteAction(intention: string | undefined): string {
   const normalized = intention?.trim().toLowerCase() ?? "";
   if (normalized.includes("create")) {
@@ -566,18 +787,28 @@ function inferCopilotWriteAction(intention: string | undefined): string {
     return "move";
   }
 
-  if (normalized.includes("replace") || normalized.includes("edit") || normalized.includes("modify") || normalized.includes("update")) {
+  if (
+    normalized.includes("replace") ||
+    normalized.includes("edit") ||
+    normalized.includes("modify") ||
+    normalized.includes("update")
+  ) {
     return "edit";
   }
 
   return "write";
 }
 
+/** シェルまたは変更系のツールを実行中の操作欄へ表示する対象とする。 */
 export function isCopilotVisibleToolName(toolName: string): boolean {
   const normalized = normalizeCopilotToolName(toolName);
-  return COPILOT_SHELL_TOOL_NAMES.has(normalized) || COPILOT_MUTATING_TOOL_NAMES.has(normalized);
+  return (
+    COPILOT_SHELL_TOOL_NAMES.has(normalized) ||
+    COPILOT_MUTATING_TOOL_NAMES.has(normalized)
+  );
 }
 
+/** シェルではコマンド、変更系では対象パスを表示し、移動と改名では移動元と移動先を示す。 */
 export function buildCopilotToolSummary(
   toolName: string,
   argumentsValue: JsonValue | undefined,
@@ -586,15 +817,40 @@ export function buildCopilotToolSummary(
   const normalizedToolName = normalizeCopilotToolName(toolName);
   const argumentRecord = isRecord(argumentsValue) ? argumentsValue : undefined;
   if (COPILOT_SHELL_TOOL_NAMES.has(normalizedToolName)) {
-    return extractShellCommandFromArguments(argumentRecord) ?? normalizedToolName;
+    return (
+      extractShellCommandFromArguments(argumentRecord) ?? normalizedToolName
+    );
   }
 
-  const targetPath = getStringArgument(argumentRecord, ["path", "filePath", "fileName", "target", "targetPath", "destination", "destinationPath"]);
+  const targetPath = getStringArgument(argumentRecord, [
+    "path",
+    "filePath",
+    "fileName",
+    "target",
+    "targetPath",
+    "destination",
+    "destinationPath",
+  ]);
   if (normalizedToolName === "move" || normalizedToolName === "rename") {
-    const sourcePath = getStringArgument(argumentRecord, ["source", "sourcePath", "from", "oldPath"]);
-    const destinationPath = getStringArgument(argumentRecord, ["destination", "destinationPath", "to", "newPath", "path"]);
-    const formattedSource = sourcePath ? compactCopilotTargetPath(sourcePath, workspacePath) : null;
-    const formattedDestination = destinationPath ? compactCopilotTargetPath(destinationPath, workspacePath) : null;
+    const sourcePath = getStringArgument(argumentRecord, [
+      "source",
+      "sourcePath",
+      "from",
+      "oldPath",
+    ]);
+    const destinationPath = getStringArgument(argumentRecord, [
+      "destination",
+      "destinationPath",
+      "to",
+      "newPath",
+      "path",
+    ]);
+    const formattedSource = sourcePath
+      ? compactCopilotTargetPath(sourcePath, workspacePath)
+      : null;
+    const formattedDestination = destinationPath
+      ? compactCopilotTargetPath(destinationPath, workspacePath)
+      : null;
     if (formattedSource && formattedDestination) {
       return `${normalizedToolName} ${formattedSource} -> ${formattedDestination}`;
     }
@@ -611,15 +867,20 @@ export function buildCopilotToolSummary(
   return normalizedToolName;
 }
 
+/** 一時イベント、差分、既知の内部通知は未対応イベントの診断対象から除く。 */
 function shouldDropCopilotRawEvent(event: SessionEvent): boolean {
   if ("ephemeral" in event && event.ephemeral === true) {
     return true;
   }
 
   const eventType = String(event.type);
-  return eventType.endsWith("_delta") || COPILOT_DROPPED_RAW_EVENT_TYPES.has(eventType);
+  return (
+    eventType.endsWith("_delta") ||
+    COPILOT_DROPPED_RAW_EVENT_TYPES.has(eventType)
+  );
 }
 
+/** 権限の開始イベントと SDK の承認要求から、表示に使う共通項目だけを受け取る形式。 */
 type CopilotPermissionRequestLike = {
   kind: string;
   toolCallId?: string;
@@ -629,19 +890,34 @@ type CopilotPermissionRequestLike = {
   intention?: unknown;
 };
 
-function buildCopilotPermissionSummary(request: CopilotPermissionRequestLike, workspacePath: string): string | null {
-  if (request.kind === "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+/** シェルのコマンドまたは書き込みの操作名と対象を要約し、どちらも得られなければ null を返す。 */
+function buildCopilotPermissionSummary(
+  request: CopilotPermissionRequestLike,
+  workspacePath: string,
+): string | null {
+  if (
+    request.kind === "shell" &&
+    typeof request.fullCommandText === "string" &&
+    request.fullCommandText.trim()
+  ) {
     return request.fullCommandText.trim();
   }
 
-  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
-    const action = inferCopilotWriteAction(typeof request.intention === "string" ? request.intention : undefined);
+  if (
+    request.kind === "write" &&
+    typeof request.fileName === "string" &&
+    request.fileName.trim()
+  ) {
+    const action = inferCopilotWriteAction(
+      typeof request.intention === "string" ? request.intention : undefined,
+    );
     return `${action} ${compactCopilotTargetPath(request.fileName, workspacePath)}`;
   }
 
   return null;
 }
 
+/** 権限の種類に対応する承認用の見出しを選び、未知の種類には共通の見出しを使う。 */
 function buildCopilotApprovalTitle(kind: string): string {
   switch (kind) {
     case "shell":
@@ -661,35 +937,57 @@ function buildCopilotApprovalTitle(kind: string): string {
   }
 }
 
-function buildCopilotApprovalDetails(request: CopilotPermissionRequestLike, workspacePath: string): string | undefined {
+/** 書き込みの意図と対象、または非シェル要求のコマンドを承認の補足としてまとめる。 */
+function buildCopilotApprovalDetails(
+  request: CopilotPermissionRequestLike,
+  workspacePath: string,
+): string | undefined {
   const detailParts: string[] = [];
 
-  if (request.kind === "write" && typeof request.intention === "string" && request.intention.trim()) {
+  if (
+    request.kind === "write" &&
+    typeof request.intention === "string" &&
+    request.intention.trim()
+  ) {
     detailParts.push(`intent: ${request.intention.trim()}`);
   }
 
-  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
-    detailParts.push(`target: ${compactCopilotTargetPath(request.fileName, workspacePath)}`);
+  if (
+    request.kind === "write" &&
+    typeof request.fileName === "string" &&
+    request.fileName.trim()
+  ) {
+    detailParts.push(
+      `target: ${compactCopilotTargetPath(request.fileName, workspacePath)}`,
+    );
   }
 
-  if (request.kind !== "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+  if (
+    request.kind !== "shell" &&
+    typeof request.fullCommandText === "string" &&
+    request.fullCommandText.trim()
+  ) {
     detailParts.push(request.fullCommandText.trim());
   }
 
   return detailParts.length > 0 ? detailParts.join("\n") : undefined;
 }
 
+/** SDK の権限要求を、要求 ID と警告を保持したアプリの直接承認要求に変換する。 */
 function buildCopilotApprovalRequest(
   request: PermissionRequest,
   requestId: string,
   providerId: string,
   workspacePath: string,
 ): LiveApprovalRequest {
-  const requestLike = request as PermissionRequest & CopilotPermissionRequestLike;
-  const summary = buildCopilotPermissionSummary(requestLike, workspacePath) ?? request.kind;
-  const warning = typeof requestLike.warning === "string" && requestLike.warning.trim()
-    ? requestLike.warning.trim()
-    : undefined;
+  const requestLike = request as PermissionRequest &
+    CopilotPermissionRequestLike;
+  const summary =
+    buildCopilotPermissionSummary(requestLike, workspacePath) ?? request.kind;
+  const warning =
+    typeof requestLike.warning === "string" && requestLike.warning.trim()
+      ? requestLike.warning.trim()
+      : undefined;
 
   return {
     requestId,
@@ -703,6 +1001,7 @@ function buildCopilotApprovalRequest(
   };
 }
 
+/** フォルダーはディレクトリ、画像を含むその他の添付はファイルとして SDK に渡す。 */
 export function buildCopilotMessageAttachments(
   attachments: RunSessionTurnInput["attachments"],
 ): NonNullable<MessageOptions["attachments"]> {
@@ -713,6 +1012,7 @@ export function buildCopilotMessageAttachments(
   }));
 }
 
+/** 固定指示などの合成済み本文を SDK の既定指示へ追記し、空白だけなら設定しない。 */
 export function buildCopilotSystemMessage(
   prompt: ProviderPromptComposition,
 ): SessionConfig["systemMessage"] | undefined {
@@ -725,9 +1025,6 @@ export function buildCopilotSystemMessage(
     content: prompt.systemBodyText,
   };
 }
-
-
-
 
 const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "user.message",
@@ -744,9 +1041,16 @@ const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "tool.execution_complete",
 ]);
 
-export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRawItem[]): ProviderDiagnosticMetadata[] {
+/** 対応済み種別と切り詰め通知を除き、残った項目を未対応イベントの診断へ変換する。 */
+export function buildCopilotProviderMetadata(
+  rawItems: readonly CopilotStableRawItem[],
+): ProviderDiagnosticMetadata[] {
   return rawItems
-    .filter((item) => item.type !== "withmate.raw_items_truncated" && !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
+    .filter(
+      (item) =>
+        item.type !== "withmate.raw_items_truncated" &&
+        !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type),
+    )
     .map((item) => ({
       provider: "copilot",
       kind: "unsupported_event",
@@ -757,15 +1061,24 @@ export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRaw
     }));
 }
 
-function extractShellCommandFromArguments(argumentsValue: Record<string, unknown> | undefined): string | null {
+/** 優先順でシェルの文字列引数を探し、該当するコマンドがなければ引数の内容自体を表示用に返す。 */
+function extractShellCommandFromArguments(
+  argumentsValue: Record<string, unknown> | undefined,
+): string | null {
   if (!argumentsValue) {
     return null;
   }
 
   const directCommand =
-    (typeof argumentsValue.command === "string" ? argumentsValue.command : null) ??
-    (typeof argumentsValue.commandText === "string" ? argumentsValue.commandText : null) ??
-    (typeof argumentsValue.fullCommandText === "string" ? argumentsValue.fullCommandText : null) ??
+    (typeof argumentsValue.command === "string"
+      ? argumentsValue.command
+      : null) ??
+    (typeof argumentsValue.commandText === "string"
+      ? argumentsValue.commandText
+      : null) ??
+    (typeof argumentsValue.fullCommandText === "string"
+      ? argumentsValue.fullCommandText
+      : null) ??
     (typeof argumentsValue.input === "string" ? argumentsValue.input : null);
 
   if (directCommand?.trim()) {
@@ -775,11 +1088,17 @@ function extractShellCommandFromArguments(argumentsValue: Record<string, unknown
   return stringifyUnknown(argumentsValue) ?? null;
 }
 
-function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.execution_complete" }>): string | undefined {
+/** 完了イベントから本文、端末出力と終了情報、エラーを拾い、空でない詳細だけをまとめる。 */
+function extractToolExecutionDetails(
+  event: Extract<SessionEvent, { type: "tool.execution_complete" }>,
+): string | undefined {
   const detailParts: string[] = [];
   const result = event.data.result;
 
-  if (typeof result?.detailedContent === "string" && result.detailedContent.trim()) {
+  if (
+    typeof result?.detailedContent === "string" &&
+    result.detailedContent.trim()
+  ) {
     detailParts.push(result.detailedContent);
   } else if (typeof result?.content === "string" && result.content.trim()) {
     detailParts.push(result.content);
@@ -792,9 +1111,19 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
     }
 
     if (content.type === "terminal" && content.text.trim()) {
-      const header = typeof content.cwd === "string" && content.cwd.trim() ? `cwd: ${content.cwd}` : null;
-      const exitCode = typeof content.exitCode === "number" ? `exit code: ${content.exitCode}` : null;
-      detailParts.push([header, content.text, exitCode].filter((part) => part && part.trim()).join("\n"));
+      const header =
+        typeof content.cwd === "string" && content.cwd.trim()
+          ? `cwd: ${content.cwd}`
+          : null;
+      const exitCode =
+        typeof content.exitCode === "number"
+          ? `exit code: ${content.exitCode}`
+          : null;
+      detailParts.push(
+        [header, content.text, exitCode]
+          .filter((part) => part && part.trim())
+          .join("\n"),
+      );
     }
   }
 
@@ -802,21 +1131,32 @@ function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.
     detailParts.push(event.data.error.message);
   }
 
-  const normalized = detailParts.map((part) => part.trim()).filter((part) => part.length > 0);
+  const normalized = detailParts
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
   return normalized.length > 0 ? normalized.join("\n\n") : undefined;
 }
 
-function toMessageOperations(steps: Map<string, LiveRunStep>): MessageOperation[] {
-  return Array.from(steps.values())
-    .map((step) => ({ ...step }));
+/** 操作マップの順序を保ったまま各項目を複製し、メッセージ保存用に切り出す。 */
+function toMessageOperations(
+  steps: Map<string, LiveRunStep>,
+): MessageOperation[] {
+  return Array.from(steps.values()).map((step) => ({ ...step }));
 }
 
+/** 確認が成立しない権限要求を、ユーザーの明示的な拒否とは別の結果として SDK へ返す。 */
 function blockedCopilotPermission() {
-  return createAttributedPermissionResult({ kind: "user-not-available" }, {
-    source: "unattended_fallback", surface: "sdk", outcome: "autopilot_denied",
-  });
+  return createAttributedPermissionResult(
+    { kind: "user-not-available" },
+    {
+      source: "unattended_fallback",
+      surface: "sdk",
+      outcome: "autopilot_denied",
+    },
+  );
 }
 
+/** SDK の読み取り要求と、読み取り専用の印が明示された MCP 要求を識別する。 */
 function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
   switch (request.kind) {
     case "read":
@@ -828,49 +1168,109 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
   }
 }
 
+/** 権限の対象や操作根拠が、空白だけではない文字列かを確かめる。 */
 function hasCopilotPermissionTarget(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isCopilotSandboxEscalation(request: PermissionRequest | PermissionPromptRequest): boolean {
-  return ("requestSandboxBypass" in request && request.requestSandboxBypass === true)
-    || ("requestSandboxPermissive" in request && request.requestSandboxPermissive === true)
-    || ("sandboxPathGrant" in request && request.sandboxPathGrant !== undefined);
+/** サンドボックスの迂回・緩和・パス許可の要求を、通常の操作承認から区別する。 */
+function isCopilotSandboxEscalation(
+  request: PermissionRequest | PermissionPromptRequest,
+): boolean {
+  return (
+    ("requestSandboxBypass" in request &&
+      request.requestSandboxBypass === true) ||
+    ("requestSandboxPermissive" in request &&
+      request.requestSandboxPermissive === true) ||
+    ("sandboxPathGrant" in request && request.sandboxPathGrant !== undefined)
+  );
 }
 
-function hasCopilotReviewEvidence(request: PermissionRequest, prompt: PermissionPromptRequest | undefined): boolean {
+/** 操作種別ごとに対象や内容が特定でき、添付された確認プロンプトと矛盾しない場合だけレビューの根拠とする。 */
+function hasCopilotReviewEvidence(
+  request: PermissionRequest,
+  prompt: PermissionPromptRequest | undefined,
+): boolean {
   if (prompt !== undefined && !isRecord(prompt)) return false;
-  if (prompt?.toolCallId && request.toolCallId && prompt.toolCallId !== request.toolCallId) return false;
+  if (
+    prompt?.toolCallId &&
+    request.toolCallId &&
+    prompt.toolCallId !== request.toolCallId
+  )
+    return false;
   if (prompt?.kind === "path") {
-    if (prompt.accessKind !== request.kind || !Array.isArray(prompt.paths) || !prompt.paths.length
-      || !prompt.paths.every(hasCopilotPermissionTarget)) return false;
+    if (
+      prompt.accessKind !== request.kind ||
+      !Array.isArray(prompt.paths) ||
+      !prompt.paths.length ||
+      !prompt.paths.every(hasCopilotPermissionTarget)
+    )
+      return false;
   }
   const operationPrompt = prompt?.kind === "path" ? undefined : prompt;
   switch (request.kind) {
     case "read":
-      return prompt !== undefined && hasCopilotPermissionTarget(request.path)
-        && (!operationPrompt || (operationPrompt.kind === "read" && operationPrompt.path === request.path));
+      return (
+        prompt !== undefined &&
+        hasCopilotPermissionTarget(request.path) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "read" &&
+            operationPrompt.path === request.path))
+      );
     case "shell":
-      return hasCopilotPermissionTarget(request.fullCommandText)
-        && (!operationPrompt || (operationPrompt.kind === "commands" && operationPrompt.fullCommandText === request.fullCommandText));
+      return (
+        hasCopilotPermissionTarget(request.fullCommandText) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "commands" &&
+            operationPrompt.fullCommandText === request.fullCommandText))
+      );
     case "write":
-      return hasCopilotPermissionTarget(request.fileName)
-        && (hasCopilotPermissionTarget(request.diff) || typeof request.newFileContents === "string"
-          || (Array.isArray(request.fileEdits) && request.fileEdits.length > 0
-            && request.fileEdits.every((edit) => isRecord(edit) && (edit.before !== undefined || edit.after !== undefined)
-              && [edit.before, edit.after].every((side) => side === undefined
-                || (isRecord(side) && hasCopilotPermissionTarget(side.path) && typeof side.content === "string")))))
-        && (!operationPrompt || (operationPrompt.kind === "write" && operationPrompt.fileName === request.fileName));
+      return (
+        hasCopilotPermissionTarget(request.fileName) &&
+        (hasCopilotPermissionTarget(request.diff) ||
+          typeof request.newFileContents === "string" ||
+          (Array.isArray(request.fileEdits) &&
+            request.fileEdits.length > 0 &&
+            request.fileEdits.every(
+              (edit) =>
+                isRecord(edit) &&
+                (edit.before !== undefined || edit.after !== undefined) &&
+                [edit.before, edit.after].every(
+                  (side) =>
+                    side === undefined ||
+                    (isRecord(side) &&
+                      hasCopilotPermissionTarget(side.path) &&
+                      typeof side.content === "string"),
+                ),
+            ))) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "write" &&
+            operationPrompt.fileName === request.fileName))
+      );
     case "url":
-      return hasCopilotPermissionTarget(request.url)
-        && (!operationPrompt || (operationPrompt.kind === "url" && operationPrompt.url === request.url));
+      return (
+        hasCopilotPermissionTarget(request.url) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "url" &&
+            operationPrompt.url === request.url))
+      );
     case "mcp":
-      return hasCopilotPermissionTarget(request.serverName) && hasCopilotPermissionTarget(request.toolName)
-        && (!operationPrompt || (operationPrompt.kind === "mcp" && operationPrompt.serverName === request.serverName
-          && operationPrompt.toolName === request.toolName));
+      return (
+        hasCopilotPermissionTarget(request.serverName) &&
+        hasCopilotPermissionTarget(request.toolName) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "mcp" &&
+            operationPrompt.serverName === request.serverName &&
+            operationPrompt.toolName === request.toolName))
+      );
     case "custom-tool":
-      return hasCopilotPermissionTarget(request.toolName) && hasCopilotPermissionTarget(request.toolDescription)
-        && (!operationPrompt || (operationPrompt.kind === "custom-tool" && operationPrompt.toolName === request.toolName));
+      return (
+        hasCopilotPermissionTarget(request.toolName) &&
+        hasCopilotPermissionTarget(request.toolDescription) &&
+        (!operationPrompt ||
+          (operationPrompt.kind === "custom-tool" &&
+            operationPrompt.toolName === request.toolName))
+      );
     default:
       // 専用の同意プロンプトや未知の操作があるだけでは、
       // ホストにユーザーの代わりに承認するだけの根拠や権限があるとはいえない。
@@ -878,37 +1278,64 @@ function hasCopilotReviewEvidence(request: PermissionRequest, prompt: Permission
   }
 }
 
+/** ターンの承認モードと SDK の確認要件を適用し、対話による決着とホスト側の判断を区別して返す。 */
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
-  const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+  const redactor = createProviderAgentRuntimeBindingRedactor(
+    input.agentRuntimeBinding,
+  );
   const requestIds = new WeakMap<PermissionRequest, string>();
-  const approvalMode = normalizeApprovalMode(input.executionOptions.approvalMode);
+  const approvalMode = normalizeApprovalMode(
+    input.executionOptions.approvalMode,
+  );
   return async (request, invocation) => {
     if (input.signal?.aborted) return blockedCopilotPermission();
     const promptRequest = invocation?.promptRequest;
     const assessment = invocation?.assistedApprovalAssessment;
     const promptAssessment = promptRequest?.assistedApproval;
-    const providerRequiresHuman = request.managedApprovalRequired
-      || (promptRequest && "managedApprovalRequired" in promptRequest && promptRequest.managedApprovalRequired)
-      || isCopilotSandboxEscalation(request)
-      || (promptRequest && isCopilotSandboxEscalation(promptRequest))
-      || (assessment?.status === "excluded"
-        && (assessment.reason === "managed-approval-required" || assessment.reason === "sandbox-bypass"));
-    const requiresExplicitDecision = assessment?.status === "completed" && assessment.recommendation === "requireApproval";
-    const unassessed = assessment === undefined || assessment?.status === "not-run" || assessment?.status === "unavailable";
-    const classified = promptRequest === undefined
-      && (unassessed || (assessment?.status === "completed" && assessment.recommendation === "approve"));
+    const providerRequiresHuman =
+      request.managedApprovalRequired ||
+      (promptRequest &&
+        "managedApprovalRequired" in promptRequest &&
+        promptRequest.managedApprovalRequired) ||
+      isCopilotSandboxEscalation(request) ||
+      (promptRequest && isCopilotSandboxEscalation(promptRequest)) ||
+      (assessment?.status === "excluded" &&
+        (assessment.reason === "managed-approval-required" ||
+          assessment.reason === "sandbox-bypass"));
+    const requiresExplicitDecision =
+      assessment?.status === "completed" &&
+      assessment.recommendation === "requireApproval";
+    const unassessed =
+      assessment === undefined ||
+      assessment?.status === "not-run" ||
+      assessment?.status === "unavailable";
+    const classified =
+      promptRequest === undefined &&
+      (unassessed ||
+        (assessment?.status === "completed" &&
+          assessment.recommendation === "approve"));
     const readOnly = isReadOnlyPermissionRequest(request);
     if (approvalMode === "safety-focused") {
       // 読み取りと分類され、ユーザーへの確認待ちがない場合が、SDK の通常経路に当たる。
       // 管理ポリシーによる確認要求や MCP の readOnly ヒントは、その根拠にはならない。
-      return { kind: request.kind === "read" && classified && !providerRequiresHuman
-        ? "approve-once" : "reject" };
+      return {
+        kind:
+          request.kind === "read" && classified && !providerRequiresHuman
+            ? "approve-once"
+            : "reject",
+      };
     }
     if (approvalMode === "untrusted") {
-      return { kind: readOnly && !providerRequiresHuman ? "approve-once" : "reject" };
+      return {
+        kind: readOnly && !providerRequiresHuman ? "approve-once" : "reject",
+      };
     }
-    if (!providerRequiresHuman && !requiresExplicitDecision && promptAssessment?.recommendation !== "requireApproval"
-      && (approvalMode === "never" || (readOnly && classified))) {
+    if (
+      !providerRequiresHuman &&
+      !requiresExplicitDecision &&
+      promptAssessment?.recommendation !== "requireApproval" &&
+      (approvalMode === "never" || (readOnly && classified))
+    ) {
       return { kind: "approve-once" };
     }
     if (!input.onApprovalRequest) {
@@ -921,70 +1348,120 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
       requestIds.set(request, requestId);
     }
     const workspacePath = resolveRunWorkspacePath(input);
-    const review = !providerRequiresHuman && (unassessed || (requiresExplicitDecision && promptRequest !== undefined))
-      && (!promptAssessment || promptAssessment.recommendation === "requireApproval")
-      && hasCopilotPermissionTarget(workspacePath)
-      && hasCopilotReviewEvidence(request, promptRequest)
-      ? { operation: redactor.sanitize({ request, workspacePath,
-        ...(promptRequest ? { promptRequest } : {}),
-        ...(assessment ? { assistedApprovalAssessment: assessment } : {}),
-        ...(invocation?.programToolCallId ? { programToolCallId: invocation.programToolCallId } : {}),
-      }) }
-      : undefined;
+    const review =
+      !providerRequiresHuman &&
+      (unassessed ||
+        (requiresExplicitDecision && promptRequest !== undefined)) &&
+      (!promptAssessment ||
+        promptAssessment.recommendation === "requireApproval") &&
+      hasCopilotPermissionTarget(workspacePath) &&
+      hasCopilotReviewEvidence(request, promptRequest)
+        ? {
+            operation: redactor.sanitize({
+              request,
+              workspacePath,
+              ...(promptRequest ? { promptRequest } : {}),
+              ...(assessment ? { assistedApprovalAssessment: assessment } : {}),
+              ...(invocation?.programToolCallId
+                ? { programToolCallId: invocation.programToolCallId }
+                : {}),
+            }),
+          }
+        : undefined;
     let source: ApprovalDecisionSource | undefined;
     const decision = await input.onApprovalRequest(
-      redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, workspacePath)),
+      redactor.sanitize(
+        buildCopilotApprovalRequest(
+          request,
+          requestId,
+          input.providerCatalog.id,
+          workspacePath,
+        ),
+      ),
       input.signal,
       review,
-      (settledBy) => { source = settledBy; },
+      (settledBy) => {
+        source = settledBy;
+      },
     );
     if (input.signal?.aborted) return blockedCopilotPermission();
     if (source === "manual") {
-      return createAttributedPermissionResult({ kind: decision === "approve" ? "approve-once" : "reject" }, {
-        source: "human_response", responseCapability: "interactive", surface: "sdk", outcome: "prompted_user",
-      });
+      return createAttributedPermissionResult(
+        { kind: decision === "approve" ? "approve-once" : "reject" },
+        {
+          source: "human_response",
+          responseCapability: "interactive",
+          surface: "sdk",
+          outcome: "prompted_user",
+        },
+      );
     }
     if (source === "reviewer" && review) {
       // 従来の CLI プロトコルの判定値を維持する。この経路で `reject` はユーザーによる拒否を表す。
       // ユーザーの回答がない場合は、対話なしの拒否を返す。
       // WithMate は SDK のホストであり、Copilot 自身の Assisted Permissions の判定主体ではない。
-      return createAttributedPermissionResult({ kind: decision === "approve" ? "approve-once" : "user-not-available" }, {
-        source: "host_policy", surface: "sdk", outcome: decision === "approve" ? "auto_approved" : "autopilot_denied",
-      });
+      return createAttributedPermissionResult(
+        {
+          kind: decision === "approve" ? "approve-once" : "user-not-available",
+        },
+        {
+          source: "host_policy",
+          surface: "sdk",
+          outcome:
+            decision === "approve" ? "auto_approved" : "autopilot_denied",
+        },
+      );
     }
     return blockedCopilotPermission();
   };
 }
 
-
+/** セッション初期化失敗の診断を組み立て、認証情報は API キーの有無だけを記録する。 */
 function buildCopilotBootstrapDebugItems(
   input: RunSessionTurnInput,
   cliPath: string,
   phase: string,
   message: string,
 ): string {
-  return JSON.stringify([
-    {
-      type: "copilot_bootstrap_debug",
-      phase,
-      message,
-      cliPath,
-      provider: input.providerCatalog.id,
-      model: input.executionOptions.model,
-      reasoningEffort: input.executionOptions.reasoningEffort,
-      approvalMode: input.executionOptions.approvalMode,
-      workspacePath: resolveRunWorkspacePath(input),
-      threadId: input.session.threadId,
-      hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
-      useLoggedInUser: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length === 0,
-    },
-  ], null, 2);
+  return JSON.stringify(
+    [
+      {
+        type: "copilot_bootstrap_debug",
+        phase,
+        message,
+        cliPath,
+        provider: input.providerCatalog.id,
+        model: input.executionOptions.model,
+        reasoningEffort: input.executionOptions.reasoningEffort,
+        approvalMode: input.executionOptions.approvalMode,
+        workspacePath: resolveRunWorkspacePath(input),
+        threadId: input.session.threadId,
+        hasApiKey:
+          getProviderAppSettings(
+            input.appSettings,
+            input.providerCatalog.id,
+          ).apiKey.trim().length > 0,
+        useLoggedInUser:
+          getProviderAppSettings(
+            input.appSettings,
+            input.providerCatalog.id,
+          ).apiKey.trim().length === 0,
+      },
+    ],
+    null,
+    2,
+  );
 }
 
-function logCopilotRuntime(message: string, details: Record<string, unknown>): void {
+/** 接続やターン失敗の情報を Copilot の警告としてコンソールへ出力する。秘匿処理は呼び出し側で行う。 */
+function logCopilotRuntime(
+  message: string,
+  details: Record<string, unknown>,
+): void {
   console.warn(`[copilot] ${message} ${JSON.stringify(details)}`);
 }
 
+/** 表示用本文を短縮・秘匿し、現在の操作とバックグラウンドタスクを差分とともに進捗受け手へ渡す。 */
 async function emitLiveState(
   handler: RunSessionTurnProgressHandler | undefined,
   sessionId: string,
@@ -1002,23 +1479,33 @@ async function emitLiveState(
   }
   const stepProgress = steps.takeProgress(redactor);
   const taskProgress = backgroundTasks.takeProgress(redactor);
-  await handler({
-    sessionId,
-    threadId: threadId ?? "",
-    assistantText: redactor.sanitizeText(toProviderTextPreview(assistantText) ?? ""),
-    reasoningText: redactor.sanitizeText(toProviderTextPreview(reasoningText) ?? ""),
-    steps: stepProgress.snapshot,
-    backgroundTasks: sortLiveBackgroundTasks(taskProgress.snapshot),
-    usage,
-    errorMessage: redactor.sanitizeText(errorMessage),
-    approvalRequest: null,
-    elicitationRequest: null,
-  }, { steps: stepProgress.changes, backgroundTasks: taskProgress.changes });
+  await handler(
+    {
+      sessionId,
+      threadId: threadId ?? "",
+      assistantText: redactor.sanitizeText(
+        toProviderTextPreview(assistantText) ?? "",
+      ),
+      reasoningText: redactor.sanitizeText(
+        toProviderTextPreview(reasoningText) ?? "",
+      ),
+      steps: stepProgress.snapshot,
+      backgroundTasks: sortLiveBackgroundTasks(taskProgress.snapshot),
+      usage,
+      errorMessage: redactor.sanitizeText(errorMessage),
+      approvalRequest: null,
+      elicitationRequest: null,
+    },
+    { steps: stepProgress.changes, backgroundTasks: taskProgress.changes },
+  );
 }
 
-function waitForCopilotSessionCompletion(
-  session: CopilotSession,
-): { wait: Promise<void>; idle: Promise<void>; dispose: () => void } {
+/** 最初の待機入りまたはエラーで実行結果を確定する。エラー後も取消処理は別の待機入り通知を待てる。 */
+function waitForCopilotSessionCompletion(session: CopilotSession): {
+  wait: Promise<void>;
+  idle: Promise<void>;
+  dispose: () => void;
+} {
   let settled = false;
   let resolveWait!: () => void;
   let rejectWait!: (error: Error) => void;
@@ -1028,8 +1515,11 @@ function waitForCopilotSessionCompletion(
     rejectWait = reject;
   });
   let resolveIdle!: () => void;
-  const idle = new Promise<void>((resolve) => { resolveIdle = resolve; });
+  const idle = new Promise<void>((resolve) => {
+    resolveIdle = resolve;
+  });
 
+  /** 待機入りとエラーが競合しても、実行結果を決めるコールバックは一度だけ呼ぶ。 */
   const settle = (handler: () => void) => {
     if (settled) {
       return;
@@ -1056,19 +1546,25 @@ function waitForCopilotSessionCompletion(
   return {
     wait,
     idle,
+    /** 完了または後片付け時に SDK イベントの購読を解除する。 */
     dispose: () => {
       unsubscribe();
     },
   };
 }
 
+/** 今回のターンから SDK の設定とモデル選択を組み立て、再利用を許す設定の組をキーにする。 */
 export function buildCopilotSessionSettings(
   input: RunSessionTurnInput,
   prompt: ProviderPromptComposition,
   clientKey: string,
   resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
 ): CopilotSessionSettings {
-  const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
+  const selection = resolveModelSelection(
+    input.providerCatalog,
+    input.executionOptions.model,
+    input.executionOptions.reasoningEffort,
+  );
   const workspacePath = resolveRunWorkspacePath(input);
   const resolvedCustomAgents = resolveCustomAgents(
     workspacePath,
@@ -1077,7 +1573,13 @@ export function buildCopilotSessionSettings(
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: CopilotSessionSettings["config"] = {
     model: selection.resolvedModel,
-    ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
+    ...(selection.resolvedReasoningEffort
+      ? {
+          reasoningEffort: toCopilotReasoningEffort(
+            selection.resolvedReasoningEffort,
+          ),
+        }
+      : {}),
     workingDirectory: workspacePath,
     additionalDirectories: prompt.additionalDirectories,
     streaming: true,
@@ -1086,8 +1588,12 @@ export function buildCopilotSessionSettings(
       ? { mcpServers: buildManagedHttpMcpServers(input.agentRuntimeBinding) }
       : {}),
     ...(systemMessage ? { systemMessage } : {}),
-    ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
-    ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
+    ...(resolvedCustomAgents.customAgents.length > 0
+      ? { customAgents: resolvedCustomAgents.customAgents }
+      : {}),
+    ...(resolvedCustomAgents.selectedAgentName
+      ? { agent: resolvedCustomAgents.selectedAgentName }
+      : {}),
   };
 
   return {
@@ -1103,17 +1609,22 @@ export function buildCopilotSessionSettings(
       systemMessage?.mode ?? "",
       systemMessage?.content ?? "",
       input.executionOptions.customAgentName,
-      resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
-        name: agent.name,
-        displayName: agent.displayName ?? "",
-        description: agent.description ?? "",
-        prompt: agent.prompt,
-        tools: agent.tools ?? null,
-      })).join("\u001f"),
+      resolvedCustomAgents.customAgents
+        .map((agent) =>
+          JSON.stringify({
+            name: agent.name,
+            displayName: agent.displayName ?? "",
+            description: agent.description ?? "",
+            prompt: agent.prompt,
+            tools: agent.tools ?? null,
+          }),
+        )
+        .join("\u001f"),
     ]),
   };
 }
 
+/** 保存済みスレッドがあれば再開し、不在が確認でき、既存必須でないときだけ新規作成へ切り替える。 */
 async function createOrResumeCopilotSession(
   client: CopilotSessionConnector,
   threadId: string | null,
@@ -1128,7 +1639,10 @@ async function createOrResumeCopilotSession(
     return await client.resumeSession(threadId, config);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (requireExistingThread || !isRecoverableCopilotMissingSessionErrorMessage(message)) {
+    if (
+      requireExistingThread ||
+      !isRecoverableCopilotMissingSessionErrorMessage(message)
+    ) {
       throw error;
     }
 
@@ -1136,21 +1650,34 @@ async function createOrResumeCopilotSession(
   }
 }
 
+/** SDK の未確定値を、キーで参照できる配列以外の非 null オブジェクトに絞る。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildCopilotBackgroundTaskKey(kind: "agent" | "shell", id: string): string {
+/** エージェントとシェルで同じ ID が使われても、別のタスクとして追跡できるキーを作る。 */
+function buildCopilotBackgroundTaskKey(
+  kind: "agent" | "shell",
+  id: string,
+): string {
   return `${kind}:${id}`;
 }
 
-function buildCopilotBackgroundTaskTitle(description: string | undefined, fallback: string): string {
+/** SDK の説明をタスク名に使い、空白しかなければ種別を示す既定名にする。 */
+function buildCopilotBackgroundTaskTitle(
+  description: string | undefined,
+  fallback: string,
+): string {
   const trimmed = description?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
-export function sortLiveBackgroundTasks(tasks: Iterable<LiveBackgroundTask>): LiveBackgroundTask[] {
+/** タスクを実行中、失敗、完了の順に並べ、同じ状態の中では新しい更新を先にする。 */
+export function sortLiveBackgroundTasks(
+  tasks: Iterable<LiveBackgroundTask>,
+): LiveBackgroundTask[] {
   return Array.from(tasks).sort((left, right) => {
+    /** 更新時刻に先立って比較する、状態ごとの表示優先度を返す。 */
     const statusOrder = (status: LiveBackgroundTask["status"]): number => {
       switch (status) {
         case "running":
@@ -1172,8 +1699,14 @@ export function sortLiveBackgroundTasks(tasks: Iterable<LiveBackgroundTask>): Li
   });
 }
 
-function trimTerminalBackgroundTasks(tasks: Map<string, LiveBackgroundTask>, maxTerminal = 6): void {
-  const terminalTasks = sortLiveBackgroundTasks(tasks.values()).filter((task) => task.status !== "running");
+/** 実行中のタスクを残し、終了済みの項目だけを表示順の上限までに絞る。 */
+function trimTerminalBackgroundTasks(
+  tasks: Map<string, LiveBackgroundTask>,
+  maxTerminal = 6,
+): void {
+  const terminalTasks = sortLiveBackgroundTasks(tasks.values()).filter(
+    (task) => task.status !== "running",
+  );
   if (terminalTasks.length <= maxTerminal) {
     return;
   }
@@ -1183,6 +1716,7 @@ function trimTerminalBackgroundTasks(tasks: Map<string, LiveBackgroundTask>, max
   }
 }
 
+/** SDK のエージェント・シェル通知をタスクに反映し、セッション待機入りでは実行中の表示を取り除く。 */
 export function applyCopilotBackgroundTaskEvent(
   tasks: Map<string, LiveBackgroundTask>,
   event: SessionEvent,
@@ -1210,7 +1744,10 @@ export function applyCopilotBackgroundTaskEvent(
             id: key,
             kind: "agent",
             status: "running",
-            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            title: buildCopilotBackgroundTaskTitle(
+              kind.description,
+              `${kind.agentType} agent`,
+            ),
             details: kind.agentType,
             updatedAt: event.timestamp,
           });
@@ -1222,7 +1759,10 @@ export function applyCopilotBackgroundTaskEvent(
             id: key,
             kind: "agent",
             status: kind.status === "failed" ? "failed" : "completed",
-            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            title: buildCopilotBackgroundTaskTitle(
+              kind.description,
+              `${kind.agentType} agent`,
+            ),
             details: kind.prompt?.trim() ? kind.prompt : kind.agentType,
             updatedAt: event.timestamp,
           });
@@ -1233,16 +1773,24 @@ export function applyCopilotBackgroundTaskEvent(
         case "shell_detached_completed": {
           const key = buildCopilotBackgroundTaskKey("shell", kind.shellId);
           const detailParts: string[] = [];
-          const exitCode = "exitCode" in kind && typeof kind.exitCode === "number" ? kind.exitCode : null;
+          const exitCode =
+            "exitCode" in kind && typeof kind.exitCode === "number"
+              ? kind.exitCode
+              : null;
           if (exitCode !== null) {
             detailParts.push(`exitCode: ${exitCode}`);
           }
           tasks.set(key, {
             id: key,
             kind: "shell",
-            status: exitCode !== null && exitCode !== 0 ? "failed" : "completed",
-            title: buildCopilotBackgroundTaskTitle(kind.description, "background shell"),
-            details: detailParts.length > 0 ? detailParts.join("\n") : undefined,
+            status:
+              exitCode !== null && exitCode !== 0 ? "failed" : "completed",
+            title: buildCopilotBackgroundTaskTitle(
+              kind.description,
+              "background shell",
+            ),
+            details:
+              detailParts.length > 0 ? detailParts.join("\n") : undefined,
             updatedAt: event.timestamp,
           });
           trimTerminalBackgroundTasks(tasks);
@@ -1257,6 +1805,7 @@ export function applyCopilotBackgroundTaskEvent(
   }
 }
 
+/** 設定キーが一致する間は接続を再利用し、変更されたら旧接続を切り離して現設定で再開または作成する。 */
 export async function resolveCopilotSessionForSettings(args: {
   cached: { session: CopilotSession; settingsKey: string } | undefined;
   nextSettingsKey: string;
@@ -1265,13 +1814,7 @@ export async function resolveCopilotSessionForSettings(args: {
   client: CopilotSessionConnector;
   requireExistingThread?: boolean;
 }): Promise<{ session: CopilotSession; reusedCached: boolean }> {
-  const {
-    cached,
-    nextSettingsKey,
-    threadId,
-    config,
-    client,
-  } = args;
+  const { cached, nextSettingsKey, threadId, config, client } = args;
 
   if (cached && cached.settingsKey === nextSettingsKey) {
     return {
@@ -1285,14 +1828,25 @@ export async function resolveCopilotSessionForSettings(args: {
   }
 
   return {
-    session: await createOrResumeCopilotSession(client, threadId, config, args.requireExistingThread),
+    session: await createOrResumeCopilotSession(
+      client,
+      threadId,
+      config,
+      args.requireExistingThread,
+    ),
     reusedCached: false,
   };
 }
 
+/** SDK クライアントの差し替え、診断・タスク通知、停止処理の期限を調整するアダプター設定。 */
 type CopilotAdapterOptions = {
-  createClient?: (options: ConstructorParameters<typeof CopilotClient>[0]) => CopilotClient;
-  onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
+  createClient?: (
+    options: ConstructorParameters<typeof CopilotClient>[0],
+  ) => CopilotClient;
+  onBackgroundTasksChanged?: (
+    sessionId: string,
+    tasks: LiveBackgroundTask[],
+  ) => void;
   log?: (input: CopilotAdapterLogInput) => void;
   clientStopTimeoutMs?: number;
   sessionDisconnectTimeoutMs?: number;
@@ -1303,9 +1857,13 @@ const COPILOT_CLIENT_STOP_TIMEOUT_MS = 5_000;
 const COPILOT_SESSION_DISCONNECT_TIMEOUT_MS = 5_000;
 const COPILOT_TURN_CANCEL_GRACE_MS = 5_000;
 
+/** SDK が管理する子プロセスと、停止要求の応答とは別に実終了を確認する手段。 */
 type CopilotProcessLifetime = { child: ChildProcess; exited: Promise<void> };
 
-function captureCopilotProcessLifetime(client: CopilotClient): CopilotProcessLifetime | null {
+/** SDK が停止時に保持をやめる前に CLI の子プロセスを取得し、見つからなければ終了確認を作らない。 */
+function captureCopilotProcessLifetime(
+  client: CopilotClient,
+): CopilotProcessLifetime | null {
   // stdio SDK は終了を通知する公開フックを持たない。stop() がハンドルを消す前に、
   // 管理下の子プロセスを取得する。forceStop() だけではプロセスの終了を確認できない。
   const child: unknown = Reflect.get(client, "cliProcess");
@@ -1322,6 +1880,7 @@ function captureCopilotProcessLifetime(client: CopilotClient): CopilotProcessLif
   return { child, exited };
 }
 
+/** セッションの切断を待つが、拒否や無応答でクライアントの解放が止まらないようにする。 */
 async function disconnectCopilotSession(
   session: Pick<CopilotSession, "disconnect">,
   timeoutMs: number = COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
@@ -1337,57 +1896,82 @@ async function disconnectCopilotSession(
   }
 }
 
+/** SDK の通常停止が期限内に成功しなければ強制停止を試し、その待ち時間にも上限を設ける。 */
 async function stopCopilotClient(
   client: CopilotClient,
   timeoutMs: number = COPILOT_CLIENT_STOP_TIMEOUT_MS,
 ): Promise<void> {
-  const gracefulStop = await settleCopilotCleanupWithin(() => client.stop(), timeoutMs);
+  const gracefulStop = await settleCopilotCleanupWithin(
+    () => client.stop(),
+    timeoutMs,
+  );
   if (gracefulStop.status !== "settled" || gracefulStop.value.length > 0) {
     await settleCopilotCleanupWithin(() => client.forceStop(), timeoutMs);
   }
 }
 
+/** 後片付けの正常応答、失敗、待機期限超過を混同しないための結果。 */
 type CopilotCleanupSettlement<T> =
   | { status: "settled"; value: T }
   | { status: "rejected"; error: unknown }
   | { status: "timed_out" };
 
+/** 後片付けを指定時間だけ待ち、同期例外や Promise の拒否も失敗として返す。期限超過は処理を中断しない。 */
 async function settleCopilotCleanupWithin<T>(
   operation: () => Promise<T>,
   timeoutMs: number,
 ): Promise<CopilotCleanupSettlement<T>> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const operationSettlement: Promise<CopilotCleanupSettlement<T>> = Promise.resolve()
-    .then(operation)
-    .then(
-      (value) => ({ status: "settled", value }),
-      (error: unknown) => ({ status: "rejected", error }),
-    );
-  const timeoutSettlement = new Promise<CopilotCleanupSettlement<T>>((resolve) => {
-    timeoutId = setTimeout(() => resolve({ status: "timed_out" }), Math.max(0, timeoutMs));
-  });
-  const settlement = await Promise.race([operationSettlement, timeoutSettlement]);
+  const operationSettlement: Promise<CopilotCleanupSettlement<T>> =
+    Promise.resolve()
+      .then(operation)
+      .then(
+        (value) => ({ status: "settled", value }),
+        (error: unknown) => ({ status: "rejected", error }),
+      );
+  const timeoutSettlement = new Promise<CopilotCleanupSettlement<T>>(
+    (resolve) => {
+      timeoutId = setTimeout(
+        () => resolve({ status: "timed_out" }),
+        Math.max(0, timeoutMs),
+      );
+    },
+  );
+  const settlement = await Promise.race([
+    operationSettlement,
+    timeoutSettlement,
+  ]);
   if (timeoutId !== null) {
     clearTimeout(timeoutId);
   }
   return settlement;
 }
 
+/** WithMate のターンを Copilot SDK へ接続し、実行主体別のクライアント、進捗、取消処理を管理する。 */
 export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, CopilotClient>();
   private readonly sessions = new Map<string, CachedCopilotSession>();
   private readonly clientKeysBySession = new Map<string, string>();
 
+  /** 接続、通知、停止時間の設定を受け取り、SDK の接続は必要になった時点まで作らない。 */
   constructor(private options: CopilotAdapterOptions = {}) {}
 
+  /** アダプターで指定された上限を使って、キャッシュから外した CLI クライアントを停止する。 */
   private async stopClient(client: CopilotClient): Promise<void> {
     await stopCopilotClient(client, this.options.clientStopTimeoutMs);
   }
 
-  private async disconnectSession(session: Pick<CopilotSession, "disconnect">): Promise<void> {
-    await disconnectCopilotSession(session, this.options.sessionDisconnectTimeoutMs);
+  /** SDK セッションの切断待ちに、アダプターで指定された上限を適用する。 */
+  private async disconnectSession(
+    session: Pick<CopilotSession, "disconnect">,
+  ): Promise<void> {
+    await disconnectCopilotSession(
+      session,
+      this.options.sessionDisconnectTimeoutMs,
+    );
   }
 
+  /** 設定されたログ記録先へ診断を知らせる。記録の失敗はターンへ伝えない。 */
   private writeLog(input: CopilotAdapterLogInput): void {
     try {
       this.options.log?.(input);
@@ -1396,61 +1980,110 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  /** 共通のプロンプト合成を使い、SDK のシステム指示と送信本文に渡す内容を分けて得る。 */
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
 
-  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
-    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+  /** 専用の一時接続から利用可能なモデルと推論深度を取得し、成功と失敗のどちらでも接続を後片付けする。 */
+  async listModels(
+    input: ListProviderModelsInput,
+  ): Promise<ModelCatalogProvider> {
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000);
     signal.throwIfAborted();
     let client: CopilotClient | undefined;
     let abort: (() => void) | undefined;
     try {
-      const apiKey = getProviderAppSettings(input.appSettings, "copilot").apiKey.trim();
-      const options = { connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
-        workingDirectory: input.workspacePath, env: buildCopilotClientEnv(process.env),
-        ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}) };
-      client = this.options.createClient?.(options) ?? new CopilotClient(options);
+      const apiKey = getProviderAppSettings(
+        input.appSettings,
+        "copilot",
+      ).apiKey.trim();
+      const options = {
+        connection: RuntimeConnection.forStdio({
+          path: resolveCopilotCliPath(),
+        }),
+        workingDirectory: input.workspacePath,
+        env: buildCopilotClientEnv(process.env),
+        ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}),
+      };
+      client =
+        this.options.createClient?.(options) ?? new CopilotClient(options);
       const ownedClient = client;
       const metadata = await Promise.race([
-        (async () => { await ownedClient.start(); signal.throwIfAborted(); return ownedClient.listModels(); })(),
+        (async () => {
+          await ownedClient.start();
+          signal.throwIfAborted();
+          return ownedClient.listModels();
+        })(),
         new Promise<never>((_, reject) => {
           abort = () => reject(new Error("Canceled"));
           signal.addEventListener("abort", abort, { once: true });
           if (signal.aborted) abort();
         }),
       ]);
-      const models = metadata.filter((model) => !model.policy || model.policy.state === "enabled").map((model) => ({
-        id: model.id, label: model.name,
-        reasoningEfforts: model.capabilities.supports.reasoningEffort ? model.supportedReasoningEfforts ?? [] : [],
-        defaultReasoningEffort: model.capabilities.supports.reasoningEffort ? model.defaultReasoningEffort ?? "" : "",
-      }));
-      return { id: "copilot", label: "GitHub Copilot", models, defaultModelId: models[0]?.id ?? "", defaultReasoningEffort: models[0]?.defaultReasoningEffort ?? "" };
+      const models = metadata
+        .filter((model) => !model.policy || model.policy.state === "enabled")
+        .map((model) => ({
+          id: model.id,
+          label: model.name,
+          reasoningEfforts: model.capabilities.supports.reasoningEffort
+            ? (model.supportedReasoningEfforts ?? [])
+            : [],
+          defaultReasoningEffort: model.capabilities.supports.reasoningEffort
+            ? (model.defaultReasoningEffort ?? "")
+            : "",
+        }));
+      return {
+        id: "copilot",
+        label: "GitHub Copilot",
+        models,
+        defaultModelId: models[0]?.id ?? "",
+        defaultReasoningEffort: models[0]?.defaultReasoningEffort ?? "",
+      };
     } catch {
-      throw new Error(signal.aborted ? "Copilot model discovery canceled" : "Copilot models could not be retrieved");
+      throw new Error(
+        signal.aborted
+          ? "Copilot model discovery canceled"
+          : "Copilot models could not be retrieved",
+      );
     } finally {
       if (abort) signal.removeEventListener("abort", abort);
       if (client) {
         const lifetime = captureCopilotProcessLifetime(client);
-        const timeout = this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS;
-        const stopped = await settleCopilotCleanupWithin(() => client!.stop(), timeout);
+        const timeout =
+          this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS;
+        const stopped = await settleCopilotCleanupWithin(
+          () => client!.stop(),
+          timeout,
+        );
         if (stopped.status !== "settled" || stopped.value.length > 0) {
-          const forced = await settleCopilotCleanupWithin(() => client!.forceStop(), timeout);
-          if (forced.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+          const forced = await settleCopilotCleanupWithin(
+            () => client!.forceStop(),
+            timeout,
+          );
+          if (forced.status !== "settled")
+            throw new Error("Copilot model discovery process cleanup failed");
         }
         if (lifetime) {
-          const exited = await settleCopilotCleanupWithin(() => lifetime.exited, timeout);
-          if (exited.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+          const exited = await settleCopilotCleanupWithin(
+            () => lifetime.exited,
+            timeout,
+          );
+          if (exited.status !== "settled")
+            throw new Error("Copilot model discovery process cleanup failed");
         }
       }
     }
   }
 
-
+  /** 指定した WithMate セッションの SDK 接続と、それに関連付けたクライアントを破棄する。 */
   async invalidateSessionThread(sessionId: string): Promise<void> {
     await this.disposeSessionAndClientCache(sessionId);
   }
 
+  /** 全キャッシュを先に切り離し、取得済みのセッションとクライアントを並行して解放する。 */
   async invalidateAllSessionThreads(): Promise<void> {
     const sessions = [...this.sessions.entries()];
     const clients = [...this.clients.values()];
@@ -1468,6 +2101,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     ]);
   }
 
+  /** 特定のターンの実行主体に結び付かない接続で、利用枠を取得する。 */
   async getProviderQuotaTelemetry({
     providerId,
     appSettings,
@@ -1478,14 +2112,21 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return this.fetchProviderQuotaTelemetry(providerId, appSettings);
   }
 
-
-
-  private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
+  /** 実行主体の環境バインディングを先に検証し、同じ認証設定と主体を持つクライアントだけを再利用する。 */
+  private getClient(
+    providerId: string,
+    input: RunSessionTurnInput,
+  ): { client: CopilotClient; clientKey: string } {
     const binding = input.agentRuntimeBinding;
     if (binding?.transport !== "env" || !binding.bindingReference.trim()) {
-      throw new Error("Copilot Session provider execution requires an Agent runtime binding.");
+      throw new Error(
+        "Copilot Session provider execution requires an Agent runtime binding.",
+      );
     }
-    const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
+    const codingApiKey = getProviderAppSettings(
+      input.appSettings,
+      providerId,
+    ).apiKey.trim();
     const clientKey = buildCopilotClientKey(providerId, input);
     const cached = this.clients.get(clientKey);
     if (cached) {
@@ -1493,24 +2134,40 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
 
     const cliPath = resolveCopilotCliPath();
-    const client = (this.options.createClient ?? ((options) => new CopilotClient(options)))({
+    const client = (
+      this.options.createClient ?? ((options) => new CopilotClient(options))
+    )({
       connection: RuntimeConnection.forStdio({ path: cliPath }),
       env: buildCopilotClientEnv(process.env, input.agentRuntimeBinding),
-      ...(codingApiKey ? { gitHubToken: codingApiKey, useLoggedInUser: false } : {}),
+      ...(codingApiKey
+        ? { gitHubToken: codingApiKey, useLoggedInUser: false }
+        : {}),
     });
     this.clients.set(clientKey, client);
     return { client, clientKey };
   }
 
-  private getOrCreateClientByAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): CopilotClient {
-    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, appSettings);
+  /** アプリ設定だけで認証する照会用クライアントを、ターン用の接続とは別のキーで管理する。 */
+  private getOrCreateClientByAppSettings(
+    providerId: string,
+    appSettings: RunSessionTurnInput["appSettings"],
+  ): CopilotClient {
+    const clientKey = buildCopilotClientKeyFromAppSettings(
+      providerId,
+      appSettings,
+    );
     const cached = this.clients.get(clientKey);
     if (cached) {
       return cached;
     }
 
-    const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-    const client = (this.options.createClient ?? ((options) => new CopilotClient(options)))({
+    const apiKey = getProviderAppSettings(
+      appSettings,
+      providerId,
+    ).apiKey.trim();
+    const client = (
+      this.options.createClient ?? ((options) => new CopilotClient(options))
+    )({
       connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
       env: buildCopilotClientEnv(process.env),
       ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}),
@@ -1519,8 +2176,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return client;
   }
 
-
-
+  /** セッションの登録を外してバックグラウンド表示を消し、保持していた SDK 接続を切断する。 */
   private async disposeSessionCache(sessionId: string): Promise<void> {
     const cached = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
@@ -1531,6 +2187,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  /** キーの登録を停止待ちより先に外し、取り出したクライアントだけを停止する。 */
   private async disposeClientCache(clientKey: string): Promise<void> {
     const client = this.clients.get(clientKey);
     this.clients.delete(clientKey);
@@ -1539,6 +2196,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  /** セッションとクライアントの所属を先に外し、待機中の再接続を巻き込まず旧接続だけを解放する。 */
   private async disposeSessionAndClientCache(sessionId: string): Promise<void> {
     const clientKey = this.clientKeysBySession.get(sessionId);
     const cached = this.sessions.get(sessionId);
@@ -1570,13 +2228,20 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
-  setBackgroundTasksObserver(observer: CopilotAdapterOptions["onBackgroundTasksChanged"]): void {
+  /** 通知先を差し替え、新しい通知先へキャッシュ済みの全セッションの現在のタスクを送る。 */
+  setBackgroundTasksObserver(
+    observer: CopilotAdapterOptions["onBackgroundTasksChanged"],
+  ): void {
     this.options.onBackgroundTasksChanged = observer;
     for (const [sessionId, cached] of this.sessions.entries()) {
-      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+      this.options.onBackgroundTasksChanged?.(
+        sessionId,
+        sortLiveBackgroundTasks(cached.backgroundTasks.values()),
+      );
     }
   }
 
+  /** 現行の SDK 接続にだけ監視を結び付け、タスクの文面を秘匿してから通知する。 */
   private attachBackgroundTaskObserver(
     sessionId: string,
     cached: CachedCopilotSession,
@@ -1595,44 +2260,78 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         cached.backgroundTasks.set(taskId, {
           ...task,
           title: redactor.sanitizeText(task.title),
-          details: task.details === undefined ? undefined : redactor.sanitizeText(task.details),
+          details:
+            task.details === undefined
+              ? undefined
+              : redactor.sanitizeText(task.details),
         });
       }
 
-      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+      this.options.onBackgroundTasksChanged?.(
+        sessionId,
+        sortLiveBackgroundTasks(cached.backgroundTasks.values()),
+      );
     });
   }
 
-  private async resetRecoverableConnection(input: RunSessionTurnInput): Promise<void> {
+  /** 再試行前にセッションを解放し、記録済みと現設定のクライアントキーを重複なく破棄する。 */
+  private async resetRecoverableConnection(
+    input: RunSessionTurnInput,
+  ): Promise<void> {
     const mappedClientKey = this.clientKeysBySession.get(input.session.id);
-    const currentClientKey = buildCopilotClientKey(input.providerCatalog.id, input);
+    const currentClientKey = buildCopilotClientKey(
+      input.providerCatalog.id,
+      input,
+    );
     this.clientKeysBySession.delete(input.session.id);
     await this.disposeSessionCache(input.session.id);
     await Promise.all(
-      [...new Set([mappedClientKey, currentClientKey].filter((key): key is string => Boolean(key)))]
-        .map((clientKey) => this.disposeClientCache(clientKey)),
+      [
+        ...new Set(
+          [mappedClientKey, currentClientKey].filter((key): key is string =>
+            Boolean(key),
+          ),
+        ),
+      ].map((clientKey) => this.disposeClientCache(clientKey)),
     );
   }
 
+  /** 接続準備の失敗時にも解放できるよう所属を先に記録し、設定に応じて SDK セッションを選ぶ。 */
   private async getSession(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
-  ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }> {
-    const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
+  ): Promise<{
+    session: CopilotSession;
+    selection: ResolvedModelSelection;
+    client: CopilotClient;
+    clientKey: string;
+  }> {
+    const { client, clientKey } = this.getClient(
+      input.providerCatalog.id,
+      input,
+    );
     const previousClientKey = this.clientKeysBySession.get(input.session.id);
     this.clientKeysBySession.set(input.session.id, clientKey);
     const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
     const cached = this.sessions.get(input.session.id);
-    const permissionHandler = { current: nextSettings.config.onPermissionRequest };
+    const permissionHandler = {
+      current: nextSettings.config.onPermissionRequest,
+    };
     const resolved = await resolveCopilotSessionForSettings({
       cached,
       nextSettingsKey: nextSettings.settingsKey,
       threadId: input.session.threadId,
-      config: { ...nextSettings.config, onPermissionRequest: async (request, invocation) => {
-        const owner = permissionHandler.current;
-        const result = await owner(request, invocation);
-        return owner === permissionHandler.current ? result : blockedCopilotPermission();
-      } },
+      config: {
+        ...nextSettings.config,
+        /** 承認を待つ間に担当ターンが変わった場合、旧担当の応答を採用しない。 */
+        onPermissionRequest: async (request, invocation) => {
+          const owner = permissionHandler.current;
+          const result = await owner(request, invocation);
+          return owner === permissionHandler.current
+            ? result
+            : blockedCopilotPermission();
+        },
+      },
       client,
     });
     if (resolved.reusedCached && cached) {
@@ -1675,7 +2374,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private detachCanceledTurn(sessionId: string, session: CopilotSession, client: CopilotClient, clientKey: string): void {
+  /** 取消対象と実体が一致する登録だけを同期的に外し、同じキーの後継接続を保護する。 */
+  private detachCanceledTurn(
+    sessionId: string,
+    session: CopilotSession,
+    client: CopilotClient,
+    clientKey: string,
+  ): void {
     const cached = this.sessions.get(sessionId);
     if (cached?.session === session) {
       this.sessions.delete(sessionId);
@@ -1694,6 +2399,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  /** 取消対象の CLI 終了、または子プロセスが不明なら元の待機入りと、送信・中断 RPC の決着を待つ。 */
   private async stopCanceledTurn(
     session: CopilotSession,
     client: CopilotClient,
@@ -1703,9 +2409,17 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     processLifetime: CopilotProcessLifetime | null,
   ): Promise<string[]> {
     const failures: string[] = [];
-    const describe = (name: string, result: CopilotCleanupSettlement<unknown>) => {
+    /** 各停止手順の拒否または期限超過を、必要に応じて秘匿して診断へ加える。 */
+    const describe = (
+      name: string,
+      result: CopilotCleanupSettlement<unknown>,
+    ) => {
       if (result.status === "rejected") {
-        failures.push(redactor.sanitizeText(`${name} failed: ${result.error instanceof Error ? result.error.message : String(result.error)}`));
+        failures.push(
+          redactor.sanitizeText(
+            `${name} failed: ${result.error instanceof Error ? result.error.message : String(result.error)}`,
+          ),
+        );
       } else if (result.status === "timed_out") {
         failures.push(`${name} timed out`);
       }
@@ -1717,7 +2431,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     describe("abort/idle confirmation", graceful);
     const disconnected = await settleCopilotCleanupWithin(
       () => session.disconnect(),
-      this.options.sessionDisconnectTimeoutMs ?? COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
+      this.options.sessionDisconnectTimeoutMs ??
+        COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
     );
     describe("session disconnect", disconnected);
     const stopped = await settleCopilotCleanupWithin(
@@ -1727,15 +2442,26 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     describe("client stop", stopped);
     if (stopped.status !== "settled" || stopped.value.length > 0) {
       if (stopped.status === "settled") {
-        failures.push(redactor.sanitizeText(`client stop failed: ${stopped.value.map((error) => error.message).join("; ")}`));
+        failures.push(
+          redactor.sanitizeText(
+            `client stop failed: ${stopped.value.map((error) => error.message).join("; ")}`,
+          ),
+        );
       }
       try {
         // 期限を過ぎても、管理下のトランスポートが停止した証拠にはならない。
         await client.forceStop();
       } catch (error) {
-        const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+        const message = redactor.sanitizeText(
+          error instanceof Error ? error.message : String(error),
+        );
         failures.push(`client force stop failed: ${message}`);
-        this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+        this.writeLog({
+          level: "error",
+          kind: "provider.cancel-stop-failed",
+          message,
+          data: null,
+        });
       }
       const child = processLifetime?.child;
       if (child && child.exitCode === null && child.signalCode === null) {
@@ -1744,9 +2470,16 @@ export class CopilotAdapter implements ProviderTurnAdapter {
             throw new Error("Copilot CLI kill request was not accepted");
           }
         } catch (error) {
-          const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+          const message = redactor.sanitizeText(
+            error instanceof Error ? error.message : String(error),
+          );
           failures.push(`CLI process stop failed: ${message}`);
-          this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+          this.writeLog({
+            level: "error",
+            kind: "provider.cancel-stop-failed",
+            message,
+            data: null,
+          });
         }
       }
     }
@@ -1755,9 +2488,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     } else {
       // SDK の所有関係を確認できない場合、トランスポートの破棄だけでは停止の根拠にならない。
       // 安全に引き継げると判断できるのは、元の Turn の idle を確認したときだけ。
-      const message = "Copilot CLI process handle unavailable; waiting for original turn idle";
+      const message =
+        "Copilot CLI process handle unavailable; waiting for original turn idle";
       failures.push(message);
-      this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+      this.writeLog({
+        level: "error",
+        kind: "provider.cancel-stop-failed",
+        message,
+        data: null,
+      });
       await idle;
     }
     // SDK 接続を閉じると、保留中の send と abort の RPC は拒否される。
@@ -1766,14 +2505,20 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
         const error = result.reason as unknown;
-        failures.push(redactor.sanitizeText(`${index === 0 ? "send" : "abort"} failed: ${error instanceof Error ? error.message : String(error)}`));
+        failures.push(
+          redactor.sanitizeText(
+            `${index === 0 ? "send" : "abort"} failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
       }
     }
     return failures;
   }
 
+  /** 取得済み本文・全操作を共通の結果にまとめ、秘匿を施して正常終了と途中失敗の両方に使う。 */
   private async buildTurnResult(
-    agentRuntimeBinding: ProviderAgentRuntimeBindingProjection | null | undefined,
+    agentRuntimeBinding:
+      ProviderAgentRuntimeBindingProjection | null | undefined,
     threadId: string | null,
     assistantText: string,
     lastNonEmptyAssistantMessageText: string,
@@ -1790,13 +2535,18 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     providerQuotaTelemetry: ProviderQuotaTelemetry | null,
     outputProjection?: CopilotOutputProjection,
   ): Promise<RunSessionTurnResult> {
-    const redactor = createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
-    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
-      ? await captureWorkspaceSnapshot([
-          workspacePath,
-          ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
-        ])
-      : createDisabledWorkspaceSnapshotCapture();
+    const redactor =
+      createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } =
+      WORKSPACE_DIFF_CAPTURE_ENABLED
+        ? await captureWorkspaceSnapshot([
+            workspacePath,
+            ...normalizeAllowedAdditionalDirectories(
+              workspacePath,
+              session.allowedAdditionalDirectories,
+            ),
+          ])
+        : createDisabledWorkspaceSnapshotCapture();
     const operations = redactor.sanitize(toMessageOperations(steps));
     for (const metadata of providerMetadata) {
       this.writeLog({
@@ -1824,7 +2574,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       threadId,
       assistantText: redactor.sanitizeText(assistantText),
       output: outputProjection?.project(redactor.sanitizeText).output,
-      lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(
+        lastNonEmptyAssistantMessageText,
+      ),
       artifact: redactor.sanitize(artifact),
       providerMetadata,
       usage,
@@ -1832,29 +2584,41 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     };
   }
 
+  /** 一回の送信を進捗、質問の応答、取消と調停し、失敗してもその時点までに得た結果を返せるようにする。 */
   private async runSessionTurnOnce(
     input: RunSessionTurnInput,
     prompt: ProviderPromptComposition,
     onProgress?: RunSessionTurnProgressHandler,
     onSendInvoked?: () => void,
   ): Promise<RunSessionTurnResult> {
-    const messageAttachments = buildCopilotMessageAttachments(input.attachments);
-    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    const messageAttachments = buildCopilotMessageAttachments(
+      input.attachments,
+    );
+    const redactor = createProviderAgentRuntimeBindingRedactor(
+      input.agentRuntimeBinding,
+    );
     const workspacePath = resolveRunWorkspacePath(input);
 
     const cliPath = resolveCopilotCliPath();
-    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
-      ? await captureWorkspaceSnapshot([
-          workspacePath,
-          ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
-        ])
-      : createDisabledWorkspaceSnapshotCapture();
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } =
+      WORKSPACE_DIFF_CAPTURE_ENABLED
+        ? await captureWorkspaceSnapshot([
+            workspacePath,
+            ...normalizeAllowedAdditionalDirectories(
+              workspacePath,
+              input.session.allowedAdditionalDirectories,
+            ),
+          ])
+        : createDisabledWorkspaceSnapshotCapture();
     let session: CopilotSession;
     let selection: ResolvedModelSelection;
     let client: CopilotClient;
     let clientKey: string;
     try {
-      ({ session, selection, client, clientKey } = await this.getSession(input, prompt));
+      ({ session, selection, client, clientKey } = await this.getSession(
+        input,
+        prompt,
+      ));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logCopilotRuntime("session bootstrap failed", {
@@ -1870,8 +2634,21 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         {
           threadId: input.session.threadId || null,
           assistantText: "",
-          providerMetadata: [{ provider: "copilot", kind: "bootstrap_failure", summary: redactor.sanitizeText(message),
-            payload: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)) }],
+          providerMetadata: [
+            {
+              provider: "copilot",
+              kind: "bootstrap_failure",
+              summary: redactor.sanitizeText(message),
+              payload: redactor.sanitizeText(
+                buildCopilotBootstrapDebugItems(
+                  input,
+                  cliPath,
+                  "session-bootstrap",
+                  message,
+                ),
+              ),
+            },
+          ],
           usage: null,
           providerQuotaTelemetry: null,
         },
@@ -1884,25 +2661,30 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     let interactionFailure: unknown;
     const interestHandles: string[] = [];
     const interactionTasks: Promise<void>[] = [];
+    /** 購読の準備後に取消処理へ接続する。差し替え前に起きた進捗失敗は準備後に処理する。 */
     let stopForProgressFailure = () => {};
-    const progressDelivery = new ProviderProgressDelivery(onProgress, (error) => {
-      progressFailure ??= error;
-      stopForProgressFailure();
-    });
+    const progressDelivery = new ProviderProgressDelivery(
+      onProgress,
+      (error) => {
+        progressFailure ??= error;
+        stopForProgressFailure();
+      },
+    );
+    /** 進捗の受け手があり失敗していなければ、最新の状態を順序付きの配信へ渡す。 */
     const scheduleLiveState = () => {
       if (!onProgress || progressFailure) return Promise.resolve();
       return emitLiveState(
-          (state, changes) => progressDelivery.deliver(state, changes),
-          input.session.id,
-          session.sessionId,
-          streamState.liveSteps,
-          streamState.backgroundTasks,
-          streamState.assistantText,
-          streamState.reasoningText,
-          streamState.usage,
-          streamState.streamErrorMessage,
-          redactor,
-        );
+        (state, changes) => progressDelivery.deliver(state, changes),
+        input.session.id,
+        session.sessionId,
+        streamState.liveSteps,
+        streamState.backgroundTasks,
+        streamState.assistantText,
+        streamState.reasoningText,
+        streamState.usage,
+        streamState.streamErrorMessage,
+        redactor,
+      );
     };
 
     await emitLiveState(
@@ -1931,55 +2713,102 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
         onSessionContextTelemetry: input.onSessionContextTelemetry,
       });
-      if (event.type === "elicitation.requested" || event.type === "user_input.requested") {
-        const request = event.type === "user_input.requested"
-          ? buildLiveElicitationRequestFromCopilotUserInput(input.providerCatalog.id, event)
-          : buildElicitationRequestProjection(input.providerCatalog.id, event);
+      if (
+        event.type === "elicitation.requested" ||
+        event.type === "user_input.requested"
+      ) {
+        const request =
+          event.type === "user_input.requested"
+            ? buildLiveElicitationRequestFromCopilotUserInput(
+                input.providerCatalog.id,
+                event,
+              )
+            : buildElicitationRequestProjection(
+                input.providerCatalog.id,
+                event,
+              );
         if (!request) {
-          this.writeLog({ level: "warn", kind: "provider.unsupported-interaction", message: "Unsupported Copilot elicitation schema; declining the entire request." });
+          this.writeLog({
+            level: "warn",
+            kind: "provider.unsupported-interaction",
+            message:
+              "Unsupported Copilot elicitation schema; declining the entire request.",
+          });
         }
-        const redactedRequest = request ? {
-          ...redactor.sanitize(request), requestId: request.requestId,
-          textPosition: redactor.sanitizeText(streamState.assistantText).length,
-        } : null;
-        interactionTasks.push(scheduleLiveState()
-          .then(() => observingTurn && redactedRequest && input.onElicitationRequest
-            ? input.onElicitationRequest(redactedRequest, input.signal)
-            : { action: request ? "cancel" : "decline" } as LiveElicitationResponse)
-          .then(async (response) => {
-            if (!observingTurn || cancellationCleanup) return;
-            const answer = response.action === "accept" ? response.content?.answer : "";
-            const result = event.type === "user_input.requested"
-              ? await session.rpc.ui.handlePendingUserInput({ requestId: event.data.requestId, response: {
-                  answer: typeof answer === "string" ? answer : "",
-                  wasFreeform: !event.data.choices?.includes(typeof answer === "string" ? answer : ""),
-                } })
-              : await session.rpc.ui.handlePendingElicitation({ requestId: event.data.requestId, result: response });
-            if (!result.success) throw new Error("Copilot input request is no longer pending.");
-            if (event.type === "user_input.requested" && response.action === "accept") input.onElicitationDelivered?.(event.data.requestId);
-          })
-          .catch((error: unknown) => {
-            logCopilotRuntime("elicitation handling failed", {
-              provider: input.providerCatalog.id,
-              model: input.executionOptions.model,
-              workspacePath,
-              threadId: session.sessionId,
-              requestId: event.data.requestId,
-              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
-            });
-            if (observingTurn && !cancellationCleanup) {
-              interactionFailure ??= error;
-              handleAbort();
+        const redactedRequest = request
+          ? {
+              ...redactor.sanitize(request),
+              requestId: request.requestId,
+              textPosition: redactor.sanitizeText(streamState.assistantText)
+                .length,
             }
-          }));
+          : null;
+        interactionTasks.push(
+          scheduleLiveState()
+            .then(() =>
+              observingTurn && redactedRequest && input.onElicitationRequest
+                ? input.onElicitationRequest(redactedRequest, input.signal)
+                : ({
+                    action: request ? "cancel" : "decline",
+                  } as LiveElicitationResponse),
+            )
+            .then(async (response) => {
+              if (!observingTurn || cancellationCleanup) return;
+              const answer =
+                response.action === "accept" ? response.content?.answer : "";
+              const result =
+                event.type === "user_input.requested"
+                  ? await session.rpc.ui.handlePendingUserInput({
+                      requestId: event.data.requestId,
+                      response: {
+                        answer: typeof answer === "string" ? answer : "",
+                        wasFreeform: !event.data.choices?.includes(
+                          typeof answer === "string" ? answer : "",
+                        ),
+                      },
+                    })
+                  : await session.rpc.ui.handlePendingElicitation({
+                      requestId: event.data.requestId,
+                      result: response,
+                    });
+              if (!result.success)
+                throw new Error("Copilot input request is no longer pending.");
+              if (
+                event.type === "user_input.requested" &&
+                response.action === "accept"
+              )
+                input.onElicitationDelivered?.(event.data.requestId);
+            })
+            .catch((error: unknown) => {
+              logCopilotRuntime("elicitation handling failed", {
+                provider: input.providerCatalog.id,
+                model: input.executionOptions.model,
+                workspacePath,
+                threadId: session.sessionId,
+                requestId: event.data.requestId,
+                message: redactor.sanitizeText(
+                  error instanceof Error ? error.message : String(error),
+                ),
+              });
+              if (observingTurn && !cancellationCleanup) {
+                interactionFailure ??= error;
+                handleAbort();
+              }
+            }),
+        );
       }
       void scheduleLiveState().catch(() => undefined);
     });
 
     const completion = waitForCopilotSessionCompletion(session);
     const send = Promise.resolve().then(async () => {
-      for (const eventType of ["user_input.requested", "elicitation.requested"]) {
-        const { handle } = await session.rpc.eventLog.registerInterest({ eventType });
+      for (const eventType of [
+        "user_input.requested",
+        "elicitation.requested",
+      ]) {
+        const { handle } = await session.rpc.eventLog.registerInterest({
+          eventType,
+        });
         interestHandles.push(handle);
       }
       if (!observingTurn || input.signal?.aborted) return;
@@ -1987,18 +2816,26 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       onSendInvoked?.();
       return session.send({
         prompt: prompt.inputBodyText,
-        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+        ...(messageAttachments.length > 0
+          ? { attachments: messageAttachments }
+          : {}),
       });
     });
-    const execution = Promise.all([send, completion.wait]).then(async ([requestMessageId]) => {
-      await Promise.all(interactionTasks);
-      await progressDelivery.drain();
-      if (typeof requestMessageId === "string") streamState.outputProjection.completeRequest(requestMessageId);
-    });
+    const execution = Promise.all([send, completion.wait]).then(
+      async ([requestMessageId]) => {
+        await Promise.all(interactionTasks);
+        await progressDelivery.drain();
+        if (typeof requestMessageId === "string")
+          streamState.outputProjection.completeRequest(requestMessageId);
+      },
+    );
     let cancellationCleanup: Promise<never> | undefined;
     let cancellationFailures: string[] = [];
     let rejectCancellation!: (error: unknown) => void;
-    const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject;
+    });
+    /** 取消を一度だけ開始し、元の接続を直ちに登録から外して停止完了までの処理を保持する。 */
     const handleAbort = () => {
       if (cancellationCleanup || !observingTurn) {
         return;
@@ -2019,7 +2856,12 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         );
         cancellationFailures = failures;
         if (failures.length > 0) {
-          this.writeLog({ level: "warn", kind: "provider.cancel-cleanup", message: failures.join("; "), data: null });
+          this.writeLog({
+            level: "warn",
+            kind: "provider.cancel-cleanup",
+            message: failures.join("; "),
+            data: null,
+          });
         }
         throw new Error(["Abort requested", ...failures].join("; "));
       })();
@@ -2065,7 +2907,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         throw new ProviderTurnError(
           redactor.sanitizeText(streamState.streamErrorMessage),
           partialResult,
-          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
+          Boolean(input.signal?.aborted) ||
+            isCanceledProviderMessage(streamState.streamErrorMessage),
         );
       }
 
@@ -2095,7 +2938,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
 
       const failure = progressFailure ?? interactionFailure ?? error;
-      const message = failure instanceof Error ? failure.message : String(failure);
+      const message =
+        failure instanceof Error ? failure.message : String(failure);
       const partialResult = await this.buildTurnResult(
         input.agentRuntimeBinding,
         session.sessionId,
@@ -2121,7 +2965,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
             provider: input.providerCatalog.id,
             kind: "cancellation_cleanup",
             source: "CopilotAdapter",
-            summary: "Copilot cancellation cleanup encountered incomplete or failed stop requests",
+            summary:
+              "Copilot cancellation cleanup encountered incomplete or failed stop requests",
             payload: { failures: cancellationFailures },
           },
         ];
@@ -2137,7 +2982,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(
         redactor.sanitizeText(message),
         partialResult,
-        !progressFailure && !interactionFailure && (Boolean(input.signal?.aborted) || isCanceledProviderMessage(message)),
+        !progressFailure &&
+          !interactionFailure &&
+          (Boolean(input.signal?.aborted) ||
+            isCanceledProviderMessage(message)),
       );
     } finally {
       observingTurn = false;
@@ -2146,26 +2994,46 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       input.signal?.removeEventListener("abort", handleAbort);
       if (!cancellationCleanup) {
         for (const handle of interestHandles) {
-          await session.rpc.eventLog.releaseInterest({ handle }).catch((error: unknown) => {
-            this.writeLog({ level: "warn", kind: "provider.interaction-interest-release-failed",
-              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)) });
-          });
+          await session.rpc.eventLog
+            .releaseInterest({ handle })
+            .catch((error: unknown) => {
+              this.writeLog({
+                level: "warn",
+                kind: "provider.interaction-interest-release-failed",
+                message: redactor.sanitizeText(
+                  error instanceof Error ? error.message : String(error),
+                ),
+              });
+            });
         }
       }
     }
   }
 
-  async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
+  /** 回復可能な接続失敗は送信呼び出し前に限り一度やり直す。送信後は結果が不明でも自動再送しない。 */
+  async runSessionTurn(
+    input: RunSessionTurnInput,
+    onProgress?: RunSessionTurnProgressHandler,
+  ): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
-    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    const redactor = createProviderAgentRuntimeBindingRedactor(
+      input.agentRuntimeBinding,
+    );
     let sendInvoked = false;
 
     try {
-      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { sendInvoked = true; });
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => {
+        sendInvoked = true;
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (sendInvoked || input.signal?.aborted || (error instanceof ProviderTurnError && error.canceled)
-        || (!isRecoverableCopilotConnectionErrorMessage(message) && !isRecoverableCopilotMissingSessionErrorMessage(message))) {
+      if (
+        sendInvoked ||
+        input.signal?.aborted ||
+        (error instanceof ProviderTurnError && error.canceled) ||
+        (!isRecoverableCopilotConnectionErrorMessage(message) &&
+          !isRecoverableCopilotMissingSessionErrorMessage(message))
+      ) {
         throw error;
       }
 
@@ -2181,6 +3049,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
+  /** 照会用クライアントを起動し、SDK のアカウント利用枠を取得時刻付きの共通形式に投影する。 */
   private async fetchProviderQuotaTelemetry(
     providerId: string,
     appSettings: RunSessionTurnInput["appSettings"],
@@ -2188,6 +3057,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
     await client.start();
     const quota = await client.rpc.account.getQuota({});
-    return buildProviderQuotaTelemetryProjection(providerId, quota.quotaSnapshots, new Date().toISOString());
+    return buildProviderQuotaTelemetryProjection(
+      providerId,
+      quota.quotaSnapshots,
+      new Date().toISOString(),
+    );
   }
 }

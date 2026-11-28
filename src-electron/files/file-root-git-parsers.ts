@@ -9,18 +9,30 @@ import type {
   FileRootGitHistoryRefKind,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
+/** 空文字・絶対パス・空またはドット系の区間を拒み、相対パスの区切りをスラッシュへ揃える。 */
 export function normalizeGitRelativePath(value: string): string {
-  if (typeof value !== "string" || !value || path.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    path.isAbsolute(value) ||
+    /^[a-zA-Z]:[\\/]/.test(value)
+  ) {
     throw new Error("Git path must be a non-empty workspace-relative path.");
   }
   const segments = value.replaceAll("\\", "/").split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+  if (
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) {
     throw new Error("Git path contains an invalid segment.");
   }
   return segments.join("/");
 }
 
-function changeKind(status: string, fallback: FileRootGitChangeKind = "modified"): FileRootGitChangeKind {
+/** Git の単文字ステータスから改名・複製・削除・追加を取り出し、その他は既定の変更種別へ寄せる。 */
+function changeKind(
+  status: string,
+  fallback: FileRootGitChangeKind = "modified",
+): FileRootGitChangeKind {
   if (status === "R") return "renamed";
   if (status === "C") return "copied";
   if (status === "D") return "deleted";
@@ -28,76 +40,124 @@ function changeKind(status: string, fallback: FileRootGitChangeKind = "modified"
   return fallback;
 }
 
+/** リポジトリ直下なら空文字、それ以外は先頭スラッシュなし・末尾スラッシュ付きの接頭辞へ揃える。 */
 export function normalizeWorkspacePrefix(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
   return normalized ? `${normalized}/` : "";
 }
 
-function toWorkspaceRelativePath(repositoryRelativePath: string, workspacePrefix: string): string | null {
+/** 区間境界付きの接頭辞を外してワークスペース相対に変換し、範囲外なら null を返す。 */
+function toWorkspaceRelativePath(
+  repositoryRelativePath: string,
+  workspacePrefix: string,
+): string | null {
   const normalizedPath = repositoryRelativePath.replaceAll("\\", "/");
   const normalizedPrefix = normalizeWorkspacePrefix(workspacePrefix);
   if (!normalizedPrefix) return normalizeGitRelativePath(normalizedPath);
   if (!normalizedPath.startsWith(normalizedPrefix)) return null;
-  return normalizeGitRelativePath(normalizedPath.slice(normalizedPrefix.length));
+  return normalizeGitRelativePath(
+    normalizedPath.slice(normalizedPrefix.length),
+  );
 }
 
-export function parseGitPorcelainV1Z(output: Buffer, workspacePrefix = ""): FileRootGitChangeEntry[] {
+/**
+ * NUL 区切りの status を読み、インデックスと作業ツリーの変更を別々に保持する。
+ * 改名・複製の片側だけがワークスペース内にある場合は、範囲内での追加または削除として返す。
+ */
+export function parseGitPorcelainV1Z(
+  output: Buffer,
+  workspacePrefix = "",
+): FileRootGitChangeEntry[] {
   const fields = output.toString("utf8").split("\0");
   const entries: FileRootGitChangeEntry[] = [];
   for (let index = 0; index < fields.length; index += 1) {
     const field = fields[index];
     if (!field) continue;
-    if (field.length < 4 || field[2] !== " ") throw new Error("Git status returned an unsupported porcelain record.");
+    if (field.length < 4 || field[2] !== " ")
+      throw new Error("Git status returned an unsupported porcelain record.");
     const x = field[0] ?? " ";
     const y = field[1] ?? " ";
     const repositoryRelativePath = normalizeGitRelativePath(field.slice(3));
     const isRename = x === "R" || x === "C" || y === "R" || y === "C";
-    const repositoryPreviousPath = isRename ? normalizeGitRelativePath(fields[index + 1] ?? "") : null;
+    const repositoryPreviousPath = isRename
+      ? normalizeGitRelativePath(fields[index + 1] ?? "")
+      : null;
     if (isRename) index += 1;
-    const currentRelativePath = toWorkspaceRelativePath(repositoryRelativePath, workspacePrefix);
+    const currentRelativePath = toWorkspaceRelativePath(
+      repositoryRelativePath,
+      workspacePrefix,
+    );
     const previousRelativePath = repositoryPreviousPath
       ? toWorkspaceRelativePath(repositoryPreviousPath, workspacePrefix)
       : null;
     if (!currentRelativePath && !previousRelativePath) continue;
     const relativePath = currentRelativePath ?? previousRelativePath!;
     if (x === "?" && y === "?") {
-      entries.push({ relativePath, previousRelativePath: null, kinds: { "working-tree": "untracked" }, scopes: ["working-tree"] });
+      entries.push({
+        relativePath,
+        previousRelativePath: null,
+        kinds: { "working-tree": "untracked" },
+        scopes: ["working-tree"],
+      });
       continue;
     }
     const scopes: FileRootGitChangeEntry["scopes"] = [];
     const kinds: FileRootGitChangeEntry["kinds"] = {};
     if (x !== " " && x !== "?") {
       scopes.push("staged");
-      kinds.staged = !currentRelativePath ? "deleted" : isRename && !previousRelativePath ? "added" : changeKind(x);
+      kinds.staged = !currentRelativePath
+        ? "deleted"
+        : isRename && !previousRelativePath
+          ? "added"
+          : changeKind(x);
     }
     if (y !== " " && y !== "?") {
       scopes.push("working-tree");
-      kinds["working-tree"] = !currentRelativePath ? "deleted" : isRename && !previousRelativePath ? "added" : changeKind(y);
+      kinds["working-tree"] = !currentRelativePath
+        ? "deleted"
+        : isRename && !previousRelativePath
+          ? "added"
+          : changeKind(y);
     }
-    entries.push({ relativePath, previousRelativePath: currentRelativePath ? previousRelativePath : null, kinds, scopes });
+    entries.push({
+      relativePath,
+      previousRelativePath: currentRelativePath ? previousRelativePath : null,
+      kinds,
+      scopes,
+    });
   }
   return entries;
 }
 
+/** 前後の空白を除き、SHA-1 または SHA-256 の小文字の完全 ID だけを受け付ける。 */
 export function normalizeHistoryObjectId(value: string): string {
   const normalized = value.trim();
-  if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(normalized)) throw new Error("Git history returned an unsupported commit id.");
+  if (!/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(normalized))
+    throw new Error("Git history returned an unsupported commit id.");
   return normalized;
 }
 
+/** 空文字や制御文字を含む参照名を拒む。参照の存在確認は Git を呼ぶ側で行う。 */
 export function normalizeHistoryBranch(value: string): string {
-  if (typeof value !== "string" || !value || /[\u0000-\u001f\u007f]/u.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
     throw new Error("Git history branch is invalid.");
   }
   return value;
 }
 
+/** ログの装飾から HEAD・ローカルブランチ・タグを抽出し、同じ種別と名前の重複を除く。 */
 function parseHistoryRefs(value: string): FileRootGitHistoryRef[] {
   const refs: FileRootGitHistoryRef[] = [];
   const seen = new Set<string>();
+  /** 装飾から切り出した参照名を検査し、その種別と名前の初出だけを保持する。 */
   const add = (kind: FileRootGitHistoryRefKind, name: string) => {
     const normalizedName = name.trim();
-    if (!normalizedName || /[\u0000-\u001f\u007f]/u.test(normalizedName)) return;
+    if (!normalizedName || /[\u0000-\u001f\u007f]/u.test(normalizedName))
+      return;
     const key = `${kind}:${normalizedName}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -107,16 +167,29 @@ function parseHistoryRefs(value: string): FileRootGitHistoryRef[] {
     const token = rawToken.trim();
     if (!token) continue;
     const headTarget = /^HEAD -> (refs\/heads\/)?(.+)$/u.exec(token);
-    if (headTarget) { add("head", "HEAD"); add("branch", headTarget[2]!); continue; }
-    if (token === "HEAD") { add("head", "HEAD"); continue; }
-    const tagTarget = /^(?:tag: (?:refs\/tags\/)?|refs\/tags\/)(.+)$/u.exec(token);
-    if (tagTarget) { add("tag", tagTarget[1]!); continue; }
+    if (headTarget) {
+      add("head", "HEAD");
+      add("branch", headTarget[2]!);
+      continue;
+    }
+    if (token === "HEAD") {
+      add("head", "HEAD");
+      continue;
+    }
+    const tagTarget = /^(?:tag: (?:refs\/tags\/)?|refs\/tags\/)(.+)$/u.exec(
+      token,
+    );
+    if (tagTarget) {
+      add("tag", tagTarget[1]!);
+      continue;
+    }
     const branchTarget = /^refs\/heads\/(.+)$/u.exec(token);
     if (branchTarget) add("branch", branchTarget[1]!);
   }
   return refs;
 }
 
+/** レコード区切りと NUL 区切りのフィールドを読み、コミット ID・親 ID・著者日時を検証して履歴へ変換する。 */
 export function parseGitHistoryLog(output: Buffer): FileRootGitHistoryCommit[] {
   const records = output.toString("utf8").split("\x01");
   const commits: FileRootGitHistoryCommit[] = [];
@@ -124,43 +197,98 @@ export function parseGitHistoryLog(output: Buffer): FileRootGitHistoryCommit[] {
     const record = rawRecord.replace(/^\r?\n/u, "").replace(/\r?\n$/u, "");
     if (!record) continue;
     const fields = record.split("\0");
-    if (fields.length !== 9 || fields[8] !== "") throw new Error("Git history returned an unsupported commit record.");
-    const [idField, shortHash, authorName, authorEmail, authoredAt, subject, parents, decorations] = fields;
+    if (fields.length !== 9 || fields[8] !== "")
+      throw new Error("Git history returned an unsupported commit record.");
+    const [
+      idField,
+      shortHash,
+      authorName,
+      authorEmail,
+      authoredAt,
+      subject,
+      parents,
+      decorations,
+    ] = fields;
     const id = normalizeHistoryObjectId(idField!);
-    if (!/^[0-9a-f]{7,64}$/.test(shortHash!)) throw new Error("Git history returned an unsupported short commit id.");
-    if (!authoredAt || Number.isNaN(Date.parse(authoredAt))) throw new Error("Git history returned an unsupported author date.");
-    const parentIds = parents ? parents.split(/\s+/u).map(normalizeHistoryObjectId) : [];
-    commits.push({ id, shortHash: shortHash!, subject: subject ?? "", authorName: authorName ?? "", authorEmail: authorEmail ?? "", authoredAt: new Date(authoredAt).toISOString(), refs: parseHistoryRefs(decorations ?? ""), parentIds });
+    if (!/^[0-9a-f]{7,64}$/.test(shortHash!))
+      throw new Error("Git history returned an unsupported short commit id.");
+    if (!authoredAt || Number.isNaN(Date.parse(authoredAt)))
+      throw new Error("Git history returned an unsupported author date.");
+    const parentIds = parents
+      ? parents.split(/\s+/u).map(normalizeHistoryObjectId)
+      : [];
+    commits.push({
+      id,
+      shortHash: shortHash!,
+      subject: subject ?? "",
+      authorName: authorName ?? "",
+      authorEmail: authorEmail ?? "",
+      authoredAt: new Date(authoredAt).toISOString(),
+      refs: parseHistoryRefs(decorations ?? ""),
+      parentIds,
+    });
   }
   return commits;
 }
 
-export function parseGitHistoryNameStatusZ(output: Buffer, workspacePrefix = ""): FileRootGitChangeEntry[] {
+/**
+ * NUL 区切りの name-status をコミット差分の一覧に変換する。
+ * 改名・複製の旧パスは両側が範囲内のときだけ残し、片側だけなら追加または削除として返す。
+ */
+export function parseGitHistoryNameStatusZ(
+  output: Buffer,
+  workspacePrefix = "",
+): FileRootGitChangeEntry[] {
   const fields = output.toString("utf8").split("\0");
   const entries: FileRootGitChangeEntry[] = [];
   for (let index = 0; index < fields.length; index += 1) {
     const statusField = fields[index];
     if (!statusField) continue;
     const status = statusField[0];
-    if (!status || !/^[A-Z]$/u.test(status)) throw new Error("Git history returned an unsupported file status.");
-    const firstRepositoryPath = normalizeGitRelativePath(fields[index + 1] ?? "");
+    if (!status || !/^[A-Z]$/u.test(status))
+      throw new Error("Git history returned an unsupported file status.");
+    const firstRepositoryPath = normalizeGitRelativePath(
+      fields[index + 1] ?? "",
+    );
     const isRenameOrCopy = status === "R" || status === "C";
-    const secondRepositoryPath = isRenameOrCopy ? normalizeGitRelativePath(fields[index + 2] ?? "") : null;
+    const secondRepositoryPath = isRenameOrCopy
+      ? normalizeGitRelativePath(fields[index + 2] ?? "")
+      : null;
     index += isRenameOrCopy ? 2 : 1;
-    const firstPath = toWorkspaceRelativePath(firstRepositoryPath, workspacePrefix);
-    const secondPath = secondRepositoryPath ? toWorkspaceRelativePath(secondRepositoryPath, workspacePrefix) : null;
+    const firstPath = toWorkspaceRelativePath(
+      firstRepositoryPath,
+      workspacePrefix,
+    );
+    const secondPath = secondRepositoryPath
+      ? toWorkspaceRelativePath(secondRepositoryPath, workspacePrefix)
+      : null;
     if (!firstPath && !secondPath) continue;
     const resolvedPath = secondPath ?? firstPath;
     if (!resolvedPath) continue;
-    const kind = !isRenameOrCopy ? changeKind(status) : firstPath && secondPath ? changeKind(status) : secondPath ? "added" : "deleted";
-    entries.push({ relativePath: resolvedPath, previousRelativePath: secondPath && firstPath ? firstPath : null, kinds: { commit: kind }, scopes: ["commit"] });
+    const kind = !isRenameOrCopy
+      ? changeKind(status)
+      : firstPath && secondPath
+        ? changeKind(status)
+        : secondPath
+          ? "added"
+          : "deleted";
+    entries.push({
+      relativePath: resolvedPath,
+      previousRelativePath: secondPath && firstPath ? firstPath : null,
+      kinds: { commit: kind },
+      scopes: ["commit"],
+    });
   }
   return entries;
 }
 
-export function parseGitHistoryAvailableRefs(output: Buffer): FileRootGitHistoryAvailableRef[] {
+/** 完全参照名の一覧からローカルブランチ、リモート追跡ブランチ、タグを比較候補に変換する。 */
+export function parseGitHistoryAvailableRefs(
+  output: Buffer,
+): FileRootGitHistoryAvailableRef[] {
   const refs: FileRootGitHistoryAvailableRef[] = [];
   const seen = new Set<string>();
+  /** 名前が空または制御文字を含む候補を除き、同じ種別と名前の初出だけを追加する。 */
   const add = (kind: FileRootGitHistoryAvailableRef["kind"], name: string) => {
     if (!name || /[\u0000-\u001f\u007f]/u.test(name)) return;
     const key = `${kind}:${name}`;
@@ -169,9 +297,12 @@ export function parseGitHistoryAvailableRefs(output: Buffer): FileRootGitHistory
     refs.push({ kind, name });
   };
   for (const rawLine of output.toString("utf8").split(/\r?\n/u)) {
-    if (rawLine.startsWith("refs/heads/")) add("branch", rawLine.slice("refs/heads/".length));
-    else if (rawLine.startsWith("refs/remotes/")) add("remote", rawLine.slice("refs/remotes/".length));
-    else if (rawLine.startsWith("refs/tags/")) add("tag", rawLine.slice("refs/tags/".length));
+    if (rawLine.startsWith("refs/heads/"))
+      add("branch", rawLine.slice("refs/heads/".length));
+    else if (rawLine.startsWith("refs/remotes/"))
+      add("remote", rawLine.slice("refs/remotes/".length));
+    else if (rawLine.startsWith("refs/tags/"))
+      add("tag", rawLine.slice("refs/tags/".length));
   }
   return refs;
 }

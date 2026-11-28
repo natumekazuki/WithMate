@@ -1,9 +1,22 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ClipboardEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEventHandler,
+  type KeyboardEventHandler,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
 import { ButtonContent } from "../../ui/button-content.js";
-import { isSessionApprovalChoice, type SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
+import {
+  isSessionApprovalChoice,
+  type SessionApprovalChoice,
+} from "../../../src-shared/settings/session-approval-choice.js";
 
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
@@ -17,18 +30,28 @@ import { ComposerIcon } from "./composer-icon.js";
 import { ComposerErrorDetails } from "./composer-error-details.js";
 import { ComposerSettingSelect } from "./composer-setting-select.js";
 import { ModelPicker } from "./model-picker.js";
-import { CustomAgentPicker, type SessionCustomAgentItem } from "./custom-agent-picker.js";
+import {
+  CustomAgentPicker,
+  type SessionCustomAgentItem,
+} from "./custom-agent-picker.js";
 import type { ModelSelectOption } from "../../settings/model-select-options.js";
 import type { ModelCatalogItem } from "../../../src-shared/settings/model-catalog.js";
-import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
+import {
+  useComposerController,
+  type ComposerControllerRegistry,
+  type ComposerOwner,
+} from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
   resolveComposerSendabilityState,
 } from "./session-composer-feedback.js";
 
-import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
+import {
+  appendShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+} from "../../settings/shortcut-registry.js";
 
-
+/** 実行設定の選択欄に表示する値・ラベルと、補足や選択不可の指定。 */
 export type SessionSelectOption = {
   value: string;
   label: string;
@@ -36,6 +59,7 @@ export type SessionSelectOption = {
   disabled?: boolean;
 };
 
+/** スキルピッカーで候補を表示・検索し、選択元のスキルを特定する項目。 */
 export type SessionSkillItem = {
   key: string;
   skillId: string;
@@ -45,6 +69,7 @@ export type SessionSkillItem = {
   searchText?: string;
 };
 
+/** コンポーザーの描画に必要な処理中の状態と、送信不可時の表示内容。 */
 type SessionComposerSendabilityView = {
   isBusy?: boolean;
   busyReason?: string;
@@ -54,11 +79,24 @@ type SessionComposerSendabilityView = {
   shouldShowFeedback: boolean;
 };
 
+/** セッション入力欄へ渡す下書き、送信・復旧状態、実行設定および各操作。 */
 export type SessionComposerExpandedProps = {
   replyUnavailableReason?: string;
-  queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
+  queuedTurnEdit?: {
+    busy: boolean;
+    canceling: boolean;
+    unavailable: boolean;
+    /** 待機中メッセージの編集を確定する。 */
+    onSubmit(): void;
+    /** 待機中メッセージの編集を取り消す。 */
+    onCancel(): void;
+  };
   isActive?: boolean;
-  composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
+  composerController?: {
+    owner: ComposerOwner;
+    registry: ComposerControllerRegistry;
+    initialDraft?: string;
+  };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
   isCanceling?: boolean;
@@ -138,7 +176,9 @@ export type SessionComposerExpandedProps = {
   onToggleSkillPicker: () => void;
   onOpenPromptTemplates?: () => void;
   onAddAdditionalDirectory: (directoryPath?: string) => void | Promise<void>;
-  onValidateAdditionalDirectory: (directoryPath: string) => Promise<WorkspaceDirectoryValidationResult>;
+  onValidateAdditionalDirectory: (
+    directoryPath: string,
+  ) => Promise<WorkspaceDirectoryValidationResult>;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
@@ -159,6 +199,7 @@ export type SessionComposerExpandedProps = {
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
+/** 編集対象の入力欄と操作群を描き、通常送信・待機中メッセージの編集・送信復旧を状態に応じて切り替える。 */
 export function SessionComposerExpanded({
   replyUnavailableReason,
   queuedTurnEdit,
@@ -264,67 +305,112 @@ export function SessionComposerExpanded({
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const keyboardShortcuts = useShortcutSettings();
-  const controllerOwner = composerController?.owner ?? { kind: "main" as const, id: "__legacy__" };
+  const controllerOwner = composerController?.owner ?? {
+    kind: "main" as const,
+    id: "__legacy__",
+  };
   const composerControllerState = useComposerController(
     controllerOwner,
     composerController?.initialDraft ?? draft,
     composerController?.registry,
   );
-  const displayedDraft = composerController ? composerControllerState.draft : draft;
+  const displayedDraft = composerController
+    ? composerControllerState.draft
+    : draft;
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
-  const canQueueTurn = !!queuedTurnEdit || isRunning && !!onQueueTurn;
-  const composerControlsDisabled = !isActive || composerBlocked || composerFrozen || !!queuedTurnEdit?.busy || (isRunning && !canQueueTurn);
-  const executionControlsDisabled = composerControlsDisabled || !!queuedTurnEdit;
-  const turnRecoveryBusyReason = turnRecoveryAction === "check" ? "Checking turn acceptance."
-    : turnRecoveryAction === "retry" ? "Retrying the original turn." : "";
+  const canQueueTurn = !!queuedTurnEdit || (isRunning && !!onQueueTurn);
+  const composerControlsDisabled =
+    !isActive ||
+    composerBlocked ||
+    composerFrozen ||
+    !!queuedTurnEdit?.busy ||
+    (isRunning && !canQueueTurn);
+  const executionControlsDisabled =
+    composerControlsDisabled || !!queuedTurnEdit;
+  const turnRecoveryBusyReason =
+    turnRecoveryAction === "check"
+      ? "Checking turn acceptance."
+      : turnRecoveryAction === "retry"
+        ? "Retrying the original turn."
+        : "";
   const projectedComposerSendability = composerController
     ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
         canSendInput: !canQueueTurn && canSendInput && !isCanceling,
         canQueueTurn,
-        busyReason: turnRecoveryBusyReason || composerSendability.busyReason || (queueTurnBusy ? "Message submission is in progress." : ""),
-        blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
+        busyReason:
+          turnRecoveryBusyReason ||
+          composerSendability.busyReason ||
+          (queueTurnBusy ? "Message submission is in progress." : ""),
+        blockedReason: composerBlocked
+          ? (composerSendability.primaryFeedback ?? "")
+          : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
         forceBlockedFeedback: forceComposerBlockedFeedback,
       })
     : null;
-  const resolvedComposerSendability = projectedComposerSendability ?? composerSendability;
+  const resolvedComposerSendability =
+    projectedComposerSendability ?? composerSendability;
   const displayedComposerSendability = resolvedComposerSendability;
   const errorOwnerKey = `${controllerOwner.kind}:${controllerOwner.id}`;
   const displayedIsSendDisabled = composerController
-    ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt
-    : isComposerDisabled || isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt;
+    ? isComposerDisabled ||
+      projectedComposerSendability!.isSendDisabled ||
+      composerSaveFailed ||
+      !!onCheckTurnReceipt
+    : isComposerDisabled ||
+      isSendDisabled ||
+      composerSaveFailed ||
+      !!onCheckTurnReceipt;
   const displayedSendButtonTitle = composerSaveFailed
     ? "Draft could not be saved. Retry before sending."
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
   const showBusySendState = !turnRecoveryAction && queueTurnBusy;
-  const recoveryControlsBusy = queueTurnBusy || displayedComposerSendability.isBusy || !!turnRecoveryAction;
-  const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
-    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable
-    || !!replyUnavailableReason;
+  const recoveryControlsBusy =
+    queueTurnBusy ||
+    displayedComposerSendability.isBusy ||
+    !!turnRecoveryAction;
+  const sendDisabled =
+    (isRunning && !canSendInput && !canQueueTurn) ||
+    (isCanceling && !canQueueTurn) ||
+    displayedIsSendDisabled ||
+    composerBlocked ||
+    composerFrozen ||
+    queueTurnBusy ||
+    !!turnRecoveryAction ||
+    !!queuedTurnEdit?.unavailable ||
+    !!replyUnavailableReason;
   const sendDisabledReason = replyUnavailableReason
     ? replyUnavailableReason
     : composerFrozen
-    ? "Input is frozen while the window is closing."
-    : turnRecoveryAction === "check"
-      ? "Checking turn acceptance."
-      : turnRecoveryAction === "retry"
-        ? "Retrying the original turn."
-        : onCheckTurnReceipt
-          ? "Turn acceptance is unknown. Check Receipt or Retry Original Turn before sending."
-          : (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
-            ? "Cannot send while a run is active."
-            : queueTurnBusy
-              ? displayedComposerSendability.busyReason || "Message submission is in progress."
-              : displayedComposerSendability.primaryFeedback || displayedComposerSendability.busyReason
-                || (composerBlocked || isComposerDisabled ? "Message cannot be sent in this conversation."
-                  : displayedSendButtonTitle || "Message cannot be sent.");
+      ? "Input is frozen while the window is closing."
+      : turnRecoveryAction === "check"
+        ? "Checking turn acceptance."
+        : turnRecoveryAction === "retry"
+          ? "Retrying the original turn."
+          : onCheckTurnReceipt
+            ? "Turn acceptance is unknown. Check Receipt or Retry Original Turn before sending."
+            : (isRunning && !canSendInput && !canQueueTurn) ||
+                (isCanceling && !canQueueTurn)
+              ? "Cannot send while a run is active."
+              : queueTurnBusy
+                ? displayedComposerSendability.busyReason ||
+                  "Message submission is in progress."
+                : displayedComposerSendability.primaryFeedback ||
+                  displayedComposerSendability.busyReason ||
+                  (composerBlocked || isComposerDisabled
+                    ? "Message cannot be sent in this conversation."
+                    : displayedSendButtonTitle || "Message cannot be sent.");
   const sendTitle = appendShortcutLabel(
-    sendDisabled ? sendDisabledReason : queuedTurnEdit ? "Submit" : displayedSendButtonTitle || "Send",
+    sendDisabled
+      ? sendDisabledReason
+      : queuedTurnEdit
+        ? "Submit"
+        : displayedSendButtonTitle || "Send",
     SHORTCUT_COMMAND_IDS.composerSubmit,
     undefined,
     keyboardShortcuts,
@@ -332,25 +418,51 @@ export function SessionComposerExpanded({
   const sendReasonId = useId();
   const submissionErrorId = useId();
   const [isSendReasonFocused, setIsSendReasonFocused] = useState(false);
-  const hasVisibleSendReason = !composerFrozen && (!!onCheckTurnReceipt || composerSaveFailed
-    || (displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds));
-  const showFocusedSendReason = sendDisabled && isSendReasonFocused && !hasVisibleSendReason;
-  const composerDescriptionIds = [
-    externalErrorDescriptionIds,
-    composerSaveFailed ? "composer-save-feedback" : undefined,
-    submissionError && !onCheckTurnReceipt ? submissionErrorId : undefined,
-    displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds
-      ? "composer-sendability-feedback"
-      : undefined,
-  ].filter(Boolean).join(" ") || undefined;
+  const hasVisibleSendReason =
+    !composerFrozen &&
+    (!!onCheckTurnReceipt ||
+      composerSaveFailed ||
+      (displayedComposerSendability.shouldShowFeedback &&
+        !externalErrorDescriptionIds));
+  const showFocusedSendReason =
+    sendDisabled && isSendReasonFocused && !hasVisibleSendReason;
+  const composerDescriptionIds =
+    [
+      externalErrorDescriptionIds,
+      composerSaveFailed ? "composer-save-feedback" : undefined,
+      submissionError && !onCheckTurnReceipt ? submissionErrorId : undefined,
+      displayedComposerSendability.shouldShowFeedback &&
+      !externalErrorDescriptionIds
+        ? "composer-sendability-feedback"
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   useEffect(() => {
-    if (!isActive || !showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
+    if (
+      !isActive ||
+      !showAttachmentControls ||
+      (isRunning && !canSendInput && !onQueueTurn) ||
+      composerBlocked ||
+      composerFrozen
+    ) {
       setIsAttachmentMenuOpen(false);
     }
-  }, [isActive, canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
+  }, [
+    isActive,
+    canSendInput,
+    composerBlocked,
+    composerFrozen,
+    isRunning,
+    onQueueTurn,
+    showAttachmentControls,
+  ]);
 
-  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey, controllerOwner.frameKey]);
+  useLayoutEffect(
+    () => setIsAttachmentMenuOpen(false),
+    [errorOwnerKey, controllerOwner.frameKey],
+  );
   useEffect(() => {
     if (!isActive && isAgentPickerOpen) onCloseAgentPicker();
   }, [isActive, isAgentPickerOpen, onCloseAgentPicker]);
@@ -375,7 +487,13 @@ export function SessionComposerExpanded({
         <div className="composer-attachments-toolbar">
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={!isActive || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen || !!queuedTurnEdit?.busy}
+              disabled={
+                !isActive ||
+                (isRunning && !canSendInput && !onQueueTurn) ||
+                composerBlocked ||
+                composerFrozen ||
+                !!queuedTurnEdit?.busy
+              }
               isOpen={isActive && isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
@@ -461,7 +579,9 @@ export function SessionComposerExpanded({
               disabled={composerControlsDisabled}
               aria-expanded={isSkillPickerOpen}
               aria-haspopup="dialog"
-              aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
+              aria-controls={
+                isSkillPickerOpen ? "composer-skill-picker-list" : undefined
+              }
             >
               <ComposerIcon name="skill" />
               <span className="visually-hidden">Skill</span>
@@ -469,7 +589,11 @@ export function SessionComposerExpanded({
           ) : null}
           {showAdditionalDirectoryControls ? (
             <div className="composer-additional-directory-toolbar">
-              <div className="composer-directory-add-group" role="group" aria-label="Add directory">
+              <div
+                className="composer-directory-add-group"
+                role="group"
+                aria-label="Add directory"
+              >
                 <button
                   className="drawer-toggle compact secondary composer-skill-button composer-icon-button"
                   type="button"
@@ -518,12 +642,22 @@ export function SessionComposerExpanded({
                 aria-expanded={isAdditionalDirectoryListOpen}
               >
                 <ComposerIcon name="folders" />
-                <span className="composer-directory-count" aria-hidden="true">{additionalDirectoryCount}</span>
+                <span className="composer-directory-count" aria-hidden="true">
+                  {additionalDirectoryCount}
+                </span>
               </button>
             </div>
           ) : null}
-          {providerQuota ? <div className="session-provider-quota-slot">{providerQuota}</div> : null}
-          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch || recoveryActions || attentionControl ? (
+          {providerQuota ? (
+            <div className="session-provider-quota-slot">{providerQuota}</div>
+          ) : null}
+          {isRunning ||
+          showJumpToBottom ||
+          showMessageViewModeControls ||
+          targetDock ||
+          dockModeSwitch ||
+          recoveryActions ||
+          attentionControl ? (
             <div className="composer-toolbar-view-actions">
               {attentionControl}
               {recoveryActions}
@@ -536,15 +670,26 @@ export function SessionComposerExpanded({
                     className="danger session-send-button composer-icon-button"
                     type="button"
                     onClick={onSendOrCancel}
-                    title={isCanceling ? "Canceling" : canSendInput ? "Cancel run" : sendButtonTitle || "Cancel"}
+                    title={
+                      isCanceling
+                        ? "Canceling"
+                        : canSendInput
+                          ? "Cancel run"
+                          : sendButtonTitle || "Cancel"
+                    }
                     disabled={isCanceling}
                     aria-busy={isCanceling || undefined}
                   >
-                    <ButtonContent busy={isCanceling && !isAwaitingRunStop}><ComposerIcon name="stop" /><span className="visually-hidden">Cancel</span></ButtonContent>
+                    <ButtonContent busy={isCanceling && !isAwaitingRunStop}>
+                      <ComposerIcon name="stop" />
+                      <span className="visually-hidden">Cancel</span>
+                    </ButtonContent>
                   </button>
                 ) : null}
               </div>
-              {targetDock ? <div className="composer-target-dock-slot">{targetDock}</div> : null}
+              {targetDock ? (
+                <div className="composer-target-dock-slot">{targetDock}</div>
+              ) : null}
               {showJumpToBottom ? (
                 <button
                   className="drawer-toggle compact secondary message-jump-bottom-button composer-icon-button"
@@ -557,7 +702,11 @@ export function SessionComposerExpanded({
                 </button>
               ) : null}
               {showMessageViewModeControls ? (
-                <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+                <div
+                  className="composer-message-view-mode"
+                  role="group"
+                  aria-label="Message display mode"
+                >
                   <button
                     className="composer-message-view-mode-button"
                     type="button"
@@ -587,29 +736,54 @@ export function SessionComposerExpanded({
       ) : null}
 
       <div className="composer-input-row">
-        <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+        <div
+          className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}
+        >
           <textarea
             ref={composerTextareaRef}
             aria-label="Message"
             data-shortcut-scope="composer"
             value={displayedDraft}
             placeholder={placeholder}
-            onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
+            onChange={(event) =>
+              onDraftChange(
+                event.target.value,
+                event.target.selectionStart ?? event.target.value.length,
+              )
+            }
             onFocus={onDraftFocus}
             onKeyDown={onDraftKeyDown}
             onPaste={onDraftPaste}
-            onSelect={(event) => onDraftSelect(event.currentTarget.selectionStart ?? 0)}
+            onSelect={(event) =>
+              onDraftSelect(event.currentTarget.selectionStart ?? 0)
+            }
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
             disabled={isComposerDisabled || composerFrozen}
             aria-busy={displayedComposerSendability.isBusy || undefined}
             aria-describedby={composerDescriptionIds}
-            aria-invalid={displayedComposerSendability.feedbackTone === "blocked" || composerSaveFailed || !!submissionError ? true : undefined}
+            aria-invalid={
+              displayedComposerSendability.feedbackTone === "blocked" ||
+              composerSaveFailed ||
+              !!submissionError
+                ? true
+                : undefined
+            }
           />
           {composerControllerState.saveState === "error" ? (
             <div id="composer-save-feedback" className="composer-save-feedback">
-              <span role="status">Draft could not be saved. Retry before sending.</span>
-              <ComposerErrorDetails key={`${errorOwnerKey}:save:${composerControllerState.saveError}`} isActive={isActive} label="Draft Save Error Details" message={composerControllerState.saveError ?? "Draft could not be saved."} />
+              <span role="status">
+                Draft could not be saved. Retry before sending.
+              </span>
+              <ComposerErrorDetails
+                key={`${errorOwnerKey}:save:${composerControllerState.saveError}`}
+                isActive={isActive}
+                label="Draft Save Error Details"
+                message={
+                  composerControllerState.saveError ??
+                  "Draft could not be saved."
+                }
+              />
               {onRetryComposerSave ? (
                 <button
                   className="composer-save-retry"
@@ -625,40 +799,89 @@ export function SessionComposerExpanded({
           {onCheckTurnReceipt ? (
             <div className="composer-save-feedback composer-turn-recovery">
               <span>Turn acceptance is unknown. Your draft is preserved.</span>
-              <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
-                <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} isActive={isActive} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
+              <span
+                className="composer-turn-recovery-details"
+                inert={!turnRecoveryError}
+                aria-hidden={!turnRecoveryError}
+              >
+                <ComposerErrorDetails
+                  key={`${errorOwnerKey}:recovery:${turnRecoveryError}`}
+                  isActive={isActive}
+                  label="Turn Recovery Error Details"
+                  message={turnRecoveryError ?? ""}
+                />
               </span>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={recoveryControlsBusy} aria-busy={turnRecoveryAction === "check" || undefined}>
-                <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
+              <button
+                type="button"
+                className="drawer-toggle compact secondary"
+                onClick={onCheckTurnReceipt}
+                disabled={recoveryControlsBusy}
+                aria-busy={turnRecoveryAction === "check" || undefined}
+              >
+                <ButtonContent busy={turnRecoveryAction === "check"}>
+                  Check Receipt
+                </ButtonContent>
               </button>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={recoveryControlsBusy || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
-                <ButtonContent busy={turnRecoveryAction === "retry"}>Retry Original Turn</ButtonContent>
+              <button
+                type="button"
+                className="drawer-toggle compact secondary"
+                onClick={onRetryOriginalTurn}
+                disabled={
+                  recoveryControlsBusy || composerFrozen || !onRetryOriginalTurn
+                }
+                aria-busy={turnRecoveryAction === "retry" || undefined}
+              >
+                <ButtonContent busy={turnRecoveryAction === "retry"}>
+                  Retry Original Turn
+                </ButtonContent>
               </button>
             </div>
           ) : null}
-          {submissionError && (inputAcceptanceUnconfirmed || !onCheckTurnReceipt) ? (
+          {submissionError &&
+          (inputAcceptanceUnconfirmed || !onCheckTurnReceipt) ? (
             <div id={submissionErrorId} className="composer-save-feedback">
-              <span role="status">{inputAcceptanceUnconfirmed ? "Input acceptance could not be confirmed. Your draft is preserved."
-                : queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
-              <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} isActive={isActive} label="Message Submission Error Details" message={submissionError} />
+              <span role="status">
+                {inputAcceptanceUnconfirmed
+                  ? "Input acceptance could not be confirmed. Your draft is preserved."
+                  : queuedTurnEdit
+                    ? "Queued message edit could not be completed."
+                    : "Message could not be sent."}
+              </span>
+              <ComposerErrorDetails
+                key={`${errorOwnerKey}:submission:${submissionError}`}
+                isActive={isActive}
+                label="Message Submission Error Details"
+                message={submissionError}
+              />
             </div>
           ) : null}
-          {displayedComposerSendability.isBusy && displayedComposerSendability.busyReason ? (
-            <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+          {displayedComposerSendability.isBusy &&
+          displayedComposerSendability.busyReason ? (
+            <span
+              className="visually-hidden"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               {displayedComposerSendability.busyReason}
             </span>
           ) : null}
-          {displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
+          {displayedComposerSendability.shouldShowFeedback &&
+          !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
               className={`composer-sendability-feedback ${displayedComposerSendability.feedbackTone ?? "helper"}`}
             >
-              {displayedComposerSendability.primaryFeedback ? <p>{displayedComposerSendability.primaryFeedback}</p> : null}
+              {displayedComposerSendability.primaryFeedback ? (
+                <p>{displayedComposerSendability.primaryFeedback}</p>
+              ) : null}
               {displayedComposerSendability.secondaryFeedback.length > 0 ? (
                 <ul>
-                  {displayedComposerSendability.secondaryFeedback.map((feedback) => (
-                    <li key={feedback}>{feedback}</li>
-                  ))}
+                  {displayedComposerSendability.secondaryFeedback.map(
+                    (feedback) => (
+                      <li key={feedback}>{feedback}</li>
+                    ),
+                  )}
                 </ul>
               ) : null}
             </div>
@@ -676,7 +899,12 @@ export function SessionComposerExpanded({
                 value={selectedApprovalMode}
                 options={approvalOptions}
                 onChange={(value) => {
-                  if (isSessionApprovalChoice(value) && approvalOptions.some((option) => option.value === value && !option.disabled)) {
+                  if (
+                    isSessionApprovalChoice(value) &&
+                    approvalOptions.some(
+                      (option) => option.value === value && !option.disabled,
+                    )
+                  ) {
                     onChangeApprovalMode(value);
                   }
                 }}
@@ -689,7 +917,9 @@ export function SessionComposerExpanded({
                   label="Sandbox"
                   value={selectedCodexSandboxMode}
                   options={sandboxOptions}
-                  onChange={(value) => onChangeCodexSandboxMode(value as CodexSandboxMode)}
+                  onChange={(value) =>
+                    onChangeCodexSandboxMode(value as CodexSandboxMode)
+                  }
                   disabled={executionControlsDisabled}
                 />
               ) : null}
@@ -711,14 +941,16 @@ export function SessionComposerExpanded({
             disabled={executionControlsDisabled}
           />
 
-          {reasoningOptions.length > 0 ? <ComposerSettingSelect
-            className="composer-setting-depth"
-            label="Reasoning depth"
-            value={selectedReasoningEffort}
-            options={reasoningOptions}
-            onChange={onChangeReasoningEffort}
-            disabled={executionControlsDisabled}
-          /> : null}
+          {reasoningOptions.length > 0 ? (
+            <ComposerSettingSelect
+              className="composer-setting-depth"
+              label="Reasoning depth"
+              value={selectedReasoningEffort}
+              options={reasoningOptions}
+              onChange={onChangeReasoningEffort}
+              disabled={executionControlsDisabled}
+            />
+          ) : null}
 
           {speedOptions.length > 0 ? (
             <ComposerSettingSelect
@@ -738,9 +970,17 @@ export function SessionComposerExpanded({
           title={sendTitle}
           tabIndex={sendDisabled ? 0 : undefined}
           role={sendDisabled ? "group" : undefined}
-          aria-label={sendDisabled ? queuedTurnEdit ? "Submit unavailable" : "Send unavailable" : undefined}
+          aria-label={
+            sendDisabled
+              ? queuedTurnEdit
+                ? "Submit unavailable"
+                : "Send unavailable"
+              : undefined
+          }
           aria-describedby={sendDisabled ? sendReasonId : undefined}
-          onFocus={(event) => setIsSendReasonFocused(event.target === event.currentTarget)}
+          onFocus={(event) =>
+            setIsSendReasonFocused(event.target === event.currentTarget)
+          }
           onBlur={() => setIsSendReasonFocused(false)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && showFocusedSendReason) {
@@ -750,33 +990,60 @@ export function SessionComposerExpanded({
             }
           }}
         >
-          {queuedTurnEdit ? <button type="button" className="drawer-toggle compact secondary composer-icon-button composer-cancel-edit"
-            title="Cancel Edit" aria-label="Cancel Edit" disabled={queuedTurnEdit.busy || composerFrozen} aria-busy={queuedTurnEdit.canceling || undefined} onClick={queuedTurnEdit.onCancel}>
-            <ButtonContent busy={queuedTurnEdit.canceling}><ComposerIcon name="close" /></ButtonContent>
-          </button> : null}
+          {queuedTurnEdit ? (
+            <button
+              type="button"
+              className="drawer-toggle compact secondary composer-icon-button composer-cancel-edit"
+              title="Cancel Edit"
+              aria-label="Cancel Edit"
+              disabled={queuedTurnEdit.busy || composerFrozen}
+              aria-busy={queuedTurnEdit.canceling || undefined}
+              onClick={queuedTurnEdit.onCancel}
+            >
+              <ButtonContent busy={queuedTurnEdit.canceling}>
+                <ComposerIcon name="close" />
+              </ButtonContent>
+            </button>
+          ) : null}
           <button
             className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
             type="button"
-            onClick={queuedTurnEdit ? queuedTurnEdit.onSubmit : canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
+            onClick={
+              queuedTurnEdit
+                ? queuedTurnEdit.onSubmit
+                : canQueueTurn
+                  ? onQueueTurn
+                  : canSendInput
+                    ? onSendInput
+                    : onSendOrCancel
+            }
             disabled={sendDisabled}
             aria-describedby={sendDisabled ? sendReasonId : undefined}
             aria-busy={showBusySendState || undefined}
             title={sendTitle}
           >
-            <ButtonContent busy={showBusySendState}><ComposerIcon name={queuedTurnEdit ? "submit" : "send"} /><span className="visually-hidden">{queuedTurnEdit ? "Submit" : "Send"}</span></ButtonContent>
+            <ButtonContent busy={showBusySendState}>
+              <ComposerIcon name={queuedTurnEdit ? "submit" : "send"} />
+              <span className="visually-hidden">
+                {queuedTurnEdit ? "Submit" : "Send"}
+              </span>
+            </ButtonContent>
           </button>
           {sendDisabled ? (
             <span
               id={sendReasonId}
               role={showFocusedSendReason ? "tooltip" : undefined}
-              className={showFocusedSendReason ? "composer-send-reason" : "visually-hidden"}
+              className={
+                showFocusedSendReason
+                  ? "composer-send-reason"
+                  : "visually-hidden"
+              }
             >
               {sendDisabledReason}
             </span>
           ) : null}
         </span>
       </div>
-
     </div>
   );
 }

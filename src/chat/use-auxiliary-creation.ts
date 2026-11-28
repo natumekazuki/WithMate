@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { AuxiliaryCreationRequest, AuxiliaryCreationResult, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type {
+  AuxiliaryCreationRequest,
+  AuxiliaryCreationResult,
+  AuxiliarySession,
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { WithMateWindowAuxiliaryApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
   blocksAuxiliaryLaunchRetry,
@@ -10,29 +14,56 @@ import {
 } from "./auxiliary-launch-state.js";
 import { reconcileAuxiliaryLaunchCreation } from "./auxiliary-launch-reconciliation.js";
 
-type CreationApi = Pick<WithMateWindowAuxiliaryApi,
-  "getAuxiliaryCreationContext" | "createAuxiliarySession" | "getAuxiliaryCreation" |
-  "cancelAuxiliaryCreation" | "getAuxiliarySession">;
+/** 要求の作成・取消・照会と、確定した補助会話の取得に必要な API。 */
+type CreationApi = Pick<
+  WithMateWindowAuxiliaryApi,
+  | "getAuxiliaryCreationContext"
+  | "createAuxiliarySession"
+  | "getAuxiliaryCreation"
+  | "cancelAuxiliaryCreation"
+  | "getAuxiliarySession"
+>;
+/** 作成要求について確定済みか進行中かを表示するために使う結果区分。 */
 type CreationStatus = AuxiliaryCreationResult["status"];
+/** 確定済み会話の適用とは別に、結果照会を打ち切る終了区分を判定する。 */
 const isTerminal = (status: CreationStatus) =>
-  status === "cancelled" || status === "failed" || status === "expired" || status === "not-found";
-const storageKey = (parentSessionId: string) => `withmate:auxiliary-creation:${parentSessionId}`;
+  status === "cancelled" ||
+  status === "failed" ||
+  status === "expired" ||
+  status === "not-found";
+/** 再表示時に追跡を再開するヒントの保存先を、親会話ごとに分ける。 */
+const storageKey = (parentSessionId: string) =>
+  `withmate:auxiliary-creation:${parentSessionId}`;
 
+/** 指定した親の作成要求のヒントを読み、照会に必要な識別情報が欠けていれば採用しない。 */
 function readRequest(parentSessionId: string): AuxiliaryCreationRequest | null {
   try {
-    const value = JSON.parse(window.localStorage.getItem(storageKey(parentSessionId)) ?? "null") as Partial<AuxiliaryCreationRequest> | null;
-    return value?.parentSessionId === parentSessionId && typeof value.clientRequestId === "string"
-      && typeof value.creationContext?.generationId === "string"
-      && typeof value.creationContext?.parentIncarnationId === "string"
-      ? value as AuxiliaryCreationRequest : null;
+    const value = JSON.parse(
+      window.localStorage.getItem(storageKey(parentSessionId)) ?? "null",
+    ) as Partial<AuxiliaryCreationRequest> | null;
+    return value?.parentSessionId === parentSessionId &&
+      typeof value.clientRequestId === "string" &&
+      typeof value.creationContext?.generationId === "string" &&
+      typeof value.creationContext?.parentIncarnationId === "string"
+      ? (value as AuxiliaryCreationRequest)
+      : null;
   } catch {
     return null;
   }
 }
 
+/** 同じ要求のヒントだけを消し、同じ親に対して後から保存された別の要求は残す。 */
 function clearRequestHint(request: AuxiliaryCreationRequest): void {
-  if (readRequest(request.parentSessionId)?.clientRequestId !== request.clientRequestId) return;
-  try { window.localStorage.removeItem(storageKey(request.parentSessionId)); } catch { /* 再表示のためのヒントにのみ使う。 */ }
+  if (
+    readRequest(request.parentSessionId)?.clientRequestId !==
+    request.clientRequestId
+  )
+    return;
+  try {
+    window.localStorage.removeItem(storageKey(request.parentSessionId));
+  } catch {
+    /* 再表示のためのヒントにのみ使う。 */
+  }
 }
 
 /** 選択中の親一つに対する作成リクエストを、起動ダイアログとは別に管理する。 */
@@ -41,7 +72,10 @@ export function useAuxiliaryCreation(input: {
   api: CreationApi | null;
   onCommitted: (session: AuxiliarySession) => void;
   onFeedback: (message: string) => void;
-  onDiagnostic?: (request: AuxiliaryCreationRequest, stage: "request" | "applied" | "stale-drop") => void;
+  onDiagnostic?: (
+    request: AuxiliaryCreationRequest,
+    stage: "request" | "applied" | "stale-drop",
+  ) => void;
 }) {
   const latest = useRef(input);
   latest.current = input;
@@ -60,9 +94,17 @@ export function useAuxiliaryCreation(input: {
   const [cancelling, setCancelling] = useState(false);
   const cancellingRef = useRef<AuxiliaryCreationRequest | null>(null);
 
-  const isCurrent = (candidate: AuxiliaryCreationRequest) => mounted.current
-    && requestRef.current === candidate && latest.current.parentSessionId === candidate.parentSessionId;
-  const finish = (candidate: AuxiliaryCreationRequest, nextStatus: CreationStatus, session?: AuxiliarySession) => {
+  /** 切り替え前の親や完了済みの要求から遅れて届いた結果を除外する。 */
+  const isCurrent = (candidate: AuxiliaryCreationRequest) =>
+    mounted.current &&
+    requestRef.current === candidate &&
+    latest.current.parentSessionId === candidate.parentSessionId;
+  /** 現行の要求を一度だけ終了し、確定した会話か終了理由を呼び出し元に通知する。 */
+  const finish = (
+    candidate: AuxiliaryCreationRequest,
+    nextStatus: CreationStatus,
+    session?: AuxiliarySession,
+  ) => {
     if (!isCurrent(candidate)) return;
     clearRequestHint(candidate);
     requestRef.current = null;
@@ -76,7 +118,9 @@ export function useAuxiliaryCreation(input: {
       latest.current.onDiagnostic?.(candidate, "applied");
       latest.current.onCommitted(session);
     } else {
-      latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: nextStatus }));
+      latest.current.onFeedback(
+        resolveAuxiliaryLaunchCreationFeedback({ status: nextStatus }),
+      );
     }
   };
 
@@ -84,7 +128,9 @@ export function useAuxiliaryCreation(input: {
     mounted.current = true;
     attemptRef.current = null;
     cancellingRef.current = null;
-    const restored = input.parentSessionId ? readRequest(input.parentSessionId) : null;
+    const restored = input.parentSessionId
+      ? readRequest(input.parentSessionId)
+      : null;
     requestRef.current = restored;
     setRequest(restored);
     setStatus(restored ? "unknown" : null);
@@ -102,58 +148,108 @@ export function useAuxiliaryCreation(input: {
     if (!request || !api) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    /** 保存先に同じ作成要求を問い合わせ、未解決なら同じ識別子で次回の照会を予約する。 */
     const query = async () => {
       try {
         const result = await reconcileAuxiliaryLaunchCreation({
           request,
+          /** 照会対象の要求識別情報をそのまま保存先へ渡す。 */
           getCreation: (candidate) => api.getAuxiliaryCreation(candidate),
+          /** 作成済みと判明した補助会話を識別子で取得する。 */
           getSession: (id) => api.getAuxiliarySession(id),
+          /** 照会停止後または要求切り替え後の結果を拒否する。 */
           isCurrent: (candidate) => !stopped && isCurrent(candidate),
+          /** 現行の要求について照会できた状態を表示に反映する。 */
           onStatus: (nextStatus) => setStatus(nextStatus),
-          onCommittedSession: (session) => finish(request, "committed", session),
+          /** 照合済み会話を適用し、追跡を終了する。 */
+          onCommittedSession: (session) =>
+            finish(request, "committed", session),
         });
         if (result.stale) latest.current.onDiagnostic?.(request, "stale-drop");
-        if (!result.stale && isTerminal(result.status)) finish(request, result.status);
+        if (!result.stale && isTerminal(result.status))
+          finish(request, result.status);
       } catch {
         if (!stopped && isCurrent(request)) {
           setStatus("unknown");
-          latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }));
+          latest.current.onFeedback(
+            resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }),
+          );
         }
       }
       // 問い合わせは一度に一件。結果不明・確定処理中のリクエストは回復可能なまま維持し、
       // 終了結果が確定したら、ポーリングのたびに同じ結果を適用せずに停止する。
-      if (!stopped && isCurrent(request)) timer = setTimeout(() => { void query(); }, 500);
+      if (!stopped && isCurrent(request))
+        timer = setTimeout(() => {
+          void query();
+        }, 500);
     };
     // リクエストをセットするのと同じタスクで作成処理を送る。
     // 直ちに問い合わせると、受付前に未検出の結果を受け取る場合がある。
-    timer = setTimeout(() => { void query(); }, 500);
-    return () => { stopped = true; clearTimeout(timer); };
+    timer = setTimeout(() => {
+      void query();
+    }, 500);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [request, input.api]);
 
+  /** 選択中の親について作成を開始し、要求送信後に成否が分からなくなっても別の要求に置き換えない。 */
   const start = async (provider: string) => {
     const { api, parentSessionId } = latest.current;
-    if (!api || !parentSessionId || attemptRef.current || requestRef.current || blocksAuxiliaryLaunchRetry(status)) return;
+    if (
+      !api ||
+      !parentSessionId ||
+      attemptRef.current ||
+      requestRef.current ||
+      blocksAuxiliaryLaunchRetry(status)
+    )
+      return;
     const attempt = {};
     attemptRef.current = attempt;
     setStarting(true);
     latest.current.onFeedback("");
     let ownRequest: AuxiliaryCreationRequest | null = null;
-    const isAttemptCurrent = () => mounted.current && attemptRef.current === attempt
-      && latest.current.parentSessionId === parentSessionId && latest.current.api === api;
+    /** 親の作成文脈を取得している間に、親・API・開始操作のいずれかが変わっていないかを確認する。 */
+    const isAttemptCurrent = () =>
+      mounted.current &&
+      attemptRef.current === attempt &&
+      latest.current.parentSessionId === parentSessionId &&
+      latest.current.api === api;
     try {
-      const creationContext = await api.getAuxiliaryCreationContext(parentSessionId);
+      const creationContext =
+        await api.getAuxiliaryCreationContext(parentSessionId);
       if (!isAttemptCurrent()) return;
-      ownRequest = { parentSessionId, clientRequestId: crypto.randomUUID(), creationContext };
+      ownRequest = {
+        parentSessionId,
+        clientRequestId: crypto.randomUUID(),
+        creationContext,
+      };
       requestRef.current = ownRequest;
       setRequest(ownRequest);
       setStatus("preparing");
-      try { window.localStorage.setItem(storageKey(parentSessionId), JSON.stringify(ownRequest)); } catch { /* 再表示のためのヒントにのみ使う。 */ }
+      try {
+        window.localStorage.setItem(
+          storageKey(parentSessionId),
+          JSON.stringify(ownRequest),
+        );
+      } catch {
+        /* 再表示のためのヒントにのみ使う。 */
+      }
       latest.current.onDiagnostic?.(ownRequest, "request");
-      const saved = await api.createAuxiliarySession(buildCreateAuxiliarySessionInput({
-        parentSessionId, provider, runtimeSelection: "latest-session",
-        clientRequestId: ownRequest.clientRequestId, creationContext,
-      }));
-      if (isCurrent(ownRequest) && matchesAuxiliaryLaunchCreationRequest(saved, ownRequest)) {
+      const saved = await api.createAuxiliarySession(
+        buildCreateAuxiliarySessionInput({
+          parentSessionId,
+          provider,
+          runtimeSelection: "latest-session",
+          clientRequestId: ownRequest.clientRequestId,
+          creationContext,
+        }),
+      );
+      if (
+        isCurrent(ownRequest) &&
+        matchesAuxiliaryLaunchCreationRequest(saved, ownRequest)
+      ) {
         finish(ownRequest, "committed", saved);
       } else {
         latest.current.onDiagnostic?.(ownRequest, "stale-drop");
@@ -164,10 +260,16 @@ export function useAuxiliaryCreation(input: {
         // 作成の呼び出しが拒否されても、作成自体は既に確定している場合がある。同じ ID を問い合わせ、
         // 自動的に別の作成リクエストに置き換えない。
         setStatus("unknown");
-        latest.current.onFeedback(resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }));
+        latest.current.onFeedback(
+          resolveAuxiliaryLaunchCreationFeedback({ status: "unknown" }),
+        );
       } else {
         setStatus("failed");
-        latest.current.onFeedback(error instanceof Error ? error.message : "Could not start the Auxiliary session.");
+        latest.current.onFeedback(
+          error instanceof Error
+            ? error.message
+            : "Could not start the Auxiliary session.",
+        );
       }
     } finally {
       if (isAttemptCurrent()) {
@@ -177,24 +279,42 @@ export function useAuxiliaryCreation(input: {
     }
   };
 
+  /** 取消可能な現行要求を取り消す。競合して会話の作成が確定していれば、その会話を適用する。 */
   const cancel = async () => {
     const candidate = requestRef.current;
     const api = latest.current.api;
-    if (!candidate || !api || cancellingRef.current || !canCancelAuxiliaryLaunchCreation(status)) return;
+    if (
+      !candidate ||
+      !api ||
+      cancellingRef.current ||
+      !canCancelAuxiliaryLaunchCreation(status)
+    )
+      return;
     cancellingRef.current = candidate;
     setCancelling(true);
     try {
       const result = await reconcileAuxiliaryLaunchCreation({
         request: candidate,
+        /** 通常の照会の代わりに取り消しを送り、その応答を同じ照合経路に渡す。 */
         getCreation: (current) => api.cancelAuxiliaryCreation(current),
+        /** 取消より先に確定した補助会話を識別子で取得する。 */
         getSession: (id) => api.getAuxiliarySession(id),
         isCurrent,
+        /** 照合を通った取消応答の状態を表示に反映する。 */
         onStatus: (nextStatus) => setStatus(nextStatus),
-        onCommittedSession: (session) => finish(candidate, "committed", session),
+        /** 取消と競合して確定した会話を適用し、追跡を終了する。 */
+        onCommittedSession: (session) =>
+          finish(candidate, "committed", session),
       });
-      if (!result.stale && isTerminal(result.status)) finish(candidate, result.status);
+      if (!result.stale && isTerminal(result.status))
+        finish(candidate, result.status);
     } catch (error) {
-      if (isCurrent(candidate)) latest.current.onFeedback(error instanceof Error ? error.message : "Could not cancel Auxiliary session creation.");
+      if (isCurrent(candidate))
+        latest.current.onFeedback(
+          error instanceof Error
+            ? error.message
+            : "Could not cancel Auxiliary session creation.",
+        );
     } finally {
       if (cancellingRef.current === candidate) {
         cancellingRef.current = null;
@@ -203,6 +323,7 @@ export function useAuxiliaryCreation(input: {
     }
   };
 
-  const inFlight = starting || request !== null || blocksAuxiliaryLaunchRetry(status);
+  const inFlight =
+    starting || request !== null || blocksAuxiliaryLaunchRetry(status);
   return { status, starting, inFlight, cancelling, start, cancel };
 }

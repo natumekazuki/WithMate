@@ -4,6 +4,7 @@ import { ButtonContent } from "../button-content.js";
 import { MarkdownLink } from "./markdown-links.js";
 import type { MarkdownSourceAttributes } from "./markdown-source-ranges.js";
 
+/** 原文のファイルリンクと、HTML・PDFプレビューで共用するリンク表示を受け渡す。 */
 export type MarkdownFilePreviewProps = {
   path: string;
   href: string;
@@ -12,8 +13,20 @@ export type MarkdownFilePreviewProps = {
   sourceAttributes?: MarkdownSourceAttributes;
 };
 
+/** 原文検索の範囲をヘッダーへ付け、元ファイルのリンクとプレビュー操作を本文と分けて表示する。 */
 export function MarkdownFilePreviewFrame({
-  path, href, title, link, format, loading, reloading, onReload, shellRef, children, sourceAttributes, headerActions,
+  path,
+  href,
+  title,
+  link,
+  format,
+  loading,
+  reloading,
+  onReload,
+  shellRef,
+  children,
+  sourceAttributes,
+  headerActions,
 }: Omit<MarkdownFilePreviewProps, "children"> & {
   link: ReactNode;
   format: "HTML" | "PDF";
@@ -26,24 +39,46 @@ export function MarkdownFilePreviewFrame({
 }) {
   const reloadLabel = `Reload ${format} Preview`;
   return (
-    <span ref={shellRef} className="message-file-preview" data-format={format.toLowerCase()}
-      aria-label={title || `${format} Preview`}>
+    <span
+      ref={shellRef}
+      className="message-file-preview"
+      data-format={format.toLowerCase()}
+      aria-label={title || `${format} Preview`}
+    >
       <span {...sourceAttributes} className="message-file-preview-header">
-        {onReload || headerActions ? <span className="message-file-preview-header-actions">
-          {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
-            <button type="button" onClick={onReload} disabled={loading}
-              aria-busy={reloading || undefined} aria-label={reloadLabel} title={reloadLabel}>
-              <ButtonContent busy={reloading} busyLabel={`Reloading ${format} Preview`}>
-                <span aria-hidden="true">↻</span>
-              </ButtonContent>
-            </button>
-          </span> : null}
-          {headerActions}
-        </span> : null}
-        <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
+        {onReload || headerActions ? (
+          <span className="message-file-preview-header-actions">
+            {onReload ? (
+              <span className="message-file-preview-auxiliary message-file-preview-controls">
+                <button
+                  type="button"
+                  onClick={onReload}
+                  disabled={loading}
+                  aria-busy={reloading || undefined}
+                  aria-label={reloadLabel}
+                  title={reloadLabel}
+                >
+                  <ButtonContent
+                    busy={reloading}
+                    busyLabel={`Reloading ${format} Preview`}
+                  >
+                    <span aria-hidden="true">↻</span>
+                  </ButtonContent>
+                </button>
+              </span>
+            ) : null}
+            {headerActions}
+          </span>
+        ) : null}
+        <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>
+          {link}
+        </MarkdownLink>
       </span>
-      <span className="message-file-preview-auxiliary message-file-preview-content"
-        aria-label={`Embedded ${format}`} aria-busy={loading}>
+      <span
+        className="message-file-preview-auxiliary message-file-preview-content"
+        aria-label={`Embedded ${format}`}
+        aria-busy={loading}
+      >
         {children}
       </span>
     </span>

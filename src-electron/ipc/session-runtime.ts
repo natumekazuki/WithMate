@@ -69,13 +69,17 @@ import {
   readCancelSessionRunRequest,
 } from "./shared.js";
 
+/** ウィンドウ認可と Workspace 検証を除いた、Session の作成・実行・キュー操作のサービス側の依存。 */
 export type MainIpcSessionRuntimeServiceDeps = Omit<
   MainIpcSessionRuntimeDeps,
-  keyof MainIpcEventWindowDeps | keyof MainIpcHomeWindowDeps |
-    keyof MainIpcSessionWindowDeps | keyof MainIpcSettingsWindowDeps |
-    keyof MainIpcWorkspaceValidationDeps
+  | keyof MainIpcEventWindowDeps
+  | keyof MainIpcHomeWindowDeps
+  | keyof MainIpcSessionWindowDeps
+  | keyof MainIpcSettingsWindowDeps
+  | keyof MainIpcWorkspaceValidationDeps
 >;
 
+/** Session 実行サービスと送信元のウィンドウ判定・Workspace 検証の依存を束ねる。 */
 export function createSessionRuntimeIpcDeps(
   services: MainIpcSessionRuntimeServiceDeps,
   context: MainIpcEventWindowDeps &
@@ -87,130 +91,248 @@ export function createSessionRuntimeIpcDeps(
   return { ...context, ...services };
 }
 
+/** Session の作成・削除・実行とターンキュー操作を登録する。キューでは所有元を確認し、受付前の所定の拒否だけを未受付の結果へ変換する。 */
 export function registerSessionRuntimeHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionRuntimeDeps,
 ): void {
+  /** 有効なターンキューを取得する。キューが未接続なら操作を拒否する。 */
   const queue = () => {
     if (!deps.queue) throw new Error("The session turn queue is unavailable.");
     return deps.queue;
   };
-  const assertQueueSender = async (event: import("electron").IpcMainInvokeEvent, sessionId: string) => {
+  /** キューを操作できる親 Session を解決する。Auxiliary を指定された場合は親へたどり、送信元がそのウィンドウでなければ拒否する。 */
+  const assertQueueSender = async (
+    event: import("electron").IpcMainInvokeEvent,
+    sessionId: string,
+  ) => {
     const auxiliary = await deps.getAuxiliarySessionStatus?.(sessionId);
     const parentId = auxiliary?.parentSessionId ?? sessionId;
     assertOwningSessionWindowSender(event, parentId, deps);
     return parentId;
   };
   const editOwners = new WeakMap<import("electron").WebContents, Set<string>>();
-  const trackEditOwner = (sender: import("electron").WebContents, sessionId: string) => {
+  /** 編集中の Session を renderer に紐付け、メインフレーム遷移やプロセス消失・破棄時に編集を解放できるようにする。 */
+  const trackEditOwner = (
+    sender: import("electron").WebContents,
+    sessionId: string,
+  ) => {
     let sessions = editOwners.get(sender);
     if (!sessions) {
       sessions = new Set<string>();
       editOwners.set(sender, sessions);
+      /** この renderer に紐づく編集中の Session を追跡から外し、キュー上の編集を解放する。 */
       const release = () => {
         const pending = [...sessions!];
         sessions!.clear();
         for (const id of pending) {
-          void queue().releaseQueuedSessionTurnEdit(id).catch((error) => console.error("Queued edit cleanup failed", error));
+          void queue()
+            .releaseQueuedSessionTurnEdit(id)
+            .catch((error) =>
+              console.error("Queued edit cleanup failed", error),
+            );
         }
       };
-      sender.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) release(); });
+      sender.on(
+        "did-start-navigation",
+        (_event, _url, _isInPlace, isMainFrame) => {
+          if (isMainFrame) release();
+        },
+      );
       sender.on("render-process-gone", release);
       sender.on("destroyed", release);
     }
     sessions.add(sessionId);
   };
-  ipcMain.handle(WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest) => {
-    let abandoned = false;
-    const abandon = () => { abandoned = true; };
-    const navigation = (_event: unknown, _url: string, _isInPlace: boolean, isMainFrame: boolean) => { if (isMainFrame) abandon(); };
-    event.sender.on("did-start-navigation", navigation);
-    event.sender.on("render-process-gone", abandon);
-    event.sender.on("destroyed", abandon);
-    try {
+  ipcMain.handle(
+    WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest,
+    ) => {
+      let abandoned = false;
+      /** 編集中の要求に対して元の送信元が失われたことを記録する。 */
+      const abandon = () => {
+        abandoned = true;
+      };
+      /** サブフレームの遷移では編集開始を破棄せず、メインフレームの遷移でのみ失効を記録する。 */
+      const navigation = (
+        _event: unknown,
+        _url: string,
+        _isInPlace: boolean,
+        isMainFrame: boolean,
+      ) => {
+        if (isMainFrame) abandon();
+      };
+      event.sender.on("did-start-navigation", navigation);
+      event.sender.on("render-process-gone", abandon);
+      event.sender.on("destroyed", abandon);
+      try {
+        const parentId = await assertQueueSender(event, sessionId);
+        if (abandoned)
+          throw new Error("The queued edit owner is no longer available.");
+        assertOwningSessionWindowSender(event, parentId, deps);
+        trackEditOwner(event.sender, sessionId);
+        const receipt = await queue().beginQueuedSessionTurnEdit(
+          sessionId,
+          request,
+        );
+        if (abandoned)
+          throw new Error("The queued edit owner is no longer available.");
+        assertOwningSessionWindowSender(event, parentId, deps);
+        return receipt;
+      } finally {
+        event.sender.removeListener("did-start-navigation", navigation);
+        event.sender.removeListener("render-process-gone", abandon);
+        event.sender.removeListener("destroyed", abandon);
+      }
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/session-turn-queue.js").UpdateQueuedSessionTurnRequest,
+    ) => {
       const parentId = await assertQueueSender(event, sessionId);
-      if (abandoned) throw new Error("The queued edit owner is no longer available.");
-      assertOwningSessionWindowSender(event, parentId, deps);
-      trackEditOwner(event.sender, sessionId);
-      const receipt = await queue().beginQueuedSessionTurnEdit(sessionId, request);
-      if (abandoned) throw new Error("The queued edit owner is no longer available.");
+      const receipt = await queue().updateQueuedSessionTurn(sessionId, request);
+      editOwners.get(event.sender)?.delete(sessionId);
       assertOwningSessionWindowSender(event, parentId, deps);
       return receipt;
-    } finally {
-      event.sender.removeListener("did-start-navigation", navigation);
-      event.sender.removeListener("render-process-gone", abandon);
-      event.sender.removeListener("destroyed", abandon);
-    }
-  });
-  ipcMain.handle(WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").UpdateQueuedSessionTurnRequest) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const receipt = await queue().updateQueuedSessionTurn(sessionId, request);
-    editOwners.get(event.sender)?.delete(sessionId);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    return receipt;
-  });
-  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest) => {
-    await assertQueueSender(event, sessionId);
-    await queue().cancelQueuedSessionTurnEdit(sessionId, request);
-    editOwners.get(event.sender)?.delete(sessionId);
-  });
-  ipcMain.handle(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    try {
-      return await queue().enqueueSessionTurn(sessionId, request);
-    } catch (error) {
-      if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
-      throw error;
-    }
-  });
-  ipcMain.handle(WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const frame = event.senderFrame;
-    const assertCurrent = () => {
-      if (!frame || event.sender.isDestroyed() || event.sender.mainFrame !== frame) throw new Error("Retry requires the owning main application frame.");
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest,
+    ) => {
+      await assertQueueSender(event, sessionId);
+      await queue().cancelQueuedSessionTurnEdit(sessionId, request);
+      editOwners.get(event.sender)?.delete(sessionId);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: RunSessionTurnRequest & { incarnationId: string },
+    ) => {
+      const parentId = await assertQueueSender(event, sessionId);
       assertOwningSessionWindowSender(event, parentId, deps);
-    };
-    assertCurrent();
-    try {
-      return await queue().retryFailedSessionTurn(sessionId, request, assertCurrent);
-    } catch (error) {
-      if (error instanceof SessionTurnQueuePreflightRejectedError) return { state: "rejected", reason: error.message };
-      throw error;
-    }
-  });
-  ipcMain.handle(WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL, async (event, sessionId: string, requestId: string) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const receipt = await queue().getSessionTurnQueueReceipt(sessionId, requestId);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    return receipt;
-  });
-  ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL, async (event, sessionId: string) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const receipts = await queue().listSessionTurnQueue(sessionId);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    return receipts;
-  });
-  ipcMain.handle(WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL, async (event, sessionId: string, options?: { cursor?: number; limit?: number }) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const page = await queue().listSessionTurnQueueReceipts(sessionId, options);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    return page;
-  });
-  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
-    await assertQueueSender(event, sessionId);
-    return queue().cancelQueuedSessionTurn(sessionId, id);
-  });
-  ipcMain.handle(WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest) => {
-    const parentId = await assertQueueSender(event, sessionId);
-    const result = await queue().reorderQueuedSessionTurns(sessionId, request);
-    assertOwningSessionWindowSender(event, parentId, deps);
-    return result;
-  });
-  ipcMain.handle(WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL, async (event, sessionId: string, id: string, expectedTurnId: string) => {
-    await assertQueueSender(event, sessionId);
-    return queue().sendQueuedSessionInput(sessionId, id, expectedTurnId);
-  });
+      try {
+        return await queue().enqueueSessionTurn(sessionId, request);
+      } catch (error) {
+        if (error instanceof SessionTurnQueuePreflightRejectedError)
+          return { state: "rejected", reason: error.message };
+        throw error;
+      }
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_RETRY_FAILED_SESSION_TURN_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/session-turn-queue.js").RetryFailedSessionTurnRequest,
+    ) => {
+      const parentId = await assertQueueSender(event, sessionId);
+      const frame = event.senderFrame;
+      /** 再試行の待機中も、元のメインフレームとキューを所有する Session ウィンドウを検証できるようにする。 */
+      const assertCurrent = () => {
+        if (
+          !frame ||
+          event.sender.isDestroyed() ||
+          event.sender.mainFrame !== frame
+        )
+          throw new Error("Retry requires the owning main application frame.");
+        assertOwningSessionWindowSender(event, parentId, deps);
+      };
+      assertCurrent();
+      try {
+        return await queue().retryFailedSessionTurn(
+          sessionId,
+          request,
+          assertCurrent,
+        );
+      } catch (error) {
+        if (error instanceof SessionTurnQueuePreflightRejectedError)
+          return { state: "rejected", reason: error.message };
+        throw error;
+      }
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_TURN_QUEUE_RECEIPT_CHANNEL,
+    async (event, sessionId: string, requestId: string) => {
+      const parentId = await assertQueueSender(event, sessionId);
+      const receipt = await queue().getSessionTurnQueueReceipt(
+        sessionId,
+        requestId,
+      );
+      assertOwningSessionWindowSender(event, parentId, deps);
+      return receipt;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
+    async (event, sessionId: string) => {
+      const parentId = await assertQueueSender(event, sessionId);
+      const receipts = await queue().listSessionTurnQueue(sessionId);
+      assertOwningSessionWindowSender(event, parentId, deps);
+      return receipts;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      options?: { cursor?: number; limit?: number },
+    ) => {
+      const parentId = await assertQueueSender(event, sessionId);
+      const page = await queue().listSessionTurnQueueReceipts(
+        sessionId,
+        options,
+      );
+      assertOwningSessionWindowSender(event, parentId, deps);
+      return page;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL,
+    async (event, sessionId: string, id: string) => {
+      await assertQueueSender(event, sessionId);
+      return queue().cancelQueuedSessionTurn(sessionId, id);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL,
+    async (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest,
+    ) => {
+      const parentId = await assertQueueSender(event, sessionId);
+      const result = await queue().reorderQueuedSessionTurns(
+        sessionId,
+        request,
+      );
+      assertOwningSessionWindowSender(event, parentId, deps);
+      return result;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
+    async (event, sessionId: string, id: string, expectedTurnId: string) => {
+      await assertQueueSender(event, sessionId);
+      return queue().sendQueuedSessionInput(sessionId, id, expectedTurnId);
+    },
+  );
   ipcMain.handle(
     WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
     (_event, sessionId: string) => {
@@ -226,7 +348,9 @@ export function registerSessionRuntimeHandlers(
       if (!providerId) {
         return null;
       }
-      return deps.getProviderQuotaTelemetry(providerId, { cacheOnly: options?.cacheOnly === true });
+      return deps.getProviderQuotaTelemetry(providerId, {
+        cacheOnly: options?.cacheOnly === true,
+      });
     },
   );
   ipcMain.handle(
@@ -275,12 +399,21 @@ export function registerSessionRuntimeHandlers(
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) =>
     deps.updateSession(session),
   );
-  ipcMain.handle(WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, (event, request: ChangeSessionAdditionalDirectoryRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId
-      || typeof request.incarnationId !== "string" || !request.incarnationId) throw new TypeError("Session identity is invalid.");
-    assertOwningSessionWindowSender(event, request.sessionId, deps);
-    return deps.changeSessionAdditionalDirectory(request);
-  });
+  ipcMain.handle(
+    WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
+    (event, request: ChangeSessionAdditionalDirectoryRequest) => {
+      if (
+        !request ||
+        typeof request.sessionId !== "string" ||
+        !request.sessionId ||
+        typeof request.incarnationId !== "string" ||
+        !request.incarnationId
+      )
+        throw new TypeError("Session identity is invalid.");
+      assertOwningSessionWindowSender(event, request.sessionId, deps);
+      return deps.changeSessionAdditionalDirectory(request);
+    },
+  );
   ipcMain.handle(
     WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
     (event, request: SetSessionExecutionOptionsRequest) => {
@@ -335,14 +468,24 @@ export function registerSessionRuntimeHandlers(
     WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
     (event, value: unknown) => {
       const request = readCancelSessionRunRequest(value);
-      const assertAuthorized = () => assertOwningSessionWindowSender(event, request.sessionId, deps);
+      /** 実行の取消を依頼できるのは対象 Session の所有ウィンドウだけであることを繰り返し確認する。 */
+      const assertAuthorized = () =>
+        assertOwningSessionWindowSender(event, request.sessionId, deps);
       assertAuthorized();
       return deps.cancelSessionRun(request, assertAuthorized);
     },
   );
-  ipcMain.handle(WITHMATE_STEER_SESSION_TURN_CHANNEL, (event, sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest) => {
-    assertOwningSessionWindowSender(event, sessionId, deps);
-    if (!deps.steerSessionTurn) throw new Error("Session input is unavailable.");
-    return deps.steerSessionTurn(sessionId, request);
-  });
+  ipcMain.handle(
+    WITHMATE_STEER_SESSION_TURN_CHANNEL,
+    (
+      event,
+      sessionId: string,
+      request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest,
+    ) => {
+      assertOwningSessionWindowSender(event, sessionId, deps);
+      if (!deps.steerSessionTurn)
+        throw new Error("Session input is unavailable.");
+      return deps.steerSessionTurn(sessionId, request);
+    },
+  );
 }

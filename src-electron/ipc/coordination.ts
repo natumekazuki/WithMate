@@ -16,23 +16,34 @@ import type { CoordinationApplicationService } from "../coordination/coordinatio
 import type { IpcHandleRegistrar } from "./contracts.js";
 import { isCoordinationDeletedError } from "../coordination/coordination-errors.js";
 
+/** 信頼されたウィンドウに Coordination の照会・実行・遷移を登録する。削除済みの状態照会・実行はエラー DTO を返し、ほかの失敗は伝播する。 */
 export function registerCoordinationHandlers(
   ipc: IpcHandleRegistrar,
   deps: {
     service: CoordinationApplicationService;
+    /** IPC の送信元に対応するウィンドウを解決する。対応がなければ `null` を返す。 */
     resolveWindow(sender: Electron.WebContents): BrowserWindow | null;
+    /** 送信元や変更通知先として許されるウィンドウかを判定する。 */
     isTrustedWindow(window: BrowserWindow): boolean;
+    /** 変更通知を配信するウィンドウの候補を列挙する。 */
     allWindows(): BrowserWindow[];
+    /** 操作と対象に対してウィンドウに権限がなければ拒否する。 */
     authorizeRequest(
       window: BrowserWindow,
       request: CoordinationRequest,
     ): Promise<void>;
+    /** 整形済みの遷移要求に対応する Session ウィンドウを開く。 */
     open(request: OpenCoordinationRequest): Promise<BrowserWindow>;
-    resolveIdentity(identity: CoordinationIdentity): Promise<CoordinationDisplayIdentity | null>;
+    /** 識別情報を表示用に解決し、解決できなければ `null` を返す。 */
+    resolveIdentity(
+      identity: CoordinationIdentity,
+    ): Promise<CoordinationDisplayIdentity | null>;
+    /** 対象の保存済み状態を読み取る。 */
     readStatus(id: string): Promise<CoordinationStatus>;
   },
 ) {
   const navigation = new Map<number, OpenCoordinationRequest>();
+  /** 存続する信頼済みウィンドウのメインフレームからの呼び出しだけを認める。 */
   const authorize = (event: Electron.IpcMainInvokeEvent) => {
     const window = deps.resolveWindow(event.sender);
     if (
@@ -72,11 +83,11 @@ export function registerCoordinationHandlers(
     try {
       await deps.authorizeRequest(window, request);
       return await deps.service.executeUser(
-      request,
-      () =>
-        !window.isDestroyed() &&
-        deps.isTrustedWindow(window) &&
-        event.senderFrame === event.sender.mainFrame,
+        request,
+        () =>
+          !window.isDestroyed() &&
+          deps.isTrustedWindow(window) &&
+          event.senderFrame === event.sender.mainFrame,
       );
     } catch (error) {
       if (!isCoordinationDeletedError(error)) throw error;

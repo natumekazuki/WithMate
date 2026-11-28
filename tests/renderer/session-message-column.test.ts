@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Session as InspectorSession } from "node:inspector/promises";
 import { JSDOM } from "jsdom";
-import React, { createRef, useState, type ComponentType, type ProfilerOnRenderCallback } from "react";
+import React, {
+  createRef,
+  useState,
+  type ComponentType,
+  type ProfilerOnRenderCallback,
+} from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -14,24 +19,47 @@ import {
 } from "../../src/chat/conversation/session-message-column.js";
 import { SessionActionDockCompactRow } from "../../src/chat/approval/session-action-dock.js";
 import { SessionContextPane } from "../../src/chat/shell/session-context-pane.js";
-import { SessionComposerExpanded, type SessionComposerExpandedProps } from "../../src/chat/composer/session-composer.js";
+import {
+  SessionComposerExpanded,
+  type SessionComposerExpandedProps,
+} from "../../src/chat/composer/session-composer.js";
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
 import { ConversationMessageColumn } from "../../src/chat/conversation-message-column.js";
 import { observeSessionResultRead } from "../../src/chat/conversation/observe-session-result-read.js";
 import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-projection.js";
-import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/chat/conversation/session-message-collapse.js";
-import { buildLiveAssistantProjectionKey, buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
+import {
+  buildMessageCollapseTargets,
+  type MessageCollapseTarget,
+} from "../../src/chat/conversation/session-message-collapse.js";
+import {
+  buildLiveAssistantProjectionKey,
+  buildMessageListProjection,
+  type MessageListSource,
+} from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
+import type {
+  ElicitationRecord,
+  LiveApprovalRequest,
+  LiveElicitationRequest,
+} from "../../src-shared/session/runtime-state.js";
+import type {
+  Message,
+  MessageArtifact,
+} from "../../src-shared/session/session-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
-import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApprovalChoice } from "../../src-shared/settings/session-approval-choice.js";
+import {
+  getSessionApprovalChoices,
+  getSessionApprovalDisplay,
+  resolveSessionApprovalChoice,
+} from "../../src-shared/settings/session-approval-choice.js";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 // @test-value v2
 // kind = "contract"
@@ -45,56 +73,114 @@ import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApp
 // impact = "操作前に現在設定を確認し、選んだ値を次送信用設定へ反映できる"
 // distinction = "options生成testや型検査では実composerの表示名・title・変更callbackの接続間違いを検出できない。文字の可視性と収容は実描画で確認する"
 // @end-test-value
+/** 正式名付きの設定候補を選び直すと、選択値とツールチップが揃い、Modelの候補も供給元の2件に限られる。 */
 test("runtime設定は選択値の正式名に追従し、Model名と供給された候補を維持する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  Object.assign(dom.window.HTMLElement.prototype, { attachEvent() {}, detachEvent() {} });
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.assign(dom.window.HTMLElement.prototype, {
+    /** Reactの入力監視が参照する旧式イベント登録口を用意する。 */
+    attachEvent() {},
+    /** アンマウント時に対になる旧式イベント解除口を用意する。 */
+    detachEvent() {},
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
   const changes: string[] = [];
-  const option = <T extends string>(value: T, label: string) => ({ value, label });
+  /** 選択用の値を文字列リテラルの型のまま表示ラベルと組み合わせる。 */
+  const option = <T extends string>(value: T, label: string) => ({
+    value,
+    label,
+  });
+  /** 候補の選択結果をpropsに戻し、変更後の表示まで同じComposerで追えるようにする。 */
   function Fixture() {
-    const [selection, setSelection] = useState<Partial<SessionComposerExpandedProps>>({});
+    const [selection, setSelection] = useState<
+      Partial<SessionComposerExpandedProps>
+    >({});
+    /** 通知されたキーと値を記録し、次の描画に反映する。 */
     const change = (key: keyof SessionComposerExpandedProps, value: string) => {
       changes.push(key + ":" + value);
       setSelection((current) => ({ ...current, [key]: value }));
     };
-    return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      approvalOptions: getSessionApprovalChoices(),
-      sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
-      reasoningOptions: [option("low", "Low"), option("high", "High")],
-      modelOptions: [
-        { ...option("gpt-5.4", "GPT-5.4"), model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } },
-        { ...option("vendor/model-b", "Model B"), model: { id: "vendor/model-b", label: "Model B", reasoningEfforts: [] } },
-      ],
-      speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
-      ...selection,
-      onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
-      onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
-      onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
-      onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
-      onChangeModel: (model) => change("selectedModel", model.id),
-    }));
+    return React.createElement(
+      SessionComposerExpanded,
+      createComposerTestProps({
+        approvalOptions: getSessionApprovalChoices(),
+        sandboxOptions: [
+          option("workspace-write", "Workspace Write"),
+          option("read-only", "Read Only"),
+        ],
+        reasoningOptions: [option("low", "Low"), option("high", "High")],
+        modelOptions: [
+          {
+            ...option("gpt-5.4", "GPT-5.4"),
+            model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] },
+          },
+          {
+            ...option("vendor/model-b", "Model B"),
+            model: {
+              id: "vendor/model-b",
+              label: "Model B",
+              reasoningEfforts: [],
+            },
+          },
+        ],
+        speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
+        ...selection,
+        /** Approvalの選択を次の描画とイベント履歴に渡す。 */
+        onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
+        /** Sandboxの選択を対応する設定キーに反映する。 */
+        onChangeCodexSandboxMode: (value) =>
+          change("selectedCodexSandboxMode", value),
+        /** 推論深度の選択をComposerの現在値に戻す。 */
+        onChangeReasoningEffort: (value) =>
+          change("selectedReasoningEffort", value),
+        /** Speedの選択を他の設定とは別に更新する。 */
+        onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
+        /** Modelオブジェクトから選択値となるIDを取り出す。 */
+        onChangeModel: (model) => change("selectedModel", model.id),
+      }),
+    );
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     await act(async () => root.render(React.createElement(Fixture)));
     const document = dom.window.document;
-    assert.deepEqual([...document.querySelectorAll('.composer-settings select, .composer-settings button[aria-haspopup="listbox"]')].map((select) => select.getAttribute("aria-label")),
-      ["Approval", "Sandbox", "Model", "Reasoning depth", "Speed"]);
-    const model = document.querySelector<HTMLButtonElement>('button[aria-label="Model"]')!;
+    assert.deepEqual(
+      [
+        ...document.querySelectorAll(
+          '.composer-settings select, .composer-settings button[aria-haspopup="listbox"]',
+        ),
+      ].map((select) => select.getAttribute("aria-label")),
+      ["Approval", "Sandbox", "Model", "Reasoning depth", "Speed"],
+    );
+    const model = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Model"]',
+    )!;
     assert.equal(model.querySelector("span")?.textContent, "GPT-5.4");
     assert.equal(model.title, "Model: GPT-5.4");
-    const depth = document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning depth"]')!;
-    assert.deepEqual([...depth.options].map((item) => item.value), ["low", "high"]);
+    const depth = document.querySelector<HTMLSelectElement>(
+      'select[aria-label="Reasoning depth"]',
+    )!;
+    assert.deepEqual(
+      [...depth.options].map((item) => item.value),
+      ["low", "high"],
+    );
     for (const [label, value, title, key] of [
       ["Approval", "auto-review", "Auto Review", "selectedApprovalMode"],
       ["Sandbox", "read-only", "Read Only", "selectedCodexSandboxMode"],
       ["Reasoning depth", "low", "Low", "selectedReasoningEffort"],
       ["Speed", "fast", "Fast", "selectedCodexSpeed"],
     ]) {
-      const select = document.querySelector<HTMLSelectElement>('select[aria-label="' + label + '"]')!;
+      const select = document.querySelector<HTMLSelectElement>(
+        'select[aria-label="' + label + '"]',
+      )!;
       await act(async () => {
         select.value = value;
         select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
@@ -105,9 +191,13 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       assert.equal(select.selectedOptions[0].textContent, title);
     }
     await act(async () => model.click());
-    const candidates = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    const candidates = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ];
     assert.equal(candidates.length, 2);
-    const nextModel = candidates.find((candidate) => candidate.textContent?.includes("Model B"));
+    const nextModel = candidates.find((candidate) =>
+      candidate.textContent?.includes("Model B"),
+    );
     assert.ok(nextModel);
     await act(async () => nextModel.click());
     assert.equal(changes.at(-1), "selectedModel:vendor/model-b");
@@ -117,8 +207,14 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
   }
 });
 
@@ -134,36 +230,80 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
 // impact = "利用者が表示から判断したDepthと次送信設定が食い違う"
 // distinction = "候補生成単体ではnative selectの選択valueと実際の表示文字の一致を検証できない"
 // @end-test-value
+/** Depthを省略した場合は空値のDefaultを選択表示し、非対応モデルでは保持値を変えずに欄を隠す。 */
 test("ComposerのDepthは省略valueとDefault表示を一致させ非対応モデルの欄を隠す", () => {
-  const model = { id: "sdk-model", label: "SDK Model", reasoningEfforts: ["low"], defaultReasoningEffort: "" };
+  const model = {
+    id: "sdk-model",
+    label: "SDK Model",
+    reasoningEfforts: ["low"],
+    defaultReasoningEffort: "",
+  };
   const input = {
     providerId: "codex",
-    providerCatalog: { id: "codex", label: "Codex", defaultModelId: model.id, defaultReasoningEffort: "", models: [model] },
-    models: [model], selectedModel: model.id,
-    selectedCodexSandboxMode: "workspace-write" as const, selectedCodexSpeed: "standard" as const,
+    providerCatalog: {
+      id: "codex",
+      label: "Codex",
+      defaultModelId: model.id,
+      defaultReasoningEffort: "",
+      models: [model],
+    },
+    models: [model],
+    selectedModel: model.id,
+    selectedCodexSandboxMode: "workspace-write" as const,
+    selectedCodexSpeed: "standard" as const,
   };
   const props = createComposerTestProps({ selectedReasoningEffort: "" });
-  const options = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: props.selectedReasoningEffort, reasoningEfforts: model.reasoningEfforts });
-  const dom = new JSDOM(renderToStaticMarkup(React.createElement(SessionComposerExpanded, {
-    ...props, reasoningOptions: options.reasoningSelectOptions,
-  })));
+  const options = buildRuntimeSelectionOptions({
+    ...input,
+    selectedReasoningEffort: props.selectedReasoningEffort,
+    reasoningEfforts: model.reasoningEfforts,
+  });
+  const dom = new JSDOM(
+    renderToStaticMarkup(
+      React.createElement(SessionComposerExpanded, {
+        ...props,
+        reasoningOptions: options.reasoningSelectOptions,
+      }),
+    ),
+  );
   try {
-    const depth = dom.window.document.querySelector<HTMLSelectElement>(".composer-setting-depth select");
+    const depth = dom.window.document.querySelector<HTMLSelectElement>(
+      ".composer-setting-depth select",
+    );
     assert.ok(depth);
     assert.equal(depth.value, props.selectedReasoningEffort);
     assert.equal(depth.selectedOptions[0]?.textContent, "Default");
-  } finally { dom.window.close(); }
-  const savedProps = createComposerTestProps({ selectedReasoningEffort: "saved-sdk-depth" });
-  const unsupported = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: savedProps.selectedReasoningEffort, reasoningEfforts: [] });
-  const unsupportedDom = new JSDOM(renderToStaticMarkup(React.createElement(SessionComposerExpanded, {
-    ...savedProps, reasoningOptions: unsupported.reasoningSelectOptions,
-  })));
+  } finally {
+    dom.window.close();
+  }
+  const savedProps = createComposerTestProps({
+    selectedReasoningEffort: "saved-sdk-depth",
+  });
+  const unsupported = buildRuntimeSelectionOptions({
+    ...input,
+    selectedReasoningEffort: savedProps.selectedReasoningEffort,
+    reasoningEfforts: [],
+  });
+  const unsupportedDom = new JSDOM(
+    renderToStaticMarkup(
+      React.createElement(SessionComposerExpanded, {
+        ...savedProps,
+        reasoningOptions: unsupported.reasoningSelectOptions,
+      }),
+    ),
+  );
   try {
-    assert.equal(unsupportedDom.window.document.querySelector(".composer-setting-depth"), null);
+    assert.equal(
+      unsupportedDom.window.document.querySelector(".composer-setting-depth"),
+      null,
+    );
     assert.equal(savedProps.selectedReasoningEffort, "saved-sdk-depth");
-  } finally { unsupportedDom.window.close(); }
+  } finally {
+    unsupportedDom.window.close();
+  }
 });
 
+/** 個別ケースが指定した値だけでComposerの制約や表示を切り替えられるよう、共通の初期propsを用意する。 */
 function createComposerTestProps(
   overrides: Partial<SessionComposerExpandedProps> = {},
 ): SessionComposerExpandedProps {
@@ -186,14 +326,16 @@ function createComposerTestProps(
     additionalDirectoryCount: 1,
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
-    customAgentItems: [{
-      key: "agent-1",
-      value: "agent-1",
-      primaryLabel: "Agent",
-      secondaryLabel: "Agent description",
-      title: "Agent",
-      isSelected: true,
-    }],
+    customAgentItems: [
+      {
+        key: "agent-1",
+        value: "agent-1",
+        primaryLabel: "Agent",
+        secondaryLabel: "Agent description",
+        title: "Agent",
+        isSelected: true,
+      },
+    ],
     draft: "",
     composerTextareaRef: createRef<HTMLTextAreaElement>(),
     isComposerDisabled: false,
@@ -212,38 +354,72 @@ function createComposerTestProps(
     selectedCodexSandboxMode: "workspace-write",
     speedOptions: [],
     selectedCodexSpeed: "standard",
-    modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
+    modelOptions: [
+      {
+        value: "gpt-5.4",
+        label: "GPT-5.4",
+        model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] },
+      },
+    ],
     selectedModel: "gpt-5.4",
     selectedModelFallbackLabel: "gpt-5.4",
     reasoningOptions: [{ value: "high", label: "high" }],
     selectedReasoningEffort: "high",
+    /** ローカルファイルを選ぶ経路は起動しない。 */
     onPickFile() {},
+    /** ディレクトリ選択を伴わずに添付メニューを描画する。 */
     onPickFolder() {},
+    /** 画像選択の外部ダイアログを開かない。 */
     onPickImage() {},
+    /** 添付をSession Filesへ追加する保存処理は行わない。 */
     onAddToSessionFiles() {},
+    /** Session Files内のファイル選択を実行しない。 */
     onPickSessionFiles() {},
+    /** Session Files内のフォルダー選択を実行しない。 */
     onPickSessionFolder() {},
+    /** Session Files内の画像選択を実行しない。 */
     onPickSessionImage() {},
+    /** Agentピッカーの開閉は既定fixtureでは追跡しない。 */
     onToggleAgentPicker() {},
+    /** Skillsピッカーを開かず設定行を描画する。 */
     onToggleSkillPicker() {},
+    /** プロンプトテンプレートの画面遷移を起こさない。 */
     onOpenPromptTemplates() {},
+    /** 追加ディレクトリを実際の許可一覧へ登録しない。 */
     onAddAdditionalDirectory() {},
+    /** 追加候補を有効と扱い、実ファイルシステムの検査を切り離す。 */
     onValidateAdditionalDirectory: async () => ({ valid: true as const }),
+    /** 追加ディレクトリ一覧の開閉はテストごとの上書きに任せる。 */
     onToggleAdditionalDirectoryList() {},
+    /** 末尾への移動を起こさない既定の操作口。 */
     onJumpToBottom() {},
+    /** カスタムAgentを選択した場合の親更新を行わない。 */
     onSelectCustomAgent() {},
+    /** 入力テキストの外部保存なしにComposerを描画する。 */
     onDraftChange() {},
+    /** フォーカス通知で外部の状態を変更しない。 */
     onDraftFocus() {},
+    /** キー操作は既定fixtureの外部では処理しない。 */
     onDraftKeyDown() {},
+    /** 貼り付け内容を取り込まない既定の通知先。 */
     onDraftPaste() {},
+    /** テキスト選択に伴う親の状態更新を行わない。 */
     onDraftSelect() {},
+    /** IMEの変換開始を外部に伝播しない。 */
     onDraftCompositionStart() {},
+    /** IMEの変換確定を既定fixtureの外へ伝播しない。 */
     onDraftCompositionEnd() {},
+    /** 送信・取消を外部に実行しない既定の操作口。 */
     onSendOrCancel() {},
+    /** Approvalの変更は検証するケースだけで受け取る。 */
     onChangeApprovalMode() {},
+    /** Sandboxの設定変更に既定fixtureから副作用を起こさない。 */
     onChangeCodexSandboxMode() {},
+    /** Speed設定を永続化しない。 */
     onChangeCodexSpeed() {},
+    /** Model切替の通知でテスト外の選択を変更しない。 */
     onChangeModel() {},
+    /** Depth変更を個別ケースで差し替えられるよう既定では反映しない。 */
     onChangeReasoningEffort() {},
     ...overrides,
   };
@@ -261,45 +437,86 @@ function createComposerTestProps(
 // impact = "次Turnが手動と自動のどちらか利用者が判断・変更できなくなる"
 // distinction = "helpers単体ではnative selectのプレースホルダーと変更通知を確認できない"
 // @end-test-value
+/** 四つのproviderで共通のApproval候補を出し、UserまたはAuto Reviewの明示選択まで旧設定を保つ。 */
 test("Approval is flat across providers and keeps legacy settings until a choice is made", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
   const changes: string[] = [];
+  /** providerごとの旧Approval値を初期状態に持ち、実際の選択で次の設定に切り替える。 */
   function Fixture({ provider }: { provider: string }) {
     const [settings, setSettings] = useState({
-      provider, approvalMode: provider === "claude" ? "plan" as const : "on-request" as const,
+      provider,
+      approvalMode:
+        provider === "claude" ? ("plan" as const) : ("on-request" as const),
       codexReviewer: "user" as const,
     } as Parameters<typeof getSessionApprovalDisplay>[0]);
     const selected = getSessionApprovalDisplay(settings);
     const options = getSessionApprovalChoices();
-    return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      providerId: provider, selectedApprovalMode: selected.value,
-      approvalOptions: selected.value ? options : [{ value: "", label: selected.label, disabled: true, }, ...options],
-      onChangeApprovalMode: (value) => {
-        changes.push(value);
-        const patch = resolveSessionApprovalChoice(provider, value);
-        assert.ok(patch);
-        setSettings({ ...settings, ...patch });
-      },
-    }));
+    return React.createElement(
+      SessionComposerExpanded,
+      createComposerTestProps({
+        providerId: provider,
+        selectedApprovalMode: selected.value,
+        approvalOptions: selected.value
+          ? options
+          : [{ value: "", label: selected.label, disabled: true }, ...options],
+        /** 選択通知を記録し、共通候補を現在のproviderの設定差分へ変換する。 */
+        onChangeApprovalMode: (value) => {
+          changes.push(value);
+          const patch = resolveSessionApprovalChoice(provider, value);
+          assert.ok(patch);
+          setSettings({ ...settings, ...patch });
+        },
+      }),
+    );
   }
   try {
     for (const provider of ["codex", "claude", "copilot", "opencode"]) {
       const count = changes.length;
-      await act(async () => root.render(React.createElement(Fixture, { key: provider, provider })));
-      const select = dom.window.document.querySelector<HTMLSelectElement>('select[aria-label="Approval"]')!;
-      assert.deepEqual([...select.options].filter((option) => !option.disabled).map((option) => [option.value, option.textContent]),
-        [["auto-run", "Auto Run"], ["auto-review", "Auto Review"], ["user", "User"], ["safety-focused", "Safety Focused"]]);
-      assert.equal(select.selectedOptions[0]?.textContent,
-        provider === "codex" ? "User" : provider === "claude" ? "Plan" : "Settings Default");
+      await act(async () =>
+        root.render(React.createElement(Fixture, { key: provider, provider })),
+      );
+      const select = dom.window.document.querySelector<HTMLSelectElement>(
+        'select[aria-label="Approval"]',
+      )!;
+      assert.deepEqual(
+        [...select.options]
+          .filter((option) => !option.disabled)
+          .map((option) => [option.value, option.textContent]),
+        [
+          ["auto-run", "Auto Run"],
+          ["auto-review", "Auto Review"],
+          ["user", "User"],
+          ["safety-focused", "Safety Focused"],
+        ],
+      );
+      assert.equal(
+        select.selectedOptions[0]?.textContent,
+        provider === "codex"
+          ? "User"
+          : provider === "claude"
+            ? "Plan"
+            : "Settings Default",
+      );
       assert.equal(select.selectedOptions[0]?.disabled, provider !== "codex");
       assert.equal(changes.length, count);
       for (const value of ["auto-review", "user"]) {
-        await act(async () => { select.value = value; select.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+        await act(async () => {
+          select.value = value;
+          select.dispatchEvent(
+            new dom.window.Event("change", { bubbles: true }),
+          );
+        });
         assert.equal(select.value, value);
       }
       assert.deepEqual(changes.slice(count), ["auto-review", "user"]);
@@ -307,8 +524,14 @@ test("Approval is flat across providers and keeps legacy settings until a choice
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
   }
 });
 
@@ -324,12 +547,19 @@ test("Approval is flat across providers and keeps legacy settings until a choice
 // impact = "実行中の次要求を入力・送信できず、誤配送や終了中の受付が発生する"
 // distinction = "feedback helperや型検査では実際のbutton配線とcontroller凍結購読を確認できない"
 // @end-test-value
+/** 実行中のMainとAuxiliaryで編集した下書きが直接入力でなくキューに入り、freeze後の追加はできないことを確かめる。 */
 test("running Main and Auxiliary Send enqueue through the editable Composer and honor freeze", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
   const queued: string[] = [];
   let directInputs = 0;
@@ -338,21 +568,42 @@ test("running Main and Auxiliary Send enqueue through the editable Composer and 
       const registry = new ComposerControllerRegistry();
       const owner = { kind, id: `${kind}-conversation` };
       registry.setDraft(owner, `${kind} next request`);
-      await act(async () => root.render(React.createElement(SessionComposerExpanded, createComposerTestProps({
-        isRunning: true, canSendInput: false, isComposerDisabled: false,
-        composerController: { owner, registry },
-        onQueueTurn: () => queued.push(registry.capture(owner).draft),
-        onSendInput: () => { ++directInputs; },
-      }))));
-      assert.equal(dom.window.document.querySelector("textarea")!.disabled, false);
-      const sends = [...dom.window.document.querySelectorAll("button")].filter((button) => button.textContent === "Send");
+      await act(async () =>
+        root.render(
+          React.createElement(
+            SessionComposerExpanded,
+            createComposerTestProps({
+              isRunning: true,
+              canSendInput: false,
+              isComposerDisabled: false,
+              composerController: { owner, registry },
+              /** 送信操作の時点で対象ownerの下書きを取り出しキューに記録する。 */
+              onQueueTurn: () => queued.push(registry.capture(owner).draft),
+              /** キュー送信でなく実行中の入力が選ばれた回数を数える。 */
+              onSendInput: () => {
+                ++directInputs;
+              },
+            }),
+          ),
+        ),
+      );
+      assert.equal(
+        dom.window.document.querySelector("textarea")!.disabled,
+        false,
+      );
+      const sends = [...dom.window.document.querySelectorAll("button")].filter(
+        (button) => button.textContent === "Send",
+      );
       assert.equal(sends.length, 1);
       assert.equal(sends[0].disabled, false);
       await act(async () => sends[0].click());
       assert.equal(queued.at(-1), `${kind} next request`);
       assert.equal(directInputs, 0);
       await act(async () => registry.freeze());
-      assert.equal(dom.window.document.querySelector("textarea")!.disabled, true);
+      assert.equal(
+        dom.window.document.querySelector("textarea")!.disabled,
+        true,
+      );
       assert.equal(sends[0].disabled, true);
       await act(async () => sends[0].click());
       assert.equal(queued.length, kind === "main" ? 1 : 2);
@@ -360,11 +611,18 @@ test("running Main and Auxiliary Send enqueue through the editable Composer and 
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
   }
 });
 
+/** 会話列の表示に必要な名前・アイコン・テーマを持つ固定Characterを返す。 */
 function createCharacterProfile(): CharacterProfile {
   return {
     id: "char-1",
@@ -386,6 +644,7 @@ const conversationTestThemeColors = {
   sub: "#6fb8c7",
 };
 
+/** 会話列のpropsを実ConversationMessageColumnに接続し、保存済み履歴を含む経路を使う。 */
 function ConversationBackedMessageColumn(props: SessionMessageColumnProps) {
   return React.createElement(ConversationMessageColumn, {
     session: {
@@ -401,6 +660,7 @@ function ConversationBackedMessageColumn(props: SessionMessageColumnProps) {
   });
 }
 
+/** 仮想スクロールの各位置を識別できる連番本文を、assistantとuser交互に用意する。 */
 function createMessages(count: number): Message[] {
   return Array.from({ length: count }, (_, index) => ({
     role: index % 2 === 0 ? "assistant" : "user",
@@ -408,6 +668,7 @@ function createMessages(count: number): Message[] {
   }));
 }
 
+/** 会話本文とは独立に詳細欄を観測できるよう、操作履歴・変更行・実行結果を含む応答を用意する。 */
 function createArtifactMessage(): Message {
   return {
     role: "assistant",
@@ -435,6 +696,7 @@ function createArtifactMessage(): Message {
   };
 }
 
+/** コマンドとMCPツールが混在する操作グループの表示を試せる応答を返す。 */
 function createOperationsArtifactMessage(): Message {
   const message = createArtifactMessage();
   message.artifact!.operationTimeline = [
@@ -462,6 +724,7 @@ function createOperationsArtifactMessage(): Message {
   return message;
 }
 
+/** 警告と詳細を持ち、選択結果を直接配送するコマンド承認要求を作る。 */
 function createLiveApprovalRequest(): LiveApprovalRequest {
   return {
     requestId: "approval-1",
@@ -475,6 +738,7 @@ function createLiveApprovalRequest(): LiveApprovalRequest {
   };
 }
 
+/** 既定のブランチ名を持つ必須の回答欄を、入力待ちの質問として用意する。 */
 function createLiveElicitationRequest(): LiveElicitationRequest {
   return {
     requestId: "elicitation-1",
@@ -505,27 +769,47 @@ function createLiveElicitationRequest(): LiveElicitationRequest {
 // impact = "生成成果物への導線が欠けるか、別providerの本文を誤解釈する"
 // distinction = "parser単体と型検査では会話列の保存済み・live・pending各callerの適用を観測できない。短いSSR入力だけで接続を維持する"
 // @end-test-value
+/** Codex固有のファイル参照解釈は応答元に従い、保存済み・live・pendingに適用されても他providerやuserに波及しない。 */
 test("会話列は応答元providerの構文を保存済み・live・pendingに適用する", () => {
-  const text = 'visualize{"path":"/work/view.html"} [ordinary](/work/plain.md)';
+  const text =
+    'visualize{"path":"/work/view.html"} [ordinary](/work/plain.md)';
   for (const provider of ["codex", "claude", "copilot", undefined]) {
     for (const state of ["saved", "live", "pending"] as const) {
       const html = renderSessionMessageColumn({
         provider,
-        messages: state === "saved" ? [{ role: "user", text }, { role: "assistant", text }] : [],
+        messages:
+          state === "saved"
+            ? [
+                { role: "user", text },
+                { role: "assistant", text },
+              ]
+            : [],
         isRunning: state !== "saved",
         liveRunAssistantText: state === "live" ? text : undefined,
         pendingMessageText: state === "pending" ? text : undefined,
       });
       const dom = new JSDOM(html);
       try {
-        const links = [...dom.window.document.querySelectorAll('a[href="/work/view.html"]')];
-        assert.deepEqual(links.map((link) => link.textContent), provider === "codex" ? ["view.html"] : []);
-        assert.equal(dom.window.document.querySelectorAll('a[href="/work/plain.md"]').length, state === "saved" ? 2 : 1);
-      } finally { dom.window.close(); }
+        const links = [
+          ...dom.window.document.querySelectorAll('a[href="/work/view.html"]'),
+        ];
+        assert.deepEqual(
+          links.map((link) => link.textContent),
+          provider === "codex" ? ["view.html"] : [],
+        );
+        assert.equal(
+          dom.window.document.querySelectorAll('a[href="/work/plain.md"]')
+            .length,
+          state === "saved" ? 2 : 1,
+        );
+      } finally {
+        dom.window.close();
+      }
     }
   }
 });
 
+/** 仮想行や追加表示の初期マークアップを比較できるよう、会話列をDOM環境なしで描画する。 */
 function renderSessionMessageColumn(options: {
   messages: Message[];
   provider?: string;
@@ -582,10 +866,15 @@ function renderSessionMessageColumn(options: {
       pendingMessageTextVisible: options.pendingMessageTextVisible,
       pendingMessageGroupId: options.pendingMessageGroupId,
       isMessageListFollowing: options.isMessageListFollowing ?? false,
+      /** 静的描画ではスクロール通知を親へ渡さない。 */
       onMessageListScroll() {},
+      /** 初期HTMLの比較ではartifactの状態を操作しない。 */
       onToggleArtifact() {},
+      /** diff画面を起動せずに会話列の出力を調べる。 */
       onOpenDiff() {},
+      /** 承認操作は実行せず要求表示のみを確認できるようにする。 */
       onResolveLiveApproval() {},
+      /** 質問への回答を送らず初期マークアップを調べる。 */
       onResolveLiveElicitation() {},
       onOpenPath: undefined,
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
@@ -610,27 +899,53 @@ function renderSessionMessageColumn(options: {
 // impact = "失敗箇所の探索負担と理由の二重表示、生成内容の誤認を防ぐ"
 // distinction = "runtime/storage testでは共通欄への描画と本文操作の境界を検証できない。小さいSSR fixtureで表示契約を維持する"
 // @end-test-value
+/** 確定した失敗文言が生成本文に混入せず、応答に属する共通の表示欄に置かれる。 */
 test("確定失敗は応答側の共通欄で生成本文と分離する", () => {
   const reason = "Selected model is at capacity.\nTry a different model.";
   for (const text of [null, "", "途中までの返答"]) {
-    const document = new JSDOM(renderSessionMessageColumn({
-      messages: [{ role: "user", text: "request" }, ...(text === null ? [] : [{ ...createArtifactMessage(), text, runFailure: reason }])],
-      submissionError: text === null ? reason : undefined,
-      withResponseActions: true,
-    })).window.document;
+    const document = new JSDOM(
+      renderSessionMessageColumn({
+        messages: [
+          { role: "user", text: "request" },
+          ...(text === null
+            ? []
+            : [{ ...createArtifactMessage(), text, runFailure: reason }]),
+        ],
+        submissionError: text === null ? reason : undefined,
+        withResponseActions: true,
+      }),
+    ).window.document;
     assert.equal(document.querySelectorAll(".session-run-failure").length, 1);
-    assert.equal(document.querySelector(".message-row.assistant [role=alert]")?.textContent, `Failed${reason}`);
+    assert.equal(
+      document.querySelector(".message-row.assistant [role=alert]")
+        ?.textContent,
+      `Failed${reason}`,
+    );
     assert.equal(document.body.textContent?.split(reason).length, 2);
-    assert.equal(document.querySelector(".message-row.user")?.textContent, "request");
+    assert.equal(
+      document.querySelector(".message-row.user")?.textContent,
+      "request",
+    );
     if (text !== null) {
-      assert.equal(document.querySelector(".message-row.assistant [data-message-body]")?.textContent, text);
+      assert.equal(
+        document.querySelector(".message-row.assistant [data-message-body]")
+          ?.textContent,
+        text,
+      );
       assert.ok(document.querySelector('button[aria-label="Show details"]'));
     }
   }
-  const uncertain = new JSDOM(renderSessionMessageColumn({
-    messages: [{ role: "user", text: "request" }], submissionError: "Acceptance outcome unknown.", submissionUncertain: true,
-  })).window.document;
-  assert.equal(uncertain.querySelector("[role=alert]")?.textContent, "Acceptance outcome unknown.");
+  const uncertain = new JSDOM(
+    renderSessionMessageColumn({
+      messages: [{ role: "user", text: "request" }],
+      submissionError: "Acceptance outcome unknown.",
+      submissionUncertain: true,
+    }),
+  ).window.document;
+  assert.equal(
+    uncertain.querySelector("[role=alert]")?.textContent,
+    "Acceptance outcome unknown.",
+  );
   assert.equal(uncertain.querySelector(".session-run-failure"), null);
 });
 
@@ -646,35 +961,85 @@ test("確定失敗は応答側の共通欄で生成本文と分離する", () =>
 // impact = "大きな再取得可能detailの積み上がりと古い実行詳細の誤表示を防ぎ、会話の閲覧状態を保つ"
 // distinction = "型検査やページ離脱testでは同じmessageの開閉・非表示・遅延取得順を確認できない。短いdeferred操作でCIの保持負担を限定する"
 // @end-test-value
+/** 詳細の開き直しで再取得し、後から完了した古い要求が新しい詳細を上書きしない。 */
 test("artifactは再openで最新取得し閉じた間の遅いdetailを適用しない", async () => {
-  const summary: MessageArtifact = { title: "summary", activitySummary: [], changedFiles: [], runChecks: [], detailAvailable: true };
-  const message: Message = { role: "assistant", text: "saved body", artifact: summary };
+  const summary: MessageArtifact = {
+    title: "summary",
+    activitySummary: [],
+    changedFiles: [],
+    runChecks: [],
+    detailAvailable: true,
+  };
+  const message: Message = {
+    role: "assistant",
+    text: "saved body",
+    artifact: summary,
+  };
   const pending: Array<(detail: MessageArtifact) => void> = [];
   const mounted = await mountSessionMessageColumn({
-    messages: [message], messageKeys: ["artifact"], expandedArtifacts: { artifact: true },
-    onLoadArtifactDetail: () => new Promise((resolve) => { pending.push(resolve); }),
+    messages: [message],
+    messageKeys: ["artifact"],
+    expandedArtifacts: { artifact: true },
+    /** 取得要求を任意の順に完了させられるよう、詳細の解決関数を保存する。 */
+    onLoadArtifactDetail: () =>
+      new Promise((resolve) => {
+        pending.push(resolve);
+      }),
   });
   try {
     assert.equal(pending.length, 1);
     await mounted.rerender({ expandedArtifacts: {} });
     await mounted.rerender({ expandedArtifacts: { artifact: true } });
     assert.equal(pending.length, 2);
-    await act(async () => { pending[1]!({ ...summary, runChecks: [{ label: "Result", value: "latest detail" }] }); });
+    await act(async () => {
+      pending[1]!({
+        ...summary,
+        runChecks: [{ label: "Result", value: "latest detail" }],
+      });
+    });
     assert.match(mounted.container.textContent ?? "", /latest detail/);
-    await act(async () => { pending[0]!({ ...summary, runChecks: [{ label: "Result", value: "stale detail" }] }); });
+    await act(async () => {
+      pending[0]!({
+        ...summary,
+        runChecks: [{ label: "Result", value: "stale detail" }],
+      });
+    });
     assert.doesNotMatch(mounted.container.textContent ?? "", /stale detail/);
     await mounted.rerender({ expandedArtifacts: {} });
     await mounted.rerender({ expandedArtifacts: { artifact: true } });
     assert.equal(pending.length, 3);
-    await act(async () => { pending[2]!({ ...summary, runChecks: [{ label: "Result", value: "collapsed then reopened detail" }] }); });
-    assert.match(mounted.container.textContent ?? "", /collapsed then reopened detail/);
-    await mounted.rerender({ artifactDetailsEnabled: false, expandedArtifacts: { artifact: true } });
-    await mounted.rerender({ artifactDetailsEnabled: true, expandedArtifacts: { artifact: true } });
+    await act(async () => {
+      pending[2]!({
+        ...summary,
+        runChecks: [
+          { label: "Result", value: "collapsed then reopened detail" },
+        ],
+      });
+    });
+    assert.match(
+      mounted.container.textContent ?? "",
+      /collapsed then reopened detail/,
+    );
+    await mounted.rerender({
+      artifactDetailsEnabled: false,
+      expandedArtifacts: { artifact: true },
+    });
+    await mounted.rerender({
+      artifactDetailsEnabled: true,
+      expandedArtifacts: { artifact: true },
+    });
     assert.equal(pending.length, 4);
-    await act(async () => { pending[3]!({ ...summary, runChecks: [{ label: "Result", value: "reopened detail" }] }); });
+    await act(async () => {
+      pending[3]!({
+        ...summary,
+        runChecks: [{ label: "Result", value: "reopened detail" }],
+      });
+    });
     assert.match(mounted.container.textContent ?? "", /reopened detail/);
     assert.match(mounted.container.textContent ?? "", /saved body/);
-  } finally { await mounted.cleanup(); }
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -689,38 +1054,116 @@ test("artifactは再openで最新取得し閉じた間の遅いdetailを適用�
 // impact = "どの入力で得た応答かを実行設定と同じ場所で確認できなくなる"
 // distinction = "単体の入力状態testや型検査では既存レスポンスDetailsへの接続と取得契機を検出できない。短い1会話の開閉だけを検証する"
 // @end-test-value
+/** 詳細欄に実行設定と配送の完了状態をまとめ、本文と別に確認できる。 */
 test("応答Detailsに実行設定と配送状態を集約する", async () => {
   const response = { ...createArtifactMessage(), historyIndex: 9 };
-  response.artifact!.runChecks = [{ label: "provider", value: "Codex" }, { label: "model", value: "saved-model" }];
-  const mounted = await mountSessionMessageColumn({ messages: [{ role: "user", text: "prompt" }, response], messageKeys: ["prompt", "response"] });
-  const requests: Array<{ operation: string; request: Record<string, unknown> }> = [];
-  Object.defineProperty(mounted.dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: Record<string, unknown>) => {
-    requests.push({ operation, request });
-    if (operation === "list_sent_instruction_cards") return { ok: true, items: [], cursors: { receipts: null, steers: null } };
-    assert.equal(operation, "get_execution");
-    return { ok: true, receiptId: "start", turnId: "42", userMessageSeq: 8, assistantMessageSeq: 9, receiptState: "completed", turnState: "completed" };
-  } } });
+  response.artifact!.runChecks = [
+    { label: "provider", value: "Codex" },
+    { label: "model", value: "saved-model" },
+  ];
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "user", text: "prompt" }, response],
+    messageKeys: ["prompt", "response"],
+  });
+  const requests: Array<{
+    operation: string;
+    request: Record<string, unknown>;
+  }> = [];
+  Object.defineProperty(mounted.dom.window, "withmate", {
+    configurable: true,
+    value: {
+      /** 呼ばれた実行参照操作を記録し、カード一覧と実行明細には異なる結果を返す。 */
+      readSessionExecution: async (
+        _owner: string,
+        operation: string,
+        request: Record<string, unknown>,
+      ) => {
+        requests.push({ operation, request });
+        if (operation === "list_sent_instruction_cards")
+          return {
+            ok: true,
+            items: [],
+            cursors: { receipts: null, steers: null },
+          };
+        assert.equal(operation, "get_execution");
+        return {
+          ok: true,
+          receiptId: "start",
+          turnId: "42",
+          userMessageSeq: 8,
+          assistantMessageSeq: 9,
+          receiptState: "completed",
+          turnState: "completed",
+        };
+      },
+    },
+  });
   try {
-    const context = { ownerSessionId: "main", target: { kind: "main", sessionId: "main", incarnationId: "inc" } } as const;
+    const context = {
+      ownerSessionId: "main",
+      target: { kind: "main", sessionId: "main", incarnationId: "inc" },
+    } as const;
     await mounted.rerender({ inputReadContext: context });
-    assert.equal(requests.filter((read) => read.operation === "get_execution").length, 0);
-    await mounted.rerender({ inputReadContext: context, expandedArtifacts: { response: true } });
-    const assistant = mounted.container.querySelector(".message-row.assistant")!;
+    assert.equal(
+      requests.filter((read) => read.operation === "get_execution").length,
+      0,
+    );
+    await mounted.rerender({
+      inputReadContext: context,
+      expandedArtifacts: { response: true },
+    });
+    const assistant = mounted.container.querySelector(
+      ".message-row.assistant",
+    )!;
     assert.match(assistant.textContent!, /Run Checks.*Codex.*saved-model/s);
     assert.match(assistant.textContent!, /Operations.*updated file/s);
-    assert.deepEqual([...assistant.querySelectorAll("pre")].map((node) => node.textContent), ["details for operation"]);
-    assert.match(assistant.textContent!, /Receipt StateCompleted.*Turn StateCompleted/s);
-    assert.deepEqual(requests.filter((read) => read.operation === "get_execution").map((read) => read.request.messageSeq), [9]);
-    assert.equal(mounted.container.querySelector(".message-row.user")?.textContent, "prompt");
-    const checks = assistant.querySelector<HTMLDetailsElement>('details[aria-label="Run Checks"]')!;
-    const state = assistant.querySelector<HTMLDetailsElement>('details[aria-label="Input State"]')!;
-    assert.equal(checks.open, true); assert.equal(state.open, true);
-    await act(async () => { checks.open = false; checks.dispatchEvent(new mounted.dom.window.Event("toggle")); });
-    assert.equal(checks.open, false); assert.equal(state.open, true);
-    await mounted.rerender({ inputReadContext: context, expandedArtifacts: {} });
-    await mounted.rerender({ inputReadContext: context, expandedArtifacts: { response: true } });
-    assert.equal(requests.filter((read) => read.operation === "get_execution").length, 2);
-  } finally { await mounted.cleanup(); }
+    assert.deepEqual(
+      [...assistant.querySelectorAll("pre")].map((node) => node.textContent),
+      ["details for operation"],
+    );
+    assert.match(
+      assistant.textContent!,
+      /Receipt StateCompleted.*Turn StateCompleted/s,
+    );
+    assert.deepEqual(
+      requests
+        .filter((read) => read.operation === "get_execution")
+        .map((read) => read.request.messageSeq),
+      [9],
+    );
+    assert.equal(
+      mounted.container.querySelector(".message-row.user")?.textContent,
+      "prompt",
+    );
+    const checks = assistant.querySelector<HTMLDetailsElement>(
+      'details[aria-label="Run Checks"]',
+    )!;
+    const state = assistant.querySelector<HTMLDetailsElement>(
+      'details[aria-label="Input State"]',
+    )!;
+    assert.equal(checks.open, true);
+    assert.equal(state.open, true);
+    await act(async () => {
+      checks.open = false;
+      checks.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(checks.open, false);
+    assert.equal(state.open, true);
+    await mounted.rerender({
+      inputReadContext: context,
+      expandedArtifacts: {},
+    });
+    await mounted.rerender({
+      inputReadContext: context,
+      expandedArtifacts: { response: true },
+    });
+    assert.equal(
+      requests.filter((read) => read.operation === "get_execution").length,
+      2,
+    );
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -735,44 +1178,81 @@ test("応答Detailsに実行設定と配送状態を集約する", async () => {
 // impact = "streaming頻度の反復IPCとloading点滅を防ぎ、詳細だけの失敗から会話本文を失わず復帰できる"
 // distinction = "成功detailの解放・遅延取得testではnullとrejectの取得寿命を確認できない。2結果の短いDOM操作だけで継続負担を限定する"
 // @end-test-value
+/** 詳細の欠落と取得失敗はいずれも本文更新で再試行せず、閉じて開き直すと復帰できる。 */
 test("artifactの欠落と失敗は本文更新で再取得せず再openで復帰できる", async () => {
   for (const outcome of ["null", "reject"] as const) {
-    const summary: MessageArtifact = { title: "summary", activitySummary: [], changedFiles: [], runChecks: [], detailAvailable: true };
-    const message: Message = { role: "assistant", text: "saved body", artifact: summary };
+    const summary: MessageArtifact = {
+      title: "summary",
+      activitySummary: [],
+      changedFiles: [],
+      runChecks: [],
+      detailAvailable: true,
+    };
+    const message: Message = {
+      role: "assistant",
+      text: "saved body",
+      artifact: summary,
+    };
     let attempts = 0;
     const mounted = await mountSessionMessageColumn({
-      messages: [message], messageKeys: ["artifact"], expandedArtifacts: { artifact: true },
+      messages: [message],
+      messageKeys: ["artifact"],
+      expandedArtifacts: { artifact: true },
+      /** 最初の試行に欠落または失敗を返し、復帰時にだけ最新詳細を返す。 */
       onLoadArtifactDetail: async () => {
         ++attempts;
-        if (attempts >= 3) return { ...summary, runChecks: [{ label: "Result", value: "latest detail" }] };
+        if (attempts >= 3)
+          return {
+            ...summary,
+            runChecks: [{ label: "Result", value: "latest detail" }],
+          };
         if (outcome === "reject") throw new Error("detail load failed");
         return null;
       },
     });
     try {
       assert.equal(attempts, 1);
-      const errorText = outcome === "null" ? /Details are unavailable/ : /Failed to load details/;
-      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
-      assert.doesNotMatch(mounted.container.textContent ?? "", /Loading details/);
+      const errorText =
+        outcome === "null"
+          ? /Details are unavailable/
+          : /Failed to load details/;
+      assert.match(
+        mounted.container.querySelector('[role="alert"]')?.textContent ?? "",
+        errorText,
+      );
+      assert.doesNotMatch(
+        mounted.container.textContent ?? "",
+        /Loading details/,
+      );
       for (let delta = 1; delta <= 5; ++delta) {
-        await mounted.rerender({ messages: [{ ...message, text: `saved body ${delta}` }] });
+        await mounted.rerender({
+          messages: [{ ...message, text: `saved body ${delta}` }],
+        });
       }
       assert.equal(attempts, 1);
       await mounted.rerender({ expandedArtifacts: {} });
       await mounted.rerender({ expandedArtifacts: { artifact: true } });
       assert.equal(attempts, 2);
-      assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", errorText);
+      assert.match(
+        mounted.container.querySelector('[role="alert"]')?.textContent ?? "",
+        errorText,
+      );
       await mounted.rerender({ artifactDetailsEnabled: false });
       await mounted.rerender({ artifactDetailsEnabled: true });
       assert.equal(attempts, 3);
       assert.match(mounted.container.textContent ?? "", /latest detail/);
       assert.equal(mounted.container.querySelector('[role="alert"]'), null);
       await mounted.rerender({ messages: [], messageKeys: [] });
-      await mounted.rerender({ messages: [message], messageKeys: ["artifact"] });
+      await mounted.rerender({
+        messages: [message],
+        messageKeys: ["artifact"],
+      });
       assert.equal(attempts, 4);
       assert.match(mounted.container.textContent ?? "", /latest detail/);
       assert.match(mounted.container.textContent ?? "", /saved body/);
-    } finally { await mounted.cleanup(); }
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -788,14 +1268,34 @@ test("artifactの欠落と失敗は本文更新で再取得せず再openで復�
 // impact = "確認済みのツール結果がMonitorで未読のまま残る、または未閲覧の結果が既読になる"
 // distinction = "observer単体は手製DOMであり実componentの詳細取得状態との接続を検出できない。既存mount helperと3つの短い取得経路で確認する"
 // @end-test-value
+/** 本文がない成功応答は、詳細取得の完了だけでなくフォーカス中に可視となった場合だけ既読になる。 */
 test("本文なし成功結果は取得済みDetailsを表示した時だけ既読にする", async () => {
   for (const mode of ["loaded", "missing", "failed"] as const) {
-    const detail: MessageArtifact = { title: "Tool result", activitySummary: ["Found 3 records"], changedFiles: [], runChecks: [{ label: "Result", value: "Completed" }] };
-    const pending: Array<{ resolve: (value: MessageArtifact | null) => void; reject: (error: Error) => void }> = [];
+    const detail: MessageArtifact = {
+      title: "Tool result",
+      activitySummary: ["Found 3 records"],
+      changedFiles: [],
+      runChecks: [{ label: "Result", value: "Completed" }],
+    };
+    const pending: Array<{
+      resolve: (value: MessageArtifact | null) => void;
+      reject: (error: Error) => void;
+    }> = [];
     const mounted = await mountSessionMessageColumn({
-      messages: [{ role: "assistant", text: "", artifact: mode === "loaded" ? detail : { ...detail, activitySummary: [], detailAvailable: true } }],
+      messages: [
+        {
+          role: "assistant",
+          text: "",
+          artifact:
+            mode === "loaded"
+              ? detail
+              : { ...detail, activitySummary: [], detailAvailable: true },
+        },
+      ],
       messageKeys: ["artifact-only"],
-      onLoadArtifactDetail: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+      /** 詳細取得の完了時点をテストから制御できるよう待機させる。 */
+      onLoadArtifactDetail: () =>
+        new Promise((resolve, reject) => pending.push({ resolve, reject })),
     });
     let top = 20;
     let focused = true;
@@ -804,23 +1304,42 @@ test("本文なし成功結果は取得済みDetailsを表示した時だけ既�
     const originalBounds = window.HTMLElement.prototype.getBoundingClientRect;
     window.HTMLElement.prototype.getBoundingClientRect = function () {
       return this.classList.contains("artifact-block")
-        ? createRect({ top, left: 0, width: 400, height: 180 }) : originalBounds.call(this);
+        ? createRect({ top, left: 0, width: 400, height: 180 })
+        : originalBounds.call(this);
     };
-    Object.defineProperty(window.document, "hasFocus", { value: () => focused });
+    Object.defineProperty(window.document, "hasFocus", {
+      /** 読了判定が参照する文書のフォーカス状態を切り替える。 */
+      value: () => focused,
+    });
     const list = mounted.messageListRef.current!;
     const dispose = observeSessionResultRead({
-      sessionId: "session-1", list, assistantMessageIndexes: new Map([[8, 0]]),
+      sessionId: "session-1",
+      list,
+      assistantMessageIndexes: new Map([[8, 0]]),
       api: {
-        getUnreadSessionResult: async () => ({ turnId: 7, assistantMessageSeq: 8 }),
-        markSessionResultRead: async (id, turnId) => { acknowledgements.push([id, turnId]); return true; },
+        /** 本文の代わりに詳細の閲覧で既読にする未読ターンを返す。 */
+        getUnreadSessionResult: async () => ({
+          turnId: 7,
+          assistantMessageSeq: 8,
+        }),
+        /** 対象SessionとTurnの既読通知を記録して成功を返す。 */
+        markSessionResultRead: async (id, turnId) => {
+          acknowledgements.push([id, turnId]);
+          return true;
+        },
+        /** ターン更新を配送せず、解除可能な購読口だけを提供する。 */
         onSessionTurnUpdated: () => () => {},
       },
     });
-    const settle = (action = () => {}) => act(async () => {
-      action();
-      await Promise.resolve();
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    });
+    /** 位置やフォーカスの操作後、既読判定に必要なフレームまで待つ。 */
+    const settle = (action = () => {}) =>
+      act(async () => {
+        action();
+        await Promise.resolve();
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        );
+      });
     try {
       await settle();
       assert.deepEqual(acknowledgements, []);
@@ -838,7 +1357,9 @@ test("本文なし成功結果は取得済みDetailsを表示した時だけ既�
         assert.ok(mounted.container.querySelector('[role="alert"]'));
         assert.deepEqual(acknowledgements, []);
         await mounted.rerender({ expandedArtifacts: {} });
-        await mounted.rerender({ expandedArtifacts: { "artifact-only": true } });
+        await mounted.rerender({
+          expandedArtifacts: { "artifact-only": true },
+        });
         top = 800;
         await act(async () => pending[1].resolve(detail));
       }
@@ -847,10 +1368,14 @@ test("本文なし成功結果は取得済みDetailsを表示した時だけ既�
       assert.deepEqual(acknowledgements, []);
       focused = false;
       top = 20;
-      await settle(() => { list.dispatchEvent(new window.Event("scroll")); });
+      await settle(() => {
+        list.dispatchEvent(new window.Event("scroll"));
+      });
       assert.deepEqual(acknowledgements, []);
       focused = true;
-      await settle(() => { window.dispatchEvent(new window.Event("focus")); });
+      await settle(() => {
+        window.dispatchEvent(new window.Event("focus"));
+      });
       assert.deepEqual(acknowledgements, [["session-1", 7]]);
     } finally {
       dispose();
@@ -859,6 +1384,7 @@ test("本文なし成功結果は取得済みDetailsを表示した時だけ既�
   }
 });
 
+/** JSDOMで実際のレイアウトに頼らず、指定した位置と寸法から境界矩形を構成する。 */
 function createRect(input: {
   left: number;
   top: number;
@@ -874,12 +1400,14 @@ function createRect(input: {
     bottom: input.top + input.height,
     x: input.left,
     y: input.top,
+    /** テスト用の矩形をそのままシリアル化可能な値として返す。 */
     toJSON() {
       return this;
     },
   } as DOMRect;
 }
 
+/** 描画済みの会話列と再描画・行計測・後片付けの各操作をまとめる。 */
 type MountedSessionMessageColumn = {
   container: HTMLElement;
   dom: JSDOM;
@@ -914,6 +1442,7 @@ type MountedSessionMessageColumn = {
   cleanup: () => Promise<void>;
 };
 
+/** スクロールと行高を模擬したJSDOMへ会話列をマウントし、DOM上の操作と観測を可能にする。 */
 async function mountSessionMessageColumn(options: {
   sessionId?: string;
   inputReadContext?: SessionMessageColumnProps["inputReadContext"];
@@ -951,19 +1480,39 @@ async function mountSessionMessageColumn(options: {
   const previousEvent = globalThis.Event;
   const previousMouseEvent = globalThis.MouseEvent;
   const previousNavigator = globalThis.navigator;
-  const previousRequestAnimationFrame = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
-  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
+  const previousRequestAnimationFrame = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "requestAnimationFrame",
+  );
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    pretendToBeVisual: true,
+  });
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const messageListRef = createRef<HTMLDivElement>();
   const root = createRoot(container);
-  const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
-  const originalAttachEvent = (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
-  const originalDetachEvent = (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
-  const originalOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
-  const originalClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
-  const originalScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
+  const originalGetBoundingClientRect =
+    dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalAttachEvent = (
+    dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }
+  ).attachEvent;
+  const originalDetachEvent = (
+    dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }
+  ).detachEvent;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLElement.prototype,
+    "offsetHeight",
+  );
+  const originalClientHeight = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLElement.prototype,
+    "clientHeight",
+  );
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLElement.prototype,
+    "scrollHeight",
+  );
   const originalScrollTo = dom.window.HTMLElement.prototype.scrollTo;
-  const originalScrollIntoView = dom.window.HTMLElement.prototype.scrollIntoView;
+  const originalScrollIntoView =
+    dom.window.HTMLElement.prototype.scrollIntoView;
   const originalResizeObserver = dom.window.ResizeObserver;
   const messageRowHeights = new Map<number, number>();
   const resizeObservers: Array<{
@@ -971,26 +1520,32 @@ async function mountSessionMessageColumn(options: {
     elements: Set<Element>;
   }> = [];
 
+  /** 実ブラウザーの自動通知の代わりに、テストが行高変更を通知できるResizeObserverを提供する。 */
   class TestResizeObserver implements ResizeObserver {
     private readonly registration: (typeof resizeObservers)[number];
 
+    /** 通知先を観測対象の集合と一緒に登録する。 */
     constructor(callback: ResizeObserverCallback) {
       this.registration = { callback, elements: new Set() };
       resizeObservers.push(this.registration);
     }
 
+    /** 指定した要素を以後の行高変更の通知対象に加える。 */
     observe(target: Element): void {
       this.registration.elements.add(target);
     }
 
+    /** 対象の計測が解除された後に通知を送らないようにする。 */
     unobserve(target: Element): void {
       this.registration.elements.delete(target);
     }
 
+    /** observer単位で対象を空にし、その後の変更通知を止める。 */
     disconnect(): void {
       this.registration.elements.clear();
     }
 
+    /** 自動計測による未配送のレコードは持たない。 */
     takeRecords(): ResizeObserverEntry[] {
       return [];
     }
@@ -1002,12 +1557,14 @@ async function mountSessionMessageColumn(options: {
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
     configurable: true,
+    /** Reactの旧式イベント登録をJSDOMの通常イベントへ橋渡しする。 */
     value(this: HTMLElement, name: string, listener: EventListener) {
       this.addEventListener(name.replace(/^on/, ""), listener);
     },
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
     configurable: true,
+    /** 登録時と同じ名前変換でJSDOMのイベント購読を解除する。 */
     value(this: HTMLElement, name: string, listener: EventListener) {
       this.removeEventListener(name.replace(/^on/, ""), listener);
     },
@@ -1028,23 +1585,31 @@ async function mountSessionMessageColumn(options: {
       this.scrollTop = optionsOrX.top;
     }
   };
-  dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+  dom.window.HTMLElement.prototype.scrollIntoView =
+    function scrollIntoView() {};
 
-  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-    if (this.classList.contains("session-selection-action-overlay")) {
-      return createRect({ left: 0, top: 0, width: 960, height: 720 });
-    }
-    if (this.classList.contains("session-message-list")) {
-      return createRect({ left: 0, top: 0, width: 960, height: 720 });
-    }
-    if (this.classList.contains("session-message-virtual-row")) {
-      const index = Number(this.getAttribute("data-index"));
-      return createRect({ left: 0, top: 0, width: 960, height: messageRowHeights.get(index) ?? 168 });
-    }
-    return originalGetBoundingClientRect.call(this);
-  };
+  dom.window.HTMLElement.prototype.getBoundingClientRect =
+    function getBoundingClientRect() {
+      if (this.classList.contains("session-selection-action-overlay")) {
+        return createRect({ left: 0, top: 0, width: 960, height: 720 });
+      }
+      if (this.classList.contains("session-message-list")) {
+        return createRect({ left: 0, top: 0, width: 960, height: 720 });
+      }
+      if (this.classList.contains("session-message-virtual-row")) {
+        const index = Number(this.getAttribute("data-index"));
+        return createRect({
+          left: 0,
+          top: 0,
+          width: 960,
+          height: messageRowHeights.get(index) ?? 168,
+        });
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
     configurable: true,
+    /** 仮想一覧の高さと各行の可変高をテスト用の値で返す。 */
     get() {
       if (this.classList.contains("session-message-list")) {
         return 720;
@@ -1058,35 +1623,67 @@ async function mountSessionMessageColumn(options: {
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
     configurable: true,
+    /** 仮想一覧についてだけスクロール領域の表示高を返す。 */
     get() {
       return this.classList.contains("session-message-list") ? 720 : 0;
     },
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
     configurable: true,
+    /** 仮想リスト全体の高さを、アプリが設定したスペーサーのstyleから読み取る。 */
     get() {
       if (!this.classList.contains("session-message-list")) {
         return 0;
       }
-      const items = this.querySelector(".session-message-list-window-items") as HTMLElement | null;
+      const items = this.querySelector(
+        ".session-message-list-window-items",
+      ) as HTMLElement | null;
       return Number.parseFloat(items?.style.height ?? "0") || 0;
     },
   });
 
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: dom.window.DOMRect });
-  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
-  Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "DOMRect", {
+    configurable: true,
+    value: dom.window.DOMRect,
+  });
+  Object.defineProperty(globalThis, "Event", {
+    configurable: true,
+    value: dom.window.Event,
+  });
+  Object.defineProperty(globalThis, "MouseEvent", {
+    configurable: true,
+    value: dom.window.MouseEvent,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
 
-  Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: dom.window.requestAnimationFrame.bind(dom.window) });
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: dom.window.requestAnimationFrame.bind(dom.window),
+  });
 
   const MessageColumn = options.component ?? SessionMessageColumn;
   const character = createCharacterProfile();
   const expandedArtifacts = options.expandedArtifacts ?? {};
+  /** 同じReact rootを使って、指定されたpropsだけ差し替え会話列を更新する。 */
   const renderMessageColumn = async (callbacks: {
     sessionId?: string;
     inputReadContext?: SessionMessageColumnProps["inputReadContext"];
@@ -1115,62 +1712,91 @@ async function mountSessionMessageColumn(options: {
   }) => {
     await act(async () => {
       const messageColumn = React.createElement(MessageColumn, {
-          sessionId: callbacks.sessionId ?? options.sessionId ?? "session-1",
-          inputReadContext: callbacks.inputReadContext ?? options.inputReadContext,
-          character,
-          messages: callbacks.messages ?? options.messages,
-          messageKeys: callbacks.messageKeys ?? options.messageKeys,
-          messageGroups: callbacks.messageGroups ?? options.messageGroups,
-          messageCollapseTargets: callbacks.messageCollapseTargets ?? options.messageCollapseTargets,
-          collapsedMessageKeys: callbacks.collapsedMessageKeys ?? options.collapsedMessageKeys,
-          messageJumpRequest: callbacks.messageJumpRequest ?? options.messageJumpRequest,
-          expandedArtifacts: callbacks.expandedArtifacts ?? expandedArtifacts,
-          artifactDetailsEnabled: callbacks.artifactDetailsEnabled ?? options.artifactDetailsEnabled,
-          onLoadArtifactDetail: options.onLoadArtifactDetail,
-          messageListRef,
-          isRunning: callbacks.isRunning ?? options.isRunning ?? false,
-          liveApprovalRequest: null,
-          approvalActionRequestId: null,
-          liveElicitationRequest: callbacks.liveElicitationRequest !== undefined
+        sessionId: callbacks.sessionId ?? options.sessionId ?? "session-1",
+        inputReadContext:
+          callbacks.inputReadContext ?? options.inputReadContext,
+        character,
+        messages: callbacks.messages ?? options.messages,
+        messageKeys: callbacks.messageKeys ?? options.messageKeys,
+        messageGroups: callbacks.messageGroups ?? options.messageGroups,
+        messageCollapseTargets:
+          callbacks.messageCollapseTargets ?? options.messageCollapseTargets,
+        collapsedMessageKeys:
+          callbacks.collapsedMessageKeys ?? options.collapsedMessageKeys,
+        messageJumpRequest:
+          callbacks.messageJumpRequest ?? options.messageJumpRequest,
+        expandedArtifacts: callbacks.expandedArtifacts ?? expandedArtifacts,
+        artifactDetailsEnabled:
+          callbacks.artifactDetailsEnabled ?? options.artifactDetailsEnabled,
+        onLoadArtifactDetail: options.onLoadArtifactDetail,
+        messageListRef,
+        isRunning: callbacks.isRunning ?? options.isRunning ?? false,
+        liveApprovalRequest: null,
+        approvalActionRequestId: null,
+        liveElicitationRequest:
+          callbacks.liveElicitationRequest !== undefined
             ? callbacks.liveElicitationRequest
-            : options.liveElicitationRequest ?? null,
-          elicitationActionRequestId: null,
-          liveRunAssistantText: callbacks.liveRunAssistantText ?? options.liveRunAssistantText ?? "",
-          hasLiveRunAssistantText: !!(callbacks.liveRunAssistantText ?? options.liveRunAssistantText),
-          liveRunErrorMessage: "",
-          pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
-          pendingMessageTextVisible: callbacks.pendingMessageTextVisible ?? options.pendingMessageTextVisible,
-          pendingMessageGroupId: callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
-          isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
-          isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
-          onMessageListScroll() {},
-          onToggleMessageCollapse: callbacks.onToggleMessageCollapse ?? options.onToggleMessageCollapse,
-          onToggleAllMessageCollapse: callbacks.onToggleAllMessageCollapse ?? options.onToggleAllMessageCollapse,
-          onToggleMessageBookmark: callbacks.onToggleMessageBookmark ?? options.onToggleMessageBookmark,
-          onToggleArtifact() {},
-          onOpenDiff() {},
-          onResolveLiveApproval() {},
-          onResolveLiveElicitation: options.onResolveLiveElicitation ?? (() => {}),
-          onOpenPath: undefined,
-          onCopyMessageText: callbacks.onCopyMessageText,
-          onQuoteMessageText: callbacks.onQuoteMessageText,
-          messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
-        });
+            : (options.liveElicitationRequest ?? null),
+        elicitationActionRequestId: null,
+        liveRunAssistantText:
+          callbacks.liveRunAssistantText ?? options.liveRunAssistantText ?? "",
+        hasLiveRunAssistantText: !!(
+          callbacks.liveRunAssistantText ?? options.liveRunAssistantText
+        ),
+        liveRunErrorMessage: "",
+        pendingMessageText:
+          callbacks.pendingMessageText ?? options.pendingMessageText,
+        pendingMessageTextVisible:
+          callbacks.pendingMessageTextVisible ??
+          options.pendingMessageTextVisible,
+        pendingMessageGroupId:
+          callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
+        isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
+        isContentActive:
+          callbacks.isContentActive ?? options.isContentActive ?? true,
+        /** スクロールを親の追従処理には伝えず、列自身の反応を観測する。 */
+        onMessageListScroll() {},
+        onToggleMessageCollapse:
+          callbacks.onToggleMessageCollapse ?? options.onToggleMessageCollapse,
+        onToggleAllMessageCollapse:
+          callbacks.onToggleAllMessageCollapse ??
+          options.onToggleAllMessageCollapse,
+        onToggleMessageBookmark:
+          callbacks.onToggleMessageBookmark ?? options.onToggleMessageBookmark,
+        /** 初期表示に必要なartifact操作口を、状態変更なしで埋める。 */
+        onToggleArtifact() {},
+        /** 詳細内のdiff遷移はこのマウント内では実行しない。 */
+        onOpenDiff() {},
+        /** 承認の既定通知先は処理を行わず必要なケースが差し替える。 */
+        onResolveLiveApproval() {},
+        onResolveLiveElicitation:
+          options.onResolveLiveElicitation ?? (() => {}),
+        onOpenPath: undefined,
+        onCopyMessageText: callbacks.onCopyMessageText,
+        onQuoteMessageText: callbacks.onQuoteMessageText,
+        messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
+      });
       const profiledMessageColumn = options.onRender
-        ? React.createElement(React.Profiler, { id: "session-message-column", onRender: options.onRender }, messageColumn)
+        ? React.createElement(
+            React.Profiler,
+            { id: "session-message-column", onRender: options.onRender },
+            messageColumn,
+          )
         : messageColumn;
-      root.render(React.createElement(SessionChatScreen, {
-        mode: "agent",
-        header: null,
-        headerSplitter: null,
-        isHeaderVisible: false,
-        messageColumn: profiledMessageColumn,
-        actionDock: null,
-        actionDockSplitter: null,
-        isActionDockExpanded: false,
-        splitter: null,
-        rightPane: null,
-      }));
+      root.render(
+        React.createElement(SessionChatScreen, {
+          mode: "agent",
+          header: null,
+          headerSplitter: null,
+          isHeaderVisible: false,
+          messageColumn: profiledMessageColumn,
+          actionDock: null,
+          actionDockSplitter: null,
+          isActionDockExpanded: false,
+          splitter: null,
+          rightPane: null,
+        }),
+      );
     });
   };
 
@@ -1182,9 +1808,12 @@ async function mountSessionMessageColumn(options: {
     messageListRef,
     root,
     rerender: renderMessageColumn,
+    /** マウント済み行の高さを変え、観測中のResizeObserverに通知して次のフレームを待つ。 */
     async resizeMessageRow(index, height) {
       messageRowHeights.set(index, height);
-      const row = container.querySelector(`.session-message-virtual-row[data-index="${index}"]`);
+      const row = container.querySelector(
+        `.session-message-virtual-row[data-index="${index}"]`,
+      );
       assert.ok(row, `message row ${index} が描画されていない`);
       const entry = {
         target: row,
@@ -1197,11 +1826,16 @@ async function mountSessionMessageColumn(options: {
             observer.callback([entry], observer as unknown as ResizeObserver);
           }
         }
-        await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) =>
+          dom.window.requestAnimationFrame(() => resolve()),
+        );
       });
     },
+    /** 入力のフォーカスを外してルートを破棄し、差し替えたDOMとグローバルを復元する。 */
     async cleanup() {
-      for (const input of dom.window.document.querySelectorAll<HTMLInputElement>("input, textarea, [contenteditable='true']")) {
+      for (const input of dom.window.document.querySelectorAll<HTMLInputElement>(
+        "input, textarea, [contenteditable='true']",
+      )) {
         input.blur();
       }
       if (dom.window.document.activeElement instanceof dom.window.HTMLElement) {
@@ -1210,14 +1844,19 @@ async function mountSessionMessageColumn(options: {
       await act(async () => {
         root.unmount();
       });
-      dom.window.HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      dom.window.HTMLElement.prototype.getBoundingClientRect =
+        originalGetBoundingClientRect;
       if (originalAttachEvent) {
         Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
           configurable: true,
           value: originalAttachEvent,
         });
       } else {
-        delete (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
+        delete (
+          dom.window.HTMLElement.prototype as unknown as {
+            attachEvent?: () => void;
+          }
+        ).attachEvent;
       }
       if (originalDetachEvent) {
         Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
@@ -1225,22 +1864,50 @@ async function mountSessionMessageColumn(options: {
           value: originalDetachEvent,
         });
       } else {
-        delete (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
+        delete (
+          dom.window.HTMLElement.prototype as unknown as {
+            detachEvent?: () => void;
+          }
+        ).detachEvent;
       }
       if (originalOffsetHeight) {
-        Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+        Object.defineProperty(
+          dom.window.HTMLElement.prototype,
+          "offsetHeight",
+          originalOffsetHeight,
+        );
       } else {
-        delete (dom.window.HTMLElement.prototype as unknown as { offsetHeight?: number }).offsetHeight;
+        delete (
+          dom.window.HTMLElement.prototype as unknown as {
+            offsetHeight?: number;
+          }
+        ).offsetHeight;
       }
       if (originalClientHeight) {
-        Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", originalClientHeight);
+        Object.defineProperty(
+          dom.window.HTMLElement.prototype,
+          "clientHeight",
+          originalClientHeight,
+        );
       } else {
-        delete (dom.window.HTMLElement.prototype as unknown as { clientHeight?: number }).clientHeight;
+        delete (
+          dom.window.HTMLElement.prototype as unknown as {
+            clientHeight?: number;
+          }
+        ).clientHeight;
       }
       if (originalScrollHeight) {
-        Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+        Object.defineProperty(
+          dom.window.HTMLElement.prototype,
+          "scrollHeight",
+          originalScrollHeight,
+        );
       } else {
-        delete (dom.window.HTMLElement.prototype as unknown as { scrollHeight?: number }).scrollHeight;
+        delete (
+          dom.window.HTMLElement.prototype as unknown as {
+            scrollHeight?: number;
+          }
+        ).scrollHeight;
       }
       Object.defineProperty(dom.window, "ResizeObserver", {
         configurable: true,
@@ -1249,20 +1916,50 @@ async function mountSessionMessageColumn(options: {
       dom.window.HTMLElement.prototype.scrollTo = originalScrollTo;
       dom.window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
       dom.window.close();
-      Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-      Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-      Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-      Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-      Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: previousDOMRect });
-      Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
-      Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: previousMouseEvent });
-      Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
-      if (previousRequestAnimationFrame) Object.defineProperty(globalThis, "requestAnimationFrame", previousRequestAnimationFrame);
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: previousWindow,
+      });
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: previousDocument,
+      });
+      Object.defineProperty(globalThis, "Node", {
+        configurable: true,
+        value: previousNode,
+      });
+      Object.defineProperty(globalThis, "HTMLElement", {
+        configurable: true,
+        value: previousHTMLElement,
+      });
+      Object.defineProperty(globalThis, "DOMRect", {
+        configurable: true,
+        value: previousDOMRect,
+      });
+      Object.defineProperty(globalThis, "Event", {
+        configurable: true,
+        value: previousEvent,
+      });
+      Object.defineProperty(globalThis, "MouseEvent", {
+        configurable: true,
+        value: previousMouseEvent,
+      });
+      Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: previousNavigator,
+      });
+      if (previousRequestAnimationFrame)
+        Object.defineProperty(
+          globalThis,
+          "requestAnimationFrame",
+          previousRequestAnimationFrame,
+        );
       else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
     },
   };
 }
 
+/** 長い履歴でも描画ノード数を絞り、最古の行をマウントせず末尾付近を表示する。 */
 test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ周辺だけを描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(100),
@@ -1278,37 +1975,52 @@ test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ�
   assert.doesNotMatch(html, /以前のメッセージを読み込む/);
 });
 
+/** 有効な用語は通常の本文から開けるが、Sourceでは元の文字列を注釈なしで表示する。 */
 test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSourceでは注釈しない", () => {
-  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
-    term: "Runtime",
-    aliases: [],
-    definition: "Runtime definition",
-  }], "revision-1");
-  const messages: Message[] = [{
-    role: "assistant",
-    text: "Runtime",
-    artifact: {
-      title: "Runtime artifact",
-      activitySummary: [],
-      operationTimeline: [{ type: "command_execution", summary: "Runtime", details: "Runtime" }],
-      changedFiles: [],
-      runChecks: [],
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher(
+    [
+      {
+        term: "Runtime",
+        aliases: [],
+        definition: "Runtime definition",
+      },
+    ],
+    "revision-1",
+  );
+  const messages: Message[] = [
+    {
+      role: "assistant",
+      text: "Runtime",
+      artifact: {
+        title: "Runtime artifact",
+        activitySummary: [],
+        operationTimeline: [
+          { type: "command_execution", summary: "Runtime", details: "Runtime" },
+        ],
+        changedFiles: [],
+        runChecks: [],
+      },
     },
-  }];
+  ];
   const previewHtml = renderSessionMessageColumn({
     messages,
     expandedArtifacts: { "message-0": true },
     glossaryAnnotationMatcher,
+    /** 通常表示の用語導線を描画するため、外部遷移を伴わない通知口を渡す。 */
     onActivateGlossaryEntry: () => undefined,
   });
   const sourceHtml = renderSessionMessageColumn({
     messages,
     glossaryAnnotationMatcher,
+    /** 同じ用語通知口があってもSourceには導線が出ない条件を作る。 */
     onActivateGlossaryEntry: () => undefined,
     messageViewMode: "source",
   });
 
-  assert.equal((previewHtml.match(/class="glossary-annotation"/g) ?? []).length, 1);
+  assert.equal(
+    (previewHtml.match(/class="glossary-annotation"/g) ?? []).length,
+    1,
+  );
   assert.doesNotMatch(sourceHtml, /class="glossary-annotation"/);
 });
 
@@ -1324,6 +2036,7 @@ test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSo
 // impact = "message本文の開閉とkeyboard shortcutによる一括操作が利用できなくなる"
 // distinction = "DOM owner境界ではなく、個別controlのaccessibility contractと一括shortcutの操作経路を検証する"
 // @end-test-value
+/** 個別と一括の縮小操作をネイティブボタンから実行し、それぞれの対象に反映することを確かめる。 */
 test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
   const messages: Message[] = [
     { role: "user", text: "first **collapsed** message" },
@@ -1332,7 +2045,10 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
   const messageKeys = ["session-s-0", "session-s-1"];
   const messageCollapseTargets = buildMessageCollapseTargets(
     messages,
-    messages.map((_, messageIndex): MessageListSource => ({ kind: "session", messageIndex })),
+    messages.map((_, messageIndex): MessageListSource => ({
+      kind: "session",
+      messageIndex,
+    })),
     messageKeys,
   );
   let toggledKey: string | null = null;
@@ -1343,25 +2059,35 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     messageKeys,
     messageCollapseTargets,
     collapsedMessageKeys,
+    /** 個別操作に渡った行キーを記録する。 */
     onToggleMessageCollapse: (key) => {
       toggledKey = key;
     },
+    /** 一括操作の発火を個別操作とは別に数える。 */
     onToggleAllMessageCollapse: () => {
       allToggleCount += 1;
     },
   });
 
   try {
-    const collapsedBody = mounted.container.querySelector("#message-body-session-s-0");
+    const collapsedBody = mounted.container.querySelector(
+      "#message-body-session-s-0",
+    );
     assert.ok(collapsedBody);
     assert.equal(collapsedBody.querySelector(".rich-text"), null);
-    assert.equal(collapsedBody.querySelector(".message-collapsed-preview")?.textContent, "first collapsed message");
+    assert.equal(
+      collapsedBody.querySelector(".message-collapsed-preview")?.textContent,
+      "first collapsed message",
+    );
     const individualButton = mounted.container.querySelector<HTMLButtonElement>(
       "button[aria-label^='Expand message']",
     );
     assert.ok(individualButton);
     assert.equal(individualButton.getAttribute("aria-expanded"), "false");
-    assert.equal(individualButton.getAttribute("aria-controls"), "message-body-session-s-0");
+    assert.equal(
+      individualButton.getAttribute("aria-controls"),
+      "message-body-session-s-0",
+    );
     await act(async () => {
       individualButton.focus();
     });
@@ -1399,20 +2125,34 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
 // lifecycle = "permanent"
 // distinction = "plain-text projectionや手製DOMのobserver単体では、実Columnでの開閉control・既読の接続を観測できない"
 // @end-test-value
+/** 空本文の失敗に代替本文を作らず、実際の生成本文がある場合も失敗欄から分けておく。 */
 test("SessionMessageColumn は空の失敗本文を埋めず、実本文と別表示を保つ", async () => {
   const messages: Message[] = [
     { ...createArtifactMessage(), text: "", runFailure: "Fixture failure" },
     { role: "assistant", text: "No content" },
   ];
   const messageKeys = ["empty", "literal"];
-  const messageCollapseTargets = buildMessageCollapseTargets(messages, [
-    { kind: "session", messageIndex: 0 },
-    { kind: "auxiliary", sessionId: "aux-fixture", messageIndex: 0, artifact: undefined },
-  ], messageKeys);
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [
+      { kind: "session", messageIndex: 0 },
+      {
+        kind: "auxiliary",
+        sessionId: "aux-fixture",
+        messageIndex: 0,
+        artifact: undefined,
+      },
+    ],
+    messageKeys,
+  );
   const collapsedMessageKeys = new Set(["literal"]);
   const mounted = await mountSessionMessageColumn({
-    messages, messageKeys, messageCollapseTargets, collapsedMessageKeys,
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    collapsedMessageKeys,
     expandedArtifacts: { empty: true },
+    /** 失敗応答で縮小操作をしたときの対象キーを記録する。 */
     onToggleMessageCollapse: (key) => {
       if (collapsedMessageKeys.has(key)) collapsedMessageKeys.delete(key);
       else collapsedMessageKeys.add(key);
@@ -1422,45 +2162,95 @@ test("SessionMessageColumn は空の失敗本文を埋めず、実本文と別�
   try {
     const body = mounted.container.querySelector("#message-body-empty");
     const row = body?.closest("article");
-    const button = row?.querySelector<HTMLButtonElement>("button[aria-label='Collapse message']");
+    const button = row?.querySelector<HTMLButtonElement>(
+      "button[aria-label='Collapse message']",
+    );
     assert.ok(body && row && button);
-    assert.equal(row.querySelector(".session-run-failure strong")?.textContent, "Failed");
-    assert.equal(row.querySelector(".session-run-failure p")?.textContent, "Fixture failure");
+    assert.equal(
+      row.querySelector(".session-run-failure strong")?.textContent,
+      "Failed",
+    );
+    assert.equal(
+      row.querySelector(".session-run-failure p")?.textContent,
+      "Fixture failure",
+    );
     assert.ok(row.querySelector("#artifact-panel-empty"));
-    await act(async () => { button.focus(); button.click(); });
-    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    await act(async () => {
+      button.focus();
+      button.click();
+    });
+    await mounted.rerender({
+      collapsedMessageKeys: new Set(collapsedMessageKeys),
+    });
     assert.equal(mounted.dom.window.document.activeElement, button);
     assert.equal(button.getAttribute("aria-label"), "Expand message");
     assert.equal(button.getAttribute("aria-expanded"), "false");
-    const collapsedBody = mounted.dom.window.document.getElementById(button.getAttribute("aria-controls") ?? "");
+    const collapsedBody = mounted.dom.window.document.getElementById(
+      button.getAttribute("aria-controls") ?? "",
+    );
     assert.equal(collapsedBody?.id, body.id);
     assert.equal(collapsedBody.textContent, "");
-    assert.equal(collapsedBody.querySelector(".message-collapsed-preview"), null);
-    assert.ok(row.querySelector(".session-run-failure")?.textContent?.includes("Fixture failure"));
+    assert.equal(
+      collapsedBody.querySelector(".message-collapsed-preview"),
+      null,
+    );
+    assert.ok(
+      row
+        .querySelector(".session-run-failure")
+        ?.textContent?.includes("Fixture failure"),
+    );
     assert.ok(row.querySelector("#artifact-panel-empty"));
-    assert.equal(mounted.container.querySelector("#message-body-literal .message-collapsed-preview")?.textContent, "No content");
+    assert.equal(
+      mounted.container.querySelector(
+        "#message-body-literal .message-collapsed-preview",
+      )?.textContent,
+      "No content",
+    );
 
     const { window } = mounted.dom;
-    const shownFailure = row.querySelector<HTMLElement>(".session-run-failure")!;
-    shownFailure.getBoundingClientRect = () => createRect({ top: 20, left: 0, width: 400, height: 80 });
-    Object.defineProperty(window.document, "hasFocus", { value: () => true });
+    const shownFailure = row.querySelector<HTMLElement>(
+      ".session-run-failure",
+    )!;
+    shownFailure.getBoundingClientRect = () =>
+      createRect({ top: 20, left: 0, width: 400, height: 80 });
+    Object.defineProperty(window.document, "hasFocus", {
+      /** 失敗応答を閲覧中として扱い、既読の判定からフォーカス要因を外す。 */ value:
+        () => true,
+    });
     const acknowledgements: Array<[string, number]> = [];
     stopObserve = observeSessionResultRead({
-      sessionId: "session-1", list: mounted.messageListRef.current!, assistantMessageIndexes: new Map([[0, 0]]),
+      sessionId: "session-1",
+      list: mounted.messageListRef.current!,
+      assistantMessageIndexes: new Map([[0, 0]]),
       api: {
-        getUnreadSessionResult: async () => ({ turnId: 7, assistantMessageSeq: 0 }),
-        markSessionResultRead: async (id, turnId) => { acknowledgements.push([id, turnId]); return true; },
+        /** 失敗応答に対応する未読結果の識別子を返す。 */
+        getUnreadSessionResult: async () => ({
+          turnId: 7,
+          assistantMessageSeq: 0,
+        }),
+        /** 既読になったSessionとTurnを記録する。 */
+        markSessionResultRead: async (id, turnId) => {
+          acknowledgements.push([id, turnId]);
+          return true;
+        },
+        /** 更新イベントを追加せず、購読と解除の形だけ満たす。 */
         onSessionTurnUpdated: () => () => {},
       },
     });
-    const flushFrame = () => act(async () => {
-      await Promise.resolve();
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    });
+    /** 既読の非同期監視が次の描画フレームまで進むのを待つ。 */
+    const flushFrame = () =>
+      act(async () => {
+        await Promise.resolve();
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        );
+      });
     await flushFrame();
     assert.deepEqual(acknowledgements, []);
     await act(async () => button.click());
-    await mounted.rerender({ collapsedMessageKeys: new Set(collapsedMessageKeys) });
+    await mounted.rerender({
+      collapsedMessageKeys: new Set(collapsedMessageKeys),
+    });
     await flushFrame();
     assert.deepEqual(acknowledgements, [["session-1", 7]]);
   } finally {
@@ -1481,8 +2271,11 @@ test("SessionMessageColumn は空の失敗本文を埋めず、実本文と別�
 // impact = "bookmarkを追加・解除できず、本文とMessages filterの状態が更新できない"
 // distinction = "static markupだけでなくmount後のclickとtarget identityを確認し、typecheck/buildでは得られない操作契約を補う"
 // @end-test-value
+/** ブックマークがネイティブボタンで切り替わり、通知が対象メッセージを指すことを確かめる。 */
 test("SessionMessageColumn はbookmark controlをnative buttonで操作する", async () => {
-  const messages: Message[] = [{ role: "assistant", text: "bookmark target", isBookmarked: true }];
+  const messages: Message[] = [
+    { role: "assistant", text: "bookmark target", isBookmarked: true },
+  ];
   const messageKeys = ["session-s-0"];
   const messageCollapseTargets = buildMessageCollapseTargets(
     messages,
@@ -1496,6 +2289,7 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
     messages,
     messageKeys,
     messageCollapseTargets,
+    /** 操作対象を記録し、次の描画でブックマーク状態を反映する。 */
     onToggleMessageBookmark: (target) => {
       toggledKey = target.key;
       toggledState = target.isBookmarked;
@@ -1504,7 +2298,9 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
   });
 
   try {
-    const button = mounted.container.querySelector<HTMLButtonElement>("button.message-bookmark-toggle");
+    const button = mounted.container.querySelector<HTMLButtonElement>(
+      "button.message-bookmark-toggle",
+    );
     assert.ok(button);
     assert.equal(button.getAttribute("aria-label"), "Remove bookmark");
     assert.equal(button.getAttribute("aria-pressed"), "true");
@@ -1515,7 +2311,9 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
     assert.equal(toggledState, true);
     assert.deepEqual(toggledSource, { kind: "session", messageIndex: 0 });
 
-    const unbookmarkedMessages: Message[] = [{ role: "assistant", text: "bookmark target" }];
+    const unbookmarkedMessages: Message[] = [
+      { role: "assistant", text: "bookmark target" },
+    ];
     await mounted.rerender({
       messages: unbookmarkedMessages,
       messageCollapseTargets: buildMessageCollapseTargets(
@@ -1524,7 +2322,9 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
         messageKeys,
       ),
     });
-    const addButton = mounted.container.querySelector<HTMLButtonElement>("button.message-bookmark-toggle");
+    const addButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button.message-bookmark-toggle",
+    );
     assert.ok(addButton);
     assert.equal(addButton.getAttribute("aria-label"), "Add bookmark");
     assert.equal(addButton.getAttribute("aria-pressed"), "false");
@@ -1550,6 +2350,7 @@ test("SessionMessageColumn はbookmark controlをnative buttonで操作する", 
 // lifecycle = "permanent"
 // distinction = "個別・一括操作の状態遷移ではなく、本文とDetailsのDOM owner境界を検証する"
 // @end-test-value
+/** 縮小ボタンは本文の操作として置き、別のDetailsを縮小の持ち主にしない。 */
 test("SessionMessageColumn は個別collapse controlを本文wrapper内に保ちDetailsをownerに含めない", async () => {
   const messages = [createArtifactMessage()];
   messages[0]!.text = "long message ".repeat(80);
@@ -1564,6 +2365,7 @@ test("SessionMessageColumn は個別collapse controlを本文wrapper内に保ち
     messageKeys,
     messageCollapseTargets,
     expandedArtifacts: { "session-1-0": true },
+    /** 親の更新を起こさず、縮小ボタンのDOM上の所属だけを調べる。 */
     onToggleMessageCollapse: () => undefined,
   });
 
@@ -1584,8 +2386,11 @@ test("SessionMessageColumn は個別collapse controlを本文wrapper内に保ち
   }
 });
 
+/** 検索中は縮小済みの一致本文を一時表示し、検索を終えれば元の縮小に戻す。 */
 test("SessionMessageColumn はfind中だけ縮小messageを一時展開する", async () => {
-  const messages: Message[] = [{ role: "assistant", text: "**needle** remains searchable" }];
+  const messages: Message[] = [
+    { role: "assistant", text: "**needle** remains searchable" },
+  ];
   const messageKeys = ["session-s-0"];
   const messageCollapseTargets = buildMessageCollapseTargets(
     messages,
@@ -1602,13 +2407,17 @@ test("SessionMessageColumn はfind中だけ縮小messageを一時展開する", 
   try {
     assert.ok(mounted.container.querySelector(".message-collapsed-preview"));
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -1617,24 +2426,37 @@ test("SessionMessageColumn はfind中だけ縮小messageを一時展開する", 
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "needle");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
-    assert.equal(mounted.container.querySelector(".message-collapsed-preview"), null);
-    assert.ok(mounted.container.querySelector("#message-body-session-s-0 > .rich-text"));
+    assert.equal(
+      mounted.container.querySelector(".message-collapsed-preview"),
+      null,
+    );
+    assert.ok(
+      mounted.container.querySelector("#message-body-session-s-0 > .rich-text"),
+    );
   } finally {
     await mounted.cleanup();
   }
 });
 
+/** 仮想化で初期描画から外れた最古の行も、上方向へのスクロールで到達できる。 */
 test("SessionMessageColumn は上方向へスクロールして先頭メッセージへ到達できる", async () => {
-  const mounted = await mountSessionMessageColumn({ messages: createMessages(100) });
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(100),
+  });
 
   try {
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
-    assert.doesNotMatch(mounted.container.textContent ?? "", /message 1(?:\D|$)/);
+    assert.doesNotMatch(
+      mounted.container.textContent ?? "",
+      /message 1(?:\D|$)/,
+    );
 
     await act(async () => {
       messageList.scrollTop = 0;
@@ -1647,19 +2469,26 @@ test("SessionMessageColumn は上方向へスクロールして先頭メッセ�
   }
 });
 
+/** Inspectorの精密カバレッジで検索用の本文投影の呼出し回数を計測する。 */
 async function startSearchProjectionCounter() {
   const inspector = new InspectorSession();
   inspector.connect();
   await inspector.post("Profiler.enable");
-  await inspector.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+  await inspector.post("Profiler.startPreciseCoverage", {
+    callCount: true,
+    detailed: false,
+  });
   return {
+    /** 前の読取り以降に実行された検索本文投影だけを集計する。 */
     async take() {
       const { result } = await inspector.post("Profiler.takePreciseCoverage");
-      return result.filter((script) => script.url.includes("/message-search."))
+      return result
+        .filter((script) => script.url.includes("/message-search."))
         .flatMap((script) => script.functions)
         .filter((fn) => fn.functionName === "projectMessageRenderedSearchText")
         .reduce((count, fn) => count + fn.ranges[0].count, 0);
     },
+    /** 精密カバレッジを停止し、テスト専用のInspector接続を閉じる。 */
     async stop() {
       await inspector.post("Profiler.stopPreciseCoverage");
       inspector.disconnect();
@@ -1667,35 +2496,64 @@ async function startSearchProjectionCounter() {
   };
 }
 
-async function setMessageFindQuery(mounted: MountedSessionMessageColumn, query: string) {
+/** Findをキーボードで開き、入力値変更と仮想一覧の通知を実DOMイベントで発火する。 */
+async function setMessageFindQuery(
+  mounted: MountedSessionMessageColumn,
+  query: string,
+) {
   await act(async () => {
-    mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-      key: "f", ctrlKey: true, bubbles: true,
-    }));
+    mounted.dom.window.dispatchEvent(
+      new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
   });
-  const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+  const input = mounted.container.querySelector<HTMLInputElement>(
+    "input[aria-label='Find in current content']",
+  );
   assert.ok(input);
-  const setValue = Object.getOwnPropertyDescriptor(mounted.dom.window.HTMLInputElement.prototype, "value")?.set;
+  const setValue = Object.getOwnPropertyDescriptor(
+    mounted.dom.window.HTMLInputElement.prototype,
+    "value",
+  )?.set;
   assert.ok(setValue);
   await act(async () => {
     setValue.call(input, query);
-    const event = new mounted.dom.window.Event("propertychange", { bubbles: true });
+    const event = new mounted.dom.window.Event("propertychange", {
+      bubbles: true,
+    });
     Object.defineProperty(event, "propertyName", { value: "value" });
     input.dispatchEvent(event);
   });
   await act(async () => {
-    mounted.container.querySelector(".session-message-list")?.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    mounted.container
+      .querySelector(".session-message-list")
+      ?.dispatchEvent(new mounted.dom.window.Event("scroll"));
   });
 }
 
+/** JSDOMにHighlight APIの記録役を設置し、検索が登録したDOM範囲を取得できるようにする。 */
 function installMessageFindHighlights(mounted: MountedSessionMessageColumn) {
+  /** Highlight名ごとに追加された範囲を保持するブラウザーAPIの代役。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
-    add(range: Range) { this.ranges.push(range); return this; }
+    /** 渡された範囲を保存し、実APIと同じく自身を返す。 */
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
   }
   const highlights = new Map<string, TestHighlight>();
-  Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-  Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+  Object.defineProperty(mounted.dom.window, "CSS", {
+    configurable: true,
+    value: { highlights },
+  });
+  Object.defineProperty(mounted.dom.window, "Highlight", {
+    configurable: true,
+    value: TestHighlight,
+  });
   return highlights;
 }
 
@@ -1711,22 +2569,46 @@ function installMessageFindHighlights(mounted: MountedSessionMessageColumn) {
 // impact = "利用者が選んだURL内や変換された表示文字の出現をSourceで確認できない"
 // distinction = "shared範囲helperはReact選択とmode変更を通らない。各3出現だけで順序逆転・同一要素・token長差を検証する"
 // @end-test-value
+/** PreviewとSourceで見かけの順序が変わっても、同じ元Markdownの出現を選択し続ける。 */
 test("chat Find preserves each raw occurrence across Preview and Source order changes", async () => {
   const text = "[表示](C:/needle/needle.md) needle";
-  const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "assistant", text }],
+  });
   const highlights = installMessageFindHighlights(mounted);
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
-  const next = async () => act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+  /** Findの件数欄から表示中の位置と総数だけを読む。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
+  /** ネイティブの次候補ボタンを操作して現在位置を進める。 */
+  const next = async () =>
+    act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+        .click(),
+    );
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(count(), "1/3");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "needle",
+    );
     await next();
-    const anchor = mounted.container.querySelector(".message-find-source-target");
+    const anchor = mounted.container.querySelector(
+      ".message-find-source-target",
+    );
     assert.equal(anchor?.tagName, "A");
-    for (const [previewOrdinal, sourceOrdinal, offset] of [[2, 1, text.indexOf("needle")], [3, 2, text.indexOf("needle", text.indexOf("needle") + 1)]]) {
+    for (const [previewOrdinal, sourceOrdinal, offset] of [
+      [2, 1, text.indexOf("needle")],
+      [3, 2, text.indexOf("needle", text.indexOf("needle") + 1)],
+    ]) {
       assert.equal(count(), `${previewOrdinal}/3`);
-      assert.equal(mounted.container.querySelector(".message-find-source-target")?.textContent, "表示");
+      assert.equal(
+        mounted.container.querySelector(".message-find-source-target")
+          ?.textContent,
+        "表示",
+      );
       await mounted.rerender({ messageViewMode: "source" });
       assert.equal(count(), `${sourceOrdinal}/3`);
       const range = highlights.get("withmate-find-current")?.ranges[0];
@@ -1734,25 +2616,43 @@ test("chat Find preserves each raw occurrence across Preview and Source order ch
       assert.equal(range?.startOffset, offset);
       await mounted.rerender({ messageViewMode: "preview" });
       assert.equal(count(), `${previewOrdinal}/3`);
-      assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
+      assert.equal(
+        mounted.container.querySelector(".message-find-source-target")?.tagName,
+        "A",
+      );
       if (previewOrdinal === 2) {
-        const beforeNext = mounted.container.querySelector(".message-find-source-target");
+        const beforeNext = mounted.container.querySelector(
+          ".message-find-source-target",
+        );
         await next();
-        assert.equal(mounted.container.querySelector(".message-find-source-target"), beforeNext);
+        assert.equal(
+          mounted.container.querySelector(".message-find-source-target"),
+          beforeNext,
+        );
       }
     }
-  } finally { await mounted.cleanup(); }
+  } finally {
+    await mounted.cleanup();
+  }
   for (const [text, query, sourceOffset] of [
     ["[label](a&) &amp; &", "&", 12],
     ["[label](a*) \\* *", "*", 13],
   ] as const) {
-    const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+    const mounted = await mountSessionMessageColumn({
+      messages: [{ role: "assistant", text }],
+    });
     const highlights = installMessageFindHighlights(mounted);
-    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+    /** 別の一致順のケースでも位置表示を同じDOM境界で読む。 */
+    const count = () =>
+      mounted.container.querySelector(".session-content-find-count")?.firstChild
+        ?.textContent;
     try {
       await setMessageFindQuery(mounted, query);
       assert.equal(count(), "1/3");
-      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), query);
+      assert.equal(
+        highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+        query,
+      );
       await mounted.rerender({ messageViewMode: "source" });
       assert.equal(count(), "2/3", text);
       const sourceRange = highlights.get("withmate-find-current")?.ranges[0];
@@ -1760,8 +2660,13 @@ test("chat Find preserves each raw occurrence across Preview and Source order ch
       assert.equal(sourceRange?.toString(), query);
       await mounted.rerender({ messageViewMode: "preview" });
       assert.equal(count(), "1/3", text);
-      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), query);
-    } finally { await mounted.cleanup(); }
+      assert.equal(
+        highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+        query,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -1777,46 +2682,85 @@ test("chat Find preserves each raw occurrence across Preview and Source order ch
 // impact = "画像pathや未参照定義の一致を見失うか誤った場所を一致と理解する"
 // distinction = "parser metadata単体ではcolumnの結果選択とfallbackを確認できない。小さい3messageで一対多と非text表示先・非表示祖先の境界を通す"
 // @end-test-value
+/** Sourceにしかない一致は、最初の参照・画像外枠・メッセージ本体の順に適切な移動先を選ぶ。 */
 test("chat Find targets first reference, image shell and message fallback", async () => {
   const previousIntersectionObserver = globalThis.IntersectionObserver;
-  Object.defineProperty(globalThis, "IntersectionObserver", { configurable: true, value: class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } });
-  const mounted = await mountSessionMessageColumn({ messages: [
-    { role: "assistant", text: "[first][r] [second][r]\n\n> [r]: C:/needle/needle.md\n\n[unused]: C:/orphan.md" },
-    { role: "assistant", text: "**![picture](C:/image-path.png)**" },
-    { role: "assistant", text: "**![x](javascript:omitted)**\n\n***" },
-  ] });
-  const target = () => mounted.container.querySelector(".message-find-source-target");
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    configurable: true,
+    value: class {
+      /** IntersectionObserverの登録では可視性イベントを自動配送しない。 */
+      observe() {}
+      /** 可視性を通知しないobserverなので個別解除でも状態を作らない。 */
+      unobserve() {}
+      /** 外部監視を持たないobserverの終了口。 */
+      disconnect() {}
+    },
+  });
+  const mounted = await mountSessionMessageColumn({
+    messages: [
+      {
+        role: "assistant",
+        text: "[first][r] [second][r]\n\n> [r]: C:/needle/needle.md\n\n[unused]: C:/orphan.md",
+      },
+      { role: "assistant", text: "**![picture](C:/image-path.png)**" },
+      { role: "assistant", text: "**![x](javascript:omitted)**\n\n***" },
+    ],
+  });
+  /** 元文一致の移動先として付与された要素を得る。 */
+  const target = () =>
+    mounted.container.querySelector(".message-find-source-target");
+  /** 元文一致を含む位置と総数をFind欄から読む。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(count(), "1/2");
     assert.equal(target()?.tagName, "A");
     assert.equal(target()?.textContent, "first");
-    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    await act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+        .click(),
+    );
     assert.equal(count(), "2/2");
     assert.equal(target()?.textContent, "first");
     await setMessageFindQuery(mounted, "image-path");
     assert.equal(count(), "1/1");
     assert.ok(target()?.classList.contains("message-image-shell"));
-    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
+    assert.equal(
+      target()
+        ?.closest(".session-message-virtual-row")
+        ?.getAttribute("data-index"),
+      "1",
+    );
     await setMessageFindQuery(mounted, "orphan");
     assert.equal(count(), "1/1");
     assert.equal(target()?.getAttribute("data-message-body"), "true");
-    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
+    assert.equal(
+      target()
+        ?.closest(".session-message-virtual-row")
+        ?.getAttribute("data-index"),
+      "0",
+    );
     await setMessageFindQuery(mounted, "omitted");
     assert.equal(count(), "1/1");
     assert.equal(target()?.getAttribute("data-message-body"), "true");
-    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "2");
+    assert.equal(
+      target()
+        ?.closest(".session-message-virtual-row")
+        ?.getAttribute("data-index"),
+      "2",
+    );
     await setMessageFindQuery(mounted, "***");
     assert.equal(count(), "1/1");
     assert.equal(target()?.tagName, "HR");
   } finally {
     await mounted.cleanup();
-    Object.defineProperty(globalThis, "IntersectionObserver", { configurable: true, value: previousIntersectionObserver });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      configurable: true,
+      value: previousIntersectionObserver,
+    });
   }
 });
 
@@ -1832,28 +2776,58 @@ test("chat Find targets first reference, image shell and message fallback", asyn
 // impact = "未完成の数式を含む応答でも利用者が選んだ本文と数式を取り違えず確認できる"
 // distinction = "projection照合だけでは現在選択のDOM ordinalと要素強調・Source切替の接続を確認できない。短い1messageで2出現を辿る"
 // @end-test-value
+/** 数式のエラー表示を通常の可視本文の一致範囲と混同しない。 */
 test("chat Find separates math errors from visible text highlights", async () => {
   const text = "before\n\n```math\n\\frac{needle\n```\n\nafter needle";
-  const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "assistant", text }],
+  });
   const highlights = installMessageFindHighlights(mounted);
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  /** 数式エラーを含む場合の位置表示から補足文言を除いて読む。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(count(), "1/2");
     const range = highlights.get("withmate-find-current")?.ranges[0];
     assert.equal(range?.toString(), "needle");
-    assert.equal(range?.startContainer.parentElement?.closest("p")?.textContent, "after needle");
-    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    assert.equal(
+      range?.startContainer.parentElement?.closest("p")?.textContent,
+      "after needle",
+    );
+    await act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+        .click(),
+    );
     assert.equal(count(), "2/2");
-    assert.equal(mounted.container.querySelector(".session-content-find-description")?.textContent, "Source Match");
-    assert.ok(mounted.container.querySelector(".message-find-source-target .katex-error"));
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-description")
+        ?.textContent,
+      "Source Match",
+    );
+    assert.ok(
+      mounted.container.querySelector(
+        ".message-find-source-target .katex-error",
+      ),
+    );
     await mounted.rerender({ messageViewMode: "source" });
     assert.equal(count(), "1/2");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.startOffset, text.indexOf("needle"));
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.startOffset,
+      text.indexOf("needle"),
+    );
     await mounted.rerender({ messageViewMode: "preview" });
     assert.equal(count(), "2/2");
-    assert.ok(mounted.container.querySelector(".message-find-source-target .katex-error"));
-  } finally { await mounted.cleanup(); }
+    assert.ok(
+      mounted.container.querySelector(
+        ".message-find-source-target .katex-error",
+      ),
+    );
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -1868,30 +2842,74 @@ test("chat Find separates math errors from visible text highlights", async () =>
 // impact = "大きな保存履歴と未保存送信・待機本文を一つのFindで正確に探索できる"
 // distinction = "query hook testは実際のFind bar、loaded本文と保存件数の重複排除、pendingの順序を通らない"
 // @end-test-value
+/** ページ検索の保存済み総数を使い、現在ページの重複を除いて未保存末尾とpendingだけを加える。 */
 test("paged Find counts global saved hits and only unsaved tail and pending", async () => {
-  const requests: Array<Parameters<NonNullable<SessionMessageColumnProps["searchConversation"]>>[0]> = [];
+  const requests: Array<
+    Parameters<NonNullable<SessionMessageColumnProps["searchConversation"]>>[0]
+  > = [];
   const loaded: number[] = [];
   const cancelled: string[] = [];
-  const messages: Message[] = [{ role: "user", text: "saved needle", historyIndex: 999 }, { role: "user", text: "unsaved needle", historyIndex: 1000 }];
+  const messages: Message[] = [
+    { role: "user", text: "saved needle", historyIndex: 999 },
+    { role: "user", text: "unsaved needle", historyIndex: 1000 },
+  ];
+  /** 保存済み検索のスタブと手元にある未保存末尾を同じ列に供給する。 */
   function PagedFind(props: SessionMessageColumnProps) {
     return React.createElement(SessionMessageColumn, {
-      ...props, searchTailMessages: messages,
+      ...props,
+      searchTailMessages: messages,
+      /** リクエストを記録し、全130件の保存済み一致を要求されたオフセットから返す。 */
       searchConversation: async (request) => {
         requests.push(request);
         const offset = request.offset ?? 0;
-        return { status: "complete", stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 1, requestId: request.requestId }, incarnationId: "incarnation", messageCount: 1000, totalCount: 130, offset, items: Array.from({ length: Math.min(64, 130 - offset) }, (_, index) => ({ messageIndex: offset + index + 10, occurrenceIndex: 0 })) };
+        return {
+          status: "complete",
+          stamp: {
+            generationId: "generation",
+            ownerIdentity: "owner",
+            contentRevision: 1,
+            requestId: request.requestId,
+          },
+          incarnationId: "incarnation",
+          messageCount: 1000,
+          totalCount: 130,
+          offset,
+          items: Array.from(
+            { length: Math.min(64, 130 - offset) },
+            (_, index) => ({
+              messageIndex: offset + index + 10,
+              occurrenceIndex: 0,
+            }),
+          ),
+        };
       },
-      onLoadMessagePage: async (index) => { loaded.push(index); },
-      cancelConversationQuery: async (request) => { cancelled.push(request.requestId); },
+      /** 一致へ移動するために要求された履歴ページの位置を記録する。 */
+      onLoadMessagePage: async (index) => {
+        loaded.push(index);
+      },
+      /** 古い検索を取り消すときの要求IDを残す。 */
+      cancelConversationQuery: async (request) => {
+        cancelled.push(request.requestId);
+      },
     });
   }
-  const mounted = await mountSessionMessageColumn({ messages, component: PagedFind, isRunning: true, pendingMessageText: "pending needle" });
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    component: PagedFind,
+    isRunning: true,
+    pendingMessageText: "pending needle",
+  });
   try {
     await setMessageFindQuery(mounted, "needle");
-    const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+    /** 保存済み結果と未保存結果を合成した位置・総数を読む。 */
+    const count = () =>
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent;
     assert.equal(count(), "1/132");
     assert.equal(loaded.at(-1), 10);
-    const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']");
+    const previous = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Previous match']",
+    );
     assert.ok(previous);
     await act(async () => previous.click());
     assert.equal(count(), "132/132");
@@ -1901,13 +2919,27 @@ test("paged Find counts global saved hits and only unsaved tail and pending", as
     await act(async () => previous.click());
     assert.equal(count(), "130/132");
     assert.equal(loaded.at(-1), 139);
-    assert.ok(requests.some((request) => request.offset === 128 && request.stamp?.requestId === requests[0].requestId));
+    assert.ok(
+      requests.some(
+        (request) =>
+          request.offset === 128 &&
+          request.stamp?.requestId === requests[0].requestId,
+      ),
+    );
     await act(async () => {
-      mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")?.blur();
-      mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Close find']")?.click();
+      mounted.container
+        .querySelector<HTMLInputElement>(
+          "input[aria-label='Find in current content']",
+        )
+        ?.blur();
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Close find']")
+        ?.click();
     });
     assert.deepEqual(cancelled, [requests[0].requestId]);
-  } finally { await mounted.cleanup(); }
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -1922,63 +2954,143 @@ test("paged Find counts global saved hits and only unsaved tail and pending", as
 // impact = "リンク先だけにあるファイル名を検索し、見つかった根拠と通常本文を同時に確認できる"
 // distinction = "shared matcherではReactの結果選択・要素強調・link操作・Closeの接続を確認できない。短い2messageで操作境界を検証する"
 // @end-test-value
+/** リンク先URLだけの一致はSource Matchとして案内し、Markdown表示を置き換えたり可視一致を重複計上したりしない。 */
 test("chat Find shows raw-only link matches without replacing Markdown or duplicating visible hits", async () => {
+  /** 可視本文のハイライト登録を元文のみの一致と区別して観測する代替実装。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
-    add(range: Range) { this.ranges.push(range); return this; }
+    /** 可視本文の範囲が登録されたことを記録する。 */
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
   }
   const text = "ordinary needle [filename](C:/users/admin/documents/sample.md)";
   const opened: string[] = [];
+  /** 実会話列のリンク操作を、開いたパスを検査できる通知先に接続する。 */
   function Column(props: SessionMessageColumnProps) {
-    return React.createElement(SessionMessageColumn, { ...props, onOpenPath: async (path) => { opened.push(path); } });
+    return React.createElement(SessionMessageColumn, {
+      ...props,
+      /** リンク操作で選ばれたパスを外部起動せず記録する。 */
+      onOpenPath: async (path) => {
+        opened.push(path);
+      },
+    });
   }
-  const mounted = await mountSessionMessageColumn({ messages: [
-    { role: "assistant", text }, { role: "user", text: "Another [label](C:/second/sample.md)" },
-  ], component: Column });
+  const mounted = await mountSessionMessageColumn({
+    messages: [
+      { role: "assistant", text },
+      { role: "user", text: "Another [label](C:/second/sample.md)" },
+    ],
+    component: Column,
+  });
   const highlights = new Map<string, TestHighlight>();
-  Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-  Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
-  const target = () => mounted.container.querySelector(".message-find-source-target");
-  const description = () => mounted.container.querySelector(".session-content-find-count span")?.textContent;
+  Object.defineProperty(mounted.dom.window, "CSS", {
+    configurable: true,
+    value: { highlights },
+  });
+  Object.defineProperty(mounted.dom.window, "Highlight", {
+    configurable: true,
+    value: TestHighlight,
+  });
+  /** 補足メッセージを除いた現在位置と総数を取得する。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
+  /** リンク全体が元文一致の移動先になったかを調べる。 */
+  const target = () =>
+    mounted.container.querySelector(".message-find-source-target");
+  /** 可視本文以外の一致に添えられる説明を読む。 */
+  const description = () =>
+    mounted.container.querySelector(".session-content-find-count span")
+      ?.textContent;
   try {
     await setMessageFindQuery(mounted, "sample.md");
     assert.equal(count(), "1/2");
     assert.equal(description(), "Source Match");
     assert.equal(target()?.tagName, "A");
-    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
-    assert.equal(target()?.getAttribute("href"), "C:/users/admin/documents/sample.md");
-    assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
-    assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
+    assert.equal(
+      target()
+        ?.closest(".session-message-virtual-row")
+        ?.getAttribute("data-index"),
+      "0",
+    );
+    assert.equal(
+      target()?.getAttribute("href"),
+      "C:/users/admin/documents/sample.md",
+    );
+    assert.equal(
+      mounted.container.querySelector(".rich-text a")?.textContent,
+      "filename",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges.length ?? 0,
+      0,
+    );
     await act(async () => (target() as HTMLAnchorElement).click());
     assert.equal(opened.length, 1);
     assert.match(opened[0], /sample.md/);
-    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    await act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+        .click(),
+    );
     assert.equal(count(), "2/2");
-    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
-    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!.click());
+    assert.equal(
+      target()
+        ?.closest(".session-message-virtual-row")
+        ?.getAttribute("data-index"),
+      "1",
+    );
+    await act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>(
+          "button[aria-label='Previous match']",
+        )!
+        .click(),
+    );
     assert.equal(count(), "1/2");
     await setMessageFindQuery(mounted, "filename");
     assert.equal(count(), "1/1");
     assert.equal(target(), null);
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "filename");
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "filename",
+    );
     await setMessageFindQuery(mounted, "needle");
     assert.equal(count(), "1/1");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "needle",
+    );
     await setMessageFindQuery(mounted, "sample.md");
     await mounted.rerender({ messageViewMode: "source" });
     assert.equal(count(), "1/2");
     assert.equal(target(), null);
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "sample.md");
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "sample.md",
+    );
     await mounted.rerender({ messageViewMode: "preview" });
     assert.equal(target()?.tagName, "A");
     await act(async () => {
-      mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")!.blur();
-      mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Close find']")!.click();
+      mounted.container
+        .querySelector<HTMLInputElement>(
+          "input[aria-label='Find in current content']",
+        )!
+        .blur();
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Close find']")!
+        .click();
     });
     assert.equal(target(), null);
-    assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
-  } finally { await mounted.cleanup(); }
+    assert.equal(
+      mounted.container.querySelector(".rich-text a")?.textContent,
+      "filename",
+    );
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -1993,6 +3105,7 @@ test("chat Find shows raw-only link matches without replacing Markdown or duplic
 // impact = "検索結果を選択したまま会話を読む位置がstreaming中に戻される"
 // distinction = "共有matcherのtestではDOM更新と選択移動の接続を確認できない"
 // @end-test-value
+/** Source Matchへ移動した後でDOMが変わっても、読み進めた位置を奪わない。 */
 test("chat Find preserves the reading position on DOM updates after navigating to a source match", async () => {
   const mounted = await mountSessionMessageColumn({
     messages: [
@@ -2002,16 +3115,26 @@ test("chat Find preserves the reading position on DOM updates after navigating t
     isRunning: true,
     liveRunAssistantText: "streaming response",
   });
-  const originalRect = mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalRect =
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
   mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
     return this.matches("a.message-find-source-target")
-      ? createRect({ left: 0, top: 1500, width: 200, height: 40 }) : originalRect.call(this);
+      ? createRect({ left: 0, top: 1500, width: 200, height: 40 })
+      : originalRect.call(this);
   };
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  /** DOM更新を挟んで同じFind上の位置を保っているか読む。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
   const list = mounted.messageListRef.current!;
   try {
     await setMessageFindQuery(mounted, "sample.md");
-    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    await act(
+      async () =>
+        new Promise<void>((resolve) =>
+          mounted.dom.window.requestAnimationFrame(() => resolve()),
+        ),
+    );
     assert.equal(count(), "1/2");
     assert.ok(list.scrollTop > 0);
     list.scrollTop = 100;
@@ -2020,17 +3143,45 @@ test("chat Find preserves the reading position on DOM updates after navigating t
       node.textContent = "unrelated update";
       mounted.messageListRef.current!.appendChild(node);
     });
-    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    await act(
+      async () =>
+        new Promise<void>((resolve) =>
+          mounted.dom.window.requestAnimationFrame(() => resolve()),
+        ),
+    );
     assert.equal(list.scrollTop, 100);
-    await mounted.rerender({ isRunning: true, liveRunAssistantText: "streaming response updated" });
-    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    await mounted.rerender({
+      isRunning: true,
+      liveRunAssistantText: "streaming response updated",
+    });
+    await act(
+      async () =>
+        new Promise<void>((resolve) =>
+          mounted.dom.window.requestAnimationFrame(() => resolve()),
+        ),
+    );
     assert.equal(list.scrollTop, 100);
-    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
-    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    await act(async () =>
+      mounted.container
+        .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+        .click(),
+    );
+    await act(
+      async () =>
+        new Promise<void>((resolve) =>
+          mounted.dom.window.requestAnimationFrame(() => resolve()),
+        ),
+    );
     assert.equal(count(), "2/2");
     assert.ok(list.scrollTop > 100);
-    assert.equal(mounted.container.querySelector(".message-find-source-target")?.textContent, "second");
-  } finally { await mounted.cleanup(); }
+    assert.equal(
+      mounted.container.querySelector(".message-find-source-target")
+        ?.textContent,
+      "second",
+    );
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -2045,33 +3196,67 @@ test("chat Find preserves the reading position on DOM updates after navigating t
 // impact = "Main/Auxiliaryどちらでも保存前後のリンク先を一続きの検索結果として辿れる"
 // distinction = "worker testはrendererの未保存合流とpending表示を通らない。明示した保存API結果で2ownerの接続を検証する"
 // @end-test-value
+/** MainとAuxiliaryの両方で、保存済み・未保存末尾・pendingの元文一致を結合して辿れる。 */
 test("paged raw Find merges saved, tail and pending matches for Main and Auxiliary", async () => {
   for (const sessionId of ["main", "auxiliary"]) {
     const loaded: number[] = [];
     const messages: Message[] = [
-      { role: "assistant", text: "[saved](C:/saved/sample.md)", historyIndex: 49 },
+      {
+        role: "assistant",
+        text: "[saved](C:/saved/sample.md)",
+        historyIndex: 49,
+      },
       { role: "user", text: "[tail](C:/tail/sample.md)", historyIndex: 50 },
     ];
+    /** 検索ownerと未保存分を列へ明示し、保存済み検索のスタブを接続する。 */
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(SessionMessageColumn, {
-        ...props, searchTailMessages: messages, conversationQueryOwner: sessionId,
-        searchConversation: async (request) => ({ status: "complete", stamp: {
-          generationId: "generation", ownerIdentity: sessionId, contentRevision: 1, requestId: request.requestId,
-        }, incarnationId: "incarnation", messageCount: 50, totalCount: 1, offset: 0,
-        items: [{ messageIndex: 49, occurrenceIndex: 0 }] }),
-        onLoadMessagePage: async (index) => { loaded.push(index); },
+        ...props,
+        searchTailMessages: messages,
+        conversationQueryOwner: sessionId,
+        /** 同じownerの保存済み履歴にある49番目の一致を一件だけ返す。 */
+        searchConversation: async (request) => ({
+          status: "complete",
+          stamp: {
+            generationId: "generation",
+            ownerIdentity: sessionId,
+            contentRevision: 1,
+            requestId: request.requestId,
+          },
+          incarnationId: "incarnation",
+          messageCount: 50,
+          totalCount: 1,
+          offset: 0,
+          items: [{ messageIndex: 49, occurrenceIndex: 0 }],
+        }),
+        /** 保存済み一致に到達するとき要求された履歴位置を記録する。 */
+        onLoadMessagePage: async (index) => {
+          loaded.push(index);
+        },
       });
     }
-    const mounted = await mountSessionMessageColumn({ sessionId, messages, component: Column,
-      isRunning: true, pendingMessageText: "[pending](C:/pending/sample.md)" });
-    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
-    const target = () => mounted.container.querySelector(".message-find-source-target");
+    const mounted = await mountSessionMessageColumn({
+      sessionId,
+      messages,
+      component: Column,
+      isRunning: true,
+      pendingMessageText: "[pending](C:/pending/sample.md)",
+    });
+    /** 三種類の履歴を結合したFindの位置と総数を読む。 */
+    const count = () =>
+      mounted.container.querySelector(".session-content-find-count")?.firstChild
+        ?.textContent;
+    /** ソース上の一致として選ばれた描画要素を取得する。 */
+    const target = () =>
+      mounted.container.querySelector(".message-find-source-target");
     try {
       await setMessageFindQuery(mounted, "sample.md");
       assert.equal(count(), "1/3", sessionId);
       assert.equal(target()?.textContent, "saved");
       assert.equal(loaded.at(-1), 49);
-      const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+      const next = mounted.container.querySelector<HTMLButtonElement>(
+        "button[aria-label='Next match']",
+      )!;
       await act(async () => next.click());
       assert.equal(count(), "2/3");
       assert.equal(target()?.textContent, "tail");
@@ -2091,7 +3276,9 @@ test("paged raw Find merges saved, tail and pending matches for Main and Auxilia
       await act(async () => next.click());
       assert.equal(count(), "1/3");
       assert.equal(target()?.textContent, "saved");
-    } finally { await mounted.cleanup(); }
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -2107,51 +3294,115 @@ test("paged raw Find merges saved, tail and pending matches for Main and Auxilia
 // impact = "長い履歴の選択中URLをSourceで確認すると別の保存結果へ移る"
 // distinction = "local切替testは保存APIとglobal ordinal page取得を通らない。2ownerと64件境界だけをcanned保存結果で検証する"
 // @end-test-value
+/** 両ownerでモード切替時に元文アンカーを引き継ぎ、サーバーが返す全体順位へ移動する。 */
 test("paged Find uses raw anchors and returned global ordinals across modes for both owners", async () => {
   for (const sessionId of ["main", "auxiliary"]) {
     const text = "[label](C:/needle.md) needle";
     const messages: Message[] = [{ role: "assistant", text, historyIndex: 49 }];
-    const requests: Array<Parameters<NonNullable<SessionMessageColumnProps["searchConversation"]>>[0]> = [];
+    const requests: Array<
+      Parameters<
+        NonNullable<SessionMessageColumnProps["searchConversation"]>
+      >[0]
+    > = [];
     const loaded: number[] = [];
+    /** MainとAuxiliaryを同じページング契約の異なるownerとして描画する。 */
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(SessionMessageColumn, {
-        ...props, conversationQueryOwner: sessionId,
+        ...props,
+        conversationQueryOwner: sessionId,
+        /** モード別の一致順とアンカー順位を返し、元文アンカーの送信も記録する。 */
         searchConversation: async (request) => {
           requests.push(request);
           const offset = request.offset ?? 0;
           const source = request.mode === "source";
-          return { status: "complete", stamp: { generationId: "generation", ownerIdentity: sessionId, contentRevision: 1, requestId: request.requestId },
-            incarnationId: "incarnation", messageCount: 1000, totalCount: 130, offset,
-            ...(!request.stamp && request.anchor ? { anchorOrdinal: source ? 65 : 1 } : {}),
-            items: Array.from({ length: Math.min(64, 130 - offset) }, (_, index) => {
-              const ordinal = offset + index;
-              return source
-                ? { messageIndex: ordinal === 65 ? 49 : ordinal + 100, occurrenceIndex: 0 }
-                : { messageIndex: ordinal < 2 ? 49 : ordinal + 100, occurrenceIndex: ordinal === 1 ? 1 : 0 };
-            }),
+          return {
+            status: "complete",
+            stamp: {
+              generationId: "generation",
+              ownerIdentity: sessionId,
+              contentRevision: 1,
+              requestId: request.requestId,
+            },
+            incarnationId: "incarnation",
+            messageCount: 1000,
+            totalCount: 130,
+            offset,
+            ...(!request.stamp && request.anchor
+              ? { anchorOrdinal: source ? 65 : 1 }
+              : {}),
+            items: Array.from(
+              { length: Math.min(64, 130 - offset) },
+              (_, index) => {
+                const ordinal = offset + index;
+                return source
+                  ? {
+                      messageIndex: ordinal === 65 ? 49 : ordinal + 100,
+                      occurrenceIndex: 0,
+                    }
+                  : {
+                      messageIndex: ordinal < 2 ? 49 : ordinal + 100,
+                      occurrenceIndex: ordinal === 1 ? 1 : 0,
+                    };
+              },
+            ),
           };
         },
-        onLoadMessagePage: async (index) => { loaded.push(index); },
+        /** モード切替に伴い要求されたページ位置を記録する。 */
+        onLoadMessagePage: async (index) => {
+          loaded.push(index);
+        },
       });
     }
-    const mounted = await mountSessionMessageColumn({ sessionId, messages, component: Column });
+    const mounted = await mountSessionMessageColumn({
+      sessionId,
+      messages,
+      component: Column,
+    });
     const highlights = installMessageFindHighlights(mounted);
-    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+    /** 各モードで返された全体順位をFindの位置表示から読む。 */
+    const count = () =>
+      mounted.container.querySelector(".session-content-find-count")?.firstChild
+        ?.textContent;
     try {
       await setMessageFindQuery(mounted, "needle");
-      await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+      await act(async () =>
+        mounted.container
+          .querySelector<HTMLButtonElement>("button[aria-label='Next match']")!
+          .click(),
+      );
       assert.equal(count(), "2/130");
       await mounted.rerender({ messageViewMode: "source" });
-      const firstSource = requests.find((request) => request.mode === "source" && !request.stamp);
-      assert.deepEqual(firstSource?.anchor, { messageIndex: 49, startOffset: text.indexOf("needle"), endOffset: text.indexOf("needle") + 6 });
+      const firstSource = requests.find(
+        (request) => request.mode === "source" && !request.stamp,
+      );
+      assert.deepEqual(firstSource?.anchor, {
+        messageIndex: 49,
+        startOffset: text.indexOf("needle"),
+        endOffset: text.indexOf("needle") + 6,
+      });
       assert.equal(count(), "66/130", sessionId);
-      assert.ok(requests.some((request) => request.mode === "source" && request.offset === 64 && request.stamp?.requestId === firstSource?.requestId));
+      assert.ok(
+        requests.some(
+          (request) =>
+            request.mode === "source" &&
+            request.offset === 64 &&
+            request.stamp?.requestId === firstSource?.requestId,
+        ),
+      );
       assert.equal(loaded.at(-1), 49);
-      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.startOffset, text.indexOf("needle"));
+      assert.equal(
+        highlights.get("withmate-find-current")?.ranges[0]?.startOffset,
+        text.indexOf("needle"),
+      );
       await mounted.rerender({ messageViewMode: "preview" });
       assert.equal(count(), "2/130");
-      assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
-    } finally { await mounted.cleanup(); }
+      assert.equal(
+        mounted.container.querySelector(".message-find-source-target")?.tagName,
+        "A",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -2167,56 +3418,118 @@ test("paged Find uses raw anchors and returned global ordinals across modes for 
 // impact = "検索を続けながら応答を読む際の同期解析負荷が、変更のない履歴量に比例して増える"
 // distinction = "既存DOM・型・build確認では再解析を検出できない。既存mount fixtureとV8 coverageで5更新だけを観測し、製品側の計測APIやmockを追加しない"
 // @end-test-value
+/** liveの末尾が伸びても確定済み本文は再投影せず、更新箇所だけを再解析する。 */
 test("ConversationMessageColumn の検索はlive末尾更新だけを再解析する", async (t) => {
   const messages = Array.from({ length: 40 }, (_, index): Message => ({
-    role: "user", text: `history ${index} needle [label](https://destination.example)`,
+    role: "user",
+    text: `history ${index} needle [label](https://destination.example)`,
   }));
   const mounted = await mountSessionMessageColumn({
-    messages, component: ConversationBackedMessageColumn, isRunning: true, liveRunAssistantText: "live needle 0",
+    messages,
+    component: ConversationBackedMessageColumn,
+    isRunning: true,
+    liveRunAssistantText: "live needle 0",
   });
   const counter = await startSearchProjectionCounter();
   try {
+    /** 再解析後にハイライトが新しい本文へ移ったことを範囲で確認するための代替実装。 */
     class TestHighlight {
       readonly ranges: Range[] = [];
-      add(range: Range) { this.ranges.push(range); return this; }
+      /** ライブ更新後に生成されたハイライト範囲を記録する。 */
+      add(range: Range) {
+        this.ranges.push(range);
+        return this;
+      }
     }
     const highlights = new Map<string, TestHighlight>();
-    Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-    Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
     await setMessageFindQuery(mounted, "needle");
     assert.equal(await counter.take(), 41);
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/41");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/41",
+    );
     for (let tick = 1; tick <= 5; tick += 1) {
-      await mounted.rerender({ isRunning: true, liveRunAssistantText: `live needle ${tick}` });
+      await mounted.rerender({
+        isRunning: true,
+        liveRunAssistantText: `live needle ${tick}`,
+      });
     }
     const parseCount = await counter.take();
-    t.diagnostic(`40確定履歴・query=needle・Preview・5 live更新: 検索Markdown解析 ${parseCount}回`);
+    t.diagnostic(
+      `40確定履歴・query=needle・Preview・5 live更新: 検索Markdown解析 ${parseCount}回`,
+    );
     assert.equal(parseCount, 5);
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/41");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
-    const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/41",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "needle",
+    );
+    const next = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Next match']",
+    );
     assert.ok(next);
     await act(async () => next.click());
     await act(async () => {
-      mounted.container.querySelector(".session-message-list")?.dispatchEvent(new mounted.dom.window.Event("scroll"));
+      mounted.container
+        .querySelector(".session-message-list")
+        ?.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/41");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "2/41",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "needle",
+    );
     await setMessageFindQuery(mounted, "live needle");
     assert.equal(await counter.take(), 0);
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "live needle");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/1",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "live needle",
+    );
     await mounted.rerender({
       messages: [...messages, { role: "assistant", text: "settled needle" }],
-      isRunning: false, liveRunAssistantText: "",
+      isRunning: false,
+      liveRunAssistantText: "",
     });
     // 確定時は新しい履歴の検索本文とcollapse previewが各1回、この投影関数を使う。
     assert.equal(await counter.take(), 2);
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "0/0");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "0/0",
+    );
     await setMessageFindQuery(mounted, "settled needle");
     assert.equal(await counter.take(), 0);
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "settled needle");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/1",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "settled needle",
+    );
   } finally {
     await counter.stop();
     await mounted.cleanup();
@@ -2235,24 +3548,40 @@ test("ConversationMessageColumn の検索はlive末尾更新だけを再解析�
 // impact = "検索結果が古い本文と不一致になり、会話反復切替や履歴入替で不要な本文保持が増え続ける"
 // distinction = "既存検索testは一回の件数・移動・highlightを担う。このtestは3件以内の入力遷移だけで再利用と破棄を観測し、型やDOMの単発確認では判別できない寿命を確認する"
 // @end-test-value
+/** 検索投影は本文とキーが同じ現在履歴でだけ再利用し、履歴離脱・owner切替・空検索を越えて残さない。 */
 test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴に追従する", async () => {
   const first: Message = { role: "assistant", text: "**needle** first" };
-  const second: Message = { role: "user", text: "[other](https://needle.example)" };
-  const mounted = await mountSessionMessageColumn({ messages: [first, second], messageKeys: ["first", "second"] });
+  const second: Message = {
+    role: "user",
+    text: "[other](https://needle.example)",
+  };
+  const mounted = await mountSessionMessageColumn({
+    messages: [first, second],
+    messageKeys: ["first", "second"],
+  });
   const counter = await startSearchProjectionCounter();
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  /** 投影を差し替える各段階で、画面が示す一致位置と総数を読む。 */
+  const count = () =>
+    mounted.container.querySelector(".session-content-find-count")?.firstChild
+      ?.textContent;
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(await counter.take(), 2);
     assert.equal(count(), "1/2");
 
     // 新しいmessage objectと配列でも、keyと本文の組は変わらない。
-    await mounted.rerender({ messages: [{ ...second }, { ...first }], messageKeys: ["second", "first"] });
+    await mounted.rerender({
+      messages: [{ ...second }, { ...first }],
+      messageKeys: ["second", "first"],
+    });
     assert.equal(await counter.take(), 0);
     assert.equal(count(), "1/2");
     const changed: Message = { ...first, text: "**absent** first" };
     assert.equal(first.text.length, changed.text.length);
-    await mounted.rerender({ messages: [second, changed], messageKeys: ["second", "first"] });
+    await mounted.rerender({
+      messages: [second, changed],
+      messageKeys: ["second", "first"],
+    });
     assert.equal(await counter.take(), 1);
     assert.equal(count(), "1/1");
     const third: Message = { role: "assistant", text: "needle third" };
@@ -2262,26 +3591,53 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
     assert.equal(await counter.take(), 1);
     assert.equal(count(), "1/2");
 
-    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "source" });
+    await mounted.rerender({
+      messages,
+      messageKeys: keys,
+      messageViewMode: "source",
+    });
     assert.equal(await counter.take(), 0);
     assert.equal(count(), "1/2");
-    messages = [{ ...second, text: "[new](https://needle.example)" }, changed, third];
-    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "source" });
+    messages = [
+      { ...second, text: "[new](https://needle.example)" },
+      changed,
+      third,
+    ];
+    await mounted.rerender({
+      messages,
+      messageKeys: keys,
+      messageViewMode: "source",
+    });
     assert.equal(await counter.take(), 0);
-    await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "preview" });
+    await mounted.rerender({
+      messages,
+      messageKeys: keys,
+      messageViewMode: "preview",
+    });
     assert.equal(await counter.take(), 1);
     assert.equal(count(), "1/2");
 
-    await mounted.rerender({ messages: messages.slice(0, 2), messageKeys: keys.slice(0, 2) });
+    await mounted.rerender({
+      messages: messages.slice(0, 2),
+      messageKeys: keys.slice(0, 2),
+    });
     assert.equal(await counter.take(), 0);
     assert.equal(count(), "1/1");
     await mounted.rerender({ messages, messageKeys: keys });
     assert.equal(await counter.take(), 1);
     assert.equal(count(), "1/2");
-    await mounted.rerender({ sessionId: "another-owner", messages, messageKeys: keys });
+    await mounted.rerender({
+      sessionId: "another-owner",
+      messages,
+      messageKeys: keys,
+    });
     assert.equal(await counter.take(), 3);
     assert.equal(count(), "1/2");
-    await mounted.rerender({ sessionId: "session-1", messages, messageKeys: keys });
+    await mounted.rerender({
+      sessionId: "session-1",
+      messages,
+      messageKeys: keys,
+    });
     assert.equal(await counter.take(), 3);
 
     await setMessageFindQuery(mounted, "");
@@ -2296,14 +3652,18 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
   }
 });
 
+/** Findを開始すると、仮想範囲外にある最初の一致をマウントしてそこへ移動する。 */
 test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移動する", async () => {
+  /** 仮想行のマウント後に初めて登録される一致範囲を観測する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
 
+    /** 初期化時の範囲は空で、登録は後から行われることを確認する。 */
     constructor(...ranges: Range[]) {
       assert.equal(ranges.length, 0);
     }
 
+    /** 行へ移動した後の一致範囲を捕捉する。 */
     add(range: Range) {
       this.ranges.push(range);
       return this;
@@ -2311,7 +3671,10 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
   }
 
   const messages = createMessages(100);
-  messages[0] = { role: "assistant", text: "only early needle and another needle" };
+  messages[0] = {
+    role: "assistant",
+    text: "only early needle and another needle",
+  };
   const mounted = await mountSessionMessageColumn({ messages });
 
   try {
@@ -2327,16 +3690,23 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
     const initialScrollTop = messageList.scrollTop;
-    assert.doesNotMatch(mounted.container.textContent ?? "", /only early needle/);
+    assert.doesNotMatch(
+      mounted.container.textContent ?? "",
+      /only early needle/,
+    );
 
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -2345,7 +3715,9 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "needle");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
@@ -2356,11 +3728,15 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
     });
     assert.match(mounted.container.textContent ?? "", /only early needle/);
     assert.deepEqual(
-      highlights.get("withmate-find-match")?.ranges.map((range) => range.toString()),
+      highlights
+        .get("withmate-find-match")
+        ?.ranges.map((range) => range.toString()),
       ["needle", "needle"],
     );
     assert.deepEqual(
-      highlights.get("withmate-find-current")?.ranges.map((range) => range.startOffset),
+      highlights
+        .get("withmate-find-current")
+        ?.ranges.map((range) => range.startOffset),
       [11],
     );
   } finally {
@@ -2380,10 +3756,16 @@ test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移
 // impact = "質問以降の検索結果に到達できず、会話の情報を見失う"
 // distinction = "既存Find testは質問による本文分割と質問原文の置換を通らない。2質問形式と2表示modeの短いDOM操作で公開検索契約を守る"
 // @end-test-value
+/** 質問カードを挟む本文は本文内の出現順で辿り、質問を解決した後も同じ一致を保つ。 */
 test("質問前後のFindは本文の一致番号で強調・移動し解決後も保持する", async () => {
+  /** 質問の前後どちらに現在一致が付いたかをDOM範囲で観測する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
-    add(range: Range) { this.ranges.push(range); return this; }
+    /** 本文の現在一致と全一致が持つ範囲をそれぞれ記録する。 */
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
   }
   for (const kind of ["tool", "source"] as const) {
     for (const messageViewMode of ["preview", "source"] as const) {
@@ -2391,59 +3773,130 @@ test("質問前後のFindは本文の一致番号で強調・移動し解決後�
       const question = kind === "source" ? "Which needle?\n\n" : "";
       const text = `${before}${question}After **needle**`;
       const request: LiveElicitationRequest = {
-        ...createLiveElicitationRequest(), kind: "question",
-        fields: [{ type: "text", name: "answer", title: "Which needle?", required: true }],
+        ...createLiveElicitationRequest(),
+        kind: "question",
+        fields: [
+          {
+            type: "text",
+            name: "answer",
+            title: "Which needle?",
+            required: true,
+          },
+        ],
       };
+      /** 実行中と確定後の本文に同一キーを割り当てて質問前後の連続性を調べる。 */
       function Column(props: SessionMessageColumnProps) {
         return React.createElement(SessionMessageColumn, {
-          ...props, messageKeys: ["body"], pendingResponseMessageKey: props.isRunning ? "body" : null,
+          ...props,
+          messageKeys: ["body"],
+          pendingResponseMessageKey: props.isRunning ? "body" : null,
         });
       }
-      const message: Message = { role: "assistant", text, elicitationRecords: [{
-        requestId: request.requestId, kind: "question", message: "needle",
-        fields: [{ title: "Which needle?", options: ["needle option"] }],
-        textRange: { start: before.length, end: before.length + question.length }, status: "pending",
-      }] };
+      const message: Message = {
+        role: "assistant",
+        text,
+        elicitationRecords: [
+          {
+            requestId: request.requestId,
+            kind: "question",
+            message: "needle",
+            fields: [{ title: "Which needle?", options: ["needle option"] }],
+            textRange: {
+              start: before.length,
+              end: before.length + question.length,
+            },
+            status: "pending",
+          },
+        ],
+      };
       const mounted = await mountSessionMessageColumn({
-        component: Column, messages: [message], isRunning: true,
-        liveElicitationRequest: request, messageViewMode,
+        component: Column,
+        messages: [message],
+        isRunning: true,
+        liveElicitationRequest: request,
+        messageViewMode,
       });
       try {
         const highlights = new Map<string, TestHighlight>();
-        Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-        Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+        Object.defineProperty(mounted.dom.window, "CSS", {
+          configurable: true,
+          value: { highlights },
+        });
+        Object.defineProperty(mounted.dom.window, "Highlight", {
+          configurable: true,
+          value: TestHighlight,
+        });
         let scrolledText = "";
-        mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.closest(".rich-text")?.textContent ?? ""; };
+        mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () {
+          scrolledText = this.closest(".rich-text")?.textContent ?? "";
+        };
         await setMessageFindQuery(mounted, "needle");
         const total = kind === "source" ? 3 : 2;
-        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `1/${total}`);
-        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        assert.equal(
+          mounted.container.querySelector(".session-content-find-count")
+            ?.textContent,
+          `1/${total}`,
+        );
+        assert.deepEqual(
+          highlights
+            .get("withmate-find-match")
+            ?.ranges.map((range) => range.toString()),
+          ["needle", "needle"],
+        );
         assert.match(scrolledText, /Before/);
-        const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
-        const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
-        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        const next = mounted.container.querySelector<HTMLButtonElement>(
+          "button[aria-label='Next match']",
+        )!;
+        const previous = mounted.container.querySelector<HTMLButtonElement>(
+          "button[aria-label='Previous match']",
+        )!;
+        for (let step = 1; step < total; step += 1)
+          await act(async () => next.click());
+        /** 現在一致とスクロール先が、質問より後ろの本文を指すことを確認する。 */
         const assertAfter = () => {
-          assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${total}/${total}`);
+          assert.equal(
+            mounted.container.querySelector(".session-content-find-count")
+              ?.textContent,
+            `${total}/${total}`,
+          );
           const range = highlights.get("withmate-find-current")?.ranges[0];
           assert.equal(range?.toString(), "needle");
           assert.ok(range);
           const prefix = mounted.dom.window.document.createRange();
-          prefix.selectNodeContents(range.startContainer.parentElement!.closest(".rich-text")!);
+          prefix.selectNodeContents(
+            range.startContainer.parentElement!.closest(".rich-text")!,
+          );
           prefix.setEnd(range.startContainer, range.startOffset);
           assert.match(prefix.toString(), /After/);
           assert.match(scrolledText, /After/);
         };
         assertAfter();
-        for (let step = 1; step < total; step += 1) await act(async () => previous.click());
+        for (let step = 1; step < total; step += 1)
+          await act(async () => previous.click());
         assert.match(scrolledText, /Before/);
-        for (let step = 1; step < total; step += 1) await act(async () => next.click());
+        for (let step = 1; step < total; step += 1)
+          await act(async () => next.click());
         await mounted.rerender({
-          isRunning: false, liveElicitationRequest: null,
-          messages: [{ ...message, elicitationRecords: message.elicitationRecords!.map(record => ({ ...record, status: "answered" })) }],
+          isRunning: false,
+          liveElicitationRequest: null,
+          messages: [
+            {
+              ...message,
+              elicitationRecords: message.elicitationRecords!.map((record) => ({
+                ...record,
+                status: "answered",
+              })),
+            },
+          ],
         });
         assertAfter();
-        assert.equal(highlights.get("withmate-find-match")?.ranges.length, total);
-      } finally { await mounted.cleanup(); }
+        assert.equal(
+          highlights.get("withmate-find-match")?.ranges.length,
+          total,
+        );
+      } finally {
+        await mounted.cleanup();
+      }
     }
   }
 });
@@ -2460,53 +3913,94 @@ test("質問前後のFindは本文の一致番号で強調・移動し解決後�
 // impact = "利用者が本文の検索結果へ移動できず、非表示の承認詳細を現在位置として選んでしまう"
 // distinction = "既存の質問Findは操作面が本文DOMの外にあり、承認を含むMarkdown内の検索境界を通らない。既存DOM fixtureで2表示modeの短い操作を確認する"
 // @end-test-value
+/** 承認詳細を開閉し要求を解除しても、Findは承認欄ではなく本文の一致のみを辿る。 */
 test("承認の詳細開閉と解除を通してFindは本文の一致だけを辿る", async () => {
+  /** 承認パネルの状態により本文のハイライト範囲がずれていないか観測する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
-    add(range: Range) { this.ranges.push(range); return this; }
+    /** 登録された範囲を保存し、承認欄がFind対象に入っていないか検査できるようにする。 */
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
   }
   for (const messageViewMode of ["preview", "source"] as const) {
     const before = "Before needle\n\n";
     const text = `${before}After needle`;
     let request: LiveApprovalRequest | null = {
-      ...createLiveApprovalRequest(), textPosition: before.length,
-      summary: "needle command", details: "needle hidden details",
+      ...createLiveApprovalRequest(),
+      textPosition: before.length,
+      summary: "needle command",
+      details: "needle hidden details",
     };
+    /** 同じ応答キーへ入力中のコマンド承認を割り当てる。 */
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(SessionMessageColumn, {
-        ...props, pendingResponseMessageKey: "response", liveApprovalRequest: request,
+        ...props,
+        pendingResponseMessageKey: "response",
+        liveApprovalRequest: request,
       });
     }
     const mounted = await mountSessionMessageColumn({
-      component: Column, messages: [{ role: "assistant", text }], messageKeys: ["response"],
-      isRunning: true, liveRunAssistantText: text, messageViewMode,
+      component: Column,
+      messages: [{ role: "assistant", text }],
+      messageKeys: ["response"],
+      isRunning: true,
+      liveRunAssistantText: text,
+      messageViewMode,
     });
     try {
       const highlights = new Map<string, TestHighlight>();
-      Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-      Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+      Object.defineProperty(mounted.dom.window, "CSS", {
+        configurable: true,
+        value: { highlights },
+      });
+      Object.defineProperty(mounted.dom.window, "Highlight", {
+        configurable: true,
+        value: TestHighlight,
+      });
       let scrolledText = "";
-      mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.textContent ?? ""; };
+      mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () {
+        scrolledText = this.textContent ?? "";
+      };
       await setMessageFindQuery(mounted, "needle");
+      /** 表示順位・現在範囲と移動先の本文を組み合わせて照合する。 */
       const assertCurrent = (ordinal: number, expectedText: RegExp) => {
-        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${ordinal}/2`);
-        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        assert.equal(
+          mounted.container.querySelector(".session-content-find-count")
+            ?.textContent,
+          `${ordinal}/2`,
+        );
+        assert.deepEqual(
+          highlights
+            .get("withmate-find-match")
+            ?.ranges.map((range) => range.toString()),
+          ["needle", "needle"],
+        );
         const current = highlights.get("withmate-find-current")?.ranges[0];
         assert.equal(current?.toString(), "needle");
         assert.match(current?.startContainer.textContent ?? "", expectedText);
         assert.match(scrolledText, expectedText);
       };
       assertCurrent(1, /Before needle/);
-      const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
-      const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
+      const next = mounted.container.querySelector<HTMLButtonElement>(
+        "button[aria-label='Next match']",
+      )!;
+      const previous = mounted.container.querySelector<HTMLButtonElement>(
+        "button[aria-label='Previous match']",
+      )!;
       await act(async () => next.click());
       assertCurrent(2, /After needle/);
       await act(async () => previous.click());
       assertCurrent(1, /Before needle/);
       await act(async () => next.click());
       assertCurrent(2, /After needle/);
-      const toggle = mounted.container.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
-      const details = mounted.container.querySelector<HTMLElement>(".live-approval-details")!;
+      const toggle = mounted.container.querySelector<HTMLButtonElement>(
+        "[aria-label='Show approval details']",
+      )!;
+      const details = mounted.container.querySelector<HTMLElement>(
+        ".live-approval-details",
+      )!;
       assert.equal(details.hidden, true);
       await act(async () => toggle.click());
       assert.equal(details.hidden, false);
@@ -2517,7 +4011,9 @@ test("承認の詳細開閉と解除を通してFindは本文の一致だけを�
       request = null;
       await mounted.rerender({});
       assertCurrent(2, /After needle/);
-    } finally { await mounted.cleanup(); }
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -2533,14 +4029,18 @@ test("承認の詳細開閉と解除を通してFindは本文の一致だけを�
 // impact = "保存前後のチャット検索で結果の前後関係と移動先を維持する"
 // distinction = "matcher単体はpendingとの合流とReact再描画後のclampを通らない。短い1messageとpendingの遷移を検証する"
 // @end-test-value
+/** PreviewとSourceで未保存のpendingまで順に数え、件数が減ったとき現在位置を末尾の有効範囲に収める。 */
 test("SessionMessageColumn の検索は表示・原文とpendingを順に数え現在位置をclampする", async () => {
+  /** モード切替時に取り直された全一致と現在一致の範囲を捕捉する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
 
+    /** 構築時には範囲を渡さず後から登録する前提を確認する。 */
     constructor(...ranges: Range[]) {
       assert.equal(ranges.length, 0);
     }
 
+    /** 現在の表示モードから登録された本文範囲を保持する。 */
     add(range: Range) {
       this.ranges.push(range);
       return this;
@@ -2568,13 +4068,17 @@ test("SessionMessageColumn の検索は表示・原文とpendingを順に数え�
       value: TestHighlight,
     });
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -2583,31 +4087,59 @@ test("SessionMessageColumn の検索は表示・原文とpendingを順に数え�
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "needle");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
 
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/3");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/3",
+    );
     assert.equal(highlights.get("withmate-find-match")?.ranges.length, 2);
     assert.equal(
-      highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
+      highlights.get("withmate-find-current")?.ranges[0]?.startContainer
+        .parentElement?.tagName,
       "A",
     );
 
-    const nextButton = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    const nextButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Next match']",
+    );
     assert.ok(nextButton);
     await act(async () => {
       nextButton.click();
     });
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent, "2/3");
-    assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
-    assert.equal(mounted.container.querySelector(".session-content-find-count span")?.textContent, "Source Match");
-    assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
-    await act(async () => nextButton.click());
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "3/3");
     assert.equal(
-      highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
+      mounted.container.querySelector(".session-content-find-count")?.firstChild
+        ?.textContent,
+      "2/3",
+    );
+    assert.equal(
+      mounted.container.querySelector(".message-find-source-target")?.tagName,
+      "A",
+    );
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count span")
+        ?.textContent,
+      "Source Match",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges.length ?? 0,
+      0,
+    );
+    await act(async () => nextButton.click());
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "3/3",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.startContainer
+        .parentElement?.tagName,
       "P",
     );
 
@@ -2615,21 +4147,29 @@ test("SessionMessageColumn の検索は表示・原文とpendingを順に数え�
       messages: [],
       pendingMessageText: "pending needle",
     });
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/1",
+    );
     assert.equal(highlights.get("withmate-find-current")?.ranges.length, 1);
   } finally {
     await mounted.cleanup();
   }
 });
 
+/** Source検索はリンクラベルだけでなく元Markdownに書かれたURLも一致として扱う。 */
 test("SessionMessageColumn の Source 検索は link URL を含む元 Markdown を対象にする", async () => {
+  /** URL一致がSource本文のどこへ付くかをハイライト範囲で観測する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
 
+    /** URL検索で空のハイライトから範囲登録を始めることを確認する。 */
     constructor(...ranges: Range[]) {
       assert.equal(ranges.length, 0);
     }
 
+    /** 元Markdown上で登録された範囲を検査用に残す。 */
     add(range: Range) {
       this.ranges.push(range);
       return this;
@@ -2637,7 +4177,9 @@ test("SessionMessageColumn の Source 検索は link URL を含む元 Markdown �
   }
 
   const mounted = await mountSessionMessageColumn({
-    messages: [{ role: "assistant", text: "[label](https://example.test/source-path)" }],
+    messages: [
+      { role: "assistant", text: "[label](https://example.test/source-path)" },
+    ],
     messageViewMode: "source",
   });
 
@@ -2652,13 +4194,17 @@ test("SessionMessageColumn の Source 検索は link URL を含む元 Markdown �
       value: TestHighlight,
     });
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -2667,26 +4213,39 @@ test("SessionMessageColumn の Source 検索は link URL を含む元 Markdown �
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "example.test/source-path");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
 
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "example.test/source-path");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/1",
+    );
+    assert.equal(
+      highlights.get("withmate-find-current")?.ranges[0]?.toString(),
+      "example.test/source-path",
+    );
   } finally {
     await mounted.cleanup();
   }
 });
 
+/** Auxiliary groupの途中に表示するpendingを、会話の画面順で履歴と一緒に数える。 */
 test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面表示順に数える", async () => {
+  /** グループ内pendingと後続履歴のハイライトを個別に捕捉する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
 
+    /** グループの検索範囲が初期引数で混入していないことを確認する。 */
     constructor(...ranges: Range[]) {
       assert.equal(ranges.length, 0);
     }
 
+    /** 会話順に登録された範囲を検査用に蓄積する。 */
     add(range: Range) {
       this.ranges.push(range);
       return this;
@@ -2700,11 +4259,7 @@ test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面�
       { role: "user", text: "aux needle", accent: true },
       { role: "assistant", text: "later needle" },
     ],
-    messageGroups: [
-      null,
-      { id: "aux-1", label: "Auxiliary" },
-      null,
-    ],
+    messageGroups: [null, { id: "aux-1", label: "Auxiliary" }, null],
     pendingMessageText: "pending needle",
     pendingMessageGroupId: "aux-1",
   });
@@ -2720,13 +4275,17 @@ test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面�
       value: TestHighlight,
     });
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -2735,29 +4294,45 @@ test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面�
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "needle");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
 
-    const nextButton = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']");
+    const nextButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Next match']",
+    );
     assert.ok(nextButton);
     await act(async () => nextButton.click());
     await act(async () => nextButton.click());
 
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "3/4");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "3/4",
+    );
     const pendingRange = highlights.get("withmate-find-current")?.ranges[0];
     assert.ok(pendingRange);
     assert.ok(
-      pendingRange.startContainer.parentElement?.closest("[data-pending-message-body='true']"),
+      pendingRange.startContainer.parentElement?.closest(
+        "[data-pending-message-body='true']",
+      ),
       "3件目は後続main messageではなくgroup内pendingを指す",
     );
 
     await act(async () => nextButton.click());
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "4/4");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "4/4",
+    );
     const laterRange = highlights.get("withmate-find-current")?.ranges[0];
     assert.equal(
-      laterRange?.startContainer.parentElement?.closest<HTMLElement>(".session-message-virtual-row")?.dataset.index,
+      laterRange?.startContainer.parentElement?.closest<HTMLElement>(
+        ".session-message-virtual-row",
+      )?.dataset.index,
       "2",
     );
   } finally {
@@ -2765,14 +4340,18 @@ test("SessionMessageColumn の検索は Auxiliary group 内のpendingを画面�
   }
 });
 
+/** 一致数が上限を超えても表示する最初の5000範囲を画面順に選び、その中にグループ内pendingを含める。 */
 test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pendingを表示順に含める", async () => {
+  /** 上限が適用された集合から、pendingに届いた範囲を検査する。 */
   class TestHighlight {
     readonly ranges: Range[] = [];
 
+    /** 空の集合からハイライト上限の計数を始める。 */
     constructor(...ranges: Range[]) {
       assert.equal(ranges.length, 0);
     }
 
+    /** 実際に上限内で登録された範囲だけを保持する。 */
     add(range: Range) {
       this.ranges.push(range);
       return this;
@@ -2785,10 +4364,7 @@ test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pending
       { role: "user", text: "x", accent: true },
       { role: "assistant", text: "x".repeat(6_000) },
     ],
-    messageGroups: [
-      { id: "aux-1", label: "Auxiliary" },
-      null,
-    ],
+    messageGroups: [{ id: "aux-1", label: "Auxiliary" }, null],
     pendingMessageText: "x",
     pendingMessageGroupId: "aux-1",
   });
@@ -2804,13 +4380,17 @@ test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pending
       value: TestHighlight,
     });
     await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
+      mounted.dom.window.dispatchEvent(
+        new mounted.dom.window.KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
     });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    const input = mounted.container.querySelector<HTMLInputElement>(
+      "input[aria-label='Find in current content']",
+    );
     assert.ok(input);
     const setInputValue = Object.getOwnPropertyDescriptor(
       mounted.dom.window.HTMLInputElement.prototype,
@@ -2819,16 +4399,26 @@ test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pending
     assert.ok(setInputValue);
     await act(async () => {
       setInputValue.call(input, "x");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      const propertyChange = new mounted.dom.window.Event("propertychange", {
+        bubbles: true,
+      });
       Object.defineProperty(propertyChange, "propertyName", { value: "value" });
       input.dispatchEvent(propertyChange);
     });
 
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/6002");
+    assert.equal(
+      mounted.container.querySelector(".session-content-find-count")
+        ?.textContent,
+      "1/6002",
+    );
     const allMatches = highlights.get("withmate-find-match")?.ranges ?? [];
     assert.equal(allMatches.length, 5_000);
     assert.ok(
-      allMatches.some((range) => range.startContainer.parentElement?.closest("[data-pending-message-body='true']")),
+      allMatches.some((range) =>
+        range.startContainer.parentElement?.closest(
+          "[data-pending-message-body='true']",
+        ),
+      ),
       "semantic順で2件目のpendingを先頭5000件highlightへ含める",
     );
   } finally {
@@ -2836,8 +4426,11 @@ test("SessionMessageColumn の検索は5000件highlight budgetへgroup内pending
   }
 });
 
+/** 表示範囲より上の行が再計測で伸びても、同じ読書位置を保つ。 */
 test("SessionMessageColumn は上側rowの可変高再計測後も表示位置を維持する", async () => {
-  const mounted = await mountSessionMessageColumn({ messages: createMessages(100) });
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(100),
+  });
 
   try {
     const messageList = mounted.messageListRef.current;
@@ -2847,19 +4440,21 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
       messageList.scrollTop = 4_000;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
-      await new Promise((resolve) => mounted.dom.window.setTimeout(resolve, 180));
+      await new Promise((resolve) =>
+        mounted.dom.window.setTimeout(resolve, 180),
+      );
     });
     const renderedRows = Array.from(
-      mounted.container.querySelectorAll<HTMLElement>(".session-message-virtual-row"),
+      mounted.container.querySelectorAll<HTMLElement>(
+        ".session-message-virtual-row",
+      ),
     );
     const rowAboveViewport = renderedRows.find((row) => {
       const start = Number.parseFloat(
-        row.style.top
-          || (
-            row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
-            ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
-            ?? "0"
-          ),
+        row.style.top ||
+          (row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1] ??
+            row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] ??
+            "0"),
       );
       return start < messageList.scrollTop;
     });
@@ -2887,18 +4482,32 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
 // impact = "読みかけの行の高さ増減を全量補正すると閲覧位置がずれる"
 // distinction = "DOM testでは到達しにくい行末とviewport上端の一致・1px差を小さい判定testで確認する"
 // @end-test-value
+/** 上方向へ移動中でも、下端が表示先頭以前にある行だけをアンカー補正の対象にする。 */
 test("SessionMessageColumn は上方向scroll中も上側rowのvisible anchorを補正する", () => {
-  assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemEnd: 4_000,
-    scrollOffset: 4_000,
-  }), true);
-  assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemEnd: 4_001,
-    scrollOffset: 4_000,
-  }), false);
-  assert.equal(shouldAdjustSessionMessageScrollPosition({ itemEnd: 5_000, scrollOffset: 4_000 }), false);
+  assert.equal(
+    shouldAdjustSessionMessageScrollPosition({
+      itemEnd: 4_000,
+      scrollOffset: 4_000,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAdjustSessionMessageScrollPosition({
+      itemEnd: 4_001,
+      scrollOffset: 4_000,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAdjustSessionMessageScrollPosition({
+      itemEnd: 5_000,
+      scrollOffset: 4_000,
+    }),
+    false,
+  );
 });
 
+/** 行の追加だけで末尾に飛ばず、追従するかどうかを管理する側に委ねる。 */
 test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ねる", async () => {
   const initialMessages = createMessages(20);
   const mounted = await mountSessionMessageColumn({
@@ -2909,18 +4518,24 @@ test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ね�
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
     await act(async () => {
-      messageList.scrollTop = messageList.scrollHeight - messageList.clientHeight;
+      messageList.scrollTop =
+        messageList.scrollHeight - messageList.clientHeight;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
     const followingScrollTop = messageList.scrollTop;
-    const appendedMessages = [...initialMessages, { role: "assistant" as const, text: "appended at end" }];
+    const appendedMessages = [
+      ...initialMessages,
+      { role: "assistant" as const, text: "appended at end" },
+    ];
 
     await mounted.rerender({
       isMessageListFollowing: true,
       messages: appendedMessages,
     });
     await act(async () => {
-      await new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) =>
+        mounted.dom.window.requestAnimationFrame(() => resolve()),
+      );
     });
 
     assert.equal(messageList.scrollTop, followingScrollTop);
@@ -2933,7 +4548,10 @@ test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ね�
     const nonFollowingScrollTop = messageList.scrollTop;
 
     await mounted.rerender({
-      messages: [...appendedMessages, { role: "user", text: "append while reading history" }],
+      messages: [
+        ...appendedMessages,
+        { role: "user", text: "append while reading history" },
+      ],
     });
 
     assert.equal(messageList.scrollTop, nonFollowingScrollTop);
@@ -2954,20 +4572,26 @@ test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ね�
 // impact = "長い履歴のscrollごとにMarkdown本文が再計算されると操作が重くなる"
 // distinction = "列全体のProfiler更新数は仮想範囲管理も数えるため、本文の再計算を直接区別できない"
 // @end-test-value
+/** 同じ仮想範囲のスクロールは行のマークダウンを再描画しない。 */
 test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを再描画しない", async () => {
   const inspector = new InspectorSession();
   inspector.connect();
   await inspector.post("Profiler.enable");
-  await inspector.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+  await inspector.post("Profiler.startPreciseCoverage", {
+    callCount: true,
+    detailed: false,
+  });
+  /** 精密カバレッジから前回取得後のMarkdown描画回数を集計する。 */
   const takeMarkdownRenderCount = async () => {
     const { result } = await inspector.post("Profiler.takePreciseCoverage");
-    return result.filter((script) => script.url.includes("/MessageRichText."))
+    return result
+      .filter((script) => script.url.includes("/MessageRichText."))
       .flatMap((script) => script.functions)
       .filter((fn) => fn.functionName === "MessageMarkdownPreview")
       .reduce((count, fn) => count + fn.ranges[0].count, 0);
   };
   const messages = Array.from({ length: 100 }, (_, index) => ({
-    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
     text: `message ${index + 1}`,
   }));
   const mounted = await mountSessionMessageColumn({
@@ -2975,7 +4599,7 @@ test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを�
   });
 
   try {
-    assert.ok(await takeMarkdownRenderCount() > 0);
+    assert.ok((await takeMarkdownRenderCount()) > 0);
     const messageList = mounted.messageListRef.current;
     assert.ok(messageList);
     await act(async () => {
@@ -2999,6 +4623,7 @@ test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを�
   }
 });
 
+/** 列を一度非表示にして再表示しても、列自身は末尾へ移動しない。 */
 test("SessionMessageColumn は非表示から復帰したとき独自に末尾へ移動しない", async () => {
   const mounted = await mountSessionMessageColumn({
     messages: createMessages(100),
@@ -3037,10 +4662,12 @@ test("SessionMessageColumn は非表示から復帰したとき独自に末尾�
 // impact = "composer入力時の無関係な親更新で表示済み会話の画像が再mountされる"
 // distinction = "ConversationMessageColumnのprojection生成を通した回帰とは別に、共通stable boundary単体のmemo動作を観測する"
 // @end-test-value
+/** コピーのコールバックだけを交換しても、安定化した列の既存本文は再描画しない。 */
 test("StableSessionMessageColumn は callback の再生成だけでは既存 message を再描画しない", async () => {
   let messageTextReadCount = 0;
   const message = {
     role: "assistant" as const,
+    /** 描画経路がメッセージ本文を参照した回数を観測する。 */
     get text() {
       messageTextReadCount += 1;
       return "stable assistant message";
@@ -3049,6 +4676,7 @@ test("StableSessionMessageColumn は callback の再生成だけでは既存 mes
   const mounted = await mountSessionMessageColumn({
     messages: [message],
     component: StableSessionMessageColumn,
+    /** 本文再描画の計測を始めるため、初回のコピー通知口を置く。 */
     onCopyMessageText() {},
   });
 
@@ -3056,7 +4684,9 @@ test("StableSessionMessageColumn は callback の再生成だけでは既存 mes
     const initialReadCount = messageTextReadCount;
     assert.ok(initialReadCount > 0);
 
-    await mounted.rerender({ onCopyMessageText() {} });
+    await mounted.rerender({
+      /** 処理内容は変えずに関数の同一性だけを変更する。 */ onCopyMessageText() {},
+    });
 
     assert.equal(messageTextReadCount, initialReadCount);
   } finally {
@@ -3076,10 +4706,12 @@ test("StableSessionMessageColumn は callback の再生成だけでは既存 mes
 // impact = "composer入力時に表示済み会話のMarkdown画像が再mountされ、loading状態や表示位置が失われる"
 // distinction = "StableSessionMessageColumn単体の確認とは別に、実際のConversationMessageColumn componentでprojection・character・Set生成を通した親更新を観測する"
 // @end-test-value
+/** ConversationMessageColumnでも、通知関数の再生成だけでは既存本文の評価を繰り返さない。 */
 test("ConversationMessageColumn は callback 再生成だけでは既存 message を再評価しない", async () => {
   let messageTextReadCount = 0;
   const message = {
     role: "assistant" as const,
+    /** 親の会話列が本文を評価した回数を取得と同時に数える。 */
     get text() {
       messageTextReadCount += 1;
       return "stable conversation message";
@@ -3088,6 +4720,7 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
   const mounted = await mountSessionMessageColumn({
     messages: [message],
     component: ConversationBackedMessageColumn,
+    /** 後で同じ役割の新しい関数に置き換える初期コピー通知口。 */
     onCopyMessageText() {},
   });
 
@@ -3095,7 +4728,9 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
     const initialReadCount = messageTextReadCount;
     assert.ok(initialReadCount > 0);
 
-    await mounted.rerender({ onCopyMessageText() {} });
+    await mounted.rerender({
+      /** 本文の入力を固定して別のコピー関数を渡す。 */ onCopyMessageText() {},
+    });
 
     assert.equal(messageTextReadCount, initialReadCount);
   } finally {
@@ -3115,14 +4750,25 @@ test("ConversationMessageColumn は callback 再生成だけでは既存 message
 // impact = "履歴を読みながら新着へ戻る経路とkeyboardでの閲覧継続を保証する"
 // distinction = "hookの追従状態testでは検証できない実buttonとfocusを既存DOM fixtureで確認する"
 // @end-test-value
+/** 本文が更新されても末尾復帰ボタンは同じノードであり、操作すると会話にフォーカスを戻す。 */
 test("SessionMessageColumn は本文更新前後で同じ末尾復帰buttonと会話へのfocusを提供する", async () => {
   let jumps = 0;
   const mounted = await mountSessionMessageColumn({
     messages: createMessages(3),
-    component: (props) => React.createElement(SessionMessageColumn, { ...props, onJumpToBottom: () => { jumps += 1; } }),
+    /** 末尾復帰を親へ通知した回数を見られる会話列を描画する。 */
+    component: (props) =>
+      React.createElement(SessionMessageColumn, {
+        ...props,
+        /** 末尾ボタンが発火した回数を記録する。 */
+        onJumpToBottom: () => {
+          jumps += 1;
+        },
+      }),
   });
   try {
-    const buttons = mounted.container.querySelectorAll<HTMLButtonElement>(".message-list-jump-bottom-button");
+    const buttons = mounted.container.querySelectorAll<HTMLButtonElement>(
+      ".message-list-jump-bottom-button",
+    );
     assert.equal(buttons.length, 1);
     const button = buttons[0]!;
     assert.equal(button.type, "button");
@@ -3131,17 +4777,30 @@ test("SessionMessageColumn は本文更新前後で同じ末尾復帰buttonと�
     assert.equal(button.textContent, "");
     assert.equal(button.querySelectorAll("svg").length, 1);
     await mounted.rerender({ messages: createMessages(4) });
-    assert.equal(mounted.container.querySelectorAll(".message-list-jump-bottom-button").length, 1);
-    assert.equal(mounted.container.querySelector(".message-list-jump-bottom-button"), button);
+    assert.equal(
+      mounted.container.querySelectorAll(".message-list-jump-bottom-button")
+        .length,
+      1,
+    );
+    assert.equal(
+      mounted.container.querySelector(".message-list-jump-bottom-button"),
+      button,
+    );
     assert.equal(button.getAttribute("aria-label"), "Jump to latest");
     assert.equal(button.textContent, "");
     assert.equal(button.querySelectorAll("svg").length, 1);
     button.focus();
     await act(async () => button.click());
     assert.equal(jumps, 1);
-    assert.equal(mounted.dom.window.document.activeElement, mounted.messageListRef.current);
+    assert.equal(
+      mounted.dom.window.document.activeElement,
+      mounted.messageListRef.current,
+    );
     await mounted.rerender({ isMessageListFollowing: true });
-    assert.equal(mounted.container.querySelector(".message-list-jump-bottom-button"), null);
+    assert.equal(
+      mounted.container.querySelector(".message-list-jump-bottom-button"),
+      null,
+    );
   } finally {
     await mounted.cleanup();
   }
@@ -3159,47 +4818,114 @@ test("SessionMessageColumn は本文更新前後で同じ末尾復帰buttonと�
 // impact = "履歴の復帰先を行先頭へずらさず、再計測後も読んでいた段落を維持する"
 // distinction = "cache testのrequest handoffとは異なり、virtualizerがDOMへ投影する行位置、scroll上限と後続の測定通知を通す"
 // @end-test-value
+/** 非表示から再計測した仮想行に、前の可視アンカーとその相対オフセットを復元する。 */
 test("SessionMessageColumn は再計測した行へanchor offsetを復元する", async () => {
-  const messageKeys = Array.from({ length: 100 }, (_, index) => `message-${index}`);
-  const mounted = await mountSessionMessageColumn({ messages: createMessages(100), messageKeys });
-  const originalRect = mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
-  const originalOffsetHeight = Object.getOwnPropertyDescriptor(mounted.dom.window.HTMLElement.prototype, "offsetHeight")!;
+  const messageKeys = Array.from(
+    { length: 100 },
+    (_, index) => `message-${index}`,
+  );
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(100),
+    messageKeys,
+  });
+  const originalRect =
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalOffsetHeight = Object.getOwnPropertyDescriptor(
+    mounted.dom.window.HTMLElement.prototype,
+    "offsetHeight",
+  )!;
   let hidden = false;
   try {
     const list = mounted.messageListRef.current!;
     let scrollTop = list.scrollTop;
     Object.defineProperty(list, "scrollTop", {
       configurable: true,
+      /** テストが模擬している一覧の現在のスクロール位置を返す。 */
       get: () => scrollTop,
+      /** ブラウザーと同じく範囲内に補正し、位置が変わった場合だけスクロールイベントを配送する。 */
       set: (value: number) => {
-        const next = Math.max(0, Math.min(value, Math.max(0, list.scrollHeight - list.clientHeight)));
+        const next = Math.max(
+          0,
+          Math.min(value, Math.max(0, list.scrollHeight - list.clientHeight)),
+        );
         if (next === scrollTop) return;
         scrollTop = next;
-        queueMicrotask(() => list.dispatchEvent(new mounted.dom.window.Event("scroll")));
+        queueMicrotask(() =>
+          list.dispatchEvent(new mounted.dom.window.Event("scroll")),
+        );
       },
     });
-    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
-      if (this.classList.contains("session-message-virtual-row")) {
-        if (hidden) return createRect({ left: 0, top: 0, width: 0, height: 0 });
-        const start = Number.parseFloat(this.style.top || this.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1] || this.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] || "0");
-        return createRect({ left: 0, top: start - list.scrollTop, width: 960, height: this.offsetHeight });
-      }
-      return originalRect.call(this);
-    };
-    Object.defineProperty(mounted.dom.window.HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get() { return hidden && this.classList.contains("session-message-virtual-row") ? 0 : originalOffsetHeight.get!.call(this); },
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect =
+      function () {
+        if (this.classList.contains("session-message-virtual-row")) {
+          if (hidden)
+            return createRect({ left: 0, top: 0, width: 0, height: 0 });
+          const start = Number.parseFloat(
+            this.style.top ||
+              this.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1] ||
+              this.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] ||
+              "0",
+          );
+          return createRect({
+            left: 0,
+            top: start - list.scrollTop,
+            width: 960,
+            height: this.offsetHeight,
+          });
+        }
+        return originalRect.call(this);
+      };
+    Object.defineProperty(
+      mounted.dom.window.HTMLElement.prototype,
+      "offsetHeight",
+      {
+        configurable: true,
+        /** 非表示の仮想行を高さゼロとし、表示中は元の高さ処理に委ねる。 */
+        get() {
+          return hidden &&
+            this.classList.contains("session-message-virtual-row")
+            ? 0
+            : originalOffsetHeight.get!.call(this);
+        },
+      },
+    );
+    /** 復元処理のタイマーと後続の描画フレームが進むのを待つ。 */
+    const settle = async () =>
+      act(async () => {
+        await new Promise((resolve) =>
+          mounted.dom.window.setTimeout(resolve, 180),
+        );
+        for (let frame = 0; frame < 3; frame += 1)
+          await new Promise((resolve) =>
+            mounted.dom.window.requestAnimationFrame(resolve),
+          );
+      });
+    assert.ok(
+      list.scrollHeight > list.clientHeight + 6_000,
+      "fixture has a reachable overflowing anchor",
+    );
+    assert.equal(
+      mounted.container.querySelector(
+        ".session-message-virtual-row[data-index='31']",
+      ),
+      null,
+      "target starts outside the committed virtual range",
+    );
+    await mounted.rerender({
+      messageKeys,
+      messageJumpRequest: {
+        sessionId: "session-1",
+        key: "message-31",
+        offset: -18,
+        requestId: 1,
+      },
     });
-    const settle = async () => act(async () => {
-      await new Promise((resolve) => mounted.dom.window.setTimeout(resolve, 180));
-      for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => mounted.dom.window.requestAnimationFrame(resolve));
-    });
-    assert.ok(list.scrollHeight > list.clientHeight + 6_000, "fixture has a reachable overflowing anchor");
-    assert.equal(mounted.container.querySelector(".session-message-virtual-row[data-index='31']"), null, "target starts outside the committed virtual range");
-    await mounted.rerender({ messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 1 } });
     await settle();
+    /** 選ばれたアンカー行と一覧上端との相対距離を測る。 */
     const anchorOffset = () => {
-      const row = mounted.container.querySelector<HTMLElement>(".session-message-virtual-row[data-index='31']");
+      const row = mounted.container.querySelector<HTMLElement>(
+        ".session-message-virtual-row[data-index='31']",
+      );
       assert.ok(row, "anchor is mounted after the virtualizer jump");
       return row.getBoundingClientRect().top - list.getBoundingClientRect().top;
     };
@@ -3207,28 +4933,62 @@ test("SessionMessageColumn は再計測した行へanchor offsetを復元する"
     assert.ok(list.scrollTop <= list.scrollHeight - list.clientHeight);
     const visibleScrollHeight = list.scrollHeight;
     hidden = true;
-    await mounted.rerender({ isContentActive: false, artifactDetailsEnabled: false });
+    await mounted.rerender({
+      isContentActive: false,
+      artifactDetailsEnabled: false,
+    });
     await settle();
     hidden = false;
-    await mounted.rerender({ isContentActive: true, artifactDetailsEnabled: true, messageKeys, messageJumpRequest: { sessionId: "session-1", key: "message-31", offset: -18, requestId: 2 } });
+    await mounted.rerender({
+      isContentActive: true,
+      artifactDetailsEnabled: true,
+      messageKeys,
+      messageJumpRequest: {
+        sessionId: "session-1",
+        key: "message-31",
+        offset: -18,
+        requestId: 2,
+      },
+    });
     await settle();
-    assert.equal(anchorOffset(), -18, "re-enabling the column restores its reading position after a hidden layout");
+    assert.equal(
+      anchorOffset(),
+      -18,
+      "re-enabling the column restores its reading position after a hidden layout",
+    );
     assert.equal(list.scrollHeight, visibleScrollHeight);
     await mounted.resizeMessageRow(30, 300);
     await settle();
-    assert.equal(anchorOffset(), -18, "late measurement must not replace the restored reading offset");
+    assert.equal(
+      anchorOffset(),
+      -18,
+      "late measurement must not replace the restored reading offset",
+    );
     const readingScrollTop = list.scrollTop;
     await mounted.resizeMessageRow(31, 268);
     await settle();
-    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can grow without moving its top offset");
+    assert.equal(
+      anchorOffset(),
+      -18,
+      "the partially clipped anchor row can grow without moving its top offset",
+    );
     assert.equal(list.scrollTop, readingScrollTop);
     await mounted.resizeMessageRow(31, 120);
     await settle();
-    assert.equal(anchorOffset(), -18, "the partially clipped anchor row can shrink without moving its top offset");
+    assert.equal(
+      anchorOffset(),
+      -18,
+      "the partially clipped anchor row can shrink without moving its top offset",
+    );
     assert.equal(list.scrollTop, readingScrollTop);
   } finally {
-    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = originalRect;
-    Object.defineProperty(mounted.dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
+    mounted.dom.window.HTMLElement.prototype.getBoundingClientRect =
+      originalRect;
+    Object.defineProperty(
+      mounted.dom.window.HTMLElement.prototype,
+      "offsetHeight",
+      originalOffsetHeight,
+    );
     await mounted.cleanup();
   }
 });
@@ -3245,31 +5005,64 @@ test("SessionMessageColumn は再計測した行へanchor offsetを復元する"
 // impact = "通常履歴の操作結果と出力完全性を誤認する"
 // distinction = "projectionの値や型検査では実際のDetailsに結果が表示されることを検証できない"
 // @end-test-value
+/** 個別の操作結果を詳細欄で分けて表示し、新しい項目がない旧形式も扱う。 */
 test("Details keeps individual operation results and legacy missing fields", () => {
   const message = createArtifactMessage();
   message.artifact!.operationTimeline = [
-    { type: "command_execution", summary: "npm test", status: "failed", exitCode: 2, error: { message: "Command failed" }, truncated: true, details: "partial stdout" },
-    { type: "command_execution", summary: "legacy command", details: "saved output" },
+    {
+      type: "command_execution",
+      summary: "npm test",
+      status: "failed",
+      exitCode: 2,
+      error: { message: "Command failed" },
+      truncated: true,
+      details: "partial stdout",
+    },
+    {
+      type: "command_execution",
+      summary: "legacy command",
+      details: "saved output",
+    },
   ];
-  const dom = new JSDOM(renderSessionMessageColumn({ messages: [message], expandedArtifacts: { "session-1-0": true } }));
-  const operations = dom.window.document.querySelectorAll(".artifact-operation-body");
+  const dom = new JSDOM(
+    renderSessionMessageColumn({
+      messages: [message],
+      expandedArtifacts: { "session-1-0": true },
+    }),
+  );
+  const operations = dom.window.document.querySelectorAll(
+    ".artifact-operation-body",
+  );
   assert.match(operations[0].textContent ?? "", /Failed/);
   assert.match(operations[0].textContent ?? "", /Exit Code: 2/);
-  assert.equal(operations[0].querySelector('[role="alert"]')?.textContent, "Command failed");
+  assert.equal(
+    operations[0].querySelector('[role="alert"]')?.textContent,
+    "Command failed",
+  );
   assert.match(operations[0].textContent ?? "", /Output Truncated/);
-  assert.equal(operations[0].querySelector("pre")?.textContent, "partial stdout");
+  assert.equal(
+    operations[0].querySelector("pre")?.textContent,
+    "partial stdout",
+  );
   assert.equal(operations[1].textContent, "legacy commandsaved output");
   dom.window.close();
 });
 
+/** Changed Filesを出さずRun Checksを残し、操作履歴は閉じた一つのグループへまとめる。 */
 test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、Operationsを1groupで初期closedにする", () => {
   const html = renderSessionMessageColumn({
     messages: [createOperationsArtifactMessage()],
     expandedArtifacts: { "session-1-0": true },
   });
   const dom = new JSDOM(html);
-  const operationsGroup = dom.window.document.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
-  const operationFolds = Array.from(operationsGroup?.querySelectorAll<HTMLDetailsElement>(".artifact-operation-fold") ?? []);
+  const operationsGroup = dom.window.document.querySelector<HTMLDetailsElement>(
+    ".artifact-operations-fold",
+  );
+  const operationFolds = Array.from(
+    operationsGroup?.querySelectorAll<HTMLDetailsElement>(
+      ".artifact-operation-fold",
+    ) ?? [],
+  );
 
   assert.match(html, /artifact-panel-session-1-0/);
   assert.doesNotMatch(html, /Changed Files/);
@@ -3277,39 +5070,66 @@ test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し
   assert.doesNotMatch(html, /Open Diff/);
   assert.match(html, /snapshot files/);
   assert.ok(operationsGroup);
-  assert.equal(operationsGroup.querySelector(".artifact-fold-summary-copy span")?.textContent, "4 operations");
+  assert.equal(
+    operationsGroup.querySelector(".artifact-fold-summary-copy span")
+      ?.textContent,
+    "4 operations",
+  );
   assert.equal(operationsGroup.open, false);
-  assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  assert.equal(
+    operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"),
+    "false",
+  );
   assert.equal(operationFolds.length, 4);
   assert.deepEqual(
-    operationFolds.map((operation) => operation.querySelector(".artifact-operation-type")?.textContent),
+    operationFolds.map(
+      (operation) =>
+        operation.querySelector(".artifact-operation-type")?.textContent,
+    ),
     ["Command", "Command", "MCP", "Command"],
   );
   assert.deepEqual(
-    operationFolds.map((operation) => operation.querySelector(".artifact-operation-summary-text")?.textContent),
+    operationFolds.map(
+      (operation) =>
+        operation.querySelector(".artifact-operation-summary-text")
+          ?.textContent,
+    ),
     ["npm test", "npm run typecheck", "filesystem/read", "npm run build"],
   );
   for (const operation of operationFolds) {
     assert.equal(operation.open, false);
-    assert.equal(operation.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+    assert.equal(
+      operation.querySelector("summary")?.getAttribute("aria-expanded"),
+      "false",
+    );
   }
 });
 
+/** 操作履歴と個別項目をそれぞれ開閉でき、長文の詳細もグループ外には出ない。 */
 test("SessionMessageColumn はOperationsと個別operationを開閉でき、長文operationをgroup内部へ保持する", async () => {
   const message = createArtifactMessage();
-  message.artifact!.operationTimeline = [{
-    type: "command_execution",
-    summary: "npm test",
-    details: Array.from({ length: 120 }, (_, index) => `output line ${index + 1}`).join("\n"),
-  }];
+  message.artifact!.operationTimeline = [
+    {
+      type: "command_execution",
+      summary: "npm test",
+      details: Array.from(
+        { length: 120 },
+        (_, index) => `output line ${index + 1}`,
+      ).join("\n"),
+    },
+  ];
   const mounted = await mountSessionMessageColumn({
     messages: [message],
     expandedArtifacts: { "session-1-0": true },
   });
 
   try {
-    const operationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
-    const operationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    const operationsGroup = mounted.container.querySelector<HTMLDetailsElement>(
+      ".artifact-operations-fold",
+    );
+    const operationGroup = mounted.container.querySelector<HTMLDetailsElement>(
+      ".artifact-operation-fold",
+    );
     assert.ok(operationsGroup);
     assert.ok(operationGroup);
     const operationsSummary = operationsGroup.querySelector("summary");
@@ -3319,49 +5139,72 @@ test("SessionMessageColumn はOperationsと個別operationを開閉でき、長�
     assert.equal(operationsGroup.open, false);
     assert.equal(operationGroup.open, false);
     assert.equal(operationsSummary.textContent?.includes("1 operation"), true);
-    assert.equal(operationsSummary.getAttribute("aria-controls"), operationsGroup.querySelector(".artifact-operations-body")?.id);
-    assert.equal(operationSummary.getAttribute("aria-controls"), operationGroup.querySelector(".artifact-operation-body")?.id);
+    assert.equal(
+      operationsSummary.getAttribute("aria-controls"),
+      operationsGroup.querySelector(".artifact-operations-body")?.id,
+    );
+    assert.equal(
+      operationSummary.getAttribute("aria-controls"),
+      operationGroup.querySelector(".artifact-operation-body")?.id,
+    );
 
     await act(async () => {
       operationsGroup.open = true;
       operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
     assert.equal(operationsGroup.open, true);
-    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(
+      operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"),
+      "true",
+    );
     assert.equal(operationGroup.open, false);
-    assert.match(operationsGroup.querySelector(".artifact-operations-body")?.textContent ?? "", /output line 120/);
+    assert.match(
+      operationsGroup.querySelector(".artifact-operations-body")?.textContent ??
+        "",
+      /output line 120/,
+    );
 
     await act(async () => {
       operationGroup.open = true;
       operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
     assert.equal(operationGroup.open, true);
-    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(
+      operationGroup.querySelector("summary")?.getAttribute("aria-expanded"),
+      "true",
+    );
 
     await act(async () => {
       operationGroup.open = false;
       operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
     assert.equal(operationGroup.open, false);
-    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+    assert.equal(
+      operationGroup.querySelector("summary")?.getAttribute("aria-expanded"),
+      "false",
+    );
 
     await act(async () => {
       operationsGroup.open = false;
       operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
     assert.equal(operationsGroup.open, false);
-    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+    assert.equal(
+      operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"),
+      "false",
+    );
   } finally {
     await mounted.cleanup();
   }
 });
 
+/** 仮想化で行が一度アンマウントされても、操作グループと個別項目の開閉状態が戻る。 */
 test("SessionMessageColumn はvirtualizationでrowが再mountしてもOperationsとoperationの開閉状態を維持する", async () => {
-  const messages = Array.from({ length: 30 }, (_, index) => (
+  const messages = Array.from({ length: 30 }, (_, index) =>
     index === 0
       ? createOperationsArtifactMessage()
-      : { role: "user" as const, text: `message ${index + 1}` }
-  ));
+      : { role: "user" as const, text: `message ${index + 1}` },
+  );
   const mounted = await mountSessionMessageColumn({
     messages,
     expandedArtifacts: { "session-1-0": true },
@@ -3375,17 +5218,27 @@ test("SessionMessageColumn はvirtualizationでrowが再mountしてもOperations
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
 
-    const initialOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    const initialOperationsGroup =
+      mounted.container.querySelector<HTMLDetailsElement>(
+        ".artifact-operations-fold",
+      );
     assert.ok(initialOperationsGroup);
     await act(async () => {
       initialOperationsGroup.open = true;
-      initialOperationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+      initialOperationsGroup.dispatchEvent(
+        new mounted.dom.window.Event("toggle"),
+      );
     });
-    const initialOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    const initialOperationGroup =
+      mounted.container.querySelector<HTMLDetailsElement>(
+        ".artifact-operation-fold",
+      );
     assert.ok(initialOperationGroup);
     await act(async () => {
       initialOperationGroup.open = true;
-      initialOperationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+      initialOperationGroup.dispatchEvent(
+        new mounted.dom.window.Event("toggle"),
+      );
     });
     assert.equal(initialOperationsGroup.open, true);
     assert.equal(initialOperationGroup.open, true);
@@ -3394,29 +5247,54 @@ test("SessionMessageColumn はvirtualizationでrowが再mountしてもOperations
       messageList.scrollTop = messageList.scrollHeight;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    assert.equal(mounted.container.querySelector(".artifact-operations-fold"), null);
+    assert.equal(
+      mounted.container.querySelector(".artifact-operations-fold"),
+      null,
+    );
 
     await act(async () => {
       messageList.scrollTop = 0;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    const remountedOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
-    const remountedOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    const remountedOperationsGroup =
+      mounted.container.querySelector<HTMLDetailsElement>(
+        ".artifact-operations-fold",
+      );
+    const remountedOperationGroup =
+      mounted.container.querySelector<HTMLDetailsElement>(
+        ".artifact-operation-fold",
+      );
     assert.ok(remountedOperationsGroup);
     assert.ok(remountedOperationGroup);
     assert.equal(remountedOperationsGroup.open, true);
-    assert.equal(remountedOperationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(
+      remountedOperationsGroup
+        .querySelector("summary")
+        ?.getAttribute("aria-expanded"),
+      "true",
+    );
     assert.equal(remountedOperationGroup.open, true);
-    assert.equal(remountedOperationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(
+      remountedOperationGroup
+        .querySelector("summary")
+        ?.getAttribute("aria-expanded"),
+      "true",
+    );
   } finally {
     await mounted.cleanup();
   }
 });
 
+/** 選択ツールバーは画面とActionDockの境界を使って上下を選び、横方向を収める。 */
 test("selection action geometry は viewport と ActionDock 境界内で flip と左右 clamp を行う", () => {
   const overlayRect = createRect({ left: 0, top: 0, width: 360, height: 640 });
   const sourceRect = createRect({ left: 12, top: 80, width: 336, height: 500 });
-  const actionDockRect = createRect({ left: 12, top: 580, width: 336, height: 48 });
+  const actionDockRect = createRect({
+    left: 12,
+    top: 580,
+    width: 336,
+    height: 48,
+  });
   const toolbarRect = { width: 112, height: 32 };
 
   const nearDock = resolveSelectionActionOverlayPosition({
@@ -3427,7 +5305,9 @@ test("selection action geometry は viewport と ActionDock 境界内で flip �
     toolbarRect,
   });
   assert.deepEqual(nearDock, { left: 124, maxWidth: 320, top: 526 });
-  assert.ok((nearDock?.top as number) + toolbarRect.height < actionDockRect.top);
+  assert.ok(
+    (nearDock?.top as number) + toolbarRect.height < actionDockRect.top,
+  );
 
   const leftEdge = resolveSelectionActionOverlayPosition({
     anchorRect: createRect({ left: -20, top: 120, width: 20, height: 20 }),
@@ -3448,6 +5328,7 @@ test("selection action geometry は viewport と ActionDock 境界内で flip �
   assert.equal(rightEdge?.left, 228);
 });
 
+/** 本文に選択範囲がない初期表示では応答アクションを描画しない。 */
 test("SessionMessageColumn は未選択時に response action を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: [
@@ -3461,7 +5342,10 @@ test("SessionMessageColumn は未選択時に response action を描画しない
   assert.doesNotMatch(html, />Copy</);
   assert.doesNotMatch(html, />Quote</);
   assert.match(html, /data-message-text-actions="true"/);
-  assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
+  assert.equal(
+    (html.match(/data-message-text-actions="true"/g) ?? []).length,
+    1,
+  );
 });
 
 // @test-value v2
@@ -3476,9 +5360,11 @@ test("SessionMessageColumn は未選択時に response action を描画しない
 // impact = "通常の会話閲覧・streaming時に不要な同期layout計測が発生する"
 // distinction = "既存testはtoolbarの有無を検証するが、未選択時のgeometry readを観測しない"
 // @end-test-value
+/** アクションが利用可能でも未選択なら、選択やスクロールのイベントで矩形を取得しない。 */
 test("SessionMessageColumn は未選択時にselection toolbarの矩形を計測しない", async () => {
   const mounted = await mountSessionMessageColumn({
     messages: [{ role: "assistant", text: "assistant result" }],
+    /** コピー操作を有効にしたまま、実際のコピーなしで計測の有無を観測する。 */
     onCopyMessageText: () => {},
   });
   try {
@@ -3487,11 +5373,19 @@ test("SessionMessageColumn は未選択時にselection toolbarの矩形を計測
     let geometryReads = 0;
     Object.defineProperty(messageList, "getBoundingClientRect", {
       configurable: true,
-      value: () => { geometryReads += 1; return createRect({ left: 0, top: 0, width: 500, height: 500 }); },
+      /** 一覧の境界矩形を参照した回数を数えて、それが不要な場合の検出に使う。 */
+      value: () => {
+        geometryReads += 1;
+        return createRect({ left: 0, top: 0, width: 500, height: 500 });
+      },
     });
     await act(async () => {
-      mounted.dom.window.document.dispatchEvent(new mounted.dom.window.Event("selectionchange"));
-      messageList.dispatchEvent(new mounted.dom.window.Event("scroll", { bubbles: true }));
+      mounted.dom.window.document.dispatchEvent(
+        new mounted.dom.window.Event("selectionchange"),
+      );
+      messageList.dispatchEvent(
+        new mounted.dom.window.Event("scroll", { bubbles: true }),
+      );
     });
     assert.equal(geometryReads, 0);
   } finally {
@@ -3499,18 +5393,29 @@ test("SessionMessageColumn は未選択時にselection toolbarの矩形を計測
   }
 });
 
+/** 保存されたassistant本文は、実行の終端状態によらず選択アクションの対象として残す。 */
 test("SessionMessageColumn は保持された assistant text を run の終了状態に関係なく response action 対象にする", () => {
   const states = [
     { label: "cancel前", isRunning: true, liveRunErrorMessage: "" },
-    { label: "cancel後", isRunning: false, liveRunErrorMessage: "キャンセルしました" },
-    { label: "failed", isRunning: false, liveRunErrorMessage: "実行に失敗しました" },
+    {
+      label: "cancel後",
+      isRunning: false,
+      liveRunErrorMessage: "キャンセルしました",
+    },
+    {
+      label: "failed",
+      isRunning: false,
+      liveRunErrorMessage: "実行に失敗しました",
+    },
     { label: "running", isRunning: true, liveRunErrorMessage: "" },
     { label: "通常完了", isRunning: false, liveRunErrorMessage: "" },
   ];
 
   for (const state of states) {
     const html = renderSessionMessageColumn({
-      messages: [{ role: "assistant", text: `${state.label}の保持済みresponse` }],
+      messages: [
+        { role: "assistant", text: `${state.label}の保持済みresponse` },
+      ],
       isRunning: state.isRunning,
       liveRunErrorMessage: state.liveRunErrorMessage,
       withResponseActions: true,
@@ -3524,6 +5429,7 @@ test("SessionMessageColumn は保持された assistant text を run の終了�
   }
 });
 
+/** 確定前のpending本文も選択アクションの対象に含まれる。 */
 test("SessionMessageColumn は pending response text も response action 対象にする", () => {
   const html = renderSessionMessageColumn({
     messages: [{ role: "user", text: "prompt" }],
@@ -3533,7 +5439,9 @@ test("SessionMessageColumn は pending response text も response action 対象�
   });
 
   const dom = new JSDOM(html);
-  const pendingBody = dom.window.document.querySelector("[data-pending-message-body='true']");
+  const pendingBody = dom.window.document.querySelector(
+    "[data-pending-message-body='true']",
+  );
   assert.ok(pendingBody);
   assert.equal(pendingBody.getAttribute("data-message-body"), "true");
   assert.equal(pendingBody.getAttribute("data-message-text-actions"), "true");
@@ -3551,16 +5459,20 @@ test("SessionMessageColumn は pending response text も response action 対象�
 // impact = "assistant response text actionの到達性と非対象messageへの誤表示を防ぐ"
 // distinction = "selection eventの実DOM遷移を検証し、static markupやtypecheckではselection ownerとlifecycleを確認しない"
 // @end-test-value
+/** 適格な本文選択にだけツールバーを出し、コピー・引用の対象を選択文字列に限定する。 */
 test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {
   const copiedTexts: string[] = [];
   const quotedTexts: string[] = [];
-  const assistantMessage = "assistant result text\n\n```text\nnested code text\n```";
+  const assistantMessage =
+    "assistant result text\n\n```text\nnested code text\n```";
   const mounted = await mountSessionMessageColumn({
     messages: [
       { role: "assistant", text: assistantMessage },
       { role: "user", text: "user prompt text" },
     ],
+    /** クリップボードを変更せずコピー通知の文字列を捕捉する。 */
     onCopyMessageText: (text) => copiedTexts.push(text),
+    /** 下書きを変更せず引用通知に渡った文字列を記録する。 */
     onQuoteMessageText: (text) => quotedTexts.push(text),
   });
 
@@ -3570,6 +5482,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.ok(messageList);
     Object.defineProperty(messageList, "getBoundingClientRect", {
       configurable: true,
+      /** ツールバーが収まるべき会話領域を固定の矩形で表す。 */
       value: () => createRect({ left: 0, top: 0, width: 500, height: 500 }),
     });
 
@@ -3579,76 +5492,107 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     let selectionNode: Node = container;
     let resolveSelectionNode: (() => Node | null) | null = null;
     const selection = {
+      /** テストが選択を解除した状態かどうかを返す。 */
       get isCollapsed() {
         return isCollapsed;
       },
+      /** 選択中のときだけ一つの範囲を返す形に揃える。 */
       get rangeCount() {
         return isCollapsed ? 0 : 1;
       },
+      /** 選択範囲の文章上の位置と幾何情報を模擬する。 */
       getRangeAt() {
         return {
+          /** 対象ノードを再描画後に取得し直せる場合はそのノードを返す。 */
           get commonAncestorContainer() {
             return resolveSelectionNode?.() ?? selectionNode;
           },
+          /** 選択全体の位置としてテストが指定した矩形を返す。 */
           getBoundingClientRect: () => anchorRect,
+          /** 断片矩形を取得する経路でも同じ選択位置を使う。 */
           getClientRects: () => [anchorRect],
         };
       },
+      /** APIがコピーや引用に使う選択文字列を返す。 */
       toString() {
         return selectedText;
       },
     } as unknown as Selection;
     Object.defineProperty(dom.window, "getSelection", {
       configurable: true,
+      /** ウィンドウ選択をテストが差し替え可能な選択オブジェクトへ接続する。 */
       value: () => selection,
     });
 
-    const selectText = async (body: Element, text: string, rect: DOMRect, targetSelector?: string) => {
+    /** 選択対象・文字列・位置を更新し、選択変更を本文の処理に通知する。 */
+    const selectText = async (
+      body: Element,
+      text: string,
+      rect: DOMRect,
+      targetSelector?: string,
+    ) => {
       const target = targetSelector
         ? body.querySelector(targetSelector)
-        : body.querySelector(".message-paragraph") ?? body.querySelector(".message-body");
+        : (body.querySelector(".message-paragraph") ??
+          body.querySelector(".message-body"));
       const textNode = target?.firstChild;
       assert.ok(textNode);
       selectionNode = textNode;
       resolveSelectionNode = targetSelector
-        ? () => container
-          .querySelector("[data-message-text-actions='true']")
-          ?.querySelector(targetSelector)
-          ?.firstChild ?? null
+        ? () =>
+            container
+              .querySelector("[data-message-text-actions='true']")
+              ?.querySelector(targetSelector)?.firstChild ?? null
         : null;
       selectedText = text;
       isCollapsed = false;
       anchorRect = rect;
       await act(async () => {
-        dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+        dom.window.document.dispatchEvent(
+          new dom.window.Event("selectionchange"),
+        );
       });
     };
+    /** 選択内容を空に戻してツールバーに選択解除を通知する。 */
     const clearSelection = async () => {
       isCollapsed = true;
       selectedText = "";
       await act(async () => {
-        dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+        dom.window.document.dispatchEvent(
+          new dom.window.Event("selectionchange"),
+        );
       });
     };
 
+    /** 選択アクションが有効なassistant本文ノードを取得する。 */
     const getAssistantBody = () => {
-      const body = container.querySelector("[data-message-text-actions=\"true\"]");
+      const body = container.querySelector(
+        '[data-message-text-actions="true"]',
+      );
       assert.ok(body);
       return body;
     };
     let assistantBody = getAssistantBody();
     await selectText(assistantBody, "  assistant result\n", anchorRect);
 
-    let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    let toolbar = container.querySelector(
+      ".message-response-actions",
+    ) as HTMLElement | null;
     assert.ok(toolbar);
-    assert.ok(toolbar.parentElement?.classList.contains("session-selection-action-overlay"));
+    assert.ok(
+      toolbar.parentElement?.classList.contains(
+        "session-selection-action-overlay",
+      ),
+    );
     assert.equal(toolbar.style.left, "74px");
     assert.equal(toolbar.style.top, "60px");
 
-    const copyButton = Array.from(toolbar.querySelectorAll("button"))
-      .find((button) => button.textContent === "Copy") as HTMLButtonElement | undefined;
-    const quoteButton = Array.from(toolbar.querySelectorAll("button"))
-      .find((button) => button.textContent === "Quote") as HTMLButtonElement | undefined;
+    const copyButton = Array.from(toolbar.querySelectorAll("button")).find(
+      (button) => button.textContent === "Copy",
+    ) as HTMLButtonElement | undefined;
+    const quoteButton = Array.from(toolbar.querySelectorAll("button")).find(
+      (button) => button.textContent === "Quote",
+    ) as HTMLButtonElement | undefined;
     assert.ok(copyButton);
     assert.ok(quoteButton);
 
@@ -3659,14 +5603,25 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.deepEqual(copiedTexts, ["  assistant result\n"]);
     assert.deepEqual(quotedTexts, ["  assistant result\n"]);
 
-    const userBody = Array.from(container.querySelectorAll("[data-message-body=\"true\"]"))
-      .find((body) => body.getAttribute("data-message-text-actions") !== "true");
+    const userBody = Array.from(
+      container.querySelectorAll('[data-message-body="true"]'),
+    ).find((body) => body.getAttribute("data-message-text-actions") !== "true");
     assert.ok(userBody);
-    await selectText(userBody, "user prompt", createRect({ left: 120, top: 140, width: 60, height: 20 }));
+    await selectText(
+      userBody,
+      "user prompt",
+      createRect({ left: 120, top: 140, width: 60, height: 20 }),
+    );
     assert.equal(container.querySelector(".message-response-actions"), null);
 
-    await selectText(assistantBody, "result text", createRect({ left: 200, top: 220, width: 80, height: 20 }));
-    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    await selectText(
+      assistantBody,
+      "result text",
+      createRect({ left: 200, top: 220, width: 80, height: 20 }),
+    );
+    toolbar = container.querySelector(
+      ".message-response-actions",
+    ) as HTMLElement | null;
     assert.ok(toolbar);
     assert.equal(toolbar.style.left, "184px");
     assert.equal(toolbar.style.top, "180px");
@@ -3675,7 +5630,9 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     await act(async () => {
       dom.window.dispatchEvent(new dom.window.Event("resize"));
     });
-    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    toolbar = container.querySelector(
+      ".message-response-actions",
+    ) as HTMLElement | null;
     assert.ok(toolbar);
     assert.equal(toolbar.style.left, "224px");
     assert.equal(toolbar.style.top, "220px");
@@ -3688,13 +5645,19 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       ".message-code-block code",
     );
     assistantBody = getAssistantBody();
-    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
+    const nestedScrollOwner = assistantBody.querySelector(
+      ".message-code-block",
+    );
     assert.ok(nestedScrollOwner);
     anchorRect = createRect({ left: 120, top: 280, width: 80, height: 20 });
     await act(async () => {
-      nestedScrollOwner.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
+      nestedScrollOwner.dispatchEvent(
+        new dom.window.Event("scroll", { bubbles: false }),
+      );
     });
-    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    toolbar = container.querySelector(
+      ".message-response-actions",
+    ) as HTMLElement | null;
     assert.ok(toolbar);
     assert.equal(toolbar.style.left, "104px");
     assert.equal(toolbar.style.top, "240px");
@@ -3706,32 +5669,47 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(container.querySelector(".message-response-actions"), null);
 
     assistantBody = getAssistantBody();
-    await selectText(assistantBody, "assistant result", createRect({ left: 100, top: 100, width: 60, height: 20 }));
+    await selectText(
+      assistantBody,
+      "assistant result",
+      createRect({ left: 100, top: 100, width: 60, height: 20 }),
+    );
     assert.ok(container.querySelector(".message-response-actions"));
     await mounted.rerender({
       messageViewMode: "source",
+      /** Sourceへ切り替えた後もコピー対象が同じ記録に入るようにする。 */
       onCopyMessageText: (text) => copiedTexts.push(text),
+      /** Source本文の選択から得た引用を既存の履歴に記録する。 */
       onQuoteMessageText: (text) => quotedTexts.push(text),
     });
     assert.equal(container.querySelector(".message-response-actions"), null);
     assert.equal(
-      container.querySelector("[data-message-text-actions='true']")?.textContent,
+      container.querySelector("[data-message-text-actions='true']")
+        ?.textContent,
       assistantMessage,
     );
 
-    const currentAssistantBody = container.querySelector("[data-message-text-actions='true']");
+    const currentAssistantBody = container.querySelector(
+      "[data-message-text-actions='true']",
+    );
     assert.ok(currentAssistantBody);
     await selectText(
       currentAssistantBody,
       "assistant result",
       createRect({ left: 100, top: 100, width: 60, height: 20 }),
     );
-    const sourceToolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    const sourceToolbar = container.querySelector(
+      ".message-response-actions",
+    ) as HTMLElement | null;
     assert.ok(sourceToolbar);
-    const sourceCopyButton = Array.from(sourceToolbar.querySelectorAll("button"))
-      .find((button) => button.textContent === "Copy") as HTMLButtonElement | undefined;
-    const sourceQuoteButton = Array.from(sourceToolbar.querySelectorAll("button"))
-      .find((button) => button.textContent === "Quote") as HTMLButtonElement | undefined;
+    const sourceCopyButton = Array.from(
+      sourceToolbar.querySelectorAll("button"),
+    ).find((button) => button.textContent === "Copy") as
+      HTMLButtonElement | undefined;
+    const sourceQuoteButton = Array.from(
+      sourceToolbar.querySelectorAll("button"),
+    ).find((button) => button.textContent === "Quote") as
+      HTMLButtonElement | undefined;
     assert.ok(sourceCopyButton);
     assert.ok(sourceQuoteButton);
     await act(async () => {
@@ -3742,7 +5720,9 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.deepEqual(quotedTexts, ["  assistant result\n", "assistant result"]);
     await mounted.rerender({
       messages: [],
+      /** 本文を除去するケースでもコピー操作の設定自体は有効にしておく。 */
       onCopyMessageText: (text) => copiedTexts.push(text),
+      /** 本文の除去と引用通知口の設定変更が混ざらないようにする。 */
       onQuoteMessageText: (text) => quotedTexts.push(text),
       messageViewMode: "source",
     });
@@ -3754,6 +5734,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
   }
 });
 
+/** Auxiliaryのトランスクリプトは別欄に分けず会話一覧のグループとして描画する。 */
 test("SessionMessageColumn は Auxiliary transcript group を message list 内に描画する", () => {
   const html = renderSessionMessageColumn({
     messages: [
@@ -3768,7 +5749,10 @@ test("SessionMessageColumn は Auxiliary transcript group を message list 内�
 
   assert.match(html, /auxiliary-message-group-label/);
   assert.match(html, /auxiliary-message-group-item/);
-  assert.match(html, /session-message-virtual-row auxiliary-message-group-continues/);
+  assert.match(
+    html,
+    /session-message-virtual-row auxiliary-message-group-continues/,
+  );
   assert.match(html, />Auxiliary</);
   assert.doesNotMatch(html, />Closed</);
   assert.ok(
@@ -3777,8 +5761,10 @@ test("SessionMessageColumn は Auxiliary transcript group を message list 内�
   );
 });
 
+/** Source表示では通常行とpending行の両方に加工前のMarkdownを出す。 */
 test("SessionMessageColumn の Source は通常 message と pending の元 Markdown を表示する", () => {
-  const messageSource = "> quote\n- [label](https://example.test/path)\n- `code`";
+  const messageSource =
+    "> quote\n- [label](https://example.test/path)\n- `code`";
   const pendingSource = "pending  line\n\nnext";
   const html = renderSessionMessageColumn({
     messages: [{ role: "assistant", text: messageSource }],
@@ -3788,12 +5774,22 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
   });
   const dom = new JSDOM(html);
   const sources = [
-    dom.window.document.querySelector("[data-message-body='true'] > .message-body"),
-    dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body"),
+    dom.window.document.querySelector(
+      "[data-message-body='true'] > .message-body",
+    ),
+    dom.window.document.querySelector(
+      "[data-pending-message-body='true'] > .message-body",
+    ),
   ];
 
-  assert.deepEqual(sources.map((element) => element?.textContent), [messageSource, pendingSource]);
-  assert.equal(dom.window.document.querySelector("[data-message-body='true'] a"), null);
+  assert.deepEqual(
+    sources.map((element) => element?.textContent),
+    [messageSource, pendingSource],
+  );
+  assert.equal(
+    dom.window.document.querySelector("[data-message-body='true'] a"),
+    null,
+  );
 });
 
 // @test-value v2
@@ -3808,6 +5804,7 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
 // impact = "実行中requestへの承認・入力操作が会話末尾で見つからなくなる"
 // distinction = "Main transcriptの大量messageを含む末尾位置と各live requestの内容を同時に確認する"
 // @end-test-value
+/** 仮想ウィンドウの末尾でpendingと進行中の承認・質問への導線を維持する。 */
 test("SessionMessageColumn は pending と live approval\/elicitation を message window の末尾で維持する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(100),
@@ -3817,7 +5814,9 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  const approval = new JSDOM(html).window.document.querySelector('[role="group"][aria-label="Approval required"]');
+  const approval = new JSDOM(html).window.document.querySelector(
+    '[role="group"][aria-label="Approval required"]',
+  );
   assert.ok(approval);
   assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.match(html, /対象ブランチを選んでね。/);
@@ -3844,73 +5843,144 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
 // impact = "利用者が実行中の会話から承認を見つけられず、古い要求や別の要求へ判断する誤操作につながる"
 // distinction = "既存のcard単体testでは会話内の配置を、末尾SSR testではページングと解決時の操作遷移を検出できない。既存DOM fixtureの4組合せで確認する"
 // @end-test-value
+/** 承認は届いた応答位置に表示され、そこで選択した判断を通知して閉じられる。 */
 test("SessionMessageColumn は承認を受信時の応答位置で操作して閉じる", async () => {
   for (const paged of [false, true]) {
     for (const projected of [false, true]) {
-      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const decisions: Array<
+        Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>
+      > = [];
       const explanation = "操作前の説明";
-      let request: LiveApprovalRequest | null = { ...createLiveApprovalRequest(), textPosition: explanation.length };
+      let request: LiveApprovalRequest | null = {
+        ...createLiveApprovalRequest(),
+        textPosition: explanation.length,
+      };
       const messages: Message[] = [{ role: "user", text: "依頼" }];
       if (projected) messages.push({ role: "assistant", text: explanation });
+      /** ページングの有無と投影済み行の有無を切り替えて同じ承認経路を使う。 */
       function Column(props: SessionMessageColumnProps) {
         return React.createElement(SessionMessageColumn, {
           ...props,
-          conversationPaging: paged ? { loading: false, error: "", onRetry() {} } : undefined,
+          conversationPaging: paged
+            ? {
+                loading: false,
+                error: "",
+                /** ページ再試行を起こさず、ページング中の列で承認の配置を比較する。 */ onRetry() {},
+              }
+            : undefined,
           pendingResponseMessageKey: projected ? "response" : null,
           liveApprovalRequest: request,
+          /** 選んだ承認判断を引数ごと記録し、配送内容を検査できるようにする。 */
           onResolveLiveApproval: (...args) => decisions.push(args),
         });
       }
       const mounted = await mountSessionMessageColumn({
-        component: Column, messages, messageKeys: projected ? ["prompt", "response"] : ["prompt"],
-        isRunning: true, liveRunAssistantText: explanation,
+        component: Column,
+        messages,
+        messageKeys: projected ? ["prompt", "response"] : ["prompt"],
+        isRunning: true,
+        liveRunAssistantText: explanation,
       });
       try {
         const { container, dom } = mounted;
-        const card = container.querySelector<HTMLElement>('[aria-label="Approval required"]');
+        const card = container.querySelector<HTMLElement>(
+          '[aria-label="Approval required"]',
+        );
         assert.ok(card);
-        assert.equal(container.querySelectorAll('[aria-label="Approval required"]').length, 1);
-        const response = card.closest(".session-message-list .message-row.assistant");
+        assert.equal(
+          container.querySelectorAll('[aria-label="Approval required"]').length,
+          1,
+        );
+        const response = card.closest(
+          ".session-message-list .message-row.assistant",
+        );
         assert.ok(response, "承認はメッセージ一覧内の応答に属する");
-        const body = [...response.querySelectorAll("p")].find((node) => node.textContent === explanation);
+        const body = [...response.querySelectorAll("p")].find(
+          (node) => node.textContent === explanation,
+        );
         assert.ok(body);
-        assert.ok(body.compareDocumentPosition(card) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.ok(
+          body.compareDocumentPosition(card) &
+            dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+        );
         assert.match(card.textContent ?? "", /npm test を実行します/);
         assert.match(card.textContent ?? "", /確認してね/);
-        const allow = [...card.querySelectorAll("button")].find((button) => button.textContent === "Allow Once");
+        const allow = [...card.querySelectorAll("button")].find(
+          (button) => button.textContent === "Allow Once",
+        );
         assert.ok(allow);
         allow.focus();
         const continued = `${explanation}\n\n後続の説明`;
         await mounted.rerender({
-          messages: projected ? [{ role: "user", text: "依頼" }, { role: "assistant", text: continued }] : messages,
+          messages: projected
+            ? [
+                { role: "user", text: "依頼" },
+                { role: "assistant", text: continued },
+              ]
+            : messages,
           liveRunAssistantText: continued,
         });
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
-        const following = [...response.querySelectorAll("p")].find((node) => node.textContent === "後続の説明");
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        });
+        const following = [...response.querySelectorAll("p")].find(
+          (node) => node.textContent === "後続の説明",
+        );
         assert.ok(following);
-        assert.ok(card.compareDocumentPosition(following) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-        assert.equal(container.querySelector('[aria-label="Approval required"]'), card);
+        assert.ok(
+          card.compareDocumentPosition(following) &
+            dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        assert.equal(
+          container.querySelector('[aria-label="Approval required"]'),
+          card,
+        );
         assert.equal(dom.window.document.activeElement, allow);
         await act(async () => allow.click());
         assert.deepEqual(decisions, [[request, "approve"]]);
 
         request = null;
         await mounted.rerender({});
-        assert.equal(container.querySelector('[aria-label="Approval required"]'), null);
+        assert.equal(
+          container.querySelector('[aria-label="Approval required"]'),
+          null,
+        );
         assert.match(container.textContent ?? "", /操作前の説明/);
-        assert.equal(container.textContent?.includes("npm test を実行します"), false);
+        assert.equal(
+          container.textContent?.includes("npm test を実行します"),
+          false,
+        );
 
-        request = { ...createLiveApprovalRequest(), requestId: "approval-2", summary: "次の操作", textPosition: continued.length };
+        request = {
+          ...createLiveApprovalRequest(),
+          requestId: "approval-2",
+          summary: "次の操作",
+          textPosition: continued.length,
+        };
         await mounted.rerender({});
-        const reject = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Approval required"] button')]
-          .find((button) => button.textContent === "Reject");
+        const reject = [
+          ...container.querySelectorAll<HTMLButtonElement>(
+            '[aria-label="Approval required"] button',
+          ),
+        ].find((button) => button.textContent === "Reject");
         assert.ok(reject);
         await act(async () => reject.click());
         assert.deepEqual(decisions.at(-1), [request, "deny"]);
-        await mounted.rerender({ isRunning: false, messages: [{ role: "assistant", text: explanation }], messageKeys: ["response"], liveRunAssistantText: "" });
-        assert.equal(container.querySelector('[aria-label="Approval required"]'), null, "終了後はstale requestを操作面へ戻さない");
+        await mounted.rerender({
+          isRunning: false,
+          messages: [{ role: "assistant", text: explanation }],
+          messageKeys: ["response"],
+          liveRunAssistantText: "",
+        });
+        assert.equal(
+          container.querySelector('[aria-label="Approval required"]'),
+          null,
+          "終了後はstale requestを操作面へ戻さない",
+        );
         assert.match(container.textContent ?? "", /操作前の説明/);
-      } finally { await mounted.cleanup(); }
+      } finally {
+        await mounted.cleanup();
+      }
     }
   }
 });
@@ -3927,26 +5997,43 @@ test("SessionMessageColumn は承認を受信時の応答位置で操作して�
 // impact = "詳細を読んでいる途中に内容と操作位置を失い、keyboardで承認判断を継続できなくなる"
 // distinction = "既存の承認位置testは初めから本文があり、card単体testは本文rendererの親切替を通らない。既存DOM fixtureの4条件で状態とfocusを直接確認する"
 // @end-test-value
+/** 空の応答に届いた承認は、後から本文が到着しても詳細の開閉状態と操作フォーカスを失わない。 */
 test("空本文への承認は本文到着後も詳細とfocusを保持する", async () => {
   for (const projected of [false, true]) {
     for (const messageViewMode of ["preview", "source"] as const) {
       const request = { ...createLiveApprovalRequest(), textPosition: 0 };
-      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
-      const messages: Message[] = projected ? [{ role: "assistant", text: "" }] : [];
+      const decisions: Array<
+        Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>
+      > = [];
+      const messages: Message[] = projected
+        ? [{ role: "assistant", text: "" }]
+        : [];
+      /** 同じ応答キーに承認を接続し、本文到着前後で同じ列を使う。 */
       function Column(props: SessionMessageColumnProps) {
         return React.createElement(SessionMessageColumn, {
-          ...props, pendingResponseMessageKey: projected ? "response" : null,
-          liveApprovalRequest: request, onResolveLiveApproval: (...args) => decisions.push(args),
+          ...props,
+          pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: request,
+          /** 本文が到着してから操作した承認の結果を記録する。 */
+          onResolveLiveApproval: (...args) => decisions.push(args),
         });
       }
       const mounted = await mountSessionMessageColumn({
-        component: Column, messages, messageKeys: projected ? ["response"] : [],
-        isRunning: true, liveRunAssistantText: "", messageViewMode,
+        component: Column,
+        messages,
+        messageKeys: projected ? ["response"] : [],
+        isRunning: true,
+        liveRunAssistantText: "",
+        messageViewMode,
       });
       try {
         const { container, dom } = mounted;
-        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
-        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        const card = container.querySelector<HTMLElement>(
+          "[aria-label='Approval required']",
+        )!;
+        const toggle = card.querySelector<HTMLButtonElement>(
+          "[aria-label='Show approval details']",
+        )!;
         await act(async () => toggle.click());
         toggle.focus();
         assert.equal(toggle.getAttribute("aria-expanded"), "true");
@@ -3955,17 +6042,32 @@ test("空本文への承認は本文到着後も詳細とfocusを保持する", 
           messages: projected ? [{ role: "assistant", text }] : messages,
           liveRunAssistantText: text,
         });
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
-        assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
-        assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        });
+        assert.equal(
+          container.querySelector("[aria-label='Approval required']") === card,
+          true,
+        );
+        assert.equal(
+          card.querySelector("[aria-label='Hide approval details']") === toggle,
+          true,
+        );
         assert.equal(toggle.getAttribute("aria-expanded"), "true");
-        assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+        assert.equal(
+          card.querySelector<HTMLElement>(".live-approval-details")?.hidden,
+          false,
+        );
         assert.equal(dom.window.document.activeElement === toggle, true);
         assert.match(container.textContent ?? "", /Subsequent assistant text/);
-        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        const allow = [
+          ...card.querySelectorAll<HTMLButtonElement>("button"),
+        ].find((button) => button.textContent === "Allow Once")!;
         await act(async () => allow.click());
         assert.deepEqual(decisions, [[request, "approve"]]);
-      } finally { await mounted.cleanup(); }
+      } finally {
+        await mounted.cleanup();
+      }
     }
   }
 });
@@ -3982,54 +6084,110 @@ test("空本文への承認は本文到着後も詳細とfocusを保持する", 
 // impact = "質問が届くたびに閲覧中の詳細とkeyboard操作位置を失い、承認判断の継続が妨げられる"
 // distinction = "既存の空本文・本文更新testでは質問による描画ownerの分割と結合を通らない。既存DOM fixtureで同時要求の操作継続性を検証し、型検査や静的描画では分からない再mountを検出する"
 // @end-test-value
+/** 質問が追加・更新・解決されても、共存する承認カードの詳細とフォーカスを維持する。 */
 test("質問の追加・更新・解決でも同じ承認の詳細とfocusを保持する", async () => {
   for (const projected of [false, true]) {
     for (const messageViewMode of ["preview", "source"] as const) {
       const text = "Before approval\n\nAfter approval";
-      let approval: LiveApprovalRequest | null = { ...createLiveApprovalRequest(), textPosition: "Before approval".length };
-      const question: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question" };
+      let approval: LiveApprovalRequest | null = {
+        ...createLiveApprovalRequest(),
+        textPosition: "Before approval".length,
+      };
+      const question: LiveElicitationRequest = {
+        ...createLiveElicitationRequest(),
+        kind: "question",
+      };
       let questions: LiveElicitationRequest[] = [];
       let records: ElicitationRecord[] = [];
-      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
-      const answers: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+      const decisions: Array<
+        Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>
+      > = [];
+      const answers: Array<
+        Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>
+      > = [];
+      /** 同じ応答に承認と変化する質問を渡して互いの表示状態を比較する。 */
       function Column(props: SessionMessageColumnProps) {
         return React.createElement(SessionMessageColumn, {
-          ...props, pendingResponseMessageKey: projected ? "response" : null,
-          liveApprovalRequest: approval, liveElicitationRequests: questions, liveElicitationRecords: records,
+          ...props,
+          pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: approval,
+          liveElicitationRequests: questions,
+          liveElicitationRecords: records,
+          /** 質問と混線していないか調べるため、承認操作の引数を別に採取する。 */
           onResolveLiveApproval: (...args) => decisions.push(args),
+          /** 質問への回答を承認の判断とは別の履歴へ記録する。 */
           onResolveLiveElicitation: (...args) => answers.push(args),
         });
       }
       const mounted = await mountSessionMessageColumn({
-        component: Column, messages: projected ? [{ role: "assistant", text }] : [],
-        messageKeys: projected ? ["response"] : [], isRunning: true, liveRunAssistantText: text, messageViewMode,
+        component: Column,
+        messages: projected ? [{ role: "assistant", text }] : [],
+        messageKeys: projected ? ["response"] : [],
+        isRunning: true,
+        liveRunAssistantText: text,
+        messageViewMode,
       });
       try {
         const { container, dom } = mounted;
-        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
-        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        const card = container.querySelector<HTMLElement>(
+          "[aria-label='Approval required']",
+        )!;
+        const toggle = card.querySelector<HTMLButtonElement>(
+          "[aria-label='Show approval details']",
+        )!;
         await act(async () => toggle.click());
         toggle.focus();
+        /** 再描画後も同じ承認カードと詳細ボタンが残り、展開状態とフォーカスも続くことを確認する。 */
         const expectContinuity = async () => {
           await mounted.rerender({});
-          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
-          assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
-          assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+          });
+          assert.equal(
+            container.querySelector("[aria-label='Approval required']") ===
+              card,
+            true,
+          );
+          assert.equal(
+            card.querySelector("[aria-label='Hide approval details']") ===
+              toggle,
+            true,
+          );
           assert.equal(toggle.getAttribute("aria-expanded"), "true");
-          assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+          assert.equal(
+            card.querySelector<HTMLElement>(".live-approval-details")?.hidden,
+            false,
+          );
           assert.equal(dom.window.document.activeElement === toggle, true);
         };
         questions = [question];
-        records = [{
-          requestId: question.requestId, kind: "question", message: question.message,
-          fields: [{ title: "Branch" }], textRange: { start: text.length, end: text.length }, status: "pending",
-        }];
+        records = [
+          {
+            requestId: question.requestId,
+            kind: "question",
+            message: question.message,
+            fields: [{ title: "Branch" }],
+            textRange: { start: text.length, end: text.length },
+            status: "pending",
+          },
+        ];
         await expectContinuity();
-        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 1);
-        records = [{ ...records[0], textRange: { start: 0, end: "Before approval".length } }];
+        assert.equal(
+          container.querySelectorAll(".live-elicitation-card").length,
+          1,
+        );
+        records = [
+          {
+            ...records[0],
+            textRange: { start: 0, end: "Before approval".length },
+          },
+        ];
         await expectContinuity();
-        const submit = [...container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")]
-          .find(button => button.textContent === "Submit")!;
+        const submit = [
+          ...container.querySelectorAll<HTMLButtonElement>(
+            ".live-elicitation-card button",
+          ),
+        ].find((button) => button.textContent === "Submit")!;
         await act(async () => submit.click());
         assert.equal(answers.length, 1);
         assert.equal(answers[0][0], question);
@@ -4037,23 +6195,47 @@ test("質問の追加・更新・解決でも同じ承認の詳細とfocusを保
         questions = [];
         records = [{ ...records[0], status: "answered" }];
         await expectContinuity();
-        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 0);
-        assert.match(container.querySelector(".elicitation-record")?.textContent ?? "", /Branch/);
-        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        assert.equal(
+          container.querySelectorAll(".live-elicitation-card").length,
+          0,
+        );
+        assert.match(
+          container.querySelector(".elicitation-record")?.textContent ?? "",
+          /Branch/,
+        );
+        const allow = [
+          ...card.querySelectorAll<HTMLButtonElement>("button"),
+        ].find((button) => button.textContent === "Allow Once")!;
         await act(async () => allow.click());
         assert.deepEqual(decisions, [[approval, "approve"]]);
         approval = null;
         await mounted.rerender({});
-        assert.equal(container.querySelector("[aria-label='Approval required']"), null);
-        approval = { ...createLiveApprovalRequest(), requestId: "approval-2", textPosition: text.length };
+        assert.equal(
+          container.querySelector("[aria-label='Approval required']"),
+          null,
+        );
+        approval = {
+          ...createLiveApprovalRequest(),
+          requestId: "approval-2",
+          textPosition: text.length,
+        };
         await mounted.rerender({});
-        const next = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        const next = container.querySelector<HTMLElement>(
+          "[aria-label='Approval required']",
+        )!;
         assert.equal(next === card, false);
-        assert.equal(next.querySelector("[aria-expanded]")?.getAttribute("aria-expanded"), "false");
-        const reject = [...next.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Reject")!;
+        assert.equal(
+          next.querySelector("[aria-expanded]")?.getAttribute("aria-expanded"),
+          "false",
+        );
+        const reject = [
+          ...next.querySelectorAll<HTMLButtonElement>("button"),
+        ].find((button) => button.textContent === "Reject")!;
         await act(async () => reject.click());
         assert.deepEqual(decisions.at(-1), [approval, "deny"]);
-      } finally { await mounted.cleanup(); }
+      } finally {
+        await mounted.cleanup();
+      }
     }
   }
 });
@@ -4070,41 +6252,81 @@ test("質問の追加・更新・解決でも同じ承認の詳細とfocusを保
 // impact = "実行内容の説明を読めなくなるか、承認待ちを解消できなくなる"
 // distinction = "本文とcardの平文順序testではMarkdown構造・参照解決・表示切替を検証できない。短い1応答のPreviewとSourceで確認する"
 // @end-test-value
+/** 承認はMarkdownブロックの途中を壊さない位置に挿入され、Sourceでも縮小済みの応答でも操作できる。 */
 test("承認はMarkdownのblock境界へ入りSourceと縮小済み応答でも操作できる", async () => {
-  const text = "事前説明\n\n```ts\nconst answer = 42;\n```\n\n[後続link][target]\n\n[target]: https://example.com";
+  const text =
+    "事前説明\n\n```ts\nconst answer = 42;\n```\n\n[後続link][target]\n\n[target]: https://example.com";
   const position = text.indexOf("answer");
   const messages: Message[] = [{ role: "assistant", text }];
   const mounted = await mountSessionMessageColumn({
-    component: (props: SessionMessageColumnProps) => React.createElement(SessionMessageColumn, {
-      ...props, liveApprovalRequest: { ...createLiveApprovalRequest(), textPosition: position },
-      pendingResponseMessageKey: "response",
-    }),
-    messages, messageKeys: ["response"], isRunning: true, liveRunAssistantText: text,
-    messageCollapseTargets: buildMessageCollapseTargets(messages, [{ kind: "session", messageIndex: 0 }], ["response"]),
+    /** 同じ応答キーで、承認の本文内位置を明示して描画する。 */
+    component: (props: SessionMessageColumnProps) =>
+      React.createElement(SessionMessageColumn, {
+        ...props,
+        liveApprovalRequest: {
+          ...createLiveApprovalRequest(),
+          textPosition: position,
+        },
+        pendingResponseMessageKey: "response",
+      }),
+    messages,
+    messageKeys: ["response"],
+    isRunning: true,
+    liveRunAssistantText: text,
+    messageCollapseTargets: buildMessageCollapseTargets(
+      messages,
+      [{ kind: "session", messageIndex: 0 }],
+      ["response"],
+    ),
     collapsedMessageKeys: new Set(["response"]),
   });
   try {
     const { container, dom } = mounted;
     const code = container.querySelector(".message-code-block code");
     const card = container.querySelector('[aria-label="Approval required"]');
-    const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com"]');
+    const link = container.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.com"]',
+    );
     assert.ok(code && card && link);
     assert.equal(code.textContent?.trim(), "const answer = 42;");
-    assert.ok(code.compareDocumentPosition(card) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-    assert.ok(card.compareDocumentPosition(link) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(
+      code.compareDocumentPosition(card) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    assert.ok(
+      card.compareDocumentPosition(link) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     assert.equal(container.querySelector(".message-collapsed-preview"), null);
     await mounted.rerender({ messageViewMode: "source" });
     const source = [...container.querySelectorAll(".message-source-text")];
     assert.equal(source.map((node) => node.textContent).join(""), text);
-    const sourceCard = container.querySelector('[aria-label="Approval required"]');
+    const sourceCard = container.querySelector(
+      '[aria-label="Approval required"]',
+    );
     assert.ok(sourceCard);
-    assert.ok(source[0].compareDocumentPosition(sourceCard) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-    assert.ok(sourceCard.compareDocumentPosition(source[1]) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-    const decisions = [...sourceCard.querySelectorAll<HTMLButtonElement>("button")]
-      .filter((button) => button.textContent === "Allow Once" || button.textContent === "Reject");
-    assert.deepEqual(decisions.map((button) => button.textContent), ["Allow Once", "Reject"]);
+    assert.ok(
+      source[0].compareDocumentPosition(sourceCard) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    assert.ok(
+      sourceCard.compareDocumentPosition(source[1]) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const decisions = [
+      ...sourceCard.querySelectorAll<HTMLButtonElement>("button"),
+    ].filter(
+      (button) =>
+        button.textContent === "Allow Once" || button.textContent === "Reject",
+    );
+    assert.deepEqual(
+      decisions.map((button) => button.textContent),
+      ["Allow Once", "Reject"],
+    );
     assert.ok(decisions.every((button) => !button.disabled));
-  } finally { await mounted.cleanup(); }
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -4119,24 +6341,43 @@ test("承認はMarkdownのblock境界へ入りSourceと縮小済み応答でも�
 // impact = "返答と処理状態の所属が分からず、別の応答が始まったように誤認する"
 // distinction = "内容未到着の応答枠を確認するtestと異なり、本文投影後の同一枠を確認する"
 // @end-test-value
+/** 投影済みの実行中本文を再利用しながら、末尾の処理中バブルは別に表示する。 */
 test("SessionMessageColumn は projection 済みの実行中 assistant text と末尾の処理中bubbleを表示する", () => {
-  const liveAssistant = { sessionId: "session-1", threadId: "thread-1", messageIndex: 100, text: "ストリーミング中の返答" };
-  const projection = buildMessageListProjection(createMessages(100), [], "session-1", { liveAssistant });
+  const liveAssistant = {
+    sessionId: "session-1",
+    threadId: "thread-1",
+    messageIndex: 100,
+    text: "ストリーミング中の返答",
+  };
+  const projection = buildMessageListProjection(
+    createMessages(100),
+    [],
+    "session-1",
+    { liveAssistant },
+  );
   const html = renderSessionMessageColumn({
     messages: projection.messages,
     messageKeys: projection.keys,
-    pendingResponseMessageKey: buildLiveAssistantProjectionKey(liveAssistant.sessionId, liveAssistant.threadId, liveAssistant.messageIndex),
+    pendingResponseMessageKey: buildLiveAssistantProjectionKey(
+      liveAssistant.sessionId,
+      liveAssistant.threadId,
+      liveAssistant.messageIndex,
+    ),
     isRunning: true,
     liveRunAssistantText: "ストリーミング中の返答",
   });
 
   const document = new JSDOM(html).window.document;
-  const responseBody = [...document.querySelectorAll("[data-message-body='true']")]
-    .find((body) => body.textContent?.includes("ストリーミング中の返答"));
+  const responseBody = [
+    ...document.querySelectorAll("[data-message-body='true']"),
+  ].find((body) => body.textContent?.includes("ストリーミング中の返答"));
   const responseRow = responseBody?.closest(".message-row.assistant");
   assert.ok(responseRow);
   assert.equal(responseRow.querySelectorAll(".message-avatar").length, 1);
-  assert.equal(responseRow.querySelectorAll(".pending-run-indicator").length, 1);
+  assert.equal(
+    responseRow.querySelectorAll(".pending-run-indicator").length,
+    1,
+  );
   assert.equal(document.querySelectorAll(".pending-row").length, 0);
   assert.equal((html.match(/ストリーミング中の返答/g) ?? []).length, 1);
   assert.ok(
@@ -4144,11 +6385,18 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text と�
     "projection 済みの live assistant text は既存メッセージの後に描画する",
   );
   assert.ok(
-    html.indexOf("ストリーミング中の返答") < html.indexOf("message-list-bottom-anchor"),
+    html.indexOf("ストリーミング中の返答") <
+      html.indexOf("message-list-bottom-anchor"),
     "projection 済みの live assistant text は bottom anchor より前に描画する",
   );
-  assert.ok(html.indexOf("ストリーミング中の返答") < html.indexOf("pending-run-indicator"));
-  assert.ok(html.indexOf("pending-run-indicator") < html.indexOf("message-list-bottom-anchor"));
+  assert.ok(
+    html.indexOf("ストリーミング中の返答") <
+      html.indexOf("pending-run-indicator"),
+  );
+  assert.ok(
+    html.indexOf("pending-run-indicator") <
+      html.indexOf("message-list-bottom-anchor"),
+  );
 });
 
 // @test-value v2
@@ -4163,6 +6411,7 @@ test("SessionMessageColumn は projection 済みの実行中 assistant text と�
 // impact = "利用者が応答終了を判断できず、同じ返答を別のメッセージと誤認する"
 // distinction = "同じmounted conversationで実投影とbridge保持を通す小規模な状態遷移検証。型検査や単体projection検証ではDOM内の所属・重複を検出できない。provider別の終端通知生成は対象外"
 // @end-test-value
+/** ライブと保存本文が一時的に一致しなくても、各実行終端まで応答枠を入れ替えない。 */
 test("ConversationMessageColumn は本文不一致を含む応答遷移から各終端まで同じ応答枠を維持する", async () => {
   for (const messageSourceKind of ["session", "auxiliary"] as const) {
     for (const { terminal, text: finalText } of [
@@ -4170,6 +6419,7 @@ test("ConversationMessageColumn は本文不一致を含む応答遷移から各
       { terminal: "failed", text: "途中までの返答" },
       { terminal: "canceled", text: "途中までの返答" },
     ]) {
+      /** 現在の実行情報と履歴を会話列へ渡し、遷移ごとの応答枠を観測する。 */
       function Column(props: SessionMessageColumnProps) {
         return React.createElement(ConversationMessageColumn, {
           session: {
@@ -4190,46 +6440,121 @@ test("ConversationMessageColumn は本文不一致を含む応答遷移から各
         liveRunAssistantText: "",
       });
       try {
-        assert.equal(mounted.container.querySelectorAll(".pending-run-indicator").length, 1, terminal);
-        assert.equal(mounted.container.querySelectorAll(".pending-row .message-avatar").length, 1);
+        assert.equal(
+          mounted.container.querySelectorAll(".pending-run-indicator").length,
+          1,
+          terminal,
+        );
+        assert.equal(
+          mounted.container.querySelectorAll(".pending-row .message-avatar")
+            .length,
+          1,
+        );
         await mounted.rerender({
           messages: [userMessage],
           isRunning: true,
           liveRunAssistantText: "streaming response",
         });
-        assert.equal(mounted.container.querySelectorAll(".message-row.assistant").length, 1);
-        assert.equal(mounted.container.querySelectorAll(".pending-row").length, 0);
+        assert.equal(
+          mounted.container.querySelectorAll(".message-row.assistant").length,
+          1,
+        );
+        assert.equal(
+          mounted.container.querySelectorAll(".pending-row").length,
+          0,
+        );
         for (const liveRunAssistantText of ["streaming response", ""]) {
           await mounted.rerender({
             messages: [userMessage, { role: "assistant", text: finalText }],
             isRunning: true,
             liveRunAssistantText,
           });
-          const response = mounted.container.querySelector(".message-row.assistant:not(.pending-row)");
+          const response = mounted.container.querySelector(
+            ".message-row.assistant:not(.pending-row)",
+          );
           assert.ok(response);
-          assert.equal(response.querySelectorAll(".pending-run-indicator").length, 1, `${messageSourceKind}/${terminal}/${liveRunAssistantText}`);
-          assert.equal(mounted.container.querySelectorAll(".pending-run-indicator").length, 1);
-          assert.equal(mounted.container.querySelectorAll(".pending-row").length, 0);
-          assert.equal(mounted.container.querySelectorAll(".message-row.assistant .message-avatar").length, 1);
-          assert.equal(mounted.container.querySelectorAll(".message-row.assistant [data-message-body='true']")[0]?.textContent, finalText);
+          assert.equal(
+            response.querySelectorAll(".pending-run-indicator").length,
+            1,
+            `${messageSourceKind}/${terminal}/${liveRunAssistantText}`,
+          );
+          assert.equal(
+            mounted.container.querySelectorAll(".pending-run-indicator").length,
+            1,
+          );
+          assert.equal(
+            mounted.container.querySelectorAll(".pending-row").length,
+            0,
+          );
+          assert.equal(
+            mounted.container.querySelectorAll(
+              ".message-row.assistant .message-avatar",
+            ).length,
+            1,
+          );
+          assert.equal(
+            mounted.container.querySelectorAll(
+              ".message-row.assistant [data-message-body='true']",
+            )[0]?.textContent,
+            finalText,
+          );
         }
         await mounted.rerender({
           messages: [userMessage, { role: "assistant", text: finalText }],
           isRunning: false,
           liveRunAssistantText: "",
         });
-        assert.equal(mounted.container.querySelectorAll(".pending-run-indicator").length, 0, terminal);
-        assert.equal(mounted.container.querySelectorAll(".pending-row").length, 0, terminal);
-        assert.equal(mounted.container.querySelectorAll(".message-row.assistant").length, 1, terminal);
-        assert.equal((mounted.container.textContent?.match(new RegExp(finalText, "g")) ?? []).length, 1, terminal);
+        assert.equal(
+          mounted.container.querySelectorAll(".pending-run-indicator").length,
+          0,
+          terminal,
+        );
+        assert.equal(
+          mounted.container.querySelectorAll(".pending-row").length,
+          0,
+          terminal,
+        );
+        assert.equal(
+          mounted.container.querySelectorAll(".message-row.assistant").length,
+          1,
+          terminal,
+        );
+        assert.equal(
+          (
+            mounted.container.textContent?.match(new RegExp(finalText, "g")) ??
+            []
+          ).length,
+          1,
+          terminal,
+        );
         await mounted.rerender({
-          messages: [userMessage, { role: "assistant", text: finalText }, { role: "user", text: "次の依頼" }],
+          messages: [
+            userMessage,
+            { role: "assistant", text: finalText },
+            { role: "user", text: "次の依頼" },
+          ],
           isRunning: true,
           liveRunAssistantText: "",
         });
-        assert.equal(mounted.container.querySelectorAll(".pending-row .pending-run-indicator").length, 1);
-        assert.equal(mounted.container.querySelectorAll(".message-row.assistant:not(.pending-row) .pending-run-indicator").length, 0);
-        assert.equal((mounted.container.textContent?.match(new RegExp(finalText, "g")) ?? []).length, 1);
+        assert.equal(
+          mounted.container.querySelectorAll(
+            ".pending-row .pending-run-indicator",
+          ).length,
+          1,
+        );
+        assert.equal(
+          mounted.container.querySelectorAll(
+            ".message-row.assistant:not(.pending-row) .pending-run-indicator",
+          ).length,
+          0,
+        );
+        assert.equal(
+          (
+            mounted.container.textContent?.match(new RegExp(finalText, "g")) ??
+            []
+          ).length,
+          1,
+        );
       } finally {
         await mounted.cleanup();
       }
@@ -4249,6 +6574,7 @@ test("ConversationMessageColumn は本文不一致を含む応答遷移から各
 // impact = "送信直後に処理が開始されたか分からず、応答待ちの状態を見失う"
 // distinction = "本文やrequestを持つ応答枠のtestと異なり、run開始直後の空状態を確認する"
 // @end-test-value
+/** 実行開始時にまだ本文が届いていなくても、処理中であることを末尾のバブルで示す。 */
 test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -4259,9 +6585,16 @@ test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを�
   assert.match(html, /pending-message-card/);
   assert.match(html, /typing-dots pending-run-indicator-dots/);
   assert.match(html, /role="status"[^>]*>Preparing a response<\/span>/);
-  assert.equal(new JSDOM(html).window.document.querySelectorAll(".pending-row .message-avatar").length, 1);
+  assert.equal(
+    new JSDOM(html).window.document.querySelectorAll(
+      ".pending-row .message-avatar",
+    ).length,
+    1,
+  );
   assert.ok(html.indexOf("message 1") < html.indexOf("pending-row"));
-  assert.ok(html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"));
+  assert.ok(
+    html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"),
+  );
 });
 
 // @test-value v2
@@ -4276,11 +6609,17 @@ test("SessionMessageColumn は内容未到着でも末尾に処理中bubbleを�
 // impact = "過去の会話を参照しただけで入力が失われ、別のブランチへの操作など誤った回答につながる"
 // distinction = "既存のpending配置testは入力状態と仮想範囲の往復を扱わない。2種類の会話で実DOM操作と送信結果を検証し、全履歴の常時mountによる代替も検出する"
 // @end-test-value
+/** 仮想スクロールで入力中の質問を画面外へ出しても、送っていない回答を失わない。 */
 test("ConversationMessageColumn は履歴スクロールを挟んでも elicitation の未送信回答を保持する", async () => {
   for (const messageSourceKind of ["session", "auxiliary"] as const) {
+    /** MainとAuxiliary双方を実ConversationMessageColumnへ接続し、同じスクロール操作を比較する。 */
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(ConversationMessageColumn, {
-        session: { id: messageSourceKind, messages: props.messages, runState: "running" },
+        session: {
+          id: messageSourceKind,
+          messages: props.messages,
+          runState: "running",
+        },
         messageSourceKind,
         baseProps: props,
         enabled: true,
@@ -4288,33 +6627,58 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
     }
     const request: LiveElicitationRequest = {
       ...createLiveElicitationRequest(),
-      fields: [{
-        type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main",
-        options: [{ value: "main", label: "main" }, { value: "feature/review-draft", label: "feature/review-draft" }],
-      }],
+      fields: [
+        {
+          type: "select",
+          name: "branch",
+          title: "Branch",
+          required: true,
+          defaultValue: "main",
+          options: [
+            { value: "main", label: "main" },
+            { value: "feature/review-draft", label: "feature/review-draft" },
+          ],
+        },
+      ],
     };
-    const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+    const responses: Array<
+      Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>
+    > = [];
     const mounted = await mountSessionMessageColumn({
       component: Column,
       messages: createMessages(100),
       isRunning: true,
       liveRunAssistantText: "対象ブランチの確認が必要です。",
       liveElicitationRequest: request,
+      /** 再表示後に選択・送信された回答と対象要求を記録する。 */
       onResolveLiveElicitation: (...args) => responses.push(args),
     });
     try {
       const { container, dom } = mounted;
-      const messageList = container.querySelector<HTMLDivElement>(".session-message-list");
+      const messageList = container.querySelector<HTMLDivElement>(
+        ".session-message-list",
+      );
       assert.ok(messageList);
+      /** ホイールとスクロールを発火し、対象行が仮想範囲から出入りできるようにする。 */
       const scrollTo = async (top: number) => {
         await act(async () => {
-          messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top - messageList.scrollTop, bubbles: true }));
+          messageList.dispatchEvent(
+            new dom.window.WheelEvent("wheel", {
+              deltaY: top - messageList.scrollTop,
+              bubbles: true,
+            }),
+          );
           messageList.scrollTop = top;
-          messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+          messageList.dispatchEvent(
+            new dom.window.Event("scroll", { bubbles: true }),
+          );
         });
       };
+      /** 再マウントされた質問から現在の選択欄を取得する。 */
       const getSelect = () => {
-        const select = container.querySelector<HTMLSelectElement>(".message-row.assistant .live-elicitation-card select");
+        const select = container.querySelector<HTMLSelectElement>(
+          ".message-row.assistant .live-elicitation-card select",
+        );
         assert.ok(select, messageSourceKind);
         return select;
       };
@@ -4325,24 +6689,59 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
         select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
       });
       await scrollTo(0);
-      assert.ok(container.querySelector('.session-message-virtual-row[data-index="0"]'));
-      assert.ok(container.querySelectorAll(".session-message-virtual-row").length < 30, "履歴全体を常時mountしない");
+      assert.ok(
+        container.querySelector('.session-message-virtual-row[data-index="0"]'),
+      );
+      assert.ok(
+        container.querySelectorAll(".session-message-virtual-row").length < 30,
+        "履歴全体を常時mountしない",
+      );
       await scrollTo(messageList.scrollHeight - messageList.clientHeight);
-      assert.equal(getSelect().value, "feature/review-draft", messageSourceKind);
-      assert.equal(container.querySelectorAll(".live-elicitation-card").length, 1);
+      assert.equal(
+        getSelect().value,
+        "feature/review-draft",
+        messageSourceKind,
+      );
+      assert.equal(
+        container.querySelectorAll(".live-elicitation-card").length,
+        1,
+      );
       assert.equal(container.querySelectorAll(".pending-row").length, 0);
-      const submit = [...container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")]
-        .find((button) => button.textContent === "Submit");
+      const submit = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          ".live-elicitation-card button",
+        ),
+      ].find((button) => button.textContent === "Submit");
       assert.ok(submit);
       await act(async () => submit.click());
-      assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature/review-draft" } }]]);
+      assert.deepEqual(responses, [
+        [
+          request,
+          { action: "accept", content: { branch: "feature/review-draft" } },
+        ],
+      ]);
 
-      await mounted.rerender({ liveElicitationRequest: { ...request, requestId: "elicitation-2" } });
-      assert.equal(getSelect().value, "main", "異なるrequestには回答を持ち越さない");
+      await mounted.rerender({
+        liveElicitationRequest: { ...request, requestId: "elicitation-2" },
+      });
+      assert.equal(
+        getSelect().value,
+        "main",
+        "異なるrequestには回答を持ち越さない",
+      );
       await scrollTo(0);
       await mounted.rerender({ liveElicitationRequest: null });
-      assert.equal(container.querySelectorAll(".live-elicitation-card").length, 0);
-      assert.equal(container.querySelector('.session-message-virtual-row[data-index="100"]'), null, "入力待ちが終われば通常の仮想化へ戻す");
+      assert.equal(
+        container.querySelectorAll(".live-elicitation-card").length,
+        0,
+      );
+      assert.equal(
+        container.querySelector(
+          '.session-message-virtual-row[data-index="100"]',
+        ),
+        null,
+        "入力待ちが終われば通常の仮想化へ戻す",
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -4361,32 +6760,89 @@ test("ConversationMessageColumn は履歴スクロールを挟んでも elicitat
 // impact = "履歴を参照しただけで操作対象の回答が初期化される誤送信を防ぐ"
 // distinction = "既存scroll testはmessagesのpage交換とpending rowの消滅を通らない"
 // @end-test-value
+/** 表示する履歴ページを入れ替えても、入力待ち質問の回答を保持する。 */
 test("SessionMessageColumn はpage交換でも入力待ち回答を保持する", async () => {
   const request: LiveElicitationRequest = {
     ...createLiveElicitationRequest(),
-    fields: [{ type: "select", name: "branch", title: "Branch", required: true, defaultValue: "main", options: [{ value: "main", label: "main" }, { value: "feature", label: "feature" }] }],
+    fields: [
+      {
+        type: "select",
+        name: "branch",
+        title: "Branch",
+        required: true,
+        defaultValue: "main",
+        options: [
+          { value: "main", label: "main" },
+          { value: "feature", label: "feature" },
+        ],
+      },
+    ],
   };
-  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
-  const paging = { loading: false, error: "", onRetry() {} };
+  const responses: Array<
+    Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>
+  > = [];
+  const paging = {
+    loading: false,
+    error: "",
+    /** ページ交換後も再試行の副作用なしでページング可能な列を用意する。 */ onRetry() {},
+  };
+  /** 同じページング状態を会話列へ渡して、履歴だけを交換できるようにする。 */
   function Column(props: SessionMessageColumnProps) {
-    return React.createElement(SessionMessageColumn, { ...props, conversationPaging: paging });
+    return React.createElement(SessionMessageColumn, {
+      ...props,
+      conversationPaging: paging,
+    });
   }
-  const mounted = await mountSessionMessageColumn({ component: Column, messages: createMessages(60), isRunning: true, liveElicitationRequest: request, onResolveLiveElicitation: (...args) => responses.push(args) });
+  const mounted = await mountSessionMessageColumn({
+    component: Column,
+    messages: createMessages(60),
+    isRunning: true,
+    liveElicitationRequest: request,
+    /** ページをまたいで保持された回答を引数ごと記録する。 */
+    onResolveLiveElicitation: (...args) => responses.push(args),
+  });
   try {
-    const select = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    const select = mounted.container.querySelector<HTMLSelectElement>(
+      ".live-elicitation-card select",
+    );
     assert.ok(select);
-    await act(async () => { select.value = "feature"; select.dispatchEvent(new mounted.dom.window.Event("change", { bubbles: true })); });
-    await mounted.rerender({ messages: createMessages(60).map((message) => ({ ...message, text: `Earlier ${message.text}` })), isRunning: false });
-    assert.equal(mounted.container.querySelector(".live-elicitation-card"), null, "過去pageの先頭へ質問を移動しない");
+    await act(async () => {
+      select.value = "feature";
+      select.dispatchEvent(
+        new mounted.dom.window.Event("change", { bubbles: true }),
+      );
+    });
+    await mounted.rerender({
+      messages: createMessages(60).map((message) => ({
+        ...message,
+        text: `Earlier ${message.text}`,
+      })),
+      isRunning: false,
+    });
+    assert.equal(
+      mounted.container.querySelector(".live-elicitation-card"),
+      null,
+      "過去pageの先頭へ質問を移動しない",
+    );
     await mounted.rerender({ messages: createMessages(60), isRunning: true });
-    const after = mounted.container.querySelector<HTMLSelectElement>(".live-elicitation-card select");
+    const after = mounted.container.querySelector<HTMLSelectElement>(
+      ".live-elicitation-card select",
+    );
     assert.ok(after);
     assert.equal(after.value, "feature");
-    const submit = [...mounted.container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")].find((button) => button.textContent === "Submit");
+    const submit = [
+      ...mounted.container.querySelectorAll<HTMLButtonElement>(
+        ".live-elicitation-card button",
+      ),
+    ].find((button) => button.textContent === "Submit");
     assert.ok(submit);
     await act(async () => submit.click());
-    assert.deepEqual(responses, [[request, { action: "accept", content: { branch: "feature" } }]]);
-  } finally { await mounted.cleanup(); }
+    assert.deepEqual(responses, [
+      [request, { action: "accept", content: { branch: "feature" } }],
+    ]);
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -4401,56 +6857,117 @@ test("SessionMessageColumn はpage交換でも入力待ち回答を保持する"
 // impact = "回答受付の完了を誤認した再操作や、失敗後に再送できない状態を防ぐ"
 // distinction = "request propsだけのcomponent testではconversationのaction保持と非同期失敗からの復帰を通らない。実hookと仮想化された表示を小さいfixtureで接続する"
 // @end-test-value
+/** 質問を送信して応答待ちの間は履歴を往復しても待機表示が続き、失敗した時点で解除される。 */
 test("ConversationMessageColumn は送信actionの待機表示を履歴往復と失敗まで維持する", async () => {
   const request = { ...createLiveElicitationRequest(), fields: [] };
   let rejectResponse!: (error: Error) => void;
-  const responses: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+  const responses: Array<
+    Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>
+  > = [];
   const api = {
-    resolveLiveElicitation: async (...args: [string, string, Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>[1]]) => {
+    /** 質問の対象と送信内容を記録し、送信失敗を後から発生させられるよう待機する。 */
+    resolveLiveElicitation: async (
+      ...args: [
+        string,
+        string,
+        Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>[1],
+      ]
+    ) => {
       assert.equal(args[0], "session-feedback");
       assert.equal(args[1], request.requestId);
       responses.push([request, args[2]]);
-      await new Promise<void>((_resolve, reject) => { rejectResponse = reject; });
+      await new Promise<void>((_resolve, reject) => {
+        rejectResponse = reject;
+      });
     },
   };
+  /** 実会話列を遅延する回答APIと実行中リクエストへ接続する。 */
   function Column(props: SessionMessageColumnProps) {
     return React.createElement(ConversationMessageColumn, {
-      session: { id: "session-feedback", messages: props.messages, runState: "running" },
-      baseProps: props, enabled: true, api,
+      session: {
+        id: "session-feedback",
+        messages: props.messages,
+        runState: "running",
+      },
+      baseProps: props,
+      enabled: true,
+      api,
       liveRun: {
-        sessionId: "session-feedback", threadId: "thread-feedback", assistantText: "Review the requested input.",
-        steps: [], backgroundTasks: [], usage: null, errorMessage: "",
-        approvalRequest: null, elicitationRequest: request,
+        sessionId: "session-feedback",
+        threadId: "thread-feedback",
+        assistantText: "Review the requested input.",
+        steps: [],
+        backgroundTasks: [],
+        usage: null,
+        errorMessage: "",
+        approvalRequest: null,
+        elicitationRequest: request,
       },
     });
   }
   const mounted = await mountSessionMessageColumn({
-    component: Column, messages: createMessages(100), isRunning: true,
-    liveRunAssistantText: "Review the requested input.", liveElicitationRequest: request,
+    component: Column,
+    messages: createMessages(100),
+    isRunning: true,
+    liveRunAssistantText: "Review the requested input.",
+    liveElicitationRequest: request,
   });
   try {
     const { container, dom } = mounted;
-    const list = container.querySelector<HTMLDivElement>(".session-message-list")!;
-    const controls = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button"));
-    await act(async () => controls().find((button) => button.textContent === "Submit")!.click());
+    const list = container.querySelector<HTMLDivElement>(
+      ".session-message-list",
+    )!;
+    /** 履歴を往復してDOMが変わった後も、現在描画されている回答操作を読み直す。 */
+    const controls = () =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          ".live-elicitation-card button",
+        ),
+      );
+    await act(async () =>
+      controls()
+        .find((button) => button.textContent === "Submit")!
+        .click(),
+    );
     assert.deepEqual(responses, [[request, { action: "accept" }]]);
     for (const top of [0, list.scrollHeight - list.clientHeight]) {
       await act(async () => {
-        list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top - list.scrollTop, bubbles: true }));
+        list.dispatchEvent(
+          new dom.window.WheelEvent("wheel", {
+            deltaY: top - list.scrollTop,
+            bubbles: true,
+          }),
+        );
         list.scrollTop = top;
         list.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
       });
     }
-    const submit = controls().find((button) => button.textContent === "Submit")!;
+    const submit = controls().find(
+      (button) => button.textContent === "Submit",
+    )!;
     assert.ok(submit.querySelector(".button-content-spinner"));
     assert.equal(submit.getAttribute("aria-busy"), "true");
-    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 1);
+    assert.equal(
+      container.querySelectorAll(
+        ".live-elicitation-card .button-content-spinner",
+      ).length,
+      1,
+    );
     assert.ok(controls().every((button) => button.disabled));
-    await act(async () => rejectResponse(new Error("Response was not accepted.")));
+    await act(async () =>
+      rejectResponse(new Error("Response was not accepted.")),
+    );
     assert.ok(controls().every((button) => !button.disabled));
-    assert.equal(container.querySelectorAll(".live-elicitation-card .button-content-spinner").length, 0);
+    assert.equal(
+      container.querySelectorAll(
+        ".live-elicitation-card .button-content-spinner",
+      ).length,
+      0,
+    );
     assert.match(container.textContent ?? "", /Response was not accepted\./);
-  } finally { await mounted.cleanup(); }
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 // @test-value v2
@@ -4465,35 +6982,121 @@ test("ConversationMessageColumn は送信actionの待機表示を履歴往復と
 // impact = "会話中の質問位置と文脈が変わり、質問に回答できない"
 // distinction = "InlineResponseContent単体の描画はconversationのowner判定とlive recordの受け渡しを通らない"
 // @end-test-value
+/** MainとAuxiliaryの本文で質問範囲を対応付け、回答後は質問を含む本文表示へ戻す。 */
 test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻す", async () => {
   for (const messageSourceKind of ["session", "auxiliary"] as const) {
-    const request: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question", fields: [{ type: "select", name: "branch", title: "Which branch?", required: true, allowFreeText: true, options: [{ label: "Main", value: "Main" }, { label: "Feature", value: "Feature" }] }] };
-    const record: ElicitationRecord = { requestId: request.requestId, kind: "question", message: "Question", fields: [{ title: "Which branch?", options: ["Main", "Feature"] }], textRange: { start: 8, end: 21 }, status: "answered" };
+    const request: LiveElicitationRequest = {
+      ...createLiveElicitationRequest(),
+      kind: "question",
+      fields: [
+        {
+          type: "select",
+          name: "branch",
+          title: "Which branch?",
+          required: true,
+          allowFreeText: true,
+          options: [
+            { label: "Main", value: "Main" },
+            { label: "Feature", value: "Feature" },
+          ],
+        },
+      ],
+    };
+    const record: ElicitationRecord = {
+      requestId: request.requestId,
+      kind: "question",
+      message: "Question",
+      fields: [{ title: "Which branch?", options: ["Main", "Feature"] }],
+      textRange: { start: 8, end: 21 },
+      status: "answered",
+    };
+    /** 実行中は質問記録を回答の有無に応じて切り替え、終端後はライブ記録を外す。 */
     function Column(props: SessionMessageColumnProps) {
       return React.createElement(ConversationMessageColumn, {
-        session: { id: messageSourceKind, messages: props.messages, runState: "running" }, messageSourceKind, enabled: true,
-        baseProps: { ...props, liveElicitationRecords: props.isRunning ? [{ ...record, status: props.liveElicitationRequest ? "pending" : "answered" }] : [] },
+        session: {
+          id: messageSourceKind,
+          messages: props.messages,
+          runState: "running",
+        },
+        messageSourceKind,
+        enabled: true,
+        baseProps: {
+          ...props,
+          liveElicitationRecords: props.isRunning
+            ? [
+                {
+                  ...record,
+                  status: props.liveElicitationRequest ? "pending" : "answered",
+                },
+              ]
+            : [],
+        },
       });
     }
-    const mounted = await mountSessionMessageColumn({ component: Column, messages: [{ role: "user", text: "Start" }], isRunning: true, liveRunAssistantText: "Before\n\nWhich branch?\n\nAfter", liveElicitationRequest: request });
+    const mounted = await mountSessionMessageColumn({
+      component: Column,
+      messages: [{ role: "user", text: "Start" }],
+      isRunning: true,
+      liveRunAssistantText: "Before\n\nWhich branch?\n\nAfter",
+      liveElicitationRequest: request,
+    });
     try {
-      const body = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      const body = mounted.container.querySelector(
+        ".message-row.assistant [data-message-body]",
+      );
       assert.ok(body);
-      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?MainFeatureCloseSubmit", "After"]);
-      assert.equal(mounted.container.querySelectorAll('.live-elicitation-card').length, 1);
+      assert.deepEqual(
+        [...body.children].map((node) => node.textContent?.trim()),
+        ["Before", "Which branch?MainFeatureCloseSubmit", "After"],
+      );
+      assert.equal(
+        mounted.container.querySelectorAll(".live-elicitation-card").length,
+        1,
+      );
       await mounted.rerender({ liveElicitationRequest: null });
-      const resolvedBody = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      const resolvedBody = mounted.container.querySelector(
+        ".message-row.assistant [data-message-body]",
+      );
       assert.ok(resolvedBody);
-      assert.equal(resolvedBody.querySelectorAll('input,button').length, 0);
-      assert.match(resolvedBody.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
-      await mounted.rerender({ isRunning: false, liveRunAssistantText: "", liveElicitationRequest: null, messages: [{ role: "assistant", text: "Before\n\nWhich branch?\n\nAfter", elicitationRecords: [record] }] });
-      const history = mounted.container.querySelector('.message-row.assistant [data-message-body]');
+      assert.equal(resolvedBody.querySelectorAll("input,button").length, 0);
+      assert.match(
+        resolvedBody.textContent ?? "",
+        /Before\s*Which branch\?\s*MainFeature\s*After/,
+      );
+      await mounted.rerender({
+        isRunning: false,
+        liveRunAssistantText: "",
+        liveElicitationRequest: null,
+        messages: [
+          {
+            role: "assistant",
+            text: "Before\n\nWhich branch?\n\nAfter",
+            elicitationRecords: [record],
+          },
+        ],
+      });
+      const history = mounted.container.querySelector(
+        ".message-row.assistant [data-message-body]",
+      );
       assert.ok(history);
-      assert.match(history.textContent ?? "", /Before\s*Which branch\?\s*MainFeature\s*After/);
+      assert.match(
+        history.textContent ?? "",
+        /Before\s*Which branch\?\s*MainFeature\s*After/,
+      );
       assert.equal(history.textContent?.split("Which branch?").length, 2);
-      assert.deepEqual([...history.querySelectorAll(".elicitation-record-options li")].map(node => node.textContent), ["Main", "Feature"]);
-      assert.equal(history.querySelectorAll("input,button,select,textarea").length, 0);
-    } finally { await mounted.cleanup(); }
+      assert.deepEqual(
+        [...history.querySelectorAll(".elicitation-record-options li")].map(
+          (node) => node.textContent,
+        ),
+        ["Main", "Feature"],
+      );
+      assert.equal(
+        history.querySelectorAll("input,button,select,textarea").length,
+        0,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
   }
 });
 
@@ -4509,21 +7112,65 @@ test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻
 // impact = "回答を閲覧できなくなるか、同じ回答が会話内に重複する"
 // distinction = "入力storageのtestだけでは現在pageでの質問と回答の表示関係を検証できない"
 // @end-test-value
+/** 質問にひも付く入力は、対応する確定回答が画面に見えるときだけ非表示にする。 */
 test("question-linked input is hidden only when its confirmed answer is visible", async () => {
-  const question: Message = { role: "assistant", text: "Question", elicitationRecords: [{ requestId: "q", kind: "question", message: "Question",
-    fields: [{ title: "Question", answer: { selected: [], text: ["A response"] } }], status: "answered" }] };
-  const input: Message = { role: "user", text: "A response", turnInput: { turnId: "1", nativeTurnId: "n", state: "confirmed", questionRequestId: "q", attachments: [] } };
-  const mounted = await mountSessionMessageColumn({ messages: [input, question], isRunning: false });
+  const question: Message = {
+    role: "assistant",
+    text: "Question",
+    elicitationRecords: [
+      {
+        requestId: "q",
+        kind: "question",
+        message: "Question",
+        fields: [
+          { title: "Question", answer: { selected: [], text: ["A response"] } },
+        ],
+        status: "answered",
+      },
+    ],
+  };
+  const input: Message = {
+    role: "user",
+    text: "A response",
+    turnInput: {
+      turnId: "1",
+      nativeTurnId: "n",
+      state: "confirmed",
+      questionRequestId: "q",
+      attachments: [],
+    },
+  };
+  const mounted = await mountSessionMessageColumn({
+    messages: [input, question],
+    isRunning: false,
+  });
   try {
-    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 0);
+    assert.equal(
+      mounted.container.querySelectorAll(".message-row.user").length,
+      0,
+    );
     assert.match(mounted.container.textContent ?? "", /A response/);
-    await mounted.rerender({ messages: [{ ...input, turnInput: { ...input.turnInput!, state: "unknown" } }, question] });
-    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
+    await mounted.rerender({
+      messages: [
+        { ...input, turnInput: { ...input.turnInput!, state: "unknown" } },
+        question,
+      ],
+    });
+    assert.equal(
+      mounted.container.querySelectorAll(".message-row.user").length,
+      1,
+    );
     await mounted.rerender({ messages: [input] });
-    assert.equal(mounted.container.querySelectorAll(".message-row.user").length, 1);
-  } finally { await mounted.cleanup(); }
+    assert.equal(
+      mounted.container.querySelectorAll(".message-row.user").length,
+      1,
+    );
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
+/** pending本文が先に利用可能なら、実行開始直後からassistant行を表示する。 */
 test("SessionMessageColumn は pending message text があれば実行開始直後の assistant row を描画する", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -4551,6 +7198,7 @@ test("SessionMessageColumn は pending message text があれば実行開始直�
 // impact = "既定待機説明の重複を抑えながらrun状態、request、生成内容を失わない"
 // distinction = "text visibilityだけをfalseにし、run stateとlive request payloadは各入力へ独立して与える"
 // @end-test-value
+/** 組み込みのpending文言だけを省略し、カスタム文言と実行内容は表示に残す。 */
 test("SessionMessageColumn は built-in pending text を省略しても custom と実行内容を保持する", () => {
   const builtInHiddenHtml = renderSessionMessageColumn({
     messages: createMessages(1),
@@ -4578,7 +7226,9 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  const approval = new JSDOM(approvalHtml).window.document.querySelector('.pending-row [role="group"][aria-label="Approval required"]');
+  const approval = new JSDOM(approvalHtml).window.document.querySelector(
+    '.pending-row [role="group"][aria-label="Approval required"]',
+  );
   assert.ok(approval);
   assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
@@ -4591,7 +7241,12 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageTextVisible: false,
   });
   assert.match(errorHtml, /Run failed/);
-  assert.equal(new JSDOM(errorHtml).window.document.querySelector(".pending-row .pending-run-error-note")?.textContent, "Run failed");
+  assert.equal(
+    new JSDOM(errorHtml).window.document.querySelector(
+      ".pending-row .pending-run-error-note",
+    )?.textContent,
+    "Run failed",
+  );
   assert.doesNotMatch(errorHtml, /Preparing a response/);
 
   const assistantHtml = renderSessionMessageColumn({
@@ -4609,11 +7264,17 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
   assert.match(assistantHtml, /Live assistant response/);
   const assistantDocument = new JSDOM(assistantHtml).window.document;
   assert.equal(assistantDocument.querySelectorAll(".pending-row").length, 0);
-  assert.ok([...assistantDocument.querySelectorAll(".message-row.assistant")]
-    .some((row) => row.textContent?.includes("Live assistant response") && row.querySelector(".pending-run-indicator")));
+  assert.ok(
+    [...assistantDocument.querySelectorAll(".message-row.assistant")].some(
+      (row) =>
+        row.textContent?.includes("Live assistant response") &&
+        row.querySelector(".pending-run-indicator"),
+    ),
+  );
   assert.doesNotMatch(assistantHtml, /Preparing a response/);
 });
 
+/** Auxiliaryの実行中pending行は、親の会話末尾ではなく対応するグループの中に置く。 */
 test("SessionMessageColumn は Auxiliary 実行中の pending row を group 内に描画する", () => {
   const html = renderSessionMessageColumn({
     messages: [
@@ -4621,17 +7282,16 @@ test("SessionMessageColumn は Auxiliary 実行中の pending row を group 内�
       { role: "user", text: "aux prompt", accent: true },
       { role: "assistant", text: "later main response" },
     ],
-    messageGroups: [
-      null,
-      { id: "aux-1", label: "Auxiliary" },
-      null,
-    ],
+    messageGroups: [null, { id: "aux-1", label: "Auxiliary" }, null],
     isRunning: true,
     pendingMessageText: "応答を準備しています",
     pendingMessageGroupId: "aux-1",
   });
 
-  assert.match(html, /auxiliary-message-group-item auxiliary-message-group-end/);
+  assert.match(
+    html,
+    /auxiliary-message-group-item auxiliary-message-group-end/,
+  );
   assert.ok(
     html.indexOf("aux prompt") < html.indexOf("応答を準備しています"),
     "pending row は Auxiliary prompt の後に描画する",
@@ -4654,44 +7314,86 @@ test("SessionMessageColumn は Auxiliary 実行中の pending row を group 内�
 // impact = "処理中の対象会話を取り違え、別のassistant応答が始まったように見える"
 // distinction = "単一conversationの状態遷移testと異なり、実projectionで複数sourceを挿入した位置の所属を少数fixtureで検証する。型検査とprojection単体testでは表示側の取り違えを検出できない"
 // @end-test-value
+/** 同じライブ文字列が各履歴にあっても、応答の置換対象はMainと各Auxiliaryの投影キーで選ぶ。 */
 test("SessionMessageColumn は本文が異なるMain/Auxiliary応答を投影keyで識別する", () => {
+  /** owner固有の保存本文と全ownerに共通するライブ文字列を組み合わせる。 */
   const messagesFor = (id: string): Message[] => [
     { role: "user", text: `${id} prompt` },
     { role: "assistant", text: `${id} saved response` },
     { role: "assistant", text: "live response" },
   ];
   for (const targetId of ["session-1", "aux-1", "aux-2"]) {
-    const liveAssistant = { sessionId: targetId, threadId: "thread-1", messageIndex: 1, text: "live response" };
-    const projection = buildMessageListProjection(messagesFor("session-1"), ["aux-1", "aux-2"].map((id) => ({
-      id,
-      messages: messagesFor(id),
-      displayAfterMessageIndex: 1,
-      createdAt: "2026-09-27T00:00:00Z",
-    })), "session-1", { liveAssistant });
+    const liveAssistant = {
+      sessionId: targetId,
+      threadId: "thread-1",
+      messageIndex: 1,
+      text: "live response",
+    };
+    const projection = buildMessageListProjection(
+      messagesFor("session-1"),
+      ["aux-1", "aux-2"].map((id) => ({
+        id,
+        messages: messagesFor(id),
+        displayAfterMessageIndex: 1,
+        createdAt: "2026-09-27T00:00:00Z",
+      })),
+      "session-1",
+      { liveAssistant },
+    );
     const html = renderSessionMessageColumn({
       messages: projection.messages,
       messageKeys: projection.keys,
       messageGroups: projection.groups,
-      pendingResponseMessageKey: buildLiveAssistantProjectionKey(targetId, liveAssistant.threadId, liveAssistant.messageIndex),
+      pendingResponseMessageKey: buildLiveAssistantProjectionKey(
+        targetId,
+        liveAssistant.threadId,
+        liveAssistant.messageIndex,
+      ),
       isRunning: true,
       liveRunAssistantText: liveAssistant.text,
       pendingMessageGroupId: targetId === "session-1" ? null : targetId,
     });
     const document = new JSDOM(html).window.document;
-    const response = [...document.querySelectorAll(".message-row.assistant")]
-      .find((row) => row.querySelector("[data-message-body='true']")?.textContent === `${targetId} saved response`);
+    const response = [
+      ...document.querySelectorAll(".message-row.assistant"),
+    ].find(
+      (row) =>
+        row.querySelector("[data-message-body='true']")?.textContent ===
+        `${targetId} saved response`,
+    );
     assert.ok(response, targetId);
-    assert.equal(response.querySelectorAll(".pending-run-indicator").length, 1, targetId);
-    assert.equal(document.querySelectorAll(".pending-run-indicator").length, 1, targetId);
-    assert.equal(document.querySelectorAll(".message-row.assistant .message-avatar").length, 6, targetId);
+    assert.equal(
+      response.querySelectorAll(".pending-run-indicator").length,
+      1,
+      targetId,
+    );
+    assert.equal(
+      document.querySelectorAll(".pending-run-indicator").length,
+      1,
+      targetId,
+    );
+    assert.equal(
+      document.querySelectorAll(".message-row.assistant .message-avatar")
+        .length,
+      6,
+      targetId,
+    );
     assert.equal(document.querySelectorAll(".pending-row").length, 0, targetId);
   }
 });
 
+/** 対応するAuxiliaryグループが仮想ウィンドウの外なら、pendingを暫定的に会話末尾へ表示する。 */
 test("SessionMessageColumn は pending 対象の Auxiliary group が window 外なら末尾に fallback 描画する", () => {
   const messages = createMessages(100);
-  messages[0] = { role: "user", text: "aux prompt outside window", accent: true };
-  const messageGroups: SessionMessageColumnProps["messageGroups"] = Array.from({ length: 100 }, () => null);
+  messages[0] = {
+    role: "user",
+    text: "aux prompt outside window",
+    accent: true,
+  };
+  const messageGroups: SessionMessageColumnProps["messageGroups"] = Array.from(
+    { length: 100 },
+    () => null,
+  );
   messageGroups[0] = { id: "aux-1", label: "Auxiliary" };
 
   const html = renderSessionMessageColumn({
@@ -4722,11 +7424,16 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 // impact = "SessionComposerExpandedのidle DOMで主操作とCancel予約領域の位置を維持し、誤操作可能なCancelを表示しない"
 // distinction = "CSS declaration testは共有slotの幅を確認し、running component testはactiveなCancelとdisabled Sendを確認し、このtestはSessionComposerExpanded単体のidle DOMを確認する"
 // @end-test-value
+/** 展開時はHideを出さず、設定を変える欄とは別のグループにSendを置く。 */
 test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning: false,
-      targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
+      targetDock: React.createElement(
+        "span",
+        { className: "test-target-dock" },
+        "Main / Auxiliary",
+      ),
       composerBlocked: false,
       canSelectCustomAgent: true,
       showCustomAgentPicker: true,
@@ -4760,61 +7467,121 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
       selectedCodexSandboxMode: "workspace-write",
-      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
+      modelOptions: [
+        {
+          value: "gpt-5.4",
+          label: "GPT-5.4",
+          model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] },
+        },
+      ],
       selectedModel: "gpt-5.4",
       selectedModelFallbackLabel: "gpt-5.4",
       reasoningOptions: [{ value: "high", label: "high" }],
       selectedReasoningEffort: "high",
+      /** 位置の確認だけなのでファイル選択を起動しない。 */
       onPickFile() {},
+      /** 添付のフォルダー選択を実際には開かない。 */
       onPickFolder() {},
+      /** 画像選択の外部ダイアログを起動しない。 */
       onPickImage() {},
+      /** Agentピッカーの開閉状態はこの静的描画では変えない。 */
       onToggleAgentPicker() {},
+      /** Skillピッカーの開閉をレイアウト確認から切り離す。 */
       onToggleSkillPicker() {},
+      /** 追加ディレクトリの登録処理を伴わず操作欄を描画する。 */
       onAddAdditionalDirectory() {},
+      /** 追加先を検証可能な前提にしてファイル操作の依存を外す。 */
       onValidateAdditionalDirectory: async () => ({ valid: true as const }),
+      /** 追加ディレクトリ一覧を操作せず初期の配置を調べる。 */
       onToggleAdditionalDirectoryList() {},
+      /** 末尾ジャンプの実行処理を持たずボタン位置を確認する。 */
       onJumpToBottom() {},
+      /** カスタムAgentによる選択変更は発生させない。 */
       onSelectCustomAgent() {},
+      /** 配置確認では入力値の親への反映を行わない。 */
       onDraftChange() {},
+      /** フォーカスの親通知に副作用を持たせない。 */
       onDraftFocus() {},
+      /** 下書き欄のキー操作はこの配置検査では実行しない。 */
       onDraftKeyDown() {},
+      /** テキスト選択の反映を伴わず入力欄を描画する。 */
       onDraftSelect() {},
+      /** 変換開始側の通知口を用意するがIME操作は行わない。 */
       onDraftCompositionStart() {},
+      /** 変換終了側にも副作用のない通知口を置く。 */
       onDraftCompositionEnd() {},
+      /** 操作は実行せず、Sendが置かれるグループだけ検査する。 */
       onSendOrCancel() {},
+      /** Approval更新を行わず設定グループを描画する。 */
       onChangeApprovalMode() {},
+      /** Codex Speedの保存を置き換え、表示だけを確認する。 */
       onChangeCodexSpeed() {},
+      /** Sandbox切替を設定値に反映しない表示用の通知先。 */
       onChangeCodexSandboxMode() {},
+      /** Model選択を反映せず初期の設定欄を描画する。 */
       onChangeModel() {},
+      /** 推論深度の変更を伴わず欄の配置を確認する。 */
       onChangeReasoningEffort() {},
+      /** 表示モード変更を起こさず初期表示用の操作を提供する。 */
       onMessageViewModeChange() {},
     }),
   );
 
   const renderedDocument = new JSDOM(html).window.document;
   const composer = renderedDocument.querySelector(".composer");
-  const attachmentToolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
-  const attachmentMenu = attachmentToolbar?.querySelector(".composer-attachment-menu-shell");
-  const attachmentButton = attachmentMenu?.querySelector("button.composer-attachment-trigger");
-  const attachmentPanel = renderedDocument.querySelector("#composer-attachment-menu");
-  const skillButton = Array.from(attachmentToolbar?.querySelectorAll("button") ?? [])
-    .find((button) => button.textContent?.trim() === "Skill");
-  const additionalDirectoryToolbar = attachmentToolbar?.querySelector(".composer-additional-directory-toolbar");
-  const addGroup = additionalDirectoryToolbar?.querySelector('[role="group"][aria-label="Add directory"]');
+  const attachmentToolbar = renderedDocument.querySelector(
+    ".composer-attachments-toolbar",
+  );
+  const attachmentMenu = attachmentToolbar?.querySelector(
+    ".composer-attachment-menu-shell",
+  );
+  const attachmentButton = attachmentMenu?.querySelector(
+    "button.composer-attachment-trigger",
+  );
+  const attachmentPanel = renderedDocument.querySelector(
+    "#composer-attachment-menu",
+  );
+  const skillButton = Array.from(
+    attachmentToolbar?.querySelectorAll("button") ?? [],
+  ).find((button) => button.textContent?.trim() === "Skill");
+  const additionalDirectoryToolbar = attachmentToolbar?.querySelector(
+    ".composer-additional-directory-toolbar",
+  );
+  const addGroup = additionalDirectoryToolbar?.querySelector(
+    '[role="group"][aria-label="Add directory"]',
+  );
   const addDirectoryButton = addGroup?.querySelector("button:nth-child(1)");
   const addPathButton = addGroup?.querySelector("button:nth-child(2)");
-  const directoriesButton = additionalDirectoryToolbar?.querySelector("button.composer-directory-list-button");
-  const viewActions = renderedDocument.querySelector(".composer-toolbar-view-actions");
-  const cancelSlot = viewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
-  const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
-  const jumpButton = viewActions?.querySelector("button.message-jump-bottom-button");
-  const viewModeGroup = viewActions?.querySelector(".composer-message-view-mode");
+  const directoriesButton = additionalDirectoryToolbar?.querySelector(
+    "button.composer-directory-list-button",
+  );
+  const viewActions = renderedDocument.querySelector(
+    ".composer-toolbar-view-actions",
+  );
+  const cancelSlot = viewActions?.querySelector(
+    ":scope > .session-action-dock-cancel-slot",
+  );
+  const targetSlot = viewActions?.querySelector(
+    ":scope > .composer-target-dock-slot",
+  );
+  const jumpButton = viewActions?.querySelector(
+    "button.message-jump-bottom-button",
+  );
+  const viewModeGroup = viewActions?.querySelector(
+    ".composer-message-view-mode",
+  );
   const previewButton = viewModeGroup?.querySelector("button:nth-child(1)");
   const sourceButton = viewModeGroup?.querySelector("button:nth-child(2)");
-  const composerInputRow = renderedDocument.querySelector(".composer-input-row");
+  const composerInputRow = renderedDocument.querySelector(
+    ".composer-input-row",
+  );
   const controlRow = renderedDocument.querySelector(".composer-control-row");
-  const settingsGroup = controlRow?.querySelector(":scope > .composer-settings");
-  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
+  const settingsGroup = controlRow?.querySelector(
+    ":scope > .composer-settings",
+  );
+  const sendButton = controlRow?.querySelector<HTMLButtonElement>(
+    ":scope > .composer-send-control > button.session-send-button",
+  );
   assert.ok(composer);
   assert.ok(attachmentToolbar);
   assert.ok(attachmentMenu);
@@ -4844,10 +7611,15 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.match(attachmentButton.textContent ?? "", /Attach/);
   assert.equal(addDirectoryButton.textContent, "Add Directory");
   assert.equal(addPathButton.textContent, "Add Directory By Path");
-  assert.equal(directoriesButton.getAttribute("aria-label"), "Additional Directories: 0");
+  assert.equal(
+    directoriesButton.getAttribute("aria-label"),
+    "Additional Directories: 0",
+  );
   assert.equal(directoriesButton.textContent, "0");
   assert.equal(addGroup?.nextElementSibling, directoriesButton);
-  assert.ok((additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0);
+  assert.ok(
+    (additionalDirectoryToolbar.compareDocumentPosition(viewActions) & 4) !== 0,
+  );
   assert.ok((attachmentMenu.compareDocumentPosition(viewActions) & 4) !== 0);
   assert.equal(viewActions.firstElementChild, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
@@ -4855,19 +7627,24 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.equal(cancelSlot.getAttribute("aria-hidden"), "true");
   assert.equal(cancelSlot.querySelector("button"), null);
   const forbiddenDockHitArea = Array.from(
-    composer.querySelectorAll("button, [role=\"button\"], a, [tabindex]")
+    composer.querySelectorAll('button, [role="button"], a, [tabindex]'),
   ).find((element) => {
     const accessibleText = [
       element.textContent,
       element.getAttribute("aria-label"),
       element.getAttribute("title"),
-    ].filter(Boolean).join(" ");
+    ]
+      .filter(Boolean)
+      .join(" ");
     return /\b(?:hide|reopen)\b/i.test(accessibleText);
   });
   assert.equal(forbiddenDockHitArea, undefined);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
   assert.equal(jumpButton.textContent, "Jump To Latest");
-  assert.equal(viewModeGroup.getAttribute("aria-label"), "Message display mode");
+  assert.equal(
+    viewModeGroup.getAttribute("aria-label"),
+    "Message display mode",
+  );
   assert.equal(previewButton.getAttribute("aria-pressed"), "false");
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
   assert.equal(controlRow.firstElementChild, settingsGroup);
@@ -4889,89 +7666,142 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 // impact = "queue受付のない状態で実行中の設定変更を防ぎ、CancelとSendの位置を維持する"
 // distinction = "queue受付未提供のComposer単体の描画属性を確認し、queue対応Appの次送信用設定やMain側の捕捉/保存の検査と区別する"
 // @end-test-value
+/** 実行操作に続く右端に末尾移動と表示切替を置き、実行中の設定変更は無効にする。 */
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
-  const renderComposer = (isRunning: boolean, composerBlocked = false) => renderToStaticMarkup(
-    React.createElement(SessionComposerExpanded, {
-      isRunning,
-      targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
-      composerBlocked,
-      canSelectCustomAgent: true,
-      showCustomAgentPicker: true,
-      showSkillPicker: true,
-      showMessageViewModeControls: true,
-      messageViewMode: "preview",
-      isAgentPickerOpen: false,
-      isSkillPickerOpen: false,
-      isAdditionalDirectoryListOpen: false,
-      selectedCustomAgentLabel: "Agent",
-      selectedCustomAgentTitle: "Agent",
-      additionalDirectoryCount: 0,
-      showJumpToBottom: true,
-      isCustomAgentListLoading: false,
-      customAgentItems: [],
-      draft: "実行中の下書き",
-      composerTextareaRef: createRef<HTMLTextAreaElement>(),
-      isComposerDisabled: false,
-      isSendDisabled: false,
-      composerSendability: {
-        primaryFeedback: "",
-        secondaryFeedback: [],
-        feedbackTone: null,
-        shouldShowFeedback: false,
-      },
-      sendButtonTitle: "実行をキャンセル",
-      isComposerBlockedFeedbackActive: false,
-      approvalOptions: [{ value: "untrusted", label: "untrusted" }],
-      selectedApprovalMode: "untrusted",
-      speedOptions: [],
-      selectedCodexSpeed: "standard",
-      sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
-      selectedCodexSandboxMode: "workspace-write",
-      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
-      selectedModel: "gpt-5.4",
-      selectedModelFallbackLabel: "gpt-5.4",
-      reasoningOptions: [{ value: "high", label: "high" }],
-      selectedReasoningEffort: "high",
-      onPickFile() {},
-      onPickFolder() {},
-      onPickImage() {},
-      onToggleAgentPicker() {},
-      onToggleSkillPicker() {},
-      onAddAdditionalDirectory() {},
-      onValidateAdditionalDirectory: async () => ({ valid: true as const }),
-      onToggleAdditionalDirectoryList() {},
-      onJumpToBottom() {},
-      onSelectCustomAgent() {},
-      onDraftChange() {},
-      onDraftFocus() {},
-      onDraftKeyDown() {},
-      onDraftSelect() {},
-      onDraftCompositionStart() {},
-      onDraftCompositionEnd() {},
-      onSendOrCancel() {},
-      onChangeApprovalMode() {},
-      onChangeCodexSpeed() {},
-      onChangeCodexSandboxMode() {},
-      onChangeModel() {},
-      onChangeReasoningEffort() {},
-      onMessageViewModeChange() {},
-    }),
-  );
+  /** 同一の展開Composerを実行中・待機中・ブロック中で描き分ける。 */
+  const renderComposer = (isRunning: boolean, composerBlocked = false) =>
+    renderToStaticMarkup(
+      React.createElement(SessionComposerExpanded, {
+        isRunning,
+        targetDock: React.createElement(
+          "span",
+          { className: "test-target-dock" },
+          "Main / Auxiliary",
+        ),
+        composerBlocked,
+        canSelectCustomAgent: true,
+        showCustomAgentPicker: true,
+        showSkillPicker: true,
+        showMessageViewModeControls: true,
+        messageViewMode: "preview",
+        isAgentPickerOpen: false,
+        isSkillPickerOpen: false,
+        isAdditionalDirectoryListOpen: false,
+        selectedCustomAgentLabel: "Agent",
+        selectedCustomAgentTitle: "Agent",
+        additionalDirectoryCount: 0,
+        showJumpToBottom: true,
+        isCustomAgentListLoading: false,
+        customAgentItems: [],
+        draft: "実行中の下書き",
+        composerTextareaRef: createRef<HTMLTextAreaElement>(),
+        isComposerDisabled: false,
+        isSendDisabled: false,
+        composerSendability: {
+          primaryFeedback: "",
+          secondaryFeedback: [],
+          feedbackTone: null,
+          shouldShowFeedback: false,
+        },
+        sendButtonTitle: "実行をキャンセル",
+        isComposerBlockedFeedbackActive: false,
+        approvalOptions: [{ value: "untrusted", label: "untrusted" }],
+        selectedApprovalMode: "untrusted",
+        speedOptions: [],
+        selectedCodexSpeed: "standard",
+        sandboxOptions: [
+          { value: "workspace-write", label: "workspace-write" },
+        ],
+        selectedCodexSandboxMode: "workspace-write",
+        modelOptions: [
+          {
+            value: "gpt-5.4",
+            label: "GPT-5.4",
+            model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] },
+          },
+        ],
+        selectedModel: "gpt-5.4",
+        selectedModelFallbackLabel: "gpt-5.4",
+        reasoningOptions: [{ value: "high", label: "high" }],
+        selectedReasoningEffort: "high",
+        /** 実行状態ごとの配置比較でファイルピッカーは起動しない。 */
+        onPickFile() {},
+        /** フォルダー選択は行わず、操作可能性だけを比較する。 */
+        onPickFolder() {},
+        /** 画像選択処理を外し、実行状態だけを描画条件にする。 */
+        onPickImage() {},
+        /** 実行中のAgent選択通知に副作用を持たせない。 */
+        onToggleAgentPicker() {},
+        /** 実行状態の比較ではSkillピッカーを実際に切り替えない。 */
+        onToggleSkillPicker() {},
+        /** 実行中かどうかを比較する際、追加ディレクトリは登録しない。 */
+        onAddAdditionalDirectory() {},
+        /** 同じ有効な検証結果を各実行状態に供給する。 */
+        onValidateAdditionalDirectory: async () => ({ valid: true as const }),
+        /** ディレクトリ一覧の開閉処理を描画結果の比較から切り離す。 */
+        onToggleAdditionalDirectoryList() {},
+        /** 末尾ジャンプの実処理ではなく右側グループでの位置を確認する。 */
+        onJumpToBottom() {},
+        /** カスタムAgentの状態は稼働条件の比較中に更新しない。 */
+        onSelectCustomAgent() {},
+        /** 実行状態の比較から下書き本文の親更新を除く。 */
+        onDraftChange() {},
+        /** フォーカス時の親の応答を固定して配置だけを比較する。 */
+        onDraftFocus() {},
+        /** キー入力の副作用を持たないComposerを描画する。 */
+        onDraftKeyDown() {},
+        /** 下書き選択の通知をどの稼働状態でも無視する。 */
+        onDraftSelect() {},
+        /** IMEの変換開始を起こさず実行状態を比較する。 */
+        onDraftCompositionStart() {},
+        /** IME確定側の通知も実行状態へ影響させない。 */
+        onDraftCompositionEnd() {},
+        /** SendまたはCancelの実行なしにボタンの表示を比較する。 */
+        onSendOrCancel() {},
+        /** Approvalは更新せず、実行中に無効化されるかを調べる。 */
+        onChangeApprovalMode() {},
+        /** Speedの変更処理を外して表示順を観測する。 */
+        onChangeCodexSpeed() {},
+        /** Sandboxの値は据え置き、selectの無効状態を確認する。 */
+        onChangeCodexSandboxMode() {},
+        /** Model更新は行わず実行中にボタンを使えるかだけ調べる。 */
+        onChangeModel() {},
+        /** 深度値の変更を行わずselectが無効になるか調べる。 */
+        onChangeReasoningEffort() {},
+        /** 表示切替の副作用なしで右側グループのモード操作を描画する。 */
+        onMessageViewModeChange() {},
+      }),
+    );
   const html = renderComposer(true);
 
   assert.match(html, /Jump To Latest/);
   assert.ok(html.indexOf("Attach") < html.indexOf("Jump To Latest"));
   assert.ok(html.indexOf("Jump To Latest") < html.indexOf("Preview"));
-  assert.match(html, /composer-toolbar-view-actions[\s\S]*Jump To Latest[\s\S]*Message display mode/);
+  assert.match(
+    html,
+    /composer-toolbar-view-actions[\s\S]*Jump To Latest[\s\S]*Message display mode/,
+  );
 
   const renderedDocument = new JSDOM(html).window.document;
-  const toolbar = renderedDocument.querySelector(".composer-attachments-toolbar");
-  const viewActions = renderedDocument.querySelector(".composer-toolbar-view-actions");
-  const cancelSlot = viewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
-  const cancelButton = cancelSlot?.querySelector<HTMLButtonElement>(":scope > button.session-send-button.danger");
-  const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
+  const toolbar = renderedDocument.querySelector(
+    ".composer-attachments-toolbar",
+  );
+  const viewActions = renderedDocument.querySelector(
+    ".composer-toolbar-view-actions",
+  );
+  const cancelSlot = viewActions?.querySelector(
+    ":scope > .session-action-dock-cancel-slot",
+  );
+  const cancelButton = cancelSlot?.querySelector<HTMLButtonElement>(
+    ":scope > button.session-send-button.danger",
+  );
+  const targetSlot = viewActions?.querySelector(
+    ":scope > .composer-target-dock-slot",
+  );
   const controlRow = renderedDocument.querySelector(".composer-control-row");
-  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
+  const sendButton = controlRow?.querySelector<HTMLButtonElement>(
+    ":scope > .composer-send-control > button.session-send-button",
+  );
   assert.ok(toolbar);
   assert.ok(viewActions);
   assert.ok(cancelSlot);
@@ -4988,22 +7818,45 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
   assert.equal(sendButton.textContent, "Send");
   assert.equal(sendButton.disabled, true);
-  assert.ok(sendButton.getAttribute("title"), "running中のSendはblocked reason titleを持つ");
+  assert.ok(
+    sendButton.getAttribute("title"),
+    "running中のSendはblocked reason titleを持つ",
+  );
   assert.equal(sendButton.classList.contains("danger"), false);
-  assert.equal(controlRow.querySelectorAll(":scope > .composer-send-control > button.session-send-button").length, 1);
-  const runningSelect = (className: string) => controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
+  assert.equal(
+    controlRow.querySelectorAll(
+      ":scope > .composer-send-control > button.session-send-button",
+    ).length,
+    1,
+  );
+  /** 実行中の設定行から対象クラスに属するネイティブselectを探す。 */
+  const runningSelect = (className: string) =>
+    controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
   assert.equal(runningSelect("composer-setting-approval")?.disabled, true);
   assert.equal(runningSelect("composer-setting-sandbox")?.disabled, true);
-  assert.equal(controlRow.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, true);
+  assert.equal(
+    controlRow.querySelector<HTMLButtonElement>(
+      '.composer-setting-model button[aria-label="Model"]',
+    )?.disabled,
+    true,
+  );
   assert.equal(runningSelect("composer-setting-depth")?.disabled, true);
 
   const idleHtml = renderComposer(false);
   const idleDocument = new JSDOM(idleHtml).window.document;
-  const idleViewActions = idleDocument.querySelector(".composer-toolbar-view-actions");
-  const idleCancelSlot = idleViewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
-  const idleTargetSlot = idleViewActions?.querySelector(":scope > .composer-target-dock-slot");
+  const idleViewActions = idleDocument.querySelector(
+    ".composer-toolbar-view-actions",
+  );
+  const idleCancelSlot = idleViewActions?.querySelector(
+    ":scope > .session-action-dock-cancel-slot",
+  );
+  const idleTargetSlot = idleViewActions?.querySelector(
+    ":scope > .composer-target-dock-slot",
+  );
   const idleControlRow = idleDocument.querySelector(".composer-control-row");
-  const idleSendButton = idleControlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
+  const idleSendButton = idleControlRow?.querySelector<HTMLButtonElement>(
+    ":scope > .composer-send-control > button.session-send-button",
+  );
   assert.ok(idleViewActions);
   assert.ok(idleCancelSlot);
   assert.ok(idleTargetSlot);
@@ -5014,12 +7867,33 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(idleCancelSlot.querySelector("button"), null);
   assert.equal(idleCancelSlot.nextElementSibling, idleTargetSlot);
   assert.equal(idleSendButton.disabled, false);
-  assert.equal(idleControlRow.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, false);
-  assert.equal(idleControlRow.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, false);
+  assert.equal(
+    idleControlRow.querySelector<HTMLButtonElement>(
+      '.composer-setting-model button[aria-label="Model"]',
+    )?.disabled,
+    false,
+  );
+  assert.equal(
+    idleControlRow.querySelector<HTMLSelectElement>(
+      ".composer-setting-depth select",
+    )?.disabled,
+    false,
+  );
 
-  const readOnlyDocument = new JSDOM(renderComposer(true, true)).window.document;
-  assert.equal(readOnlyDocument.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, true);
-  assert.equal(readOnlyDocument.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, true);
+  const readOnlyDocument = new JSDOM(renderComposer(true, true)).window
+    .document;
+  assert.equal(
+    readOnlyDocument.querySelector<HTMLButtonElement>(
+      '.composer-setting-model button[aria-label="Model"]',
+    )?.disabled,
+    true,
+  );
+  assert.equal(
+    readOnlyDocument.querySelector<HTMLSelectElement>(
+      ".composer-setting-depth select",
+    )?.disabled,
+    true,
+  );
 });
 
 // @test-value v2
@@ -5034,30 +7908,36 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 // impact = "送信直後の待機状態を簡潔な視覚表示とaccessible statusで示し、同じbusy説明の重複表示を防ぐ"
 // distinction = "sendability state testはbusy/error併存判定を確認し、このtestはSessionComposerExpandedへの表示投影を確認する"
 // @end-test-value
+/** 送信がbusyの間は通常のSend操作の代わりに進行表示とステータスを出す。 */
 test("SessionComposerExpanded は busy 中の Send を spinner と status にする", () => {
   const busyReason = "Message submission is in progress.";
   const html = renderToStaticMarkup(
-    React.createElement(SessionComposerExpanded, createComposerTestProps({
-      draft: "hello",
-      isSendDisabled: true,
-      queueTurnBusy: true,
-      composerSendability: {
-        isBusy: true,
-        busyReason,
-        primaryFeedback: "",
-        secondaryFeedback: [],
-        feedbackTone: null,
-        shouldShowFeedback: false,
-      },
-      sendButtonTitle: busyReason,
-    })),
+    React.createElement(
+      SessionComposerExpanded,
+      createComposerTestProps({
+        draft: "hello",
+        isSendDisabled: true,
+        queueTurnBusy: true,
+        composerSendability: {
+          isBusy: true,
+          busyReason,
+          primaryFeedback: "",
+          secondaryFeedback: [],
+          feedbackTone: null,
+          shouldShowFeedback: false,
+        },
+        sendButtonTitle: busyReason,
+      }),
+    ),
   );
 
   const renderedDocument = new JSDOM(html).window.document;
   const sendButton = renderedDocument.querySelector<HTMLButtonElement>(
     ".composer-control-row .composer-send-control > button.session-send-button",
   );
-  const textarea = renderedDocument.querySelector<HTMLTextAreaElement>(".composer-input-row textarea");
+  const textarea = renderedDocument.querySelector<HTMLTextAreaElement>(
+    ".composer-input-row textarea",
+  );
   const status = renderedDocument.querySelector('[role="status"]');
   assert.ok(sendButton);
   assert.ok(textarea);
@@ -5065,11 +7945,16 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
   assert.equal(sendButton.disabled, true);
   assert.equal(sendButton.getAttribute("aria-busy"), "true");
   assert.ok(sendButton.getAttribute("title")?.startsWith(busyReason));
-  assert.ok(sendButton.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
+  assert.ok(
+    sendButton.querySelector(".loading-indicator-spinner[aria-hidden='true']"),
+  );
   assert.equal(sendButton.textContent, "Send");
   assert.equal(textarea.getAttribute("aria-busy"), "true");
   assert.equal(status.textContent, busyReason);
-  assert.equal(renderedDocument.querySelector(".composer-sendability-feedback"), null);
+  assert.equal(
+    renderedDocument.querySelector(".composer-sendability-feedback"),
+    null,
+  );
 });
 
 // @test-value v2
@@ -5084,6 +7969,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
 // impact = "同じ操作をMain composerと重複表示し、compact dockの対象切替を妨げる"
 // distinction = "running compact表示のpending/cancel契約とは分離してidle表示の重複抑止を確認する"
 // @end-test-value
+/** 待機時の折りたたみ行には表示モードと末尾移動を残すが、Sendや下書きは出さない。 */
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
@@ -5091,19 +7977,31 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
       showJumpToBottom: true,
       showMessageViewModeControls: true,
       messageViewMode: "preview",
+      /** 折りたたみ時の初期表示確認では展開しない。 */
       onExpand() {},
+      /** 末尾移動のボタンは描画するがスクロール処理は走らせない。 */
       onJumpToBottom() {},
+      /** 通常時に取消が実行されない構成で配置を確認する。 */
       onCancel() {},
+      /** PreviewとSourceの切替状態を他の表示に反映しない。 */
       onMessageViewModeChange() {},
     }),
   );
 
   assert.match(html, /Jump To Latest/);
   const document = new JSDOM(html).window.document;
-  assert.deepEqual([...document.querySelectorAll('.composer-message-view-mode button')].map((button) => button.textContent), ["Preview", "Source"]);
-  assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
+  assert.deepEqual(
+    [...document.querySelectorAll(".composer-message-view-mode button")].map(
+      (button) => button.textContent,
+    ),
+    ["Preview", "Source"],
+  );
+  assert.match(
+    html,
+    /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/,
+  );
   assert.match(html, /aria-label="Expand action dock"/);
-  assert.equal(document.querySelector('.session-send-button'), null);
+  assert.equal(document.querySelector(".session-send-button"), null);
   assert.doesNotMatch(html, /Draft|下書きなし/);
 });
 
@@ -5119,51 +8017,110 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 // impact = "実行中だけmeta領域から再展開できず、状態によって開閉操作が変わる"
 // distinction = "既存の静的DOM testとは異なり、React上で各状態のmeta領域をclickして同一callbackを確認する"
 // @end-test-value
+/** 実行状態によらずmeta領域から展開できることをクリックで確認する。 */
 test("SessionActionDockCompactRow は状態によらずmeta領域から展開する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
   let root: Root | null = null;
   let expandCount = 0;
 
   try {
-    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-    for (const [isRunning, hasAttention] of [[false, false], [false, true], [true, true]] as const) {
+    root = createRoot(
+      dom.window.document.getElementById("root") as HTMLElement,
+    );
+    for (const [isRunning, hasAttention] of [
+      [false, false],
+      [false, true],
+      [true, true],
+    ] as const) {
       await act(async () => {
-        root?.render(React.createElement(SessionActionDockCompactRow, {
-          isRunning,
-          attentionControl: hasAttention ? React.createElement("button", { type: "button", className: "test-attention" }, "Main: New messages. Show Chat") : null,
-          showJumpToBottom: false,
-          onExpand: () => { expandCount += 1; },
-          onJumpToBottom() {},
-          onCancel() {},
-        }));
+        root?.render(
+          React.createElement(SessionActionDockCompactRow, {
+            isRunning,
+            attentionControl: hasAttention
+              ? React.createElement(
+                  "button",
+                  { type: "button", className: "test-attention" },
+                  "Main: New messages. Show Chat",
+                )
+              : null,
+            showJumpToBottom: false,
+            /** meta領域から展開が通知された回数を数える。 */
+            onExpand: () => {
+              expandCount += 1;
+            },
+            /** 末尾移動に副作用を持たせず展開操作を検証する。 */
+            onJumpToBottom() {},
+            /** 取消処理を起こさずメタ領域のクリックとの分離を調べる。 */
+            onCancel() {},
+          }),
+        );
       });
-      const row = dom.window.document.querySelector(".session-action-dock-compact-row");
-      const button = row?.querySelector<HTMLButtonElement>(".session-action-dock-compact-expand-button");
+      const row = dom.window.document.querySelector(
+        ".session-action-dock-compact-row",
+      );
+      const button = row?.querySelector<HTMLButtonElement>(
+        ".session-action-dock-compact-expand-button",
+      );
       assert.ok(button);
       assert.equal(button.getAttribute("aria-label"), "Expand action dock");
       assert.equal(button.type, "button");
       assert.equal(button.tabIndex, 0);
-      assert.equal(row?.querySelectorAll(".session-action-dock-compact-expand-button").length, 1);
+      assert.equal(
+        row?.querySelectorAll(".session-action-dock-compact-expand-button")
+          .length,
+        1,
+      );
       assert.equal(button.childElementCount, 0);
-      assert.equal(row?.querySelectorAll(".session-action-dock-compact-actions > .test-attention").length, hasAttention ? 1 : 0);
+      assert.equal(
+        row?.querySelectorAll(
+          ".session-action-dock-compact-actions > .test-attention",
+        ).length,
+        hasAttention ? 1 : 0,
+      );
       await act(async () => button.click());
       assert.equal(expandCount, isRunning ? 3 : hasAttention ? 2 : 1);
     }
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
   }
 });
 
@@ -5179,16 +8136,28 @@ test("SessionActionDockCompactRow は状態によらずmeta領域から展開す
 // impact = "実行中のcompact ActionDockで停止操作と会話対象の切替位置を見失わない"
 // distinction = "同一React treeのidle/running遷移は別testで確認し、このtestは実行中の操作列を確認する"
 // @end-test-value
+/** 折りたたみ中でも実行中なら末尾移動と取消を操作できる表示にする。 */
 test("SessionActionDockCompactRow は実行中に jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       isRunning: true,
-      targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
-      attentionControl: React.createElement("button", { type: "button", className: "test-attention" }, "Main: New messages. Show Chat"),
+      targetDock: React.createElement(
+        "span",
+        { className: "test-target-dock" },
+        "Main / Auxiliary",
+      ),
+      attentionControl: React.createElement(
+        "button",
+        { type: "button", className: "test-attention" },
+        "Main: New messages. Show Chat",
+      ),
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
+      /** 実行中の折りたたみ行からはダミーの展開先を使う。 */
       onExpand() {},
+      /** 実行中のジャンプ操作は行わずボタンの存在を確認する。 */
       onJumpToBottom() {},
+      /** Cancelの実行を伴わず表示の契約を検査する。 */
       onCancel() {},
     }),
   );
@@ -5196,11 +8165,20 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
   const renderedDocument = new JSDOM(html).window.document;
-  assert.equal(renderedDocument.querySelector('.session-send-button')?.textContent, "Cancel");
-  const actions = renderedDocument.querySelector(".session-action-dock-compact-actions");
+  assert.equal(
+    renderedDocument.querySelector(".session-send-button")?.textContent,
+    "Cancel",
+  );
+  const actions = renderedDocument.querySelector(
+    ".session-action-dock-compact-actions",
+  );
   assert.ok(actions);
-  const cancelSlot = actions?.querySelector(":scope > .session-action-dock-cancel-slot");
-  const targetSlot = actions?.querySelector(":scope > .session-action-dock-target-slot");
+  const cancelSlot = actions?.querySelector(
+    ":scope > .session-action-dock-cancel-slot",
+  );
+  const targetSlot = actions?.querySelector(
+    ":scope > .session-action-dock-target-slot",
+  );
   assert.ok(cancelSlot);
   assert.ok(targetSlot);
   assert.equal(actions.firstElementChild?.className, "test-attention");
@@ -5221,23 +8199,44 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
 // impact = "compactとexpandedでCancelの相対位置を揃え、target切替とrun状態変更による操作位置の横ずれを双方向に防ぐ"
 // distinction = "CSS declaration testは固定幅を確認し、component testはReact state更新後もslotのDOM位置とtarget内容を確認する"
 // @end-test-value
+/** 実行状態や対象ラベルが変わっても、Cancelに予約した枠をMain／Auxiliaryの直前に維持する。 */
 test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxiliary 直前の Cancel 予約slotを維持する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    pretendToBeVisual: true,
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      pretendToBeVisual: true,
+    },
+  );
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: dom.window,
   });
-  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
-  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: dom.window.document,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+  Object.defineProperty(globalThis, "Node", {
+    configurable: true,
+    value: dom.window.Node,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
   let root: Root | null = null;
   let setRunning: React.Dispatch<React.SetStateAction<boolean>> | null = null;
-  let setTargetLabel: React.Dispatch<React.SetStateAction<string>> | null = null;
+  let setTargetLabel: React.Dispatch<React.SetStateAction<string>> | null =
+    null;
+  /** 同じ折りたたみ行の実行状態と対象ラベルを別々に更新できるfixture。 */
   function Harness() {
     const [isRunning, updateRunning] = React.useState(false);
     const [targetLabel, updateTargetLabel] = React.useState("Main / Auxiliary");
@@ -5245,21 +8244,40 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
     setTargetLabel = updateTargetLabel;
     return React.createElement(SessionActionDockCompactRow, {
       isRunning,
-      targetDock: React.createElement("span", { className: "test-target-dock" }, targetLabel),
+      targetDock: React.createElement(
+        "span",
+        { className: "test-target-dock" },
+        targetLabel,
+      ),
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
+      /** 状態遷移中に展開で行の種類を変更しない。 */
       onExpand() {},
+      /** 予約枠の検査にスクロール操作を混ぜない。 */
       onJumpToBottom() {},
+      /** Cancel表示の遷移を検査し、実行自体は中止しない。 */
       onCancel() {},
     });
   }
 
-  const assertSlot = (slot: Element | null, isRunning: boolean, targetLabel: string) => {
+  /** 予約枠の順序と対象表示を確認し、実行状態に応じたCancelの有無も判定する。 */
+  const assertSlot = (
+    slot: Element | null,
+    isRunning: boolean,
+    targetLabel: string,
+  ) => {
     assert.ok(slot);
     const parent = slot.parentElement;
-    assert.ok(parent?.classList.contains("session-action-dock-compact-actions"));
+    assert.ok(
+      parent?.classList.contains("session-action-dock-compact-actions"),
+    );
     assert.equal(parent?.firstElementChild, slot);
-    assert.equal(slot.nextElementSibling?.classList.contains("session-action-dock-target-slot"), true);
+    assert.equal(
+      slot.nextElementSibling?.classList.contains(
+        "session-action-dock-target-slot",
+      ),
+      true,
+    );
     assert.equal(slot.nextElementSibling?.textContent, targetLabel);
     assert.equal(slot.classList.contains("is-active"), isRunning);
     if (isRunning) {
@@ -5275,11 +8293,15 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
 
   try {
     await act(async () => {
-      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root = createRoot(
+        dom.window.document.getElementById("root") as HTMLElement,
+      );
       root.render(React.createElement(Harness));
     });
     const container = dom.window.document.getElementById("root") as HTMLElement;
-    const idleSlot = container.querySelector(".session-action-dock-cancel-slot");
+    const idleSlot = container.querySelector(
+      ".session-action-dock-cancel-slot",
+    );
     assertSlot(idleSlot, false, "Main / Auxiliary");
     assert.ok(setRunning);
     assert.ok(setTargetLabel);
@@ -5288,23 +8310,42 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
       setRunning?.(true);
       setTargetLabel?.("Auxiliary");
     });
-    const runningSlot = container.querySelector(".session-action-dock-cancel-slot");
+    const runningSlot = container.querySelector(
+      ".session-action-dock-cancel-slot",
+    );
     assertSlot(runningSlot, true, "Auxiliary");
 
     await act(async () => {
       setRunning?.(false);
       setTargetLabel?.("Main / Auxiliary");
     });
-    const restoredSlot = container.querySelector(".session-action-dock-cancel-slot");
+    const restoredSlot = container.querySelector(
+      ".session-action-dock-cancel-slot",
+    );
     assertSlot(restoredSlot, false, "Main / Auxiliary");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
-    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
-    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
-    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: previousWindow,
+    });
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: previousDocument,
+    });
+    Object.defineProperty(globalThis, "HTMLElement", {
+      configurable: true,
+      value: previousHTMLElement,
+    });
+    Object.defineProperty(globalThis, "Node", {
+      configurable: true,
+      value: previousNode,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
   }
 });
 
@@ -5320,33 +8361,81 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
 // impact = "queue受付のない実行中の設定変更、利用制限中の編集、idleでの設定変更不能を防ぐ"
 // distinction = "queue受付未提供のcomponent条件で各制限の独立性を8組合せで確認する。queue対応Appのrunning編集可は別境界のtestが担う"
 // @end-test-value
+/** ModelとDepthの保持値を変えず、操作ごとに許可・制限を独立して適用する。 */
 test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限を独立に適用する", () => {
   for (const isRunning of [false, true]) {
     for (const composerBlocked of [false, true]) {
       for (const frozen of [false, true]) {
         const registry = new ComposerControllerRegistry();
         if (frozen) registry.freeze();
-        const html = renderToStaticMarkup(React.createElement(SessionComposerExpanded, createComposerTestProps({
-          isRunning,
-          composerBlocked,
-          composerController: { owner: { kind: "main", id: "main-1" }, registry },
-          modelOptions: [
-            { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", model: { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", reasoningEfforts: [] } },
-            { value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } },
-          ],
-          reasoningOptions: [{ value: "medium", label: "Medium" }, { value: "high", label: "High" }],
-        })));
+        const html = renderToStaticMarkup(
+          React.createElement(
+            SessionComposerExpanded,
+            createComposerTestProps({
+              isRunning,
+              composerBlocked,
+              composerController: {
+                owner: { kind: "main", id: "main-1" },
+                registry,
+              },
+              modelOptions: [
+                {
+                  value: "gpt-5.4-mini",
+                  label: "GPT-5.4 Mini",
+                  model: {
+                    id: "gpt-5.4-mini",
+                    label: "GPT-5.4 Mini",
+                    reasoningEfforts: [],
+                  },
+                },
+                {
+                  value: "gpt-5.4",
+                  label: "GPT-5.4",
+                  model: {
+                    id: "gpt-5.4",
+                    label: "GPT-5.4",
+                    reasoningEfforts: [],
+                  },
+                },
+              ],
+              reasoningOptions: [
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+              ],
+            }),
+          ),
+        );
         const dom = new JSDOM(html);
         try {
-          const context = JSON.stringify({ isRunning, composerBlocked, frozen });
-          const model = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Model"]');
+          const context = JSON.stringify({
+            isRunning,
+            composerBlocked,
+            frozen,
+          });
+          const model = dom.window.document.querySelector<HTMLButtonElement>(
+            'button[aria-label="Model"]',
+          );
           assert.ok(model, context);
-          assert.equal(model.disabled, isRunning || composerBlocked || frozen, context);
-          assert.equal(model.querySelector("span")?.textContent, "GPT-5.4", context);
+          assert.equal(
+            model.disabled,
+            isRunning || composerBlocked || frozen,
+            context,
+          );
+          assert.equal(
+            model.querySelector("span")?.textContent,
+            "GPT-5.4",
+            context,
+          );
           assert.equal(model.title, "Model: GPT-5.4", context);
-          const depth = dom.window.document.querySelector<HTMLSelectElement>(".composer-setting-depth select");
+          const depth = dom.window.document.querySelector<HTMLSelectElement>(
+            ".composer-setting-depth select",
+          );
           assert.ok(depth, context);
-          assert.equal(depth.disabled, isRunning || composerBlocked || frozen, context);
+          assert.equal(
+            depth.disabled,
+            isRunning || composerBlocked || frozen,
+            context,
+          );
           assert.equal(depth.value, "high", context);
           assert.equal(depth.selectedOptions[0]?.textContent, "High", context);
         } finally {
@@ -5369,47 +8458,76 @@ test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限�
 // impact = "flush中に捨てられる入力操作を利用者へ実行可能と見せず、keyboard送信を抑止した理由を表示する"
 // distinction = "これは実Appのflush開始・非同期picker適用ではなく、共通ComposerのUI契約を確認する。controller通知・main handlerの統合挙動はintegration testで確認する"
 // @end-test-value
+/** freeze中には設定変更を無効化し、明示されたブロック理由を表示する。 */
 test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強制blocked feedbackを表示する", () => {
   const registry = new ComposerControllerRegistry();
   const owner = { kind: "auxiliary" as const, id: "aux-1" };
   registry.setPreview(owner, {
-    attachments: [{
-      id: "attachment-1",
-      kind: "file",
-      source: "text",
-      absolutePath: "C:/workspace/README.md",
-      displayPath: "README.md",
-      workspaceRelativePath: "README.md",
-      isOutsideWorkspace: false,
-    }],
+    attachments: [
+      {
+        id: "attachment-1",
+        kind: "file",
+        source: "text",
+        absolutePath: "C:/workspace/README.md",
+        displayPath: "README.md",
+        workspaceRelativePath: "README.md",
+        isOutsideWorkspace: false,
+      },
+    ],
     errors: [],
   });
   registry.freeze();
   const html = renderToStaticMarkup(
-    React.createElement(SessionComposerExpanded, createComposerTestProps({
-      composerController: { owner, registry },
-      forceComposerBlockedFeedback: true,
-      isAgentPickerOpen: true,
-    })),
+    React.createElement(
+      SessionComposerExpanded,
+      createComposerTestProps({
+        composerController: { owner, registry },
+        forceComposerBlockedFeedback: true,
+        isAgentPickerOpen: true,
+      }),
+    ),
   );
   const renderedDocument = new JSDOM(html).window.document;
   for (const selector of [
-    ".composer-attachments-toolbar button", 'button[aria-label="Custom Agent: Agent"]',
-    'button[title="Skill"]', 'button[title="Template"]', ".composer-additional-directory-toolbar button",
-    '.composer-setting-model button[aria-label="Model"]', ".composer-setting-depth select",
+    ".composer-attachments-toolbar button",
+    'button[aria-label="Custom Agent: Agent"]',
+    'button[title="Skill"]',
+    'button[title="Template"]',
+    ".composer-additional-directory-toolbar button",
+    '.composer-setting-model button[aria-label="Model"]',
+    ".composer-setting-depth select",
   ]) {
-    const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(selector));
+    const controls = Array.from(
+      renderedDocument.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(
+        selector,
+      ),
+    );
     assert.ok(controls.length > 0, selector);
-    assert.ok(controls.every((control) => control.disabled), selector);
+    assert.ok(
+      controls.every((control) => control.disabled),
+      selector,
+    );
   }
-  const agentTrigger = renderedDocument.querySelector('button[aria-label="Custom Agent: Agent"]');
+  const agentTrigger = renderedDocument.querySelector(
+    'button[aria-label="Custom Agent: Agent"]',
+  );
   assert.equal(agentTrigger?.getAttribute("aria-expanded"), "false");
-  assert.equal(renderedDocument.querySelector('[role="listbox"][aria-label="Custom Agent Options"]'), null);
-  const feedback = renderedDocument.querySelector("#composer-sendability-feedback");
+  assert.equal(
+    renderedDocument.querySelector(
+      '[role="listbox"][aria-label="Custom Agent Options"]',
+    ),
+    null,
+  );
+  const feedback = renderedDocument.querySelector(
+    "#composer-sendability-feedback",
+  );
   const textarea = renderedDocument.querySelector("textarea");
   assert.equal(textarea?.disabled, true);
   assert.equal(feedback?.textContent, "Message is empty.");
-  assert.match(textarea?.getAttribute("aria-describedby") ?? "", /composer-sendability-feedback/);
+  assert.match(
+    textarea?.getAttribute("aria-describedby") ?? "",
+    /composer-sendability-feedback/,
+  );
 });
 
 // @test-value v2
@@ -5422,6 +8540,7 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
 // scope = "session-context-pane-empty-command"
 // lifecycle = "permanent"
 // @end-test-value
+/** 最後のコマンドが取得できないときも、コンテキストペインの空の枠を残す。 */
 test("SessionContextPane は latest command がないとき empty shell を維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionContextPane, {
@@ -5451,6 +8570,7 @@ test("SessionContextPane は latest command がないとき empty shell を維�
         systemTokensLabel: "",
         conversationTokensLabel: "",
       },
+      /** タブの切替を起こさず、コマンドなしの初期表示だけを調べる。 */
       onCycleContextPaneTab() {},
     }),
   );

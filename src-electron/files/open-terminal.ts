@@ -1,19 +1,23 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 
+/** シェル経由で連結せず、プロセス起動へ渡す端末の実行ファイルと引数。 */
 export type TerminalLaunchCommand = {
   command: string;
   args: string[];
 };
 
+/** PowerShellの単引用符付きリテラル内で引用符を文字として扱える形にする。 */
 function escapePowerShellLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+/** cmdの二重引用符付き引数に埋め込む引用符を二重化する。 */
 function escapeCmdDoubleQuoted(value: string): string {
-  return value.replace(/"/g, "\"\"");
+  return value.replace(/"/g, '""');
 }
 
+/** 指定ディレクトリで開くための端末候補をOS別に試行順で返す。未対応OSには候補を返さない。 */
 export function buildTerminalLaunchCommands(
   workingDirectory: string,
   platform: NodeJS.Platform = process.platform,
@@ -26,11 +30,19 @@ export function buildTerminalLaunchCommands(
       },
       {
         command: "pwsh.exe",
-        args: ["-NoExit", "-Command", `Set-Location -LiteralPath '${escapePowerShellLiteral(workingDirectory)}'`],
+        args: [
+          "-NoExit",
+          "-Command",
+          `Set-Location -LiteralPath '${escapePowerShellLiteral(workingDirectory)}'`,
+        ],
       },
       {
         command: "powershell.exe",
-        args: ["-NoExit", "-Command", `Set-Location -LiteralPath '${escapePowerShellLiteral(workingDirectory)}'`],
+        args: [
+          "-NoExit",
+          "-Command",
+          `Set-Location -LiteralPath '${escapePowerShellLiteral(workingDirectory)}'`,
+        ],
       },
       {
         command: "cmd.exe",
@@ -72,14 +84,21 @@ export function buildTerminalLaunchCommands(
   return [];
 }
 
+/** 起動前に作業場所を確認し、存在しないパスやディレクトリでないパスを拒否する。 */
 async function ensureDirectoryExists(workingDirectory: string): Promise<void> {
   const directoryStat = await stat(workingDirectory);
   if (!directoryStat.isDirectory()) {
-    throw new Error("The workspace path is not a directory, so the terminal could not be opened.");
+    throw new Error(
+      "The workspace path is not a directory, so the terminal could not be opened.",
+    );
   }
 }
 
-function launchDetachedCommand(launchCommand: TerminalLaunchCommand, workingDirectory: string): Promise<void> {
+/** 端末を独立したプロセスとして起動し、端末の終了を待たずに起動イベントで完了する。 */
+function launchDetachedCommand(
+  launchCommand: TerminalLaunchCommand,
+  workingDirectory: string,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(launchCommand.command, launchCommand.args, {
       cwd: workingDirectory,
@@ -96,13 +115,16 @@ function launchDetachedCommand(launchCommand: TerminalLaunchCommand, workingDire
   });
 }
 
+/** 指定ディレクトリで端末を開く。候補が見つからない場合に限って次候補へ進み、起動できなければ例外を返す。 */
 export async function launchTerminalAtPath(
   workingDirectory: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
   const normalizedPath = workingDirectory.trim();
   if (!normalizedPath) {
-    throw new Error("The workspace path is empty, so the terminal could not be opened.");
+    throw new Error(
+      "The workspace path is empty, so the terminal could not be opened.",
+    );
   }
 
   await ensureDirectoryExists(normalizedPath);
@@ -119,7 +141,10 @@ export async function launchTerminalAtPath(
       return;
     } catch (error) {
       lastError = error;
-      const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : null;
+      const errorCode =
+        typeof error === "object" && error !== null && "code" in error
+          ? error.code
+          : null;
       if (errorCode !== "ENOENT") {
         break;
       }

@@ -15,6 +15,7 @@ import {
 
 import type { IpcHandleRegistrar, MainIpcMateDeps } from "./contracts.js";
 
+/** Mate の状態とプロフィールの取得、作成・更新・アバター変更・リセットをそれぞれのサービスへ委譲する IPC を登録する。 */
 export function registerMateHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcMateDeps,

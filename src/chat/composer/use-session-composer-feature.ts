@@ -19,9 +19,20 @@ import type {
   ModelCatalogProvider,
   ModelReasoningEffort,
 } from "../../../src-shared/settings/model-catalog.js";
-import { getSessionIncarnationId, type Session } from "../../../src-shared/session/session-state.js";
-import { applyAuxiliarySessionRuntimeOptionsPatch, type AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
-import { getSessionApprovalChoices, getSessionApprovalDisplay, resolveSessionApprovalChoice, type SessionApprovalChoice } from "../../../src-shared/settings/session-approval-choice.js";
+import {
+  getSessionIncarnationId,
+  type Session,
+} from "../../../src-shared/session/session-state.js";
+import {
+  applyAuxiliarySessionRuntimeOptionsPatch,
+  type AuxiliarySession,
+} from "../../../src-shared/auxiliary/auxiliary-session-state.js";
+import {
+  getSessionApprovalChoices,
+  getSessionApprovalDisplay,
+  resolveSessionApprovalChoice,
+  type SessionApprovalChoice,
+} from "../../../src-shared/settings/session-approval-choice.js";
 import type { AuxiliaryDraftPersistence } from "../auxiliary/use-auxiliary-draft-persistence.js";
 import type {
   ComposerControllerRegistry,
@@ -31,9 +42,7 @@ import type {
 } from "../composer-controller.js";
 import { useSessionDraftFlushLifecycle } from "../runtime/use-session-draft-flush-lifecycle.js";
 import { resolveSessionRunErrorMessage } from "../runtime/session-live-run-state.js";
-import {
-  buildAuxiliaryAwareRuntimeOptionChangeHandler,
-} from "../auxiliary-runtime-option-routing.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "../auxiliary-runtime-option-routing.js";
 import { buildAuxiliaryAwareSendOrCancelHandler } from "../send-or-cancel.js";
 import {
   runAuxiliaryCodexSpeedChangeOperation,
@@ -78,9 +87,12 @@ import {
   createSkillPickerToggleHandler as createSkillPickerStateToggleHandler,
 } from "../session-shell-handlers.js";
 
+/** コンポーザーから追加の値なしで起動できる同期または非同期の操作。 */
 type SessionComposerOperation = () => void | Promise<void>;
+/** コンポーザーが選択した値を受け取る同期または非同期の操作。 */
 type SessionComposerValueOperation<T> = (value: T) => void | Promise<void>;
 
+/** 対象セッションの表示状態・利用可能な候補・操作をコンポーザーへ渡す接続契約。 */
 export type SessionComposerFeatureBridge = {
   session: Session;
   canRemoveAdditionalDirectories: boolean;
@@ -134,7 +146,11 @@ export type SessionComposerFeatureBridge = {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
       auxiliary: {
         session: AuxiliarySession | null;
-        update: (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: ConfirmedReviewerChange, approvalChoice?: SessionApprovalChoice) => Promise<void>;
+        update: (
+          recipe: (current: AuxiliarySession) => AuxiliarySession,
+          confirmedReviewerChange?: ConfirmedReviewerChange,
+          approvalChoice?: SessionApprovalChoice,
+        ) => Promise<void>;
         timestamp: () => string;
       };
     };
@@ -148,7 +164,10 @@ export type SessionComposerFeatureBridge = {
     };
     draft: {
       main: (value: string, selectionStart: number) => void | Promise<void>;
-      auxiliary: (value: string, selectionStart: number) => void | Promise<void>;
+      auxiliary: (
+        value: string,
+        selectionStart: number,
+      ) => void | Promise<void>;
       paste?: ClipboardEventHandler<HTMLTextAreaElement>;
       focus: () => void;
     };
@@ -171,24 +190,36 @@ export type SessionComposerFeatureBridge = {
   };
 };
 
+/** 展開・コンパクト表示と補助ピッカーへ渡す描画用の状態と操作。 */
 export type SessionComposerFeatureSurface = {
   composer: ReturnType<typeof buildLiveSessionComposerDockProps>["composer"];
-  compactActionDock: ReturnType<typeof buildLiveSessionComposerDockProps>["compactActionDock"];
-  additionalDirectoryListProps: NonNullable<ChatWindowProps["additionalDirectoryListProps"]>;
+  compactActionDock: ReturnType<
+    typeof buildLiveSessionComposerDockProps
+  >["compactActionDock"];
+  additionalDirectoryListProps: NonNullable<
+    ChatWindowProps["additionalDirectoryListProps"]
+  >;
   skillPickerProps: NonNullable<ChatWindowProps["skillPickerProps"]>;
   skillItems: NonNullable<ChatWindowProps["skillPickerProps"]>["items"];
-  onSelectSkill: NonNullable<ChatWindowProps["skillPickerProps"]>["onSelectSkill"];
+  onSelectSkill: NonNullable<
+    ChatWindowProps["skillPickerProps"]
+  >["onSelectSkill"];
   onToggleSkillPicker: () => void;
   isSkillPickerOpen: boolean;
   isSkillListLoading: boolean;
   skillListError: string | null;
-  additionalDirectoryItems: NonNullable<ChatWindowProps["additionalDirectoryListProps"]>["items"];
+  additionalDirectoryItems: NonNullable<
+    ChatWindowProps["additionalDirectoryListProps"]
+  >["items"];
   isAdditionalDirectoryListOpen: boolean;
   onRemoveAdditionalDirectory: (path: string) => void;
   isComposerFrozen: boolean;
 };
 
-export type SessionComposerFeature = ReturnType<typeof useSessionComposerFeature>;
+/** セッションの入力欄を組み立てるためにフックが提供する状態と操作。 */
+export type SessionComposerFeature = ReturnType<
+  typeof useSessionComposerFeature
+>;
 
 /**
  * 対象ごとのコンポーザー状態を管理する。ルートが渡すのは選択中の所有者と
@@ -216,24 +247,51 @@ export function useSessionComposerFeature(input: {
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
-  const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
-  const [turnRecoveryActions, setTurnRecoveryActions] = useState<Record<string, "check" | "retry">>({});
-  const [turnRecoveryErrors, setTurnRecoveryErrors] = useState<Record<string, string>>({});
+  const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] =
+    useState(false);
+  const [turnRecoveryActions, setTurnRecoveryActions] = useState<
+    Record<string, "check" | "retry">
+  >({});
+  const [turnRecoveryErrors, setTurnRecoveryErrors] = useState<
+    Record<string, string>
+  >({});
 
   composerOwnerRef.current = input.activeRunSessionId;
-  const composerSnapshot = input.composerRegistry.get(input.composerOwner, input.composerDraft);
+  const composerSnapshot = input.composerRegistry.get(
+    input.composerOwner,
+    input.composerDraft,
+  );
   useLayoutEffect(() => {
-    input.composerRegistry.hydrateIfUnedited(input.composerOwner, input.composerDraft);
+    input.composerRegistry.hydrateIfUnedited(
+      input.composerOwner,
+      input.composerDraft,
+    );
   }, [input.composerDraft, input.composerOwner, input.composerRegistry]);
 
   const composerState = {
     ...composerSnapshot,
-    setDraft: (value: string, selection?: ComposerSelection) => input.canChangeDraft?.() === false
-      ? input.composerRegistry.get(input.composerOwner).revision : input.composerRegistry.setDraft(input.composerOwner, value, selection),
-    setSelection: (value: SetStateAction<ComposerSelection>) => input.composerRegistry.setSelection(input.composerOwner, value),
-    setPreview: (value: ComposerPreview) => input.composerRegistry.setPreview(input.composerOwner, value),
-    setImeComposing: (value: boolean) => input.composerRegistry.setImeComposing(input.composerOwner, value),
-    setSaveState: (value: ComposerSaveState, error?: string | null) => input.composerRegistry.setSaveState(input.composerOwner, value, error),
+    /** 編集を許可されていれば現在の対象の下書きを更新し、許可されなければ現在版だけを返す。 */
+    setDraft: (value: string, selection?: ComposerSelection) =>
+      input.canChangeDraft?.() === false
+        ? input.composerRegistry.get(input.composerOwner).revision
+        : input.composerRegistry.setDraft(
+            input.composerOwner,
+            value,
+            selection,
+          ),
+    /** 選択範囲またはその更新式を現在の編集対象へ渡す。 */
+    setSelection: (value: SetStateAction<ComposerSelection>) =>
+      input.composerRegistry.setSelection(input.composerOwner, value),
+    /** 現在の編集対象に下書きのプレビュー結果を反映する。 */
+    setPreview: (value: ComposerPreview) =>
+      input.composerRegistry.setPreview(input.composerOwner, value),
+    /** 現在の編集対象のIME変換中フラグを更新する。 */
+    setImeComposing: (value: boolean) =>
+      input.composerRegistry.setImeComposing(input.composerOwner, value),
+    /** 現在の編集対象の保存状態と任意のエラーを更新する。 */
+    setSaveState: (value: ComposerSaveState, error?: string | null) =>
+      input.composerRegistry.setSaveState(input.composerOwner, value, error),
+    /** 現在の編集対象の本文と版を送信後の照合用に取得する。 */
     capture: () => input.composerRegistry.capture(input.composerOwner),
   };
 
@@ -243,16 +301,23 @@ export function useSessionComposerFeature(input: {
     persistence: input.auxiliaryDraftPersistence,
   });
   const draft = composerState.draft;
-  const setDraft = useCallback((update: SetStateAction<string>) => {
-    const current = input.composerRegistry.get(input.composerOwner).draft;
-    const next = typeof update === "function" ? update(current) : update;
-    composerState.setDraft(next);
-  }, [composerState.setDraft, input.composerOwner, input.composerRegistry]);
-  const { preview: composerPreview, setPreview: setComposerPreview } = composerState;
+  const setDraft = useCallback(
+    (update: SetStateAction<string>) => {
+      const current = input.composerRegistry.get(input.composerOwner).draft;
+      const next = typeof update === "function" ? update(current) : update;
+      composerState.setDraft(next);
+    },
+    [composerState.setDraft, input.composerOwner, input.composerRegistry],
+  );
+  const { preview: composerPreview, setPreview: setComposerPreview } =
+    composerState;
   const composerCaret = composerState.selection.start;
-  const setComposerCaret = useCallback((caret: number) => {
-    composerState.setSelection({ start: caret, end: caret });
-  }, [composerState.setSelection]);
+  const setComposerCaret = useCallback(
+    (caret: number) => {
+      composerState.setSelection({ start: caret, end: caret });
+    },
+    [composerState.setSelection],
+  );
   const getComposerDraft = useCallback(
     () => input.composerRegistry.get(input.composerOwner).draft,
     [input.composerOwner, input.composerRegistry],
@@ -260,18 +325,32 @@ export function useSessionComposerFeature(input: {
   const closeAgentPicker = useCallback(() => setIsAgentPickerOpen(false), []);
   const closeSkillPicker = useCallback(() => setIsSkillPickerOpen(false), []);
 
-  const buildSurface = (bridge: SessionComposerFeatureBridge): SessionComposerFeatureSurface => {
+  /** 対象セッションの状態と操作から、入力欄・ドック・補助ピッカーの描画用プロパティを作る。 */
+  const buildSurface = (
+    bridge: SessionComposerFeatureBridge,
+  ): SessionComposerFeatureSurface => {
     const isAuxiliaryTarget = bridge.target === "auxiliary";
+    /** 受付結果が不明な送信を照会または再試行し、処理中と失敗の表示を対象セッション別に管理する。 */
     const recoverTurn = async (action: "check" | "retry") => {
       const ownerId = bridge.session.id;
       if (turnRecoveryActions[ownerId]) return;
       setTurnRecoveryActions((current) => ({ ...current, [ownerId]: action }));
       setTurnRecoveryErrors((current) => ({ ...current, [ownerId]: "" }));
       try {
-        await (action === "check" ? bridge.operations.send.checkReceipt?.() : bridge.operations.send.retryOriginal?.());
+        await (action === "check"
+          ? bridge.operations.send.checkReceipt?.()
+          : bridge.operations.send.retryOriginal?.());
       } catch (error) {
-        const message = resolveSessionRunErrorMessage(error, action === "check" ? "Could not check the receipt." : "Could not retry the original turn.");
-        setTurnRecoveryErrors((current) => ({ ...current, [ownerId]: message }));
+        const message = resolveSessionRunErrorMessage(
+          error,
+          action === "check"
+            ? "Could not check the receipt."
+            : "Could not retry the original turn.",
+        );
+        setTurnRecoveryErrors((current) => ({
+          ...current,
+          [ownerId]: message,
+        }));
       } finally {
         setTurnRecoveryActions((current) => {
           const next = { ...current };
@@ -280,12 +359,20 @@ export function useSessionComposerFeature(input: {
         });
       }
     };
-    const selectedAgentName = bridge.session.customAgentName.trim().toLowerCase();
-    const selectedCustomAgent = bridge.resources.availableCustomAgents.find(
-      (agent) => agent.name.trim().toLowerCase() === selectedAgentName,
-    ) ?? null;
-    const selectedCustomAgentDisplay = buildSelectedCustomAgentDisplay(bridge.session, selectedCustomAgent);
-    const canSelectCustomAgent = !bridge.isCharacterAuthoringSession && bridge.session.provider === "copilot";
+    const selectedAgentName = bridge.session.customAgentName
+      .trim()
+      .toLowerCase();
+    const selectedCustomAgent =
+      bridge.resources.availableCustomAgents.find(
+        (agent) => agent.name.trim().toLowerCase() === selectedAgentName,
+      ) ?? null;
+    const selectedCustomAgentDisplay = buildSelectedCustomAgentDisplay(
+      bridge.session,
+      selectedCustomAgent,
+    );
+    const canSelectCustomAgent =
+      !bridge.isCharacterAuthoringSession &&
+      bridge.session.provider === "copilot";
     const customAgentItems: SessionComposerExpandedProps["customAgentItems"] = [
       {
         key: "default",
@@ -303,11 +390,15 @@ export function useSessionComposerFeature(input: {
           primaryLabel: display.primaryLabel,
           secondaryLabel: display.secondaryLabel,
           title: display.title,
-          isSelected: bridge.session.customAgentName.trim().toLowerCase() === agent.name.trim().toLowerCase(),
+          isSelected:
+            bridge.session.customAgentName.trim().toLowerCase() ===
+            agent.name.trim().toLowerCase(),
         };
       }),
     ];
-    const skillItems: NonNullable<ChatWindowProps["skillPickerProps"]>["items"] = bridge.resources.availableSkills.map((skill) => {
+    const skillItems: NonNullable<
+      ChatWindowProps["skillPickerProps"]
+    >["items"] = bridge.resources.availableSkills.map((skill) => {
       const display = buildSkillMatchDisplay(skill);
       return {
         key: skill.id,
@@ -330,28 +421,29 @@ export function useSessionComposerFeature(input: {
     });
     const approval = getSessionApprovalDisplay(bridge.session);
     const approvalOptions = getSessionApprovalChoices();
-    const composerSendability = bridge.target === "auxiliary"
-      ? buildComposerSendabilityState({
-          runState: bridge.runtime.auxiliaryRunState,
-          canSendInput: bridge.runtime.canSendInput,
-          canQueueTurn: !!bridge.operations.send.queue,
-          busyReason: bridge.runtime.busyReason,
-          blockedReason: bridge.runtime.blockedReason,
-          inputErrors: composerPreview.errors,
-          draftText: getComposerDraft(),
-        })
-      : resolveComposerSendabilityState({
-          runState: bridge.runtime.selectedRunState,
-          canSendInput: bridge.runtime.canSendInput,
-          canQueueTurn: !!bridge.operations.send.queue,
-          busyReason: bridge.runtime.busyReason,
-          blockedReason: bridge.runtime.blockedReason,
-          inputErrors: composerPreview.errors,
-          draftText: getComposerDraft(),
-          forceBlockedFeedback: bridge.runtime.forceBlockedFeedback,
-        });
-    const isComposerDisabled = bridge.runtime.isReadOnly
-      || !!bridge.runtime.blockedReason;
+    const composerSendability =
+      bridge.target === "auxiliary"
+        ? buildComposerSendabilityState({
+            runState: bridge.runtime.auxiliaryRunState,
+            canSendInput: bridge.runtime.canSendInput,
+            canQueueTurn: !!bridge.operations.send.queue,
+            busyReason: bridge.runtime.busyReason,
+            blockedReason: bridge.runtime.blockedReason,
+            inputErrors: composerPreview.errors,
+            draftText: getComposerDraft(),
+          })
+        : resolveComposerSendabilityState({
+            runState: bridge.runtime.selectedRunState,
+            canSendInput: bridge.runtime.canSendInput,
+            canQueueTurn: !!bridge.operations.send.queue,
+            busyReason: bridge.runtime.busyReason,
+            blockedReason: bridge.runtime.blockedReason,
+            inputErrors: composerPreview.errors,
+            draftText: getComposerDraft(),
+            forceBlockedFeedback: bridge.runtime.forceBlockedFeedback,
+          });
+    const isComposerDisabled =
+      bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason;
     const onSendOrCancel = buildAuxiliaryAwareSendOrCancelHandler({
       shouldSendAuxiliary: isAuxiliaryTarget,
       isAuxiliarySessionRunning: bridge.runtime.auxiliaryRunState === "running",
@@ -363,16 +455,23 @@ export function useSessionComposerFeature(input: {
       onSendSelectedSession: bridge.operations.send.main,
     });
     const auxiliaryRuntime = bridge.operations.runtimeOptions.auxiliary;
-    const onAuxiliarySandbox = (codexSandboxMode: Session["codexSandboxMode"]) => runAuxiliarySandboxModeChangeOperation({
-      codexSandboxMode,
-      updateActiveAuxiliarySession: auxiliaryRuntime.update,
-      createTimestampLabel: auxiliaryRuntime.timestamp,
-    });
-    const onAuxiliarySpeed = (codexSpeed: Session["codexSpeed"]) => runAuxiliaryCodexSpeedChangeOperation({
-      codexSpeed,
-      updateActiveAuxiliarySession: auxiliaryRuntime.update,
-      createTimestampLabel: auxiliaryRuntime.timestamp,
-    });
+    /** 補助セッションのSandbox設定を、対象の更新操作へ渡す。 */
+    const onAuxiliarySandbox = (
+      codexSandboxMode: Session["codexSandboxMode"],
+    ) =>
+      runAuxiliarySandboxModeChangeOperation({
+        codexSandboxMode,
+        updateActiveAuxiliarySession: auxiliaryRuntime.update,
+        createTimestampLabel: auxiliaryRuntime.timestamp,
+      });
+    /** 補助セッションのCodex実行速度を、対象の更新操作へ渡す。 */
+    const onAuxiliarySpeed = (codexSpeed: Session["codexSpeed"]) =>
+      runAuxiliaryCodexSpeedChangeOperation({
+        codexSpeed,
+        updateActiveAuxiliarySession: auxiliaryRuntime.update,
+        createTimestampLabel: auxiliaryRuntime.timestamp,
+      });
+    /** 選択したモデルの定義を使って、補助セッションの実行設定を変更する。 */
     const onAuxiliaryModel = (model: ModelCatalogItem) => {
       return runAuxiliaryModelChangeOperation({
         model,
@@ -380,6 +479,7 @@ export function useSessionComposerFeature(input: {
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
+    /** 候補のカタログと補助セッションがそろう場合にだけ推論深度の変更を実行する。 */
     const onAuxiliaryReasoning = (reasoningEffort: string) => {
       if (!bridge.runtime.providerCatalog || !auxiliaryRuntime.session) {
         return;
@@ -391,36 +491,70 @@ export function useSessionComposerFeature(input: {
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
+    /** 承認モードを現在の対象へ反映し、補助側ではプロバイダーに適用できる場合だけ設定を更新する。 */
     const onChangeApprovalMode = (value: SessionApprovalChoice) => {
       if (isAuxiliaryTarget) {
-        void auxiliaryRuntime.update((current) => {
-          const patch = resolveSessionApprovalChoice(current.provider, value);
-          return patch ? applyAuxiliarySessionRuntimeOptionsPatch(current, patch, auxiliaryRuntime.timestamp()) : current;
-        }, undefined, value);
+        void auxiliaryRuntime.update(
+          (current) => {
+            const patch = resolveSessionApprovalChoice(current.provider, value);
+            return patch
+              ? applyAuxiliarySessionRuntimeOptionsPatch(
+                  current,
+                  patch,
+                  auxiliaryRuntime.timestamp(),
+                )
+              : current;
+          },
+          undefined,
+          value,
+        );
       } else {
-        void bridge.operations.runtimeOptions.runMain({ kind: "approval-choice", value });
+        void bridge.operations.runtimeOptions.runMain({
+          kind: "approval-choice",
+          value,
+        });
       }
     };
-    const onChangeCodexSandboxMode = buildAuxiliaryAwareRuntimeOptionChangeHandler({
-      shouldUseAuxiliary: isAuxiliaryTarget,
-      onAuxiliaryChange: onAuxiliarySandbox,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "codex-sandbox-mode", value }),
-    });
+    const onChangeCodexSandboxMode =
+      buildAuxiliaryAwareRuntimeOptionChangeHandler({
+        shouldUseAuxiliary: isAuxiliaryTarget,
+        onAuxiliaryChange: onAuxiliarySandbox,
+        /** メインセッションのSandbox選択を実行設定の更新要求にする。 */
+        onSelectedSessionChange: (value) =>
+          bridge.operations.runtimeOptions.runMain({
+            kind: "codex-sandbox-mode",
+            value,
+          }),
+      });
     const onChangeCodexSpeed = buildAuxiliaryAwareRuntimeOptionChangeHandler({
       shouldUseAuxiliary: isAuxiliaryTarget,
       onAuxiliaryChange: onAuxiliarySpeed,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "codex-speed", value }),
+      /** メインセッションのCodex実行速度を切り替える。 */
+      onSelectedSessionChange: (value) =>
+        bridge.operations.runtimeOptions.runMain({
+          kind: "codex-speed",
+          value,
+        }),
     });
     const onChangeModel = buildAuxiliaryAwareRuntimeOptionChangeHandler({
       shouldUseAuxiliary: isAuxiliaryTarget,
       onAuxiliaryChange: onAuxiliaryModel,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "model", value }),
+      /** 選択したモデルの定義をメインセッションの更新処理へ渡す。 */
+      onSelectedSessionChange: (value) =>
+        bridge.operations.runtimeOptions.runMain({ kind: "model", value }),
     });
-    const onChangeReasoningEffort = buildAuxiliaryAwareRuntimeOptionChangeHandler({
-      shouldUseAuxiliary: isAuxiliaryTarget,
-      onAuxiliaryChange: onAuxiliaryReasoning,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "reasoning-effort", value: value as ModelReasoningEffort }),
-    });
+    const onChangeReasoningEffort =
+      buildAuxiliaryAwareRuntimeOptionChangeHandler({
+        shouldUseAuxiliary: isAuxiliaryTarget,
+        onAuxiliaryChange: onAuxiliaryReasoning,
+        /** 選択欄の推論深度をメインセッションの更新処理へ渡す。 */
+        onSelectedSessionChange: (value) =>
+          bridge.operations.runtimeOptions.runMain({
+            kind: "reasoning-effort",
+            value: value as ModelReasoningEffort,
+          }),
+      });
+    /** 下書きと選択開始位置を、対象に応じてメインまたは補助の更新処理へ渡す。 */
     const onDraftChange = (value: string, selectionStart: number) => {
       if (isAuxiliaryTarget) {
         void bridge.operations.draft.auxiliary(value, selectionStart);
@@ -428,19 +562,25 @@ export function useSessionComposerFeature(input: {
       }
       bridge.operations.draft.main(value, selectionStart);
     };
+    /** 登録名からエージェント候補を特定して対象へ適用し、見つからない場合は既定値として扱う。 */
     const onSelectCustomAgent = (value: string | null) => {
       const agent = value
-        ? bridge.resources.availableCustomAgents.find((entry) => entry.name === value) ?? null
+        ? (bridge.resources.availableCustomAgents.find(
+            (entry) => entry.name === value,
+          ) ?? null)
         : null;
       void (isAuxiliaryTarget
         ? bridge.operations.customAgent.auxiliary(agent)
         : bridge.operations.customAgent.main(agent));
     };
+    /** 凍結中でなく、選択IDが現在の候補にあるときだけ対象セッションへスキルを適用する。 */
     const onSelectSkill = (skillId: string) => {
       if (input.composerRegistry.isFrozen) {
         return;
       }
-      const skill = bridge.resources.availableSkills.find((entry) => entry.id === skillId);
+      const skill = bridge.resources.availableSkills.find(
+        (entry) => entry.id === skillId,
+      );
       if (!skill) {
         return;
       }
@@ -452,6 +592,7 @@ export function useSessionComposerFeature(input: {
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });
+    /** 凍結中でなければ、スキルピッカーと排他的にエージェントピッカーを切り替える。 */
     const toggleAgentPicker = () => {
       if (input.composerRegistry.isFrozen) {
         return;
@@ -462,32 +603,42 @@ export function useSessionComposerFeature(input: {
       setAgentPickerOpen: setIsAgentPickerOpen,
       setSkillPickerOpen: setIsSkillPickerOpen,
     });
+    /** 凍結中は操作せず、開くときだけ事前処理の結果を確認してスキルピッカーを切り替える。 */
     const toggleSkillPicker = () => {
       if (input.composerRegistry.isFrozen) {
         return;
       }
-      if (!isSkillPickerOpen && bridge.operations.layout.beforeOpenSkillPicker && !bridge.operations.layout.beforeOpenSkillPicker()) {
+      if (
+        !isSkillPickerOpen &&
+        bridge.operations.layout.beforeOpenSkillPicker &&
+        !bridge.operations.layout.beforeOpenSkillPicker()
+      ) {
         return;
       }
       toggleSkillPickerState();
     };
+    /** 凍結中でなければ追加ディレクトリ一覧の開閉を反転する。 */
     const toggleAdditionalDirectoryList = () => {
       if (input.composerRegistry.isFrozen) {
         return;
       }
       setIsAdditionalDirectoryListOpen((current) => !current);
     };
+    /** 手入力されたパス、またはピッカーを開くための未指定値を追加操作へ渡す。 */
     const onAddAdditionalDirectory = (directoryPath?: string) => {
       return bridge.operations.layout.addAdditionalDirectory(directoryPath);
     };
+    /** 選択した追加ディレクトリの元のパスを削除操作へ渡す。 */
     const onRemoveAdditionalDirectory = (path: string) => {
       void bridge.operations.layout.removeAdditionalDirectory(path);
     };
+    /** 対象セッションの選択範囲を記録し、メイン入力欄では選択開始位置の控えも更新する。 */
     const onDraftSelect = (selectionStart: number) => {
       if (!input.activeRunSessionId) {
         return;
       }
-      const selectionEnd = composerTextareaRef.current?.selectionEnd ?? selectionStart;
+      const selectionEnd =
+        composerTextareaRef.current?.selectionEnd ?? selectionStart;
       composerState.setSelection({ start: selectionStart, end: selectionEnd });
       if (!isAuxiliaryTarget) {
         mainComposerCaretRef.current = selectionStart;
@@ -495,10 +646,15 @@ export function useSessionComposerFeature(input: {
     };
     const onDraftComposition = buildOnDraftCompositionHandlers({
       setComposerCaret,
-      setIsComposerImeComposing: (value) => composerState.setImeComposing(value),
-      getSelectionStart: () => composerOwnerRef.current === input.activeRunSessionId
-        ? composerTextareaRef.current?.selectionStart
-        : composerCaret,
+      /** IME変換の開始・終了を現在の編集対象に反映する。 */
+      setIsComposerImeComposing: (value) =>
+        composerState.setImeComposing(value),
+      /** 入力欄の対象が一致する間は実際の選択開始位置を読み、それ以外は控えの位置を使う。 */
+      getSelectionStart: () =>
+        composerOwnerRef.current === input.activeRunSessionId
+          ? composerTextareaRef.current?.selectionStart
+          : composerCaret,
+      /** DOMから選択位置が取得できないときは、下書きの末尾を使う。 */
       getFallbackSelectionStart: () => draft.length,
       syncMainComposerCaret: !isAuxiliaryTarget
         ? (selectionStart) => {
@@ -506,32 +662,47 @@ export function useSessionComposerFeature(input: {
           }
         : undefined,
     });
-    const isComposerBlockedFeedbackActive = bridge.runtime.forceBlockedFeedback
-      && composerSendability.feedbackTone === "blocked";
+    const isComposerBlockedFeedbackActive =
+      bridge.runtime.forceBlockedFeedback &&
+      composerSendability.feedbackTone === "blocked";
     const sendButtonTitle = bridge.runtime.isCanceling
       ? "Waiting for the run to stop"
       : getComposerSendButtonTitle(composerSendability);
     const dock: LiveSessionComposerDockPropsInput = {
       canSelectCustomAgent,
-      additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
+      additionalDirectoryCount:
+        bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
       canSendInput: bridge.runtime.canSendInput,
-      submissionError: bridge.runtime.inputAcceptanceError || bridge.runtime.inputError,
+      submissionError:
+        bridge.runtime.inputAcceptanceError || bridge.runtime.inputError,
       inputAcceptanceUnconfirmed: !!bridge.runtime.inputAcceptanceError,
+      /** 実行中ターンへの追加入力を送る操作を呼ぶ。 */
       onSendInput: () => void bridge.operations.send.input?.(),
-      onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
+      onQueueTurn: bridge.operations.send.queue
+        ? () => void bridge.operations.send.queue?.()
+        : undefined,
       queueTurnBusy: bridge.runtime.queueTurnBusy,
       turnRecoveryAction: turnRecoveryActions[bridge.session.id],
       turnRecoveryError: turnRecoveryErrors[bridge.session.id],
-      onCheckTurnReceipt: bridge.runtime.hasUncertainTurn ? () => void recoverTurn("check") : undefined,
-      onRetryOriginalTurn: bridge.runtime.hasUncertainTurn ? () => void recoverTurn("retry") : undefined,
-      composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
+      onCheckTurnReceipt: bridge.runtime.hasUncertainTurn
+        ? () => void recoverTurn("check")
+        : undefined,
+      onRetryOriginalTurn: bridge.runtime.hasUncertainTurn
+        ? () => void recoverTurn("retry")
+        : undefined,
+      composerBlocked:
+        bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,
       isAgentPickerOpen,
       isSkillPickerOpen,
-      isPromptTemplateWorkspaceOpen: bridge.runtime.isPromptTemplateWorkspaceOpen,
+      isPromptTemplateWorkspaceOpen:
+        bridge.runtime.isPromptTemplateWorkspaceOpen,
       isAdditionalDirectoryListOpen,
-      selectedCustomAgentLabel: canSelectCustomAgent ? selectedCustomAgentDisplay.label : "Agent",
-      selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Select a Copilot custom agent",
+      selectedCustomAgentLabel: canSelectCustomAgent
+        ? selectedCustomAgentDisplay.label
+        : "Agent",
+      selectedCustomAgentTitle:
+        selectedCustomAgentDisplay.title ?? "Select a Copilot custom agent",
       isMessageListFollowing: bridge.runtime.isMessageListFollowing,
       isCustomAgentListLoading: bridge.resources.isCustomAgentListLoading,
       customAgentItems,
@@ -541,9 +712,10 @@ export function useSessionComposerFeature(input: {
         registry: input.composerRegistry,
         initialDraft: input.composerDraft,
       },
-      onRetryComposerSave: isAuxiliaryTarget && bridge.operations.retryComposerSave
-        ? () => void bridge.operations.retryComposerSave?.()
-        : undefined,
+      onRetryComposerSave:
+        isAuxiliaryTarget && bridge.operations.retryComposerSave
+          ? () => void bridge.operations.retryComposerSave?.()
+          : undefined,
       composerTextareaRef,
       isComposerDisabled,
       isSendDisabled: composerSendability.isSendDisabled,
@@ -551,7 +723,12 @@ export function useSessionComposerFeature(input: {
       forceComposerBlockedFeedback: bridge.runtime.forceBlockedFeedback,
       sendButtonTitle,
       isComposerBlockedFeedbackActive,
-      approvalOptions: approval.value ? approvalOptions : [{ value: "", label: approval.label, disabled: true }, ...approvalOptions],
+      approvalOptions: approval.value
+        ? approvalOptions
+        : [
+            { value: "", label: approval.label, disabled: true },
+            ...approvalOptions,
+          ],
       providerId: bridge.session.provider,
       selectedApprovalMode: approval.value,
       sandboxOptions: runtimeOptions.sandboxChoiceOptions,
@@ -568,8 +745,11 @@ export function useSessionComposerFeature(input: {
       selectedModelFallbackLabel: runtimeOptions.selectedModelFallbackLabel,
       reasoningOptions: runtimeOptions.reasoningSelectOptions,
       selectedReasoningEffort: bridge.session.reasoningEffort,
+      /** 元のパスを参照として挿入するため、通常ファイルの選択を開く。 */
       onPickFile: () => void bridge.operations.files.pick("file"),
+      /** 元のパスを参照として挿入するため、フォルダーの選択を開く。 */
       onPickFolder: () => void bridge.operations.files.pick("folder"),
+      /** 画像参照として挿入するファイルの選択を開く。 */
       onPickImage: () => void bridge.operations.files.pick("image"),
       onAddToSessionFiles: bridge.operations.files.addToSessionFiles
         ? () => void bridge.operations.files.addToSessionFiles?.()
@@ -590,10 +770,15 @@ export function useSessionComposerFeature(input: {
         ? () => void bridge.operations.layout.openPromptTemplates?.()
         : undefined,
       onAddAdditionalDirectory,
+      /** ウィンドウのセッションを基準に入力パスを検証し、接続情報がなければエラーを返す。 */
       onValidateAdditionalDirectory: async (directoryPath) => {
         const windowSessionId = input.selectedSessionId;
-        if (!input.api || !windowSessionId) throw new Error("Directory validation is unavailable.");
-        return input.api.validateSessionAdditionalDirectory(windowSessionId, directoryPath);
+        if (!input.api || !windowSessionId)
+          throw new Error("Directory validation is unavailable.");
+        return input.api.validateSessionAdditionalDirectory(
+          windowSessionId,
+          directoryPath,
+        );
       },
       onToggleAdditionalDirectoryList: toggleAdditionalDirectoryList,
       onExpandActionDock: bridge.operations.layout.expandActionDock,
@@ -601,7 +786,8 @@ export function useSessionComposerFeature(input: {
       onSelectCustomAgent,
       onDraftChange,
       onDraftFocus: bridge.operations.draft.focus,
-      onDraftKeyDown: undefined as KeyboardEventHandler<HTMLTextAreaElement> | undefined,
+      onDraftKeyDown: undefined as
+        KeyboardEventHandler<HTMLTextAreaElement> | undefined,
       onDraftPaste: bridge.operations.draft.paste,
       onDraftSelect,
       ...onDraftComposition,
@@ -624,7 +810,9 @@ export function useSessionComposerFeature(input: {
 
     return {
       composer: buildLiveSessionComposerProps(dockSurface.composer),
-      compactActionDock: buildLiveSessionCompactActionDockProps(dockSurface.compactActionDock),
+      compactActionDock: buildLiveSessionCompactActionDockProps(
+        dockSurface.compactActionDock,
+      ),
       additionalDirectoryListProps: {
         isOpen: isAdditionalDirectoryListOpen,
         items: buildAdditionalDirectoryItems(
@@ -632,9 +820,9 @@ export function useSessionComposerFeature(input: {
           bridge.canRemoveAdditionalDirectories,
         ),
         isInteractionDisabled:
-          bridge.runtime.isReadOnly
-          || !!bridge.runtime.blockedReason
-          || isComposerFrozen,
+          bridge.runtime.isReadOnly ||
+          !!bridge.runtime.blockedReason ||
+          isComposerFrozen,
         onRemove: onRemoveAdditionalDirectory,
       },
       skillPickerProps: {
@@ -664,19 +852,28 @@ export function useSessionComposerFeature(input: {
 
   useLayoutEffect(() => {
     const selection = composerState.selection;
-    composerTextareaRef.current?.setSelectionRange(selection.start, selection.end);
-    if (input.composerOwner.kind === "main") mainComposerCaretRef.current = selection.start;
+    composerTextareaRef.current?.setSelectionRange(
+      selection.start,
+      selection.end,
+    );
+    if (input.composerOwner.kind === "main")
+      mainComposerCaretRef.current = selection.start;
     setIsAgentPickerOpen(false);
     setIsSkillPickerOpen(false);
     setIsAdditionalDirectoryListOpen(false);
     input.setForceComposerBlockedFeedback(false);
     composerState.setImeComposing(false);
-  }, [input.activeRunSessionId, input.composerOwner.kind, input.composerOwner.frameKey]);
+  }, [
+    input.activeRunSessionId,
+    input.composerOwner.kind,
+    input.composerOwner.frameKey,
+  ]);
 
   useLayoutEffect(() => {
     applyComposerDraftClearCommand({
       setDraft,
       setComposerCaret,
+      /** セッション切替で下書きを初期化するとき、メイン側のキャレットの控えも戻す。 */
       syncMainComposerCaret: (selectionStart) => {
         mainComposerCaretRef.current = selectionStart;
       },

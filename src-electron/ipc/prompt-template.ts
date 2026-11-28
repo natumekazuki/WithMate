@@ -15,6 +15,7 @@ import type {
   MainIpcPromptTemplateDeps,
 } from "./contracts.js";
 
+/** 保存済みプロンプトテンプレートの一覧・作成・更新・削除の IPC を登録する。作成・更新の入力は専用のサービスへ渡す。 */
 export function registerPromptTemplateHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcPromptTemplateDeps,

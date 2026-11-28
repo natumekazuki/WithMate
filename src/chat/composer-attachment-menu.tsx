@@ -1,10 +1,19 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { ComposerIcon } from "./composer/composer-icon.js";
 import { ButtonContent } from "../ui/button-content.js";
 
+/** 開閉状態と、元のパスの参照・セッション内の添付を実行する各操作。 */
 type ComposerAttachmentMenuProps = {
   disabled: boolean;
   busy?: boolean;
@@ -20,6 +29,7 @@ type ComposerAttachmentMenuProps = {
   onPickSessionImage: () => void;
 };
 
+/** 各添付操作の短い表示名・読み上げ名・補足と、選択時に呼ぶ処理。 */
 type ComposerAttachmentMenuItem = {
   label: string;
   ariaLabel: string;
@@ -30,14 +40,20 @@ type ComposerAttachmentMenuItem = {
 const MENU_VIEWPORT_MARGIN = 16;
 const MENU_GAP = 8;
 
+/** ポータルへ配置する座標と、元の入力欄から引き継ぐテーマ値。 */
 type ComposerAttachmentMenuPosition = {
   left: number;
   top: number;
   theme: Record<string, string>;
 };
 
-const MENU_THEME_PROPERTIES = ["--ink", "--muted", "--character-main-soft"] as const;
+const MENU_THEME_PROPERTIES = [
+  "--ink",
+  "--muted",
+  "--character-main-soft",
+] as const;
 
+/** 元パスとセッションファイルの添付操作を、入力欄のクリッピング外に開く制御メニュー。 */
 export function ComposerAttachmentMenu({
   disabled,
   busy = false,
@@ -56,7 +72,8 @@ export function ComposerAttachmentMenu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const [menuPosition, setMenuPosition] = useState<ComposerAttachmentMenuPosition | null>(null);
+  const [menuPosition, setMenuPosition] =
+    useState<ComposerAttachmentMenuPosition | null>(null);
   const isMenuPositioned = menuPosition !== null;
 
   const attachItems: ComposerAttachmentMenuItem[] = [
@@ -114,7 +131,7 @@ export function ComposerAttachmentMenu({
 
   useEffect(() => {
     if (isOpen && isMenuPositioned) {
-      menuRef.current?.querySelector<HTMLElement>("[role=\"menuitem\"]")?.focus();
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     }
   }, [isOpen, isMenuPositioned]);
 
@@ -123,17 +140,19 @@ export function ComposerAttachmentMenu({
       return;
     }
 
+    /** 本体とポータルのどちらにも属さない押下でメニューを閉じる。 */
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
       if (
-        event.target
-        && !rootRef.current?.contains(event.target as Node)
-        && !menuRef.current?.contains(event.target as Node)
+        event.target &&
+        !rootRef.current?.contains(event.target as Node) &&
+        !menuRef.current?.contains(event.target as Node)
       ) {
         onOpenChange(false);
       }
     };
     document.addEventListener("pointerdown", closeOnOutsidePointerDown);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
   }, [isOpen, onOpenChange]);
 
   useLayoutEffect(() => {
@@ -142,6 +161,7 @@ export function ComposerAttachmentMenu({
       return;
     }
 
+    /** トリガー上側に収まる座標を再計算し、ポータルへ入力欄のテーマを引き継ぐ。 */
     const updateMenuPosition = () => {
       const trigger = triggerRef.current;
       const menu = menuRef.current;
@@ -156,8 +176,14 @@ export function ComposerAttachmentMenu({
         MENU_VIEWPORT_MARGIN,
         window.innerWidth - menuRect.width - MENU_VIEWPORT_MARGIN,
       );
-      const left = Math.min(Math.max(triggerRect.left, MENU_VIEWPORT_MARGIN), maximumLeft);
-      const top = Math.max(MENU_VIEWPORT_MARGIN, triggerRect.top - menuRect.height - MENU_GAP);
+      const left = Math.min(
+        Math.max(triggerRect.left, MENU_VIEWPORT_MARGIN),
+        maximumLeft,
+      );
+      const top = Math.max(
+        MENU_VIEWPORT_MARGIN,
+        triggerRect.top - menuRect.height - MENU_GAP,
+      );
       const rootStyles = window.getComputedStyle(root);
       const theme = Object.fromEntries(
         MENU_THEME_PROPERTIES.flatMap((property) => {
@@ -178,6 +204,7 @@ export function ComposerAttachmentMenu({
     };
   }, [isOpen]);
 
+  /** EscapeまたはTabで閉じて起点へフォーカスを戻し、その他の移動キーは共通処理へ渡す。 */
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -193,14 +220,24 @@ export function ComposerAttachmentMenu({
     focusRovingItemByKey(event, { orientation: "both" });
   };
 
+  /** 添付操作のグループを描き、メニュー全体の先頭項目だけを通常のタブ移動の対象にする。 */
   const renderSection = (
     sectionKey: string,
     label: string,
     items: ComposerAttachmentMenuItem[],
     firstItemIndex: number,
   ) => (
-    <div className="composer-attachment-menu-section" role="group" aria-labelledby={`${sectionKey}-label`}>
-      <span id={`${sectionKey}-label`} className="composer-attachment-menu-section-label">{label}</span>
+    <div
+      className="composer-attachment-menu-section"
+      role="group"
+      aria-labelledby={`${sectionKey}-label`}
+    >
+      <span
+        id={`${sectionKey}-label`}
+        className="composer-attachment-menu-section-label"
+      >
+        {label}
+      </span>
       <div className="composer-attachment-menu-grid">
         {items.map((item, index) => (
           <button
@@ -228,24 +265,35 @@ export function ComposerAttachmentMenu({
   );
 
   const menuStyle: CSSProperties = menuPosition
-    ? { ...menuPosition.theme, left: menuPosition.left, top: menuPosition.top } as CSSProperties
+    ? ({
+        ...menuPosition.theme,
+        left: menuPosition.left,
+        top: menuPosition.top,
+      } as CSSProperties)
     : { left: 0, top: 0, visibility: "hidden" };
 
-  const menu = isOpen ? createPortal(
-    <div
-      ref={menuRef}
-      id={menuId}
-      className="composer-attachment-menu"
-      role="menu"
-      aria-label="Add attachment"
-      style={menuStyle}
-      onKeyDown={handleMenuKeyDown}
-    >
-      {renderSection(`${menuId}-source`, "Attach", attachItems, 0)}
-      {renderSection(`${menuId}-session-files`, "Session Files", sessionItems, attachItems.length)}
-    </div>,
-    document.body,
-  ) : null;
+  const menu = isOpen
+    ? createPortal(
+        <div
+          ref={menuRef}
+          id={menuId}
+          className="composer-attachment-menu"
+          role="menu"
+          aria-label="Add attachment"
+          style={menuStyle}
+          onKeyDown={handleMenuKeyDown}
+        >
+          {renderSection(`${menuId}-source`, "Attach", attachItems, 0)}
+          {renderSection(
+            `${menuId}-session-files`,
+            "Session Files",
+            sessionItems,
+            attachItems.length,
+          )}
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <div ref={rootRef} className="composer-attachment-menu-shell">
@@ -259,7 +307,11 @@ export function ComposerAttachmentMenu({
         aria-controls={isOpen ? menuId : undefined}
         aria-busy={busy || undefined}
         aria-label={targetLabel ? `Attach to ${targetLabel}` : "Attach"}
-        title={targetLabel ? `Attach to ${targetLabel}` : "Attach a file, folder, image, or Session file"}
+        title={
+          targetLabel
+            ? `Attach to ${targetLabel}`
+            : "Attach a file, folder, image, or Session file"
+        }
         onClick={() => onOpenChange(!isOpen)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
@@ -268,7 +320,10 @@ export function ComposerAttachmentMenu({
           }
         }}
       >
-        <ButtonContent busy={busy}><ComposerIcon name="attach" /><span className="visually-hidden">Attach</span></ButtonContent>
+        <ButtonContent busy={busy}>
+          <ComposerIcon name="attach" />
+          <span className="visually-hidden">Attach</span>
+        </ButtonContent>
       </button>
       {menu}
     </div>

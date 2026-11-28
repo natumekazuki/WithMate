@@ -1,6 +1,11 @@
-
-import { parseSessionFolderCleanupRequest, parseSessionFolderCleanupRunRequest } from "../../src-shared/session/session-folder-cleanup.js";
-import { WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import {
+  parseSessionFolderCleanupRequest,
+  parseSessionFolderCleanupRunRequest,
+} from "../../src-shared/session/session-folder-cleanup.js";
+import {
+  WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL,
+  WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL,
+} from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import { isChatLayoutPreferenceUpdate } from "../../src-shared/settings/chat-layout-preference.js";
 
@@ -21,16 +26,17 @@ import type {
   MainIpcSettingsDeps,
   MainIpcSettingsWindowDeps,
 } from "./contracts.js";
-import {
-  assertSettingsWindowSender,
-} from "./shared.js";
+import { assertSettingsWindowSender } from "./shared.js";
 
+/** ウィンドウ解決の共通依存を除いた、設定とストレージ保守のサービス側の依存。 */
 export type MainIpcSettingsServiceDeps = Omit<
   MainIpcSettingsDeps,
-  keyof MainIpcEventWindowDeps | keyof MainIpcHomeWindowDeps |
-    keyof MainIpcSettingsWindowDeps
+  | keyof MainIpcEventWindowDeps
+  | keyof MainIpcHomeWindowDeps
+  | keyof MainIpcSettingsWindowDeps
 >;
 
+/** 設定サービスと送信元ウィンドウの判定に使う共通依存を束ねる。 */
 export function createSettingsIpcDeps(
   services: MainIpcSettingsServiceDeps,
   context: MainIpcEventWindowDeps &
@@ -40,6 +46,7 @@ export function createSettingsIpcDeps(
   return { ...context, ...services };
 }
 
+/** アプリ設定と保守処理の IPC を登録する。バージョン取得、Session Folder 整理と DB リセットは Settings ウィンドウに限る。 */
 export function registerSettingsHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSettingsDeps,
@@ -48,14 +55,24 @@ export function registerSettingsHandlers(
     assertSettingsWindowSender(event, deps);
     return deps.getAppVersion();
   });
-  ipcMain.handle(WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, (event, request: unknown) => {
-    assertSettingsWindowSender(event, deps);
-    return deps.scanSessionFolderCleanup(parseSessionFolderCleanupRequest(request));
-  });
-  ipcMain.handle(WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL, (event, request: unknown) => {
-    assertSettingsWindowSender(event, deps);
-    return deps.runSessionFolderCleanup(parseSessionFolderCleanupRunRequest(request));
-  });
+  ipcMain.handle(
+    WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL,
+    (event, request: unknown) => {
+      assertSettingsWindowSender(event, deps);
+      return deps.scanSessionFolderCleanup(
+        parseSessionFolderCleanupRequest(request),
+      );
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL,
+    (event, request: unknown) => {
+      assertSettingsWindowSender(event, deps);
+      return deps.runSessionFolderCleanup(
+        parseSessionFolderCleanupRunRequest(request),
+      );
+    },
+  );
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () =>
     deps.getAppSettings(),
   );

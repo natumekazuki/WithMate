@@ -21605,15 +21605,23 @@ var EMPTY_COMPLETION_RESULT = { completion: {
 	hasMore: false
 } };
 // src-electron/platform/agent-runtime/runtime-exchange.ts
+/** 接続先の応答を今回の要求に結び付けるため、要求ごとに生成したノンスを渡すヘッダー。 */
 var WITHMATE_AGENT_RUNTIME_NONCE_HEADER = "x-withmate-agent-runtime-nonce";
+/** 接続先として期待するアプリケーションのインスタンス ID を指定するヘッダー。 */
 var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-agent-runtime-application-instance";
+/** 接続先として期待するランタイムの世代 ID を指定するヘッダー。 */
 var WITHMATE_AGENT_RUNTIME_GENERATION_HEADER = "x-withmate-agent-runtime-generation";
+/** 要求本文を送る前にクライアントが照合する、接続先からの HMAC 応答のヘッダー。 */
 var WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER = "x-withmate-agent-runtime-challenge";
+/** CLI と MCP が拡張操作の要求を送る共通 API パス。 */
 var WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH = "/v1/agent-runtime-extension-exchange";
+/** 拡張操作要求の本文に含めるエンベロープのスキーマ識別子。 */
 var WITHMATE_AGENT_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-agent-runtime-exchange-v1";
+/** 拡張操作の本文を送る前の照合用に、ランタイム世代とノンスに結び付く HMAC を生成する。 */
 function createAgentRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
 }
+/** 状態確認の応答用に、アプリケーションのインスタンスとランタイム世代の組をノンスに結び付ける HMAC を生成する。 */
 function createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
 }
@@ -21626,20 +21634,29 @@ var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDIN
 var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID";
 /** クライアントが接続先runtimeの世代を識別するための環境変数キー。 */
 var WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV = "WITHMATE_AGENT_RUNTIME_GENERATION_ID";
+/** WithMate のデータ領域内でランタイム検出用レジストリを置くディレクトリ名。 */
 var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
+/** 各公開スロットに一つ置く登録メタデータファイルの名前。 */
 var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
+/** 公開側がリース時刻を更新する既定間隔。 */
 var RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS = 5e3;
+/** 最後のリース更新からこの時間を超えると、既定では期限切れとみなす。 */
 var RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS = 2e4;
+/** 容量逼迫時に期限切れで応答不能な登録を回収するまでの既定の猶予。 */
 var RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS = 6e4;
+/** 通常時の期限切れ登録や一時・退役成果物の回収に使う既定の保持期間。 */
 var RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS = 864e5;
+/** レジストリ操作の失敗を、呼び出し側が処理を分けられる分類コード付きで伝える。 */
 var RuntimeDiscoveryRegistryError = class extends Error {
 	code;
+	/** 分類コードと説明を保存し、必要な場合は元の失敗を原因として保持する。 */
 	constructor(code, message, options) {
 		super(message, options);
 		this.name = "RuntimeDiscoveryRegistryError";
 		this.code = code;
 	}
 };
+/** 上書き指定がない場合の、リース・回収・スロット容量の設定一式。 */
 var DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS = {
 	heartbeatMs: RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS,
 	staleThresholdMs: RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS,
@@ -21657,43 +21674,53 @@ var BUILD_CHANNELS = /* @__PURE__ */ new Set([
 	"visual-check",
 	"unknown"
 ]);
+/** 未知の JSON 値が、プロパティを検査できる非配列のオブジェクトか判定する。 */
 function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+/** 入力の列挙可能な文字列キーがスキーマで列挙したものと過不足なく一致するか調べる。 */
 function hasExactKeys(value, keys) {
 	const actualKeys = Object.keys(value).sort();
 	const expectedKeys = [...keys].sort();
 	return actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index]);
 }
+/** 時刻値が Date で解釈でき、ISO 形式に戻した表記も入力と一致するか調べる。 */
 function isIsoTimestamp(value) {
 	if (typeof value !== "string" || !value) return false;
 	const timestamp = Date.parse(value);
 	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
+/** 登録の識別子として受け付ける UUID の構文を検査する。 */
 function isUuid(value) {
 	return typeof value === "string" && UUID_PATTERN.test(value);
 }
+/** POSIX と Windows の両方で絶対パスでも区切り付きでもない、認証ファイル参照の文字列表記か調べる。 */
 function isSafeRelativeRuntimeDiscoveryReference(value) {
 	return typeof value === "string" && value.length > 0 && !path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.includes("/") && !value.includes("\\") && path.posix.basename(value) === value;
 }
+/** インスタンス ID とランタイム世代 ID が UUID で、種別が所定の文字形式か検査する。 */
 function isRuntimeDiscoveryIdentity(value) {
 	if (!isRecord(value)) return false;
 	return typeof value.applicationInstanceId === "string" && UUID_PATTERN.test(value.applicationInstanceId) && typeof value.runtimeGenerationId === "string" && UUID_PATTERN.test(value.runtimeGenerationId) && typeof value.runtimeKind === "string" && RUNTIME_KIND_PATTERN.test(value.runtimeKind);
 }
+/** アダプター種別と認証ファイル名の形式を検査し、登録メタデータ名を使った参照を拒否する。 */
 function isRuntimeDiscoveryAdapterReference(value) {
 	if (!isRecord(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
 	if (typeof value.adapterKind !== "string" || !ADAPTER_KIND_PATTERN.test(value.adapterKind)) return false;
 	if (typeof value.credentialFileName !== "string" || !CREDENTIAL_FILE_NAME_PATTERN.test(value.credentialFileName) || !isSafeRelativeRuntimeDiscoveryReference(value.credentialFileName) || value.credentialFileName === "entry.json") return false;
 	return true;
 }
+/** 登録の識別子とアダプター種別から決定的な認証ファイル名を得る。種別が所定の形式でなければ拒否する。 */
 function buildRuntimeDiscoveryCredentialFileName(identity, adapterKind) {
 	if (!ADAPTER_KIND_PATTERN.test(adapterKind)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Invalid adapter kind.");
 	return `credential-${createHash("sha256").update(`${identity.applicationInstanceId}\0${identity.runtimeKind}\0${identity.runtimeGenerationId}\0${adapterKind}`).digest("hex")}.json`;
 }
+/** 有効な範囲のスロット番号から固定桁のディレクトリ名を作る。範囲外は設定エラーとする。 */
 function buildRuntimeDiscoverySlotName(slot) {
 	if (!Number.isSafeInteger(slot) || slot < 0 || slot >= 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Runtime registry slot is out of range.");
 	return `slot-${String(slot).padStart(2, "0")}`;
 }
+/** 登録のスキーマとリース・プロセスの値、アダプター参照の形式と一意性を検査する。不正なら登録エラーを返す。 */
 function parseRuntimeDiscoveryRegistryEntry(value) {
 	if (!isRecord(value) || !hasExactKeys(value, [
 		"schemaVersion",
@@ -21721,9 +21748,11 @@ function parseRuntimeDiscoveryRegistryEntry(value) {
 	}
 	return value;
 }
+/** 最後のハートビートからの経過が閾値を超えた場合に限り、リースを期限切れとする。 */
 function getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
 	return now.getTime() - Date.parse(entry.lease.heartbeatAt) > staleThresholdMs ? "expired" : "fresh";
 }
+/** Windows では絶対パスの LOCALAPPDATA、その他ではユーザー単位の一時領域を基準に、版別のレジストリルートを決める。 */
 function resolveDefaultRuntimeDiscoveryRegistryRoot(env = process.env, platform = process.platform) {
 	if (platform === "win32") {
 		const localAppData = env.LOCALAPPDATA?.trim();
@@ -21733,6 +21762,7 @@ function resolveDefaultRuntimeDiscoveryRegistryRoot(env = process.env, platform 
 	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
 	return path.join(tmpdir(), "withmate", ownerSegment, RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
 }
+/** 個別設定を既定値に重ね、正の整数であることと利用可能なスロット数を超えないことを検査する。 */
 function normalizeRuntimeDiscoveryRegistryLimits(overrides = {}) {
 	const limits = {
 		...DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS,
@@ -23078,12 +23108,15 @@ var require_adapter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports.checkSync = checkSync;
 })))();
 var ACTIVE_DIRECTORY_NAME = "active";
+/** 指定されたルート、または実行環境の既定ルートを絶対パスに解決する。 */
 function normalizeRootDirectoryPath(rootDirectoryPath) {
 	return path.resolve(rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot());
 }
+/** ファイルシステム操作の失敗が、対象の消失を示す ENOENT か判定する。 */
 function isMissingError(error) {
 	return error?.code === "ENOENT";
 }
+/** リンクを辿らずに対象の属性を読み、対象なしの場合だけ null を返す。 */
 async function lstatSafe(targetPath) {
 	try {
 		return await lstat(targetPath);
@@ -23092,6 +23125,7 @@ async function lstatSafe(targetPath) {
 		throw error;
 	}
 }
+/** リンクではない通常ファイルから登録を読み、JSON とスキーマを検査する。 */
 async function readEntryFile(entryFilePath) {
 	const stats = await lstat(entryFilePath);
 	if (!stats.isFile() || stats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry file is unsafe.");
@@ -23104,6 +23138,7 @@ async function readEntryFile(entryFilePath) {
 	}
 	return parseRuntimeDiscoveryRegistryEntry(parsed);
 }
+/** 番号付きの公開スロットを調べ、登録を読み取る。認証ファイルだけの異常では登録を捨てず、問題を併記する。 */
 async function readRecordFromSlot(activeDirectoryPath, slotName) {
 	const slotDirectoryPath = path.join(activeDirectoryPath, slotName);
 	const slotStats = await lstatSafe(slotDirectoryPath);
@@ -23168,6 +23203,7 @@ async function readRecordFromSlot(activeDirectoryPath, slotName) {
 		...credentialIssue ? { issue: credentialIssue } : {}
 	};
 }
+/** 上限内の公開スロットを順に読み、登録と問題を集める。公開領域がまだ存在しなければ空とする。 */
 async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOverride = {}) {
 	const limits = normalizeRuntimeDiscoveryRegistryLimits(limitsOverride);
 	const activeDirectoryPath = path.join(normalizeRootDirectoryPath(rootDirectoryPath), ACTIVE_DIRECTORY_NAME);
@@ -23189,6 +23225,7 @@ async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOver
 		issues
 	};
 }
+/** 登録が参照するアダプターの認証ファイルを読む。参照がないか安全に読み取れない場合は null を返す。 */
 async function readRuntimeDiscoveryCredential(record, adapterKind) {
 	const reference = record.entry.adapters.find((adapter) => adapter.adapterKind === adapterKind);
 	if (!reference) return null;
@@ -23201,6 +23238,7 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 		return null;
 	}
 }
+/** 認証情報を含まない IPv4 ループバックの HTTP URL だけを受け付け、検索文字列・フラグメント・末尾のスラッシュを取り除く。 */
 function normalizeAgentRuntimeApiBaseUrl(value) {
 	try {
 		const url = new URL(value.trim());
@@ -23213,9 +23251,11 @@ function normalizeAgentRuntimeApiBaseUrl(value) {
 		return null;
 	}
 }
+/** ランタイムとの通信失敗と、要求本文の送信を開始したかどうかを伝える。送信開始は操作の成立を意味しない。 */
 var AgentRuntimeExchangeError = class extends Error {
 	dispatched;
 	discoveryCode;
+	/** 通信の失敗を記録し、該当する場合は接続先の照合に失敗した理由も残す。 */
 	constructor(message, dispatched, options) {
 		super(message, options);
 		this.name = "AgentRuntimeExchangeError";
@@ -23223,12 +23263,15 @@ var AgentRuntimeExchangeError = class extends Error {
 		this.discoveryCode = options?.discoveryCode;
 	}
 };
+/** 環境変数の前後の空白を除き、空の値を未指定として扱う。 */
 function readRequiredEnvValue(env, name) {
 	return env[name]?.trim() || void 0;
 }
+/** CLI と MCP のうち、要求元アダプターの認証に使う環境変数だけを読む。 */
 function resolveAdapterSecret(env, adapter) {
 	return readRequiredEnvValue(env, adapter === "cli" ? "WITHMATE_AGENT_RUNTIME_CLI_API_SECRET" : "WITHMATE_AGENT_RUNTIME_MCP_API_SECRET");
 }
+/** API とアダプターの秘密情報、および所有者の両 ID がそろう場合に限り接続情報を組み立てる。 */
 function buildConnectionFromValues(input) {
 	if (!input.apiSecret || !input.adapterSecret || !input.applicationInstanceId || !input.runtimeGenerationId) return null;
 	return {
@@ -23244,6 +23287,7 @@ function buildConnectionFromValues(input) {
 		}
 	};
 }
+/** 認証ドキュメントの外側と内部の両方を登録の所有者・世代・アダプターと照合する。不一致や読めない内容は接続情報にしない。 */
 function parseRegistryAgentCredential(serialized, record, adapter) {
 	try {
 		const value = JSON.parse(serialized);
@@ -23259,6 +23303,7 @@ function parseRegistryAgentCredential(serialized, record, adapter) {
 		return null;
 	}
 }
+/** レジストリの公開属性とリース状態から、認証情報を含まない候補メタデータを作る。 */
 function buildRegistrySafeCandidate(record, now, active, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
 	return {
 		source: "registry",
@@ -23270,12 +23315,15 @@ function buildRegistrySafeCandidate(record, now, active, staleThresholdMs = RUNT
 		active
 	};
 }
+/** セレクターで指定されたインスタンスと世代のすべてが候補に一致するか確かめる。 */
 function candidateMatchesSelector(candidate, applicationInstanceId, runtimeGenerationId) {
 	return (!applicationInstanceId || candidate.safe.applicationInstanceId === applicationInstanceId) && (!runtimeGenerationId || candidate.safe.runtimeGenerationId === runtimeGenerationId);
 }
+/** 候補一覧から接続情報を除き、診断に返せるメタデータだけを抽出する。 */
 function toSafeCandidates(candidates) {
 	return candidates.map(({ safe }) => safe);
 }
+/** 検出の失敗理由と安全な候補一覧を、接続情報を含めずに返す。 */
 function discoveryError(code, candidates) {
 	return {
 		kind: "error",
@@ -23283,6 +23331,7 @@ function discoveryError(code, candidates) {
 		candidates: toSafeCandidates(candidates)
 	};
 }
+/** レジストリ内の選択失敗理由を CLI・MCP 向けの公開エラーコードへ変換する。 */
 function mapAgentRuntimeDiscoveryCode(code) {
 	switch (code) {
 		case "runtime_instance_mismatch": return "WITHMATE_RUNTIME_INSTANCE_MISMATCH";
@@ -23296,6 +23345,7 @@ function mapAgentRuntimeDiscoveryCode(code) {
 		case "runtime_unavailable": return "WITHMATE_RUNTIME_UNAVAILABLE";
 	}
 }
+/** 明示 URL、またはレジストリ上の有効な候補から接続先を解決する。指定された所有者から別の所有者に切り替えず、有効な候補の曖昧さは失敗として返す。 */
 async function resolveAgentRuntimeApi(options) {
 	const env = options.env ?? process.env;
 	const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
@@ -23384,6 +23434,7 @@ async function resolveAgentRuntimeApi(options) {
 		candidates: toSafeCandidates(allCandidates)
 	};
 }
+/** 状態照会と交換時の暫定応答で接続先を確認し、照合が済んでから秘密情報と操作を含む本文を送信する。 */
 async function callAgentRuntime(connection, operation, options) {
 	let identityOutcome;
 	try {
@@ -23410,6 +23461,7 @@ async function callAgentRuntime(connection, operation, options) {
 		let dispatched = false;
 		let identityVerified = false;
 		let settled = false;
+		/** 最初の通信失敗だけを確定させ、その時点での本文送信状態と検出コードを呼び出し元に伝える。 */
 		const fail = (message, cause, discoveryCode) => {
 			if (settled) return;
 			settled = true;
@@ -23499,14 +23551,17 @@ async function callAgentRuntime(connection, operation, options) {
 		}
 	});
 }
+/** 環境から束縛参照を読む。束縛必須の実行で参照が欠けていればエラーにする。 */
 function resolveAgentRuntimeBindingReference(env = process.env) {
 	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
 	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw new Error("WithMate provider execution requires its runtime binding reference.");
 	return reference || void 0;
 }
+/** 環境から現在のターンの操作受付に必要な値を読み、空なら未指定として返す。 */
 function resolveAgentRuntimeTurnCapability(env = process.env) {
 	return env["WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY"]?.trim() || void 0;
 }
+/** 状態応答のインスタンス・世代・ノンスと、接続情報で計算した HMAC を照合する。応答を解釈できなければ例外を返す。 */
 async function verifyRuntimeIdentityOutcome(connection, fetchImpl, signal) {
 	const nonce = randomBytes(16).toString("base64url");
 	const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
@@ -23544,6 +23599,7 @@ async function verifyRuntimeIdentityOutcome(connection, fetchImpl, signal) {
 		discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE"
 	};
 }
+/** 状態照会で接続先の所有者を確認できるか判定する。通信や応答の解析に失敗した場合は例外を伝える。 */
 async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
 }

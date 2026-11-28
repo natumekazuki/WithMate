@@ -5,6 +5,7 @@ import { DiffViewer } from "../../ui/DiffViewer.js";
 
 import { useDialogA11y } from "../../ui/a11y.js";
 
+/** 会話内の差分プレビューと、閉じる操作・別窓に開く操作の接続先。 */
 export type SessionDiffModalProps = {
   selectedDiff: DiffPreviewPayload | null;
   themeStyle: CSSProperties;
@@ -12,6 +13,7 @@ export type SessionDiffModalProps = {
   onOpenDiffWindow: (payload: DiffPreviewPayload) => void;
 };
 
+/** 選択中のファイル差分だけをモーダルに表示し、別ウィンドウで開く操作を提供する。 */
 export function SessionDiffModal({
   selectedDiff,
   themeStyle,
@@ -28,7 +30,12 @@ export function SessionDiffModal({
   }
 
   return (
-    <div className="diff-modal" role="dialog" aria-modal="true" onClick={onClose}>
+    <div
+      className="diff-modal"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
       <section
         ref={dialogRef}
         className="diff-editor panel theme-accent"
@@ -39,7 +46,11 @@ export function SessionDiffModal({
         <div className="diff-titlebar">
           <h2>{selectedDiff.file.path}</h2>
           <div className="diff-titlebar-actions">
-            <button className="diff-close diff-popout" type="button" onClick={() => onOpenDiffWindow(selectedDiff)}>
+            <button
+              className="diff-close diff-popout"
+              type="button"
+              onClick={() => onOpenDiffWindow(selectedDiff)}
+            >
               Open In Window
             </button>
             <button className="diff-close" type="button" onClick={onClose}>

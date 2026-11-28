@@ -2,16 +2,23 @@ import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 import { migrateLegacySessionTurnsV6 } from "./migrations/migrate-session-turn-storage-v6.js";
-import { removeRetiredMemoryAffectDatabaseData, RETIRED_MEMORY_AFFECT_TABLES } from "./migrations/memory-affect-removal.js";
+import {
+  removeRetiredMemoryAffectDatabaseData,
+  RETIRED_MEMORY_AFFECT_TABLES,
+} from "./migrations/memory-affect-removal.js";
 import { CREATE_V7_COORDINATION_RECORDS_SQL } from "../coordination/coordination-schema-v7.js";
 import { CREATE_LOCAL_PR_SCHEMA_SQL } from "../local-pr/local-pr-schema.js";
 
+/** 通常起動で使用するV6 DBのファイル名。 */
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
+/** 新規作成と既存ファイル判定に使うSQLiteユーザー版番号。 */
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
 
+/** V6の基盤スキーマ定義に付随する設計ステータス。 */
 export const V6_SCHEMA_STATUS = "foundation";
 
 // 外部キーを有効にしたまま、廃止したテーブルを子から親の順に削除する。
+/** 廃止したSession Graphの永続テーブルを削除順に並べた一覧。 */
 export const RETIRED_SESSION_GRAPH_TABLES = [
   "session_graph_relations_v6",
   "session_graph_records_v6",
@@ -19,6 +26,7 @@ export const RETIRED_SESSION_GRAPH_TABLES = [
   "session_graphs_v6",
 ] as const;
 
+/** V6の有効性確認で存在を求める基盤テーブル。後から追加できる機能表は必ずしも含まない。 */
 export const REQUIRED_V6_TABLES = [
   "app_settings",
   "prompt_templates",
@@ -36,6 +44,7 @@ export const REQUIRED_V6_TABLES = [
   "session_turn_queue_v6",
 ] as const;
 
+/** V6では残してはならない退役テーブルと旧形式名の一覧。 */
 export const FORBIDDEN_V6_TABLES = [
   ...RETIRED_MEMORY_AFFECT_TABLES,
   ...RETIRED_SESSION_GRAPH_TABLES,
@@ -72,9 +81,36 @@ const REQUIRED_V6_INDEXES = [
 const REQUIRED_V6_TABLE_COLUMNS = {
   app_settings: ["setting_key", "setting_value", "updated_at"],
   prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
-  provider_model_cache: ["provider_id", "provider_json", "context_key", "fetched_at"],
-  characters: ["id", "name", "description", "icon_file_path", "theme_main", "theme_sub", "state", "is_default", "created_at", "updated_at", "archived_at"],
-  project_scopes_v6: ["id", "project_type", "project_key", "workspace_path", "git_root", "git_remote_url", "display_name", "created_at", "updated_at"],
+  provider_model_cache: [
+    "provider_id",
+    "provider_json",
+    "context_key",
+    "fetched_at",
+  ],
+  characters: [
+    "id",
+    "name",
+    "description",
+    "icon_file_path",
+    "theme_main",
+    "theme_sub",
+    "state",
+    "is_default",
+    "created_at",
+    "updated_at",
+    "archived_at",
+  ],
+  project_scopes_v6: [
+    "id",
+    "project_type",
+    "project_key",
+    "workspace_path",
+    "git_root",
+    "git_remote_url",
+    "display_name",
+    "created_at",
+    "updated_at",
+  ],
   sessions_v6: [
     "id",
     "title",
@@ -103,13 +139,74 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "updated_at",
     "last_active_at",
   ],
-  session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
-  session_lifecycle_operations_v6: ["operation_id", "kind", "input_json", "targets_json", "resources_json", "prepared_json", "phase", "created_at", "updated_at"],
-  coordination_records_v7: ["id", "crew_root_session_id", "initiator_session_id", "initiator_kind", "initiator_incarnation_id", "respondent_session_id", "respondent_kind", "state", "payload_json"],
-  session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
-  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "accepted_json", "dispatched_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
+  session_messages_v6: [
+    "id",
+    "session_id",
+    "seq",
+    "role",
+    "body",
+    "created_at",
+  ],
+  session_lifecycle_operations_v6: [
+    "operation_id",
+    "kind",
+    "input_json",
+    "targets_json",
+    "resources_json",
+    "prepared_json",
+    "phase",
+    "created_at",
+    "updated_at",
+  ],
+  coordination_records_v7: [
+    "id",
+    "crew_root_session_id",
+    "initiator_session_id",
+    "initiator_kind",
+    "initiator_incarnation_id",
+    "respondent_session_id",
+    "respondent_kind",
+    "state",
+    "payload_json",
+  ],
+  session_file_pins_v6: [
+    "session_id",
+    "root_kind",
+    "root_path",
+    "relative_path",
+    "relative_path_key",
+    "kind",
+    "root_label",
+  ],
+  session_turn_queue_v6: [
+    "sequence",
+    "queue_position",
+    "id",
+    "session_id",
+    "auxiliary_session_id",
+    "incarnation_id",
+    "request_id",
+    "state",
+    "captured_json",
+    "accepted_json",
+    "dispatched_json",
+    "turn_id",
+    "input_turn_id",
+    "user_message_seq",
+    "reason",
+    "released_at",
+    "created_at",
+    "updated_at",
+  ],
   auxiliary_sessions: ["id", "parent_session_id", "created_at", "updated_at"],
-  auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
+  auxiliary_session_messages: [
+    "auxiliary_session_id",
+    "seq",
+    "role",
+    "body",
+    "artifact_body",
+    "created_at",
+  ],
   session_turns_v6: [
     "id",
     "session_id",
@@ -128,12 +225,17 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "completed_at",
     "updated_at",
   ],
-} as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]>;
+} as const satisfies Record<
+  (typeof REQUIRED_V6_TABLES)[number],
+  readonly string[]
+>;
 
+/** ユーザーデータ直下に新規V6 DBのパスを解決する。ファイルは作成しない。 */
 export function resolveV6FreshDatabasePath(userDataPath: string): string {
   return join(userDataPath, APP_DATABASE_V6_FILENAME);
 }
 
+/** V6のファイル名に対して読み取り専用でユーザー版番号を取得し、取得できなければnullを返す。 */
 export function readV6DatabaseUserVersion(dbPath: string): number | null {
   if (basename(dbPath) !== APP_DATABASE_V6_FILENAME) {
     return null;
@@ -142,7 +244,8 @@ export function readV6DatabaseUserVersion(dbPath: string): number | null {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     return typeof row?.user_version === "number" ? row.user_version : null;
   } catch {
     return null;
@@ -151,6 +254,7 @@ export function readV6DatabaseUserVersion(dbPath: string): number | null {
   }
 }
 
+/** V6のファイル名・版番号・テーブル・列・索引・制約を確認し、外部キー違反のある行や読み取れないDBを拒否する。 */
 export function isValidV6Database(dbPath: string): boolean {
   if (basename(dbPath) !== APP_DATABASE_V6_FILENAME) {
     return false;
@@ -159,20 +263,29 @@ export function isValidV6Database(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;
     }
 
     const existingTables = new Set(
-      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+      (
+        db
+          .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+          .all() as Array<{ name?: unknown }>
+      )
         .map((table) => table.name)
         .filter((name): name is string => typeof name === "string"),
     );
-    if (!REQUIRED_V6_TABLES.every((tableName) => existingTables.has(tableName))) {
+    if (
+      !REQUIRED_V6_TABLES.every((tableName) => existingTables.has(tableName))
+    ) {
       return false;
     }
-    if (FORBIDDEN_V6_TABLES.some((tableName) => existingTables.has(tableName))) {
+    if (
+      FORBIDDEN_V6_TABLES.some((tableName) => existingTables.has(tableName))
+    ) {
       return false;
     }
     if (!hasRequiredColumns(db)) {
@@ -195,6 +308,7 @@ export function isValidV6Database(dbPath: string): boolean {
   }
 }
 
+/** V6のファイル名と版番号、必須・禁止テーブルだけを調べる簡易判定。列・索引・格納行の整合性は検証しない。 */
 export function isValidV6DatabaseShallow(dbPath: string): boolean {
   if (basename(dbPath) !== APP_DATABASE_V6_FILENAME) {
     return false;
@@ -203,18 +317,25 @@ export function isValidV6DatabaseShallow(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     if (row?.user_version !== APP_DATABASE_V6_SCHEMA_VERSION) {
       return false;
     }
 
     const existingTables = new Set(
-      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+      (
+        db
+          .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+          .all() as Array<{ name?: unknown }>
+      )
         .map((table) => table.name)
         .filter((name): name is string => typeof name === "string"),
     );
-    return REQUIRED_V6_TABLES.every((tableName) => existingTables.has(tableName))
-      && !FORBIDDEN_V6_TABLES.some((tableName) => existingTables.has(tableName));
+    return (
+      REQUIRED_V6_TABLES.every((tableName) => existingTables.has(tableName)) &&
+      !FORBIDDEN_V6_TABLES.some((tableName) => existingTables.has(tableName))
+    );
   } catch {
     return false;
   } finally {
@@ -222,10 +343,17 @@ export function isValidV6DatabaseShallow(dbPath: string): boolean {
   }
 }
 
+/** 必須列を確認する。Auxiliaryの詳細は旧payload列または正規化済みの列一式のどちらかを認める。 */
 function hasRequiredColumns(db: DatabaseSync): boolean {
-  for (const [tableName, expectedColumns] of Object.entries(REQUIRED_V6_TABLE_COLUMNS)) {
+  for (const [tableName, expectedColumns] of Object.entries(
+    REQUIRED_V6_TABLE_COLUMNS,
+  )) {
     const columns = new Set(
-      (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>)
+      (
+        db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+          name?: unknown;
+        }>
+      )
         .map((column) => column.name)
         .filter((name): name is string => typeof name === "string"),
     );
@@ -235,28 +363,56 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   }
 
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-  const normalizedColumns = ["title", "description", "run_state", "preview", "provider_id", "catalog_revision",
-    "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
-    "codex_reviewer", "withmate_reviewer_explicit", "custom_agent_name", "thread_id",
-    "display_after_message_index", "character_id", "character_snapshot_json",
-    "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
-    "creation_request_json"];
-  if (!auxiliaryColumns.has("payload_json") && !normalizedColumns.every((name) => auxiliaryColumns.has(name))) {
+  const normalizedColumns = [
+    "title",
+    "description",
+    "run_state",
+    "preview",
+    "provider_id",
+    "catalog_revision",
+    "model_id",
+    "reasoning_effort",
+    "approval_mode",
+    "codex_sandbox_mode",
+    "codex_speed",
+    "codex_reviewer",
+    "withmate_reviewer_explicit",
+    "custom_agent_name",
+    "thread_id",
+    "display_after_message_index",
+    "character_id",
+    "character_snapshot_json",
+    "character_snapshot_invalid",
+    "character_icon_path",
+    "client_request_id",
+    "creation_context_json",
+    "creation_request_json",
+  ];
+  if (
+    !auxiliaryColumns.has("payload_json") &&
+    !normalizedColumns.every((name) => auxiliaryColumns.has(name))
+  ) {
     return false;
   }
 
   return true;
 }
 
+/** SQLiteのスキーマ情報から必須インデックス名が揃っているか確認する。 */
 function hasRequiredIndexes(db: DatabaseSync): boolean {
   const indexes = new Set(
-    (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index'").all() as Array<{ name?: unknown }>)
+    (
+      db
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'index'")
+        .all() as Array<{ name?: unknown }>
+    )
       .map((index) => index.name)
       .filter((name): name is string => typeof name === "string"),
   );
   return REQUIRED_V6_INDEXES.every((indexName) => indexes.has(indexName));
 }
 
+/** 指定した参照元列・参照先と、指定がある場合は親削除時の動作まで一致する外部キーを探す。 */
 function hasForeignKey(
   db: DatabaseSync,
   tableName: string,
@@ -265,38 +421,86 @@ function hasForeignKey(
   targetColumn = "id",
   onDelete?: "CASCADE" | "RESTRICT" | "SET NULL",
 ): boolean {
-  const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as Array<{
+  const keys = db
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all() as Array<{
     from?: unknown;
     on_delete?: unknown;
     table?: unknown;
     to?: unknown;
   }>;
-  return keys.some((key) => key.from === fromColumn
-    && key.table === targetTable
-    && key.to === targetColumn
-    && (onDelete === undefined || key.on_delete === onDelete));
+  return keys.some(
+    (key) =>
+      key.from === fromColumn &&
+      key.table === targetTable &&
+      key.to === targetColumn &&
+      (onDelete === undefined || key.on_delete === onDelete),
+  );
 }
 
+/** Sessionと会話・受付などの関係を支える所定の外部キーが宣言されているか確認する。 */
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
-  return hasForeignKey(db, "sessions_v6", "character_id", "characters")
-    && hasForeignKey(db, "coordination_records_v7", "crew_root_session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
-    && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "session_file_pins_v6", "session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "session_turn_queue_v6", "session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "session_turn_queue_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
-    && hasForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id", "auxiliary_sessions")
-    && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
-    && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions");
+  return (
+    hasForeignKey(db, "sessions_v6", "character_id", "characters") &&
+    hasForeignKey(
+      db,
+      "coordination_records_v7",
+      "crew_root_session_id",
+      "sessions_v6",
+      "id",
+      "CASCADE",
+    ) &&
+    hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6") &&
+    hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6") &&
+    hasForeignKey(
+      db,
+      "session_file_pins_v6",
+      "session_id",
+      "sessions_v6",
+      "id",
+      "CASCADE",
+    ) &&
+    hasForeignKey(
+      db,
+      "session_turn_queue_v6",
+      "session_id",
+      "sessions_v6",
+      "id",
+      "CASCADE",
+    ) &&
+    hasForeignKey(
+      db,
+      "session_turn_queue_v6",
+      "auxiliary_session_id",
+      "auxiliary_sessions",
+      "id",
+      "CASCADE",
+    ) &&
+    hasForeignKey(
+      db,
+      "auxiliary_session_messages",
+      "auxiliary_session_id",
+      "auxiliary_sessions",
+    ) &&
+    hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6") &&
+    hasForeignKey(
+      db,
+      "session_turns_v6",
+      "auxiliary_session_id",
+      "auxiliary_sessions",
+    )
+  );
 }
 
+/** テーブルのDDLをSQLiteから取得する。未作成などで取得できない場合は空文字列を返す。 */
 function tableSql(db: DatabaseSync, tableName: string): string {
-  const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
-    | { sql?: unknown }
-    | undefined;
+  const row = db
+    .prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName) as { sql?: unknown } | undefined;
   return typeof row?.sql === "string" ? row.sql : "";
 }
 
+/** 保存JSONや状態の許容値、Turn所有者の排他性など、必須の制約がDDLに含まれるか確認する。 */
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
   const lifecycleSql = tableSql(db, "session_lifecycle_operations_v6");
@@ -305,32 +509,54 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const turnQueueSql = tableSql(db, "session_turn_queue_v6");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
 
-  return sessionsSql.includes("json_valid(character_snapshot_json)")
-    && lifecycleSql.includes("kind IN ('create', 'delete')")
-    && lifecycleSql.includes("phase IN ('preparing', 'applied', 'complete')")
-    && coordinationSql.includes("state IN ('open','resolved','withdrawn','corrected')")
-    && coordinationSql.includes("json_valid(payload_json)")
-    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')")
-    && filePinsSql.includes("kind IN ('file', 'directory')")
-    && filePinsSql.includes("root_path <> ''")
-    && filePinsSql.includes("relative_path <> ''")
-    && filePinsSql.includes("relative_path_key <> ''")
-    && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
-    && turnQueueSql.includes("state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')")
-    && turnQueueSql.includes("json_valid(captured_json)")
-    && turnQueueSql.includes("accepted_json IS NULL OR json_valid(accepted_json)")
-    && turnQueueSql.includes("dispatched_json IS NULL OR json_valid(dispatched_json)")
-    && turnQueueSql.includes("FOREIGN KEY (auxiliary_session_id)")
-    && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
-    && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
-    && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)");
+  return (
+    sessionsSql.includes("json_valid(character_snapshot_json)") &&
+    lifecycleSql.includes("kind IN ('create', 'delete')") &&
+    lifecycleSql.includes("phase IN ('preparing', 'applied', 'complete')") &&
+    coordinationSql.includes(
+      "state IN ('open','resolved','withdrawn','corrected')",
+    ) &&
+    coordinationSql.includes("json_valid(payload_json)") &&
+    filePinsSql.includes(
+      "root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')",
+    ) &&
+    filePinsSql.includes("kind IN ('file', 'directory')") &&
+    filePinsSql.includes("root_path <> ''") &&
+    filePinsSql.includes("relative_path <> ''") &&
+    filePinsSql.includes("relative_path_key <> ''") &&
+    filePinsSql.includes(
+      "PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)",
+    ) &&
+    turnQueueSql.includes(
+      "state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')",
+    ) &&
+    turnQueueSql.includes("json_valid(captured_json)") &&
+    turnQueueSql.includes(
+      "accepted_json IS NULL OR json_valid(accepted_json)",
+    ) &&
+    turnQueueSql.includes(
+      "dispatched_json IS NULL OR json_valid(dispatched_json)",
+    ) &&
+    turnQueueSql.includes("FOREIGN KEY (auxiliary_session_id)") &&
+    sessionTurnsSql.includes(
+      "phase IN ('running', 'completed', 'failed', 'canceled')",
+    ) &&
+    sessionTurnsSql.includes(
+      "session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL",
+    ) &&
+    sessionTurnsSql.includes(
+      "NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)",
+    )
+  );
 }
 
+/** 定義の有無とは別に、保存済み行が外部キーに違反していないことをSQLiteで確認する。 */
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
   const violations = db.prepare("PRAGMA foreign_key_check").all();
   return violations.length === 0;
 }
 
+/** アプリ共通設定をキー・値・更新時刻で保持するV6のDDL。 */
 export const CREATE_V6_APP_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT PRIMARY KEY,
@@ -339,6 +565,7 @@ export const CREATE_V6_APP_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 再利用するプロンプト本文を名前や更新時刻とともに保持するV6のDDL。 */
 export const CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS prompt_templates (
     id TEXT PRIMARY KEY,
@@ -352,6 +579,7 @@ export const CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL = `
     ON prompt_templates(name COLLATE NOCASE);
 `;
 
+/** プロバイダーごとのモデル取得結果をコンテキストキーで区別して保存するV6のDDL。 */
 export const CREATE_V6_PROVIDER_MODEL_CACHE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS provider_model_cache (
     provider_id TEXT NOT NULL,
@@ -362,6 +590,7 @@ export const CREATE_V6_PROVIDER_MODEL_CACHE_TABLE_SQL = `
   );
 `;
 
+/** Characterカタログの表示・定義参照・状態を管理するV6のDDL。 */
 export const CREATE_V6_CHARACTERS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS characters (
     id TEXT PRIMARY KEY,
@@ -386,6 +615,7 @@ export const CREATE_V6_CHARACTERS_TABLE_SQL = `
     ON characters(state, updated_at DESC);
 `;
 
+/** Projectの識別キーとworkspace・Git情報を保存し、Sessionから共有できるようにするV6のDDL。 */
 export const CREATE_V6_PROJECT_SCOPES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS project_scopes_v6 (
     id TEXT PRIMARY KEY,
@@ -407,6 +637,7 @@ export const CREATE_V6_PROJECT_SCOPES_TABLE_SQL = `
     ON project_scopes_v6(workspace_path);
 `;
 
+/** 通常Sessionの識別子・親子関係・実行設定・Characterスナップショットを会話本文から分離して保持するV6のDDL。 */
 export const CREATE_V6_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions_v6 (
     id TEXT PRIMARY KEY,
@@ -463,6 +694,7 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_v6_sessions_parent ON sessions_v6(parent_session_id);
 `;
 
+/** Sessionの作成・削除操作を、準備内容と再開に使う段階とともに保持するV6のDDL。 */
 export const CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_lifecycle_operations_v6 (
     operation_id TEXT PRIMARY KEY,
@@ -479,6 +711,7 @@ export const CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL = `
     ON session_lifecycle_operations_v6(kind, phase);
 `;
 
+/** 親Session内のルートと相対パスを識別キーとしてファイルのピンを保存し、親の削除に追従させるV6のDDL。 */
 export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_file_pins_v6 (
     session_id TEXT NOT NULL,
@@ -493,6 +726,7 @@ export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
   );
 `;
 
+/** 通常Sessionの会話本文をSession内で一意な順序番号とともに保存するV6のDDL。 */
 export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_messages_v6 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -511,6 +745,7 @@ export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
     ON session_messages_v6(session_id, seq);
 `;
 
+/** Auxiliaryのメタデータと順序付き会話を別テーブルに保存するV6のDDL。 */
 export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS auxiliary_sessions (
     id TEXT PRIMARY KEY,
@@ -558,6 +793,7 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
   );
 `;
 
+/** MainまたはAuxiliaryの一方だけを所有者とする最小Turnの実行情報を保存するV6のDDL。 */
 export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_turns_v6 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -600,6 +836,7 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
     WHERE phase = 'failed' AND auxiliary_session_id IS NOT NULL;
 `;
 
+/** 受付順と実行順、受付・予定・採用入力と状態を保存し、所有者ごとのリクエストID重複を防ぐV6のDDL。 */
 export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_turn_queue_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -639,6 +876,7 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     WHERE auxiliary_session_id IS NOT NULL AND user_message_seq IS NOT NULL;
 `;
 
+/** 新規V6のテーブルと機能表の作成SQLを依存順に並べ、最後に版番号を設定する。 */
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
@@ -658,23 +896,35 @@ export const CREATE_V6_SCHEMA_SQL = [
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;
 
+/** 指定名のテーブルが現行のSQLiteスキーマ内に存在するか確認する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
-    | { name?: unknown }
-    | undefined;
+  const row = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name?: unknown } | undefined;
   return row?.name === tableName;
 }
 
+/** SQLiteの列定義から、既存表で利用可能な列名の集合を取得する。 */
 function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
   return new Set(
-    (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: unknown }>)
+    (
+      db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+        name?: unknown;
+      }>
+    )
       .map((column) => column.name)
       .filter((name): name is string => typeof name === "string"),
   );
 }
 
-function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): void {
-  const createdAtExpression = columns.has("created_at") ? "created_at" : "updated_at";
+/** 旧Auxiliaryの識別子とpayloadを保ったまま表を作り直し、作成時刻列がない場合は更新時刻を引き継ぐ。 */
+function rebuildAuxiliarySessionsTable(
+  db: DatabaseSync,
+  columns: Set<string>,
+): void {
+  const createdAtExpression = columns.has("created_at")
+    ? "created_at"
+    : "updated_at";
   db.exec("DROP TABLE IF EXISTS auxiliary_sessions_v6_rebuild;");
   db.exec(`
     CREATE TABLE auxiliary_sessions_v6_rebuild (
@@ -702,14 +952,24 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     FROM auxiliary_sessions
   `);
   db.exec("DROP TABLE auxiliary_sessions;");
-  db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
+  db.exec(
+    "ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;",
+  );
 }
 
+/** 作成時刻が空またはNULLの既存Auxiliaryに限り、保存済み更新時刻で補う。 */
 function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
-  db.exec("UPDATE auxiliary_sessions SET created_at = updated_at WHERE created_at IS NULL OR created_at = '';");
+  db.exec(
+    "UPDATE auxiliary_sessions SET created_at = updated_at WHERE created_at IS NULL OR created_at = '';",
+  );
 }
 
-function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => void): void {
+/** 処理をセーブポイントで囲み、途中で失敗した場合はその範囲をロールバックして失敗を伝える。 */
+function runWithSavepoint(
+  db: DatabaseSync,
+  savepointName: string,
+  run: () => void,
+): void {
   db.exec(`SAVEPOINT ${savepointName};`);
   try {
     run();
@@ -724,14 +984,18 @@ function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => vo
   }
 }
 
+/** 退役済みテーブルのうち禁止一覧にあるものだけを、存在する場合に削除する。 */
 export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   for (const tableName of FORBIDDEN_V6_TABLES) {
     db.exec(`DROP TABLE IF EXISTS ${tableName};`);
   }
 }
 
+/** 既存V6の列追加や旧Turn・受付の移行、禁止テーブルの整理を行う。失敗時の巻き戻しは呼び出し側が担う。 */
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
-  db.exec("DROP TABLE IF EXISTS model_catalog_models; DROP TABLE IF EXISTS model_catalog_providers; DROP TABLE IF EXISTS model_catalog_revisions;");
+  db.exec(
+    "DROP TABLE IF EXISTS model_catalog_models; DROP TABLE IF EXISTS model_catalog_providers; DROP TABLE IF EXISTS model_catalog_revisions;",
+  );
   removeRetiredMemoryAffectDatabaseData(db);
   if (tableExists(db, "sessions_v6")) {
     const sessionColumns = tableColumnNames(db, "sessions_v6");
@@ -742,14 +1006,15 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       ["created_by_session_id", "TEXT"],
       ["description", "TEXT NOT NULL DEFAULT ''"],
     ]) {
-      if (!sessionColumns.has(name)) db.exec(`ALTER TABLE sessions_v6 ADD COLUMN ${name} ${definition}`);
+      if (!sessionColumns.has(name))
+        db.exec(`ALTER TABLE sessions_v6 ADD COLUMN ${name} ${definition}`);
     }
   }
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
-      statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
-      || statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
-      || statement === CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL
+      statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL ||
+      statement === CREATE_V6_SESSION_TURNS_TABLE_SQL ||
+      statement === CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL
     ) {
       continue;
     }
@@ -757,7 +1022,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   if (!tableSql(db, "session_file_pins_v6").includes("'crew-folder'")) {
-    db.exec(CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace("IF NOT EXISTS session_file_pins_v6", "session_file_pins_v6_rebuild"));
+    db.exec(
+      CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace(
+        "IF NOT EXISTS session_file_pins_v6",
+        "session_file_pins_v6_rebuild",
+      ),
+    );
     db.exec(`
       INSERT INTO session_file_pins_v6_rebuild
         (session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label)
@@ -771,17 +1041,27 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const sessionColumns = tableColumnNames(db, "sessions_v6");
   // 既存 Session は指示なしで始まり、会話や設定の項目は書き換えない。
   if (!sessionColumns.has("instructions_json")) {
-    db.exec(`ALTER TABLE sessions_v6 ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
+    db.exec(
+      `ALTER TABLE sessions_v6 ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`,
+    );
   }
   if (!sessionColumns.has("is_pinned")) {
-    db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
+    db.exec(
+      "ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));",
+    );
   }
 
   if (!sessionColumns.has("incarnation_id")) {
-    db.exec("ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';");
+    db.exec(
+      "ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';",
+    );
   }
-  db.exec("UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';");
-  db.exec("UPDATE sessions_v6 SET root_session_id = id WHERE root_session_id IS NULL;");
+  db.exec(
+    "UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';",
+  );
+  db.exec(
+    "UPDATE sessions_v6 SET root_session_id = id WHERE root_session_id IS NULL;",
+  );
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
@@ -789,18 +1069,38 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
     db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
     migrateLegacySessionTurnsV6(db);
-    const hasRetainedAuxiliaryTurns = tableExists(db, "session_turns_v6")
-      && Boolean(db.prepare("SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1").get());
-    const shouldRebuildAuxiliarySessions = auxiliaryColumns.has("payload_json")
-      && !hasRetainedAuxiliaryTurns
-      && hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6");
+    const hasRetainedAuxiliaryTurns =
+      tableExists(db, "session_turns_v6") &&
+      Boolean(
+        db
+          .prepare(
+            "SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1",
+          )
+          .get(),
+      );
+    const shouldRebuildAuxiliarySessions =
+      auxiliaryColumns.has("payload_json") &&
+      !hasRetainedAuxiliaryTurns &&
+      hasForeignKey(
+        db,
+        "auxiliary_sessions",
+        "parent_session_id",
+        "sessions_v6",
+      );
     if (shouldRebuildAuxiliarySessions) {
       rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
     } else if (!auxiliaryColumns.has("created_at")) {
-      db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+      db.exec(
+        "ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+      );
     }
-    if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("description")) {
-      db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+    if (
+      !auxiliaryColumns.has("payload_json") &&
+      !auxiliaryColumns.has("description")
+    ) {
+      db.exec(
+        "ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+      );
     }
     backfillAuxiliarySessionsCreatedAt(db);
 
@@ -814,20 +1114,35 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
   // 旧 Auxiliary テーブルの構成が確定してから列を追加する。
   if (!auxiliaryColumns.has("instructions_json")) {
-    db.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`);
+    db.exec(
+      `ALTER TABLE auxiliary_sessions ADD COLUMN instructions_json TEXT NOT NULL DEFAULT '""'`,
+    );
   }
-  if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("withmate_reviewer_explicit")) {
-    db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))");
+  if (
+    !auxiliaryColumns.has("payload_json") &&
+    !auxiliaryColumns.has("withmate_reviewer_explicit")
+  ) {
+    db.exec(
+      "ALTER TABLE auxiliary_sessions ADD COLUMN withmate_reviewer_explicit INTEGER NOT NULL DEFAULT 0 CHECK (withmate_reviewer_explicit IN (0, 1))",
+    );
   }
 
   db.exec("DROP INDEX IF EXISTS idx_auxiliary_sessions_parent_created");
 
   db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
   migrateLegacySessionTurnsV6(db);
-  if (tableExists(db, "session_turn_queue_v6") && !tableColumnNames(db, "session_turn_queue_v6").has("auxiliary_session_id")) {
-    const previousSequence = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'")
+  if (
+    tableExists(db, "session_turn_queue_v6") &&
+    !tableColumnNames(db, "session_turn_queue_v6").has("auxiliary_session_id")
+  ) {
+    const previousSequence = db
+      .prepare(
+        "SELECT seq FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'",
+      )
       .get() as { seq: number } | undefined;
-    db.exec("ALTER TABLE session_turn_queue_v6 RENAME TO session_turn_queue_previous_v6");
+    db.exec(
+      "ALTER TABLE session_turn_queue_v6 RENAME TO session_turn_queue_previous_v6",
+    );
     db.exec("DROP INDEX IF EXISTS idx_v6_session_turn_queue_owner_state");
     db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
     db.exec(`INSERT INTO session_turn_queue_v6
@@ -837,28 +1152,46 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
         user_message_seq, reason, released_at, created_at, updated_at FROM session_turn_queue_previous_v6`);
     db.exec("DROP TABLE session_turn_queue_previous_v6");
     if (previousSequence) {
-      db.prepare("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'session_turn_queue_v6'").run(previousSequence.seq);
-      if (!db.prepare("SELECT 1 FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'").get()) {
-        db.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('session_turn_queue_v6', ?)").run(previousSequence.seq);
+      db.prepare(
+        "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'session_turn_queue_v6'",
+      ).run(previousSequence.seq);
+      if (
+        !db
+          .prepare(
+            "SELECT 1 FROM sqlite_sequence WHERE name = 'session_turn_queue_v6'",
+          )
+          .get()
+      ) {
+        db.prepare(
+          "INSERT INTO sqlite_sequence (name, seq) VALUES ('session_turn_queue_v6', ?)",
+        ).run(previousSequence.seq);
       }
     }
   }
   db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
   if (!tableColumnNames(db, "session_turn_queue_v6").has("queue_position")) {
-    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0)");
+    db.exec(
+      "ALTER TABLE session_turn_queue_v6 ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0)",
+    );
     db.exec("UPDATE session_turn_queue_v6 SET queue_position = sequence");
   }
   const queueColumns = tableColumnNames(db, "session_turn_queue_v6");
   for (const name of ["accepted_json", "dispatched_json"]) {
     if (!queueColumns.has(name)) {
-      db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
+      db.exec(
+        `ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`,
+      );
     }
   }
   if (!queueColumns.has("source_display_position")) {
-    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0)");
+    db.exec(
+      "ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_position INTEGER CHECK (source_display_position IS NULL OR source_display_position >= 0)",
+    );
   }
   if (!queueColumns.has("source_display_verified")) {
-    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1))");
+    db.exec(
+      "ALTER TABLE session_turn_queue_v6 ADD COLUMN source_display_verified INTEGER NOT NULL DEFAULT 0 CHECK (source_display_verified IN (0, 1))",
+    );
   }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_sender ON session_turn_queue_v6(
     json_extract(accepted_json, '$.origin.actorKind'),
@@ -873,13 +1206,15 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     WHERE role='user' AND json_extract(body, '$.turnInput.origin.operation')='steer'`);
   cleanupForbiddenV6Tables(db);
   // 古い Graph の初期化マーカーを、対応するテーブルと同じセーブポイント内で削除する。
-  db.exec("DELETE FROM app_settings WHERE setting_key = 'session_graph_agent_origin_contract_initialized_at';");
+  db.exec(
+    "DELETE FROM app_settings WHERE setting_key = 'session_graph_agent_origin_contract_initialized_at';",
+  );
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");
   }
-
 }
 
+/** V6の作成・更新・廃止テーブル整理を同じセーブポイントで実施し、失敗時は更新を巻き戻す。 */
 export function ensureV6Schema(db: DatabaseSync): void {
   runWithSavepoint(db, "ensure_v6_schema", () => ensureV6SchemaUnsafe(db));
 }

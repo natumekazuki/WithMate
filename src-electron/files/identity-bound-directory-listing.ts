@@ -75,13 +75,17 @@ function toKind(entry) {
 });
 `;
 
+/** 一覧を取得したディレクトリのデバイス・inodeと、直下の項目およびメタデータ取得時の最大並列数。 */
 export type IdentityBoundDirectorySnapshot = {
   device: bigint;
   inode: bigint;
-  entries: Array<Pick<SessionDirectoryEntry, "name" | "kind" | "byteLength" | "modifiedAt">>;
+  entries: Array<
+    Pick<SessionDirectoryEntry, "name" | "kind" | "byteLength" | "modifiedAt">
+  >;
   maxConcurrentStats: number;
 };
 
+/** 子プロセスの期限と、起動・同一性確定・終了をテストで観測するための指定。 */
 type IdentityBoundDirectoryListingOptions = {
   delayAfterReadyMs?: number;
   hangAfterReady?: boolean;
@@ -93,6 +97,7 @@ type IdentityBoundDirectoryListingOptions = {
 
 const DEFAULT_WORKER_TIMEOUT_MS = 30_000;
 
+/** 子プロセスの起動時点の同一性通知と、読み取り後の一覧通知を区別する。 */
 type WorkerMessage =
   | { type: "ready"; device: bigint; inode: bigint }
   | {
@@ -101,17 +106,26 @@ type WorkerMessage =
       maxConcurrentStats: number;
     };
 
+/** 子プロセスの出力1行を検証し、文字列で届くデバイス番号とinodeを精度を失わず復元する。 */
 function parseWorkerMessage(line: string): WorkerMessage {
   const value: unknown = JSON.parse(line);
   if (!value || typeof value !== "object" || !("type" in value)) {
     throw new Error("The directory listing response is invalid.");
   }
   if (value.type === "ready" && "device" in value && "inode" in value) {
-    if (typeof value.device !== "string" || !/^\d+$/.test(value.device)
-      || typeof value.inode !== "string" || !/^\d+$/.test(value.inode)) {
+    if (
+      typeof value.device !== "string" ||
+      !/^\d+$/.test(value.device) ||
+      typeof value.inode !== "string" ||
+      !/^\d+$/.test(value.inode)
+    ) {
       throw new Error("The directory listing identity is invalid.");
     }
-    return { type: "ready", device: BigInt(value.device), inode: BigInt(value.inode) };
+    return {
+      type: "ready",
+      device: BigInt(value.device),
+      inode: BigInt(value.inode),
+    };
   }
   if (
     value.type === "result" &&
@@ -120,32 +134,50 @@ function parseWorkerMessage(line: string): WorkerMessage {
     "maxConcurrentStats" in value &&
     typeof value.maxConcurrentStats === "number"
   ) {
-    const entries = value.entries.map((entry): IdentityBoundDirectorySnapshot["entries"][number] => {
-      if (!entry || typeof entry !== "object" || !("name" in entry) || !("kind" in entry)) {
-        throw new Error("The directory listing entry is invalid.");
-      }
-      if (
-        typeof entry.name !== "string" ||
-        (entry.kind !== "file" && entry.kind !== "directory" && entry.kind !== "symbolic-link" && entry.kind !== "other") ||
-        !("byteLength" in entry) ||
-        (entry.byteLength !== null && typeof entry.byteLength !== "number") ||
-        !("modifiedAt" in entry) ||
-        (entry.modifiedAt !== null && typeof entry.modifiedAt !== "string")
-      ) {
-        throw new Error("The directory listing entry is invalid.");
-      }
-      return {
-        name: entry.name,
-        kind: entry.kind,
-        byteLength: entry.byteLength,
-        modifiedAt: entry.modifiedAt,
-      };
-    });
-    return { type: "result", entries, maxConcurrentStats: value.maxConcurrentStats };
+    const entries = value.entries.map(
+      (entry): IdentityBoundDirectorySnapshot["entries"][number] => {
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          !("name" in entry) ||
+          !("kind" in entry)
+        ) {
+          throw new Error("The directory listing entry is invalid.");
+        }
+        if (
+          typeof entry.name !== "string" ||
+          (entry.kind !== "file" &&
+            entry.kind !== "directory" &&
+            entry.kind !== "symbolic-link" &&
+            entry.kind !== "other") ||
+          !("byteLength" in entry) ||
+          (entry.byteLength !== null && typeof entry.byteLength !== "number") ||
+          !("modifiedAt" in entry) ||
+          (entry.modifiedAt !== null && typeof entry.modifiedAt !== "string")
+        ) {
+          throw new Error("The directory listing entry is invalid.");
+        }
+        return {
+          name: entry.name,
+          kind: entry.kind,
+          byteLength: entry.byteLength,
+          modifiedAt: entry.modifiedAt,
+        };
+      },
+    );
+    return {
+      type: "result",
+      entries,
+      maxConcurrentStats: value.maxConcurrentStats,
+    };
   }
   throw new Error("The directory listing response is invalid.");
 }
 
+/**
+ * 対象を子プロセスの作業ディレクトリにし、その作業ディレクトリ自体から同一性と一覧を取得する。
+ * 起動後のパスの差し替えで別の一覧を取得せず、期限切れや応答不正では結果を返さず失敗する。
+ */
 export function listIdentityBoundDirectory(
   targetPath: string,
   options: IdentityBoundDirectoryListingOptions = {},
@@ -156,25 +188,40 @@ export function listIdentityBoundDirectory(
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
-        WITHMATE_IDENTITY_DIRECTORY_DELAY_MS: String(options.delayAfterReadyMs ?? 0),
-        WITHMATE_IDENTITY_DIRECTORY_HANG_AFTER_READY: options.hangAfterReady ? "1" : "0",
+        WITHMATE_IDENTITY_DIRECTORY_DELAY_MS: String(
+          options.delayAfterReadyMs ?? 0,
+        ),
+        WITHMATE_IDENTITY_DIRECTORY_HANG_AFTER_READY: options.hangAfterReady
+          ? "1"
+          : "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     let stdout = "";
     let stderr = "";
-    let identity: Pick<IdentityBoundDirectorySnapshot, "device" | "inode"> | null = null;
+    let identity: Pick<
+      IdentityBoundDirectorySnapshot,
+      "device" | "inode"
+    > | null = null;
     let entries: IdentityBoundDirectorySnapshot["entries"] | null = null;
     let maxConcurrentStats: number | null = null;
     let settled = false;
     let terminalError: Error | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     const timeout = setTimeout(() => {
-      terminate(new Error(`The directory listing did not finish within ${timeoutMs} ms.`));
+      terminate(
+        new Error(
+          `The directory listing did not finish within ${timeoutMs} ms.`,
+        ),
+      );
     }, timeoutMs);
 
-    const settle = (error: Error | null, snapshot?: IdentityBoundDirectorySnapshot) => {
+    /** 期限監視を解除し、診断コールバックの成否とは独立して呼び出しを一度だけ決着させる。 */
+    const settle = (
+      error: Error | null,
+      snapshot?: IdentityBoundDirectorySnapshot,
+    ) => {
       if (settled) {
         return;
       }
@@ -192,6 +239,7 @@ export function listIdentityBoundDirectory(
       }
     };
 
+    /** 最初の中断理由を保持して子プロセスを終了させ、終了処理に失敗を引き継ぐ。 */
     function terminate(error: unknown) {
       if (settled || terminalError) {
         return;
@@ -200,6 +248,7 @@ export function listIdentityBoundDirectory(
       child.kill();
     }
 
+    /** 標準出力の完結した行だけを処理し、途中の行を次の受信まで残す。 */
     const consumeLines = () => {
       while (true) {
         const newlineIndex = stdout.indexOf("\n");
@@ -260,7 +309,12 @@ export function listIdentityBoundDirectory(
         return;
       }
       if (code !== 0) {
-        settle(new Error(stderr.trim() || `The directory listing exited with code ${code ?? "unknown"}.`));
+        settle(
+          new Error(
+            stderr.trim() ||
+              `The directory listing exited with code ${code ?? "unknown"}.`,
+          ),
+        );
         return;
       }
       if (!identity || !entries || maxConcurrentStats === null) {

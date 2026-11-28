@@ -102,8 +102,12 @@ foreach ($rule in $actualRules) {
 }
 `;
 
-const WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT = Buffer.from(WINDOWS_RUNTIME_ACL_SCRIPT, "utf16le").toString("base64");
+const WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT = Buffer.from(
+  WINDOWS_RUNTIME_ACL_SCRIPT,
+  "utf16le",
+).toString("base64");
 
+/** Windows ACL の適用と読み戻しで照合する、対象パスの種別。 */
 export type RuntimeAclTargetKind = "directory" | "file";
 
 /**
@@ -136,23 +140,27 @@ export async function secureWindowsRuntimePath(
     "powershell.exe",
   );
   try {
-    await execFileAsync(powershellPath, [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-EncodedCommand",
-      WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT,
-    ], {
-      env: {
-        ...process.env,
-        WITHMATE_RUNTIME_ACL_TARGET: targetPath,
-        WITHMATE_RUNTIME_ACL_KIND: targetKind,
+    await execFileAsync(
+      powershellPath,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        WINDOWS_RUNTIME_ACL_ENCODED_SCRIPT,
+      ],
+      {
+        env: {
+          ...process.env,
+          WITHMATE_RUNTIME_ACL_TARGET: targetPath,
+          WITHMATE_RUNTIME_ACL_KIND: targetKind,
+        },
+        timeout: 15_000,
+        windowsHide: true,
       },
-      timeout: 15_000,
-      windowsHide: true,
-    });
+    );
   } catch {
     // execFile のエラーを原因として付けない。標準エラーには対象パスや、
     // 継承した環境データが含まれ得るため、外部に出さない。

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
+/** V6の旧監査イベントから抽出する、Turnの所有者・実行情報・作成時刻。 */
 type LegacyTurn = {
   id: number;
   session_id: string | null;
@@ -10,6 +11,7 @@ type LegacyTurn = {
   created_at: string;
 };
 
+/** 保存済み会話を変更せずに未移行の監査イベントを最小Turnへ移す。参照先がない行は飛ばし、所有者の衝突や不正なメタデータは例外にする。 */
 export function migrateLegacySessionTurnsV6(db: DatabaseSync): void {
   if (
     !db
@@ -69,11 +71,13 @@ export function migrateLegacySessionTurnsV6(db: DatabaseSync): void {
         .get(row.session_id ?? row.auxiliary_session_id)
     )
       continue;
-    if (row.metadata_type !== "object") throw new Error(`Invalid session turn metadata: ${row.id}`);
+    if (row.metadata_type !== "object")
+      throw new Error(`Invalid session turn metadata: ${row.id}`);
     const metadata: unknown = JSON.parse(row.metadata_json);
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
       throw new Error(`Invalid session turn metadata: ${row.id}`);
     const value = metadata as Record<string, unknown>;
+    /** 旧メタデータの文字列値だけを採用し、それ以外は空文字として扱う。 */
     const text = (key: string): string =>
       typeof value[key] === "string" ? (value[key] as string) : "";
     const phaseValue = text("phase").replace(/^background-/, "");
@@ -82,6 +86,7 @@ export function migrateLegacySessionTurnsV6(db: DatabaseSync): void {
     )
       ? phaseValue
       : "running";
+    /** 履歴上の位置として有効な非負整数だけを採用し、欠落や不正値はnullにする。 */
     const seq = (key: string): number | null =>
       typeof value[key] === "number" &&
       Number.isInteger(value[key]) &&

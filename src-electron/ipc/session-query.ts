@@ -27,8 +27,16 @@ import type {
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 import type { GlossarySearchRequest } from "../../src-shared/glossary/glossary-contract.js";
-import type { ConversationQueryRequest, ConversationSearchRequest, ConversationNavigatorRequest, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
-import { isConversationMessageIndexes, isConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
+import type {
+  ConversationQueryRequest,
+  ConversationSearchRequest,
+  ConversationNavigatorRequest,
+  ConversationQueryCancelRequest,
+} from "../../src-shared/session/conversation-page.js";
+import {
+  isConversationMessageIndexes,
+  isConversationSearchAnchor,
+} from "../../src-shared/session/conversation-page.js";
 import {
   areSessionFileResourcesEqual,
   isFileRootGitHistoryComparisonDiffRequest,
@@ -129,12 +137,16 @@ import {
   parseMarkdownLinkContextMenuRequest,
 } from "./shared.js";
 
+/** ウィンドウの解決・Workspace 検証を除いた、Session の照会とファイル操作を実行するサービス側の依存。 */
 export type MainIpcSessionQueryServiceDeps = Omit<
   MainIpcSessionQueryDeps,
-  keyof MainIpcEventWindowDeps | keyof MainIpcSessionWindowDeps |
-    keyof MainIpcWorkspaceValidationDeps | keyof MainIpcFilePreviewWindowDeps
+  | keyof MainIpcEventWindowDeps
+  | keyof MainIpcSessionWindowDeps
+  | keyof MainIpcWorkspaceValidationDeps
+  | keyof MainIpcFilePreviewWindowDeps
 >;
 
+/** Session 照会サービスと送信元ウィンドウ・Workspace の共通依存を束ねる。 */
 export function createSessionQueryIpcDeps(
   services: MainIpcSessionQueryServiceDeps,
   context: MainIpcEventWindowDeps &
@@ -145,6 +157,7 @@ export function createSessionQueryIpcDeps(
   return { ...context, ...services };
 }
 
+/** Session の概要・会話・ファイル等の IPC を登録する。概要一覧と、親ウィンドウの所有や現在の Preview リソースを要する照会・操作を区別する。 */
 export function registerSessionQueryHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionQueryDeps,
@@ -152,7 +165,9 @@ export function registerSessionQueryHandlers(
   ipcMain.handle(
     WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL,
     (_event, request: SessionMonitorPageRequest | null | undefined) =>
-      deps.listSessionMonitorPage(parseOpenSessionWindowIdsPageRequest(request)),
+      deps.listSessionMonitorPage(
+        parseOpenSessionWindowIdsPageRequest(request),
+      ),
   );
   ipcMain.handle(
     WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
@@ -194,34 +209,57 @@ export function registerSessionQueryHandlers(
     }
     return deps.getSession(sessionId);
   });
-  const authorizeConversation = async (event: Parameters<typeof assertOwningSessionWindowSender>[0], sessionId: string) => {
-    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
-    const owner = await deps.getConversationOwnerSessionId?.(sessionId) ?? sessionId;
+  /** 会話の対象が Auxiliary であれば保存上の親を解決し、解決した所有 Session のウィンドウ以外を拒否する。 */
+  const authorizeConversation = async (
+    event: Parameters<typeof assertOwningSessionWindowSender>[0],
+    sessionId: string,
+  ) => {
+    if (typeof sessionId !== "string" || !sessionId)
+      throw new TypeError("Session ID is invalid.");
+    const owner =
+      (await deps.getConversationOwnerSessionId?.(sessionId)) ?? sessionId;
     assertOwningSessionWindowSender(event, owner, deps);
   };
-  ipcMain.handle(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL, async (event, sessionId: string) => {
-    await authorizeConversation(event, sessionId);
-    const turn = await deps.getLatestSessionTurn(sessionId);
-    await authorizeConversation(event, sessionId);
-    return turn;
-  });
-  ipcMain.handle(WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL, async (event, sessionId: string) => {
-    if (event.senderFrame !== event.sender.mainFrame) throw new Error("Result read IPC requires the main application frame.");
-    await authorizeConversation(event, sessionId);
-    return deps.getUnreadSessionResult(sessionId);
-  });
-  ipcMain.handle(WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL, async (event, sessionId: string, turnId: number) => {
-    if (event.senderFrame !== event.sender.mainFrame) throw new Error("Result read IPC requires the main application frame.");
-    if (!Number.isSafeInteger(turnId) || turnId <= 0) throw new TypeError("Turn ID is invalid.");
-    await authorizeConversation(event, sessionId);
-    if (!deps.resolveEventWindow(event)?.isFocused()) return false;
-    return deps.markSessionResultRead(sessionId, turnId);
-  });
-  ipcMain.handle(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, async (event, sessionId, request) => {
-    await authorizeConversation(event, sessionId);
-    if (!deps.getConversationPage) throw new Error("Conversation page reads are unavailable.");
-    return deps.getConversationPage(sessionId, request);
-  });
+  ipcMain.handle(
+    WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
+    async (event, sessionId: string) => {
+      await authorizeConversation(event, sessionId);
+      const turn = await deps.getLatestSessionTurn(sessionId);
+      await authorizeConversation(event, sessionId);
+      return turn;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL,
+    async (event, sessionId: string) => {
+      if (event.senderFrame !== event.sender.mainFrame)
+        throw new Error("Result read IPC requires the main application frame.");
+      await authorizeConversation(event, sessionId);
+      return deps.getUnreadSessionResult(sessionId);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL,
+    async (event, sessionId: string, turnId: number) => {
+      if (event.senderFrame !== event.sender.mainFrame)
+        throw new Error("Result read IPC requires the main application frame.");
+      if (!Number.isSafeInteger(turnId) || turnId <= 0)
+        throw new TypeError("Turn ID is invalid.");
+      await authorizeConversation(event, sessionId);
+      if (!deps.resolveEventWindow(event)?.isFocused()) return false;
+      return deps.markSessionResultRead(sessionId, turnId);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
+    async (event, sessionId, request) => {
+      await authorizeConversation(event, sessionId);
+      if (!deps.getConversationPage)
+        throw new Error("Conversation page reads are unavailable.");
+      return deps.getConversationPage(sessionId, request);
+    },
+  );
+  /** 一つの送信元と producer に対応する検索または Navigator の継続状態。下流へ渡す ID は送信元ごとに分離する。 */
   type QuerySlot = {
     requestId: string;
     producerId: string;
@@ -231,37 +269,91 @@ export function registerSessionQueryHandlers(
     cancelled: boolean;
     owner?: ConversationQueryOwner;
   };
-  const senders = new Map<NonNullable<ReturnType<typeof deps.resolveEventWindow>>, { prefix: string; slots: Map<string, QuerySlot> }>();
+  const senders = new Map<
+    NonNullable<ReturnType<typeof deps.resolveEventWindow>>,
+    { prefix: string; slots: Map<string, QuerySlot> }
+  >();
   let senderSequence = 0;
+  /** 要求と producer の ID が空白だけでなく、どちらも 128 文字以内の文字列であることを確認する。 */
   const validateIdentity = (request: ConversationQueryCancelRequest) => {
-    if (!request || typeof request.requestId !== "string" || !request.requestId.trim() || request.requestId.length > 128
-      || typeof request.producerId !== "string" || !request.producerId.trim() || request.producerId.length > 128) {
+    if (
+      !request ||
+      typeof request.requestId !== "string" ||
+      !request.requestId.trim() ||
+      request.requestId.length > 128 ||
+      typeof request.producerId !== "string" ||
+      !request.producerId.trim() ||
+      request.producerId.length > 128
+    ) {
       throw new TypeError("Conversation query identity is invalid.");
     }
   };
+  /** 継続状態を無効にし、下流の所有先が確定済みなら取消も依頼する。取消失敗はログへ記録する。 */
   const cancelSlot = (slot: QuerySlot) => {
     slot.cancelled = true;
     if (slot.owner) {
-      void Promise.resolve(slot.owner.cancel({ requestId: slot.requestId, producerId: slot.producerId }))
-        .catch((error: unknown) => console.error("Conversation query cancellation failed.", error));
+      void Promise.resolve(
+        slot.owner.cancel({
+          requestId: slot.requestId,
+          producerId: slot.producerId,
+        }),
+      ).catch((error: unknown) =>
+        console.error("Conversation query cancellation failed.", error),
+      );
     }
   };
-  const runQuery = async (event: Parameters<typeof assertOwningSessionWindowSender>[0], sessionId: string,
-    request: ConversationSearchRequest | ConversationNavigatorRequest, kind: QuerySlot["kind"]) => {
+  /** 入力を検証し、送信元ごとの producer 上限内で会話検索または Navigator を実行する。待機後は取消・所有の失効を確認してから結果を返す。 */
+  const runQuery = async (
+    event: Parameters<typeof assertOwningSessionWindowSender>[0],
+    sessionId: string,
+    request: ConversationSearchRequest | ConversationNavigatorRequest,
+    kind: QuerySlot["kind"],
+  ) => {
     validateIdentity(request);
-    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
-    if (request.offset !== undefined && (!Number.isSafeInteger(request.offset) || request.offset < 0)) throw new TypeError("Conversation query offset is invalid.");
-    if (request.messageIndexes !== undefined && !isConversationMessageIndexes(request.messageIndexes)) throw new TypeError("Conversation query message indexes are invalid.");
-    if (request.stamp !== undefined && (!request.stamp || typeof request.stamp.generationId !== "string"
-      || typeof request.stamp.ownerIdentity !== "string" || !Number.isSafeInteger(request.stamp.contentRevision)
-      || request.stamp.contentRevision < 0 || request.stamp.requestId !== request.requestId)) throw new TypeError("Conversation query stamp is invalid.");
+    if (typeof sessionId !== "string" || !sessionId)
+      throw new TypeError("Session ID is invalid.");
+    if (
+      request.offset !== undefined &&
+      (!Number.isSafeInteger(request.offset) || request.offset < 0)
+    )
+      throw new TypeError("Conversation query offset is invalid.");
+    if (
+      request.messageIndexes !== undefined &&
+      !isConversationMessageIndexes(request.messageIndexes)
+    )
+      throw new TypeError("Conversation query message indexes are invalid.");
+    if (
+      request.stamp !== undefined &&
+      (!request.stamp ||
+        typeof request.stamp.generationId !== "string" ||
+        typeof request.stamp.ownerIdentity !== "string" ||
+        !Number.isSafeInteger(request.stamp.contentRevision) ||
+        request.stamp.contentRevision < 0 ||
+        request.stamp.requestId !== request.requestId)
+    )
+      throw new TypeError("Conversation query stamp is invalid.");
     if (kind === "search") {
       const search = request as ConversationSearchRequest;
-      if (typeof search.query !== "string" || search.query.length > 4096 || (search.mode !== "source" && search.mode !== "preview")) throw new TypeError("Conversation search is invalid.");
-      if (search.anchor !== undefined && !isConversationSearchAnchor(search.anchor)) throw new TypeError("Conversation search anchor is invalid.");
-    } else if (!["all", "bookmarks"].includes((request as ConversationNavigatorRequest).filter)) throw new TypeError("Conversation navigator filter is invalid.");
+      if (
+        typeof search.query !== "string" ||
+        search.query.length > 4096 ||
+        (search.mode !== "source" && search.mode !== "preview")
+      )
+        throw new TypeError("Conversation search is invalid.");
+      if (
+        search.anchor !== undefined &&
+        !isConversationSearchAnchor(search.anchor)
+      )
+        throw new TypeError("Conversation search anchor is invalid.");
+    } else if (
+      !["all", "bookmarks"].includes(
+        (request as ConversationNavigatorRequest).filter,
+      )
+    )
+      throw new TypeError("Conversation navigator filter is invalid.");
     const window = deps.resolveEventWindow(event);
-    if (!window) throw new Error("Conversation queries require a Session window.");
+    if (!window)
+      throw new Error("Conversation queries require a Session window.");
     let sender = senders.get(window);
     if (!sender) {
       sender = { prefix: `window-${++senderSequence}:`, slots: new Map() };
@@ -272,49 +364,90 @@ export function registerSessionQueryHandlers(
         senders.delete(window);
       });
     }
-    const signature = kind === "search" ? JSON.stringify([(request as ConversationSearchRequest).query, (request as ConversationSearchRequest).mode]) : (request as ConversationNavigatorRequest).filter;
+    const signature =
+      kind === "search"
+        ? JSON.stringify([
+            (request as ConversationSearchRequest).query,
+            (request as ConversationSearchRequest).mode,
+          ])
+        : (request as ConversationNavigatorRequest).filter;
     let slot = sender.slots.get(request.producerId);
-    if (!slot || slot.requestId !== request.requestId || slot.sessionId !== sessionId || slot.kind !== kind || slot.signature !== signature) {
+    if (
+      !slot ||
+      slot.requestId !== request.requestId ||
+      slot.sessionId !== sessionId ||
+      slot.kind !== kind ||
+      slot.signature !== signature
+    ) {
       if (slot) cancelSlot(slot);
-      else if (sender.slots.size >= 16) throw new Error("Conversation query producer limit exceeded.");
-      slot = { requestId: request.requestId, producerId: sender.prefix + request.producerId, sessionId, kind, signature, cancelled: false };
+      else if (sender.slots.size >= 16)
+        throw new Error("Conversation query producer limit exceeded.");
+      slot = {
+        requestId: request.requestId,
+        producerId: sender.prefix + request.producerId,
+        sessionId,
+        kind,
+        signature,
+        cancelled: false,
+      };
       sender.slots.set(request.producerId, slot);
     }
-    const current = () => !slot!.cancelled && senders.get(window) === sender
-      && sender!.slots.get(request.producerId) === slot && deps.resolveEventWindow(event) === window;
+    /** 取消されておらず、同じ送信元の最新の継続状態であるかを判定する。 */
+    const current = () =>
+      !slot!.cancelled &&
+      senders.get(window) === sender &&
+      sender!.slots.get(request.producerId) === slot &&
+      deps.resolveEventWindow(event) === window;
     if (!current()) return { status: "cancelled" as const };
-    if (!deps.resolveConversationQueryOwner) throw new Error("Conversation queries are unavailable.");
+    if (!deps.resolveConversationQueryOwner)
+      throw new Error("Conversation queries are unavailable.");
     const owner = await deps.resolveConversationQueryOwner(sessionId);
     if (!current()) return { status: "cancelled" as const };
     if (!owner.isCurrent()) return { status: "invalidated" as const };
     assertOwningSessionWindowSender(event, owner.ownerSessionId, deps);
     slot.owner = owner;
     const backendRequest = { ...request, producerId: slot.producerId };
-    const result = await (kind === "search" ? owner.search(backendRequest as ConversationSearchRequest) : owner.navigate(backendRequest as ConversationNavigatorRequest));
+    const result = await (kind === "search"
+      ? owner.search(backendRequest as ConversationSearchRequest)
+      : owner.navigate(backendRequest as ConversationNavigatorRequest));
     if (!current()) return { status: "cancelled" as const };
     if (!owner.isCurrent()) return { status: "invalidated" as const };
     assertOwningSessionWindowSender(event, owner.ownerSessionId, deps);
     return result;
   };
-  ipcMain.handle(WITHMATE_SEARCH_CONVERSATION_CHANNEL, (event, sessionId, request) => runQuery(event, sessionId, request, "search"));
-  ipcMain.handle(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL, (event, sessionId, request) => runQuery(event, sessionId, request, "navigator"));
-  ipcMain.handle(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL, (event, request: ConversationQueryCancelRequest) => {
-    validateIdentity(request);
-    const window = deps.resolveEventWindow(event);
-    const sender = window ? senders.get(window) : undefined;
-    const slot = sender?.slots.get(request.producerId);
-    if (slot?.requestId === request.requestId) {
-      slot.cancelled = true;
-      sender!.slots.delete(request.producerId);
-      return slot.owner?.cancel({ ...request, producerId: slot.producerId });
-    }
-  });
-  ipcMain.handle(WITHMATE_GET_SESSION_SUMMARY_CHANNEL, (_event, sessionId: string) => {
-    if (!sessionId) {
-      return null;
-    }
-    return deps.getSessionSummary(sessionId);
-  });
+  ipcMain.handle(
+    WITHMATE_SEARCH_CONVERSATION_CHANNEL,
+    (event, sessionId, request) =>
+      runQuery(event, sessionId, request, "search"),
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
+    (event, sessionId, request) =>
+      runQuery(event, sessionId, request, "navigator"),
+  );
+  ipcMain.handle(
+    WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL,
+    (event, request: ConversationQueryCancelRequest) => {
+      validateIdentity(request);
+      const window = deps.resolveEventWindow(event);
+      const sender = window ? senders.get(window) : undefined;
+      const slot = sender?.slots.get(request.producerId);
+      if (slot?.requestId === request.requestId) {
+        slot.cancelled = true;
+        sender!.slots.delete(request.producerId);
+        return slot.owner?.cancel({ ...request, producerId: slot.producerId });
+      }
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_SUMMARY_CHANNEL,
+    (_event, sessionId: string) => {
+      if (!sessionId) {
+        return null;
+      }
+      return deps.getSessionSummary(sessionId);
+    },
+  );
   ipcMain.handle(
     WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
     async (event, sessionId: string) => {
@@ -373,7 +506,11 @@ export function registerSessionQueryHandlers(
         );
       }
       // ドライブ指定のない Windows のルート付きパスは、プロセスの現在のドライブに依存する。
-      if (process.platform === "win32" && typeof targetPath === "string" && path.parse(targetPath).root.length === 1) {
+      if (
+        process.platform === "win32" &&
+        typeof targetPath === "string" &&
+        path.parse(targetPath).root.length === 1
+      ) {
         return { valid: false, reason: "not-absolute" };
       }
       return deps.validateWorkspaceDirectory(targetPath);
@@ -389,21 +526,49 @@ export function registerSessionQueryHandlers(
       return deps.listSessionFileRoots(sessionId);
     },
   );
-  ipcMain.handle(WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL, async (event, sessionId: string) => {
-    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
-    await assertOwningSessionFileExplorerSender(event, sessionId, deps);
-    return deps.listSessionFilePins(sessionId);
-  });
-  ipcMain.handle(WITHMATE_PIN_SESSION_FILE_CHANNEL, async (event, request: SessionFileRootResourceRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) throw new TypeError("File Pin request is invalid.");
-    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.pinSessionFile(request);
-  });
-  ipcMain.handle(WITHMATE_UNPIN_SESSION_FILE_CHANNEL, async (event, request: SessionFilePinReference & { sessionId: string }) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) throw new TypeError("File Pin request is invalid.");
-    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.unpinSessionFile(request);
-  });
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL,
+    async (event, sessionId: string) => {
+      if (typeof sessionId !== "string" || !sessionId)
+        throw new TypeError("Session ID is invalid.");
+      await assertOwningSessionFileExplorerSender(event, sessionId, deps);
+      return deps.listSessionFilePins(sessionId);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_PIN_SESSION_FILE_CHANNEL,
+    async (event, request: SessionFileRootResourceRequest) => {
+      if (
+        !request ||
+        typeof request.sessionId !== "string" ||
+        !request.sessionId
+      )
+        throw new TypeError("File Pin request is invalid.");
+      await assertOwningSessionFileExplorerSender(
+        event,
+        request.sessionId,
+        deps,
+      );
+      return deps.pinSessionFile(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_UNPIN_SESSION_FILE_CHANNEL,
+    async (event, request: SessionFilePinReference & { sessionId: string }) => {
+      if (
+        !request ||
+        typeof request.sessionId !== "string" ||
+        !request.sessionId
+      )
+        throw new TypeError("File Pin request is invalid.");
+      await assertOwningSessionFileExplorerSender(
+        event,
+        request.sessionId,
+        deps,
+      );
+      return deps.unpinSessionFile(request);
+    },
+  );
   ipcMain.handle(
     WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
     async (event, request: SessionDirectoryRequest) => {
@@ -430,67 +595,105 @@ export function registerSessionQueryHandlers(
       return deps.inspectSessionFile(request);
     },
   );
-  const assertLinkedFileSender = async (event: Electron.IpcMainInvokeEvent, request: SessionImageResourceRequest | SessionPdfResourceRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId
-      || typeof request.target !== "string" || !request.target.trim()) {
+  /** 画像・PDF のリンク入力を検証し、所有 Session または現在のプレビュー元からの要求に限る。 */
+  const assertLinkedFileSender = async (
+    event: Electron.IpcMainInvokeEvent,
+    request: SessionImageResourceRequest | SessionPdfResourceRequest,
+  ) => {
+    if (
+      !request ||
+      typeof request.sessionId !== "string" ||
+      !request.sessionId ||
+      typeof request.target !== "string" ||
+      !request.target.trim()
+    ) {
       throw new TypeError("Local file request is invalid.");
     }
     if (request.baseResource !== undefined) {
-      assertValidSessionFilePreviewResourceRequest(request.baseResource, request.sessionId);
+      assertValidSessionFilePreviewResourceRequest(
+        request.baseResource,
+        request.sessionId,
+      );
     }
-    await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
+    await assertSessionFileLinkSender(
+      event,
+      request.sessionId,
+      request.baseResource,
+      deps,
+    );
   };
-  ipcMain.handle(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL, async (event, request: SessionImageResourceRequest) => {
-    await assertLinkedFileSender(event, request);
-    const window = deps.resolveEventWindow(event);
-    const result = await deps.inspectSessionImage(request);
-    await assertLinkedFileSender(event, request);
-    if (deps.resolveEventWindow(event) !== window) {
-      throw new Error("Local image sender changed while inspecting the image.");
-    }
-    return result;
-  });
-  ipcMain.handle(READ_SESSION_HTML_PREVIEW, async (event, request: SessionHtmlPreviewRequest) => {
-    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error("HTML preview requires the main application frame.");
-    await assertLinkedFileSender(event, request);
-    const owner = deps.resolveEventWindow(event);
-    const result = await deps.readSessionHtmlPreview(request);
-    await assertLinkedFileSender(event, request);
-    if (deps.resolveEventWindow(event) !== owner || event.senderFrame !== event.sender.mainFrame) {
-      throw new Error("HTML preview sender changed while reading the file.");
-    }
-    return result;
-  });
-  ipcMain.handle(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL, async (event, request: SessionImageChunkRequest) => {
-    await assertLinkedFileSender(event, request);
-    const window = deps.resolveEventWindow(event);
-    const result = await deps.readSessionImageChunk(request);
-    await assertLinkedFileSender(event, request);
-    if (deps.resolveEventWindow(event) !== window) {
-      throw new Error("Local image sender changed while reading the image.");
-    }
-    return result;
-  });
-  ipcMain.handle(WITHMATE_INSPECT_SESSION_PDF_CHANNEL, async (event, request: SessionPdfResourceRequest) => {
-    await assertLinkedFileSender(event, request);
-    const window = deps.resolveEventWindow(event);
-    const result = await deps.inspectSessionPdf(request);
-    await assertLinkedFileSender(event, request);
-    if (deps.resolveEventWindow(event) !== window) {
-      throw new Error("Local PDF sender changed while inspecting the PDF.");
-    }
-    return result;
-  });
-  ipcMain.handle(WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL, async (event, request: SessionPdfChunkRequest) => {
-    await assertLinkedFileSender(event, request);
-    const window = deps.resolveEventWindow(event);
-    const result = await deps.readSessionPdfChunk(request);
-    await assertLinkedFileSender(event, request);
-    if (deps.resolveEventWindow(event) !== window) {
-      throw new Error("Local PDF sender changed while reading the PDF.");
-    }
-    return result;
-  });
+  ipcMain.handle(
+    WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL,
+    async (event, request: SessionImageResourceRequest) => {
+      await assertLinkedFileSender(event, request);
+      const window = deps.resolveEventWindow(event);
+      const result = await deps.inspectSessionImage(request);
+      await assertLinkedFileSender(event, request);
+      if (deps.resolveEventWindow(event) !== window) {
+        throw new Error(
+          "Local image sender changed while inspecting the image.",
+        );
+      }
+      return result;
+    },
+  );
+  ipcMain.handle(
+    READ_SESSION_HTML_PREVIEW,
+    async (event, request: SessionHtmlPreviewRequest) => {
+      if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame)
+        throw new Error("HTML preview requires the main application frame.");
+      await assertLinkedFileSender(event, request);
+      const owner = deps.resolveEventWindow(event);
+      const result = await deps.readSessionHtmlPreview(request);
+      await assertLinkedFileSender(event, request);
+      if (
+        deps.resolveEventWindow(event) !== owner ||
+        event.senderFrame !== event.sender.mainFrame
+      ) {
+        throw new Error("HTML preview sender changed while reading the file.");
+      }
+      return result;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL,
+    async (event, request: SessionImageChunkRequest) => {
+      await assertLinkedFileSender(event, request);
+      const window = deps.resolveEventWindow(event);
+      const result = await deps.readSessionImageChunk(request);
+      await assertLinkedFileSender(event, request);
+      if (deps.resolveEventWindow(event) !== window) {
+        throw new Error("Local image sender changed while reading the image.");
+      }
+      return result;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_INSPECT_SESSION_PDF_CHANNEL,
+    async (event, request: SessionPdfResourceRequest) => {
+      await assertLinkedFileSender(event, request);
+      const window = deps.resolveEventWindow(event);
+      const result = await deps.inspectSessionPdf(request);
+      await assertLinkedFileSender(event, request);
+      if (deps.resolveEventWindow(event) !== window) {
+        throw new Error("Local PDF sender changed while inspecting the PDF.");
+      }
+      return result;
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL,
+    async (event, request: SessionPdfChunkRequest) => {
+      await assertLinkedFileSender(event, request);
+      const window = deps.resolveEventWindow(event);
+      const result = await deps.readSessionPdfChunk(request);
+      await assertLinkedFileSender(event, request);
+      if (deps.resolveEventWindow(event) !== window) {
+        throw new Error("Local PDF sender changed while reading the PDF.");
+      }
+      return result;
+    },
+  );
   ipcMain.handle(
     WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
     async (event, request: SessionFileChunkRequest) => {
@@ -510,6 +713,7 @@ export function registerSessionQueryHandlers(
   ipcMain.handle(
     WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
     async (event, request: SessionFilePreviewWindowOpenRequest) => {
+      /** リンク解決後にも送信元を再認可するための処理。リンクではない要求では追加確認しない。 */
       let assertLinkSender: () => Promise<void> = async () => {};
       if (
         !request ||
@@ -583,7 +787,9 @@ export function registerSessionQueryHandlers(
         const linkRequest = request;
         assertLinkSender = async () => {
           if (deps.resolveEventWindow(event) !== authorizedWindow) {
-            throw new Error("File Preview navigation sender changed while resolving the link.");
+            throw new Error(
+              "File Preview navigation sender changed while resolving the link.",
+            );
           }
           await assertSessionFileLinkSender(
             event,
@@ -592,7 +798,9 @@ export function registerSessionQueryHandlers(
             deps,
           );
           if (deps.resolveEventWindow(event) !== authorizedWindow) {
-            throw new Error("File Preview navigation sender changed while resolving the link.");
+            throw new Error(
+              "File Preview navigation sender changed while resolving the link.",
+            );
           }
         };
       }
@@ -622,9 +830,13 @@ export function registerSessionQueryHandlers(
     async (event, input: unknown) => {
       const request = parseSessionFilePreviewImageActionRequest(input);
       const window = deps.resolveEventWindow(event);
+      /** 画像アクションを認可し、メニューを開いた時点の送信元と同じであるかを照合する。 */
       const assertSender = async () => {
         if (request.image) {
-          await assertLinkedFileSender(event, { ...request.image, sessionId: request.sessionId });
+          await assertLinkedFileSender(event, {
+            ...request.image,
+            sessionId: request.sessionId,
+          });
         } else {
           await assertSessionFileExplorerSender(event, request.sessionId, deps);
         }
@@ -633,7 +845,11 @@ export function registerSessionQueryHandlers(
         }
       };
       await assertSender();
-      return deps.showSessionFilePreviewImageContextMenu(event, request, assertSender);
+      return deps.showSessionFilePreviewImageContextMenu(
+        event,
+        request,
+        assertSender,
+      );
     },
   );
   ipcMain.handle(

@@ -1,10 +1,31 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import {
+  Component,
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
-import type { LiveBackgroundTask, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type {
+  LiveBackgroundTask,
+  SessionContextTelemetry,
+} from "../../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 
-import { CharacterAvatar, liveRunStepDetailsLabel, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
+import {
+  CharacterAvatar,
+  liveRunStepDetailsLabel,
+  liveRunStepStatusLabel,
+  operationTypeLabel,
+} from "../../ui/ui-utils.js";
 
 import {
   contextPaneTabLabel,
@@ -21,7 +42,10 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { CoordinationPane } from "../../coordination/CoordinationPane.js";
 import type { OpenCoordinationRequest } from "../../../src-shared/coordination/coordination-window-contract.js";
 
-import { SessionSwitcher, type SessionSwitcherOption } from "../../chat/session-switcher.js";
+import {
+  SessionSwitcher,
+  type SessionSwitcherOption,
+} from "../../chat/session-switcher.js";
 
 import type { MessageNavigatorEntry } from "../conversation/session-message-collapse.js";
 import {
@@ -29,7 +53,10 @@ import {
   type SessionGlossaryPaneProps,
 } from "../../glossary/SessionGlossaryPane.js";
 
-function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): string {
+/** バックグラウンドタスクの実行状態を、右ペインの状態色に対応付ける。 */
+function liveBackgroundTaskToneClassName(
+  status: LiveBackgroundTask["status"],
+): string {
   switch (status) {
     case "running":
       return "in_progress";
@@ -41,6 +68,7 @@ function liveBackgroundTaskToneClassName(status: LiveBackgroundTask["status"]): 
   }
 }
 
+/** 仮想一覧が必要な範囲だけ取得できるように、現在のページ範囲と読み込み操作を渡す。 */
 export type MessageNavigatorPage = {
   items: readonly MessageNavigatorEntry[];
   offset: number;
@@ -53,6 +81,7 @@ export type MessageNavigatorPage = {
   onRetry: () => void;
 };
 
+/** 右ペインの選択タブと、履歴・会話ナビゲーション・実行状態などの表示入力。 */
 export type SessionContextPaneProps = {
   visible?: boolean;
   coordinationSessionId?: string;
@@ -87,7 +116,14 @@ export type SessionContextPaneProps = {
   onMessageNavigatorActiveChange?: (active: boolean) => void;
 };
 
-function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, onJump }: {
+/** 全件数から表示行を仮想化し、未取得の範囲に移動するとデータを要求する。 */
+function PagedMessageNavigator({
+  page,
+  scrollRef,
+  speakerLabel,
+  renderSpeaker,
+  onJump,
+}: {
   page: MessageNavigatorPage;
   scrollRef: RefObject<HTMLDivElement | null>;
   speakerLabel: (entry: MessageNavigatorEntry) => string;
@@ -101,7 +137,9 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
   const [scrollMargin, setScrollMargin] = useState(0);
   const virtualizer = useVirtualizer({
     count: page.totalCount,
+    /** 一覧を包む右ペインのスクロール位置を使う。 */
     getScrollElement: () => scrollRef.current,
+    /** 実寸を計測する前は一行を 54 ピクセルと見込む。 */
     estimateSize: () => 54,
     overscan: 6,
     scrollMargin,
@@ -114,13 +152,20 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
   useLayoutEffect(() => {
     const list = listRef.current;
     const scroll = scrollRef.current;
-    if (list && scroll) setScrollMargin(list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop);
+    if (list && scroll)
+      setScrollMargin(
+        list.getBoundingClientRect().top -
+          scroll.getBoundingClientRect().top +
+          scroll.scrollTop,
+      );
   }, [page.error, page.loading, scrollRef]);
   useEffect(() => {
     if (!page.totalCount || page.loading || page.error) return;
     const offset = requestedFocus.current ?? firstIndex;
-    const inPage = offset >= page.offset && offset < page.offset + page.items.length;
-    const endInPage = lastIndex >= page.offset && lastIndex < page.offset + page.items.length;
+    const inPage =
+      offset >= page.offset && offset < page.offset + page.items.length;
+    const endInPage =
+      lastIndex >= page.offset && lastIndex < page.offset + page.items.length;
     if (!inPage || !endInPage) page.onRequestRange(offset);
   }, [firstIndex, lastIndex, page]);
   useLayoutEffect(() => {
@@ -131,10 +176,14 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
         row.focus({ preventScroll: true });
         requestedFocus.current = null;
       }
-    } else if (!rowRefs.current.has(focusIndex) && !listRef.current?.contains(document.activeElement)) {
+    } else if (
+      !rowRefs.current.has(focusIndex) &&
+      !listRef.current?.contains(document.activeElement)
+    ) {
       setFocusIndex(firstIndex);
     }
   }, [firstIndex, focusIndex, page.items, virtualRows]);
+  /** 対象行までスクロールし、未描画なら範囲取得後にフォーカスできるよう位置を保持する。 */
   const moveFocus = (index: number) => {
     setFocusIndex(index);
     requestedFocus.current = index;
@@ -145,57 +194,122 @@ function PagedMessageNavigator({ page, scrollRef, speakerLabel, renderSpeaker, o
       requestedFocus.current = null;
     } else page.onRequestRange(index);
   };
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number, entry: MessageNavigatorEntry) => {
+  /** 上下キーでは一覧内を循環し、Home・End で端に移動、Enter で会話本文へ飛ぶ。 */
+  const onKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+    entry: MessageNavigatorEntry,
+  ) => {
     let next: number | undefined;
     if (event.key === "ArrowDown") next = (index + 1) % page.totalCount;
-    else if (event.key === "ArrowUp") next = (index - 1 + page.totalCount) % page.totalCount;
+    else if (event.key === "ArrowUp")
+      next = (index - 1 + page.totalCount) % page.totalCount;
     else if (event.key === "Home") next = 0;
     else if (event.key === "End") next = page.totalCount - 1;
-    else if (event.key === "Enter") { event.preventDefault(); onJump?.(entry.key); }
-    if (next !== undefined) { event.preventDefault(); moveFocus(next); }
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      onJump?.(entry.key);
+    }
+    if (next !== undefined) {
+      event.preventDefault();
+      moveFocus(next);
+    }
   };
   return (
-    <div className="messages-navigator messages-navigator-paged" aria-busy={page.loading}>
-      <div ref={listRef} className="messages-navigator-list messages-navigator-virtual-list" role="list" aria-label="Messages"
-        style={{ height: virtualizer.getTotalSize() }}>
+    <div
+      className="messages-navigator messages-navigator-paged"
+      aria-busy={page.loading}
+    >
+      <div
+        ref={listRef}
+        className="messages-navigator-list messages-navigator-virtual-list"
+        role="list"
+        aria-label="Messages"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
         {virtualRows.map((row) => {
           const entry = page.items[row.index - page.offset];
-          const label = entry ? messageNavigatorRowLabel(speakerLabel(entry), entry) : undefined;
-          return <div key={row.key} data-index={row.index} ref={virtualizer.measureElement}
-            className="messages-navigator-virtual-row" style={{ transform: `translateY(${row.start - scrollMargin}px)` }}>
-            {entry ? <button type="button" className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
-              ref={(node) => { if (node) rowRefs.current.set(row.index, node); else rowRefs.current.delete(row.index); }}
-              tabIndex={row.index === focusIndex ? 0 : -1}
-              aria-label={label}
-              title={label}
-              onFocus={() => setFocusIndex(row.index)} onKeyDown={(event) => onKeyDown(event, row.index, entry)}
-              onClick={() => onJump?.(entry.key)}>
-              <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>{renderSpeaker(entry)}</span>
-              <span className="messages-navigator-copy">
-                {entry.preview ? <span className="messages-navigator-preview">{entry.preview}</span> : null}
-                {entry.isCollapsed ? <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span> : null}
-              </span>
-            </button> : <div className="messages-navigator-placeholder" aria-hidden="true" />}
-          </div>;
+          const label = entry
+            ? messageNavigatorRowLabel(speakerLabel(entry), entry)
+            : undefined;
+          return (
+            <div
+              key={row.key}
+              data-index={row.index}
+              ref={virtualizer.measureElement}
+              className="messages-navigator-virtual-row"
+              style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
+            >
+              {entry ? (
+                <button
+                  type="button"
+                  className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
+                  ref={(node) => {
+                    if (node) rowRefs.current.set(row.index, node);
+                    else rowRefs.current.delete(row.index);
+                  }}
+                  tabIndex={row.index === focusIndex ? 0 : -1}
+                  aria-label={label}
+                  title={label}
+                  onFocus={() => setFocusIndex(row.index)}
+                  onKeyDown={(event) => onKeyDown(event, row.index, entry)}
+                  onClick={() => onJump?.(entry.key)}
+                >
+                  <span
+                    className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}
+                  >
+                    {renderSpeaker(entry)}
+                  </span>
+                  <span className="messages-navigator-copy">
+                    {entry.preview ? (
+                      <span className="messages-navigator-preview">
+                        {entry.preview}
+                      </span>
+                    ) : null}
+                    {entry.isCollapsed ? (
+                      <span
+                        className="messages-navigator-state"
+                        aria-label="Collapsed"
+                      >
+                        Collapsed
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              ) : (
+                <div
+                  className="messages-navigator-placeholder"
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+          );
         })}
       </div>
     </div>
   );
 }
 
-function messageNavigatorRowLabel(speaker: string, entry: MessageNavigatorEntry): string {
+/** 話者にブックマーク状態と本文プレビューを加え、行の読み上げ名とする。 */
+function messageNavigatorRowLabel(
+  speaker: string,
+  entry: MessageNavigatorEntry,
+): string {
   return `${speaker}${entry.isBookmarked ? ", Bookmark saved" : ""}${entry.preview ? `: ${entry.preview}` : ""}`;
 }
 
+/** 会話を巻き込まず描画失敗を捕捉する、右ペインの内容。 */
 type SessionPaneErrorBoundaryProps = {
   children: ReactNode;
 };
 
+/** 失敗時の表示文と、再試行で子を作り直すためのキー。 */
 type SessionPaneErrorBoundaryState = {
   errorMessage: string | null;
   resetNonce: number;
 };
 
+/** 右ペインの描画失敗を隔離し、ペイン単体の再試行とウィンドウ再読み込みを提供する。 */
 export class SessionPaneErrorBoundary extends Component<
   SessionPaneErrorBoundaryProps,
   SessionPaneErrorBoundaryState
@@ -205,6 +319,7 @@ export class SessionPaneErrorBoundary extends Component<
     resetNonce: 0,
   };
 
+  /** 描画失敗を利用者へ示し、エラーに本文がなければ右ペイン用の説明を補う。 */
   static getDerivedStateFromError(error: Error): SessionPaneErrorBoundaryState {
     return {
       errorMessage: error.message || "Could not render the right pane.",
@@ -212,6 +327,7 @@ export class SessionPaneErrorBoundary extends Component<
     };
   }
 
+  /** 失敗したコンポーネントのスタックを renderer ログに関連付ける。 */
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error("Session pane render failed", error, errorInfo);
     getWithMateApi()?.reportRendererLog({
@@ -231,6 +347,7 @@ export class SessionPaneErrorBoundary extends Component<
     });
   }
 
+  /** エラーを解除して子のキーを変え、右ペインを新規に描画し直す。 */
   private handleRetry = () => {
     this.setState((current) => ({
       errorMessage: null,
@@ -238,6 +355,7 @@ export class SessionPaneErrorBoundary extends Component<
     }));
   };
 
+  /** 利用者が再読み込みを選んだことを記録し、ウィンドウ全体を読み直す。 */
   private handleReload = () => {
     getWithMateApi()?.reportRendererLog({
       level: "warn",
@@ -249,11 +367,15 @@ export class SessionPaneErrorBoundary extends Component<
     window.location.reload();
   };
 
+  /** 通常は子を表示し、描画に失敗した場合は復旧操作に差し替える。 */
   render(): ReactNode {
     if (this.state.errorMessage) {
       return (
         <aside className="session-context-pane">
-          <section className="command-monitor-shell" aria-label="right pane error">
+          <section
+            className="command-monitor-shell"
+            aria-label="right pane error"
+          >
             <div className="command-monitor-content">
               <div className="command-monitor-stack">
                 <div className="command-monitor-card">
@@ -264,7 +386,11 @@ export class SessionPaneErrorBoundary extends Component<
                       <button type="button" onClick={this.handleRetry}>
                         Retry Right Pane
                       </button>
-                      <button className="drawer-toggle secondary" type="button" onClick={this.handleReload}>
+                      <button
+                        className="drawer-toggle secondary"
+                        type="button"
+                        onClick={this.handleReload}
+                      >
                         Reload Window
                       </button>
                     </div>
@@ -277,10 +403,13 @@ export class SessionPaneErrorBoundary extends Component<
       );
     }
 
-    return <Fragment key={this.state.resetNonce}>{this.props.children}</Fragment>;
+    return (
+      <Fragment key={this.state.resetNonce}>{this.props.children}</Fragment>
+    );
   }
 }
 
+/** 選択されたコンテキスト情報を表示し、タブに応じたスクロール位置を適用する。 */
 export function SessionContextPane({
   visible = true,
   coordinationSessionId,
@@ -317,23 +446,40 @@ export function SessionContextPane({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const coordinationScrollTop = useRef(0);
   useLayoutEffect(() => {
-    if (activeContextPaneTab === "coordination" && visible && contentRef.current) contentRef.current.scrollTop = coordinationScrollTop.current;
+    if (
+      activeContextPaneTab === "coordination" &&
+      visible &&
+      contentRef.current
+    )
+      contentRef.current.scrollTop = coordinationScrollTop.current;
   }, [activeContextPaneTab, visible]);
   useEffect(() => {
     onMessageNavigatorActiveChange?.(activeContextPaneTab === "messages");
   }, [activeContextPaneTab, onMessageNavigatorActiveChange]);
-  const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
-  const [localMessageNavigatorFilter, setLocalMessageNavigatorFilter] = useState<"all" | "bookmarks">("all");
-  const messageNavigatorFilter = messageNavigatorPage?.filter ?? localMessageNavigatorFilter;
-  const setMessageNavigatorFilter = messageNavigatorPage?.onFilterChange ?? setLocalMessageNavigatorFilter;
+  const messageNavigatorButtonRefs = useRef<
+    Record<string, HTMLButtonElement | null>
+  >({});
+  const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] =
+    useState(0);
+  const [localMessageNavigatorFilter, setLocalMessageNavigatorFilter] =
+    useState<"all" | "bookmarks">("all");
+  const messageNavigatorFilter =
+    messageNavigatorPage?.filter ?? localMessageNavigatorFilter;
+  const setMessageNavigatorFilter =
+    messageNavigatorPage?.onFilterChange ?? setLocalMessageNavigatorFilter;
   const taskEntries = backgroundTasks ?? [];
-  const messageNavigatorBookmarksEnabled = messageNavigatorSessionId !== undefined;
+  const messageNavigatorBookmarksEnabled =
+    messageNavigatorSessionId !== undefined;
   const visibleMessageNavigatorEntries = useMemo(
-    () => messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
-      ? messageNavigatorEntries.filter((entry) => entry.isBookmarked)
-      : messageNavigatorEntries,
-    [messageNavigatorBookmarksEnabled, messageNavigatorEntries, messageNavigatorFilter],
+    () =>
+      messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks"
+        ? messageNavigatorEntries.filter((entry) => entry.isBookmarked)
+        : messageNavigatorEntries,
+    [
+      messageNavigatorBookmarksEnabled,
+      messageNavigatorEntries,
+      messageNavigatorFilter,
+    ],
   );
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
@@ -343,20 +489,30 @@ export function SessionContextPane({
           latestCommandView?.summary ?? "",
           latestCommandView?.details?.length ?? 0,
           runningDetailsEntries
-            .map((entry) => `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details?.length ?? 0}`)
+            .map(
+              (entry) =>
+                `${entry.id}:${entry.type}:${entry.status}:${entry.summary}:${entry.details?.length ?? 0}`,
+            )
             .join("\u001f"),
           selectedSessionLiveRunErrorMessage,
         ].join("|");
       case "tasks":
         return taskEntries
-          .map((task) => `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details?.length ?? 0}:${task.updatedAt}`)
+          .map(
+            (task) =>
+              `${task.id}:${task.kind}:${task.status}:${task.title}:${task.details?.length ?? 0}:${task.updatedAt}`,
+          )
           .join("|");
       case "reasoning":
         return `${isSelectedSessionRunning ? "running" : "idle"}:${liveRunReasoningText.length}`;
       case "messages":
-        if (messageNavigatorPage) return `${messageNavigatorSessionId}:${messageNavigatorFilter}`;
+        if (messageNavigatorPage)
+          return `${messageNavigatorSessionId}:${messageNavigatorFilter}`;
         return visibleMessageNavigatorEntries
-          .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`)
+          .map(
+            (entry) =>
+              `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}:${entry.isBookmarked ? "bookmarked" : "unbookmarked"}`,
+          )
           .join("|");
       case "glossary":
         return "glossary";
@@ -379,9 +535,11 @@ export function SessionContextPane({
   ]);
 
   useEffect(() => {
-    setMessageNavigatorFocusIndex((current) => visibleMessageNavigatorEntries.length === 0
-      ? 0
-      : Math.min(current, visibleMessageNavigatorEntries.length - 1));
+    setMessageNavigatorFocusIndex((current) =>
+      visibleMessageNavigatorEntries.length === 0
+        ? 0
+        : Math.min(current, visibleMessageNavigatorEntries.length - 1),
+    );
   }, [visibleMessageNavigatorEntries.length]);
 
   useEffect(() => {
@@ -389,52 +547,83 @@ export function SessionContextPane({
     setMessageNavigatorFocusIndex(0);
   }, [messageNavigatorSessionId]);
 
-  const handleMessageNavigatorKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (visibleMessageNavigatorEntries.length === 0) {
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const direction = event.key === "ArrowDown" ? 1 : -1;
-      const nextIndex = (index + direction + visibleMessageNavigatorEntries.length) % visibleMessageNavigatorEntries.length;
-      const nextEntry = visibleMessageNavigatorEntries[nextIndex];
-      setMessageNavigatorFocusIndex(nextIndex);
-      nextEntry && messageNavigatorButtonRefs.current[nextEntry.key]?.focus();
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const entry = visibleMessageNavigatorEntries[index];
-      if (entry) {
-        onJumpToMessage?.(entry.key);
+  const handleMessageNavigatorKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+      if (visibleMessageNavigatorEntries.length === 0) {
+        return;
       }
-    }
-  }, [onJumpToMessage, visibleMessageNavigatorEntries]);
 
-  const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
-  const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex =
+          (index + direction + visibleMessageNavigatorEntries.length) %
+          visibleMessageNavigatorEntries.length;
+        const nextEntry = visibleMessageNavigatorEntries[nextIndex];
+        setMessageNavigatorFocusIndex(nextIndex);
+        nextEntry && messageNavigatorButtonRefs.current[nextEntry.key]?.focus();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const entry = visibleMessageNavigatorEntries[index];
+        if (entry) {
+          onJumpToMessage?.(entry.key);
+        }
+      }
+    },
+    [onJumpToMessage, visibleMessageNavigatorEntries],
+  );
+
+  const messageNavigatorCharacterName =
+    messageNavigatorCharacter?.name.trim() || "Character";
+  /** 送信元が不明な場合も含め、ユーザー・他エージェント・Auxiliary を読み分ける。 */
+  const messageNavigatorSpeakerLabel = (
+    entry: MessageNavigatorEntry,
+  ): string => {
     if (entry.role === "user") {
-      return entry.speaker?.kind === "agent" ? entry.speaker.name
-        : entry.speaker?.kind === "unknown" ? "Unknown sender" : "Your message";
+      return entry.speaker?.kind === "agent"
+        ? entry.speaker.name
+        : entry.speaker?.kind === "unknown"
+          ? "Unknown sender"
+          : "Your message";
     }
     return entry.sourceKind === "auxiliary"
       ? `${messageNavigatorCharacterName}（Auxiliary）`
       : messageNavigatorCharacterName;
   };
 
+  /** 話者をアバターで示せる場合はそれを使い、残りは送信元に対応する記号で示す。 */
   const renderMessageNavigatorSpeaker = (entry: MessageNavigatorEntry) => {
     if (entry.role === "user") {
-      if (entry.speaker?.kind === "agent") return <CharacterAvatar character={entry.speaker} size="tiny" />;
-      if (entry.speaker?.kind === "unknown") return <span className="messages-navigator-speaker-glyph" aria-hidden="true">?</span>;
-      return <span className="messages-navigator-speaker-glyph user" aria-hidden="true">↗</span>;
+      if (entry.speaker?.kind === "agent")
+        return <CharacterAvatar character={entry.speaker} size="tiny" />;
+      if (entry.speaker?.kind === "unknown")
+        return (
+          <span className="messages-navigator-speaker-glyph" aria-hidden="true">
+            ?
+          </span>
+        );
+      return (
+        <span
+          className="messages-navigator-speaker-glyph user"
+          aria-hidden="true"
+        >
+          ↗
+        </span>
+      );
     }
     if (entry.sourceKind === "session" && messageNavigatorCharacter) {
-      return <CharacterAvatar character={messageNavigatorCharacter} size="tiny" />;
+      return (
+        <CharacterAvatar character={messageNavigatorCharacter} size="tiny" />
+      );
     }
     return (
-      <span className={`messages-navigator-speaker-glyph assistant${entry.accent ? " accent" : ""}`} aria-hidden="true">
+      <span
+        className={`messages-navigator-speaker-glyph assistant${entry.accent ? " accent" : ""}`}
+        aria-hidden="true"
+      >
         ✦
       </span>
     );
@@ -447,61 +636,95 @@ export function SessionContextPane({
     }
 
     if (activeContextPaneTab === "coordination") return;
-    contentNode.scrollTop = activeContextPaneTab === "messages"
-      || activeContextPaneTab === "glossary"
-      ? 0
-      : contentNode.scrollHeight;
+    contentNode.scrollTop =
+      activeContextPaneTab === "messages" || activeContextPaneTab === "glossary"
+        ? 0
+        : contentNode.scrollHeight;
   }, [contentScrollKey]);
 
   return (
-    <aside className="session-context-pane session-context-pane-header-expanded" style={visible ? undefined : { display: "none" }}>
-      <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="Right pane">
+    <aside
+      className="session-context-pane session-context-pane-header-expanded"
+      style={visible ? undefined : { display: "none" }}
+    >
+      <section
+        className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`}
+        aria-label="Right pane"
+      >
         <div className="command-monitor-head">
           <SessionSwitcher
             ariaLabel="Right pane view"
-            options={availableContextPaneTabs.map((tab): SessionSwitcherOption => ({
-              id: tab,
-              label: contextPaneTabLabel(tab),
-            }))}
+            options={availableContextPaneTabs.map(
+              (tab): SessionSwitcherOption => ({
+                id: tab,
+                label: contextPaneTabLabel(tab),
+              }),
+            )}
             selectedId={activeContextPaneTab}
             onMove={onCycleContextPaneTab}
-            onSelect={(tab) => onSelectContextPaneTab?.(tab as ContextPaneTabKey)}
+            onSelect={(tab) =>
+              onSelectContextPaneTab?.(tab as ContextPaneTabKey)
+            }
           />
         </div>
 
-        <div ref={contentRef} className="command-monitor-content" onScroll={(event) => {
-          if (activeContextPaneTab === "coordination") coordinationScrollTop.current = event.currentTarget.scrollTop;
-        }}>
-          {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
+        <div
+          ref={contentRef}
+          className="command-monitor-content"
+          onScroll={(event) => {
+            if (activeContextPaneTab === "coordination")
+              coordinationScrollTop.current = event.currentTarget.scrollTop;
+          }}
+        >
+          {activeContextPaneTab === "messages" &&
+          messageNavigatorBookmarksEnabled ? (
             <div className="messages-navigator-toolbar">
-            <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
-              <button
-                className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
-                type="button"
-                aria-pressed={messageNavigatorFilter === "all"}
-                onClick={() => setMessageNavigatorFilter("all")}
+              <div
+                className="messages-navigator-filter-toolbar"
+                role="group"
+                aria-label="Messages filter"
               >
-                All
-              </button>
-              <button
-                className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
-                type="button"
-                aria-pressed={messageNavigatorFilter === "bookmarks"}
-                onClick={() => setMessageNavigatorFilter("bookmarks")}
-              >
-                Bookmark
-              </button>
-            </div>
-            {messageNavigatorPage?.loading ? <LoadingIndicator label="Loading Messages" /> : null}
-            {messageNavigatorPage?.error ? <div role="alert" className="live-run-error-block">
-              <p className="live-run-error">{messageNavigatorPage.error}</p>
-              <button type="button" onClick={messageNavigatorPage.onRetry}>Retry</button>
-            </div> : null}
+                <button
+                  className={`messages-navigator-filter${messageNavigatorFilter === "all" ? " is-active" : ""}`}
+                  type="button"
+                  aria-pressed={messageNavigatorFilter === "all"}
+                  onClick={() => setMessageNavigatorFilter("all")}
+                >
+                  All
+                </button>
+                <button
+                  className={`messages-navigator-filter${messageNavigatorFilter === "bookmarks" ? " is-active" : ""}`}
+                  type="button"
+                  aria-pressed={messageNavigatorFilter === "bookmarks"}
+                  onClick={() => setMessageNavigatorFilter("bookmarks")}
+                >
+                  Bookmark
+                </button>
+              </div>
+              {messageNavigatorPage?.loading ? (
+                <LoadingIndicator label="Loading Messages" />
+              ) : null}
+              {messageNavigatorPage?.error ? (
+                <div role="alert" className="live-run-error-block">
+                  <p className="live-run-error">{messageNavigatorPage.error}</p>
+                  <button type="button" onClick={messageNavigatorPage.onRetry}>
+                    Retry
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
-            {coordinationSessionId ? <CoordinationPane sessionId={coordinationSessionId} active={visible && activeContextPaneTab === "coordination"} navigation={coordinationNavigation} scrollContainerRef={contentRef} /> : null}
-            {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
+            {coordinationSessionId ? (
+              <CoordinationPane
+                sessionId={coordinationSessionId}
+                active={visible && activeContextPaneTab === "coordination"}
+                navigation={coordinationNavigation}
+                scrollContainerRef={contentRef}
+              />
+            ) : null}
+            {activeContextPaneTab === "latest-command" &&
+            runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
                 <div className="command-monitor-card-head">
                   <div className="command-monitor-meta">
@@ -512,28 +735,49 @@ export function SessionContextPane({
 
                 <div className="command-monitor-confirmed-list">
                   {runningDetailsEntries.map((entry) => (
-                    <article key={entry.id} className="command-monitor-confirmed-item">
+                    <article
+                      key={entry.id}
+                      className="command-monitor-confirmed-item"
+                    >
                       <div className="command-monitor-card-head compact">
                         <div className="command-monitor-meta">
-                          <span className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}>
+                          <span
+                            className={`live-run-step-status ${liveRunStepToneClassName(entry.status)}`}
+                          >
                             {liveRunStepStatusLabel(entry.status)}
                           </span>
-                          <span className="live-run-step-type">{operationTypeLabel(entry.type)}</span>
+                          <span className="live-run-step-type">
+                            {operationTypeLabel(entry.type)}
+                          </span>
                         </div>
                       </div>
 
                       {entry.type === "command_execution" ? (
-                        <div className="live-run-command-summary compact" aria-label="Confirmed command">
-                          <span className="live-run-command-prefix" aria-hidden="true">$</span>
-                          <code className="live-run-command-text">{entry.summary}</code>
+                        <div
+                          className="live-run-command-summary compact"
+                          aria-label="Confirmed command"
+                        >
+                          <span
+                            className="live-run-command-prefix"
+                            aria-hidden="true"
+                          >
+                            $
+                          </span>
+                          <code className="live-run-command-text">
+                            {entry.summary}
+                          </code>
                         </div>
                       ) : (
-                        <p className="command-monitor-confirmed-summary">{entry.summary}</p>
+                        <p className="command-monitor-confirmed-summary">
+                          {entry.summary}
+                        </p>
                       )}
 
                       {entry.details ? (
                         <details className="command-monitor-details live-run-step-details">
-                          <summary>{liveRunStepDetailsLabel(entry.type)}</summary>
+                          <summary>
+                            {liveRunStepDetailsLabel(entry.type)}
+                          </summary>
                           <pre>{entry.details}</pre>
                         </details>
                       ) : null}
@@ -543,11 +787,29 @@ export function SessionContextPane({
               </div>
             ) : null}
 
-            {activeContextPaneTab === "latest-command" && (commandHistoryLoading || commandHistoryError) ? (
-              <div className="command-monitor-empty-shell" aria-busy={commandHistoryLoading || undefined}>
-                {commandHistoryLoading ? <LoadingIndicator inline label="Loading command history" /> : null}
-                {commandHistoryError ? <p className="live-run-error" role="alert">{commandHistoryError}</p> : null}
-                {commandHistoryError && onRetryCommandHistory ? <button type="button" className="drawer-toggle secondary" onClick={onRetryCommandHistory}>Retry</button> : null}
+            {activeContextPaneTab === "latest-command" &&
+            (commandHistoryLoading || commandHistoryError) ? (
+              <div
+                className="command-monitor-empty-shell"
+                aria-busy={commandHistoryLoading || undefined}
+              >
+                {commandHistoryLoading ? (
+                  <LoadingIndicator inline label="Loading command history" />
+                ) : null}
+                {commandHistoryError ? (
+                  <p className="live-run-error" role="alert">
+                    {commandHistoryError}
+                  </p>
+                ) : null}
+                {commandHistoryError && onRetryCommandHistory ? (
+                  <button
+                    type="button"
+                    className="drawer-toggle secondary"
+                    onClick={onRetryCommandHistory}
+                  >
+                    Retry
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
@@ -556,14 +818,26 @@ export function SessionContextPane({
                 <div className="command-monitor-card">
                   <div className="command-monitor-card-head">
                     <div className="command-monitor-meta">
-                      <span className={`live-run-step-status ${contextPaneProjection.latestCommandToneClassName}`}>{contextPaneProjection.latestCommandStatusLabel}</span>
+                      <span
+                        className={`live-run-step-status ${contextPaneProjection.latestCommandToneClassName}`}
+                      >
+                        {contextPaneProjection.latestCommandStatusLabel}
+                      </span>
                       <span className="live-run-step-type">Command</span>
-                      <span className="command-monitor-source">{contextPaneProjection.latestCommandSourceCopy}</span>
+                      <span className="command-monitor-source">
+                        {contextPaneProjection.latestCommandSourceCopy}
+                      </span>
                     </div>
                     {latestCommandView.riskLabels.length > 0 ? (
-                      <div className="command-monitor-risk-list" aria-label="Command risk">
+                      <div
+                        className="command-monitor-risk-list"
+                        aria-label="Command risk"
+                      >
                         {latestCommandView.riskLabels.map((label) => (
-                          <span key={label} className={`command-monitor-risk ${label.toLowerCase()}`}>
+                          <span
+                            key={label}
+                            className={`command-monitor-risk ${label.toLowerCase()}`}
+                          >
                             {label}
                           </span>
                         ))}
@@ -571,15 +845,29 @@ export function SessionContextPane({
                     ) : null}
                   </div>
 
-                  <div className="live-run-command-summary" aria-label="Executed command">
-                    <span className="live-run-command-prefix" aria-hidden="true">
+                  <div
+                    className="live-run-command-summary"
+                    aria-label="Executed command"
+                  >
+                    <span
+                      className="live-run-command-prefix"
+                      aria-hidden="true"
+                    >
                       $
                     </span>
-                    <code className="live-run-command-text">{latestCommandView.summary}</code>
+                    <code className="live-run-command-text">
+                      {latestCommandView.summary}
+                    </code>
                   </div>
 
-                  {latestCommandView.exitCode !== undefined ? <p>Exit Code: {latestCommandView.exitCode}</p> : null}
-                  {latestCommandView.errorMessage ? <p className="live-run-error" role="alert">{latestCommandView.errorMessage}</p> : null}
+                  {latestCommandView.exitCode !== undefined ? (
+                    <p>Exit Code: {latestCommandView.exitCode}</p>
+                  ) : null}
+                  {latestCommandView.errorMessage ? (
+                    <p className="live-run-error" role="alert">
+                      {latestCommandView.errorMessage}
+                    </p>
+                  ) : null}
                   {latestCommandView.truncated ? <p>Output Truncated</p> : null}
                   {latestCommandView.details ? (
                     <details className="command-monitor-details live-run-step-details">
@@ -588,20 +876,27 @@ export function SessionContextPane({
                     </details>
                   ) : null}
 
-                  {selectedSessionLiveRunErrorMessage && isSelectedSessionRunning ? (
+                  {selectedSessionLiveRunErrorMessage &&
+                  isSelectedSessionRunning ? (
                     <div className="live-run-error-block" role="alert">
                       <strong>Run Error</strong>
-                      <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
+                      <p className="live-run-error">
+                        {selectedSessionLiveRunErrorMessage}
+                      </p>
                     </div>
                   ) : null}
                 </div>
               ) : (
                 <div className="command-monitor-empty-shell">
-                  {commandHistoryUnrecorded ? <p role="status">Command history not recorded.</p> : null}
+                  {commandHistoryUnrecorded ? (
+                    <p role="status">Command history not recorded.</p>
+                  ) : null}
                   {selectedSessionLiveRunErrorMessage ? (
                     <div className="live-run-error-block" role="alert">
                       <strong>Run Error</strong>
-                      <p className="live-run-error">{selectedSessionLiveRunErrorMessage}</p>
+                      <p className="live-run-error">
+                        {selectedSessionLiveRunErrorMessage}
+                      </p>
                     </div>
                   ) : null}
                 </div>
@@ -620,16 +915,27 @@ export function SessionContextPane({
 
                   <div className="command-monitor-confirmed-list">
                     {taskEntries.map((task) => (
-                      <article key={task.id} className="command-monitor-confirmed-item">
+                      <article
+                        key={task.id}
+                        className="command-monitor-confirmed-item"
+                      >
                         <div className="command-monitor-card-head compact">
                           <div className="command-monitor-meta">
-                            <span className={`live-run-step-status ${liveBackgroundTaskToneClassName(task.status)}`}>
-                              {sessionBackgroundActivityStatusLabel(task.status)}
+                            <span
+                              className={`live-run-step-status ${liveBackgroundTaskToneClassName(task.status)}`}
+                            >
+                              {sessionBackgroundActivityStatusLabel(
+                                task.status,
+                              )}
                             </span>
-                            <span className="live-run-step-type">{task.kind === "agent" ? "Agent" : "Shell"}</span>
+                            <span className="live-run-step-type">
+                              {task.kind === "agent" ? "Agent" : "Shell"}
+                            </span>
                           </div>
                         </div>
-                        <p className="command-monitor-confirmed-summary">{task.title}</p>
+                        <p className="command-monitor-confirmed-summary">
+                          {task.title}
+                        </p>
                         {task.details ? (
                           <details className="command-monitor-details live-run-step-details">
                             <summary>Task Details</summary>
@@ -640,7 +946,9 @@ export function SessionContextPane({
                     ))}
                   </div>
                 </div>
-              ) : <div className="command-monitor-empty-shell" />
+              ) : (
+                <div className="command-monitor-empty-shell" />
+              )
             ) : null}
 
             {activeContextPaneTab === "reasoning" ? (
@@ -648,7 +956,9 @@ export function SessionContextPane({
                 <div className="command-monitor-card">
                   <div className="command-monitor-card-head">
                     <div className="command-monitor-meta">
-                      <span className={`live-run-step-status ${contextPaneProjection.reasoningToneClassName}`}>
+                      <span
+                        className={`live-run-step-status ${contextPaneProjection.reasoningToneClassName}`}
+                      >
                         {isSelectedSessionRunning ? "Running" : "Retained"}
                       </span>
                       <span className="live-run-step-type">Reasoning</span>
@@ -667,40 +977,72 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "messages" && messageNavigatorPage ? (
-              <PagedMessageNavigator key={`${messageNavigatorSessionId}:${messageNavigatorFilter}`} page={messageNavigatorPage}
-                scrollRef={contentRef} speakerLabel={messageNavigatorSpeakerLabel} renderSpeaker={renderMessageNavigatorSpeaker} onJump={onJumpToMessage} />
+              <PagedMessageNavigator
+                key={`${messageNavigatorSessionId}:${messageNavigatorFilter}`}
+                page={messageNavigatorPage}
+                scrollRef={contentRef}
+                speakerLabel={messageNavigatorSpeakerLabel}
+                renderSpeaker={renderMessageNavigatorSpeaker}
+                onJump={onJumpToMessage}
+              />
             ) : activeContextPaneTab === "messages" ? (
               <div className="messages-navigator">
-                <div className="messages-navigator-list" role="list" aria-label="Messages">
-                  {visibleMessageNavigatorEntries.length > 0 ? visibleMessageNavigatorEntries.map((entry, index) => {
-                    const label = messageNavigatorRowLabel(messageNavigatorSpeakerLabel(entry), entry);
-                    return (
-                      <button
-                        key={entry.key}
-                        ref={(node) => {
-                          messageNavigatorButtonRefs.current[entry.key] = node;
-                        }}
-                        className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
-                        type="button"
-                        tabIndex={index === messageNavigatorFocusIndex ? 0 : -1}
-                        aria-label={label}
-                        title={label}
-                        onFocus={() => setMessageNavigatorFocusIndex(index)}
-                        onKeyDown={(event) => handleMessageNavigatorKeyDown(event, index)}
-                        onClick={() => onJumpToMessage?.(entry.key)}
-                      >
-                        <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>
-                          {renderMessageNavigatorSpeaker(entry)}
-                        </span>
-                        <span className="messages-navigator-copy">
-                          {entry.preview ? <span className="messages-navigator-preview">{entry.preview}</span> : null}
-                          {entry.isCollapsed ? (
-                            <span className="messages-navigator-state" aria-label="Collapsed">Collapsed</span>
-                          ) : null}
-                        </span>
-                      </button>
-                    );
-                  }) : messageNavigatorBookmarksEnabled && messageNavigatorFilter === "bookmarks" ? null : (
+                <div
+                  className="messages-navigator-list"
+                  role="list"
+                  aria-label="Messages"
+                >
+                  {visibleMessageNavigatorEntries.length > 0 ? (
+                    visibleMessageNavigatorEntries.map((entry, index) => {
+                      const label = messageNavigatorRowLabel(
+                        messageNavigatorSpeakerLabel(entry),
+                        entry,
+                      );
+                      return (
+                        <button
+                          key={entry.key}
+                          ref={(node) => {
+                            messageNavigatorButtonRefs.current[entry.key] =
+                              node;
+                          }}
+                          className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
+                          type="button"
+                          tabIndex={
+                            index === messageNavigatorFocusIndex ? 0 : -1
+                          }
+                          aria-label={label}
+                          title={label}
+                          onFocus={() => setMessageNavigatorFocusIndex(index)}
+                          onKeyDown={(event) =>
+                            handleMessageNavigatorKeyDown(event, index)
+                          }
+                          onClick={() => onJumpToMessage?.(entry.key)}
+                        >
+                          <span
+                            className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}
+                          >
+                            {renderMessageNavigatorSpeaker(entry)}
+                          </span>
+                          <span className="messages-navigator-copy">
+                            {entry.preview ? (
+                              <span className="messages-navigator-preview">
+                                {entry.preview}
+                              </span>
+                            ) : null}
+                            {entry.isCollapsed ? (
+                              <span
+                                className="messages-navigator-state"
+                                aria-label="Collapsed"
+                              >
+                                Collapsed
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : messageNavigatorBookmarksEnabled &&
+                    messageNavigatorFilter === "bookmarks" ? null : (
                     <div className="command-monitor-empty-shell" />
                   )}
                 </div>
@@ -708,9 +1050,11 @@ export function SessionContextPane({
             ) : null}
 
             {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
-              <SessionGlossaryPane {...glossaryPaneProps} scrollContainerRef={contentRef} />
+              <SessionGlossaryPane
+                {...glossaryPaneProps}
+                scrollContainerRef={contentRef}
+              />
             ) : null}
-
           </div>
         </div>
       </section>
@@ -738,23 +1082,41 @@ export function SessionContextPane({
               <div className="provider-context-grid">
                 <div className="provider-context-item">
                   <span>Current</span>
-                  <strong>{selectedSessionContextTelemetryProjection.currentTokensLabel}</strong>
+                  <strong>
+                    {
+                      selectedSessionContextTelemetryProjection.currentTokensLabel
+                    }
+                  </strong>
                 </div>
                 <div className="provider-context-item">
                   <span>Limit</span>
-                  <strong>{selectedSessionContextTelemetryProjection.tokenLimitLabel}</strong>
+                  <strong>
+                    {selectedSessionContextTelemetryProjection.tokenLimitLabel}
+                  </strong>
                 </div>
                 <div className="provider-context-item">
                   <span>Messages</span>
-                  <strong>{selectedSessionContextTelemetryProjection.messagesLengthLabel}</strong>
+                  <strong>
+                    {
+                      selectedSessionContextTelemetryProjection.messagesLengthLabel
+                    }
+                  </strong>
                 </div>
                 <div className="provider-context-item">
                   <span>System</span>
-                  <strong>{selectedSessionContextTelemetryProjection.systemTokensLabel}</strong>
+                  <strong>
+                    {
+                      selectedSessionContextTelemetryProjection.systemTokensLabel
+                    }
+                  </strong>
                 </div>
                 <div className="provider-context-item wide">
                   <span>Conversation</span>
-                  <strong>{selectedSessionContextTelemetryProjection.conversationTokensLabel}</strong>
+                  <strong>
+                    {
+                      selectedSessionContextTelemetryProjection.conversationTokensLabel
+                    }
+                  </strong>
                 </div>
                 <div className="provider-context-item wide">
                   <span>Reset</span>

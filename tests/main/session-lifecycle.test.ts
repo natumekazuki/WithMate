@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { it, type TestContext } from "node:test";
-import { mkdtemp, mkdir, rm, stat, writeFile, readFile, readdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  rm,
+  stat,
+  writeFile,
+  readFile,
+  readdir,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,7 +16,11 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
-import { captureSessionLifecycleResource, cleanupSessionLifecycleResource, prepareSessionLifecycleFiles } from "../../src-electron/session/session-lifecycle-files.js";
+import {
+  captureSessionLifecycleResource,
+  cleanupSessionLifecycleResource,
+  prepareSessionLifecycleFiles,
+} from "../../src-electron/session/session-lifecycle-files.js";
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
 import { MainSessionCommandFacade } from "../../src-electron/app/main-session-command-facade.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
@@ -17,82 +29,274 @@ import type { Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionLifecycleResource } from "../../src-electron/session/session-lifecycle-operation.js";
 
+/** 指定IDに共通の初期設定とCharacterを付けた作成入力を用意する。 */
 function input(id: string) {
-  return { id, taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "", characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, approvalMode: "on-request" as const };
+  return {
+    id,
+    taskTitle: "Task",
+    workspaceLabel: "Workspace",
+    workspacePath: "C:/work",
+    branch: "",
+    characterId: "azki",
+    character: "AZKi",
+    characterIconPath: "",
+    characterThemeColors: { main: "#fff", sub: "#000" },
+    approvalMode: "on-request" as const,
+  };
 }
 
-function lifecyclePersistence(storage: SessionStorageV6, catalog: ModelCatalogProvider) {
+/** 実V6ストレージへ永続化しながら、公開用のSessionキャッシュを観測できるようにする。 */
+function lifecyclePersistence(
+  storage: SessionStorageV6,
+  catalog: ModelCatalogProvider,
+) {
   let cached = storage.listSessions();
   const persistence = new SessionPersistenceService({
-    getSessions: () => cached, setSessions: (next) => { cached = next; }, getSession: (id) => cached.find((item) => item.id === id) ?? null,
-    getStoredSession: storage.getSession.bind(storage), getStoredSessionSummary: storage.getSessionSummary.bind(storage), isSessionRunInFlight: () => false,
-    upsertStoredSession: (session, operation) => operation === "create" ? storage.insertSession(session) : storage.updateSession(session),
-    replaceStoredSessions: (sessions) => { storage.replaceSessions(sessions); }, listStoredSessions: storage.listSessions.bind(storage), listStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
-    getSessionLifecycleOperation: storage.getSessionLifecycleOperation.bind(storage), listPendingSessionLifecycleOperations: storage.listPendingSessionLifecycleOperations.bind(storage),
-    beginSessionLifecycleOperation: storage.beginSessionLifecycleOperation.bind(storage), prepareSessionLifecycleCreation: storage.prepareSessionLifecycleCreation.bind(storage), advanceSessionLifecycleOperation: storage.advanceSessionLifecycleOperation.bind(storage),
-    deleteSessionCrewForLifecycle: storage.deleteSessionCrewForLifecycle.bind(storage),
-    getAppSettings: createDefaultAppSettings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-     clearSessionContextTelemetry: () => {},  invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
+    /** 現在のキャッシュ一覧を返す。 */
+    getSessions: () => cached,
+    /** 永続化サービスが公開キャッシュを差し替えた結果を保持する。 */
+    setSessions: (next) => {
+      cached = next;
+    },
+    /** 公開キャッシュから指定IDだけを解決する。 */
+    getSession: (id) => cached.find((item) => item.id === id) ?? null,
+    getStoredSession: storage.getSession.bind(storage),
+    getStoredSessionSummary: storage.getSessionSummary.bind(storage),
+    /** この共通fixtureでは実行中のSessionを持たない。 */
+    isSessionRunInFlight: () => false,
+    /** 新規IDはinsertとし、既存Sessionへの変更と区別する。 */
+    upsertStoredSession: (session, operation) =>
+      operation === "create"
+        ? storage.insertSession(session)
+        : storage.updateSession(session),
+    /** サービスからの全件置換は実ストレージに委譲する。 */
+    replaceStoredSessions: (sessions) => {
+      storage.replaceSessions(sessions);
+    },
+    listStoredSessions: storage.listSessions.bind(storage),
+    listStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
+    getSessionLifecycleOperation:
+      storage.getSessionLifecycleOperation.bind(storage),
+    listPendingSessionLifecycleOperations:
+      storage.listPendingSessionLifecycleOperations.bind(storage),
+    beginSessionLifecycleOperation:
+      storage.beginSessionLifecycleOperation.bind(storage),
+    prepareSessionLifecycleCreation:
+      storage.prepareSessionLifecycleCreation.bind(storage),
+    advanceSessionLifecycleOperation:
+      storage.advanceSessionLifecycleOperation.bind(storage),
+    deleteSessionCrewForLifecycle:
+      storage.deleteSessionCrewForLifecycle.bind(storage),
+    getAppSettings: createDefaultAppSettings,
+    /** 渡されたProvider一件をモデル検証に使用する。 */
+    getModelCatalogSnapshot: () => ({ providers: [catalog] }),
+    /** コンテキスト計測の破棄をテスト外へ伝えない。 */
+    clearSessionContextTelemetry: () => {},
+    /** 永続化の副作用で外部Providerへ接続しない。 */
+    invalidateProviderSessionThread: () => {},
+    /** 実ウィンドウは作らないため終了処理を省く。 */
+    closeSessionWindow: () => {},
+    /** 公開一覧の通知先は設けず、キャッシュを直接観測する。 */
+    broadcastSessions: () => {},
   });
-  return { persistence, cached: () => cached };
+  return {
+    persistence,
+    /** 更新後のキャッシュをfixture利用側から読めるようにする。 */
+    cached: () => cached,
+  };
 }
 
-function lifecycleFacade(storage: SessionStorageV6, directory: string, harness: ReturnType<typeof lifecyclePersistence>, overrides: Partial<ConstructorParameters<typeof MainSessionCommandFacade>[0]> = {}) {
+/** 実ストレージと共通Coordinatorをつなぎ、障害点をケースごとに差し替えられるfacadeを作る。 */
+function lifecycleFacade(
+  storage: SessionStorageV6,
+  directory: string,
+  harness: ReturnType<typeof lifecyclePersistence>,
+  overrides: Partial<
+    ConstructorParameters<typeof MainSessionCommandFacade>[0]
+  > = {},
+) {
   const coordinator = new ProviderRuntimeOperationCoordinator();
   return new MainSessionCommandFacade({
-    getSessions: harness.cached, getSession: (id) => harness.cached().find((item) => item.id === id) ?? null,
-    getStoredSessionSummaries: storage.listSessionSummaries.bind(storage), getSessionStorageIdentity: () => storage,
-    runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
-    resolveSessionLaunchSelection: async () => { throw new Error("The test does not use GUI launch defaults."); },
-    getSessionPersistenceService: () => harness.persistence, getSessionRuntimeService: () => ({} as never),
-    getProviderQuotaTelemetry: () => null, isProviderQuotaTelemetryStale: () => false, refreshProviderQuotaTelemetry: async () => null,
-    initializeCreatedSession: async () => {}, createSessionId: () => "reserved-child",
-    createSessionFilesDirectory: async (id) => { const value = path.join(directory, id); await mkdir(value); return value; },
+    getSessions: harness.cached,
+    /** 公開キャッシュから他の層と同じ対象Sessionを参照する。 */
+    getSession: (id) => harness.cached().find((item) => item.id === id) ?? null,
+    getStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
+    /** 永続処理が同じストレージ実体に属することを判定できるようにする。 */
+    getSessionStorageIdentity: () => storage,
+    /** ライフサイクルとProvider操作を同じCoordinatorで直列化する。 */
+    runProviderRuntimeOperationExclusive: (operation) =>
+      coordinator.runExclusive(operation),
+    /** GUI既定値の取得が不要なケースで呼ばれた場合は失敗させる。 */
+    resolveSessionLaunchSelection: async () => {
+      throw new Error("The test does not use GUI launch defaults.");
+    },
+    /** 同じV6データを使う永続化サービスを渡す。 */
+    getSessionPersistenceService: () => harness.persistence,
+    /** Turn実行を伴わないライフサイクル用のランタイム参照を置く。 */
+    getSessionRuntimeService: () => ({}) as never,
+    /** Provider使用量の既存値を設定しない。 */
+    getProviderQuotaTelemetry: () => null,
+    /** 使用量の再取得がライフサイクル検証へ割り込まないようにする。 */
+    isProviderQuotaTelemetryStale: () => false,
+    /** 外部Providerへのquota照会は行わない。 */
+    refreshProviderQuotaTelemetry: async () => null,
+    /** 初期Auxiliaryが必要なケースごとに初期化経路を差し替える。 */
+    initializeCreatedSession: async () => {},
+    /** 予約された子IDをストレージで追跡できる固定値にする。 */
+    createSessionId: () => "reserved-child",
+    /** fixtureの一時領域へ対象ID専用のFilesディレクトリを作る。 */
+    createSessionFilesDirectory: async (id) => {
+      const value = path.join(directory, id);
+      await mkdir(value);
+      return value;
+    },
+    /** ディレクトリを作らず、同じIDからFilesのパスを算出する。 */
     resolveSessionFilesDirectory: (id) => path.join(directory, id),
-    isSessionFilesWorkspace: () => false, dismissSessionTurnNotification: () => {}, validateWorkspaceDirectory: async () => ({ valid: true }),
+    /** 通常のworkspaceはSession Filesと独立している状態にする。 */
+    isSessionFilesWorkspace: () => false,
+    /** 作成・削除の検証からTurn通知の副作用を除く。 */
+    dismissSessionTurnNotification: () => {},
+    /** workspace検証を既定で通し、ライフサイクルに焦点を当てる。 */
+    validateWorkspaceDirectory: async () => ({ valid: true }),
     ...overrides,
   });
 }
 
+/** IDで区別できる選択可能なCharacter一覧の一行を作る。 */
 function activeCharacter(id: string) {
-  return { id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active" as const, createdAt: "now", updatedAt: "now", archivedAt: null };
+  return {
+    id,
+    name: id,
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#fff", sub: "#000" },
+    state: "active" as const,
+    createdAt: "now",
+    updatedAt: "now",
+    archivedAt: null,
+  };
 }
 
-async function childCharacterFixture(t: TestContext, activeIds: string[], crewCharacterIds: string[], random = 0) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-child-character-"));
+/** 親・起点・既存メンバーをV6に作成し、利用回数と抽選値を独立に制御できるようにする。 */
+async function childCharacterFixture(
+  t: TestContext,
+  activeIds: string[],
+  crewCharacterIds: string[],
+  random = 0,
+) {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-child-character-"),
+  );
   const dbPath = path.join(directory, "app.db");
   const storage = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
-  t.after(async () => { auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true }); });
+  /** 両ストレージを閉じてから、ケース専用の一時ディレクトリを片付ける。 */
+  t.after(async () => {
+    auxiliary.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  });
   const setup = new DatabaseSync(dbPath);
   try {
     for (const id of ["azki", "sora", "miko"]) {
-      setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES(?,?,'now','now')").run(id, id);
+      setup
+        .prepare(
+          "INSERT INTO characters(id,name,created_at,updated_at) VALUES(?,?,'now','now')",
+        )
+        .run(id, id);
     }
   } finally {
     setup.close();
   }
-  const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator", characterId: "sora" });
-  const parent = storage.insertSession({ ...buildNewSession(input("parent")), sessionRole: "task-coordinator",
-    rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+  const root = storage.insertSession({
+    ...buildNewSession(input("root")),
+    sessionRole: "overall-coordinator",
+    characterId: "sora",
+  });
+  const parent = storage.insertSession({
+    ...buildNewSession(input("parent")),
+    sessionRole: "task-coordinator",
+    rootSessionId: root.id,
+    parentSessionId: root.id,
+    createdBySessionId: root.id,
+  });
   crewCharacterIds.forEach((characterId, index) => {
-    storage.insertSession({ ...buildNewSession(input(`member-${index}`)), sessionRole: "executor", characterId,
-      rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+    storage.insertSession({
+      ...buildNewSession(input(`member-${index}`)),
+      sessionRole: "executor",
+      characterId,
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+    });
   });
-  const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
-  const facade = lifecycleFacade(storage, directory, lifecyclePersistence(storage, catalog), {
-    listActiveCharacters: async () => activeIds.map(activeCharacter),
-    createCharacterRuntimeSnapshot: async (id) => ({ characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character\nCharacter", definitionSha256: "snapshot", definitionByteSize: 21, snapshotAt: "now" }),
-    initializeCreatedSession: async (session) => {
-      auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } });
+  const catalog: ModelCatalogProvider = {
+    id: "codex",
+    label: "Codex",
+    defaultModelId: "model",
+    defaultReasoningEffort: "high",
+    models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
+  };
+  const facade = lifecycleFacade(
+    storage,
+    directory,
+    lifecyclePersistence(storage, catalog),
+    {
+      /** ケースごとに選択対象としたactive Characterだけを返す。 */
+      listActiveCharacters: async () => activeIds.map(activeCharacter),
+      /** 選ばれたCharacter IDが保存結果に伝わる最小のsnapshotを返す。 */
+      createCharacterRuntimeSnapshot: async (id) => ({
+        characterId: id,
+        name: id,
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#fff", sub: "#000" },
+        definitionMarkdown: "# Character\nCharacter",
+        definitionSha256: "snapshot",
+        definitionByteSize: 21,
+        snapshotAt: "now",
+      }),
+      /** 子Mainを完成可能にするため、そのincarnationを指す最初のAuxiliaryを保存する。 */
+      initializeCreatedSession: async (session) => {
+        auxiliary.upsertAuxiliarySession({
+          ...session,
+          id: `${session.id}-aux`,
+          parentSessionId: session.id,
+          title: "Aux",
+          runState: "idle",
+          createdAt: session.updatedAt,
+          composerDraft: "",
+          displayAfterMessageIndex: null,
+          creationContext: {
+            generationId: "test",
+            parentIncarnationId: session.incarnationId!,
+          },
+        });
+      },
+      /** 同数候補の抽選が再現できるよう値を固定する。 */
+      randomCharacter: () => random,
     },
-    randomCharacter: () => random,
-  });
+  );
   return {
     storage,
-    create: () => facade.createChildSession({ id: parent.id, incarnationId: parent.incarnationId! },
-      { requestId: "character-selection", role: "executor", provider: "codex", model: "model", reasoningEffort: "high",
-        workspacePath: "C:/prepared-worktree" }, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent) }),
+    /** 作成元の親とその実行設定を使って同じ子作成操作を呼ぶ。 */
+    create: () =>
+      facade.createChildSession(
+        { id: parent.id, incarnationId: parent.incarnationId! },
+        {
+          requestId: "character-selection",
+          role: "executor",
+          provider: "codex",
+          model: "model",
+          reasoningEffort: "high",
+          workspacePath: "C:/prepared-worktree",
+        },
+        () => {},
+        {
+          providerId: "codex",
+          executionOptions: captureSessionExecutionOptions(parent),
+        },
+      ),
   };
 }
 
@@ -107,8 +311,13 @@ async function childCharacterFixture(t: TestContext, activeIds: string[], crewCh
 // lifecycle = "permanent"
 // impact = "別Characterが使えるのに親子が同じCharacterになったり、残候補の割当てが偏ったりする"
 // @end-test-value
+/** 直接の親が最少使用でも候補から外し、残りのCrew利用数で子のCharacterを選ぶ。 */
 it("excludes the direct parent before choosing the least-used alternative for a new child", async (t) => {
-  const fixture = await childCharacterFixture(t, ["miko", "azki", "sora"], ["sora", "miko", "miko", "miko"]);
+  const fixture = await childCharacterFixture(
+    t,
+    ["miko", "azki", "sora"],
+    ["sora", "miko", "miko", "miko"],
+  );
   assert.equal((await fixture.create()).characterId, "sora");
 });
 
@@ -122,10 +331,24 @@ it("excludes the direct parent before choosing the least-used alternative for a 
 // scope = "親を除いた残候補の同数抽選"
 // lifecycle = "permanent"
 // @end-test-value
+/** 親を除いた最少使用候補が同数なら、抽選値に従って別の候補が選ばれることを確認する。 */
 it("keeps the existing draw among equally used non-parent Characters", async (t) => {
-  const first = await childCharacterFixture(t, ["azki", "sora", "miko"], ["miko"], 0);
-  const last = await childCharacterFixture(t, ["azki", "sora", "miko"], ["miko"], 0.99);
-  const selected = [(await first.create()).characterId, (await last.create()).characterId];
+  const first = await childCharacterFixture(
+    t,
+    ["azki", "sora", "miko"],
+    ["miko"],
+    0,
+  );
+  const last = await childCharacterFixture(
+    t,
+    ["azki", "sora", "miko"],
+    ["miko"],
+    0.99,
+  );
+  const selected = [
+    (await first.create()).characterId,
+    (await last.create()).characterId,
+  ];
   assert.deepEqual(new Set(selected), new Set(["sora", "miko"]));
 });
 
@@ -139,6 +362,7 @@ it("keeps the existing draw among equally used non-parent Characters", async (t)
 // scope = "親がactive候補外での通常子Main新規作成"
 // lifecycle = "permanent"
 // @end-test-value
+/** 親が候補外なら、全active候補の中で最少使用のCharacterを選ぶ。 */
 it("uses all active Characters when the direct parent is outside the catalog", async (t) => {
   const fixture = await childCharacterFixture(t, ["sora", "miko"], []);
   assert.equal((await fixture.create()).characterId, "miko");
@@ -154,9 +378,13 @@ it("uses all active Characters when the direct parent is outside the catalog", a
 // scope = "active候補0件での通常子Main新規作成"
 // lifecycle = "permanent"
 // @end-test-value
+/** active候補がない要求を専用理由で拒否し、予約IDに子Mainを保存しない。 */
 it("rejects creation without saving a child when there is no active Character", async (t) => {
   const fixture = await childCharacterFixture(t, [], []);
-  await assert.rejects(fixture.create(), /No active Character is available for the child Session\./);
+  await assert.rejects(
+    fixture.create(),
+    /No active Character is available for the child Session\./,
+  );
   assert.equal(fixture.storage.getSession("reserved-child"), null);
 });
 
@@ -170,30 +398,75 @@ it("rejects creation without saving a child when there is no active Character", 
 // scope = "Session lifecycle creation persistence"
 // lifecycle = "permanent"
 // @end-test-value
+/** 途中状態をDB再オープンから再利用し、Mainと初期Auxiliaryが揃うまで一覧へ公開しないことを確認する。 */
 it("recovers the same prepared creation and publishes only the complete pair", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-lifecycle-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-lifecycle-"),
+  );
   const dbPath = path.join(directory, "app.db");
   let storage = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   try {
-    storage.beginSessionLifecycleOperation({ operationId: "create-1", kind: "create", input: { title: "Task", requestId: "same" }, targets: [{ id: "root", rootSessionId: "root" }] });
+    storage.beginSessionLifecycleOperation({
+      operationId: "create-1",
+      kind: "create",
+      input: { title: "Task", requestId: "same" },
+      targets: [{ id: "root", rootSessionId: "root" }],
+    });
     storage.prepareSessionLifecycleCreation("create-1", input("root"));
     storage.insertSession(buildNewSession(input("root")));
     assert.deepEqual(storage.listSessionSummaries(), []);
-    assert.throws(() => storage.advanceSessionLifecycleOperation("create-1", "complete"));
+    assert.throws(() =>
+      storage.advanceSessionLifecycleOperation("create-1", "complete"),
+    );
     storage.close();
     storage = new SessionStorageV6(dbPath);
-    const operation = storage.beginSessionLifecycleOperation({ operationId: "create-1", kind: "create", input: { requestId: "same", title: "Task" }, targets: [{ id: "another" }] });
+    const operation = storage.beginSessionLifecycleOperation({
+      operationId: "create-1",
+      kind: "create",
+      input: { requestId: "same", title: "Task" },
+      targets: [{ id: "another" }],
+    });
     assert.equal(operation.targets[0].id, "root");
-    assert.equal(storage.prepareSessionLifecycleCreation("create-1", { ...input("root"), characterId: "replacement" }).preparedSession?.characterId, "azki");
-    assert.throws(() => storage.beginSessionLifecycleOperation({ operationId: "create-1", kind: "create", input: { requestId: "same", title: "Changed" }, targets: [{ id: "root" }] }));
+    assert.equal(
+      storage.prepareSessionLifecycleCreation("create-1", {
+        ...input("root"),
+        characterId: "replacement",
+      }).preparedSession?.characterId,
+      "azki",
+    );
+    assert.throws(() =>
+      storage.beginSessionLifecycleOperation({
+        operationId: "create-1",
+        kind: "create",
+        input: { requestId: "same", title: "Changed" },
+        targets: [{ id: "root" }],
+      }),
+    );
     const root = storage.getSession("root")!;
-    auxiliary.upsertAuxiliarySession({ ...root, id: "aux", parentSessionId: root.id, title: "Aux", createdAt: root.updatedAt, runState: "idle", composerDraft: "draft", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: root.incarnationId! } });
+    auxiliary.upsertAuxiliarySession({
+      ...root,
+      id: "aux",
+      parentSessionId: root.id,
+      title: "Aux",
+      createdAt: root.updatedAt,
+      runState: "idle",
+      composerDraft: "draft",
+      displayAfterMessageIndex: null,
+      creationContext: {
+        generationId: "test",
+        parentIncarnationId: root.incarnationId!,
+      },
+    });
     storage.advanceSessionLifecycleOperation("create-1", "complete");
-    assert.deepEqual(storage.listSessionSummaries().map((item) => item.id), ["root"]);
+    assert.deepEqual(
+      storage.listSessionSummaries().map((item) => item.id),
+      ["root"],
+    );
     assert.equal(auxiliary.getAuxiliarySession("aux")?.composerDraft, "draft");
   } finally {
-    auxiliary.close(); storage.close();
+    auxiliary.close();
+    storage.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -208,34 +481,82 @@ it("recovers the same prepared creation and publishes only the complete pair", a
 // scope = "Crew atomic deletion and owned Files recovery"
 // lifecycle = "permanent"
 // @end-test-value
+/** CrewのMainを原子的に削除し、実行中の子がいれば保護し、DB適用後は記録されたFilesだけを再開処理する。 */
 it("deletes a whole idle Crew and resumes only its fixed owned Files cleanup", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-delete-lifecycle-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-delete-lifecycle-"),
+  );
   const storage = new SessionStorageV6(path.join(directory, "app.db"));
   const owned = path.join(directory, "owned");
   await mkdir(owned);
   try {
-    const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator" });
-    const child = storage.insertSession({ ...buildNewSession(input("child")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id, status: "running", runState: "running" });
+    const root = storage.insertSession({
+      ...buildNewSession(input("root")),
+      sessionRole: "overall-coordinator",
+    });
+    const child = storage.insertSession({
+      ...buildNewSession(input("child")),
+      sessionRole: "executor",
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+      status: "running",
+      runState: "running",
+    });
     assert.throws(() => storage.deleteSession(root.id));
     assert.throws(() => storage.deleteSessions([root.id, child.id]));
     assert.equal(storage.listSessionSummaries().length, 2);
     storage.updateSession({ ...child, status: "idle", runState: "idle" });
     const resource = await captureSessionLifecycleResource(owned);
-    storage.beginSessionLifecycleOperation({ operationId: "delete-1", kind: "delete", input: { root: root.id }, targets: [root, child].map((item) => ({ id: item.id, incarnationId: item.incarnationId })), resources: [resource] });
+    storage.beginSessionLifecycleOperation({
+      operationId: "delete-1",
+      kind: "delete",
+      input: { root: root.id },
+      targets: [root, child].map((item) => ({
+        id: item.id,
+        incarnationId: item.incarnationId,
+      })),
+      resources: [resource],
+    });
     const operation = storage.deleteSessionCrewForLifecycle("delete-1");
     assert.equal(operation.phase, "applied");
-    assert.deepEqual(storage.beginSessionLifecycleOperation({ operationId: "delete-1", kind: "delete", input: { root: root.id },
-      targets: [{ id: "replacement" }], resources: [] }), operation);
+    assert.deepEqual(
+      storage.beginSessionLifecycleOperation({
+        operationId: "delete-1",
+        kind: "delete",
+        input: { root: root.id },
+        targets: [{ id: "replacement" }],
+        resources: [],
+      }),
+      operation,
+    );
     assert.equal(storage.getSession(root.id), null);
     assert.equal(storage.getSession(child.id), null);
-    await assert.rejects(cleanupSessionLifecycleResource({ ...resource, inode: (BigInt(resource.inode) + 1n).toString() }), /identity changed/);
+    await assert.rejects(
+      cleanupSessionLifecycleResource({
+        ...resource,
+        inode: (BigInt(resource.inode) + 1n).toString(),
+      }),
+      /identity changed/,
+    );
     assert.equal((await stat(owned)).isDirectory(), true);
     const cleaned = await cleanupSessionLifecycleResource(resource);
-    storage.advanceSessionLifecycleOperation(operation.operationId, "complete", [cleaned]);
-    assert.equal(storage.getSessionLifecycleOperation(operation.operationId)?.phase, "complete");
-    assert.equal(storage.deleteSessionCrewForLifecycle(operation.operationId).phase, "complete");
+    storage.advanceSessionLifecycleOperation(
+      operation.operationId,
+      "complete",
+      [cleaned],
+    );
+    assert.equal(
+      storage.getSessionLifecycleOperation(operation.operationId)?.phase,
+      "complete",
+    );
+    assert.equal(
+      storage.deleteSessionCrewForLifecycle(operation.operationId).phase,
+      "complete",
+    );
   } finally {
-    storage.close(); await rm(directory, { recursive: true, force: true });
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -251,48 +572,116 @@ it("deletes a whole idle Crew and resumes only its fixed owned Files cleanup", a
 // impact = "通常のCrew削除が拒否から回復できなくなるか、対象外データを失う"
 // distinction = "型検査やstorage単体testではfacadeによる旧操作再利用と所有Files再収集を通らないため、小さい隔離Crewを実DBで削除する"
 // @end-test-value
+/** 削除拒否後に子が増えたら現在のCrewと所有Filesを取り直し、別Crewを維持することを確認する。 */
 it("reprepares a rejected Crew deletion for the current children and owned Files", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-delete-retry-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-delete-retry-"),
+  );
   const storage = new SessionStorageV6(path.join(directory, "app.db"));
-  const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+  const catalog: ModelCatalogProvider = {
+    id: "codex",
+    label: "Codex",
+    defaultModelId: "model",
+    defaultReasoningEffort: "high",
+    models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
+  };
   try {
-    const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator" });
-    const child = storage.insertSession({ ...buildNewSession(input("child")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id, status: "running", runState: "running" });
+    const root = storage.insertSession({
+      ...buildNewSession(input("root")),
+      sessionRole: "overall-coordinator",
+    });
+    const child = storage.insertSession({
+      ...buildNewSession(input("child")),
+      sessionRole: "executor",
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+      status: "running",
+      runState: "running",
+    });
     const other = storage.insertSession(buildNewSession(input("other")));
     const crewFiles = path.join(directory, "crew-files");
-    for (const folder of [path.join(directory, root.id), path.join(directory, child.id), path.join(directory, other.id), crewFiles]) {
+    for (const folder of [
+      path.join(directory, root.id),
+      path.join(directory, child.id),
+      path.join(directory, other.id),
+      crewFiles,
+    ]) {
       await mkdir(folder);
       await writeFile(path.join(folder, "content.txt"), path.basename(folder));
     }
-    const makeFacade = () => lifecycleFacade(storage, directory, lifecyclePersistence(storage, catalog), { resolveCrewFilesDirectory: () => crewFiles });
+    /** 再試行ごとに最新のストレージとCrew Filesを参照するfacadeを組み直す。 */
+    const makeFacade = () =>
+      lifecycleFacade(
+        storage,
+        directory,
+        lifecyclePersistence(storage, catalog),
+        {
+          /** 削除対象CrewのFiles位置を固定する。 */
+          resolveCrewFilesDirectory: () => crewFiles,
+        },
+      );
     await assert.rejects(makeFacade().deleteSession(root.id));
     const pending = storage.listPendingSessionLifecycleOperations()[0];
     assert.equal(pending.phase, "preparing");
-    assert.deepEqual(new Set(pending.targets.map((target) => target.id)), new Set([root.id, child.id]));
+    assert.deepEqual(
+      new Set(pending.targets.map((target) => target.id)),
+      new Set([root.id, child.id]),
+    );
     assert.equal(storage.listSessionSummaries().length, 3);
-    for (const resource of pending.resources) assert.equal(await readFile(path.join(resource.path, "content.txt"), "utf8"), path.basename(resource.path));
+    for (const resource of pending.resources)
+      assert.equal(
+        await readFile(path.join(resource.path, "content.txt"), "utf8"),
+        path.basename(resource.path),
+      );
 
     storage.updateSession({ ...child, status: "idle", runState: "idle" });
-    const added = storage.insertSession({ ...buildNewSession(input("added")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+    const added = storage.insertSession({
+      ...buildNewSession(input("added")),
+      sessionRole: "executor",
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+    });
     await mkdir(path.join(directory, added.id));
     await writeFile(path.join(directory, added.id, "content.txt"), "added");
     await makeFacade().recoverPendingSessionLifecycleOperations();
     assert.equal(storage.listSessionSummaries().length, 4);
-    assert.equal(await readFile(path.join(directory, added.id, "content.txt"), "utf8"), "added");
+    assert.equal(
+      await readFile(path.join(directory, added.id, "content.txt"), "utf8"),
+      "added",
+    );
 
     await makeFacade().deleteSession(root.id);
-    assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), [other.id]);
+    assert.deepEqual(
+      storage.listSessionSummaries().map((session) => session.id),
+      [other.id],
+    );
     const complete = storage.getSessionLifecycleOperation(pending.operationId)!;
     assert.equal(complete.phase, "complete");
-    assert.deepEqual(new Set(complete.targets.map((target) => target.id)), new Set([root.id, child.id, added.id]));
-    assert.deepEqual(new Set(complete.resources.map((resource) => resource.path)), new Set([root.id, child.id, added.id].map((id) => path.join(directory, id)).concat(crewFiles)));
+    assert.deepEqual(
+      new Set(complete.targets.map((target) => target.id)),
+      new Set([root.id, child.id, added.id]),
+    );
+    assert.deepEqual(
+      new Set(complete.resources.map((resource) => resource.path)),
+      new Set(
+        [root.id, child.id, added.id]
+          .map((id) => path.join(directory, id))
+          .concat(crewFiles),
+      ),
+    );
     for (const resource of complete.resources) {
       assert.equal(resource.cleaned, true);
       await assert.rejects(stat(resource.path), { code: "ENOENT" });
     }
-    assert.equal(await readFile(path.join(directory, other.id, "content.txt"), "utf8"), other.id);
+    assert.equal(
+      await readFile(path.join(directory, other.id, "content.txt"), "utf8"),
+      other.id,
+    );
   } finally {
-    storage.close(); await rm(directory, { recursive: true, force: true });
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -306,73 +695,285 @@ it("reprepares a rejected Crew deletion for the current children and owned Files
 // scope = "common child Session application with real SQLite and Files"
 // lifecycle = "permanent"
 // @end-test-value
+/** Filesと初期Auxiliaryの失敗を越えて同じ子とCharacterを予約し続け、親Turnと受付時の実行設定を保持する。 */
 it("retries child creation without redrawing its Character or replacing parent execution choices", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-create-child-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-create-child-"),
+  );
   const storage = new SessionStorageV6(path.join(directory, "app.db"));
   const auxiliary = new AuxiliarySessionStorage(path.join(directory, "app.db"));
   const setup = new DatabaseSync(path.join(directory, "app.db"));
-  for (const id of ["azki", "sora"]) setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES(?,?,'now','now')").run(id, id);
+  for (const id of ["azki", "sora"])
+    setup
+      .prepare(
+        "INSERT INTO characters(id,name,created_at,updated_at) VALUES(?,?,'now','now')",
+      )
+      .run(id, id);
   setup.close();
-  const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator" });
-  storage.insertSession({ ...buildNewSession(input("other-crew")), characterId: "sora" });
+  const root = storage.insertSession({
+    ...buildNewSession(input("root")),
+    sessionRole: "overall-coordinator",
+  });
+  storage.insertSession({
+    ...buildNewSession(input("other-crew")),
+    characterId: "sora",
+  });
   let cached = storage.listSessions();
   let snapshotCount = 0;
   let filesFail = true;
   let auxiliaryFail = true;
   let issued = 0;
   const coordinator = new ProviderRuntimeOperationCoordinator();
-  const catalog = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high" as const, models: [{ id: "model", label: "Model", reasoningEfforts: ["high" as const] }] };
+  const catalog = {
+    id: "codex",
+    label: "Codex",
+    defaultModelId: "model",
+    defaultReasoningEffort: "high" as const,
+    models: [
+      { id: "model", label: "Model", reasoningEfforts: ["high" as const] },
+    ],
+  };
   const persistence = new SessionPersistenceService({
-    getSessions: () => cached, setSessions: (next) => { cached = next; }, getSession: (id) => cached.find((item) => item.id === id) ?? null,
-    getStoredSession: storage.getSession.bind(storage), isSessionRunInFlight: () => false,
-    upsertStoredSession: (session, operation) => operation === "create" ? storage.insertSession(session) : storage.updateSession(session),
-    replaceStoredSessions: (sessions) => { storage.replaceSessions(sessions); }, listStoredSessions: storage.listSessions.bind(storage), listStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
-    getSessionLifecycleOperation: storage.getSessionLifecycleOperation.bind(storage), listPendingSessionLifecycleOperations: storage.listPendingSessionLifecycleOperations.bind(storage),
-    beginSessionLifecycleOperation: storage.beginSessionLifecycleOperation.bind(storage), prepareSessionLifecycleCreation: storage.prepareSessionLifecycleCreation.bind(storage), advanceSessionLifecycleOperation: storage.advanceSessionLifecycleOperation.bind(storage),
-    getAppSettings: createDefaultAppSettings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-     clearSessionContextTelemetry: () => {},  invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
+    /** 子の作成途中に公開キャッシュが何を含むかを観測する。 */
+    getSessions: () => cached,
+    /** 公開一覧の差し替えを保持する。 */
+    setSessions: (next) => {
+      cached = next;
+    },
+    /** キャッシュに反映された対象Sessionだけを返す。 */
+    getSession: (id) => cached.find((item) => item.id === id) ?? null,
+    getStoredSession: storage.getSession.bind(storage),
+    /** 作成再試行を既存実行によって拒否しない設定にする。 */
+    isSessionRunInFlight: () => false,
+    /** 子の初回insertと後続更新を実V6にそのまま伝える。 */
+    upsertStoredSession: (session, operation) =>
+      operation === "create"
+        ? storage.insertSession(session)
+        : storage.updateSession(session),
+    /** 全件置換の依存を実ストレージへ接続する。 */
+    replaceStoredSessions: (sessions) => {
+      storage.replaceSessions(sessions);
+    },
+    listStoredSessions: storage.listSessions.bind(storage),
+    listStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
+    getSessionLifecycleOperation:
+      storage.getSessionLifecycleOperation.bind(storage),
+    listPendingSessionLifecycleOperations:
+      storage.listPendingSessionLifecycleOperations.bind(storage),
+    beginSessionLifecycleOperation:
+      storage.beginSessionLifecycleOperation.bind(storage),
+    prepareSessionLifecycleCreation:
+      storage.prepareSessionLifecycleCreation.bind(storage),
+    advanceSessionLifecycleOperation:
+      storage.advanceSessionLifecycleOperation.bind(storage),
+    getAppSettings: createDefaultAppSettings,
+    /** 受付時のモデルと推論レベルを許可するカタログを渡す。 */
+    getModelCatalogSnapshot: () => ({ providers: [catalog] }),
+    /** 子作成ではコンテキストの外部通知を行わない。 */
+    clearSessionContextTelemetry: () => {},
+    /** 実Providerのスレッドを作らない。 */
+    invalidateProviderSessionThread: () => {},
+    /** 子作成確認ではウィンドウを使わない。 */
+    closeSessionWindow: () => {},
+    /** 通知を配信せず、公開一覧を直接確認する。 */
+    broadcastSessions: () => {},
   });
   const facade = new MainSessionCommandFacade({
-    getSessions: () => cached, getSession: (id) => cached.find((item) => item.id === id) ?? null, getStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
-    getSessionStorageIdentity: () => storage, runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
-    resolveSessionLaunchSelection: async () => { throw new Error("Child creation must not read GUI launch defaults."); },
-    getSessionPersistenceService: () => persistence, getSessionRuntimeService: () => ({} as never),
-    getProviderQuotaTelemetry: () => null, isProviderQuotaTelemetryStale: () => false, refreshProviderQuotaTelemetry: async () => null,
-    initializeCreatedSession: async (session) => {
-      if (auxiliaryFail) { auxiliaryFail = false; throw new Error("initial Auxiliary failed"); }
-      auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } });
+    /** facadeにも永続化サービスと同じ公開キャッシュを見せる。 */
+    getSessions: () => cached,
+    /** 親の参照をキャッシュ上のIDで解決する。 */
+    getSession: (id) => cached.find((item) => item.id === id) ?? null,
+    getStoredSessionSummaries: storage.listSessionSummaries.bind(storage),
+    /** 再試行を同じV6ストレージへ結び付ける。 */
+    getSessionStorageIdentity: () => storage,
+    /** 子の作成手順を実Coordinatorの排他に通す。 */
+    runProviderRuntimeOperationExclusive: (operation) =>
+      coordinator.runExclusive(operation),
+    /** 子作成で起動設定をGUI既定値から取り直した場合に失敗させる。 */
+    resolveSessionLaunchSelection: async () => {
+      throw new Error("Child creation must not read GUI launch defaults.");
     },
+    /** 失敗と再試行で同一の永続化サービスを使う。 */
+    getSessionPersistenceService: () => persistence,
+    /** 子の準備だけを検証し、実Providerは起動しない。 */
+    getSessionRuntimeService: () => ({}) as never,
+    /** 使用量の初期キャッシュを持たない。 */
+    getProviderQuotaTelemetry: () => null,
+    /** 作成中にquota更新を要求しない。 */
+    isProviderQuotaTelemetryStale: () => false,
+    /** 再試行中の外部quota通信を行わない。 */
+    refreshProviderQuotaTelemetry: async () => null,
+    /** 初回の初期Auxiliary保存だけ失敗させ、後の再試行で子の実体を完成する。 */
+    initializeCreatedSession: async (session) => {
+      if (auxiliaryFail) {
+        auxiliaryFail = false;
+        throw new Error("initial Auxiliary failed");
+      }
+      auxiliary.upsertAuxiliarySession({
+        ...session,
+        id: `${session.id}-aux`,
+        parentSessionId: session.id,
+        title: "Aux",
+        runState: "idle",
+        createdAt: session.updatedAt,
+        composerDraft: "",
+        displayAfterMessageIndex: null,
+        creationContext: {
+          generationId: "test",
+          parentIncarnationId: session.incarnationId!,
+        },
+      });
+    },
+    /** IDを発行した回数が新規予約の有無を示すようにする。 */
     createSessionId: () => `child-${++issued}`,
-    createSessionFilesDirectory: async (id) => { const value = path.join(directory, id); await mkdir(value); return value; },
+    /** 発行済みIDの一時Filesディレクトリを作る。 */
+    createSessionFilesDirectory: async (id) => {
+      const value = path.join(directory, id);
+      await mkdir(value);
+      return value;
+    },
+    /** 再試行でも同じIDを同じFilesパスへ解決する。 */
     resolveSessionFilesDirectory: (id) => path.join(directory, id),
-    prepareSessionLifecycleFiles: async (input) => { if (filesFail) { filesFail = false; throw new Error("Files failed"); } return prepareSessionLifecycleFiles(input); },
-    isSessionFilesWorkspace: () => false, dismissSessionTurnNotification: () => {}, validateWorkspaceDirectory: async () => ({ valid: true }),
-    listActiveCharacters: async () => ["azki", "sora"].map((id) => ({ id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active", createdAt: "now", updatedAt: "now", archivedAt: null })),
-    createCharacterRuntimeSnapshot: async (id) => { snapshotCount += 1; return { characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character\nCharacter", definitionSha256: "snapshot", definitionByteSize: 21, snapshotAt: "2026-11-07T00:00:00Z" }; },
+    /** 最初のFiles準備だけ失敗させ、以降は本番の準備処理を通す。 */
+    prepareSessionLifecycleFiles: async (input) => {
+      if (filesFail) {
+        filesFail = false;
+        throw new Error("Files failed");
+      }
+      return prepareSessionLifecycleFiles(input);
+    },
+    /** 既定のworkspaceとSession Filesを別物として扱う。 */
+    isSessionFilesWorkspace: () => false,
+    /** 再試行中のシステム通知は省く。 */
+    dismissSessionTurnNotification: () => {},
+    /** 指定workspaceを有効にし、FilesとAuxiliaryの障害だけを起こす。 */
+    validateWorkspaceDirectory: async () => ({ valid: true }),
+    /** 親と選択される別候補を含む固定Character一覧を返す。 */
+    listActiveCharacters: async () =>
+      ["azki", "sora"].map((id) => ({
+        id,
+        name: id,
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#fff", sub: "#000" },
+        state: "active",
+        createdAt: "now",
+        updatedAt: "now",
+        archivedAt: null,
+      })),
+    /** Characterの解決回数を記録し、失敗後に再抽選しないことを確かめる。 */
+    createCharacterRuntimeSnapshot: async (id) => {
+      snapshotCount += 1;
+      return {
+        characterId: id,
+        name: id,
+        description: "",
+        iconFilePath: "",
+        theme: { main: "#fff", sub: "#000" },
+        definitionMarkdown: "# Character\nCharacter",
+        definitionSha256: "snapshot",
+        definitionByteSize: 21,
+        snapshotAt: "2026-11-07T00:00:00Z",
+      };
+    },
+    /** 初回予約の抽選を再現可能にする。 */
     randomCharacter: () => 0,
   });
-  const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
-  const actorExecution = { providerId: "codex", executionOptions: { ...captureSessionExecutionOptions(root), codexSandboxMode: "read-only" as const, codexReviewer: "auto-review" as const } };
+  const request = {
+    requestId: "same-request",
+    role: "executor" as const,
+    provider: "codex",
+    model: "model",
+    reasoningEffort: "high" as const,
+    workspacePath: "C:/prepared-worktree",
+    title: "Child",
+  };
+  const actorExecution = {
+    providerId: "codex",
+    executionOptions: {
+      ...captureSessionExecutionOptions(root),
+      codexSandboxMode: "read-only" as const,
+      codexReviewer: "auto-review" as const,
+    },
+  };
   try {
     const actor = { id: root.id, incarnationId: root.incarnationId! };
-    await assert.rejects(facade.createChildSession(actor, request, () => {}, actorExecution), /Files failed/);
-    assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.characterId, "sora");
-    assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.codexReviewer, "auto-review");
-    await assert.rejects(facade.createChildSession(actor, request, () => {}), /initial Auxiliary failed/);
-    assert.equal(storage.listSessionSummaries().some((item) => item.parentSessionId === root.id), false);
+    await assert.rejects(
+      facade.createChildSession(actor, request, () => {}, actorExecution),
+      /Files failed/,
+    );
+    assert.equal(
+      storage.listPendingSessionLifecycleOperations()[0].preparedSession
+        ?.characterId,
+      "sora",
+    );
+    assert.equal(
+      storage.listPendingSessionLifecycleOperations()[0].preparedSession
+        ?.codexReviewer,
+      "auto-review",
+    );
+    await assert.rejects(
+      facade.createChildSession(actor, request, () => {}),
+      /initial Auxiliary failed/,
+    );
+    assert.equal(
+      storage
+        .listSessionSummaries()
+        .some((item) => item.parentSessionId === root.id),
+      false,
+    );
     const child = await facade.createChildSession(actor, request, () => {});
     assert.equal(child.characterId, "sora");
     assert.equal(child.codexReviewer, "auto-review");
     assert.equal(storage.getSession(child.id)?.codexReviewer, "auto-review");
-    assert.deepEqual(auxiliary.listAuxiliarySessionSummaries([child.id]).map((entry) => entry.id), [`${child.id}-aux`]);
+    assert.deepEqual(
+      auxiliary
+        .listAuxiliarySessionSummaries([child.id])
+        .map((entry) => entry.id),
+      [`${child.id}-aux`],
+    );
     assert.equal(snapshotCount, 1);
     assert.equal(issued, 1);
-    assert.deepEqual([child.provider, child.model, child.reasoningEffort, child.approvalMode, child.codexSandboxMode, child.workspacePath], ["codex", "model", "high", "on-request", "read-only", request.workspacePath]);
-    assert.equal((await facade.createChildSession(actor, request, () => {})).id, child.id);
-    assert.equal(storage.listSessionSummaries().filter((item) => item.parentSessionId === root.id).length, 1);
-    await assert.rejects(facade.createChildSession(actor, { ...request, title: "Different" }, () => {}), /different input/);
+    assert.deepEqual(
+      [
+        child.provider,
+        child.model,
+        child.reasoningEffort,
+        child.approvalMode,
+        child.codexSandboxMode,
+        child.workspacePath,
+      ],
+      [
+        "codex",
+        "model",
+        "high",
+        "on-request",
+        "read-only",
+        request.workspacePath,
+      ],
+    );
+    assert.equal(
+      (await facade.createChildSession(actor, request, () => {})).id,
+      child.id,
+    );
+    assert.equal(
+      storage
+        .listSessionSummaries()
+        .filter((item) => item.parentSessionId === root.id).length,
+      1,
+    );
+    await assert.rejects(
+      facade.createChildSession(
+        actor,
+        { ...request, title: "Different" },
+        () => {},
+      ),
+      /different input/,
+    );
   } finally {
-    auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true });
+    auxiliary.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -386,42 +987,116 @@ it("retries child creation without redrawing its Character or replacing parent e
 // scope = "Crew expiry and Coordination deletion guards"
 // lifecycle = "permanent"
 // @end-test-value
+/** Crew内のAuxiliary活動と相談のownerを照合し、期限候補確定後の活動更新も削除時に保護する。 */
 it("guards expiry and unresolved Coordination by the actual Crew conversation identity", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-crew-guards-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-crew-guards-"),
+  );
   const dbPath = path.join(directory, "app.db");
   const storage = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   const db = new DatabaseSync(dbPath);
   const old = "2026-01-01T00:00:00.000Z";
   const recent = "2026-11-01T00:00:00.000Z";
-  const cutoff = { cutoffDate: "2026-07-01", cutoffIso: "2026-07-01T00:00:00.000Z", cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z") };
+  const cutoff = {
+    cutoffDate: "2026-07-01",
+    cutoffIso: "2026-07-01T00:00:00.000Z",
+    cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+  };
   try {
-    const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator", updatedAt: old });
-    const child = storage.insertSession({ ...buildNewSession(input("shared-id")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id, updatedAt: old });
-    const other = storage.insertSession({ ...buildNewSession(input("other")), updatedAt: old });
-    for (const [id, parent, updatedAt] of [["recent-aux", root, recent], [child.id, other, old]] as const) {
-      auxiliary.upsertAuxiliarySession({ ...parent, id, parentSessionId: parent.id, title: "Aux", createdAt: old, updatedAt, runState: "idle", composerDraft: "", displayAfterMessageIndex: null });
+    const root = storage.insertSession({
+      ...buildNewSession(input("root")),
+      sessionRole: "overall-coordinator",
+      updatedAt: old,
+    });
+    const child = storage.insertSession({
+      ...buildNewSession(input("shared-id")),
+      sessionRole: "executor",
+      rootSessionId: root.id,
+      parentSessionId: root.id,
+      createdBySessionId: root.id,
+      updatedAt: old,
+    });
+    const other = storage.insertSession({
+      ...buildNewSession(input("other")),
+      updatedAt: old,
+    });
+    for (const [id, parent, updatedAt] of [
+      ["recent-aux", root, recent],
+      [child.id, other, old],
+    ] as const) {
+      auxiliary.upsertAuxiliarySession({
+        ...parent,
+        id,
+        parentSessionId: parent.id,
+        title: "Aux",
+        createdAt: old,
+        updatedAt,
+        runState: "idle",
+        composerDraft: "",
+        displayAfterMessageIndex: null,
+      });
     }
-    assert.deepEqual(storage.listSessionIdsLastActiveBefore(cutoff), [other.id]);
-    db.prepare("UPDATE auxiliary_sessions SET updated_at = ? WHERE id = 'recent-aux'").run(old);
-    db.prepare("UPDATE auxiliary_session_drafts SET updated_at = ? WHERE auxiliary_session_id = 'recent-aux'").run(old);
-    assert.deepEqual(new Set(storage.listSessionIdsLastActiveBefore(cutoff)), new Set([root.id, other.id]));
-    db.prepare(`INSERT INTO coordination_records_v7(id,crew_root_session_id,initiator_session_id,initiator_kind,initiator_incarnation_id,respondent_kind,state,payload_json)
-      VALUES('foreign-aux',?,'shared-id','auxiliary',?,'user','open','{}')`).run(other.id, old);
-    assert.equal(storage.getCrewDeletionStatus(root.id, root.incarnationId!).allowed, true);
-    db.prepare(`INSERT INTO coordination_records_v7(id,crew_root_session_id,initiator_session_id,initiator_kind,initiator_incarnation_id,respondent_session_id,respondent_kind,state,payload_json)
-      VALUES('needs-reply',?,?,'main',?,'shared-id','main','open','{}')`).run(other.id, other.id, other.incarnationId!);
-    assert.deepEqual(storage.getCrewDeletionStatus(root.id, root.incarnationId!).blockers.map((item) => item.id), ["needs-reply"]);
+    assert.deepEqual(storage.listSessionIdsLastActiveBefore(cutoff), [
+      other.id,
+    ]);
+    db.prepare(
+      "UPDATE auxiliary_sessions SET updated_at = ? WHERE id = 'recent-aux'",
+    ).run(old);
+    db.prepare(
+      "UPDATE auxiliary_session_drafts SET updated_at = ? WHERE auxiliary_session_id = 'recent-aux'",
+    ).run(old);
+    assert.deepEqual(
+      new Set(storage.listSessionIdsLastActiveBefore(cutoff)),
+      new Set([root.id, other.id]),
+    );
+    db.prepare(
+      `INSERT INTO coordination_records_v7(id,crew_root_session_id,initiator_session_id,initiator_kind,initiator_incarnation_id,respondent_kind,state,payload_json)
+      VALUES('foreign-aux',?,'shared-id','auxiliary',?,'user','open','{}')`,
+    ).run(other.id, old);
+    assert.equal(
+      storage.getCrewDeletionStatus(root.id, root.incarnationId!).allowed,
+      true,
+    );
+    db.prepare(
+      `INSERT INTO coordination_records_v7(id,crew_root_session_id,initiator_session_id,initiator_kind,initiator_incarnation_id,respondent_session_id,respondent_kind,state,payload_json)
+      VALUES('needs-reply',?,?,'main',?,'shared-id','main','open','{}')`,
+    ).run(other.id, other.id, other.incarnationId!);
+    assert.deepEqual(
+      storage
+        .getCrewDeletionStatus(root.id, root.incarnationId!)
+        .blockers.map((item) => item.id),
+      ["needs-reply"],
+    );
     assert.throws(() => storage.deleteSessions([root.id, child.id]));
-    db.prepare("UPDATE coordination_records_v7 SET state='resolved' WHERE id='needs-reply'").run();
-    assert.equal(storage.getCrewDeletionStatus(root.id, root.incarnationId!).allowed, true);
-    storage.beginSessionLifecycleOperation({ operationId: "expired-root", kind: "delete", input: { cutoffIso: cutoff.cutoffIso }, targets: [root, child].map((item) => ({ id: item.id, incarnationId: item.incarnationId })) });
+    db.prepare(
+      "UPDATE coordination_records_v7 SET state='resolved' WHERE id='needs-reply'",
+    ).run();
+    assert.equal(
+      storage.getCrewDeletionStatus(root.id, root.incarnationId!).allowed,
+      true,
+    );
+    storage.beginSessionLifecycleOperation({
+      operationId: "expired-root",
+      kind: "delete",
+      input: { cutoffIso: cutoff.cutoffIso },
+      targets: [root, child].map((item) => ({
+        id: item.id,
+        incarnationId: item.incarnationId,
+      })),
+    });
     storage.updateSession({ ...child, updatedAt: recent });
-    assert.throws(() => storage.deleteSessionCrewForLifecycle("expired-root"), /activity cutoff/);
+    assert.throws(
+      () => storage.deleteSessionCrewForLifecycle("expired-root"),
+      /activity cutoff/,
+    );
     assert.notEqual(storage.getSession(root.id), null);
     assert.notEqual(storage.getSession(child.id), null);
   } finally {
-    db.close(); auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true });
+    db.close();
+    auxiliary.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -436,42 +1111,117 @@ it("guards expiry and unresolved Coordination by the actual Crew conversation id
 // lifecycle = "permanent"
 // risk_tags = ["irreversible-data-loss"]
 // @end-test-value
+/** 作成途中の非公開・予約済みworkspaceを、Crew削除と適用済みcleanupの再試行から保護する。 */
 it("protects unpublished saved and reserved Workspaces before deletion and cleanup recovery", async () => {
-  for (const stage of ["before-delete", "after-apply", "before-prepare"] as const) {
-    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-pending-workspace-"));
+  for (const stage of [
+    "before-delete",
+    "after-apply",
+    "before-prepare",
+  ] as const) {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "withmate-pending-workspace-"),
+    );
     const storage = new SessionStorageV6(path.join(directory, "app.db"));
     const folder = path.join(directory, "deleting-root");
     const workspace = path.join(folder, "project");
     await mkdir(workspace, { recursive: true });
-    await writeFile(path.join(workspace, "work.txt"), "keep pending work", "utf8");
+    await writeFile(
+      path.join(workspace, "work.txt"),
+      "keep pending work",
+      "utf8",
+    );
     try {
-      const root = storage.insertSession(buildNewSession(input("deleting-root")));
-      const parent = storage.insertSession({ ...buildNewSession(input("other-crew")), sessionRole: "overall-coordinator" });
-      const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+      const root = storage.insertSession(
+        buildNewSession(input("deleting-root")),
+      );
+      const parent = storage.insertSession({
+        ...buildNewSession(input("other-crew")),
+        sessionRole: "overall-coordinator",
+      });
+      const catalog: ModelCatalogProvider = {
+        id: "codex",
+        label: "Codex",
+        defaultModelId: "model",
+        defaultReasoningEffort: "high",
+        models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
+      };
       const harness = lifecyclePersistence(storage, catalog);
       const facade = lifecycleFacade(storage, directory, harness);
       if (stage !== "before-delete") {
-        storage.beginSessionLifecycleOperation({ operationId: "cleanup-after-delete", kind: "delete", input: { sessionId: root.id },
-          targets: [{ id: root.id, incarnationId: root.incarnationId }], resources: [await captureSessionLifecycleResource(folder)] });
+        storage.beginSessionLifecycleOperation({
+          operationId: "cleanup-after-delete",
+          kind: "delete",
+          input: { sessionId: root.id },
+          targets: [{ id: root.id, incarnationId: root.incarnationId }],
+          resources: [await captureSessionLifecycleResource(folder)],
+        });
         storage.deleteSessionCrewForLifecycle("cleanup-after-delete");
       }
-      const prepared = { ...input("pending-child"), workspacePath: workspace, sessionRole: "executor" as const, rootSessionId: parent.id, parentSessionId: parent.id, createdBySessionId: parent.id };
-      storage.beginSessionLifecycleOperation({ operationId: "pending-create", kind: "create",
-        input: { requestId: "pending", role: "executor", provider: "codex", model: "model", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "read-only", workspacePath: workspace },
-        targets: [{ id: prepared.id, rootSessionId: parent.id, parentSessionId: parent.id, parentIncarnationId: parent.incarnationId }] });
-      if (stage === "before-delete") storage.insertSession(buildNewSession(prepared));
-      else if (stage === "after-apply") storage.prepareSessionLifecycleCreation("pending-create", prepared);
-      assert.equal(storage.listSessionSummaries().some((session) => session.id === prepared.id), false);
+      const prepared = {
+        ...input("pending-child"),
+        workspacePath: workspace,
+        sessionRole: "executor" as const,
+        rootSessionId: parent.id,
+        parentSessionId: parent.id,
+        createdBySessionId: parent.id,
+      };
+      storage.beginSessionLifecycleOperation({
+        operationId: "pending-create",
+        kind: "create",
+        input: {
+          requestId: "pending",
+          role: "executor",
+          provider: "codex",
+          model: "model",
+          reasoningEffort: "high",
+          approvalMode: "on-request",
+          codexSandboxMode: "read-only",
+          workspacePath: workspace,
+        },
+        targets: [
+          {
+            id: prepared.id,
+            rootSessionId: parent.id,
+            parentSessionId: parent.id,
+            parentIncarnationId: parent.incarnationId,
+          },
+        ],
+      });
+      if (stage === "before-delete")
+        storage.insertSession(buildNewSession(prepared));
+      else if (stage === "after-apply")
+        storage.prepareSessionLifecycleCreation("pending-create", prepared);
+      assert.equal(
+        storage
+          .listSessionSummaries()
+          .some((session) => session.id === prepared.id),
+        false,
+      );
       if (stage === "before-delete") await facade.deleteSession(root.id);
       else {
-        await assert.rejects(facade.deleteSession(root.id), /overlaps a current Workspace/);
-        assert.equal(storage.getSessionLifecycleOperation("cleanup-after-delete")?.phase, "applied");
+        await assert.rejects(
+          facade.deleteSession(root.id),
+          /overlaps a current Workspace/,
+        );
+        assert.equal(
+          storage.getSessionLifecycleOperation("cleanup-after-delete")?.phase,
+          "applied",
+        );
       }
       assert.equal(storage.getSession(root.id), null);
-      assert.equal(await readFile(path.join(workspace, "work.txt"), "utf8"), "keep pending work");
-      assert.equal(storage.listSessionSummaries().some((session) => session.id === prepared.id), false);
+      assert.equal(
+        await readFile(path.join(workspace, "work.txt"), "utf8"),
+        "keep pending work",
+      );
+      assert.equal(
+        storage
+          .listSessionSummaries()
+          .some((session) => session.id === prepared.id),
+        false,
+      );
     } finally {
-      storage.close(); await rm(directory, { recursive: true, force: true });
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
     }
   }
 });
@@ -486,49 +1236,135 @@ it("protects unpublished saved and reserved Workspaces before deletion and clean
 // scope = "pending child creation retry execution-setting validation"
 // lifecycle = "permanent"
 // @end-test-value
+/** 親のみで取った予約を候補追加後も保持し、未保存の場合だけモデル対応を再検証する。 */
 it("revalidates pending child execution support without redrawing its prepared Character", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-child-revalidation-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "withmate-child-revalidation-"),
+  );
   const dbPath = path.join(directory, "app.db");
   const storage = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   try {
     const setup = new DatabaseSync(dbPath);
-    setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now'),('sora','Sora','now','now')").run();
+    setup
+      .prepare(
+        "INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now'),('sora','Sora','now','now')",
+      )
+      .run();
     setup.close();
-    const parent = storage.insertSession({ ...buildNewSession(input("parent")), sessionRole: "overall-coordinator" });
-    const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+    const parent = storage.insertSession({
+      ...buildNewSession(input("parent")),
+      sessionRole: "overall-coordinator",
+    });
+    const catalog: ModelCatalogProvider = {
+      id: "codex",
+      label: "Codex",
+      defaultModelId: "model",
+      defaultReasoningEffort: "high",
+      models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
+    };
     const harness = lifecyclePersistence(storage, catalog);
     let filesFail = true;
     let snapshots = 0;
     const activeIds = ["azki"];
     const facade = lifecycleFacade(storage, directory, harness, {
-      prepareSessionLifecycleFiles: async (input) => { if (filesFail) { filesFail = false; throw new Error("Files failed"); } return prepareSessionLifecycleFiles(input); },
+      /** 準備レコードを残して再試行できるように、最初のFiles処理で失敗させる。 */
+      prepareSessionLifecycleFiles: async (input) => {
+        if (filesFail) {
+          filesFail = false;
+          throw new Error("Files failed");
+        }
+        return prepareSessionLifecycleFiles(input);
+      },
+      /** 予約後に変わり得る現在のactive候補を返す。 */
       listActiveCharacters: async () => activeIds.map(activeCharacter),
-      createCharacterRuntimeSnapshot: async (id) => { snapshots += 1; return { characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character", definitionSha256: "snapshot", definitionByteSize: 11, snapshotAt: "now" }; },
-      initializeCreatedSession: async (session) => { auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } }); },
+      /** snapshot作成回数で、予約済みCharacterが引き継がれたことを確認する。 */
+      createCharacterRuntimeSnapshot: async (id) => {
+        snapshots += 1;
+        return {
+          characterId: id,
+          name: id,
+          description: "",
+          iconFilePath: "",
+          theme: { main: "#fff", sub: "#000" },
+          definitionMarkdown: "# Character",
+          definitionSha256: "snapshot",
+          definitionByteSize: 11,
+          snapshotAt: "now",
+        };
+      },
+      /** 作成完了に必要な初期Auxiliaryを実ストレージへ登録する。 */
+      initializeCreatedSession: async (session) => {
+        auxiliary.upsertAuxiliarySession({
+          ...session,
+          id: `${session.id}-aux`,
+          parentSessionId: session.id,
+          title: "Aux",
+          runState: "idle",
+          createdAt: session.updatedAt,
+          composerDraft: "",
+          displayAfterMessageIndex: null,
+          creationContext: {
+            generationId: "test",
+            parentIncarnationId: session.incarnationId!,
+          },
+        });
+      },
     });
     const actor = { id: parent.id, incarnationId: parent.incarnationId! };
-    const request = { requestId: "same", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree" };
-    await assert.rejects(facade.createChildSession(actor, request, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent) }), /Files failed/);
-    const prepared = storage.listPendingSessionLifecycleOperations()[0].preparedSession!;
+    const request = {
+      requestId: "same",
+      role: "executor" as const,
+      provider: "codex",
+      model: "model",
+      reasoningEffort: "high" as const,
+      workspacePath: "C:/prepared-worktree",
+    };
+    await assert.rejects(
+      facade.createChildSession(actor, request, () => {}, {
+        providerId: "codex",
+        executionOptions: captureSessionExecutionOptions(parent),
+      }),
+      /Files failed/,
+    );
+    const prepared =
+      storage.listPendingSessionLifecycleOperations()[0].preparedSession!;
     assert.equal(prepared.characterId, "azki");
     activeIds.push("sora");
     catalog.models = [];
-    await assert.rejects(facade.createChildSession(actor, request, () => {}), /not in the discovered model list/);
-    catalog.models = [{ id: "model", label: "Model", reasoningEfforts: ["low"] }];
-    await assert.rejects(facade.createChildSession(actor, request, () => {}), /depth is not supported/);
+    await assert.rejects(
+      facade.createChildSession(actor, request, () => {}),
+      /not in the discovered model list/,
+    );
+    catalog.models = [
+      { id: "model", label: "Model", reasoningEfforts: ["low"] },
+    ];
+    await assert.rejects(
+      facade.createChildSession(actor, request, () => {}),
+      /depth is not supported/,
+    );
     assert.equal(storage.getSession(prepared.id!), null);
-    assert.deepEqual(storage.listPendingSessionLifecycleOperations()[0].preparedSession, prepared);
+    assert.deepEqual(
+      storage.listPendingSessionLifecycleOperations()[0].preparedSession,
+      prepared,
+    );
     assert.equal(snapshots, 1);
-    catalog.models = [{ id: "model", label: "Model", reasoningEfforts: ["high"] }];
+    catalog.models = [
+      { id: "model", label: "Model", reasoningEfforts: ["high"] },
+    ];
     const child = await facade.createChildSession(actor, request, () => {});
     assert.equal(child.id, prepared.id);
     assert.equal(child.characterId, "azki");
     catalog.models = [];
-    assert.equal((await facade.createChildSession(actor, request, () => {})).incarnationId, child.incarnationId);
+    assert.equal(
+      (await facade.createChildSession(actor, request, () => {})).incarnationId,
+      child.incarnationId,
+    );
     assert.equal(snapshots, 1);
   } finally {
-    auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true });
+    auxiliary.close();
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -544,46 +1380,164 @@ it("revalidates pending child execution support without redrawing its prepared C
 // impact = "途中失敗した作成の重複・所有不明directoryの削除を防ぎ、同じ要求を再開可能にする"
 // distinction = "mock Filesや完了後retryだけでは実directory publishとDB保存の中断順序を検証できない"
 // @end-test-value
+/** GUIとAgentの子作成で、staging記録・公開・DB保存の各中断から同じSessionとFilesへ収束することを確認する。 */
 it("converges GUI and child creation across each staging publication crash boundary", async () => {
   for (const mode of ["gui", "child"] as const) {
-    for (const boundary of ["before-receipt", "before-publish", "before-db"] as const) {
-      const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-publication-recovery-"));
+    for (const boundary of [
+      "before-receipt",
+      "before-publish",
+      "before-db",
+    ] as const) {
+      const directory = await mkdtemp(
+        path.join(os.tmpdir(), "withmate-publication-recovery-"),
+      );
       const dbPath = path.join(directory, "app.db");
       let storage = new SessionStorageV6(dbPath);
       const auxiliary = new AuxiliarySessionStorage(dbPath);
       try {
         const setup = new DatabaseSync(dbPath);
-        setup.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now')").run();
+        setup
+          .prepare(
+            "INSERT INTO characters(id,name,created_at,updated_at) VALUES('azki','AZKi','now','now')",
+          )
+          .run();
         setup.close();
-        const parent = mode === "child" ? storage.insertSession({ ...buildNewSession(input("parent")), sessionRole: "overall-coordinator" }) : null;
-        const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+        const parent =
+          mode === "child"
+            ? storage.insertSession({
+                ...buildNewSession(input("parent")),
+                sessionRole: "overall-coordinator",
+              })
+            : null;
+        const catalog: ModelCatalogProvider = {
+          id: "codex",
+          label: "Codex",
+          defaultModelId: "model",
+          defaultReasoningEffort: "high",
+          models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }],
+        };
         let crashed = false;
         let firstResource: SessionLifecycleResource | undefined;
         let issued = 0;
         let snapshots = 0;
-        const makeFacade = () => lifecycleFacade(storage, directory, lifecyclePersistence(storage, catalog), {
-          createSessionId: () => `reserved-${++issued}`,
-          resolveSessionLaunchSelection: async () => ({ provider: "codex", model: "model", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" }),
-          prepareSessionLifecycleFiles: async (config) => {
-            if (crashed) return prepareSessionLifecycleFiles(config);
-            crashed = true;
-            const finalPath = await prepareSessionLifecycleFiles({ ...config, persistResource: async (resource) => {
-              firstResource = resource;
-              if (boundary === "before-receipt") throw new Error("simulated crash before receipt");
-              await config.persistResource(resource);
-              if (boundary === "before-publish") throw new Error("simulated crash before publish");
-            } });
-            assert.equal(finalPath, firstResource?.path);
-            throw new Error("simulated crash before DB");
-          },
-          listActiveCharacters: async () => [{ id: "azki", name: "AZKi", description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, state: "active", createdAt: "now", updatedAt: "now", archivedAt: null }],
-          createCharacterRuntimeSnapshot: async (id) => { snapshots += 1; return { characterId: id, name: id, description: "", iconFilePath: "", theme: { main: "#fff", sub: "#000" }, definitionMarkdown: "# Character", definitionSha256: "snapshot", definitionByteSize: 11, snapshotAt: "now" }; },
-          initializeCreatedSession: async (session) => { auxiliary.upsertAuxiliarySession({ ...session, id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt, composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: session.incarnationId! } }); },
-        });
-        const guiRequest = { provider: "codex", taskTitle: "Root", characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, workspace: { kind: "session-folder" as const }, clientRequestId: `gui-${boundary}` };
-        const childRequest = { requestId: `child-${boundary}`, role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, workspacePath: "C:/prepared-worktree" };
-        const invoke = (facade: MainSessionCommandFacade) => mode === "gui" ? facade.createSessionFromRequest(guiRequest)
-          : facade.createChildSession({ id: parent!.id, incarnationId: parent!.incarnationId! }, childRequest, () => {}, { providerId: "codex", executionOptions: captureSessionExecutionOptions(parent!) });
+        /** ストレージを開き直した後も、同一の要求を新しいfacadeから再送できるようにする。 */
+        const makeFacade = () =>
+          lifecycleFacade(
+            storage,
+            directory,
+            lifecyclePersistence(storage, catalog),
+            {
+              /** 固定される予約IDと再発行回数を同時に観測する。 */
+              createSessionId: () => `reserved-${++issued}`,
+              /** GUI経路の起動条件を同じカタログ設定へ固定する。 */
+              resolveSessionLaunchSelection: async () => ({
+                provider: "codex",
+                model: "model",
+                reasoningEffort: "high",
+                approvalMode: "on-request",
+                codexSandboxMode: "read-only",
+                codexSpeed: "standard",
+                codexReviewer: "user",
+                customAgentName: "",
+              }),
+              /** 最初のFiles処理を指定された境界で中断し、以降は実処理へ委ねる。 */
+              prepareSessionLifecycleFiles: async (config) => {
+                if (crashed) return prepareSessionLifecycleFiles(config);
+                crashed = true;
+                const finalPath = await prepareSessionLifecycleFiles({
+                  ...config,
+                  /** 最初のstaging記録を捕捉し、保存の前後に中断できるようにする。 */
+                  persistResource: async (resource) => {
+                    firstResource = resource;
+                    if (boundary === "before-receipt")
+                      throw new Error("simulated crash before receipt");
+                    await config.persistResource(resource);
+                    if (boundary === "before-publish")
+                      throw new Error("simulated crash before publish");
+                  },
+                });
+                assert.equal(finalPath, firstResource?.path);
+                throw new Error("simulated crash before DB");
+              },
+              /** 起点と子の準備に利用できるCharacterを一件だけにする。 */
+              listActiveCharacters: async () => [
+                {
+                  id: "azki",
+                  name: "AZKi",
+                  description: "",
+                  iconFilePath: "",
+                  theme: { main: "#fff", sub: "#000" },
+                  state: "active",
+                  createdAt: "now",
+                  updatedAt: "now",
+                  archivedAt: null,
+                },
+              ],
+              /** Account環境から定義を読まず、選定が行われた回数と内容を記録する。 */
+              createCharacterRuntimeSnapshot: async (id) => {
+                snapshots += 1;
+                return {
+                  characterId: id,
+                  name: id,
+                  description: "",
+                  iconFilePath: "",
+                  theme: { main: "#fff", sub: "#000" },
+                  definitionMarkdown: "# Character",
+                  definitionSha256: "snapshot",
+                  definitionByteSize: 11,
+                  snapshotAt: "now",
+                };
+              },
+              /** 再開時に完成したMainの初期Auxiliaryを永続化する。 */
+              initializeCreatedSession: async (session) => {
+                auxiliary.upsertAuxiliarySession({
+                  ...session,
+                  id: `${session.id}-aux`,
+                  parentSessionId: session.id,
+                  title: "Aux",
+                  runState: "idle",
+                  createdAt: session.updatedAt,
+                  composerDraft: "",
+                  displayAfterMessageIndex: null,
+                  creationContext: {
+                    generationId: "test",
+                    parentIncarnationId: session.incarnationId!,
+                  },
+                });
+              },
+            },
+          );
+        const guiRequest = {
+          provider: "codex",
+          taskTitle: "Root",
+          characterId: "azki",
+          character: "AZKi",
+          characterIconPath: "",
+          characterThemeColors: { main: "#fff", sub: "#000" },
+          workspace: { kind: "session-folder" as const },
+          clientRequestId: `gui-${boundary}`,
+        };
+        const childRequest = {
+          requestId: `child-${boundary}`,
+          role: "executor" as const,
+          provider: "codex",
+          model: "model",
+          reasoningEffort: "high" as const,
+          workspacePath: "C:/prepared-worktree",
+        };
+        /** 入口をGUIかAgentに切り替えつつ、再試行の要求と受付キーは変えない。 */
+        const invoke = (facade: MainSessionCommandFacade) =>
+          mode === "gui"
+            ? facade.createSessionFromRequest(guiRequest)
+            : facade.createChildSession(
+                { id: parent!.id, incarnationId: parent!.incarnationId! },
+                childRequest,
+                () => {},
+                {
+                  providerId: "codex",
+                  executionOptions: captureSessionExecutionOptions(parent!),
+                },
+              );
         await assert.rejects(invoke(makeFacade()), /simulated crash/);
         const pending = storage.listPendingSessionLifecycleOperations()[0];
         const target = pending.targets[0].id;
@@ -593,28 +1547,55 @@ it("converges GUI and child creation across each staging publication crash bound
           assert.equal(pending.resources.length, 0);
           assert.deepEqual(await readdir(firstResource.stagingPath), []);
         } else {
-          assert.equal(pending.resources[0].stagingPath, firstResource.stagingPath);
+          assert.equal(
+            pending.resources[0].stagingPath,
+            firstResource.stagingPath,
+          );
         }
         storage.close();
         storage = new SessionStorageV6(dbPath);
         const recovered = await invoke(makeFacade());
         assert.equal(recovered.id, target);
-        const complete = storage.getSessionLifecycleOperation(pending.operationId)!;
+        const complete = storage.getSessionLifecycleOperation(
+          pending.operationId,
+        )!;
         assert.equal(complete.phase, "complete");
         assert.equal(complete.resources[0].path, firstResource.path);
-        const actual = await captureSessionLifecycleResource(complete.resources[0].path);
-        assert.deepEqual([actual.device, actual.inode], [complete.resources[0].device, complete.resources[0].inode]);
-        if (boundary !== "before-receipt") assert.equal(actual.inode, firstResource.inode);
+        const actual = await captureSessionLifecycleResource(
+          complete.resources[0].path,
+        );
+        assert.deepEqual(
+          [actual.device, actual.inode],
+          [complete.resources[0].device, complete.resources[0].inode],
+        );
+        if (boundary !== "before-receipt")
+          assert.equal(actual.inode, firstResource.inode);
         else {
-          assert.notEqual(complete.resources[0].stagingPath, firstResource.stagingPath);
+          assert.notEqual(
+            complete.resources[0].stagingPath,
+            firstResource.stagingPath,
+          );
           assert.deepEqual(await readdir(firstResource.stagingPath), []);
         }
-        assert.equal(auxiliary.listAuxiliarySessionSummaries([target]).length, 1);
-        assert.equal(storage.listSessionSummaries().filter((session) => session.id === target).length, 1);
-        assert.equal((await invoke(makeFacade())).incarnationId, recovered.incarnationId);
+        assert.equal(
+          auxiliary.listAuxiliarySessionSummaries([target]).length,
+          1,
+        );
+        assert.equal(
+          storage
+            .listSessionSummaries()
+            .filter((session) => session.id === target).length,
+          1,
+        );
+        assert.equal(
+          (await invoke(makeFacade())).incarnationId,
+          recovered.incarnationId,
+        );
         if (mode === "child") assert.equal(snapshots, 1);
       } finally {
-        auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true });
+        auxiliary.close();
+        storage.close();
+        await rm(directory, { recursive: true, force: true });
       }
     }
   }

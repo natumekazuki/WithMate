@@ -1,19 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { DiscoveredSkill, DiscoveredSkillSource } from "../../src-shared/session/runtime-state.js";
+import type {
+  DiscoveredSkill,
+  DiscoveredSkillSource,
+} from "../../src-shared/session/runtime-state.js";
 
+/** 探索ディレクトリと、検出したスキルに付ける出所情報。 */
 type SkillRoot = {
   rootPath: string;
   source: DiscoveredSkillSource;
   sourceLabel: string;
 };
 
+/** ルート直下の変更を検出する照合値と、そのルートで見つけたスキル。 */
 type CachedSkillRoot = {
   fingerprint: string;
   skills: DiscoveredSkill[];
 };
 
+/** 探索対象全体の照合値と、重複解消・整列済みのスキル一覧。 */
 type CachedSkillDiscovery = {
   fingerprint: string;
   skills: DiscoveredSkill[];
@@ -32,10 +38,12 @@ const WORKSPACE_SKILL_ROOT_CANDIDATES = [
 const skillRootCache = new Map<string, CachedSkillRoot>();
 const skillDiscoveryCache = new Map<string, CachedSkillDiscovery>();
 
+/** 表示パスや識別子に使う区切りをスラッシュに統一する。 */
 function normalizeSlashes(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
+/** ワークスペース配下で探索する既定のディレクトリと出所ラベルを組み立てる。 */
 function buildWorkspaceSkillRoots(workspacePath: string): SkillRoot[] {
   return WORKSPACE_SKILL_ROOT_CANDIDATES.map((relativePath) => ({
     rootPath: path.join(workspacePath, relativePath),
@@ -44,6 +52,7 @@ function buildWorkspaceSkillRoots(workspacePath: string): SkillRoot[] {
   }));
 }
 
+/** 先頭メタデータの指定キーから単一行の値を取得し、値がなければ空文字列を返す。 */
 function parseFrontmatterValue(frontmatter: string, key: string): string {
   const match = new RegExp(`^${key}:\\s*(.+)$`, "m").exec(frontmatter);
   if (!match) {
@@ -53,7 +62,10 @@ function parseFrontmatterValue(frontmatter: string, key: string): string {
   return match[1].trim().replace(/^['"]|['"]$/g, "");
 }
 
-async function parseSkillMarkdown(skillFilePath: string): Promise<{ name: string; description: string }> {
+/** SKILL.md の先頭メタデータから名前と説明を読み取る。先頭にメタデータがなければ両方を空にする。 */
+async function parseSkillMarkdown(
+  skillFilePath: string,
+): Promise<{ name: string; description: string }> {
   const markdown = await fs.promises.readFile(skillFilePath, "utf8");
   const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown);
   if (frontmatterMatch) {
@@ -70,30 +82,45 @@ async function parseSkillMarkdown(skillFilePath: string): Promise<{ name: string
   };
 }
 
-function toDisplayPath(workspacePath: string, source: DiscoveredSkillSource, skillDirectoryPath: string): string {
+/** ワークスペース内のスキルは相対パスで表示し、範囲外やプロバイダー由来のスキルは元のパスを使う。 */
+function toDisplayPath(
+  workspacePath: string,
+  source: DiscoveredSkillSource,
+  skillDirectoryPath: string,
+): string {
   if (source !== "workspace") {
     return normalizeSlashes(skillDirectoryPath);
   }
 
   const relativePath = path.relative(workspacePath, skillDirectoryPath);
-  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
     return normalizeSlashes(skillDirectoryPath);
   }
 
   return normalizeSlashes(relativePath);
 }
 
+/** 出所・出所ラベル・絶対パスを組み合わせてルート別キャッシュを区別する。 */
 function getSkillRootCacheKey(root: SkillRoot): string {
   return `${root.source}:${root.sourceLabel}:${normalizeSlashes(path.resolve(root.rootPath))}`;
 }
 
-function getSkillDiscoveryCacheKey(workspacePath: string, providerSkillRootPath: string | null): string {
+/** ワークスペースとプロバイダー側の探索ルートの組み合わせをキャッシュキーにする。 */
+function getSkillDiscoveryCacheKey(
+  workspacePath: string,
+  providerSkillRootPath: string | null,
+): string {
   return [
     normalizeSlashes(path.resolve(workspacePath)),
     normalizeSlashes(path.resolve(providerSkillRootPath?.trim() || ".")),
   ].join("|");
 }
 
+/** ファイル情報を取得し、取得に失敗した場合は存在しない場合と同様に扱う。 */
 async function statFileIfExists(filePath: string): Promise<fs.Stats | null> {
   try {
     return await fs.promises.stat(filePath);
@@ -102,6 +129,7 @@ async function statFileIfExists(filePath: string): Promise<fs.Stats | null> {
   }
 }
 
+/** 探索ルートと直下の各ディレクトリ・SKILL.md の更新時刻やサイズを照合値にし、列挙順の違いを無視する。 */
 async function buildSkillRootFingerprint(rootPath: string): Promise<string> {
   const rootStats = await statFileIfExists(rootPath);
   if (!rootStats?.isDirectory()) {
@@ -109,43 +137,52 @@ async function buildSkillRootFingerprint(rootPath: string): Promise<string> {
   }
 
   const entries = await fs.promises.readdir(rootPath, { withFileTypes: true });
-  const entryFingerprints = await Promise.all(entries
-    .filter((entry) => entry.isDirectory())
-    .map(async (entry) => {
-      const skillDirectoryPath = path.join(rootPath, entry.name);
-      const skillDirectoryStats = await statFileIfExists(skillDirectoryPath);
-      const skillFilePath = path.join(skillDirectoryPath, "SKILL.md");
-      const skillFileStats = await statFileIfExists(skillFilePath);
-      const skillFingerprint = skillFileStats?.isFile()
-        ? `file:${skillFileStats.mtimeMs}:${skillFileStats.size}`
-        : "missing";
+  const entryFingerprints = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const skillDirectoryPath = path.join(rootPath, entry.name);
+        const skillDirectoryStats = await statFileIfExists(skillDirectoryPath);
+        const skillFilePath = path.join(skillDirectoryPath, "SKILL.md");
+        const skillFileStats = await statFileIfExists(skillFilePath);
+        const skillFingerprint = skillFileStats?.isFile()
+          ? `file:${skillFileStats.mtimeMs}:${skillFileStats.size}`
+          : "missing";
 
-      return [
-        entry.name,
-        skillDirectoryStats?.mtimeMs ?? 0,
-        skillDirectoryStats?.size ?? 0,
-        skillFingerprint,
-      ].join(":");
-    }));
+        return [
+          entry.name,
+          skillDirectoryStats?.mtimeMs ?? 0,
+          skillDirectoryStats?.size ?? 0,
+          skillFingerprint,
+        ].join(":");
+      }),
+  );
 
-  return [
-    rootStats.mtimeMs,
-    rootStats.size,
-    ...entryFingerprints.sort(),
-  ].join("|");
+  return [rootStats.mtimeMs, rootStats.size, ...entryFingerprints.sort()].join(
+    "|",
+  );
 }
 
+/** 呼び出し側で項目を書き換えてもキャッシュを汚さないよう、一覧と各項目を複製する。 */
 function cloneSkills(skills: DiscoveredSkill[]): DiscoveredSkill[] {
   return skills.map((skill) => ({ ...skill }));
 }
 
-async function discoverSkillsInRoot(workspacePath: string, root: SkillRoot): Promise<DiscoveredSkill[]> {
-  const rootStats = root.rootPath ? await statFileIfExists(root.rootPath) : null;
+/** ルートの直下から SKILL.md を持つディレクトリを列挙し、名前が空ならディレクトリ名を使う。 */
+async function discoverSkillsInRoot(
+  workspacePath: string,
+  root: SkillRoot,
+): Promise<DiscoveredSkill[]> {
+  const rootStats = root.rootPath
+    ? await statFileIfExists(root.rootPath)
+    : null;
   if (!rootStats?.isDirectory()) {
     return [];
   }
 
-  const entries = await fs.promises.readdir(root.rootPath, { withFileTypes: true });
+  const entries = await fs.promises.readdir(root.rootPath, {
+    withFileTypes: true,
+  });
   const skills: DiscoveredSkill[] = [];
 
   for (const entry of entries) {
@@ -175,6 +212,7 @@ async function discoverSkillsInRoot(workspacePath: string, root: SkillRoot): Pro
   return skills;
 }
 
+/** ルートの照合値が一致する場合はキャッシュの複製を返し、変化したルートだけ再探索する。 */
 async function discoverSkillsInRootCached(
   workspacePath: string,
   root: SkillRoot,
@@ -201,6 +239,7 @@ async function discoverSkillsInRootCached(
   };
 }
 
+/** 名前の前後の空白と大小文字を無視して重複を解消し、ワークスペース由来を優先して出所・名前順に並べる。 */
 function dedupeAndSortSkills(discovered: DiscoveredSkill[]): DiscoveredSkill[] {
   const deduped = new Map<string, DiscoveredSkill>();
 
@@ -226,6 +265,7 @@ function dedupeAndSortSkills(discovered: DiscoveredSkill[]): DiscoveredSkill[] {
   });
 }
 
+/** ワークスペースと指定されたプロバイダー側を探索し、ルートの照合値が変わらない場合は統合済み一覧を再利用する。 */
 export async function discoverSessionSkills(
   workspacePath: string,
   providerSkillRootPath: string | null,
@@ -244,15 +284,24 @@ export async function discoverSessionSkills(
       : []),
   ];
 
-  const rootResults = await Promise.all(roots.map((root) => discoverSkillsInRootCached(workspacePath, root)));
-  const fingerprint = rootResults.map((result) => result.fingerprint).join("||");
-  const cacheKey = getSkillDiscoveryCacheKey(workspacePath, providerSkillRootPath);
+  const rootResults = await Promise.all(
+    roots.map((root) => discoverSkillsInRootCached(workspacePath, root)),
+  );
+  const fingerprint = rootResults
+    .map((result) => result.fingerprint)
+    .join("||");
+  const cacheKey = getSkillDiscoveryCacheKey(
+    workspacePath,
+    providerSkillRootPath,
+  );
   const cached = skillDiscoveryCache.get(cacheKey);
   if (cached?.fingerprint === fingerprint) {
     return cloneSkills(cached.skills);
   }
 
-  const skills = dedupeAndSortSkills(rootResults.flatMap((result) => result.skills));
+  const skills = dedupeAndSortSkills(
+    rootResults.flatMap((result) => result.skills),
+  );
   skillDiscoveryCache.set(cacheKey, {
     fingerprint,
     skills: cloneSkills(skills),

@@ -2,46 +2,113 @@ import { useLayoutEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
-import type { MarkdownImageContext, MarkdownImageResolver } from "../../ui/markdown/image-resource-loader.js";
+import type {
+  MarkdownImageContext,
+  MarkdownImageResolver,
+} from "../../ui/markdown/image-resource-loader.js";
 import { ButtonContent } from "../../ui/button-content.js";
-import type { SessionTurnQueueActionKind, SessionTurnQueueMoveDirection } from "./use-session-turn-queue.js";
+import type {
+  SessionTurnQueueActionKind,
+  SessionTurnQueueMoveDirection,
+} from "./use-session-turn-queue.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import {
+  useTurnInputRead,
+  TurnInputOriginAvatar,
+  SessionOriginRoute,
+  type TurnInputReadContext,
+} from "./turn-input-details.js";
 import { ReplyQuote } from "./reply-quote.js";
 import { getQueuedSourceWaitState } from "./queued-source-wait.js";
-import { CoordinationNotice, ReceivedCoordinationContent } from "./coordination-notice.js";
-import { isFailedTurnReceipt, turnReceiptFailureReason } from "./session-turn-queue-projection.js";
+import {
+  CoordinationNotice,
+  ReceivedCoordinationContent,
+} from "./coordination-notice.js";
+import {
+  isFailedTurnReceipt,
+  turnReceiptFailureReason,
+} from "./session-turn-queue-projection.js";
 
-export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
-  return <><article className="message-row user" data-message-source="turn-submission">
-    <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={submission.userMessage} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} markdownLinkFileContext={markdownImageContext} />
-      {submission.error ? submission.uncertain ? <p className="pending-run-error-note" role="alert">{submission.error}</p> : null
-        : <LoadingIndicator inline label="Queued turn" />}
-    </div></div>
-  </article>
-    {submission.error && !submission.uncertain ? <SessionRunFailureRow reason={submission.error} character={character} /> : null}
-  </>;
+/** ローカル送信の本文を表示し、受理不明の案内と確定した失敗の応答行を分ける。 */
+export function SessionTurnSubmissionRow({
+  submission,
+  resolveImageSource,
+  markdownImageContext,
+  character,
+}: {
+  submission: SessionTurnSubmission;
+  character: CharacterVisual;
+  resolveImageSource?: MarkdownImageResolver;
+  markdownImageContext?: MarkdownImageContext;
+}) {
+  return (
+    <>
+      <article
+        className="message-row user"
+        data-message-source="turn-submission"
+      >
+        <div className="message-card user">
+          <div className="message-card-content">
+            <MessageRichText
+              text={submission.userMessage}
+              resolveImageSource={resolveImageSource}
+              markdownImageContext={markdownImageContext}
+              markdownLinkFileContext={markdownImageContext}
+            />
+            {submission.error ? (
+              submission.uncertain ? (
+                <p className="pending-run-error-note" role="alert">
+                  {submission.error}
+                </p>
+              ) : null
+            ) : (
+              <LoadingIndicator inline label="Queued turn" />
+            )}
+          </div>
+        </div>
+      </article>
+      {submission.error && !submission.uncertain ? (
+        <SessionRunFailureRow reason={submission.error} character={character} />
+      ) : null}
+    </>
+  );
 }
 
+/** 予約中の受付だけに操作欄を出し、処理開始後や終了後は操作できないようにする。 */
 export function SessionTurnQueueStatus(props: {
-  receipt: SessionTurnQueueReceipt; position?: number; busy: boolean;
+  receipt: SessionTurnQueueReceipt;
+  position?: number;
+  busy: boolean;
   queueSize?: number;
   moveDisabled?: boolean;
   busyKind?: SessionTurnQueueActionKind | null;
   onCancel: (receipt: SessionTurnQueueReceipt) => void;
   onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
-  onMove?: (receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => void;
+  onMove?: (
+    receipt: SessionTurnQueueReceipt,
+    direction: SessionTurnQueueMoveDirection,
+  ) => void;
 }) {
   if (props.receipt.state !== "queued") return null;
   return <SessionTurnQueueControls {...props} />;
 }
 
-function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
+/** 予約行の操作ボタンを出し、並べ替えや行の取り外し後も操作フォーカスの行き先を保つ。 */
+function SessionTurnQueueControls({
+  receipt,
+  position,
+  queueSize,
+  busy,
+  busyKind,
+  onCancel,
+  onSendInput,
+  onMove,
+  moveDisabled,
+}: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const editor = useQueuedTurnEditContext();
   const editing = editor?.edits[receipt.sessionId];
   const editableInput = !receipt.captured.coordination;
@@ -53,7 +120,9 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     if (!button || busy) return;
     const active = button.ownerDocument.activeElement;
     if (active === button || active === button.ownerDocument.body) {
-      (button.disabled ? statusRef.current : button)?.focus({ preventScroll: true });
+      (button.disabled ? statusRef.current : button)?.focus({
+        preventScroll: true,
+      });
     }
     moveFocus.current = null;
   }, [busy, position]);
@@ -63,7 +132,11 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     return () => {
       if (!status || !list?.isConnected) return;
       const { activeElement, body } = status.ownerDocument;
-      if (status.contains(activeElement) || steerFocus.current && activeElement === body) list.focus({ preventScroll: true });
+      if (
+        status.contains(activeElement) ||
+        (steerFocus.current && activeElement === body)
+      )
+        list.focus({ preventScroll: true });
     };
   }, []);
   useLayoutEffect(() => {
@@ -71,49 +144,228 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   }, [busyKind]);
   const sourceWaitState = getQueuedSourceWaitState(receipt);
   const waitingForSource = sourceWaitState !== null;
-  return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role="group" aria-label={position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`}>
-    {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
-    {sourceWaitState === "unknown" ? <span className="session-turn-queue-reason">Source Turn State Unknown</span> : null}
-    {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
-      {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
-        title={direction === "up" ? "Move Up" : "Move Down"} aria-label={`Move queued turn ${position} ${direction}`} data-queue-move={direction}
-        disabled={busy || moveDisabled || (direction === "up" ? position === 1 : position === queueSize)} aria-busy={busyKind === `move-${direction}` || undefined}
-        onClick={(event) => { moveFocus.current = event.currentTarget; onMove(receipt, direction); }}>
-        <ButtonContent busy={busyKind === `move-${direction}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={direction === "up" ? "M12 20V4m-6 6 6-6 6 6" : "M12 4v16m-6-6 6 6 6-6"} /></svg></ButtonContent>
-      </button>)}
-    </span> : null}
-    {receipt.state === "queued" && editableInput && !receipt.captured.retrySource && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={(event) => {
-      steerFocus.current = event.currentTarget === event.currentTarget.ownerDocument.activeElement;
-      onSendInput(receipt);
-    }}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
-    {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
-    {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
-  </div>;
+  return (
+    <div
+      ref={statusRef}
+      className="session-turn-queue-status"
+      data-queue-receipt-id={receipt.id}
+      tabIndex={onMove ? -1 : undefined}
+      role="group"
+      aria-label={
+        position === undefined
+          ? "Queued turn"
+          : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`
+      }
+    >
+      {receipt.reason ? (
+        <span className="session-turn-queue-reason">{receipt.reason}</span>
+      ) : null}
+      {sourceWaitState === "unknown" ? (
+        <span className="session-turn-queue-reason">
+          Source Turn State Unknown
+        </span>
+      ) : null}
+      {receipt.state === "queued" &&
+      onMove &&
+      position !== undefined &&
+      queueSize !== undefined ? (
+        <span
+          className="session-turn-queue-move"
+          role="group"
+          aria-label="Change execution order"
+        >
+          {(["up", "down"] as const).map((direction) => (
+            <button
+              key={direction}
+              className="drawer-toggle compact secondary session-turn-queue-move-button"
+              type="button"
+              title={direction === "up" ? "Move Up" : "Move Down"}
+              aria-label={`Move queued turn ${position} ${direction}`}
+              data-queue-move={direction}
+              disabled={
+                busy ||
+                moveDisabled ||
+                (direction === "up" ? position === 1 : position === queueSize)
+              }
+              aria-busy={busyKind === `move-${direction}` || undefined}
+              onClick={(event) => {
+                moveFocus.current = event.currentTarget;
+                onMove(receipt, direction);
+              }}
+            >
+              <ButtonContent busy={busyKind === `move-${direction}`}>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path
+                    d={
+                      direction === "up"
+                        ? "M12 20V4m-6 6 6-6 6 6"
+                        : "M12 4v16m-6-6 6 6 6-6"
+                    }
+                  />
+                </svg>
+              </ButtonContent>
+            </button>
+          ))}
+        </span>
+      ) : null}
+      {receipt.state === "queued" &&
+      editableInput &&
+      !receipt.captured.retrySource &&
+      onSendInput ? (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          title="Send this message to the current turn"
+          disabled={
+            busy ||
+            waitingForSource ||
+            (!!editing && editing.receipt.id === receipt.id)
+          }
+          aria-busy={busyKind === "input" || undefined}
+          onClick={(event) => {
+            steerFocus.current =
+              event.currentTarget ===
+              event.currentTarget.ownerDocument.activeElement;
+            onSendInput(receipt);
+          }}
+        >
+          <ButtonContent busy={busyKind === "input"}>Steer</ButtonContent>
+        </button>
+      ) : null}
+      {receipt.state === "queued" && editableInput && editor ? (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          title="Edit queued message"
+          disabled={busy || moveDisabled || !!editing}
+          onClick={() => editor.begin(receipt)}
+        >
+          Edit
+        </button>
+      ) : null}
+      {receipt.state === "queued" ? (
+        <button
+          className="drawer-toggle compact secondary"
+          type="button"
+          aria-label={
+            position === undefined
+              ? "Cancel queued turn"
+              : `Cancel queued turn ${position}`
+          }
+          disabled={busy || (!!editing && editing.receipt.id === receipt.id)}
+          aria-busy={busyKind === "cancel" || undefined}
+          onClick={() => onCancel(receipt)}
+        >
+          <ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent>
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext; inputReadContext?: TurnInputReadContext }) {
-  const message = { role: "user" as const, text: props.receipt.captured.request.userMessage };
-  const read = useTurnInputRead({ message, receipt: props.receipt, context: props.inputReadContext });
+/** 履歴行に収束していない受付の入力を送信元・返信とともに描画し、失敗時は理由を応答行に出す。 */
+export function SessionTurnQueueRow(
+  props: Parameters<typeof SessionTurnQueueStatus>[0] & {
+    character: CharacterVisual;
+    resolveImageSource?: MarkdownImageResolver;
+    markdownImageContext?: MarkdownImageContext;
+    inputReadContext?: TurnInputReadContext;
+  },
+) {
+  const message = {
+    role: "user" as const,
+    text: props.receipt.captured.request.userMessage,
+  };
+  const read = useTurnInputRead({
+    message,
+    receipt: props.receipt,
+    context: props.inputReadContext,
+  });
   const origin = read.displayOrigin;
   const isSessionOrigin = origin?.kind === "session";
   const theme = isSessionOrigin ? read.senderTheme : null;
   const role = isSessionOrigin ? "session-origin" : "user";
-  return <><article className={`message-row ${role}`} data-message-source="turn-queue">
-    {isSessionOrigin ? <TurnInputOriginAvatar read={read} origin={origin} /> : null}
-    <div className={`message-card ${role}${theme ? " has-sender-theme" : ""}`}
-      style={theme ? { "--sender-main": theme.main } as CSSProperties : undefined}><div className="message-card-content">
-      {isSessionOrigin ? <SessionOriginRoute origin={origin} onError={read.setReadError} /> : null}
-      {props.receipt.captured.request.replyTo && props.inputReadContext ? <ReplyQuote ownerSessionId={props.inputReadContext.ownerSessionId} reference={props.receipt.captured.request.replyTo} /> : null}
-      {read.coordination && props.inputReadContext ? <>
-        <CoordinationNotice id={read.coordination.id} consultation={read.coordination.consultation ?? read.text} target={props.inputReadContext.target} />
-        <ReceivedCoordinationContent text={read.text} consultation={read.coordination.consultation}>
-          <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
-        </ReceivedCoordinationContent>
-      </> : <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />}
-      {read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
-      <SessionTurnQueueStatus {...props} />
-    </div></div>
-  </article>
-    {isFailedTurnReceipt(props.receipt) ? <SessionRunFailureRow reason={turnReceiptFailureReason(props.receipt)} character={props.character} /> : null}
-  </>;
+  return (
+    <>
+      <article
+        className={`message-row ${role}`}
+        data-message-source="turn-queue"
+      >
+        {isSessionOrigin ? (
+          <TurnInputOriginAvatar read={read} origin={origin} />
+        ) : null}
+        <div
+          className={`message-card ${role}${theme ? " has-sender-theme" : ""}`}
+          style={
+            theme
+              ? ({ "--sender-main": theme.main } as CSSProperties)
+              : undefined
+          }
+        >
+          <div className="message-card-content">
+            {isSessionOrigin ? (
+              <SessionOriginRoute origin={origin} onError={read.setReadError} />
+            ) : null}
+            {props.receipt.captured.request.replyTo &&
+            props.inputReadContext ? (
+              <ReplyQuote
+                ownerSessionId={props.inputReadContext.ownerSessionId}
+                reference={props.receipt.captured.request.replyTo}
+              />
+            ) : null}
+            {read.coordination && props.inputReadContext ? (
+              <>
+                <CoordinationNotice
+                  id={read.coordination.id}
+                  consultation={read.coordination.consultation ?? read.text}
+                  target={props.inputReadContext.target}
+                />
+                <ReceivedCoordinationContent
+                  text={read.text}
+                  consultation={read.coordination.consultation}
+                >
+                  <MessageRichText
+                    text={read.text}
+                    resolveImageSource={props.resolveImageSource}
+                    markdownImageContext={props.markdownImageContext}
+                    markdownLinkFileContext={props.markdownImageContext}
+                  />
+                </ReceivedCoordinationContent>
+              </>
+            ) : (
+              <MessageRichText
+                text={read.text}
+                resolveImageSource={props.resolveImageSource}
+                markdownImageContext={props.markdownImageContext}
+                markdownLinkFileContext={props.markdownImageContext}
+              />
+            )}
+            {read.readError ? (
+              <p className="pending-run-error-note" role="alert">
+                {read.readError}
+              </p>
+            ) : null}
+            <SessionTurnQueueStatus {...props} />
+          </div>
+        </div>
+      </article>
+      {isFailedTurnReceipt(props.receipt) ? (
+        <SessionRunFailureRow
+          reason={turnReceiptFailureReason(props.receipt)}
+          character={props.character}
+        />
+      ) : null}
+    </>
+  );
 }

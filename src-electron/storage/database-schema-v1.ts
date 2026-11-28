@@ -1,12 +1,16 @@
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 
+/** 初期形式のアプリDBを識別するファイル名。 */
 export const APP_DATABASE_V1_FILENAME = "withmate.db";
+/** 初期形式を識別するスキーマ版番号。 */
 export const APP_DATABASE_V1_SCHEMA_VERSION = 1;
 
+/** 単一引用符を二重化し、DDLに既定値として埋め込めるSQL文字列リテラルを返す。 */
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** 設定をキー単位で値と更新時刻とともに保持するV1のDDL。 */
 export const CREATE_APP_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT PRIMARY KEY,
@@ -15,6 +19,7 @@ export const CREATE_APP_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 実行設定・会話本文・旧ストリームをSession行にまとめて保持するV1のDDL。 */
 export const CREATE_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -49,6 +54,7 @@ export const CREATE_SESSIONS_TABLE_SQL = `
   );
 `;
 
+/** 初期のSession表に不足する列を補うための型・既定値の定義。 */
 export const LEGACY_SESSION_COLUMN_DEFINITIONS = {
   model: `TEXT NOT NULL DEFAULT ${sqlStringLiteral("gpt-5.4")}`,
   reasoning_effort: `TEXT NOT NULL DEFAULT ${sqlStringLiteral("high")}`,
@@ -63,6 +69,7 @@ export const LEGACY_SESSION_COLUMN_DEFINITIONS = {
   source_schema_version: "INTEGER NOT NULL DEFAULT 4",
 } as const;
 
+/** モデル一覧を取得元の版ごとに保持し、版の削除時には配下のプロバイダーとモデルも削除するV1のDDL。 */
 export const CREATE_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +101,7 @@ export const CREATE_MODEL_CATALOG_TABLES_SQL = `
   );
 `;
 
+/** 旧SessionメモリをSessionに一対一で紐付け、親Sessionの削除に追従させるV1のDDL。 */
 export const CREATE_SESSION_MEMORIES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_memories (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
@@ -109,6 +117,7 @@ export const CREATE_SESSION_MEMORIES_TABLE_SQL = `
   );
 `;
 
+/** 旧Projectメモリをスコープと分類で検索できるようにし、元Sessionが消えても記録自体は保持するV1のDDL。 */
 export const CREATE_PROJECT_MEMORY_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS project_scopes (
     id TEXT PRIMARY KEY,
@@ -143,6 +152,7 @@ export const CREATE_PROJECT_MEMORY_TABLES_SQL = `
     ON project_memory_entries(project_scope_id, category, updated_at DESC);
 `;
 
+/** 旧CharacterメモリをCharacterごとのスコープに紐付け、元Session削除時は参照だけ外すV1のDDL。 */
 export const CREATE_CHARACTER_MEMORY_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS character_scopes (
     id TEXT PRIMARY KEY,

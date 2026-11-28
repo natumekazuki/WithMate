@@ -17,9 +17,17 @@ import { PdfFilePreview, type PdfFilePreviewHandle } from "./PdfFilePreview.js";
 import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
 import { HtmlPreview } from "../ui/html-preview/HtmlPreview.js";
 import { useMarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
-import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
+import {
+  AppNotification,
+  type AppNotificationState,
+} from "../ui/app-notification.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
-import { ImageViewport, ImageZoomControls, resolveVisibleImageCopyPoint, useImageViewport } from "../ui/image-viewport.js";
+import {
+  ImageViewport,
+  ImageZoomControls,
+  resolveVisibleImageCopyPoint,
+  useImageViewport,
+} from "../ui/image-viewport.js";
 import { SelectionTextActionSurface } from "../chat/conversation/session-message-column.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
@@ -83,6 +91,7 @@ import {
   type StructuredTextProjection,
 } from "./structured-text-preview.js";
 
+/** ファイルの検査・読み込みと、開く・コピーする等のホスト操作に使うIPCの部分契約。 */
 type FilePreviewApi = Pick<
   WithMateWindowApi,
   | "inspectSessionFile"
@@ -98,6 +107,7 @@ type FilePreviewApi = Pick<
   | "copySessionFileObject"
 >;
 
+/** プレビュー対象の要求と、遷移・コピー・引用・差分表示を親と連携するための入力。 */
 type SessionFilePreviewProps = {
   api: FilePreviewApi | null;
   request: SessionFilePreviewResourceRequest;
@@ -113,28 +123,51 @@ type SessionFilePreviewProps = {
   diffAvailabilityMessage?: string;
 };
 
+/** 内容の読み込みが終わったファイルの記述子と生バイト列。 */
 type LoadedFile = {
   descriptor: SessionFileDescriptor;
   bytes: Uint8Array;
 };
 
+/** 検査、大容量の確認、進捗、準備完了、失敗を区別する。本体を表示しない形式は準備完了でもバイト列を持たない。 */
 type FileLoadState =
   | { status: "inspecting" }
   | { status: "large-warning"; descriptor: SessionFileDescriptor }
-  | { status: "loading"; descriptor: SessionFileDescriptor; loadedBytes: number }
-  | { status: "ready"; loaded: LoadedFile | null; descriptor: SessionFileDescriptor }
+  | {
+      status: "loading";
+      descriptor: SessionFileDescriptor;
+      loadedBytes: number;
+    }
+  | {
+      status: "ready";
+      loaded: LoadedFile | null;
+      descriptor: SessionFileDescriptor;
+    }
   | { status: "error"; message: string };
 
-type PreviewAction = "open" | "reveal" | "copy-file" | "copy-image" | "context-menu" | "open-path" | "open-diff" | "load";
+/** プレビューツールバーなどで同時実行を制限する操作の種類。 */
+type PreviewAction =
+  | "open"
+  | "reveal"
+  | "copy-file"
+  | "copy-image"
+  | "context-menu"
+  | "open-path"
+  | "open-diff"
+  | "load";
 
+/** 構造化テキストを整形できなかった理由を開閉可能な詳細に表示する。 */
 function StructuredTextErrorDetails({ message }: { message: string }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   return (
-    <span className="session-file-format-error" onKeyDown={(event) => {
-      if (open && event.key === "Escape") event.stopPropagation();
-    }}>
+    <span
+      className="session-file-format-error"
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") event.stopPropagation();
+      }}
+    >
       <button
         ref={trigger}
         className="session-file-explorer-refresh"
@@ -146,15 +179,47 @@ function StructuredTextErrorDetails({ message }: { message: string }) {
         aria-haspopup="dialog"
         aria-controls={id}
       >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" />
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v6m0 3v1" />
         </svg>
       </button>
-      <span id={id} popover="auto" role="dialog" aria-label="Formatting Error Details"
-        className="session-file-format-error-details" onToggle={(event) => setOpen(event.newState === "open")}>
-        <button className="session-file-explorer-refresh" type="button" popoverTarget={id} popoverTargetAction="hide"
-          aria-label="Close Formatting Error Details" title="Close Formatting Error Details" onClick={() => trigger.current?.focus()}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
+      <span
+        id={id}
+        popover="auto"
+        role="dialog"
+        aria-label="Formatting Error Details"
+        className="session-file-format-error-details"
+        onToggle={(event) => setOpen(event.newState === "open")}
+      >
+        <button
+          className="session-file-explorer-refresh"
+          type="button"
+          popoverTarget={id}
+          popoverTargetAction="hide"
+          aria-label="Close Formatting Error Details"
+          title="Close Formatting Error Details"
+          onClick={() => trigger.current?.focus()}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            aria-hidden="true"
+            focusable="false"
+          >
             <path d="m6 6 12 12M18 6 6 18" />
           </svg>
         </button>
@@ -164,23 +229,27 @@ function StructuredTextErrorDetails({ message }: { message: string }) {
   );
 }
 
+/** 原文と形式に対応する整形結果を保持する。失敗時も取得できた原文の着色は表示に使える。 */
 type StructuredTextProjectionState =
   | { status: "idle" | "loading" }
   | {
-    status: "ready";
-    sourceText: string;
-    format: StructuredTextFormat;
-    projection: StructuredTextProjection;
-  }
+      status: "ready";
+      sourceText: string;
+      format: StructuredTextFormat;
+      projection: StructuredTextProjection;
+    }
   | {
-    status: "error";
-    sourceText: string;
-    format: StructuredTextFormat;
-    message: string;
-    rawTokens: PreviewSyntaxToken[][] | null;
-  };
+      status: "error";
+      sourceText: string;
+      format: StructuredTextFormat;
+      message: string;
+      rawTokens: PreviewSyntaxToken[][] | null;
+    };
 
-const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
+const ENCODING_OPTIONS: Array<{
+  value: SessionFileEncodingSelection;
+  label: string;
+}> = [
   { value: "auto", label: "Auto" },
   { value: "utf-8", label: "UTF-8" },
   { value: "shift_jis", label: "Shift_JIS (Windows-31J)" },
@@ -188,12 +257,14 @@ const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: stri
   { value: "utf-16be", label: "UTF-16 BE" },
 ];
 
+/** バイト範囲だけを独立したArrayBufferへ複製する。元バッファの前後のデータは含めない。 */
 function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
 }
 
+/** 記述子の版と長さを前提に内容を読み切る。対象が切り替わった場合や読み込み位置・全体長が変わった場合は中止する。 */
 async function readWholeResource(
   api: Pick<FilePreviewApi, "readSessionFileChunk">,
   descriptor: SessionFileDescriptor,
@@ -202,7 +273,8 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource: SessionFilePreviewResourceRequest = isSessionFileGitCommitResource(descriptor)
+  const resource: SessionFilePreviewResourceRequest =
+    isSessionFileGitCommitResource(descriptor)
       ? {
           resourceKind: "git-commit-file",
           sessionId: descriptor.sessionId,
@@ -212,22 +284,28 @@ async function readWholeResource(
           relativePath: descriptor.relativePath,
         }
       : {
-        sessionId: descriptor.sessionId,
-        absolutePath: descriptor.absoluteFilePath,
-      };
+          sessionId: descriptor.sessionId,
+          absolutePath: descriptor.absoluteFilePath,
+        };
   while (offset < descriptor.byteLength) {
     const result = await api.readSessionFileChunk({
       ...resource,
       offset,
       length: isSessionFileGitCommitResource(resource)
         ? descriptor.byteLength - offset
-        : Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
+        : Math.min(
+            SESSION_FILE_READ_CHUNK_BYTES,
+            descriptor.byteLength - offset,
+          ),
       expectedRevision: descriptor.revision,
     });
     if (!isCurrent()) {
       throw new Error("File load was replaced.");
     }
-    if (result.offset !== offset || result.totalBytes !== descriptor.byteLength) {
+    if (
+      result.offset !== offset ||
+      result.totalBytes !== descriptor.byteLength
+    ) {
       throw new Error("File contents changed while they were being read.");
     }
     accumulator.append(new Uint8Array(result.data));
@@ -240,6 +318,7 @@ async function readWholeResource(
   return accumulator.finish(descriptor.byteLength);
 }
 
+/** 仮想行に表示する全文、検索状態、任意の構文着色とテキスト操作。 */
 type VirtualizedTextContentProps = {
   text: string;
   copyText: (text: string) => void;
@@ -250,8 +329,10 @@ type VirtualizedTextContentProps = {
   syntaxTokens?: PreviewSyntaxToken[][] | null;
 };
 
+/** 行内の検索一致に全文での順位を持たせ、現在位置と照合できるようにする。 */
 type IndexedPreviewTextMatch = PreviewTextMatch & { matchIndex: number };
 
+/** 行の文字列を維持しつつ、検索一致に印を付け、現在の一致を区別する。 */
 function renderHighlightedLine(
   line: string,
   matches: IndexedPreviewTextMatch[],
@@ -269,7 +350,9 @@ function renderHighlightedLine(
     content.push(
       <mark
         key={`${match.startOffset}-${match.endOffset}`}
-        className={match.matchIndex === currentMatchIndex ? "is-current" : undefined}
+        className={
+          match.matchIndex === currentMatchIndex ? "is-current" : undefined
+        }
       >
         {line.slice(match.startOffset, match.endOffset)}
       </mark>,
@@ -282,15 +365,26 @@ function renderHighlightedLine(
   return content;
 }
 
-function syntaxTokenStyle(token: PreviewSyntaxToken, includeColor: boolean): CSSProperties {
+/** トークンの書体ビットをCSSへ変換する。検索の強調色を使う部分ではトークン色を外せる。 */
+function syntaxTokenStyle(
+  token: PreviewSyntaxToken,
+  includeColor: boolean,
+): CSSProperties {
   return {
     ...(includeColor && token.color ? { color: token.color } : {}),
-    ...(token.fontStyle && (token.fontStyle & 1) !== 0 ? { fontStyle: "italic" } : {}),
-    ...(token.fontStyle && (token.fontStyle & 2) !== 0 ? { fontWeight: 700 } : {}),
-    ...(token.fontStyle && (token.fontStyle & 4) !== 0 ? { textDecoration: "underline" } : {}),
+    ...(token.fontStyle && (token.fontStyle & 1) !== 0
+      ? { fontStyle: "italic" }
+      : {}),
+    ...(token.fontStyle && (token.fontStyle & 2) !== 0
+      ? { fontWeight: 700 }
+      : {}),
+    ...(token.fontStyle && (token.fontStyle & 4) !== 0
+      ? { textDecoration: "underline" }
+      : {}),
   };
 }
 
+/** 構文トークンを検索境界で分割して両方を表示する。トークンが原文と一致しない場合は検索の強調だけを使う。 */
 function renderSyntaxHighlightedLine(
   line: string,
   tokens: PreviewSyntaxToken[],
@@ -313,7 +407,9 @@ function renderSyntaxHighlightedLine(
         boundaries.add(Math.min(tokenEnd, match.endOffset));
       }
     }
-    const sortedBoundaries = [...boundaries].sort((left, right) => left - right);
+    const sortedBoundaries = [...boundaries].sort(
+      (left, right) => left - right,
+    );
     for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
       const start = sortedBoundaries[index] ?? tokenStart;
       const end = sortedBoundaries[index + 1] ?? tokenEnd;
@@ -321,19 +417,28 @@ function renderSyntaxHighlightedLine(
         continue;
       }
       const text = token.content.slice(start - tokenStart, end - tokenStart);
-      const match = matches.find((candidate) => candidate.startOffset <= start && candidate.endOffset >= end);
+      const match = matches.find(
+        (candidate) =>
+          candidate.startOffset <= start && candidate.endOffset >= end,
+      );
       if (match) {
         content.push(
           <mark
             key={key}
-            className={match.matchIndex === currentMatchIndex ? "is-current" : undefined}
+            className={
+              match.matchIndex === currentMatchIndex ? "is-current" : undefined
+            }
             style={syntaxTokenStyle(token, false)}
           >
             {text}
           </mark>,
         );
       } else {
-        content.push(<span key={key} style={syntaxTokenStyle(token, true)}>{text}</span>);
+        content.push(
+          <span key={key} style={syntaxTokenStyle(token, true)}>
+            {text}
+          </span>,
+        );
       }
       key += 1;
     }
@@ -342,6 +447,7 @@ function renderSyntaxHighlightedLine(
   return content.length > 0 ? content : " ";
 }
 
+/** テキストやインライン差分を行単位で仮想表示し、検索位置への移動と全文の選択操作を提供する。 */
 function VirtualizedTextContent({
   text,
   copyText,
@@ -365,7 +471,9 @@ function VirtualizedTextContent({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: lines.length,
+    /** テキストの仮想行を表示するスクロール要素を返す。 */
     getScrollElement: () => scrollRef.current,
+    /** 実測前のテキスト行の高さを見積もる。 */
     estimateSize: () => 23,
     overscan: 24,
     useFlushSync: false,
@@ -385,18 +493,22 @@ function VirtualizedTextContent({
       selectAllText={text}
       surfaceRef={scrollRef}
     >
-      <div className="session-file-text-lines" style={{ height: virtualizer.getTotalSize() }}>
+      <div
+        className="session-file-text-lines"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
         {virtualizer.getVirtualItems().map((virtualLine) => {
           const line = lines[virtualLine.index] ?? "";
-          const diffKind = variant === "diff"
-            ? line.startsWith("+") && !line.startsWith("+++")
-              ? " added"
-              : line.startsWith("-") && !line.startsWith("---")
-                ? " removed"
-                : line.startsWith("@@")
-                  ? " hunk"
-                  : ""
-            : "";
+          const diffKind =
+            variant === "diff"
+              ? line.startsWith("+") && !line.startsWith("+++")
+                ? " added"
+                : line.startsWith("-") && !line.startsWith("---")
+                  ? " removed"
+                  : line.startsWith("@@")
+                    ? " hunk"
+                    : ""
+              : "";
           return (
             <div
               key={virtualLine.key}
@@ -405,16 +517,22 @@ function VirtualizedTextContent({
               ref={virtualizer.measureElement}
               style={{ transform: `translateY(${virtualLine.start}px)` }}
             >
-              <span className="session-file-line-number" aria-hidden="true">{virtualLine.index + 1}</span>
+              <span className="session-file-line-number" aria-hidden="true">
+                {virtualLine.index + 1}
+              </span>
               <code>
                 {syntaxTokens?.[virtualLine.index]
                   ? renderSyntaxHighlightedLine(
-                    line,
-                    syntaxTokens[virtualLine.index] ?? [],
-                    matchesByLine.get(virtualLine.index) ?? [],
-                    currentMatchIndex,
-                  )
-                  : renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}
+                      line,
+                      syntaxTokens[virtualLine.index] ?? [],
+                      matchesByLine.get(virtualLine.index) ?? [],
+                      currentMatchIndex,
+                    )
+                  : renderHighlightedLine(
+                      line,
+                      matchesByLine.get(virtualLine.index) ?? [],
+                      currentMatchIndex,
+                    )}
               </code>
             </div>
           );
@@ -424,6 +542,7 @@ function VirtualizedTextContent({
   );
 }
 
+/** 左右差分に投影するパッチ原文と、原文を基準にした検索・選択操作。 */
 type VirtualizedSplitDiffContentProps = {
   patch: string;
   copyText: (text: string) => void;
@@ -432,13 +551,21 @@ type VirtualizedSplitDiffContentProps = {
   currentMatchIndex: number;
 };
 
-function rowContainsPatchLine(row: UnifiedDiffDisplayRow, patchLineIndex: number): boolean {
+/** 元パッチの行番号が、単独表示の行または左右いずれかのセルに対応するかを調べる。 */
+function rowContainsPatchLine(
+  row: UnifiedDiffDisplayRow,
+  patchLineIndex: number,
+): boolean {
   if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
     return row.patchLineIndex === patchLineIndex;
   }
-  return row.leftPatchLineIndex === patchLineIndex || row.rightPatchLineIndex === patchLineIndex;
+  return (
+    row.leftPatchLineIndex === patchLineIndex ||
+    row.rightPatchLineIndex === patchLineIndex
+  );
 }
 
+/** unified diffを左右の仮想行へ投影し、パッチ原文の検索一致と対応するセルを強調する。 */
 function VirtualizedSplitDiffContent({
   patch,
   copyText,
@@ -457,15 +584,21 @@ function VirtualizedSplitDiffContent({
     return grouped;
   }, [matches]);
   const activePatchLineIndex = matches[currentMatchIndex]?.lineIndex ?? null;
-  const activeRowIndex = useMemo(() => (
-    activePatchLineIndex === null
-      ? null
-      : parsed.rows.findIndex((row) => rowContainsPatchLine(row, activePatchLineIndex))
-  ), [activePatchLineIndex, parsed.rows]);
+  const activeRowIndex = useMemo(
+    () =>
+      activePatchLineIndex === null
+        ? null
+        : parsed.rows.findIndex((row) =>
+            rowContainsPatchLine(row, activePatchLineIndex),
+          ),
+    [activePatchLineIndex, parsed.rows],
+  );
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: parsed.rows.length,
+    /** 左右差分の仮想行を表示する共通スクロール要素を返す。 */
     getScrollElement: () => scrollRef.current,
+    /** 実測前の左右差分行の高さを見積もる。 */
     estimateSize: () => 25,
     overscan: 24,
     useFlushSync: false,
@@ -477,21 +610,25 @@ function VirtualizedSplitDiffContent({
     }
   }, [activeRowIndex, virtualizer]);
 
+  /** 指定側の本文と行番号を描画し、その側の元パッチ行に対応する一致だけを強調する。 */
   const renderContentCell = (
     row: UnifiedDiffContentRow,
     side: "left" | "right",
   ) => {
-    const patchLineIndex = side === "left" ? row.leftPatchLineIndex : row.rightPatchLineIndex;
+    const patchLineIndex =
+      side === "left" ? row.leftPatchLineIndex : row.rightPatchLineIndex;
     const text = side === "left" ? row.leftText : row.rightText;
     return (
       <>
         <span className="session-live-diff-line-number" aria-hidden="true">
-          {side === "left" ? row.leftNumber ?? "" : row.rightNumber ?? ""}
+          {side === "left" ? (row.leftNumber ?? "") : (row.rightNumber ?? "")}
         </span>
         <code className={`session-live-diff-code ${side}`}>
           {renderHighlightedLine(
             text ?? "",
-            patchLineIndex === undefined ? [] : matchesByLine.get(patchLineIndex) ?? [],
+            patchLineIndex === undefined
+              ? []
+              : (matchesByLine.get(patchLineIndex) ?? []),
             currentMatchIndex,
           )}
         </code>
@@ -514,14 +651,21 @@ function VirtualizedSplitDiffContent({
         selectAllText={patch}
         surfaceRef={scrollRef}
       >
-        <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
+        <div
+          className="session-live-diff-split-rows"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = parsed.rows[virtualRow.index];
             if (!row) {
               return null;
             }
             const isActive = activeRowIndex === virtualRow.index;
-            if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
+            if (
+              row.kind === "metadata" ||
+              row.kind === "hunk" ||
+              row.kind === "note"
+            ) {
               return (
                 <div
                   key={virtualRow.key}
@@ -559,6 +703,7 @@ function VirtualizedSplitDiffContent({
   );
 }
 
+/** セッションの現在ファイルまたはコミット内のファイルを検査・読み込みし、形式に応じた表示と操作を提供する。 */
 export function SessionFilePreview({
   api,
   request: sourceRequest,
@@ -575,34 +720,56 @@ export function SessionFilePreview({
     targetRef.current = { source: sourceRequest, resource: sourceRequest };
   }
   const request = targetRef.current.resource;
-  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
+  const fileObjectCopyAvailable =
+    api?.isSessionFileObjectCopyAvailable?.() ?? false;
   const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
-  const markdownLinkFileContext = useMemo(() => isSessionFileGitCommitResource(request)
-    ? undefined
-    : {
-        sessionId: request.sessionId,
-        baseResource: request,
-      }, [request]);
+  const markdownLinkFileContext = useMemo(
+    () =>
+      isSessionFileGitCommitResource(request)
+        ? undefined
+        : {
+            sessionId: request.sessionId,
+            baseResource: request,
+          },
+    [request],
+  );
   const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
-  const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
-  const [loadState, setLoadState] = useState<FileLoadState>({ status: "inspecting" });
-  const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
-  const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
-  const [structuredTextMode, setStructuredTextMode] = useState<"formatted" | "raw">("formatted");
-  const [structuredTextProjection, setStructuredTextProjection] = useState<StructuredTextProjectionState>({
-    status: "idle",
+  const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(
+    null,
+  );
+  const [loadState, setLoadState] = useState<FileLoadState>({
+    status: "inspecting",
   });
+  const [encoding, setEncoding] =
+    useState<SessionFileEncodingSelection>("auto");
+  const [markdownMode, setMarkdownMode] = useState<"preview" | "source">(
+    "preview",
+  );
+  const [structuredTextMode, setStructuredTextMode] = useState<
+    "formatted" | "raw"
+  >("formatted");
+  const [structuredTextProjection, setStructuredTextProjection] =
+    useState<StructuredTextProjectionState>({
+      status: "idle",
+    });
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [copyFeedback, setCopyFeedback] = useState<AppNotificationState | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<AppNotificationState | null>(
+    null,
+  );
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
-  const imageContext = useMemo(() => ({ sessionId: request.sessionId, baseResource: request }), [request]);
+  const imageContext = useMemo(
+    () => ({ sessionId: request.sessionId, baseResource: request }),
+    [request],
+  );
   const resolveMarkdownImageSource = useMarkdownImageResolver(
-    api, imageContext, `${reloadRevision}:${encoding}:${markdownMode}`,
+    api,
+    imageContext,
+    `${reloadRevision}:${encoding}:${markdownMode}`,
   );
   const [reloadPending, setReloadPending] = useState(false);
   const [busyAction, setBusyAction] = useState<PreviewAction | null>(null);
@@ -610,15 +777,18 @@ export function SessionFilePreview({
   const busyActionRef = useRef<PreviewAction | null>(null);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
   const pdfPreviewRef = useRef<PdfFilePreviewHandle>(null);
-  const [pdfActionsContainer, setPdfActionsContainer] = useState<HTMLSpanElement | null>(null);
+  const [pdfActionsContainer, setPdfActionsContainer] =
+    useState<HTMLSpanElement | null>(null);
   const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
     normalizedQueryLength: 0,
   });
-  const [renderedMarkdownIndexRevision, setRenderedMarkdownIndexRevision] = useState(0);
-  const [renderedMarkdownMatchCount, setRenderedMarkdownMatchCount] = useState(0);
+  const [renderedMarkdownIndexRevision, setRenderedMarkdownIndexRevision] =
+    useState(0);
+  const [renderedMarkdownMatchCount, setRenderedMarkdownMatchCount] =
+    useState(0);
 
   const beginAction = useCallback((action: PreviewAction): number | null => {
     if (busyActionRef.current !== null) {
@@ -637,46 +807,59 @@ export function SessionFilePreview({
     }
   }, []);
 
-  const loadDescriptor = useCallback(async (descriptor: SessionFileDescriptor, revision: number) => {
-    if (!api) {
-      setLoadState({ status: "error", message: "File API is unavailable." });
-      return;
-    }
-    if (descriptor.kind === "binary") {
-      setLoadState({ status: "ready", descriptor, loaded: null });
-      return;
-    }
+  const loadDescriptor = useCallback(
+    async (descriptor: SessionFileDescriptor, revision: number) => {
+      if (!api) {
+        setLoadState({ status: "error", message: "File API is unavailable." });
+        return;
+      }
+      if (descriptor.kind === "binary") {
+        setLoadState({ status: "ready", descriptor, loaded: null });
+        return;
+      }
 
-    activePreviewAccumulatorRef.current?.release();
-    const accumulator = new PreviewByteAccumulator();
-    activePreviewAccumulatorRef.current = accumulator;
-    setLoadState({ status: "loading", descriptor, loadedBytes: 0 });
-    try {
-      const bytes = await readWholeResource(
-        api,
-        descriptor,
-        () => loadRevisionRef.current === revision,
-        accumulator,
-        (loadedBytes) => {
-          if (loadRevisionRef.current === revision) {
-            setLoadState({ status: "loading", descriptor, loadedBytes });
-          }
-        },
-      );
-      if (loadRevisionRef.current === revision) {
-        setLoadState({ status: "ready", descriptor, loaded: { descriptor, bytes } });
+      activePreviewAccumulatorRef.current?.release();
+      const accumulator = new PreviewByteAccumulator();
+      activePreviewAccumulatorRef.current = accumulator;
+      setLoadState({ status: "loading", descriptor, loadedBytes: 0 });
+      try {
+        const bytes = await readWholeResource(
+          api,
+          descriptor,
+          () => loadRevisionRef.current === revision,
+          accumulator,
+          (loadedBytes) => {
+            if (loadRevisionRef.current === revision) {
+              setLoadState({ status: "loading", descriptor, loadedBytes });
+            }
+          },
+        );
+        if (loadRevisionRef.current === revision) {
+          setLoadState({
+            status: "ready",
+            descriptor,
+            loaded: { descriptor, bytes },
+          });
+        }
+      } catch (error) {
+        if (loadRevisionRef.current === revision) {
+          setLoadState({
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "File could not be loaded.",
+          });
+        }
+      } finally {
+        accumulator.release();
+        if (activePreviewAccumulatorRef.current === accumulator) {
+          activePreviewAccumulatorRef.current = null;
+        }
       }
-    } catch (error) {
-      if (loadRevisionRef.current === revision) {
-        setLoadState({ status: "error", message: error instanceof Error ? error.message : "File could not be loaded." });
-      }
-    } finally {
-      accumulator.release();
-      if (activePreviewAccumulatorRef.current === accumulator) {
-        activePreviewAccumulatorRef.current = null;
-      }
-    }
-  }, [api]);
+    },
+    [api],
+  );
 
   useEffect(() => {
     const revision = loadRevisionRef.current + 1;
@@ -706,27 +889,43 @@ export function SessionFilePreview({
       };
     }
 
-    void api.inspectSessionFile(request).then(async (descriptor) => {
-      if (loadRevisionRef.current !== revision) {
-        return;
-      }
-      if (!isSessionFileGitCommitResource(descriptor)) {
-        targetRef.current.resource = { sessionId: descriptor.sessionId, absolutePath: descriptor.absoluteFilePath };
-      }
-      if (descriptor.kind !== "binary" && descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES) {
-        setLoadState({ status: "large-warning", descriptor });
-      } else {
-        await loadDescriptor(descriptor, revision);
-      }
-    }).catch((error) => {
-      if (loadRevisionRef.current === revision) {
-        setLoadState({ status: "error", message: error instanceof Error ? error.message : "File could not be inspected." });
-      }
-    }).finally(() => {
-      if (loadRevisionRef.current === revision) {
-        setReloadPending(false);
-      }
-    });
+    void api
+      .inspectSessionFile(request)
+      .then(async (descriptor) => {
+        if (loadRevisionRef.current !== revision) {
+          return;
+        }
+        if (!isSessionFileGitCommitResource(descriptor)) {
+          targetRef.current.resource = {
+            sessionId: descriptor.sessionId,
+            absolutePath: descriptor.absoluteFilePath,
+          };
+        }
+        if (
+          descriptor.kind !== "binary" &&
+          descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES
+        ) {
+          setLoadState({ status: "large-warning", descriptor });
+        } else {
+          await loadDescriptor(descriptor, revision);
+        }
+      })
+      .catch((error) => {
+        if (loadRevisionRef.current === revision) {
+          setLoadState({
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "File could not be inspected.",
+          });
+        }
+      })
+      .finally(() => {
+        if (loadRevisionRef.current === revision) {
+          setReloadPending(false);
+        }
+      });
 
     return () => {
       loadRevisionRef.current += 1;
@@ -735,18 +934,21 @@ export function SessionFilePreview({
     };
   }, [api, loadDescriptor, reloadRevision, sourceRequest]);
 
-  const descriptor = loadState.status === "inspecting" || loadState.status === "error"
-    ? null
-    : loadState.descriptor;
+  const descriptor =
+    loadState.status === "inspecting" || loadState.status === "error"
+      ? null
+      : loadState.descriptor;
   const loaded = loadState.status === "ready" ? loadState.loaded : null;
   const loadedTextIsBinary = Boolean(
     loaded &&
-    (loaded.descriptor.kind === "text" || loaded.descriptor.kind === "markdown") &&
+    (loaded.descriptor.kind === "text" ||
+      loaded.descriptor.kind === "markdown") &&
     isLikelyBinarySessionFile(loaded.bytes),
   );
   const previewKind = loadedTextIsBinary
     ? "binary"
-    : descriptor?.kind === "text" && descriptor.name.toLocaleLowerCase("en-US").endsWith(".mmd")
+    : descriptor?.kind === "text" &&
+        descriptor.name.toLocaleLowerCase("en-US").endsWith(".mmd")
       ? "mermaid"
       : descriptor?.kind === "text" && /\.html?$/i.test(descriptor.name)
         ? "html"
@@ -754,14 +956,23 @@ export function SessionFilePreview({
   const isRichPreview = previewKind === "markdown" || previewKind === "mermaid";
   const isDocumentPreview = isRichPreview || previewKind === "html";
   const decodedText = useMemo(() => {
-    if (!loaded || (loaded.descriptor.kind !== "text" && loaded.descriptor.kind !== "markdown")) {
+    if (
+      !loaded ||
+      (loaded.descriptor.kind !== "text" &&
+        loaded.descriptor.kind !== "markdown")
+    ) {
       return "";
     }
-    return decodeSessionFileBytes(loaded.bytes, encoding, loaded.descriptor.suggestedEncoding);
+    return decodeSessionFileBytes(
+      loaded.bytes,
+      encoding,
+      loaded.descriptor.suggestedEncoding,
+    );
   }, [encoding, loaded]);
-  const structuredTextFormat = previewKind === "text" && descriptor
-    ? resolveStructuredTextFormat(descriptor.name)
-    : null;
+  const structuredTextFormat =
+    previewKind === "text" && descriptor
+      ? resolveStructuredTextFormat(descriptor.name)
+      : null;
   const structuredTextEligible = Boolean(
     loaded &&
     structuredTextFormat &&
@@ -776,54 +987,63 @@ export function SessionFilePreview({
     let current = true;
     setStructuredTextMode("formatted");
     setStructuredTextProjection({ status: "loading" });
-    void projectStructuredText(decodedText, structuredTextFormat).then((projection) => {
-      if (current) {
-        setStructuredTextProjection({
-          status: "ready",
-          sourceText: decodedText,
-          format: structuredTextFormat,
-          projection,
-        });
-      }
-    }).catch(async (error) => {
-      const message = error instanceof Error
-        ? error.message
-        : "Structured text could not be formatted.";
-      let rawTokens: PreviewSyntaxToken[][] | null = null;
-      try {
-        rawTokens = await highlightRawStructuredText(decodedText, structuredTextFormat);
-      } catch {
-        rawTokens = null;
-      }
-      if (current) {
-        setStructuredTextMode("raw");
-        setStructuredTextProjection({
-          status: "error",
-          sourceText: decodedText,
-          format: structuredTextFormat,
-          message,
-          rawTokens,
-        });
-      }
-    });
+    void projectStructuredText(decodedText, structuredTextFormat)
+      .then((projection) => {
+        if (current) {
+          setStructuredTextProjection({
+            status: "ready",
+            sourceText: decodedText,
+            format: structuredTextFormat,
+            projection,
+          });
+        }
+      })
+      .catch(async (error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Structured text could not be formatted.";
+        let rawTokens: PreviewSyntaxToken[][] | null = null;
+        try {
+          rawTokens = await highlightRawStructuredText(
+            decodedText,
+            structuredTextFormat,
+          );
+        } catch {
+          rawTokens = null;
+        }
+        if (current) {
+          setStructuredTextMode("raw");
+          setStructuredTextProjection({
+            status: "error",
+            sourceText: decodedText,
+            format: structuredTextFormat,
+            message,
+            rawTokens,
+          });
+        }
+      });
     return () => {
       current = false;
     };
   }, [decodedText, structuredTextEligible, structuredTextFormat]);
 
-  const currentStructuredTextProjection = structuredTextProjection.status === "ready" &&
+  const currentStructuredTextProjection =
+    structuredTextProjection.status === "ready" &&
     structuredTextProjection.sourceText === decodedText &&
     structuredTextProjection.format === structuredTextFormat
-    ? structuredTextProjection.projection
-    : null;
-  const currentStructuredTextError = structuredTextProjection.status === "error" &&
+      ? structuredTextProjection.projection
+      : null;
+  const currentStructuredTextError =
+    structuredTextProjection.status === "error" &&
     structuredTextProjection.sourceText === decodedText &&
     structuredTextProjection.format === structuredTextFormat
-    ? structuredTextProjection
-    : null;
-  const displayedText = currentStructuredTextProjection && structuredTextMode === "formatted"
-    ? currentStructuredTextProjection.formattedText
-    : decodedText;
+      ? structuredTextProjection
+      : null;
+  const displayedText =
+    currentStructuredTextProjection && structuredTextMode === "formatted"
+      ? currentStructuredTextProjection.formattedText
+      : decodedText;
   const displayedSyntaxTokens = currentStructuredTextProjection
     ? structuredTextMode === "formatted"
       ? currentStructuredTextProjection.formattedTokens
@@ -831,7 +1051,10 @@ export function SessionFilePreview({
     : currentStructuredTextError
       ? currentStructuredTextError.rawTokens
       : null;
-  const textLines = useMemo(() => splitPreviewLines(displayedText), [displayedText]);
+  const textLines = useMemo(
+    () => splitPreviewLines(displayedText),
+    [displayedText],
+  );
   const findMatches = useMemo(
     () => findPreviewTextMatches(textLines, findQuery),
     [findQuery, textLines],
@@ -842,21 +1065,34 @@ export function SessionFilePreview({
   }, [findQuery, request]);
 
   useEffect(() => {
-    const container = markdownSurfaceRef.current?.querySelector<HTMLElement>(".session-file-markdown") ?? null;
+    const container =
+      markdownSurfaceRef.current?.querySelector<HTMLElement>(
+        ".session-file-markdown",
+      ) ?? null;
     if (!container || markdownMode !== "preview" || !isRichPreview) {
       renderedMarkdownIndexRef.current = null;
-      renderedMarkdownMatchesRef.current = { offsets: new Uint32Array(0), normalizedQueryLength: 0 };
+      renderedMarkdownMatchesRef.current = {
+        offsets: new Uint32Array(0),
+        normalizedQueryLength: 0,
+      };
       setRenderedMarkdownMatchCount(0);
       return;
     }
+    /** リッチ表示の本文を検索用に索引化する。本文が変化したときだけ一致の選択位置を先頭へ戻す。 */
     const rebuildIndex = () => {
       const index = createRenderedTextSearchIndex(
         container,
-        (node) => !node.parentElement?.closest(previewKind === "mermaid"
-          ? ".message-mermaid-controls, svg style, svg defs"
-          : ".message-mermaid-controls"),
+        (node) =>
+          !node.parentElement?.closest(
+            previewKind === "mermaid"
+              ? ".message-mermaid-controls, svg style, svg defs"
+              : ".message-mermaid-controls",
+          ),
       );
-      if (renderedMarkdownIndexRef.current?.normalizedText !== index.normalizedText) {
+      if (
+        renderedMarkdownIndexRef.current?.normalizedText !==
+        index.normalizedText
+      ) {
         setCurrentMatch(0);
       }
       renderedMarkdownIndexRef.current = index;
@@ -864,7 +1100,11 @@ export function SessionFilePreview({
     };
     rebuildIndex();
     const observer = new MutationObserver(rebuildIndex);
-    observer.observe(container, { childList: true, characterData: true, subtree: true });
+    observer.observe(container, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
     return () => observer.disconnect();
   }, [decodedText, isRichPreview, markdownMode, previewKind]);
 
@@ -877,13 +1117,19 @@ export function SessionFilePreview({
     setRenderedMarkdownMatchCount(matches.offsets.length);
   }, [findQuery, renderedMarkdownIndexRevision]);
 
-  const activeFindMatchCount = isRichPreview && markdownMode === "preview"
-    ? renderedMarkdownMatchCount
-    : findMatches.length;
-  const activeCurrentMatch = clampFindMatchIndex(currentMatch, activeFindMatchCount);
+  const activeFindMatchCount =
+    isRichPreview && markdownMode === "preview"
+      ? renderedMarkdownMatchCount
+      : findMatches.length;
+  const activeCurrentMatch = clampFindMatchIndex(
+    currentMatch,
+    activeFindMatchCount,
+  );
 
   useEffect(() => {
-    setCurrentMatch((current) => clampFindMatchIndex(current, activeFindMatchCount));
+    setCurrentMatch((current) =>
+      clampFindMatchIndex(current, activeFindMatchCount),
+    );
   }, [activeFindMatchCount]);
 
   useLayoutEffect(() => {
@@ -896,23 +1142,46 @@ export function SessionFilePreview({
       return;
     }
     const resolvedMatches = resolveRenderedTextMatches(index, matches);
-    const resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, activeCurrentMatch);
-    applyRenderedTextHighlights(document, resolvedMatches, resolvedCurrentMatch);
+    const resolvedCurrentMatch = resolveRenderedTextMatch(
+      index,
+      matches,
+      activeCurrentMatch,
+    );
+    applyRenderedTextHighlights(
+      document,
+      resolvedMatches,
+      resolvedCurrentMatch,
+    );
     scrollRenderedTextMatchIntoView(resolvedCurrentMatch);
     return () => clearRenderedTextHighlights(document);
-  }, [activeCurrentMatch, findOpen, findQuery, isRichPreview, markdownMode, renderedMarkdownIndexRevision]);
+  }, [
+    activeCurrentMatch,
+    findOpen,
+    findQuery,
+    isRichPreview,
+    markdownMode,
+    renderedMarkdownIndexRevision,
+  ]);
 
   useEffect(() => {
-    if (!loaded || (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")) {
+    if (
+      !loaded ||
+      (loaded.descriptor.kind !== "image" && loaded.descriptor.kind !== "svg")
+    ) {
       setImageObjectUrl("");
       return;
     }
-    const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
+    const objectUrl = URL.createObjectURL(
+      new Blob([copyBytesToArrayBuffer(loaded.bytes)], {
+        type: loaded.descriptor.mimeType,
+      }),
+    );
     setImageObjectUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
 
   useShortcutScope("file-preview");
+  /** プレビュー内の検索を開く。HTMLの場合は検索対象である原文表示へ切り替える。 */
   const openFind = () => {
     if (previewKind === "html") {
       setMarkdownMode("source");
@@ -927,7 +1196,9 @@ export function SessionFilePreview({
     } else if (previewKind === "text" || isDocumentPreview) {
       openFind();
     } else {
-      setFeedback("Find is available for text, Markdown, Mermaid, HTML source, and Git diff previews.");
+      setFeedback(
+        "Find is available for text, Markdown, Mermaid, HTML source, and Git diff previews.",
+      );
     }
     return true;
   });
@@ -943,32 +1214,37 @@ export function SessionFilePreview({
     return false;
   });
 
-  const navigateMatch = useCallback((direction: 1 | -1) => {
-    if (isRichPreview && markdownMode === "preview") {
-      const matches = renderedMarkdownMatchesRef.current;
-      const index = renderedMarkdownIndexRef.current;
-      if (!index || matches.offsets.length === 0) {
+  const navigateMatch = useCallback(
+    (direction: 1 | -1) => {
+      if (isRichPreview && markdownMode === "preview") {
+        const matches = renderedMarkdownMatchesRef.current;
+        const index = renderedMarkdownIndexRef.current;
+        if (!index || matches.offsets.length === 0) {
+          return;
+        }
+        setCurrentMatch((current) => {
+          const next =
+            (clampFindMatchIndex(current, matches.offsets.length) +
+              direction +
+              matches.offsets.length) %
+            matches.offsets.length;
+          return next;
+        });
         return;
       }
-      setCurrentMatch((current) => {
-        const next = (
-          clampFindMatchIndex(current, matches.offsets.length)
-          + direction
-          + matches.offsets.length
-        ) % matches.offsets.length;
-        return next;
-      });
-      return;
-    }
-    if (findMatches.length === 0) {
-      return;
-    }
-    setCurrentMatch((current) => (
-      clampFindMatchIndex(current, findMatches.length)
-      + direction
-      + findMatches.length
-    ) % findMatches.length);
-  }, [findMatches.length, isRichPreview, markdownMode]);
+      if (findMatches.length === 0) {
+        return;
+      }
+      setCurrentMatch(
+        (current) =>
+          (clampFindMatchIndex(current, findMatches.length) +
+            direction +
+            findMatches.length) %
+          findMatches.length,
+      );
+    },
+    [findMatches.length, isRichPreview, markdownMode],
+  );
   const openCurrentFile = useCallback(async () => {
     if (!api || busyAction !== null) {
       return;
@@ -985,7 +1261,11 @@ export function SessionFilePreview({
       }
     } catch (error) {
       if (loadRevisionRef.current === revision) {
-        setFeedback(error instanceof Error ? error.message : "The file could not be opened.");
+        setFeedback(
+          error instanceof Error
+            ? error.message
+            : "The file could not be opened.",
+        );
       }
     } finally {
       finishAction(actionRevision);
@@ -1004,11 +1284,19 @@ export function SessionFilePreview({
     try {
       const result = await api.openSessionFile({ ...request, reveal: true });
       if (loadRevisionRef.current === revision) {
-        setFeedback(result.status === "revealed" || result.status === "opened" ? "" : result.message);
+        setFeedback(
+          result.status === "revealed" || result.status === "opened"
+            ? ""
+            : result.message,
+        );
       }
     } catch (error) {
       if (loadRevisionRef.current === revision) {
-        setFeedback(error instanceof Error ? error.message : "The file could not be revealed.");
+        setFeedback(
+          error instanceof Error
+            ? error.message
+            : "The file could not be revealed.",
+        );
       }
     } finally {
       finishAction(actionRevision);
@@ -1034,20 +1322,41 @@ export function SessionFilePreview({
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setCopyFeedback({ message: "File could not be copied.", tone: "error" });
+        setCopyFeedback({
+          message: "File could not be copied.",
+          tone: "error",
+        });
       }
     } finally {
       finishAction(actionRevision);
     }
-  }, [api, beginAction, busyAction, fileObjectCopyAvailable, finishAction, request]);
+  }, [
+    api,
+    beginAction,
+    busyAction,
+    fileObjectCopyAvailable,
+    finishAction,
+    request,
+  ]);
 
   const copyPreviewImage = useCallback(async () => {
-    if (!api || !imageViewport.imageRef.current || !imageViewport.viewportRef.current || busyAction !== null) {
+    if (
+      !api ||
+      !imageViewport.imageRef.current ||
+      !imageViewport.viewportRef.current ||
+      busyAction !== null
+    ) {
       return;
     }
-    const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
+    const point = resolveVisibleImageCopyPoint(
+      imageViewport.imageRef.current,
+      imageViewport.viewportRef.current,
+    );
     if (!point) {
-      setCopyFeedback({ message: "The image is not currently visible.", tone: "error" });
+      setCopyFeedback({
+        message: "The image is not currently visible.",
+        tone: "error",
+      });
       return;
     }
     const actionRevision = beginAction("copy-image");
@@ -1062,125 +1371,174 @@ export function SessionFilePreview({
       });
       if (loadRevisionRef.current === revision) {
         setCopyFeedback({
-          message: result.status === "copied" ? "Image copied." : result.message,
+          message:
+            result.status === "copied" ? "Image copied." : result.message,
           tone: result.status === "copied" ? "success" : "error",
         });
       }
     } catch {
       if (loadRevisionRef.current === revision) {
-        setCopyFeedback({ message: "Image could not be copied.", tone: "error" });
-      }
-    } finally {
-      finishAction(actionRevision);
-    }
-  }, [api, beginAction, busyAction, finishAction, imageViewport.imageRef, imageViewport.viewportRef, request.sessionId]);
-
-  const showPreviewImageContextMenu = useCallback(async (
-    event: ReactMouseEvent<HTMLImageElement>,
-  ) => {
-    event.preventDefault();
-    if (!api || busyAction !== null) {
-      return;
-    }
-    const actionRevision = beginAction("context-menu");
-    if (actionRevision === null) {
-      return;
-    }
-    const revision = loadRevisionRef.current;
-    try {
-      const result = await api.showSessionFilePreviewImageContextMenu({
-        sessionId: request.sessionId,
-        point: {
-          x: Math.max(0, Math.round(event.clientX)),
-          y: Math.max(0, Math.round(event.clientY)),
-        },
-      });
-      if (loadRevisionRef.current === revision && result.status !== "dismissed") {
         setCopyFeedback({
-          message: result.status === "copied" ? "Image copied."
-            : result.status === "copied-path" ? "Path copied." : result.message,
-          tone: result.status === "failed" ? "error" : "success",
+          message: "Image could not be copied.",
+          tone: "error",
         });
       }
-    } catch {
-      if (loadRevisionRef.current === revision) {
-        setCopyFeedback({ message: "Image context menu could not be opened.", tone: "error" });
-      }
     } finally {
       finishAction(actionRevision);
     }
-  }, [api, beginAction, busyAction, finishAction, request.sessionId]);
+  }, [
+    api,
+    beginAction,
+    busyAction,
+    finishAction,
+    imageViewport.imageRef,
+    imageViewport.viewportRef,
+    request.sessionId,
+  ]);
 
-  const handleOpenMarkdownPath = useCallback((target: string) => {
-    if (!api || busyAction !== null) {
-      return;
-    }
-    const trimmedTarget = target.trim();
-    if (!trimmedTarget || trimmedTarget.startsWith("#")) {
-      return;
-    }
-    const actionRevision = beginAction("open-path");
-    if (actionRevision === null) {
-      return;
-    }
-    const revision = loadRevisionRef.current;
-    void api.openSessionFilePreviewWindow({
-      kind: "link",
-      sessionId: request.sessionId,
-      target: trimmedTarget,
-      baseResource: request,
-    })
-      .then((result) => {
-        if (loadRevisionRef.current === revision) {
-          setFeedback(result.status === "opened" ? "" : result.message);
+  const showPreviewImageContextMenu = useCallback(
+    async (event: ReactMouseEvent<HTMLImageElement>) => {
+      event.preventDefault();
+      if (!api || busyAction !== null) {
+        return;
+      }
+      const actionRevision = beginAction("context-menu");
+      if (actionRevision === null) {
+        return;
+      }
+      const revision = loadRevisionRef.current;
+      try {
+        const result = await api.showSessionFilePreviewImageContextMenu({
+          sessionId: request.sessionId,
+          point: {
+            x: Math.max(0, Math.round(event.clientX)),
+            y: Math.max(0, Math.round(event.clientY)),
+          },
+        });
+        if (
+          loadRevisionRef.current === revision &&
+          result.status !== "dismissed"
+        ) {
+          setCopyFeedback({
+            message:
+              result.status === "copied"
+                ? "Image copied."
+                : result.status === "copied-path"
+                  ? "Path copied."
+                  : result.message,
+            tone: result.status === "failed" ? "error" : "success",
+          });
         }
-      })
-      .catch((error) => {
+      } catch {
         if (loadRevisionRef.current === revision) {
-          setFeedback(error instanceof Error ? error.message : "The link could not be opened.");
+          setCopyFeedback({
+            message: "Image context menu could not be opened.",
+            tone: "error",
+          });
         }
-      })
-      .finally(() => {
+      } finally {
         finishAction(actionRevision);
-      });
-  }, [api, beginAction, busyAction, finishAction, request]);
+      }
+    },
+    [api, beginAction, busyAction, finishAction, request.sessionId],
+  );
 
-  const openDiff = useCallback(async (scope: FileRootGitDiffScope) => {
-    if (!onOpenDiff || busyAction !== null) {
-      return;
-    }
-    const actionRevision = beginAction("open-diff");
-    if (actionRevision === null) {
-      return;
-    }
-    const revision = loadRevisionRef.current;
-    try {
-      const message = await onOpenDiff(scope);
-      if (loadRevisionRef.current === revision) {
-        setFeedback(message ?? "");
+  const handleOpenMarkdownPath = useCallback(
+    (target: string) => {
+      if (!api || busyAction !== null) {
+        return;
       }
-    } catch (error) {
-      if (loadRevisionRef.current === revision) {
-        setFeedback(error instanceof Error ? error.message : "Git diff failed.");
+      const trimmedTarget = target.trim();
+      if (!trimmedTarget || trimmedTarget.startsWith("#")) {
+        return;
       }
-    } finally {
-      finishAction(actionRevision);
-    }
-  }, [beginAction, busyAction, finishAction, onOpenDiff]);
+      const actionRevision = beginAction("open-path");
+      if (actionRevision === null) {
+        return;
+      }
+      const revision = loadRevisionRef.current;
+      void api
+        .openSessionFilePreviewWindow({
+          kind: "link",
+          sessionId: request.sessionId,
+          target: trimmedTarget,
+          baseResource: request,
+        })
+        .then((result) => {
+          if (loadRevisionRef.current === revision) {
+            setFeedback(result.status === "opened" ? "" : result.message);
+          }
+        })
+        .catch((error) => {
+          if (loadRevisionRef.current === revision) {
+            setFeedback(
+              error instanceof Error
+                ? error.message
+                : "The link could not be opened.",
+            );
+          }
+        })
+        .finally(() => {
+          finishAction(actionRevision);
+        });
+    },
+    [api, beginAction, busyAction, finishAction, request],
+  );
+
+  const openDiff = useCallback(
+    async (scope: FileRootGitDiffScope) => {
+      if (!onOpenDiff || busyAction !== null) {
+        return;
+      }
+      const actionRevision = beginAction("open-diff");
+      if (actionRevision === null) {
+        return;
+      }
+      const revision = loadRevisionRef.current;
+      try {
+        const message = await onOpenDiff(scope);
+        if (loadRevisionRef.current === revision) {
+          setFeedback(message ?? "");
+        }
+      } catch (error) {
+        if (loadRevisionRef.current === revision) {
+          setFeedback(
+            error instanceof Error ? error.message : "Git diff failed.",
+          );
+        }
+      } finally {
+        finishAction(actionRevision);
+      }
+    },
+    [beginAction, busyAction, finishAction, onOpenDiff],
+  );
 
   const structuredTextFeedback = currentStructuredTextError
     ? "Formatted preview is unavailable. Showing raw content."
-    : loaded && structuredTextFormat && loaded.bytes.byteLength > STRUCTURED_TEXT_PREVIEW_MAX_BYTES
+    : loaded &&
+        structuredTextFormat &&
+        loaded.bytes.byteLength > STRUCTURED_TEXT_PREVIEW_MAX_BYTES
       ? `Formatted preview is skipped for files larger than ${formatFileByteLength(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}.`
       : "";
-  const previewFeedback = [feedback, diffAvailabilityMessage, structuredTextFeedback].filter(Boolean);
-  const contentLoading = loadState.status === "inspecting" || loadState.status === "loading";
+  const previewFeedback = [
+    feedback,
+    diffAvailabilityMessage,
+    structuredTextFeedback,
+  ].filter(Boolean);
+  const contentLoading =
+    loadState.status === "inspecting" || loadState.status === "loading";
 
   return (
     <section
       className="session-file-preview session-file-preview-with-path"
       aria-label="File preview"
-      aria-busy={contentLoading || reloadPending || Boolean(busyAction) || diffLoadingScope !== null || undefined}
+      aria-busy={
+        contentLoading ||
+        reloadPending ||
+        Boolean(busyAction) ||
+        diffLoadingScope !== null ||
+        undefined
+      }
     >
       <header className="session-file-preview-header session-file-preview-file-header">
         {backNavigation ? (
@@ -1190,47 +1548,94 @@ export function SessionFilePreview({
           />
         ) : null}
         <div className="session-file-preview-title">
-          <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
-          {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
+          <strong>
+            {descriptor?.name ??
+              getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}
+          </strong>
+          {isSessionFileGitCommitResource(request) ? (
+            <span>Commit {request.commitId.slice(0, 7)}</span>
+          ) : null}
         </div>
         <div className="session-file-preview-actions">
-          {previewKind === "pdf" ? <span ref={setPdfActionsContainer} className="session-pdf-selection-actions"
-            role="group" aria-label="Selected PDF Text" /> : null}
+          {previewKind === "pdf" ? (
+            <span
+              ref={setPdfActionsContainer}
+              className="session-pdf-selection-actions"
+              role="group"
+              aria-label="Selected PDF Text"
+            />
+          ) : null}
           {descriptor && (previewKind === "text" || isDocumentPreview) ? (
             <select
               aria-label="Text encoding"
               value={encoding}
-              onChange={(event) => setEncoding(event.currentTarget.value as SessionFileEncodingSelection)}
+              onChange={(event) =>
+                setEncoding(
+                  event.currentTarget.value as SessionFileEncodingSelection,
+                )
+              }
             >
-              {ENCODING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              {ENCODING_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           ) : null}
           {isDocumentPreview ? (
-            <div className="session-file-preview-segmented" role="group" aria-label={`${previewKind === "html" ? "HTML" : previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}>
-              <button type="button" className={markdownMode === "preview" ? "is-active" : ""} aria-pressed={markdownMode === "preview"} onClick={() => {
-                if (previewKind === "html") {
-                  setFindOpen(false);
-                }
-                setMarkdownMode("preview");
-              }}>Preview</button>
-              <button type="button" className={markdownMode === "source" ? "is-active" : ""} aria-pressed={markdownMode === "source"} onClick={() => setMarkdownMode("source")}>Source</button>
+            <div
+              className="session-file-preview-segmented"
+              role="group"
+              aria-label={`${previewKind === "html" ? "HTML" : previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}
+            >
+              <button
+                type="button"
+                className={markdownMode === "preview" ? "is-active" : ""}
+                aria-pressed={markdownMode === "preview"}
+                onClick={() => {
+                  if (previewKind === "html") {
+                    setFindOpen(false);
+                  }
+                  setMarkdownMode("preview");
+                }}
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                className={markdownMode === "source" ? "is-active" : ""}
+                aria-pressed={markdownMode === "source"}
+                onClick={() => setMarkdownMode("source")}
+              >
+                Source
+              </button>
             </div>
           ) : null}
           {structuredTextFormat && structuredTextEligible ? (
-            <div className="session-file-preview-segmented" role="group" aria-label="Structured text display mode">
+            <div
+              className="session-file-preview-segmented"
+              role="group"
+              aria-label="Structured text display mode"
+            >
               <button
                 type="button"
-                className={structuredTextMode === "formatted" ? "is-active" : ""}
+                className={
+                  structuredTextMode === "formatted" ? "is-active" : ""
+                }
                 aria-pressed={structuredTextMode === "formatted"}
                 disabled={!currentStructuredTextProjection}
                 onClick={() => setStructuredTextMode("formatted")}
-              >Formatted</button>
+              >
+                Formatted
+              </button>
               <button
                 type="button"
                 className={structuredTextMode === "raw" ? "is-active" : ""}
                 aria-pressed={structuredTextMode === "raw"}
                 onClick={() => setStructuredTextMode("raw")}
-              >Raw</button>
+              >
+                Raw
+              </button>
             </div>
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
@@ -1241,7 +1646,12 @@ export function SessionFilePreview({
                 disabled={!imageObjectUrl || busyAction !== null}
                 onClick={() => void copyPreviewImage()}
               >
-                <ButtonContent busy={busyAction === "copy-image"} busyLabel="Copying image">Copy Image</ButtonContent>
+                <ButtonContent
+                  busy={busyAction === "copy-image"}
+                  busyLabel="Copying image"
+                >
+                  Copy Image
+                </ButtonContent>
               </button>
               <ImageZoomControls
                 controller={imageViewport}
@@ -1250,19 +1660,28 @@ export function SessionFilePreview({
               />
             </>
           ) : null}
-          {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
-            <button
-              key={scope}
-              type="button"
-              aria-busy={diffLoadingScope === scope || undefined}
-              disabled={diffLoadingScope !== null || busyAction !== null}
-              onClick={() => void openDiff(scope)}
-            >
-              <ButtonContent busy={diffLoadingScope === scope} busyLabel="Loading diff">
-                {diffScopes.length === 1 ? "Open Diff" : scope === "staged" ? "Staged Diff" : "Working Tree Diff"}
-              </ButtonContent>
-            </button>
-          )) : null}
+          {onOpenDiff && diffScopes.length > 0
+            ? diffScopes.map((scope) => (
+                <button
+                  key={scope}
+                  type="button"
+                  aria-busy={diffLoadingScope === scope || undefined}
+                  disabled={diffLoadingScope !== null || busyAction !== null}
+                  onClick={() => void openDiff(scope)}
+                >
+                  <ButtonContent
+                    busy={diffLoadingScope === scope}
+                    busyLabel="Loading diff"
+                  >
+                    {diffScopes.length === 1
+                      ? "Open Diff"
+                      : scope === "staged"
+                        ? "Staged Diff"
+                        : "Working Tree Diff"}
+                  </ButtonContent>
+                </button>
+              ))
+            : null}
           {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button
               type="button"
@@ -1270,14 +1689,23 @@ export function SessionFilePreview({
               disabled={busyAction !== null}
               onClick={() => void copyCurrentFile()}
             >
-              <ButtonContent busy={busyAction === "copy-file"} busyLabel="Copying file">Copy File</ButtonContent>
+              <ButtonContent
+                busy={busyAction === "copy-file"}
+                busyLabel="Copying file"
+              >
+                Copy File
+              </ButtonContent>
             </button>
           ) : null}
           {previewKind === "text" || isDocumentPreview ? (
             <button
               type="button"
               onClick={openFind}
-              title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
+              title={getShortcutTooltip(
+                SHORTCUT_COMMAND_IDS.filePreviewFind,
+                undefined,
+                keyboardShortcuts,
+              )}
             >
               Find
             </button>
@@ -1294,7 +1722,9 @@ export function SessionFilePreview({
               setReloadRevision((current) => current + 1);
             }}
           >
-            <ButtonContent busy={reloadPending} busyLabel="Reloading">Reload</ButtonContent>
+            <ButtonContent busy={reloadPending} busyLabel="Reloading">
+              Reload
+            </ButtonContent>
           </button>
           {currentFileActionsAvailable ? (
             <>
@@ -1304,7 +1734,12 @@ export function SessionFilePreview({
                 disabled={busyAction !== null}
                 onClick={() => void openCurrentFile()}
               >
-                <ButtonContent busy={busyAction === "open"} busyLabel="Opening file">Open</ButtonContent>
+                <ButtonContent
+                  busy={busyAction === "open"}
+                  busyLabel="Opening file"
+                >
+                  Open
+                </ButtonContent>
               </button>
               <button
                 type="button"
@@ -1312,7 +1747,12 @@ export function SessionFilePreview({
                 disabled={busyAction !== null}
                 onClick={() => void revealCurrentFile()}
               >
-                <ButtonContent busy={busyAction === "reveal"} busyLabel="Showing file in Explorer">Show In Explorer</ButtonContent>
+                <ButtonContent
+                  busy={busyAction === "reveal"}
+                  busyLabel="Showing file in Explorer"
+                >
+                  Show In Explorer
+                </ButtonContent>
               </button>
             </>
           ) : null}
@@ -1339,7 +1779,9 @@ export function SessionFilePreview({
         </div>
       ) : null}
 
-      {findOpen && descriptor && (previewKind === "text" || isDocumentPreview) ? (
+      {findOpen &&
+      descriptor &&
+      (previewKind === "text" || isDocumentPreview) ? (
         <SessionContentFindBar
           open
           query={findQuery}
@@ -1359,20 +1801,38 @@ export function SessionFilePreview({
       ) : null}
       {loadState.status === "loading" ? (
         loadState.descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES ? (
-          <div className="session-file-preview-loading" role="status" aria-live="polite" aria-label="Loading file content">
-            <progress aria-label="Loading file content" max={loadState.descriptor.byteLength} value={loadState.loadedBytes} />
-            <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
+          <div
+            className="session-file-preview-loading"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading file content"
+          >
+            <progress
+              aria-label="Loading file content"
+              max={loadState.descriptor.byteLength}
+              value={loadState.loadedBytes}
+            />
+            <span>
+              {formatFileByteLength(loadState.loadedBytes)} /{" "}
+              {formatFileByteLength(loadState.descriptor.byteLength)}
+            </span>
           </div>
         ) : (
-          <div className="session-file-preview-loading"><LoadingIndicator label="Loading file content" /></div>
+          <div className="session-file-preview-loading">
+            <LoadingIndicator label="Loading file content" />
+          </div>
         )
       ) : null}
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">
-          <strong>Large file: {formatFileByteLength(loadState.descriptor.byteLength)}</strong>
-          <p>{isSessionFileGitCommitResource(request)
-            ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
-            : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
+          <strong>
+            Large file: {formatFileByteLength(loadState.descriptor.byteLength)}
+          </strong>
+          <p>
+            {isSessionFileGitCommitResource(request)
+              ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
+              : "The file can still be opened. It is read in chunks and replaces the previous preview."}
+          </p>
           <button
             type="button"
             aria-busy={busyAction === "load" || undefined}
@@ -1385,22 +1845,45 @@ export function SessionFilePreview({
               if (actionRevision === null) {
                 return;
               }
-              void loadDescriptor(loadState.descriptor, loadRevisionRef.current).finally(() => finishAction(actionRevision));
+              void loadDescriptor(
+                loadState.descriptor,
+                loadRevisionRef.current,
+              ).finally(() => finishAction(actionRevision));
             }}
           >
-            <ButtonContent busy={busyAction === "load"} busyLabel="Loading file">Load Anyway</ButtonContent>
+            <ButtonContent
+              busy={busyAction === "load"}
+              busyLabel="Loading file"
+            >
+              Load Anyway
+            </ButtonContent>
           </button>
         </div>
       ) : null}
-      {loadState.status === "error" ? <div className="session-file-preview-error" role="alert">{loadState.message}</div> : null}
+      {loadState.status === "error" ? (
+        <div className="session-file-preview-error" role="alert">
+          {loadState.message}
+        </div>
+      ) : null}
 
-      {loadState.status === "ready" && descriptor && previewKind === "binary" ? (
+      {loadState.status === "ready" &&
+      descriptor &&
+      previewKind === "binary" ? (
         <div className="session-file-preview-metadata">
           <strong>Preview is not available for this binary file.</strong>
           <dl>
-            <div><dt>Type</dt><dd>{descriptor.mimeType}</dd></div>
-            <div><dt>Size</dt><dd>{formatFileByteLength(descriptor.byteLength)}</dd></div>
-            <div><dt>Modified</dt><dd>{descriptor.modifiedAt}</dd></div>
+            <div>
+              <dt>Type</dt>
+              <dd>{descriptor.mimeType}</dd>
+            </div>
+            <div>
+              <dt>Size</dt>
+              <dd>{formatFileByteLength(descriptor.byteLength)}</dd>
+            </div>
+            <div>
+              <dt>Modified</dt>
+              <dd>{descriptor.modifiedAt}</dd>
+            </div>
           </dl>
           {currentFileActionsAvailable ? (
             <>
@@ -1410,7 +1893,12 @@ export function SessionFilePreview({
                 disabled={busyAction !== null}
                 onClick={() => void openCurrentFile()}
               >
-                <ButtonContent busy={busyAction === "open"} busyLabel="Opening file">Open In Default App</ButtonContent>
+                <ButtonContent
+                  busy={busyAction === "open"}
+                  busyLabel="Opening file"
+                >
+                  Open In Default App
+                </ButtonContent>
               </button>
               <button
                 type="button"
@@ -1418,7 +1906,12 @@ export function SessionFilePreview({
                 disabled={busyAction !== null}
                 onClick={() => void revealCurrentFile()}
               >
-                <ButtonContent busy={busyAction === "reveal"} busyLabel="Showing file in Explorer">Show In Explorer</ButtonContent>
+                <ButtonContent
+                  busy={busyAction === "reveal"}
+                  busyLabel="Showing file in Explorer"
+                >
+                  Show In Explorer
+                </ButtonContent>
               </button>
             </>
           ) : null}
@@ -1495,7 +1988,10 @@ export function SessionFilePreview({
           />
         )
       ) : null}
-      {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
+      {loadState.status === "ready" &&
+      loaded &&
+      descriptor &&
+      (previewKind === "image" || previewKind === "svg") ? (
         imageObjectUrl ? (
           <ImageViewport
             controller={imageViewport}
@@ -1504,7 +2000,9 @@ export function SessionFilePreview({
             viewportClassName="session-file-image-scroll"
             canvasClassName="session-file-image-canvas"
             imageClassName="session-file-image"
-            onImageContextMenu={(event) => void showPreviewImageContextMenu(event)}
+            onImageContextMenu={(event) =>
+              void showPreviewImageContextMenu(event)
+            }
           />
         ) : null
       ) : null}
@@ -1516,13 +2014,18 @@ export function SessionFilePreview({
               {message}
             </span>
           ))}
-          {currentStructuredTextError ? <StructuredTextErrorDetails message={currentStructuredTextError.message} /> : null}
+          {currentStructuredTextError ? (
+            <StructuredTextErrorDetails
+              message={currentStructuredTextError.message}
+            />
+          ) : null}
         </p>
       ) : null}
     </section>
   );
 }
 
+/** Git差分に表示する原文と世代、および差分からの遷移・再取得を担う親側の処理。 */
 export type SessionDiffPreviewProps = {
   title: string;
   previewRevision: number;
@@ -1542,6 +2045,7 @@ export type SessionDiffPreviewProps = {
   contextLabel?: string;
 };
 
+/** Git差分を左右またはインラインで表示し、検索・再取得・比較元や比較先のプレビューへの遷移を扱う。 */
 export function SessionDiffPreview({
   title,
   previewRevision,
@@ -1563,7 +2067,9 @@ export function SessionDiffPreview({
   const [query, setQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
   const [feedback, setFeedback] = useState("");
-  const [navigationAction, setNavigationAction] = useState<"preview" | "before" | "after" | null>(null);
+  const [navigationAction, setNavigationAction] = useState<
+    "preview" | "before" | "after" | null
+  >(null);
   const previewIdentity = `${title}\0${previewRevision}`;
   const previewIdentityRef = useRef(previewIdentity);
   const navigationRevisionRef = useRef(0);
@@ -1574,7 +2080,10 @@ export function SessionDiffPreview({
     reloadRevisionRef.current += 1;
   }
   const lines = useMemo(() => splitPreviewLines(patch), [patch]);
-  const matches = useMemo(() => findPreviewTextMatches(lines, query), [lines, query]);
+  const matches = useMemo(
+    () => findPreviewTextMatches(lines, query),
+    [lines, query],
+  );
   const activeCurrentMatch = clampFindMatchIndex(currentMatch, matches.length);
 
   useEffect(() => {
@@ -1610,16 +2119,20 @@ export function SessionDiffPreview({
     return false;
   });
 
+  /** 一致があれば指定方向に一件移動し、端に達したら反対端へ循環する。 */
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
-      setCurrentMatch((current) => (
-        clampFindMatchIndex(current, matches.length)
-        + direction
-        + matches.length
-      ) % matches.length);
+      setCurrentMatch(
+        (current) =>
+          (clampFindMatchIndex(current, matches.length) +
+            direction +
+            matches.length) %
+          matches.length,
+      );
     }
   };
 
+  /** 他の操作や再取得を待っていないときだけ更新を依頼し、同じ差分の最新応答だけを通知する。 */
   const reload = async () => {
     if (!onReload || loading || reloadPending || navigationAction) {
       return;
@@ -1627,16 +2140,25 @@ export function SessionDiffPreview({
     const revision = ++reloadRevisionRef.current;
     try {
       const message = await onReload();
-      if (revision === reloadRevisionRef.current && previewIdentityRef.current === previewIdentity) {
+      if (
+        revision === reloadRevisionRef.current &&
+        previewIdentityRef.current === previewIdentity
+      ) {
         setFeedback(message ?? "");
       }
     } catch (error) {
-      if (revision === reloadRevisionRef.current && previewIdentityRef.current === previewIdentity) {
-        setFeedback(error instanceof Error ? error.message : "Git diff failed.");
+      if (
+        revision === reloadRevisionRef.current &&
+        previewIdentityRef.current === previewIdentity
+      ) {
+        setFeedback(
+          error instanceof Error ? error.message : "Git diff failed.",
+        );
       }
     }
   };
 
+  /** 一つずつファイルプレビューを開き、差分や操作が切り替わった後に旧結果を表示しない。 */
   const openPreviewAction = async (
     action: (() => Promise<string | null>) | undefined,
     fallbackMessage: string,
@@ -1649,11 +2171,17 @@ export function SessionDiffPreview({
     setNavigationAction(actionName);
     try {
       const message = await action();
-      if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
+      if (
+        revision === navigationRevisionRef.current &&
+        previewIdentityRef.current === previewIdentity
+      ) {
         setFeedback(message ?? "");
       }
     } catch (error) {
-      if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
+      if (
+        revision === navigationRevisionRef.current &&
+        previewIdentityRef.current === previewIdentity
+      ) {
         setFeedback(error instanceof Error ? error.message : fallbackMessage);
       }
     } finally {
@@ -1667,7 +2195,9 @@ export function SessionDiffPreview({
     <section
       className="session-file-preview session-diff-preview"
       aria-label="Git diff preview"
-      aria-busy={loading || reloadPending || navigationAction !== null || undefined}
+      aria-busy={
+        loading || reloadPending || navigationAction !== null || undefined
+      }
     >
       <header className="session-file-preview-header">
         {backNavigation ? (
@@ -1679,10 +2209,16 @@ export function SessionDiffPreview({
         <div className="session-file-preview-title">
           <strong>{title}</strong>
           <span>Git Diff</span>
-          {contextLabel ? <span className="session-diff-preview-context">{contextLabel}</span> : null}
+          {contextLabel ? (
+            <span className="session-diff-preview-context">{contextLabel}</span>
+          ) : null}
         </div>
         <div className="session-file-preview-actions">
-          <div className="session-file-preview-segmented" role="group" aria-label="Git diff display mode">
+          <div
+            className="session-file-preview-segmented"
+            role="group"
+            aria-label="Git diff display mode"
+          >
             <button
               type="button"
               className={viewMode === "split" ? "is-active" : ""}
@@ -1707,9 +2243,20 @@ export function SessionDiffPreview({
               type="button"
               aria-busy={navigationAction === "preview" || undefined}
               disabled={navigationAction !== null}
-              onClick={() => void openPreviewAction(onOpenPreview, "The file preview could not be opened.", "preview")}
+              onClick={() =>
+                void openPreviewAction(
+                  onOpenPreview,
+                  "The file preview could not be opened.",
+                  "preview",
+                )
+              }
             >
-              <ButtonContent busy={navigationAction === "preview"} busyLabel="Opening preview">Open Preview</ButtonContent>
+              <ButtonContent
+                busy={navigationAction === "preview"}
+                busyLabel="Opening preview"
+              >
+                Open Preview
+              </ButtonContent>
             </button>
           ) : null}
           {onOpenBeforePreview ? (
@@ -1717,9 +2264,20 @@ export function SessionDiffPreview({
               type="button"
               aria-busy={navigationAction === "before" || undefined}
               disabled={navigationAction !== null}
-              onClick={() => void openPreviewAction(onOpenBeforePreview, "The before preview could not be opened.", "before")}
+              onClick={() =>
+                void openPreviewAction(
+                  onOpenBeforePreview,
+                  "The before preview could not be opened.",
+                  "before",
+                )
+              }
             >
-              <ButtonContent busy={navigationAction === "before"} busyLabel="Opening before preview">Open Before</ButtonContent>
+              <ButtonContent
+                busy={navigationAction === "before"}
+                busyLabel="Opening before preview"
+              >
+                Open Before
+              </ButtonContent>
             </button>
           ) : null}
           {onOpenAfterPreview ? (
@@ -1727,27 +2285,47 @@ export function SessionDiffPreview({
               type="button"
               aria-busy={navigationAction === "after" || undefined}
               disabled={navigationAction !== null}
-              onClick={() => void openPreviewAction(onOpenAfterPreview, "The after preview could not be opened.", "after")}
+              onClick={() =>
+                void openPreviewAction(
+                  onOpenAfterPreview,
+                  "The after preview could not be opened.",
+                  "after",
+                )
+              }
             >
-              <ButtonContent busy={navigationAction === "after"} busyLabel="Opening after preview">Open After</ButtonContent>
+              <ButtonContent
+                busy={navigationAction === "after"}
+                busyLabel="Opening after preview"
+              >
+                Open After
+              </ButtonContent>
             </button>
           ) : null}
           <button
             type="button"
             disabled={loading || reloadPending || navigationAction !== null}
             onClick={() => setFindOpen(true)}
-            title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
+            title={getShortcutTooltip(
+              SHORTCUT_COMMAND_IDS.filePreviewFind,
+              undefined,
+              keyboardShortcuts,
+            )}
           >
             Find
           </button>
           {onReload ? (
             <button
               type="button"
-              aria-busy={reloadPending && !loading || undefined}
+              aria-busy={(reloadPending && !loading) || undefined}
               disabled={loading || reloadPending || navigationAction !== null}
               onClick={() => void reload()}
             >
-              <ButtonContent busy={reloadPending && !loading} busyLabel="Reloading">Reload</ButtonContent>
+              <ButtonContent
+                busy={reloadPending && !loading}
+                busyLabel="Reloading"
+              >
+                Reload
+              </ButtonContent>
             </button>
           ) : null}
         </div>
@@ -1784,7 +2362,11 @@ export function SessionDiffPreview({
           variant="diff"
         />
       )}
-      {feedback ? <p className="session-file-preview-feedback" role="alert">{feedback}</p> : null}
+      {feedback ? (
+        <p className="session-file-preview-feedback" role="alert">
+          {feedback}
+        </p>
+      ) : null}
     </section>
   );
 }

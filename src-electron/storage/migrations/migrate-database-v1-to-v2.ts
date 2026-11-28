@@ -1,10 +1,14 @@
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { openAppDatabaseReadOnly, openMigrationDatabase } from "../sqlite-connection.js";
+import {
+  openAppDatabaseReadOnly,
+  openMigrationDatabase,
+} from "../sqlite-connection.js";
 
 import { CREATE_V2_SCHEMA_SQL } from "../database-schema-v2.js";
 
+/** 移行から除外したデータの位置と理由を、調査・実行レポートに記録する。 */
 export type MigrationIssue = {
   sourceTable: string;
   sourceId: string;
@@ -13,6 +17,7 @@ export type MigrationIssue = {
   action: "skipped";
 };
 
+/** 移行元を読むだけで、V1の内訳、V2への予定件数、除外件数、問題を確認するためのレポート。 */
 export type MigrationDryRunReport = {
   mode: "dry-run";
   input: {
@@ -51,6 +56,7 @@ export type MigrationDryRunReport = {
   issues: MigrationIssue[];
 };
 
+/** V2ファイルへの書き込み後に、移行元と移行結果の件数、除外理由を返すレポート。 */
 export type MigrationWriteReport = {
   mode: "write";
   input: {
@@ -87,6 +93,7 @@ export type MigrationWriteReport = {
   issues: MigrationIssue[];
 };
 
+/** V1のSession一行にまとまっているヘッダー、会話本文、旧ストリームの形。 */
 type SessionSourceRow = {
   id: string;
   task_title: string;
@@ -116,19 +123,26 @@ type SessionSourceRow = {
   last_active_at: number;
 };
 
-type SessionHeaderSourceRow = Omit<SessionSourceRow, "messages_json" | "stream_json">;
+/** 大きな本文を一括取得せずSession概要を先に読み込むための行。 */
+type SessionHeaderSourceRow = Omit<
+  SessionSourceRow,
+  "messages_json" | "stream_json"
+>;
 
+/** 個別のSessionから取得する旧会話本文と旧ストリームのJSON。 */
 type SessionPayloadSourceRow = {
   messages_json: string;
   stream_json: string;
 };
 
+/** V2へコピーする共通設定のキー・保存値・更新時刻。 */
 type AppSettingSourceRow = {
   setting_key: string;
   setting_value: string;
   updated_at: string;
 };
 
+/** 旧モデル一覧の版番号と取得元・有効状態を保持する元行。 */
 type ModelCatalogRevisionRow = {
   revision: number;
   source: string;
@@ -136,6 +150,7 @@ type ModelCatalogRevisionRow = {
   is_active: number;
 };
 
+/** モデル一覧の版ごとに移すプロバイダーの表示情報・既定値・表示順。 */
 type ModelCatalogProviderRow = {
   revision: number;
   provider_id: string;
@@ -145,6 +160,7 @@ type ModelCatalogProviderRow = {
   sort_order: number;
 };
 
+/** モデル一覧の版とプロバイダーごとに移すモデルと推論設定の候補。 */
 type ModelCatalogModelRow = {
   revision: number;
   provider_id: string;
@@ -154,6 +170,7 @@ type ModelCatalogModelRow = {
   sort_order: number;
 };
 
+/** 存在する移行元テーブルの件数を読み取る集計結果。 */
 type CountRow = {
   count: number;
 };
@@ -165,30 +182,43 @@ const LEGACY_APP_SETTING_KEYS = new Set([
   "character_reflection_trigger_settings_json",
 ]);
 
+/** 既存のV2本体またはサイドカーを一時退避した元パスと退避先。 */
 type SqliteBackupFile = {
   originalPath: string;
   backupPath: string;
 };
 
+/** 旧版に任意で存在するテーブルを、スキーマ情報から名前で確認する。 */
 function tableExists(db: DatabaseSync, tableName: string): boolean {
-  const row = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName);
+  const row = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ?")
+    .get(tableName);
   return row !== undefined;
 }
 
+/** 実在する列名を調べ、テーブルがなければ空集合を返す。 */
 function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
   if (!tableExists(db, tableName)) {
     return new Set();
   }
 
-  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+    name: string;
+  }>;
   return new Set(rows.map((row) => row.name));
 }
 
+/** 文字列内の引用符を二重化し、旧データに不足する列の既定値をSQLリテラルにする。 */
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function selectColumnOrDefault(columnNames: Set<string>, columnName: string, defaultValue: string | number): string {
+/** 旧DBに列があればその値を使い、なければ同じ列名で指定の既定値を射影する。 */
+function selectColumnOrDefault(
+  columnNames: Set<string>,
+  columnName: string,
+  defaultValue: string | number,
+): string {
   if (columnNames.has(columnName)) {
     return columnName;
   }
@@ -198,14 +228,18 @@ function selectColumnOrDefault(columnNames: Set<string>, columnName: string, def
     : `${sqlStringLiteral(defaultValue)} AS ${columnName}`;
 }
 
+/** 任意のテーブルを集計する。テーブル自体がない旧版の件数はゼロとする。 */
 function countRows(db: DatabaseSync, tableName: string): number {
   if (!tableExists(db, tableName)) {
     return 0;
   }
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get() as CountRow;
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+    .get() as CountRow;
   return row.count;
 }
 
+/** JSON配列だけを認め、壊れたJSONや別の型は呼び出し側が除外できるようnullを返す。 */
 function parseJsonArray(value: string): unknown[] | null {
   try {
     const parsed = JSON.parse(value);
@@ -215,44 +249,77 @@ function parseJsonArray(value: string): unknown[] | null {
   }
 }
 
-function recordJsonArrayIssue(issues: MigrationIssue[], issue: MigrationIssue): void {
+/** 配列として読めない元フィールドの位置と除外理由を報告へ追加する。 */
+function recordJsonArrayIssue(
+  issues: MigrationIssue[],
+  issue: MigrationIssue,
+): void {
   issues.push(issue);
 }
 
-function isMessageCandidate(value: unknown): value is { role?: unknown; artifact?: unknown; text?: unknown; accent?: unknown } {
+/** 旧会話の要素にロールや詳細が格納され得るオブジェクトか判定する。 */
+function isMessageCandidate(value: unknown): value is {
+  role?: unknown;
+  artifact?: unknown;
+  text?: unknown;
+  accent?: unknown;
+} {
   return typeof value === "object" && value !== null;
 }
 
-function isValidMessage(value: unknown): value is { role: "user" | "assistant"; artifact?: unknown; text?: unknown; accent?: unknown } {
+/** V2の本文行へ移行可能なユーザー発言またはアシスタント発言か判定する。 */
+function isValidMessage(value: unknown): value is {
+  role: "user" | "assistant";
+  artifact?: unknown;
+  text?: unknown;
+  accent?: unknown;
+} {
   if (!isMessageCandidate(value)) {
     return false;
   }
   return value.role === "user" || value.role === "assistant";
 }
 
+/** 事前集計で、旧会話要素にオブジェクト型の詳細が付属するか判定する。 */
 function hasArtifact(value: unknown): boolean {
-  return isMessageCandidate(value) && typeof value.artifact === "object" && value.artifact !== null;
+  return (
+    isMessageCandidate(value) &&
+    typeof value.artifact === "object" &&
+    value.artifact !== null
+  );
 }
 
+/** 旧会話の本文は文字列だけを保持し、それ以外は空文字とする。 */
 function asText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/** 明示的な真だけをSQLiteの1にし、それ以外を0にする。 */
 function toSqliteBoolean(value: unknown): number {
   return value === true ? 1 : 0;
 }
 
+/** SQLite本体と一緒に扱うWAL・共有メモリーのパスを得る。 */
 function sqliteDatabaseFilePaths(dbPath: string): string[] {
   return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
 }
 
+/** DB本体がなくてもサイドカーが残っていれば出力先が使用済みと判定する。 */
 function sqliteDatabaseFilesExist(dbPath: string): boolean {
   return sqliteDatabaseFilePaths(dbPath).some((path) => existsSync(path));
 }
 
-function assertDistinctMigrationPaths(v1DbPath: string, v2DbPath: string): void {
-  const v1Paths = new Set(sqliteDatabaseFilePaths(v1DbPath).map((path) => resolve(path)));
-  const v2Paths = new Set(sqliteDatabaseFilePaths(v2DbPath).map((path) => resolve(path)));
+/** 移行元と移行先の本体・サイドカーを絶対パスで照合し、衝突する移行を拒否する。 */
+function assertDistinctMigrationPaths(
+  v1DbPath: string,
+  v2DbPath: string,
+): void {
+  const v1Paths = new Set(
+    sqliteDatabaseFilePaths(v1DbPath).map((path) => resolve(path)),
+  );
+  const v2Paths = new Set(
+    sqliteDatabaseFilePaths(v2DbPath).map((path) => resolve(path)),
+  );
 
   for (const path of v1Paths) {
     if (v2Paths.has(path)) {
@@ -261,6 +328,7 @@ function assertDistinctMigrationPaths(v1DbPath: string, v2DbPath: string): void 
   }
 }
 
+/** 上書き対象の既存V2とサイドカーを退避する。移動途中で失敗した場合は移動済み分を戻す。 */
 function backupExistingSqliteDatabaseFiles(dbPath: string): SqliteBackupFile[] {
   const suffix = `.migration-backup-${process.pid}-${Date.now()}`;
   const backups: SqliteBackupFile[] = [];
@@ -283,12 +351,14 @@ function backupExistingSqliteDatabaseFiles(dbPath: string): SqliteBackupFile[] {
   return backups;
 }
 
+/** 指定したSQLite DB本体とサイドカーを削除する。不在のファイルは許容する。 */
 function removeSqliteDatabaseFiles(dbPath: string): void {
   for (const path of sqliteDatabaseFilePaths(dbPath)) {
     rmSync(path, { force: true });
   }
 }
 
+/** 存在する退避ファイルを元の名前へ戻し、途中で作られた同名ファイルは置き換える。 */
 function restoreMovedSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   for (const backup of backups) {
     if (existsSync(backup.backupPath)) {
@@ -298,18 +368,27 @@ function restoreMovedSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   }
 }
 
-function restoreSqliteDatabaseBackups(dbPath: string, backups: SqliteBackupFile[]): void {
+/** 失敗した移行先の本体とサイドカーを除去し、元の出力先を復元する。 */
+function restoreSqliteDatabaseBackups(
+  dbPath: string,
+  backups: SqliteBackupFile[],
+): void {
   removeSqliteDatabaseFiles(dbPath);
   restoreMovedSqliteDatabaseBackups(backups);
 }
 
+/** 移行成功後に、置き換え前の一時退避ファイルを破棄する。 */
 function discardSqliteDatabaseBackups(backups: SqliteBackupFile[]): void {
   for (const backup of backups) {
     rmSync(backup.backupPath, { force: true });
   }
 }
 
-function copyModelCatalogTables(v1Db: DatabaseSync, v2Db: DatabaseSync): {
+/** 旧カタログの版、プロバイダー、モデルを親から順に移し、それぞれ実際に挿入した件数を返す。 */
+function copyModelCatalogTables(
+  v1Db: DatabaseSync,
+  v2Db: DatabaseSync,
+): {
   modelCatalogRevisions: number;
   modelCatalogProviders: number;
   modelCatalogModels: number;
@@ -329,10 +408,18 @@ function copyModelCatalogTables(v1Db: DatabaseSync, v2Db: DatabaseSync): {
   let models = 0;
 
   if (tableExists(v1Db, "model_catalog_revisions")) {
-    const rows = v1Db.prepare("SELECT revision, source, imported_at, is_active FROM model_catalog_revisions ORDER BY revision").all() as
-      ModelCatalogRevisionRow[];
+    const rows = v1Db
+      .prepare(
+        "SELECT revision, source, imported_at, is_active FROM model_catalog_revisions ORDER BY revision",
+      )
+      .all() as ModelCatalogRevisionRow[];
     for (const row of rows) {
-      revisionStmt.run(row.revision, row.source, row.imported_at, row.is_active);
+      revisionStmt.run(
+        row.revision,
+        row.source,
+        row.imported_at,
+        row.is_active,
+      );
       revisions += 1;
     }
   }
@@ -382,7 +469,10 @@ function copyModelCatalogTables(v1Db: DatabaseSync, v2Db: DatabaseSync): {
   };
 }
 
-export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunReport {
+/** V1を読み取り専用で開き、V2に移せる会話・設定の予定件数と除外箇所を報告する。移行先は作らない。 */
+export function createMigrationDryRunReport(
+  v1DbPath: string,
+): MigrationDryRunReport {
   if (!existsSync(v1DbPath)) {
     throw new Error(`V1 database not found: ${v1DbPath}`);
   }
@@ -391,10 +481,16 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
   try {
     const issues: MigrationIssue[] = [];
     const sessions = tableExists(v1Db, "sessions")
-      ? (v1Db.prepare("SELECT id, messages_json, stream_json FROM sessions ORDER BY id").all() as SessionSourceRow[])
+      ? (v1Db
+          .prepare(
+            "SELECT id, messages_json, stream_json FROM sessions ORDER BY id",
+          )
+          .all() as SessionSourceRow[])
       : [];
     const appSettings = tableExists(v1Db, "app_settings")
-      ? (v1Db.prepare("SELECT setting_key FROM app_settings ORDER BY setting_key").all() as AppSettingSourceRow[])
+      ? (v1Db
+          .prepare("SELECT setting_key FROM app_settings ORDER BY setting_key")
+          .all() as AppSettingSourceRow[])
       : [];
 
     let sessionMessages = 0;
@@ -447,7 +543,9 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
       }
     }
 
-    const legacyAppSettings = appSettings.filter((row) => LEGACY_APP_SETTING_KEYS.has(row.setting_key)).length;
+    const legacyAppSettings = appSettings.filter((row) =>
+      LEGACY_APP_SETTING_KEYS.has(row.setting_key),
+    ).length;
 
     return {
       mode: "dry-run",
@@ -481,8 +579,14 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
         invalidMessages,
       },
       estimatedSourceBytes: {
-        sessionMessagesJson: sessions.reduce((total, row) => total + row.messages_json.length, 0),
-        sessionStreamJson: sessions.reduce((total, row) => total + row.stream_json.length, 0),
+        sessionMessagesJson: sessions.reduce(
+          (total, row) => total + row.messages_json.length,
+          0,
+        ),
+        sessionStreamJson: sessions.reduce(
+          (total, row) => total + row.stream_json.length,
+          0,
+        ),
       },
       issues,
     };
@@ -491,6 +595,7 @@ export function createMigrationDryRunReport(v1DbPath: string): MigrationDryRunRe
   }
 }
 
+/** V1を読み取り専用のまま、会話を行と詳細に分離してV2へ保存する。上書き指定時は既存出力を退避し、失敗時に戻す。 */
 export function createMigrationWriteReport(input: {
   v1DbPath: string;
   v2DbPath: string;
@@ -515,22 +620,32 @@ export function createMigrationWriteReport(input: {
   const issues: MigrationIssue[] = [];
 
   try {
-    backups = overwrite ? backupExistingSqliteDatabaseFiles(input.v2DbPath) : [];
+    backups = overwrite
+      ? backupExistingSqliteDatabaseFiles(input.v2DbPath)
+      : [];
     v1Db = openAppDatabaseReadOnly(input.v1DbPath);
     v2Db = openMigrationDatabase(input.v2DbPath);
 
     const sessionColumnNames = tableColumnNames(v1Db, "sessions");
     const sessionRows = tableExists(v1Db, "sessions")
-      ? (v1Db.prepare(
-          `SELECT id, task_title, status, updated_at, provider, ${selectColumnOrDefault(sessionColumnNames, "catalog_revision", 1)}, workspace_label, workspace_path, branch, ${selectColumnOrDefault(sessionColumnNames, "session_kind", "default")}, character_id, character_name, character_icon_path, ${selectColumnOrDefault(sessionColumnNames, "character_theme_main", "#6f8cff")}, ${selectColumnOrDefault(sessionColumnNames, "character_theme_sub", "#6fb8c7")}, run_state, approval_mode, ${selectColumnOrDefault(sessionColumnNames, "codex_sandbox_mode", "workspace-write")}, ${selectColumnOrDefault(sessionColumnNames, "model", "gpt-5.4")}, ${selectColumnOrDefault(sessionColumnNames, "reasoning_effort", "high")}, ${selectColumnOrDefault(sessionColumnNames, "custom_agent_name", "")}, ${selectColumnOrDefault(sessionColumnNames, "allowed_additional_directories_json", "[]")}, ${selectColumnOrDefault(sessionColumnNames, "thread_id", "")}, last_active_at FROM sessions ORDER BY id`,
-        ).all() as SessionHeaderSourceRow[])
+      ? (v1Db
+          .prepare(
+            `SELECT id, task_title, status, updated_at, provider, ${selectColumnOrDefault(sessionColumnNames, "catalog_revision", 1)}, workspace_label, workspace_path, branch, ${selectColumnOrDefault(sessionColumnNames, "session_kind", "default")}, character_id, character_name, character_icon_path, ${selectColumnOrDefault(sessionColumnNames, "character_theme_main", "#6f8cff")}, ${selectColumnOrDefault(sessionColumnNames, "character_theme_sub", "#6fb8c7")}, run_state, approval_mode, ${selectColumnOrDefault(sessionColumnNames, "codex_sandbox_mode", "workspace-write")}, ${selectColumnOrDefault(sessionColumnNames, "model", "gpt-5.4")}, ${selectColumnOrDefault(sessionColumnNames, "reasoning_effort", "high")}, ${selectColumnOrDefault(sessionColumnNames, "custom_agent_name", "")}, ${selectColumnOrDefault(sessionColumnNames, "allowed_additional_directories_json", "[]")}, ${selectColumnOrDefault(sessionColumnNames, "thread_id", "")}, last_active_at FROM sessions ORDER BY id`,
+          )
+          .all() as SessionHeaderSourceRow[])
       : [];
 
     const appSettings = tableExists(v1Db, "app_settings")
-      ? (v1Db.prepare("SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key").all() as AppSettingSourceRow[])
+      ? (v1Db
+          .prepare(
+            "SELECT setting_key, setting_value, updated_at FROM app_settings ORDER BY setting_key",
+          )
+          .all() as AppSettingSourceRow[])
       : [];
 
-    const appSettingLegacyCount = appSettings.filter((row) => LEGACY_APP_SETTING_KEYS.has(row.setting_key)).length;
+    const appSettingLegacyCount = appSettings.filter((row) =>
+      LEGACY_APP_SETTING_KEYS.has(row.setting_key),
+    ).length;
     const v1Counts = {
       sessions: sessionRows.length,
       appSettings: appSettings.length,
@@ -540,13 +655,16 @@ export function createMigrationWriteReport(input: {
     };
 
     const sessionPayloadStmt = tableExists(v1Db, "sessions")
-      ? v1Db.prepare("SELECT messages_json, stream_json FROM sessions WHERE id = ?")
+      ? v1Db.prepare(
+          "SELECT messages_json, stream_json FROM sessions WHERE id = ?",
+        )
       : null;
     let skippedStreamEntries = 0;
     let invalidMessages = 0;
 
     for (const session of sessionRows) {
-      const sessionPayload = sessionPayloadStmt?.get(session.id) as SessionPayloadSourceRow | undefined;
+      const sessionPayload = sessionPayloadStmt?.get(session.id) as
+        SessionPayloadSourceRow | undefined;
       if (sessionPayload === undefined) {
         continue;
       }
@@ -585,11 +703,16 @@ export function createMigrationWriteReport(input: {
       const messageStmt = v2Db.prepare(
         "INSERT INTO session_messages (session_id, seq, role, text, accent, artifact_available) VALUES (?, ?, ?, ?, ?, ?)",
       );
-      const messageArtifactStmt = v2Db.prepare("INSERT INTO session_message_artifacts (message_id, artifact_json) VALUES (?, ?)");
-      const appSettingStmt = v2Db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)");
+      const messageArtifactStmt = v2Db.prepare(
+        "INSERT INTO session_message_artifacts (message_id, artifact_json) VALUES (?, ?)",
+      );
+      const appSettingStmt = v2Db.prepare(
+        "INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+      );
 
       for (const session of sessionRows) {
-        const sessionPayload = sessionPayloadStmt?.get(session.id) as SessionPayloadSourceRow | undefined;
+        const sessionPayload = sessionPayloadStmt?.get(session.id) as
+          SessionPayloadSourceRow | undefined;
         if (sessionPayload === undefined) {
           continue;
         }
@@ -631,7 +754,9 @@ export function createMigrationWriteReport(input: {
               role: message.role,
               text: asText((message as { text?: unknown }).text),
               accent: toSqliteBoolean(message.accent),
-              artifact: isMessageCandidate(message) ? message.artifact : undefined,
+              artifact: isMessageCandidate(message)
+                ? message.artifact
+                : undefined,
             });
             messageCount += 1;
           }
@@ -677,7 +802,10 @@ export function createMigrationWriteReport(input: {
           );
           const messageRowId = messageResult.lastInsertRowid;
           if (message.artifact !== undefined) {
-            messageArtifactStmt.run(messageRowId, JSON.stringify(message.artifact));
+            messageArtifactStmt.run(
+              messageRowId,
+              JSON.stringify(message.artifact),
+            );
             sessionMessageArtifacts += 1;
           }
         }

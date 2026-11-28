@@ -4,24 +4,31 @@ import path from "node:path";
 
 import type { CustomAgentConfig } from "@github/copilot-sdk";
 
-import type { DiscoveredCustomAgent, DiscoveredCustomAgentSource } from "../../src-shared/session/runtime-state.js";
+import type {
+  DiscoveredCustomAgent,
+  DiscoveredCustomAgentSource,
+} from "../../src-shared/session/runtime-state.js";
 
+/** エージェントの探索ディレクトリと、結果を区別する出所情報。 */
 type CustomAgentRoot = {
   rootPath: string;
   source: DiscoveredCustomAgentSource;
   sourceLabel: string;
 };
 
+/** 単一の探索ルートの照合値と、そこから解決したエージェント。 */
 type CachedCustomAgentRoot = {
   fingerprint: string;
   agents: ResolvedCustomAgent[];
 };
 
+/** ワークスペース・ユーザーホームをまとめた照合値と、重複解消済みのエージェント。 */
 type CachedCustomAgentDiscovery = {
   fingerprint: string;
   agents: ResolvedCustomAgent[];
 };
 
+/** 公開するエージェント情報に、SDKでの実行と表示可否の絞り込みに使う情報を加えた内部表現。 */
 type ResolvedCustomAgent = DiscoveredCustomAgent & {
   prompt: string;
   tools?: string[] | null;
@@ -31,11 +38,16 @@ type ResolvedCustomAgent = DiscoveredCustomAgent & {
 const customAgentRootCache = new Map<string, CachedCustomAgentRoot>();
 const customAgentDiscoveryCache = new Map<string, CachedCustomAgentDiscovery>();
 
+/** 識別子や表示パスの区切りをスラッシュに統一する。 */
 function normalizeSlashes(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
 
-function buildCustomAgentRoots(workspacePath: string, homeDirectory: string): CustomAgentRoot[] {
+/** ワークスペースの .github/agents とユーザーホームの .copilot/agents を探索対象にする。 */
+function buildCustomAgentRoots(
+  workspacePath: string,
+  homeDirectory: string,
+): CustomAgentRoot[] {
   return [
     {
       rootPath: path.join(workspacePath, ".github", "agents"),
@@ -50,6 +62,7 @@ function buildCustomAgentRoots(workspacePath: string, homeDirectory: string): Cu
   ];
 }
 
+/** 指定のキーを大小文字を区別せず探し、先頭メタデータの単一行から値を取り出す。 */
 function parseFrontmatterValue(frontmatter: string, key: string): string {
   const match = new RegExp(`^${key}:\\s*(.+)$`, "mi").exec(frontmatter);
   if (!match) {
@@ -59,7 +72,11 @@ function parseFrontmatterValue(frontmatter: string, key: string): string {
   return match[1].trim().replace(/^['"]|['"]$/g, "");
 }
 
-function parseFrontmatterBoolean(frontmatter: string, key: string): boolean | null {
+/** 先頭メタデータの真偽値を読み取り、真偽を表す値でなければ null を返す。 */
+function parseFrontmatterBoolean(
+  frontmatter: string,
+  key: string,
+): boolean | null {
   const rawValue = parseFrontmatterValue(frontmatter, key).toLowerCase();
   if (rawValue === "true") {
     return true;
@@ -72,8 +89,11 @@ function parseFrontmatterBoolean(frontmatter: string, key: string): boolean | nu
   return null;
 }
 
-function parseFrontmatterTools(frontmatter: string): string[] | null | undefined {
-  const inlineMatch = /^tools:\s*(.+)$/mi.exec(frontmatter);
+/** tools の指定を読み取る。全ツールを表す all と null は null に、指定が読み取れなければ undefined にする。 */
+function parseFrontmatterTools(
+  frontmatter: string,
+): string[] | null | undefined {
+  const inlineMatch = /^tools:\s*(.+)$/im.exec(frontmatter);
   if (inlineMatch) {
     const rawValue = inlineMatch[1]?.trim() ?? "";
     if (!rawValue) {
@@ -99,7 +119,9 @@ function parseFrontmatterTools(frontmatter: string): string[] | null | undefined
   }
 
   const lines = frontmatter.split(/\r?\n/);
-  const toolsIndex = lines.findIndex((line) => /^tools:\s*$/i.test(line.trim()));
+  const toolsIndex = lines.findIndex((line) =>
+    /^tools:\s*$/i.test(line.trim()),
+  );
   if (toolsIndex < 0) {
     return undefined;
   }
@@ -111,76 +133,114 @@ function parseFrontmatterTools(frontmatter: string): string[] | null | undefined
       break;
     }
 
-    tools.push(line.replace(/^\s*-\s+/, "").trim().replace(/^['"]|['"]$/g, ""));
+    tools.push(
+      line
+        .replace(/^\s*-\s+/, "")
+        .trim()
+        .replace(/^['"]|['"]$/g, ""),
+    );
   }
 
   return tools.length > 0 ? tools : undefined;
 }
 
-function parseCustomAgentMarkdown(
-  agentFilePath: string,
-): { name: string; displayName: string; description: string; prompt: string; tools?: string[] | null; userInvocable: boolean } {
+/** エージェント定義を同期で読み取り、先頭メタデータとプロンプト本文に分ける。明示的な true の場合だけユーザーから呼び出せる。 */
+function parseCustomAgentMarkdown(agentFilePath: string): {
+  name: string;
+  displayName: string;
+  description: string;
+  prompt: string;
+  tools?: string[] | null;
+  userInvocable: boolean;
+} {
   const markdown = fs.readFileSync(agentFilePath, "utf8");
   const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown);
   const frontmatter = frontmatterMatch?.[1] ?? "";
-  const prompt = (frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown).trim();
+  const prompt = (
+    frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown
+  ).trim();
 
   return {
     name: parseFrontmatterValue(frontmatter, "name"),
     displayName:
-      parseFrontmatterValue(frontmatter, "displayName")
-      || parseFrontmatterValue(frontmatter, "display_name"),
+      parseFrontmatterValue(frontmatter, "displayName") ||
+      parseFrontmatterValue(frontmatter, "display_name"),
     description: parseFrontmatterValue(frontmatter, "description"),
     prompt,
     tools: parseFrontmatterTools(frontmatter),
-    userInvocable: parseFrontmatterBoolean(frontmatter, "user-invocable") === true,
+    userInvocable:
+      parseFrontmatterBoolean(frontmatter, "user-invocable") === true,
   };
 }
 
-async function parseCustomAgentMarkdownAsync(
-  agentFilePath: string,
-): Promise<{ name: string; displayName: string; description: string; prompt: string; tools?: string[] | null; userInvocable: boolean }> {
+/** エージェント定義を非同期で読み取り、先頭メタデータとプロンプト本文に分ける。明示的な true の場合だけユーザーから呼び出せる。 */
+async function parseCustomAgentMarkdownAsync(agentFilePath: string): Promise<{
+  name: string;
+  displayName: string;
+  description: string;
+  prompt: string;
+  tools?: string[] | null;
+  userInvocable: boolean;
+}> {
   const markdown = await fs.promises.readFile(agentFilePath, "utf8");
   const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown);
   const frontmatter = frontmatterMatch?.[1] ?? "";
-  const prompt = (frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown).trim();
+  const prompt = (
+    frontmatterMatch ? markdown.slice(frontmatterMatch[0].length) : markdown
+  ).trim();
 
   return {
     name: parseFrontmatterValue(frontmatter, "name"),
     displayName:
-      parseFrontmatterValue(frontmatter, "displayName")
-      || parseFrontmatterValue(frontmatter, "display_name"),
+      parseFrontmatterValue(frontmatter, "displayName") ||
+      parseFrontmatterValue(frontmatter, "display_name"),
     description: parseFrontmatterValue(frontmatter, "description"),
     prompt,
     tools: parseFrontmatterTools(frontmatter),
-    userInvocable: parseFrontmatterBoolean(frontmatter, "user-invocable") === true,
+    userInvocable:
+      parseFrontmatterBoolean(frontmatter, "user-invocable") === true,
   };
 }
 
-function toDisplayPath(workspacePath: string, source: DiscoveredCustomAgentSource, agentFilePath: string): string {
+/** ワークスペース内の定義は相対パスで表示し、範囲外やグローバル定義は元のパスを使う。 */
+function toDisplayPath(
+  workspacePath: string,
+  source: DiscoveredCustomAgentSource,
+  agentFilePath: string,
+): string {
   if (source !== "workspace") {
     return normalizeSlashes(agentFilePath);
   }
 
   const relativePath = path.relative(workspacePath, agentFilePath);
-  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
     return normalizeSlashes(agentFilePath);
   }
 
   return normalizeSlashes(relativePath);
 }
 
+/** 出所・出所ラベル・絶対パスを組み合わせて各ルートのキャッシュを区別する。 */
 function getCustomAgentRootCacheKey(root: CustomAgentRoot): string {
   return `${root.source}:${root.sourceLabel}:${normalizeSlashes(path.resolve(root.rootPath))}`;
 }
 
-function getCustomAgentDiscoveryCacheKey(workspacePath: string, homeDirectory: string): string {
+/** ワークスペースとユーザーホームの絶対パスで探索全体のキャッシュを区別する。 */
+function getCustomAgentDiscoveryCacheKey(
+  workspacePath: string,
+  homeDirectory: string,
+): string {
   return [
     normalizeSlashes(path.resolve(workspacePath)),
     normalizeSlashes(path.resolve(homeDirectory)),
   ].join("|");
 }
 
+/** ファイル情報を同期取得し、取得に失敗した場合は null を返す。 */
 function statFileIfExists(filePath: string): fs.Stats | null {
   try {
     return fs.statSync(filePath);
@@ -189,7 +249,10 @@ function statFileIfExists(filePath: string): fs.Stats | null {
   }
 }
 
-async function statFileIfExistsAsync(filePath: string): Promise<fs.Stats | null> {
+/** ファイル情報を非同期取得し、取得に失敗した場合は null を返す。 */
+async function statFileIfExistsAsync(
+  filePath: string,
+): Promise<fs.Stats | null> {
   try {
     return await fs.promises.stat(filePath);
   } catch {
@@ -197,6 +260,7 @@ async function statFileIfExistsAsync(filePath: string): Promise<fs.Stats | null>
   }
 }
 
+/** ルートと直下のエージェント定義の更新時刻やサイズから、列挙順に依存しない照合値を同期で作る。 */
 function buildCustomAgentRootFingerprint(rootPath: string): string {
   const rootStats = statFileIfExists(rootPath);
   if (!rootStats?.isDirectory()) {
@@ -205,7 +269,10 @@ function buildCustomAgentRootFingerprint(rootPath: string): string {
 
   const entries = fs.readdirSync(rootPath, { withFileTypes: true });
   const entryFingerprints = entries
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".agent.md"))
+    .filter(
+      (entry) =>
+        entry.isFile() && entry.name.toLowerCase().endsWith(".agent.md"),
+    )
     .map((entry) => {
       const agentFilePath = path.join(rootPath, entry.name);
       const agentFileStats = statFileIfExists(agentFilePath);
@@ -215,46 +282,59 @@ function buildCustomAgentRootFingerprint(rootPath: string): string {
     })
     .sort();
 
-  return [
-    rootStats.mtimeMs,
-    rootStats.size,
-    ...entryFingerprints,
-  ].join("|");
+  return [rootStats.mtimeMs, rootStats.size, ...entryFingerprints].join("|");
 }
 
-async function buildCustomAgentRootFingerprintAsync(rootPath: string): Promise<string> {
+/** ルートと直下のエージェント定義の更新時刻やサイズを非同期で集め、列挙順に依存しない照合値を作る。 */
+async function buildCustomAgentRootFingerprintAsync(
+  rootPath: string,
+): Promise<string> {
   const rootStats = await statFileIfExistsAsync(rootPath);
   if (!rootStats?.isDirectory()) {
     return "missing";
   }
 
   const entries = await fs.promises.readdir(rootPath, { withFileTypes: true });
-  const entryFingerprints = await Promise.all(entries
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".agent.md"))
-    .map(async (entry) => {
-      const agentFilePath = path.join(rootPath, entry.name);
-      const agentFileStats = await statFileIfExistsAsync(agentFilePath);
-      return agentFileStats?.isFile()
-        ? `${entry.name}:${agentFileStats.mtimeMs}:${agentFileStats.size}`
-        : `${entry.name}:missing`;
-    }));
+  const entryFingerprints = await Promise.all(
+    entries
+      .filter(
+        (entry) =>
+          entry.isFile() && entry.name.toLowerCase().endsWith(".agent.md"),
+      )
+      .map(async (entry) => {
+        const agentFilePath = path.join(rootPath, entry.name);
+        const agentFileStats = await statFileIfExistsAsync(agentFilePath);
+        return agentFileStats?.isFile()
+          ? `${entry.name}:${agentFileStats.mtimeMs}:${agentFileStats.size}`
+          : `${entry.name}:missing`;
+      }),
+  );
 
-  return [
-    rootStats.mtimeMs,
-    rootStats.size,
-    ...entryFingerprints.sort(),
-  ].join("|");
+  return [rootStats.mtimeMs, rootStats.size, ...entryFingerprints.sort()].join(
+    "|",
+  );
 }
 
-function cloneResolvedCustomAgents(agents: ResolvedCustomAgent[]): ResolvedCustomAgent[] {
+/** キャッシュの内容に影響を与えないよう、一覧・各エージェント・ツール配列を複製する。 */
+function cloneResolvedCustomAgents(
+  agents: ResolvedCustomAgent[],
+): ResolvedCustomAgent[] {
   return agents.map((agent) => ({
     ...agent,
     tools: Array.isArray(agent.tools) ? [...agent.tools] : agent.tools,
   }));
 }
 
-function discoverCustomAgentsInRoot(workspacePath: string, root: CustomAgentRoot): ResolvedCustomAgent[] {
-  if (!root.rootPath || !fs.existsSync(root.rootPath) || !fs.statSync(root.rootPath).isDirectory()) {
+/** ルート直下の .agent.md を同期で読み取り、名前またはプロンプトが空の定義を除く。メタデータに名前がなければファイル名で補う。 */
+function discoverCustomAgentsInRoot(
+  workspacePath: string,
+  root: CustomAgentRoot,
+): ResolvedCustomAgent[] {
+  if (
+    !root.rootPath ||
+    !fs.existsSync(root.rootPath) ||
+    !fs.statSync(root.rootPath).isDirectory()
+  ) {
     return [];
   }
 
@@ -292,13 +372,21 @@ function discoverCustomAgentsInRoot(workspacePath: string, root: CustomAgentRoot
   return discovered;
 }
 
-async function discoverCustomAgentsInRootAsync(workspacePath: string, root: CustomAgentRoot): Promise<ResolvedCustomAgent[]> {
-  const rootStats = root.rootPath ? await statFileIfExistsAsync(root.rootPath) : null;
+/** ルート直下の .agent.md を非同期で読み取る。定義に名前がなければファイル名で補い、名前とプロンプトがそろう定義を採用する。 */
+async function discoverCustomAgentsInRootAsync(
+  workspacePath: string,
+  root: CustomAgentRoot,
+): Promise<ResolvedCustomAgent[]> {
+  const rootStats = root.rootPath
+    ? await statFileIfExistsAsync(root.rootPath)
+    : null;
   if (!rootStats?.isDirectory()) {
     return [];
   }
 
-  const entries = await fs.promises.readdir(root.rootPath, { withFileTypes: true });
+  const entries = await fs.promises.readdir(root.rootPath, {
+    withFileTypes: true,
+  });
   const discovered: ResolvedCustomAgent[] = [];
 
   for (const entry of entries) {
@@ -332,6 +420,7 @@ async function discoverCustomAgentsInRootAsync(workspacePath: string, root: Cust
   return discovered;
 }
 
+/** ルートの照合値が一致する場合は複製した結果を返し、異なる場合は同期で読み直す。 */
 function discoverCustomAgentsInRootCached(
   workspacePath: string,
   root: CustomAgentRoot,
@@ -358,6 +447,7 @@ function discoverCustomAgentsInRootCached(
   };
 }
 
+/** ルートの照合値が一致する場合は複製した結果を返し、異なる場合は非同期で読み直す。 */
 async function discoverCustomAgentsInRootCachedAsync(
   workspacePath: string,
   root: CustomAgentRoot,
@@ -384,7 +474,10 @@ async function discoverCustomAgentsInRootCachedAsync(
   };
 }
 
-function dedupeCustomAgents(discovered: ResolvedCustomAgent[]): ResolvedCustomAgent[] {
+/** 名前の前後の空白と大小文字を無視して重複を解消し、グローバル定義よりワークスペース定義を優先する。 */
+function dedupeCustomAgents(
+  discovered: ResolvedCustomAgent[],
+): ResolvedCustomAgent[] {
   const deduped = new Map<string, ResolvedCustomAgent>();
 
   for (const agent of discovered) {
@@ -409,17 +502,30 @@ function dedupeCustomAgents(discovered: ResolvedCustomAgent[]): ResolvedCustomAg
   });
 }
 
-function resolveCustomAgents(workspacePath: string, homeDirectory: string): ResolvedCustomAgent[] {
+/** SDK に渡す設定を作れるようにルートごとの結果を同期で解決し、照合値が一致する場合は統合済みの一覧を再利用する。 */
+function resolveCustomAgents(
+  workspacePath: string,
+  homeDirectory: string,
+): ResolvedCustomAgent[] {
   const roots = buildCustomAgentRoots(workspacePath, homeDirectory);
-  const rootResults = roots.map((root) => discoverCustomAgentsInRootCached(workspacePath, root));
-  const fingerprint = rootResults.map((result) => result.fingerprint).join("||");
-  const cacheKey = getCustomAgentDiscoveryCacheKey(workspacePath, homeDirectory);
+  const rootResults = roots.map((root) =>
+    discoverCustomAgentsInRootCached(workspacePath, root),
+  );
+  const fingerprint = rootResults
+    .map((result) => result.fingerprint)
+    .join("||");
+  const cacheKey = getCustomAgentDiscoveryCacheKey(
+    workspacePath,
+    homeDirectory,
+  );
   const cached = customAgentDiscoveryCache.get(cacheKey);
   if (cached?.fingerprint === fingerprint) {
     return cloneResolvedCustomAgents(cached.agents);
   }
 
-  const agents = dedupeCustomAgents(rootResults.flatMap((result) => result.agents));
+  const agents = dedupeCustomAgents(
+    rootResults.flatMap((result) => result.agents),
+  );
   customAgentDiscoveryCache.set(cacheKey, {
     fingerprint,
     agents: cloneResolvedCustomAgents(agents),
@@ -428,17 +534,32 @@ function resolveCustomAgents(workspacePath: string, homeDirectory: string): Reso
   return agents;
 }
 
-async function resolveCustomAgentsAsync(workspacePath: string, homeDirectory: string): Promise<ResolvedCustomAgent[]> {
+/** 各ルートの探索結果を非同期で集め、照合値が変わった場合にだけ重複解消と整列をやり直す。 */
+async function resolveCustomAgentsAsync(
+  workspacePath: string,
+  homeDirectory: string,
+): Promise<ResolvedCustomAgent[]> {
   const roots = buildCustomAgentRoots(workspacePath, homeDirectory);
-  const rootResults = await Promise.all(roots.map((root) => discoverCustomAgentsInRootCachedAsync(workspacePath, root)));
-  const fingerprint = rootResults.map((result) => result.fingerprint).join("||");
-  const cacheKey = getCustomAgentDiscoveryCacheKey(workspacePath, homeDirectory);
+  const rootResults = await Promise.all(
+    roots.map((root) =>
+      discoverCustomAgentsInRootCachedAsync(workspacePath, root),
+    ),
+  );
+  const fingerprint = rootResults
+    .map((result) => result.fingerprint)
+    .join("||");
+  const cacheKey = getCustomAgentDiscoveryCacheKey(
+    workspacePath,
+    homeDirectory,
+  );
   const cached = customAgentDiscoveryCache.get(cacheKey);
   if (cached?.fingerprint === fingerprint) {
     return cloneResolvedCustomAgents(cached.agents);
   }
 
-  const agents = dedupeCustomAgents(rootResults.flatMap((result) => result.agents));
+  const agents = dedupeCustomAgents(
+    rootResults.flatMap((result) => result.agents),
+  );
   customAgentDiscoveryCache.set(cacheKey, {
     fingerprint,
     agents: cloneResolvedCustomAgents(agents),
@@ -447,15 +568,24 @@ async function resolveCustomAgentsAsync(workspacePath: string, homeDirectory: st
   return agents;
 }
 
+/** 選択候補にはユーザーが呼び出せるエージェントだけを残し、プロンプトとツールの詳細を返さない。 */
 export async function discoverSessionCustomAgents(
   workspacePath: string,
   homeDirectory: string = os.homedir(),
 ): Promise<DiscoveredCustomAgent[]> {
   return (await resolveCustomAgentsAsync(workspacePath, homeDirectory))
     .filter((agent) => agent.userInvocable)
-    .map(({ prompt: _prompt, tools: _tools, userInvocable: _userInvocable, ...agent }) => agent);
+    .map(
+      ({
+        prompt: _prompt,
+        tools: _tools,
+        userInvocable: _userInvocable,
+        ...agent
+      }) => agent,
+    );
 }
 
+/** 検出した定義を Copilot SDK の設定に変換し、指定名に一致した定義名を返す。一致しなければ選択名は null になる。 */
 export function resolveSessionCustomAgentConfigs(
   workspacePath: string,
   selectedAgentName: string,
@@ -471,7 +601,10 @@ export function resolveSessionCustomAgentConfigs(
   }));
   const normalizedSelectedAgentName = selectedAgentName.trim().toLowerCase();
   const selectedAgent = normalizedSelectedAgentName
-    ? resolvedAgents.find((agent) => agent.name.trim().toLowerCase() === normalizedSelectedAgentName) ?? null
+    ? (resolvedAgents.find(
+        (agent) =>
+          agent.name.trim().toLowerCase() === normalizedSelectedAgentName,
+      ) ?? null)
     : null;
 
   return {

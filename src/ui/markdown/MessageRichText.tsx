@@ -1,4 +1,16 @@
-import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkFrontmatter from "remark-frontmatter";
@@ -23,7 +35,10 @@ import {
   type MessageCopyFeedback,
 } from "./markdown-context.js";
 import { markdownUrlTransform } from "./markdown-links.js";
-import type { MarkdownImageContext, MarkdownImageResolver } from "./image-resource-loader.js";
+import type {
+  MarkdownImageContext,
+  MarkdownImageResolver,
+} from "./image-resource-loader.js";
 import {
   markdownComponents,
   renderMarkdownFrontmatter,
@@ -34,24 +49,52 @@ import {
 } from "./markdown-plugins.js";
 import { createMarkdownParseProjectionPlugin } from "./markdown-parse-projection.js";
 import { createKatexProjectionPlugin } from "./markdown-katex-projection.js";
-import { rehypeSourceRanges, remarkReferenceSourceRanges } from "./markdown-source-ranges.js";
+import {
+  rehypeSourceRanges,
+  remarkReferenceSourceRanges,
+} from "./markdown-source-ranges.js";
 
+/** Markdownを意味要素へ変換するPreviewと、変換前の原文を表示するSourceを区別する。 */
 export type MessageViewMode = "preview" | "source";
 
-export type MessageInlineContent = { key: string; position: number; content: ReactNode; stableOwner?: boolean };
+/** 原文中の挿入位置・Reactの表示内容と、状態を持つ項目に専用の兄弟要素を割り当てる指定。 */
+export type MessageInlineContent = {
+  key: string;
+  position: number;
+  content: ReactNode;
+  stableOwner?: boolean;
+};
 
-function inlineContentList(value: MessageInlineContent | readonly MessageInlineContent[] | undefined): readonly MessageInlineContent[] {
-  return value ? Array.isArray(value) ? value : [value as MessageInlineContent] : [];
+/** 単独・複数・未指定の挿入内容を、元の並び順を保つ配列として扱う。 */
+function inlineContentList(
+  value: MessageInlineContent | readonly MessageInlineContent[] | undefined,
+): readonly MessageInlineContent[] {
+  return value
+    ? Array.isArray(value)
+      ? value
+      : [value as MessageInlineContent]
+    : [];
 }
 
 const InlineContentContext = createContext<readonly MessageInlineContent[]>([]);
-const InlineContent: NonNullable<Components["div"]> = function InlineContent({ node, className, ...props }) {
+/** 構文木に差し込んだインデックス付きの要素を実コンテンツへ置き換え、通常のdivはそのまま描画する。 */
+const InlineContent: NonNullable<Components["div"]> = function InlineContent({
+  node,
+  className,
+  ...props
+}) {
   const contents = useContext(InlineContentContext);
-  const match = className?.match(/(?:^|\s)message-inline-content-(\d+)(?:\s|$)/);
+  const match = className?.match(
+    /(?:^|\s)message-inline-content-(\d+)(?:\s|$)/,
+  );
   const content = match ? contents[Number(match[1])] : undefined;
-  return node && match
-    ? <div className="message-inline-content" key={content?.key}>{content?.content}</div>
-    : <div className={className} {...props} />;
+  return node && match ? (
+    <div className="message-inline-content" key={content?.key}>
+      {content?.content}
+    </div>
+  ) : (
+    <div className={className} {...props} />
+  );
 };
 const inlineMarkdownComponents = {
   ...markdownComponents,
@@ -59,6 +102,7 @@ const inlineMarkdownComponents = {
   "withmate-stable-inline": InlineContent,
 } as Components;
 
+/** メッセージ本文と原文位置を受け取り、メディア解決や会話操作を呼び出し側へ接続する入力。 */
 type MessageRichTextProps = {
   text: string;
   embeddedMedia?: "allow" | "text";
@@ -83,49 +127,97 @@ type MessageRichTextProps = {
   onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
-function createInlineContentPlugin(contents: readonly MessageInlineContent[]): Plugin<[], Root> {
+/** 原文の位置をブロック境界へ対応付け、本文ブロックを分割せずに指定順で挿入する。 */
+function createInlineContentPlugin(
+  contents: readonly MessageInlineContent[],
+): Plugin<[], Root> {
   return () => (tree) => {
     const original = tree.children.slice();
-    const insertions = contents.map((content, contentIndex) => {
-      let index = 0;
-      for (const node of original) {
-        if ((node.position?.start.offset ?? 0) >= content.position) break;
-        index += 1;
-        if ((node.position?.end.offset ?? 0) >= content.position) break;
-      }
-      return { index, contentIndex };
-    }).sort((a, b) => b.index - a.index || b.contentIndex - a.contentIndex);
-    for (const { index, contentIndex } of insertions) tree.children.splice(index, 0, {
-      type: "paragraph", children: [],
-      // 状態を持つ内容には、通常のカードと異なる ReactMarkdown の兄弟要素キーを割り当てる。
-      data: { hName: contents[contentIndex].stableOwner ? "withmate-stable-inline" : "div", hProperties: { className: ["message-inline-content", `message-inline-content-${contentIndex}`] } },
-    });
+    const insertions = contents
+      .map((content, contentIndex) => {
+        let index = 0;
+        for (const node of original) {
+          if ((node.position?.start.offset ?? 0) >= content.position) break;
+          index += 1;
+          if ((node.position?.end.offset ?? 0) >= content.position) break;
+        }
+        return { index, contentIndex };
+      })
+      .sort((a, b) => b.index - a.index || b.contentIndex - a.contentIndex);
+    for (const { index, contentIndex } of insertions)
+      tree.children.splice(index, 0, {
+        type: "paragraph",
+        children: [],
+        // 状態を持つ内容には、通常のカードと異なる ReactMarkdown の兄弟要素キーを割り当てる。
+        data: {
+          hName: contents[contentIndex].stableOwner
+            ? "withmate-stable-inline"
+            : "div",
+          hProperties: {
+            className: [
+              "message-inline-content",
+              `message-inline-content-${contentIndex}`,
+            ],
+          },
+        },
+      });
   };
 }
 
-function createQuestionSelectionPlugin(ranges: Array<{ start: number; end: number }>): Plugin<[], Root> {
+/** 原文範囲が完全に一致する段落またはリスト項目に、回答の選択印と表示クラスを付ける。 */
+function createQuestionSelectionPlugin(
+  ranges: Array<{ start: number; end: number }>,
+): Plugin<[], Root> {
   return () => (tree) => {
     for (const node of tree.children) {
       const blocks = node.type === "list" ? node.children : [node];
       for (const block of blocks) {
-        if (!ranges.some((range) => range.start === block.position?.start.offset && range.end === block.position?.end.offset)) continue;
-        const paragraph = block.type === "listItem" ? block.children.find((child) => child.type === "paragraph") : block.type === "paragraph" ? block : undefined;
+        if (
+          !ranges.some(
+            (range) =>
+              range.start === block.position?.start.offset &&
+              range.end === block.position?.end.offset,
+          )
+        )
+          continue;
+        const paragraph =
+          block.type === "listItem"
+            ? block.children.find((child) => child.type === "paragraph")
+            : block.type === "paragraph"
+              ? block
+              : undefined;
         if (!paragraph || paragraph.type !== "paragraph") continue;
         paragraph.children.unshift({ type: "text", value: "✓ " });
         const data = block.data ?? (block.data = {});
         const properties = data.hProperties ?? (data.hProperties = {});
         const classes = properties.className;
-        properties.className = [...(Array.isArray(classes) ? classes : typeof classes === "string" ? [classes] : []), "elicitation-record-selected"];
+        properties.className = [
+          ...(Array.isArray(classes)
+            ? classes
+            : typeof classes === "string"
+              ? [classes]
+              : []),
+          "elicitation-record-selected",
+        ];
       }
     }
   };
 }
 
-function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullRender: boolean): string {
+/** 受信中の追記だけをまとめ、置換・受信終了・即時描画要求では最新本文をそのまま返す。 */
+function useStreamingMarkdownText(
+  text: string,
+  isStreaming: boolean,
+  forceFullRender: boolean,
+): string {
   const [snapshot, setSnapshot] = useState(text);
   const latestText = useRef(text);
   const timer = useRef<number | null>(null);
-  const immediate = !isStreaming || forceFullRender || !text.startsWith(latestText.current) || typeof window === "undefined";
+  const immediate =
+    !isStreaming ||
+    forceFullRender ||
+    !text.startsWith(latestText.current) ||
+    typeof window === "undefined";
 
   useEffect(() => {
     latestText.current = text;
@@ -142,13 +234,17 @@ function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullR
     }
   }, [immediate, snapshot, text]);
 
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
 
   return immediate ? text : snapshot;
 }
 
+/** メッセージごとに脚注を分離してMarkdownを変換し、検索範囲・埋め込み・コピー通知を描画へつなぐ。 */
 function MessageMarkdownPreview({
   text,
   embeddedMedia = "allow",
@@ -177,7 +273,11 @@ function MessageMarkdownPreview({
     [reactId],
   );
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
-  const renderText = useStreamingMarkdownText(text, isStreaming, forceFullRender || streamingTextPresented);
+  const renderText = useStreamingMarkdownText(
+    text,
+    isStreaming,
+    forceFullRender || streamingTextPresented,
+  );
   const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(
     null,
   );
@@ -187,7 +287,10 @@ function MessageMarkdownPreview({
     text: renderText,
     onActivate: onActivateGlossaryEntry,
   });
-  const parseProjection = useMemo(() => createMarkdownParseProjectionPlugin(), [responseProvider]);
+  const parseProjection = useMemo(
+    () => createMarkdownParseProjectionPlugin(),
+    [responseProvider],
+  );
   const katexProjection = useMemo(() => createKatexProjectionPlugin(), []);
   const handleLinkContextMenuResult = useCallback(
     (result: MarkdownLinkContextMenuResult) => {
@@ -254,7 +357,12 @@ function MessageMarkdownPreview({
     [footnoteLabelId, glossaryAnnotations.rehypePlugin, katexProjection],
   );
   const inlineContents = inlineContentList(inlineContent);
-  const inlinePositions = JSON.stringify(inlineContents.map(({ position, stableOwner }) => [position, Boolean(stableOwner)]));
+  const inlinePositions = JSON.stringify(
+    inlineContents.map(({ position, stableOwner }) => [
+      position,
+      Boolean(stableOwner),
+    ]),
+  );
   const remarkPlugins = useMemo<PluggableList>(
     () => [
       remarkFrontmatter,
@@ -264,29 +372,44 @@ function MessageMarkdownPreview({
       parseProjection,
       sharedRemarkHtmlLineBreaks,
       remarkReferenceSourceRanges,
-      ...(selectedRanges?.length ? [createQuestionSelectionPlugin(selectedRanges)] : []),
-      ...(inlineContents.length ? [createInlineContentPlugin(inlineContents)] : []),
+      ...(selectedRanges?.length
+        ? [createQuestionSelectionPlugin(selectedRanges)]
+        : []),
+      ...(inlineContents.length
+        ? [createInlineContentPlugin(inlineContents)]
+        : []),
     ],
     [responseProvider, parseProjection, inlinePositions, selectedRanges],
   );
-  const markdownContent = useMemo(() => (
-    <ReactMarkdown
-      components={embeddedMedia === "text" ? {
-        ...inlineMarkdownComponents,
-        img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>,
-        pre: ({ children }) => <pre>{children}</pre>,
-      } : inlineMarkdownComponents}
-      rehypePlugins={rehypePlugins}
-      urlTransform={markdownUrlTransform}
-      remarkPlugins={remarkPlugins}
-      remarkRehypeOptions={{
-        clobberPrefix: footnotePrefix,
-        handlers: { yaml: renderMarkdownFrontmatter },
-      }}
-    >
-      {renderText}
-    </ReactMarkdown>
-  ), [embeddedMedia, footnotePrefix, rehypePlugins, remarkPlugins, renderText]);
+  const markdownContent = useMemo(
+    () => (
+      <ReactMarkdown
+        components={
+          embeddedMedia === "text"
+            ? {
+                ...inlineMarkdownComponents,
+                /** メディアを読み込まない表示では、画像を代替テキストのある参照に置き換える。 */
+                img: ({ alt }) => (
+                  <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>
+                ),
+                /** メディアを読み込まない表示で、Mermaidも通常の整形済みテキストとして残す。 */
+                pre: ({ children }) => <pre>{children}</pre>,
+              }
+            : inlineMarkdownComponents
+        }
+        rehypePlugins={rehypePlugins}
+        urlTransform={markdownUrlTransform}
+        remarkPlugins={remarkPlugins}
+        remarkRehypeOptions={{
+          clobberPrefix: footnotePrefix,
+          handlers: { yaml: renderMarkdownFrontmatter },
+        }}
+      >
+        {renderText}
+      </ReactMarkdown>
+    ),
+    [embeddedMedia, footnotePrefix, rehypePlugins, remarkPlugins, renderText],
+  );
 
   useEffect(() => {
     if (!copyFeedback) {
@@ -311,54 +434,100 @@ function MessageMarkdownPreview({
           </InlineContentContext.Provider>
         </MarkdownRenderContext.Provider>
       </MessageGlossaryAnnotationProvider>
-      {copyFeedback ? createPortal(
-        <span
-          className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {copyFeedback.message}
-        </span>,
-        document.body,
-      ) : null}
+      {copyFeedback
+        ? createPortal(
+            <span
+              className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {copyFeedback.message}
+            </span>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
 
+/** 表示モードを切り替え、Sourceでは挿入内容と選択印を加えつつMarkdown構文を変換しない。 */
 function MessageRichTextComponent({
   displayMode = "preview",
   ...props
 }: MessageRichTextProps) {
   if (displayMode === "source") {
     const className = props.className ?? "message-body";
+    /** 選択範囲を表示区間へ切り詰め、挿入内容で分かれた後続区間には選択印を重ねない。 */
     const sourceContent = (start: number, end: number) => {
       const pieces: ReactNode[] = [];
       let offset = start;
-      for (const range of [...props.selectedRanges ?? []].sort((a, b) => a.start - b.start)) {
+      for (const range of [...(props.selectedRanges ?? [])].sort(
+        (a, b) => a.start - b.start,
+      )) {
         const rangeStart = Math.max(range.start, start, offset);
         const rangeEnd = Math.min(range.end, end);
         if (rangeEnd <= rangeStart) continue;
         pieces.push(props.text.slice(offset, rangeStart));
-        pieces.push(<span className="elicitation-record-selected" key={`${range.start}:${range.end}`}>{rangeStart === range.start ? "✓ " : ""}{props.text.slice(rangeStart, rangeEnd)}</span>);
+        pieces.push(
+          <span
+            className="elicitation-record-selected"
+            key={`${range.start}:${range.end}`}
+          >
+            {rangeStart === range.start ? "✓ " : ""}
+            {props.text.slice(rangeStart, rangeEnd)}
+          </span>,
+        );
         offset = rangeEnd;
       }
       pieces.push(props.text.slice(offset, end));
       return pieces;
     };
-    const contents = inlineContentList(props.inlineContent).slice().sort((a, b) => a.position - b.position);
+    const contents = inlineContentList(props.inlineContent)
+      .slice()
+      .sort((a, b) => a.position - b.position);
     if (contents.length) {
       let offset = 0;
       const fragments = contents.map((content) => {
-        const position = Math.max(offset, Math.min(content.position, props.text.length));
-        const fragment = <Fragment key={content.key}>{position > offset ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + offset}>{sourceContent(offset, position)}</pre> : null}{content.content}</Fragment>;
+        const position = Math.max(
+          offset,
+          Math.min(content.position, props.text.length),
+        );
+        const fragment = (
+          <Fragment key={content.key}>
+            {position > offset ? (
+              <pre
+                className={`${className} rich-text message-source-text`.trim()}
+                data-source-start={(props.sourceStart ?? 0) + offset}
+              >
+                {sourceContent(offset, position)}
+              </pre>
+            ) : null}
+            {content.content}
+          </Fragment>
+        );
         offset = position;
         return fragment;
       });
-      return <>{fragments}{offset < props.text.length ? <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={(props.sourceStart ?? 0) + offset}>{sourceContent(offset, props.text.length)}</pre> : null}</>;
+      return (
+        <>
+          {fragments}
+          {offset < props.text.length ? (
+            <pre
+              className={`${className} rich-text message-source-text`.trim()}
+              data-source-start={(props.sourceStart ?? 0) + offset}
+            >
+              {sourceContent(offset, props.text.length)}
+            </pre>
+          ) : null}
+        </>
+      );
     }
     return (
-      <pre className={`${className} rich-text message-source-text`.trim()} data-source-start={props.sourceStart}>
+      <pre
+        className={`${className} rich-text message-source-text`.trim()}
+        data-source-start={props.sourceStart}
+      >
         {sourceContent(0, props.text.length)}
       </pre>
     );
@@ -367,4 +536,5 @@ function MessageRichTextComponent({
   return <MessageMarkdownPreview {...props} />;
 }
 
+/** 会話本文をPreviewまたはSourceとして描画し、入力が変わらない場合は再描画を省く。 */
 export const MessageRichText = memo(MessageRichTextComponent);

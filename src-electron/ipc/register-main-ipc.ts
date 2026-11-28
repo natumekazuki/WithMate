@@ -48,7 +48,11 @@ export function registerMainIpcHandlers(
   ipcMain.on(
     WITHMATE_RENDERER_LOG_CHANNEL,
     (event, input: RendererLogInput) => {
-      try { assertNotHtmlPreviewSender(event); } catch { return; }
+      try {
+        assertNotHtmlPreviewSender(event);
+      } catch {
+        return;
+      }
       const windowId = deps.common.resolveEventWindow(event)?.id;
       deps.common.reportRendererLog?.(input, windowId);
     },
@@ -56,17 +60,23 @@ export function registerMainIpcHandlers(
   ipcMain.on(
     WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
     (event, payload: { requestId: string; success: boolean }) => {
-      try { assertNotHtmlPreviewSender(event); } catch { return; }
+      try {
+        assertNotHtmlPreviewSender(event);
+      } catch {
+        return;
+      }
       deps.common.acknowledgeSessionDraftFlush(event, payload);
     },
   );
 }
 
+/** 共通の invoke 境界で HTML プレビューからの送信を拒否し、失敗をログへ記録したうえで元の例外を伝播する登録窓口を作る。 */
 function createErrorLoggingIpcMain(
   ipcMain: IpcMain,
   deps: Pick<MainIpcRegistrationDeps["common"], "logIpcError">,
 ): IpcHandleRegistrar {
   return {
+    /** チャネル別のハンドラーを共通の送信元検証とエラー記録で包んで登録する。 */
     handle(channel, handler) {
       ipcMain.handle(channel, async (event, ...args) => {
         const startedAt = Date.now();

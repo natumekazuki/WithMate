@@ -4,17 +4,22 @@ import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
+/** V1と別ファイルへ移行したV2 DBのファイル名。 */
 export const APP_DATABASE_V2_FILENAME = "withmate-v2.db";
+/** V2の作成時と判定時に用いるSQLiteのユーザー版番号。 */
 export const APP_DATABASE_V2_SCHEMA_VERSION = 2;
 
+/** V2のスキーマ定義に付随する設計ステータス。 */
 export const V2_SCHEMA_STATUS = "ready-for-implementation";
 
+/** 版番号が未設定のDBをV2と認めるために必要な、分離済みの会話テーブル。 */
 export const REQUIRED_V2_TABLES = [
   "sessions",
   "session_messages",
   "session_message_artifacts",
 ] as const;
 
+/** ファイル名と版番号でV2を識別する。版番号が未設定なら会話テーブル構成で判定し、読み取りに失敗したDBは対象外とする。 */
 export function isValidV2Database(dbPath: string): boolean {
   if (basename(dbPath) !== APP_DATABASE_V2_FILENAME) {
     return false;
@@ -23,7 +28,8 @@ export function isValidV2Database(dbPath: string): boolean {
   let db: DatabaseSync | null = null;
   try {
     db = openAppDatabaseReadOnly(dbPath);
-    const row = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+    const row = db.prepare("PRAGMA user_version").get() as
+      { user_version?: number } | undefined;
     if (row?.user_version === APP_DATABASE_V2_SCHEMA_VERSION) {
       return true;
     }
@@ -32,11 +38,17 @@ export function isValidV2Database(dbPath: string): boolean {
     }
 
     const existingTables = new Set(
-      (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as Array<{ name?: unknown }>)
+      (
+        db
+          .prepare("SELECT name FROM sqlite_schema WHERE type = 'table'")
+          .all() as Array<{ name?: unknown }>
+      )
         .map((table) => table.name)
         .filter((name): name is string => typeof name === "string"),
     );
-    return REQUIRED_V2_TABLES.every((tableName) => existingTables.has(tableName));
+    return REQUIRED_V2_TABLES.every((tableName) =>
+      existingTables.has(tableName),
+    );
   } catch {
     return false;
   } finally {
@@ -44,10 +56,12 @@ export function isValidV2Database(dbPath: string): boolean {
   }
 }
 
+/** 文字列内の単一引用符を二重化し、DDLの既定値として埋め込める形にする。 */
 function sqlStringLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** 一覧用ヘッダーと詳細の分離、および旧MemoryGeneration・独り言の除外を示すV2の設計メモ。 */
 export const V2_SCHEMA_DESIGN_NOTES = [
   "V2 は withmate-v2.db を正本にし、V1 withmate.db からの移行は別スクリプトで行う。",
   "V2 では MemoryGeneration / Monologue legacy table を正本 schema に含めない。",
@@ -56,6 +70,7 @@ export const V2_SCHEMA_DESIGN_NOTES = [
   "V1 sessions.stream_json は独り言 legacy 表現のため V2 正本 schema と migration 対象から除外する。",
 ] as const;
 
+/** アプリ共通設定の値と更新時刻をキー単位で保持するV2のDDL。 */
 export const CREATE_V2_APP_SETTINGS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     setting_key TEXT PRIMARY KEY,
@@ -64,6 +79,7 @@ export const CREATE_V2_APP_SETTINGS_TABLE_SQL = `
   );
 `;
 
+/** 会話本文とは別に一覧用のSession情報と件数を保持し、活動順・workspace・Characterでの検索を支えるV2のDDL。 */
 export const CREATE_V2_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -103,6 +119,7 @@ export const CREATE_V2_SESSIONS_TABLE_SQL = `
     ON sessions(character_id, last_active_at DESC);
 `;
 
+/** Session内順序を一意にし、本文・Bookmark・詳細有無を行単位で保持するV2のDDL。 */
 export const CREATE_V2_SESSION_MESSAGES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,6 +142,7 @@ export const CREATE_V2_SESSION_MESSAGES_TABLE_SQL = `
     ON session_messages(session_id, id DESC);
 `;
 
+/** メッセージの詳細JSONを本文から分離し、本文の削除時に連動して削除するV2のDDL。 */
 export const CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_message_artifacts (
     message_id INTEGER PRIMARY KEY,
@@ -133,6 +151,7 @@ export const CREATE_V2_SESSION_MESSAGE_ARTIFACTS_TABLE_SQL = `
   );
 `;
 
+/** V1から継続する版付きモデル一覧と、版に従属するプロバイダー・モデルのV2のDDL。 */
 export const CREATE_V2_MODEL_CATALOG_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS model_catalog_revisions (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,6 +183,7 @@ export const CREATE_V2_MODEL_CATALOG_TABLES_SQL = `
   );
 `;
 
+/** V2の版番号設定と作成SQLを参照先のテーブルから順に並べる。 */
 export const CREATE_V2_SCHEMA_SQL = [
   `PRAGMA user_version = ${APP_DATABASE_V2_SCHEMA_VERSION};`,
   CREATE_V2_APP_SETTINGS_TABLE_SQL,
@@ -173,6 +193,7 @@ export const CREATE_V2_SCHEMA_SQL = [
   CREATE_V2_MODEL_CATALOG_TABLES_SQL,
 ] as const;
 
+/** 会話本文や詳細を結合せずにSession概要を取得するための列一覧。 */
 export const V2_SESSION_SUMMARY_COLUMNS = [
   "id",
   "task_title",

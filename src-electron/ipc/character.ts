@@ -19,6 +19,7 @@ import {
 
 import type { IpcHandleRegistrar, MainIpcCharacterDeps } from "./contracts.js";
 
+/** Character の一覧・更新・アーカイブと、起動時の解決・作成支援を登録する。ID が空の単件取得はサービスを呼ばず `null` を返す。 */
 export function registerCharacterHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcCharacterDeps,
