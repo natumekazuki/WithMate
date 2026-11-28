@@ -1464,49 +1464,14 @@
       "count": 5
     }
   },
-  "src-shared/window/app-boot-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src-shared/window/app-database-diagnostics-state.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 5
-    }
-  },
-  "src-shared/window/app-log-types.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
-  "src-shared/window/home-crew-types.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
   "src-shared/window/html-preview.ts": {
     "jsdoc/require-jsdoc": {
       "count": 16
     }
   },
-  "src-shared/window/markdown-link-context-menu.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
-    }
-  },
-  "src-shared/window/session-window-restore.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 6
-    }
-  },
   "src-shared/window/withmate-window-types.ts": {
     "jsdoc/require-jsdoc": {
       "count": 38
-    }
-  },
-  "src-shared/window/workspace-directory-validation.ts": {
-    "jsdoc/require-jsdoc": {
-      "count": 3
     }
   },
   "src/app/SessionWindowApp.tsx": {

@@ -1,19 +1,27 @@
+/** 復元候補として受け付ける重複のないSession IDの上限。 */
 export const SESSION_WINDOW_RESTORE_SET_MAX = 100;
 
-export type SessionWindowRestoreFailureReason = "missing" | "unreadable" | "open-failed";
+/** 保存Sessionの不在、読み取り不可、ウィンドウ起動の失敗を区別する。 */
+export type SessionWindowRestoreFailureReason =
+  "missing" | "unreadable" | "open-failed";
 
+/** 復元できなかったSessionのIDと、止まった段階。 */
 export type SessionWindowRestoreFailure = {
   sessionId: string;
   reason: SessionWindowRestoreFailureReason;
 };
 
+/** 一回の復元要求に含まれたIDと、開けた対象・失敗した対象の内訳。 */
 export type SessionWindowRestoreResult = {
   requestedSessionIds: string[];
   openedSessionIds: string[];
   failures: SessionWindowRestoreFailure[];
 };
 
-export function normalizeSessionWindowRestoreIds(value: unknown): string[] | null {
+/** IDを出現順に空白除去・重複排除し、上限までに文字列以外があれば不正とする。 */
+export function normalizeSessionWindowRestoreIds(
+  value: unknown,
+): string[] | null {
   if (!Array.isArray(value)) {
     return null;
   }
@@ -37,7 +45,10 @@ export function normalizeSessionWindowRestoreIds(value: unknown): string[] | nul
   return sessionIds;
 }
 
-export function normalizeSessionWindowRestoreResult(value: unknown): SessionWindowRestoreResult | null {
+/** 要求したIDすべてが成功または既知の失敗に一度ずつ分類されるかを検証する。 */
+export function normalizeSessionWindowRestoreResult(
+  value: unknown,
+): SessionWindowRestoreResult | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
@@ -46,9 +57,17 @@ export function normalizeSessionWindowRestoreResult(value: unknown): SessionWind
     openedSessionIds?: unknown;
     failures?: unknown;
   };
-  const requestedSessionIds = normalizeSessionWindowRestoreIds(candidate.requestedSessionIds);
-  const openedSessionIds = normalizeSessionWindowRestoreIds(candidate.openedSessionIds);
-  if (!requestedSessionIds || !openedSessionIds || !Array.isArray(candidate.failures)) {
+  const requestedSessionIds = normalizeSessionWindowRestoreIds(
+    candidate.requestedSessionIds,
+  );
+  const openedSessionIds = normalizeSessionWindowRestoreIds(
+    candidate.openedSessionIds,
+  );
+  if (
+    !requestedSessionIds ||
+    !openedSessionIds ||
+    !Array.isArray(candidate.failures)
+  ) {
     return null;
   }
   const requestedSet = new Set(requestedSessionIds);
@@ -62,16 +81,15 @@ export function normalizeSessionWindowRestoreResult(value: unknown): SessionWind
       return null;
     }
     const failure = entry as { sessionId?: unknown; reason?: unknown };
-    const sessionId = typeof failure.sessionId === "string" ? failure.sessionId.trim() : "";
+    const sessionId =
+      typeof failure.sessionId === "string" ? failure.sessionId.trim() : "";
     if (
-      !sessionId
-      || !requestedSet.has(sessionId)
-      || failedIds.has(sessionId)
-      || (
-        failure.reason !== "missing"
-        && failure.reason !== "unreadable"
-        && failure.reason !== "open-failed"
-      )
+      !sessionId ||
+      !requestedSet.has(sessionId) ||
+      failedIds.has(sessionId) ||
+      (failure.reason !== "missing" &&
+        failure.reason !== "unreadable" &&
+        failure.reason !== "open-failed")
     ) {
       return null;
     }
@@ -83,8 +101,8 @@ export function normalizeSessionWindowRestoreResult(value: unknown): SessionWind
   }
   const classifiedIds = new Set([...openedSessionIds, ...failedIds]);
   if (
-    classifiedIds.size !== requestedSessionIds.length
-    || requestedSessionIds.some((sessionId) => !classifiedIds.has(sessionId))
+    classifiedIds.size !== requestedSessionIds.length ||
+    requestedSessionIds.some((sessionId) => !classifiedIds.has(sessionId))
   ) {
     return null;
   }
